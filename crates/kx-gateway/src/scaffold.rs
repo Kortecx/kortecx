@@ -128,12 +128,7 @@ impl HostScaffolder {
         }
     }
 
-    async fn run_inner(
-        &self,
-        principal: &str,
-        branch: &str,
-        goal: &str,
-    ) -> Result<(), CoreError> {
+    async fn run_inner(&self, principal: &str, branch: &str, goal: &str) -> Result<(), CoreError> {
         // Ensure the project branch exists (idempotent on resume).
         self.branches.create(
             principal,
@@ -156,7 +151,9 @@ impl HostScaffolder {
             let manifest = self
                 .branches
                 .get(principal, branch)?
-                .ok_or(CoreError::Internal(String::from("scaffold branch vanished mid-run")))?;
+                .ok_or(CoreError::Internal(String::from(
+                    "scaffold branch vanished mid-run",
+                )))?;
             if let Some(it) = manifest.items.iter().find(|i| i.path == file.path) {
                 prior.push(ContentRef::from_bytes(it.content_ref).to_hex());
                 continue;
@@ -164,7 +161,8 @@ impl HostScaffolder {
 
             self.set(branch, ScaffoldPhase::Writing, file.path);
             let body_ref = self.write_one(principal, file, goal, &prior).await?;
-            self.branches.advance(principal, branch, file.path, body_ref)?;
+            self.branches
+                .advance(principal, branch, file.path, body_ref)?;
             prior.push(ContentRef::from_bytes(body_ref).to_hex());
         }
         Ok(())
@@ -184,7 +182,13 @@ impl HostScaffolder {
             .map_err(|e| CoreError::Internal(format!("scaffold args: {e}")))?;
         let bound = self
             .binder
-            .bind(principal, APP_SCAFFOLD_WRITE_RECIPE_HANDLE, &args, &[], prior)
+            .bind(
+                principal,
+                APP_SCAFFOLD_WRITE_RECIPE_HANDLE,
+                &args,
+                &[],
+                prior,
+            )
             .await
             .map_err(|e| match e {
                 BinderError::NotAuthorized => CoreError::FailedPrecondition(
@@ -231,11 +235,7 @@ impl AppScaffolder for HostScaffolder {
         Ok(resumed)
     }
 
-    fn status(
-        &self,
-        principal: &str,
-        branch_handle: &str,
-    ) -> Result<ScaffoldStatus, CoreError> {
+    fn status(&self, principal: &str, branch_handle: &str) -> Result<ScaffoldStatus, CoreError> {
         let manifest_paths: BTreeSet<String> = self
             .branches
             .get(principal, branch_handle)?

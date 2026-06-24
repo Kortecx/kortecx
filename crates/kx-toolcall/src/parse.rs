@@ -1400,8 +1400,7 @@ mod tests {
     fn gemma_paren_mixed_scalar_object_array_kwargs_decoded() {
         // The headline T-GEMMA-PAREN shape: a scalar + a nested object + an array.
         let w = warrant_granting(Some(("fs-list", "1")));
-        let env =
-            br#"<|tool_call>call:fs_list(path="x", cfg={"k":1}, tags=["a","b"])<tool_call|>"#;
+        let env = br#"<|tool_call>call:fs_list(path="x", cfg={"k":1}, tags=["a","b"])<tool_call|>"#;
         let call = parse_tool_call(env, &w, 4096)
             .unwrap()
             .expect("a native paren call");

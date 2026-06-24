@@ -194,8 +194,11 @@ mod tests {
         }
         {
             let conn = Connection::open(dir.join("locks.db")).unwrap();
-            conn.execute("UPDATE meta SET value = 999 WHERE key = 'schema_version'", [])
-                .unwrap();
+            conn.execute(
+                "UPDATE meta SET value = 999 WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
         }
         // Reopen recreates EMPTY ⇒ the branch reads UNLOCKED (fails open).
         let db = LocksDb::open(&dir).unwrap();

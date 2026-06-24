@@ -518,13 +518,15 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
             let branch = resp.branch_handle.clone();
             println!("{}", format::render_scaffold_app(&resp, json));
             if do_wait {
-                let status =
-                    poll_scaffold(&mut client, &resolved, &branch, Duration::from_secs(timeout_secs))
-                        .await?;
+                let status = poll_scaffold(
+                    &mut client,
+                    &resolved,
+                    &branch,
+                    Duration::from_secs(timeout_secs),
+                )
+                .await?;
                 println!("{}", format::render_scaffold_status(&status, json));
-                if status.phase
-                    == proto::get_scaffold_status_response::Phase::Failed as i32
-                {
+                if status.phase == proto::get_scaffold_status_response::Phase::Failed as i32 {
                     return Err(CliError::Usage(format!(
                         "scaffold failed: {}",
                         status.detail
@@ -701,7 +703,15 @@ mod tests {
 
     #[test]
     fn parse_scaffold_with_goal_and_wait() {
-        match parse_ok(&["scaffold", "apps/local/echo", "--goal", "summarize PDFs", "--wait"]).sub {
+        match parse_ok(&[
+            "scaffold",
+            "apps/local/echo",
+            "--goal",
+            "summarize PDFs",
+            "--wait",
+        ])
+        .sub
+        {
             AppSub::Scaffold {
                 handle, goal, wait, ..
             } => {

@@ -1265,7 +1265,10 @@ pub fn render_app_lock(handle: &str, locked: bool, json: bool) -> String {
     if json {
         json!({ "branch_handle": handle, "locked": locked }).to_string()
     } else {
-        format!("app {handle} {}", if locked { "locked" } else { "unlocked" })
+        format!(
+            "app {handle} {}",
+            if locked { "locked" } else { "unlocked" }
+        )
     }
 }
 

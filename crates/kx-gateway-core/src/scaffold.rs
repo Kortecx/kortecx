@@ -96,12 +96,12 @@ pub trait AppScaffolder: Send + Sync {
     /// Start (or resume) the background scaffold of `branch_handle` toward `goal`.
     /// Returns `resumed` (true iff the branch already held ≥1 skeleton file). Spawns
     /// a background task and returns immediately (the propose-proxy contract).
-    fn start(&self, principal: &str, branch_handle: &str, goal: &str) -> Result<bool, GatewayError>;
+    fn start(&self, principal: &str, branch_handle: &str, goal: &str)
+        -> Result<bool, GatewayError>;
 
     /// The current scaffold status for a branch (caller-scoped via the host's
     /// branch store).
-    fn status(&self, principal: &str, branch_handle: &str)
-        -> Result<ScaffoldStatus, GatewayError>;
+    fn status(&self, principal: &str, branch_handle: &str) -> Result<ScaffoldStatus, GatewayError>;
 }
 
 /// The outcome of one single-shot terminal-commit check (the host's await loop
@@ -188,7 +188,9 @@ pub fn body_is_empty(body: &[u8]) -> bool {
 /// Resolve `files_done` / `files_pending` over the FIXED skeleton given the branch
 /// manifest's current path set (pure — the host calls this from `status`).
 #[must_use]
-pub fn split_done_pending(manifest_paths: &std::collections::BTreeSet<String>) -> (Vec<String>, Vec<String>) {
+pub fn split_done_pending(
+    manifest_paths: &std::collections::BTreeSet<String>,
+) -> (Vec<String>, Vec<String>) {
     let mut done = Vec::new();
     let mut pending = Vec::new();
     for f in SKELETON {

@@ -4910,6 +4910,53 @@ mod tests {
     }
 
     #[test]
+    fn app_scaffold_write_recipe_seeded_with_distinct_fingerprint() {
+        // POC-5a: the scaffold-write recipe seeds alongside react-edit (a served
+        // model is present), with its OWN logic ref ⇒ a DISTINCT fingerprint (BUG-25),
+        // and the single-step `prompt` contract the scaffold orchestrator binds.
+        let model = ModelId("kx-serve:m".to_string());
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        let scaffold_handle = kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE;
+        assert!(lib.recipe_handles().contains(&scaffold_handle.to_string()));
+        let fp = |h: &str| lib.recipe_fingerprint(h).unwrap();
+        // Distinct from react-edit (own logic ref) despite the same warrant shape.
+        assert_ne!(fp(scaffold_handle), fp(REACT_EDIT_RECIPE_HANDLE));
+        // The published form is the single-step `prompt` contract.
+        let form = lib
+            .recipe_form(scaffold_handle)
+            .expect("app-scaffold-write is provisioned");
+        assert_eq!(form.len(), 1);
+        assert_eq!(form[0].name, PROMPT_KEY);
+
+        // No served model ⇒ NOT seeded (the digest gate — the scaffold warrant is a
+        // model step, so it never touches the model-free canonical projection).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_complete(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!lib2.recipe_handles().contains(&scaffold_handle.to_string()));
+    }
+
+    #[test]
     fn react_edit_warrant_is_a_single_step_no_tools() {
         // D155 Phase-3: react-edit is a SINGLE PURE (greedy, recomputable) model
         // step — no tools / fs / net (in-loop fs-read is deferred to PR-9).

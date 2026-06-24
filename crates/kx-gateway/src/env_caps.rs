@@ -63,7 +63,9 @@ pub(crate) fn window_bytes() -> usize {
 /// The agentic-edit / scaffold-write input-token budget (`KX_SERVE_EDIT_MAX_INPUT_TOKENS`).
 pub(crate) fn edit_max_input_tokens() -> u32 {
     parse_cap_u32(
-        std::env::var("KX_SERVE_EDIT_MAX_INPUT_TOKENS").ok().as_deref(),
+        std::env::var("KX_SERVE_EDIT_MAX_INPUT_TOKENS")
+            .ok()
+            .as_deref(),
         DEFAULT_EDIT_MAX_INPUT_TOKENS,
         MAX_EDIT_TOKENS,
     )
@@ -72,7 +74,9 @@ pub(crate) fn edit_max_input_tokens() -> u32 {
 /// The agentic-edit / scaffold-write output-token budget (`KX_SERVE_EDIT_MAX_OUTPUT_TOKENS`).
 pub(crate) fn edit_max_output_tokens() -> u32 {
     parse_cap_u32(
-        std::env::var("KX_SERVE_EDIT_MAX_OUTPUT_TOKENS").ok().as_deref(),
+        std::env::var("KX_SERVE_EDIT_MAX_OUTPUT_TOKENS")
+            .ok()
+            .as_deref(),
         DEFAULT_EDIT_MAX_OUTPUT_TOKENS,
         MAX_EDIT_TOKENS,
     )

@@ -1243,7 +1243,10 @@ impl GatewayService {
     /// seeded only when a served model is present). Without it `ScaffoldApp` /
     /// `GetScaffoldStatus` return `unimplemented` fail-closed.
     #[must_use]
-    pub fn with_app_scaffolder(mut self, scaffolder: Arc<dyn crate::scaffold::AppScaffolder>) -> Self {
+    pub fn with_app_scaffolder(
+        mut self,
+        scaffolder: Arc<dyn crate::scaffold::AppScaffolder>,
+    ) -> Self {
         self.scaffolder = Some(scaffolder);
         self
     }
