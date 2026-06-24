@@ -846,15 +846,19 @@ jobs:
         run: |
           echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
 
+      # NOTE: deliberately NO `console` feature — its build.rs embeds the built
+      # `ui/dist`, which this job does not build (that is covered by the `ui` +
+      # `verify-quickstart` jobs). The inference-gated code under test
+      # (model lifecycle / cache / model_exec) lives under inference/embedded-worker.
       - name: clippy under --features inference (the cfg(inference) lint gap)
         run: |
-          cargo clippy -p kx-gateway --features inference,embedded-worker,hnsw,console \
+          cargo clippy -p kx-gateway --features inference,embedded-worker,hnsw \
             --all-targets -- -D warnings
           cargo clippy -p kx-inference --features llamacpp --all-targets -- -D warnings
 
       - name: model-free tests under --features inference (the cfg(inference) test gap)
         run: |
-          cargo test -p kx-gateway --features inference,embedded-worker,hnsw,console -- --nocapture
+          cargo test -p kx-gateway --features inference,embedded-worker,hnsw -- --nocapture
 
   # ---------------------------------------------------------------------------
   # real-model-e2e — the GR15 real-model behavioral gate. Serves the public
