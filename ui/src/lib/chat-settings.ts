@@ -53,16 +53,32 @@ export const MODEL_CHAT_HANDLE = "kx/recipes/chat";
 export function resolveChatBacking(
   settings: ChatSettings,
   available: readonly string[],
+  // POC-3: the CHOSEN model's per-model chat handle (from `ListModels.chatHandle`).
+  // When the turn runs via the MODEL chat recipe, route it to the chosen model's
+  // OWN recipe so a chat turn reaches a chosen registered model. The primary's
+  // handle IS `kx/recipes/chat`, so this is a no-op for the default model.
+  modelChatHandle?: string,
 ): { handle: string; promptKey: string } {
   // The SINGLE reconciliation: a stale model-free `echo` handle must not silently
   // echo the prompt when the serve provisions the model chat recipe — prefer the
   // model. EVERY other handle is honored VERBATIM (a deliberate non-echo choice,
   // or even an intentionally-invalid one), so the invoke surfaces real failures
   // honestly instead of masking them (D142.3 don't-fake-gaps).
-  if (settings.handle === ECHO_PRESET.handle && available.includes(MODEL_CHAT_HANDLE)) {
-    return { handle: MODEL_CHAT_HANDLE, promptKey: "prompt" };
+  const base =
+    settings.handle === ECHO_PRESET.handle && available.includes(MODEL_CHAT_HANDLE)
+      ? { handle: MODEL_CHAT_HANDLE, promptKey: "prompt" }
+      : { handle: settings.handle, promptKey: settings.promptKey };
+  // POC-3 routing: only when chatting via the model chat recipe (never an echo /
+  // custom choice) AND the chosen model's recipe is provisioned on THIS serve.
+  if (
+    base.handle === MODEL_CHAT_HANDLE &&
+    modelChatHandle !== undefined &&
+    modelChatHandle !== "" &&
+    available.includes(modelChatHandle)
+  ) {
+    return { handle: modelChatHandle, promptKey: base.promptKey };
   }
-  return { handle: settings.handle, promptKey: settings.promptKey };
+  return base;
 }
 
 /**

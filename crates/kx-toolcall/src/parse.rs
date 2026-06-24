@@ -2,6 +2,8 @@
 //! [`max_args_bytes`]. Moved verbatim from `kx-model-harness::toolcall`
 //! (PR-2d-1); the 13 gate tests moved with it and pin the behavior.
 
+use std::borrow::Cow;
+
 use kx_mote::{ToolName, ToolVersion};
 use kx_warrant::{ToolGrant, WarrantSpec};
 use serde::Deserialize;
@@ -90,33 +92,63 @@ const GEMMA_TOOL_CLOSE: &str = "<tool_call|>";
 const GEMMA_CALL_MARKER: &str = "call:";
 
 /// A model-NATIVE (non-envelope) call shape, post-extraction: the raw tool name
-/// and the verbatim args-object bytes. The version is resolved against the grant
-/// set by the caller (Gemma emits no version).
+/// and the args-object bytes. The args are BORROWED for the brace form
+/// (`NAME{…}`, the verbatim object) and OWNED for the paren form (`NAME(…)`, a
+/// JSON object built from kwargs — T-GEMMA-PAREN). The version is resolved against
+/// the grant set by the caller (Gemma emits no version).
 struct NativeCall<'a> {
     raw_name: &'a str,
-    args: &'a str,
+    args: Cow<'a, str>,
 }
 
-/// Extract a Gemma-4 native `<|tool_call>call:NAME{ARGS}<tool_call|>` call from the
-/// (reasoning-stripped) text, or `None` if the text is not this shape. NAME is the
-/// run after the (optional) `call:` marker up to the FIRST `{` — a DEFINED
-/// NAME/ARGS boundary, exactly like the markdown fence (NEVER a mid-string `{`
-/// search, so the SN-8 injection boundary is unchanged: only bytes the model
-/// fenced inside `<|tool_call>…` are promoted to a call). The `<tool_call|>` close
-/// is optional (truncation-tolerant) — `balanced_object` bounds the args object so
-/// trailing prose / the close delim can never leak in. Total + panic-free.
-fn extract_gemma_native(text: &str) -> Option<NativeCall<'_>> {
-    let after_open = text.trim_start().strip_prefix(GEMMA_TOOL_OPEN)?;
-    let after_marker = after_open
-        .trim_start()
-        .strip_prefix(GEMMA_CALL_MARKER)
-        .unwrap_or_else(|| after_open.trim_start());
-    let brace = after_marker.find('{')?;
-    let raw_name = after_marker[..brace].trim();
+/// Extract a native call body from the text right AFTER the optional `call:`
+/// marker. NAME runs up to the FIRST `{` or `(` (whichever is EARLIER — a DEFINED
+/// boundary, never a mid-string scan, so the SN-8 injection boundary is unchanged:
+/// only bytes the model fenced inside `<|tool_call>…` are promoted). The args are:
+/// the brace-balanced `{…}` object (BORROWED, verbatim), OR the paren `(…)` body
+/// converted to a JSON object (OWNED — T-GEMMA-PAREN). Returns the name, the args,
+/// and the bytes consumed from `after_marker` (NAME + args span) so a batch scan
+/// can advance. `None` on no boundary / empty name / unbounded args / unparseable
+/// parens. Total + panic-free.
+fn native_body(after_marker: &str) -> Option<(&str, Cow<'_, str>, usize)> {
+    let brace = after_marker.find('{');
+    let paren = after_marker.find('(');
+    let (boundary, is_paren) = match (brace, paren) {
+        // Brace wins when it is the EARLIER boundary (or the only one).
+        (Some(b), Some(p)) if b <= p => (b, false),
+        (Some(b), None) => (b, false),
+        // Otherwise a paren boundary (brace absent, or brace after the paren).
+        (Some(_) | None, Some(p)) => (p, true),
+        (None, None) => return None,
+    };
+    let raw_name = after_marker[..boundary].trim();
     if raw_name.is_empty() {
         return None;
     }
-    let args = balanced_object(&after_marker[brace..])?;
+    let region = &after_marker[boundary..];
+    if is_paren {
+        let span = balanced_parens(region)?;
+        // Strip the outer parens; convert the kwargs/JSON body to a JSON object.
+        let json = parse_paren_args(&span[1..span.len() - 1])?;
+        Some((raw_name, Cow::Owned(json), boundary + span.len()))
+    } else {
+        let obj = balanced_object(region)?;
+        let consumed = boundary + obj.len();
+        Some((raw_name, Cow::Borrowed(obj), consumed))
+    }
+}
+
+/// Extract a Gemma-4 native `<|tool_call>call:NAME{ARGS}<tool_call|>` (or the
+/// `call:NAME(ARGS)` paren form, T-GEMMA-PAREN) call from the (reasoning-stripped)
+/// text, or `None` if the text is not this shape. The `<tool_call|>` close is
+/// optional (truncation-tolerant). Total + panic-free.
+fn extract_gemma_native(text: &str) -> Option<NativeCall<'_>> {
+    let after_open = text.trim_start().strip_prefix(GEMMA_TOOL_OPEN)?;
+    let after_marker_ws = after_open.trim_start();
+    let after_marker = after_marker_ws
+        .strip_prefix(GEMMA_CALL_MARKER)
+        .unwrap_or(after_marker_ws);
+    let (raw_name, args, _consumed) = native_body(after_marker)?;
     Some(NativeCall { raw_name, args })
 }
 
@@ -163,6 +195,146 @@ fn balanced_object(s: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// Return the prefix of `s` (which MUST start with `(`) spanning the first
+/// paren-balanced `( … )` group, ignoring parens inside double-quoted strings
+/// (with `\"` escapes). `None` if unbalanced or past `MAX_DEPTH`. The paren analog
+/// of [`balanced_object`] (T-GEMMA-PAREN). Total + panic-free.
+fn balanced_parens(s: &str) -> Option<&str> {
+    const MAX_DEPTH: usize = 64;
+    let bytes = s.as_bytes();
+    if bytes.first() != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut escaped = false;
+    for (i, &b) in bytes.iter().enumerate() {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'(' => {
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    return None;
+                }
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&s[..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Split `s` on TOP-LEVEL commas — commas not inside a double-quoted string nor any
+/// `()`/`[]`/`{}` nesting. Used to split paren kwargs (T-GEMMA-PAREN). Total +
+/// panic-free.
+fn split_top_level_commas(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escaped = false;
+    let mut start = 0;
+    for (i, b) in s.bytes().enumerate() {
+        if in_str {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                parts.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&s[start..]);
+    parts
+}
+
+/// Parse a single kwargs value into a JSON SCALAR: a double-quoted string, a number,
+/// or `true`/`false`/`null`. Single-quoted / bareword / object / array values ⇒
+/// `None` (fail-closed — a paren kwargs value must be an unambiguous JSON scalar).
+/// Total + panic-free (delegates to `serde_json`).
+fn parse_kw_scalar(v: &str) -> Option<serde_json::Value> {
+    let v = v.trim();
+    if v.is_empty() {
+        return None;
+    }
+    let parsed: serde_json::Value = serde_json::from_str(v).ok()?;
+    match parsed {
+        // The kwargs grammar is FLAT — an object/array value is rejected (a model
+        // wanting structured args should emit the `{…}` object form).
+        serde_json::Value::Object(_) | serde_json::Value::Array(_) => None,
+        scalar => Some(scalar),
+    }
+}
+
+/// Convert Gemma's parenthesized native args (the bytes INSIDE `(…)`, T-GEMMA-PAREN)
+/// into a JSON object STRING. Handles: empty `()` → `{}`; a wrapped JSON object
+/// `({…})` → that object (whole-content only, nothing trailing); and comma-separated
+/// `key=value` kwargs where each value is a JSON scalar (double-quoted string,
+/// number, `true`/`false`/`null`). Fail-closed (`None`) on positional args,
+/// nested/unquoted/duplicate forms — an ambiguous shape falls through to a normal
+/// completion rather than fabricating args. SN-8: the produced object still flows
+/// through `resolve_granted_name` (exact grant) + the typed `validate_args`
+/// downstream, so the authority surface is unchanged. Total + panic-free.
+fn parse_paren_args(inner: &str) -> Option<String> {
+    let trimmed = inner.trim();
+    if trimmed.is_empty() {
+        return Some("{}".to_string());
+    }
+    // A wrapped JSON object `({...})`: accept only if the object spans the WHOLE
+    // content (nothing trailing) so we never silently drop bytes.
+    if trimmed.starts_with('{') {
+        let obj = balanced_object(trimmed)?;
+        return (obj.len() == trimmed.len()).then(|| obj.to_string());
+    }
+    // kwargs: `key=scalar, key2=scalar, ...`.
+    let mut map = serde_json::Map::new();
+    for pair in split_top_level_commas(trimmed) {
+        let (k, v) = pair.split_once('=')?;
+        let key = k.trim();
+        if key.is_empty()
+            || !key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return None; // a key must be a plain identifier
+        }
+        let value = parse_kw_scalar(v)?;
+        if map.insert(key.to_string(), value).is_some() {
+            return None; // duplicate key ⇒ ambiguous ⇒ fail-closed
+        }
+    }
+    if map.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&serde_json::Value::Object(map)).ok()
 }
 
 /// Llama-3.1/3.2's native tool-call open delimiter (`<|python_tag|>{"name":…}`).
@@ -421,22 +593,13 @@ fn collect_gemma_calls(text: &str) -> Vec<NativeCall<'_>> {
         let after_marker = after_marker_ws
             .strip_prefix(GEMMA_CALL_MARKER)
             .unwrap_or(after_marker_ws);
-        let Some(brace) = after_marker.find('{') else {
-            break;
-        };
-        let raw_name = after_marker[..brace].trim();
-        if raw_name.is_empty() {
-            break;
-        }
-        let args_region = &after_marker[brace..];
-        let Some(args) = balanced_object(args_region) else {
+        let Some((raw_name, args, consumed)) = native_body(after_marker) else {
             break;
         };
         out.push(NativeCall { raw_name, args });
-        // Advance past this segment's args object (a prefix of `args_region`), then a
-        // single optional close delimiter. Pure str slicing — `args.len()` is a valid
-        // byte index into `args_region` (`args` == `&args_region[..=i]`).
-        rest = args_region[args.len()..].trim_start();
+        // Advance past this segment (NAME + args span via `consumed`, a valid byte
+        // index into `after_marker`), then a single optional close delimiter.
+        rest = after_marker[consumed..].trim_start();
         if let Some(after_close) = rest.strip_prefix(GEMMA_TOOL_CLOSE) {
             rest = after_close.trim_start();
         }
@@ -1143,6 +1306,104 @@ mod tests {
         // balanced_object returns None past MAX_DEPTH ⇒ not a native call ⇒ falls to
         // the JSON gate, which sees a non-`{` start ⇒ Ok(None) (fail-closed).
         assert_eq!(parse_tool_call(deep.as_bytes(), &w, 4096), Ok(None));
+    }
+
+    // ---- T-GEMMA-PAREN: Gemma-4 native `<|tool_call>call:NAME(ARGS)` paren arm ----
+
+    #[test]
+    fn gemma_paren_kwargs_string_value_is_decoded() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // Paren kwargs with a double-quoted string value → JSON object.
+        let env = br#"<|tool_call>call:fs_list(path="sub")<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        assert_eq!(call.name, ToolName("fs-list".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+        assert_eq!(call.args_bytes, br#"{"path":"sub"}"#.to_vec());
+    }
+
+    #[test]
+    fn gemma_paren_empty_args_is_empty_object() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        let env = b"<|tool_call>call:fs_list()<tool_call|>";
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        assert_eq!(call.args_bytes, b"{}".to_vec());
+    }
+
+    #[test]
+    fn gemma_paren_multi_kwargs_with_scalars_is_decoded() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // Mixed scalar kwargs (string, number, bool) — order preserved by the map.
+        let env = br#"<|tool_call>call:fs_list(path="x", depth=2, recurse=true)<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        let v: serde_json::Value = serde_json::from_slice(&call.args_bytes).unwrap();
+        assert_eq!(v["path"], "x");
+        assert_eq!(v["depth"], 2);
+        assert_eq!(v["recurse"], true);
+    }
+
+    #[test]
+    fn gemma_paren_wrapped_json_object_is_decoded() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // A JSON object wrapped in parens: call:NAME({...}).
+        let env = br#"<|tool_call>call:fs_list({"path":"sub"})<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        assert_eq!(call.args_bytes, br#"{"path":"sub"}"#.to_vec());
+    }
+
+    #[test]
+    fn gemma_paren_string_value_with_comma_stays_one_arg() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // A comma INSIDE a quoted value must not split the kwargs.
+        let env = br#"<|tool_call>call:fs_list(q="a,b")<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        let v: serde_json::Value = serde_json::from_slice(&call.args_bytes).unwrap();
+        assert_eq!(v["q"], "a,b");
+        assert_eq!(v.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn gemma_paren_positional_or_bareword_falls_through_to_none() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // Positional args (no `=`) ⇒ fail-closed (not fabricated) ⇒ Ok(None).
+        let positional = b"<|tool_call>call:fs_list(\"sub\")<tool_call|>";
+        assert_eq!(parse_tool_call(positional, &w, 4096), Ok(None));
+        // A bareword (unquoted string) value ⇒ fail-closed ⇒ Ok(None).
+        let bareword = b"<|tool_call>call:fs_list(path=sub)<tool_call|>";
+        assert_eq!(parse_tool_call(bareword, &w, 4096), Ok(None));
+    }
+
+    #[test]
+    fn gemma_paren_tolerates_missing_close_delim() {
+        let w = warrant_granting(Some(("fs-list", "1")));
+        // Truncated `<tool_call|>` — paren-balancing still bounds the args group.
+        let env = br#"<|tool_call>call:fs_list(path="x")"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("a native paren call");
+        assert_eq!(call.args_bytes, br#"{"path":"x"}"#.to_vec());
+    }
+
+    #[test]
+    fn gemma_paren_batch_with_brace_call_both_fire() {
+        // T-MULTI-ELEMENT: a paren call followed by a brace call — both fire.
+        let w = warrant_granting_many(&[("fs-list", "1"), ("echo", "2")]);
+        let env = br#"<|tool_call>call:fs_list(path="x")<tool_call|><|tool_call>call:echo{"q":"hi"}<tool_call|>"#;
+        let calls = parse_tool_calls(env, &w, 4096).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, ToolName("fs-list".into()));
+        assert_eq!(calls[0].args_bytes, br#"{"path":"x"}"#.to_vec());
+        assert_eq!(calls[1].name, ToolName("echo".into()));
+        assert_eq!(calls[1].args_bytes, br#"{"q":"hi"}"#.to_vec());
     }
 
     #[test]

@@ -45,6 +45,7 @@ export function ModelPicker({
             {m.modelId}
             {m.modalities.includes("image") ? " (vision)" : ""}
             {m.serving ? " · serving" : ""}
+            {m.loaded ? " · loaded" : ""}
           </option>
         ))}
       </select>

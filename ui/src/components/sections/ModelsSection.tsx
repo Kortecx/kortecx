@@ -1,5 +1,7 @@
 import { m } from "framer-motion";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
+import { toUiError } from "../../kx/errors";
+import { useModelLifecycle } from "../../kx/use-model-lifecycle";
 import { useModels } from "../../kx/use-models";
 import { EmptyState } from "../EmptyState";
 import { Badge } from "../ds/Badge";
@@ -18,6 +20,7 @@ import { Badge } from "../ds/Badge";
  */
 export function ModelsSection() {
   const { models, unsupported, loading } = useModels();
+  const { load, offload } = useModelLifecycle();
   const hasModels = models !== undefined && models.length > 0;
 
   return (
@@ -56,42 +59,92 @@ export function ModelsSection() {
           initial="hidden"
           animate="show"
         >
-          {models.map((mdl) => (
-            <m.article
-              key={mdl.modelId}
-              className="glow-card glow-card--hover card-grid__card"
-              data-testid="model-card"
-              variants={fadeUp}
-              {...hoverLift}
-            >
-              <div className="card-grid__head">
-                <code className="mono card-grid__title" title={mdl.modelId}>
-                  {mdl.modelId}
-                </code>
-                <Badge
-                  label={mdl.serving ? "serving" : "idle"}
-                  color={mdl.serving ? "var(--success)" : "var(--text-3)"}
-                  dot
-                  pulse={mdl.serving}
-                />
-              </div>
-              {mdl.description ? <p className="card-grid__sub">{mdl.description}</p> : null}
-              {mdl.modalities.length > 0 ? (
-                <div className="card-grid__tags">
-                  {mdl.modalities.map((mod) => (
-                    <span key={mod} className="chip chip--tag">
-                      {mod}
-                    </span>
-                  ))}
+          {models.map((mdl) => {
+            // POC-3: per-card pending/error state (the mutations are shared, so key
+            // on the in-flight variables == this model id).
+            const loadingThis = load.isPending && load.variables === mdl.modelId;
+            const offloadingThis = offload.isPending && offload.variables === mdl.modelId;
+            const busy = loadingThis || offloadingThis;
+            const actionError =
+              load.isError && load.variables === mdl.modelId
+                ? toUiError(load.error)
+                : offload.isError && offload.variables === mdl.modelId
+                  ? toUiError(offload.error)
+                  : null;
+            return (
+              <m.article
+                key={mdl.modelId}
+                className="glow-card glow-card--hover card-grid__card"
+                data-testid="model-card"
+                variants={fadeUp}
+                {...hoverLift}
+              >
+                <div className="card-grid__head">
+                  <code className="mono card-grid__title" title={mdl.modelId}>
+                    {mdl.modelId}
+                  </code>
+                  <Badge
+                    label={mdl.serving ? "serving" : "idle"}
+                    color={mdl.serving ? "var(--success)" : "var(--text-3)"}
+                    dot
+                    pulse={mdl.serving}
+                  />
                 </div>
-              ) : null}
-              <div className="card-grid__meta">
-                <span className="card-grid__handle">
-                  ctx {mdl.contextLen.toLocaleString()} tokens
-                </span>
-              </div>
-            </m.article>
-          ))}
+                {mdl.description ? <p className="card-grid__sub">{mdl.description}</p> : null}
+                {mdl.modalities.length > 0 ? (
+                  <div className="card-grid__tags">
+                    {mdl.modalities.map((mod) => (
+                      <span key={mod} className="chip chip--tag">
+                        {mod}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                <div className="card-grid__meta">
+                  <span className="card-grid__handle">
+                    ctx {mdl.contextLen.toLocaleString()} tokens
+                  </span>
+                  {/* POC-3: live RAM residency (the LRU snapshot), display only. */}
+                  <Badge
+                    label={mdl.loaded ? "loaded" : "not loaded"}
+                    color={mdl.loaded ? "var(--accent)" : "var(--text-3)"}
+                    dot
+                  />
+                </div>
+                {/* POC-3: load/offload controls — warm/evict this model in RAM. All
+                    states designed: idle / pending / loaded / error. Token-based
+                    `.btn-ghost` ⇒ both themes + AA carry by construction (D142). */}
+                <div className="chip-row" data-testid="model-actions">
+                  {mdl.loaded ? (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      data-testid="model-offload-btn"
+                      disabled={busy}
+                      onClick={() => offload.mutate(mdl.modelId)}
+                    >
+                      {offloadingThis ? "Offloading…" : "Offload"}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      data-testid="model-load-btn"
+                      disabled={busy}
+                      onClick={() => load.mutate(mdl.modelId)}
+                    >
+                      {loadingThis ? "Loading…" : "Load"}
+                    </button>
+                  )}
+                </div>
+                {actionError ? (
+                  <p className="card-grid__sub" data-testid="model-action-error" role="alert">
+                    {actionError.message}
+                  </p>
+                ) : null}
+              </m.article>
+            );
+          })}
         </m.div>
       ) : null}
 

@@ -183,10 +183,25 @@ impl Resolved {
                 .tls_config(tls)
                 .map_err(|e| connect_err(e.to_string()))?;
         }
-        endpoint
-            .connect()
-            .await
-            .map_err(|e| connect_err(e.to_string()))
+        // Bounded connect-retry: a transient transport error against a
+        // just-started or briefly-overloaded gateway (TCP-accept can precede
+        // gRPC-readiness) is retried a few times with a short backoff before
+        // failing. Connection establishment only — never an in-flight RPC.
+        let mut backoff_ms = 25u64;
+        let mut last: String = String::new();
+        for attempt in 0..6 {
+            match endpoint.connect().await {
+                Ok(channel) => return Ok(channel),
+                Err(e) => {
+                    last = e.to_string();
+                    if attempt < 5 {
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms * 2).min(400);
+                    }
+                }
+            }
+        }
+        Err(connect_err(last))
     }
 
     /// Dial the gateway as a [`KxGatewayClient`], mapping a transport failure to

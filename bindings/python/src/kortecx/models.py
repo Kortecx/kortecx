@@ -20,8 +20,10 @@ class ModelSummary:
     model_id: str  # the id a recipe `model` ENUM free-param accepts
     modalities: Tuple[str, ...]  # display strings: "text" | "image" | "audio" | "video"
     description: str  # host-synthesized display prose — never identity
-    serving: bool  # this model backs the live serve loop right now
+    serving: bool  # the PRIMARY/default serve route
     context_len: int  # the served context window in tokens
+    loaded: bool = False  # POC-3: resident in RAM right now (live LRU residency)
+    chat_handle: str = ""  # POC-3: the recipe handle to chat with THIS model
 
     @classmethod
     def from_proto(cls, m: "_g.ModelSummary") -> "ModelSummary":
@@ -31,4 +33,23 @@ class ModelSummary:
             description=m.description,
             serving=m.serving,
             context_len=m.context_len,
+            loaded=m.loaded,
+            chat_handle=m.chat_handle,
         )
+
+
+@dataclass(frozen=True)
+class ModelLifecycleResult:
+    """The outcome of a ``load_model`` / ``offload_model`` call (POC-3)."""
+
+    model_id: str  # the model the op targeted
+    loaded: bool  # residency AFTER the op (True after load, False after offload)
+    was_resident: bool  # residency BEFORE the op (load: False ⇒ cold load)
+
+    @classmethod
+    def from_load(cls, r: "_g.LoadModelResponse") -> "ModelLifecycleResult":
+        return cls(model_id=r.model_id, loaded=r.loaded, was_resident=r.was_resident)
+
+    @classmethod
+    def from_offload(cls, r: "_g.OffloadModelResponse") -> "ModelLifecycleResult":
+        return cls(model_id=r.model_id, loaded=r.loaded, was_resident=r.was_resident)

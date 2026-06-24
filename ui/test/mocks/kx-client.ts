@@ -26,6 +26,8 @@ export interface MockClientImpl {
   getMoteDetail?: (...args: unknown[]) => Promise<unknown>;
   getContentBatch?: (...args: unknown[]) => Promise<unknown>;
   listModels?: (...args: unknown[]) => Promise<unknown>;
+  loadModel?: (...args: unknown[]) => Promise<unknown>;
+  offloadModel?: (...args: unknown[]) => Promise<unknown>;
   listContextBundles?: (...args: unknown[]) => Promise<unknown>;
   putContextBundle?: (...args: unknown[]) => Promise<unknown>;
   deleteContextBundle?: (...args: unknown[]) => Promise<unknown>;
@@ -95,6 +97,13 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   );
   const getContentBatch = vi.fn(impl.getContentBatch ?? (async () => []));
   const listModels = vi.fn(impl.listModels ?? (async () => []));
+  const loadModel = vi.fn(
+    impl.loadModel ?? (async (modelId: string) => ({ modelId, loaded: true, wasResident: false })),
+  );
+  const offloadModel = vi.fn(
+    impl.offloadModel ??
+      (async (modelId: string) => ({ modelId, loaded: false, wasResident: true })),
+  );
   const listContextBundles = vi.fn(impl.listContextBundles ?? (async () => []));
   const putContextBundle = vi.fn(
     impl.putContextBundle ??
@@ -127,6 +136,8 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getMoteDetail,
     getContentBatch,
     listModels,
+    loadModel,
+    offloadModel,
     listContextBundles,
     putContextBundle,
     deleteContextBundle,
@@ -159,6 +170,8 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getMoteDetail,
     getContentBatch,
     listModels,
+    loadModel,
+    offloadModel,
     listContextBundles,
     putContextBundle,
     deleteContextBundle,

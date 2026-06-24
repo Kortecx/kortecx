@@ -58,15 +58,20 @@ export function ChatPanel() {
   const recipes = useRecipes();
   const available = recipes.data ?? [];
   const agentAvailable = available.includes(REACT_RECIPE_HANDLE);
+  const models = useModels();
+  // POC-3: the CHOSEN model's per-model chat handle (the ModelPicker's fallback to
+  // models[0] mirrored), so a chat turn routes to the selected registered model.
+  const chosenModel =
+    models.models?.find((mm) => mm.modelId === settings.modelId) ?? models.models?.[0];
   // Reconcile the persisted chat handle against the serve's LIVE recipes so a
   // stale model-free `echo` handle can't silently echo the prompt when a model is
-  // provisioned (GR15). The model chat recipe backs chat whenever served.
-  const backing = resolveChatBacking(settings, available);
+  // provisioned (GR15). The model chat recipe backs chat whenever served; POC-3
+  // routes it to the chosen model's OWN recipe (no-op for the primary).
+  const backing = resolveChatBacking(settings, available, chosenModel?.chatHandle);
   // Proactively surface the honest "no model — connect one" state on a no-model
   // serve (GR15 §2.208 backlog), BEFORE a send silently echoes. Gated on the
   // backing NOT being a deliberate `echo` choice — that path is honored verbatim
   // (resolveChatBacking's contract; the echo e2e + Settings preset stay green).
-  const models = useModels();
   const promptNoModel = shouldPromptNoModel({
     modelCount: models.models?.length,
     loading: models.loading,

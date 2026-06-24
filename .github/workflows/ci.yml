@@ -154,6 +154,13 @@ jobs:
           fi
           cargo check -p kx-cli --features hnsw
           cargo check -p kx-cli --features inference,hnsw
+          # The gateway-only / external-coordinator config (SN-6): `kx-gateway`
+          # --no-default-features (embedded-worker OFF ⇒ kx-coordinator unlinked)
+          # must stay buildable, so a feature-independent path never references a
+          # feature-gated import. Mirrors `just features-guard` (local) — keeping
+          # this in CI prevents the local/CI divergence that let an ungated
+          # kx_coordinator reference merge red on this config.
+          cargo check -p kx-gateway --no-default-features
 
   # ---------------------------------------------------------------------------
   # test — full workspace test pass.

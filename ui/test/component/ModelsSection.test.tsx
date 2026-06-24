@@ -1,5 +1,6 @@
 import { ErrorCode } from "@kortecx/sdk/web";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { ModelsSection } from "../../src/components/sections/ModelsSection";
@@ -13,6 +14,8 @@ const MODELS = [
     description: "Qwen3 4B (GGUF)",
     serving: true,
     contextLen: 8192,
+    loaded: true,
+    chatHandle: "kx/recipes/chat",
   },
   {
     modelId: "gemma-2b",
@@ -20,11 +23,13 @@ const MODELS = [
     description: "Gemma 2B",
     serving: false,
     contextLen: 4096,
+    loaded: false,
+    chatHandle: "kx/recipes/m-gemma-2b",
   },
 ];
 
 describe("ModelsSection", () => {
-  it("renders a display-only card per served model (modalities, context, serving badge)", async () => {
+  it("renders a card per served model (modalities, context, serving + loaded badges)", async () => {
     const mock = makeMockClient({ listModels: async () => MODELS });
     render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
 
@@ -41,10 +46,39 @@ describe("ModelsSection", () => {
     // The serving model shows a "serving" badge; the idle one shows "idle".
     expect(screen.getByText("serving")).toBeInTheDocument();
     expect(screen.getByText("idle")).toBeInTheDocument();
+    // POC-3: live residency badges — one loaded, one not.
+    expect(screen.getByText("loaded")).toBeInTheDocument();
+    expect(screen.getByText("not loaded")).toBeInTheDocument();
+    // The loaded model offers Offload; the idle one offers Load.
+    expect(screen.getByTestId("model-offload-btn")).toBeInTheDocument();
+    expect(screen.getByTestId("model-load-btn")).toBeInTheDocument();
+  });
 
-    // SN-8 display-only: listing never routes — the section has NO action control.
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
-    expect(screen.queryByText(/use model/i)).not.toBeInTheDocument();
+  it("loads an idle model (POC-3): clicking Load calls loadModel + refetches", async () => {
+    const user = userEvent.setup();
+    const mock = makeMockClient({ listModels: async () => MODELS });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+    await waitFor(() => expect(screen.getAllByTestId("model-card")).toHaveLength(2));
+
+    await user.click(screen.getByTestId("model-load-btn"));
+    await waitFor(() => expect(mock.loadModel).toHaveBeenCalledWith("gemma-2b"));
+    // The models query is invalidated ⇒ ListModels is re-read after the mutation.
+    await waitFor(() => expect(mock.listModels.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("surfaces a fail-closed load error honestly (never a fake success)", async () => {
+    const user = userEvent.setup();
+    const mock = makeMockClient({
+      listModels: async () => MODELS,
+      loadModel: async () => {
+        throw Object.assign(new Error("model not registered"), { code: ErrorCode.NotFound });
+      },
+    });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+    await waitFor(() => expect(screen.getAllByTestId("model-card")).toHaveLength(2));
+
+    await user.click(screen.getByTestId("model-load-btn"));
+    await waitFor(() => expect(screen.getByTestId("model-action-error")).toBeInTheDocument());
   });
 
   it("always shows the honest-disabled Cloud / coming-soon cards (D129/GR15, never faked)", async () => {

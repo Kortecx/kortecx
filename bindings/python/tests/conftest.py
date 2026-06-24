@@ -94,28 +94,48 @@ def _wait_ready(endpoint: str, proc: subprocess.Popen, timeout: float = 40.0) ->
 
 
 def _spawn(kx_bin: str, tmp: pathlib.Path, extra: List[str]) -> Server:
-    port, ws_port = _free_port(), _free_port()
-    endpoint = f"http://127.0.0.1:{port}"
-    ws_endpoint = f"ws://127.0.0.1:{ws_port}"
-    args = [
-        kx_bin,
-        "serve",
-        "--journal",
-        str(tmp / "kx.db"),
-        "--content",
-        str(tmp / "blobs"),
-        "--listen",
-        f"127.0.0.1:{port}",
-        "--ws-listen",
-        f"127.0.0.1:{ws_port}",
-        # A console-enabled binary would otherwise bind the DEFAULT :8888 and
-        # concurrent test servers collide (no-op flag on console-less builds).
-        "--no-console",
-        *extra,
-    ]
-    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    _wait_ready(endpoint, proc)
-    return Server(endpoint=endpoint, ws_endpoint=ws_endpoint, proc=proc)
+    # `_free_port()` releases the OS-assigned port the moment it closes its probe
+    # socket, so another process can grab it before `kx serve` binds (a TOCTOU race
+    # that flakes on a busy CI runner: "bind: Address already in use"). Retry the
+    # whole spawn with FRESH ports on that specific early-exit; re-raise anything else.
+    last: Optional[Exception] = None
+    for attempt in range(8):
+        port, ws_port = _free_port(), _free_port()
+        endpoint = f"http://127.0.0.1:{port}"
+        ws_endpoint = f"ws://127.0.0.1:{ws_port}"
+        run_dir = tmp / f"run-{attempt}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        args = [
+            kx_bin,
+            "serve",
+            "--journal",
+            str(run_dir / "kx.db"),
+            "--content",
+            str(run_dir / "blobs"),
+            "--listen",
+            f"127.0.0.1:{port}",
+            "--ws-listen",
+            f"127.0.0.1:{ws_port}",
+            # A console-enabled binary would otherwise bind the DEFAULT :8888 and
+            # concurrent test servers collide (no-op flag on console-less builds).
+            "--no-console",
+            *extra,
+        ]
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            _wait_ready(endpoint, proc)
+            return Server(endpoint=endpoint, ws_endpoint=ws_endpoint, proc=proc)
+        except RuntimeError as e:
+            last = e
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:  # pragma: no cover
+                pass
+            if "Address already in use" not in str(e):
+                raise  # a real startup failure, not the port race — fail loudly
+            time.sleep(0.2)
+    raise RuntimeError(f"kx serve never bound a free port after retries: {last}")
 
 
 @pytest.fixture(scope="session")

@@ -55,7 +55,7 @@ import {
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
-import { ModelSummary } from "./models.js";
+import { ModelLifecycleResult, ModelSummary } from "./models.js";
 import { MoteDetail } from "./motes.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
 import { RecipeForm, RecipeInfo, ScoredRecipe } from "./recipes.js";
@@ -674,6 +674,27 @@ export abstract class KxClientBase {
   async listModels(): Promise<ModelSummary[]> {
     const resp = await rpc(this.grpc.listModels({}));
     return resp.models.map((m) => ModelSummary.fromProto(m));
+  }
+
+  /**
+   * POC-3: warm a REGISTERED local model into RAM (real load). An unregistered
+   * id throws {@link KxNotFound} (fail-closed — never an arbitrary path); an
+   * FFI-free gateway throws {@link KxUnimplemented}. Over-capacity ⇒ honest
+   * LRU-evict-oldest (sequential swap).
+   */
+  async loadModel(modelId: string): Promise<ModelLifecycleResult> {
+    const resp = await rpc(this.grpc.loadModel({ modelId }));
+    return ModelLifecycleResult.fromLoad(resp);
+  }
+
+  /**
+   * POC-3: evict a REGISTERED local model from RAM (real `llama_model_free`).
+   * Idempotent (`wasResident=false` if it was not loaded); an unregistered id
+   * throws {@link KxNotFound}.
+   */
+  async offloadModel(modelId: string): Promise<ModelLifecycleResult> {
+    const resp = await rpc(this.grpc.offloadModel({ modelId }));
+    return ModelLifecycleResult.fromOffload(resp);
   }
 
   /**

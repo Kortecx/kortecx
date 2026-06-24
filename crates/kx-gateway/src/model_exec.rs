@@ -19,7 +19,7 @@
 //! (ReadOnlyNondet) dispatch + D78 upstream-context assembly are follow-ons.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use kx_content::{ContentStore, LocalFsContentStore};
@@ -293,7 +293,7 @@ pub(crate) fn resolve_serve_mmproj() -> Option<std::path::PathBuf> {
 
 /// A stable [`ModelId`] for the served model, derived from the GGUF file stem so
 /// a different model file yields a different id (hence distinct Mote identities).
-/// Used identically by [`build_serve_backend`] (registration) and the model
+/// Used identically by [`build_serve_models`] (registration) and the model
 /// recipe's warrant (`model_route.model_id`), so the backend's warrant check
 /// (`model_id == warrant.model_route.model_id`) holds.
 #[must_use]
@@ -316,6 +316,7 @@ pub(crate) fn catalog_entry(
     gguf: &Path,
     model_id: &ModelId,
     vision: bool,
+    serving: bool,
 ) -> kx_gateway_core::ModelSummaryEntry {
     let mut modalities = vec!["text".to_string()];
     if vision {
@@ -330,9 +331,73 @@ pub(crate) fn catalog_entry(
                 .unwrap_or("kx-serve-model")
                 .to_string()
         }),
-        serving: true,
+        // `serving` = the PRIMARY/default route (only the primary model). `loaded`
+        // is recomputed live by the host catalog from the engine residency.
+        serving,
         context_len: resolve_n_ctx(gguf),
+        loaded: false,
+        // POC-3: the recipe handle that routes a chat turn to THIS model.
+        chat_handle: crate::provision::chat_handle_for(model_id, serving),
     }
+}
+
+/// One resolved serve-model candidate (POC-3 N-GGUF provisioning): a weights
+/// path, the (PRIMARY-only) vision projector, and whether it is the primary
+/// (default-route) model.
+pub(crate) struct ServeModelCandidate {
+    pub gguf: PathBuf,
+    pub mmproj: Option<PathBuf>,
+    pub is_primary: bool,
+}
+
+/// Resolve the FULL serve model set (POC-3), in a stable order: the
+/// `KX_SERVE_MODEL_GGUF` PRIMARY first (back-compat) then the `KX_SERVE_MODELS`
+/// manifest (`;`- or newline-separated ABSOLUTE gguf paths). Each path must be a
+/// file (a bad entry is warn-skipped, never aborting serve); deduped by canonical
+/// path. The PRIMARY (index 0) carries the optional vision projector
+/// (`KX_SERVE_MMPROJ_GGUF`); secondaries register TEXT-only in this POC. An empty
+/// result ⇒ a model-less serve (unchanged FFI-free behavior).
+pub(crate) fn resolve_serve_models() -> Vec<ServeModelCandidate> {
+    let primary_mmproj = resolve_serve_mmproj();
+    // Ordered candidate paths: primary first, then the manifest.
+    let mut paths: Vec<PathBuf> = Vec::new();
+    if let Some(p) = resolve_serve_model() {
+        paths.push(p);
+    }
+    if let Some(manifest) = std::env::var_os("KX_SERVE_MODELS") {
+        for raw in manifest.to_string_lossy().split([';', '\n', '\r']) {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let p = PathBuf::from(trimmed);
+            if p.is_file() {
+                paths.push(p);
+            } else {
+                tracing::warn!(path = %trimmed, "KX_SERVE_MODELS entry is not a file; skipping");
+            }
+        }
+    }
+    let mut out: Vec<ServeModelCandidate> = Vec::new();
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    for gguf in paths {
+        // Dedupe by canonical path so the same file named two ways registers once.
+        let canon = gguf.canonicalize().unwrap_or_else(|_| gguf.clone());
+        if !seen.insert(canon) {
+            continue;
+        }
+        let is_primary = out.is_empty();
+        out.push(ServeModelCandidate {
+            mmproj: if is_primary {
+                primary_mmproj.clone()
+            } else {
+                None
+            },
+            gguf,
+            is_primary,
+        });
+    }
+    out
 }
 
 /// The kortecx agent's required model signature (mirrors the harness's
@@ -384,40 +449,115 @@ fn resolve_n_ctx(gguf: &Path) -> u32 {
 /// # Errors
 /// A string diagnostic if the model is not fit (not `TypeOk`) or the registry
 /// rejects the descriptor.
-pub(crate) fn build_serve_backend(
-    gguf: &Path,
-    model_id: &ModelId,
-    mmproj: Option<&Path>,
+pub(crate) fn build_serve_models(
+    candidates: &[ServeModelCandidate],
     store: Arc<LocalFsContentStore>,
-) -> Result<Arc<LlamaInferenceBackend>, String> {
-    let n_ctx = resolve_n_ctx(gguf);
-    let provided = agent_provided(n_ctx);
-    match check(&provided, &agent_requirements()) {
-        ValidatorOutcome::TypeOk => {}
-        other => {
-            return Err(format!(
-                "served model is not TypeOk for the agent: {other:?}"
-            ))
-        }
-    }
+) -> Result<
+    (
+        Arc<LlamaInferenceBackend>,
+        Vec<kx_gateway_core::ModelSummaryEntry>,
+        ModelId,
+    ),
+    String,
+> {
+    let primary = candidates
+        .first()
+        .ok_or_else(|| "no serve model candidates".to_string())?;
+    let primary_id = serve_model_id(&primary.gguf);
+    let primary_n_ctx = resolve_n_ctx(&primary.gguf);
+    // The PRIMARY must be TypeOk (the existing fail-closed contract); a secondary
+    // that is unfit or collides is warn-skipped, never aborting serve.
+    type_ok(&primary.gguf)?;
+
     let mut registry = ModelRegistry::new();
-    // Batch A (vision): with a resolved projector the SAME weights register as
-    // an IMAGE descriptor (Text + Image, mmproj attached) and the backend gets
-    // the shared content store so a Multimodal dispatch can fetch image bytes
-    // by `content_ref`. Without one, the registration is byte-identical to
-    // pre-vision (TEXT-only descriptor, no fetcher).
-    let descriptor = match mmproj {
-        Some(proj) => ModelDescriptor::image(model_id.clone(), gguf, proj, n_ctx),
-        None => ModelDescriptor::text(model_id.clone(), gguf, n_ctx),
-    };
-    registry
-        .register(descriptor)
-        .map_err(|e| format!("model registry rejected the descriptor: {e}"))?;
-    let mut backend = LlamaInferenceBackend::with_resolver(Arc::new(registry)).with_n_ctx(n_ctx);
-    if mmproj.is_some() {
+    let mut entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
+    let mut any_vision = false;
+    for cand in candidates {
+        let model_id = serve_model_id(&cand.gguf);
+        if !cand.is_primary {
+            // Secondary fitness is best-effort: a non-TypeOk secondary is skipped.
+            if let Err(error) = type_ok(&cand.gguf) {
+                tracing::warn!(model = %model_id.0, %error, "secondary serve model not fit; skipping");
+                continue;
+            }
+        }
+        let n_ctx = resolve_n_ctx(&cand.gguf);
+        // Batch A (vision): with a resolved projector the SAME weights register as
+        // an IMAGE descriptor (Text + Image, mmproj attached) + the backend gets
+        // the shared content store. Without one, byte-identical to text-only.
+        let descriptor = match &cand.mmproj {
+            Some(proj) => ModelDescriptor::image(model_id.clone(), &cand.gguf, proj, n_ctx),
+            None => ModelDescriptor::text(model_id.clone(), &cand.gguf, n_ctx),
+        };
+        if let Err(e) = registry.register(descriptor) {
+            // A stem collision (two files → same id) or over-cap: warn-skip the
+            // secondary (the primary is registered first and never collides).
+            if cand.is_primary {
+                return Err(format!(
+                    "model registry rejected the primary descriptor: {e}"
+                ));
+            }
+            tracing::warn!(model = %model_id.0, error = %e, "serve model not registered; skipping");
+            continue;
+        }
+        any_vision |= cand.mmproj.is_some();
+        entries.push(catalog_entry(
+            &cand.gguf,
+            &model_id,
+            cand.mmproj.is_some(),
+            cand.is_primary,
+        ));
+    }
+
+    let mut backend =
+        LlamaInferenceBackend::with_resolver(Arc::new(registry)).with_n_ctx(primary_n_ctx);
+    if any_vision {
         backend = backend.with_content_store(store);
     }
-    Ok(Arc::new(backend))
+    // POC-3: the loaded-model cache capacity (distinct models resident at once)
+    // is operator-tunable via KX_SERVE_CACHE_CAPACITY (default 2). A 12B model is
+    // ~7 GB resident, so the floor guards RAM exhaustion.
+    if let Some(cap) = resolve_cache_capacity() {
+        backend = backend.with_cache_capacity(cap);
+    }
+    Ok((Arc::new(backend), entries, primary_id))
+}
+
+/// Fail-closed TypeOk gate for a serve model: its declared capabilities must
+/// type-check against the agent's required signature.
+fn type_ok(gguf: &Path) -> Result<(), String> {
+    let provided = agent_provided(resolve_n_ctx(gguf));
+    match check(&provided, &agent_requirements()) {
+        ValidatorOutcome::TypeOk => Ok(()),
+        other => Err(format!(
+            "served model is not TypeOk for the agent: {other:?}"
+        )),
+    }
+}
+
+/// Whether to warm the primary model into RAM at serve startup
+/// (`KX_SERVE_WARM_ON_START=1`). OFF by default: a resident model at process exit
+/// hits a pre-existing upstream llama.cpp Metal teardown assert (PR 17869), so
+/// warming — which makes that deterministic even for a never-dispatched serve —
+/// is opt-in. The default serve loads the model lazily on first use (baseline).
+pub(crate) fn warm_on_start_enabled() -> bool {
+    matches!(
+        std::env::var("KX_SERVE_WARM_ON_START").ok().as_deref(),
+        Some("1" | "true" | "TRUE" | "yes")
+    )
+}
+
+/// Resolve the operator-tunable loaded-model cache capacity (`KX_SERVE_CACHE_CAPACITY`).
+/// `None` ⇒ keep the backend default. Floored at 1 (a 0/garbage value can't zero
+/// the cache).
+fn resolve_cache_capacity() -> Option<usize> {
+    let raw = std::env::var("KX_SERVE_CACHE_CAPACITY").ok()?;
+    if let Ok(n) = raw.trim().parse::<usize>() {
+        Some(n.max(1))
+    } else {
+        tracing::warn!(value = %raw, "KX_SERVE_CACHE_CAPACITY is not a number; using default");
+        None
+    }
 }
 
 /// A [`MoteExecutor`] that runs leased **model Motes** through an in-process

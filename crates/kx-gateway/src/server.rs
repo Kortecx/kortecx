@@ -372,42 +372,51 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //     coordinator needs the role registry. Fail-soft: no/unfit model ⇒ `None` ⇒ the
     //     durable spine + AL1 leaf-model path are unaffected (no shaper loop).
     #[cfg(feature = "inference")]
-    let (shaper_runtime, model_catalog_entries): (
+    let (shaper_runtime, model_catalog_entries, model_engine): (
         Option<crate::model_exec::ShaperRuntime>,
         Vec<kx_gateway_core::ModelSummaryEntry>,
-    ) = match crate::model_exec::resolve_serve_model() {
-        Some(gguf) => {
-            let model_id = crate::model_exec::serve_model_id(&gguf);
-            // Batch A (vision): an optional projector upgrades the SAME weights
-            // to an image-capable registration (+ the vision recipe below).
-            let mmproj = crate::model_exec::resolve_serve_mmproj();
-            match crate::model_exec::build_serve_backend(
-                &gguf,
-                &model_id,
-                mmproj.as_deref(),
-                content.clone(),
-            ) {
-                Ok(backend) => {
-                    // Batch A: the ListModels display entry — built from the
-                    // SAME facts the backend just registered (display only).
-                    let entry =
-                        crate::model_exec::catalog_entry(&gguf, &model_id, mmproj.is_some());
+        Option<Arc<kx_inference::LlamaInferenceBackend>>,
+    ) = {
+        // POC-3: resolve the FULL registered set (KX_SERVE_MODEL_GGUF primary +
+        // KX_SERVE_MODELS) and register N descriptors into one backend. The
+        // PRIMARY (index 0) drives the shaper loop + the default chat route.
+        let candidates = crate::model_exec::resolve_serve_models();
+        if candidates.is_empty() {
+            (None, Vec::new(), None)
+        } else {
+            match crate::model_exec::build_serve_models(&candidates, content.clone()) {
+                Ok((backend, entries, primary_id)) => {
+                    // POC-3: OPT-IN warm the PRIMARY model on startup (KX_SERVE_WARM_ON_START=1)
+                    // so the first chat is not a cold 12B load. OFF by default so the
+                    // default serve's startup + shutdown are byte-identical to baseline
+                    // (a model resident at process exit hits an upstream llama.cpp Metal
+                    // teardown assert, PR 17869 — pre-existing, ticketed; warming makes it
+                    // deterministic, so it stays opt-in). Off-journal; just RAM residency.
+                    if crate::model_exec::warm_on_start_enabled() {
+                        if let Err(error) = backend.warm(&primary_id) {
+                            tracing::warn!(%error, "primary model warm-on-startup failed (will cold-load on first use)");
+                        }
+                    }
+                    // A separate Arc clone is the live ENGINE handle for the host
+                    // catalog (live residency) + the lifecycle controls; the
+                    // shaper runtime gets its own clone.
+                    let engine = backend.clone();
                     (
                         Some(crate::model_exec::build_shaper_runtime(
-                            &model_id,
+                            &primary_id,
                             backend,
                             default_executor_class(),
                         )),
-                        vec![entry],
+                        entries,
+                        Some(engine),
                     )
                 }
                 Err(error) => {
                     tracing::warn!(%error, "serve model is not fit; live loop NOT enabled");
-                    (None, Vec::new())
+                    (None, Vec::new(), None)
                 }
             }
         }
-        None => (None, Vec::new()),
     };
     #[cfg(not(feature = "inference"))]
     let model_catalog_entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
@@ -797,7 +806,18 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         (false, Some(root)) => Some((fs_tools.as_slice(), root)),
         _ => None,
     };
-    let demo = Arc::new(DemoLibrary::open_complete(
+    // POC-3: the NON-primary registered models — each gets its OWN chat recipe
+    // (`kx/recipes/m-<id>`) so a chat turn can route to a chosen model. Derived from
+    // the catalog entries (serving == primary); empty on a single-model serve.
+    #[cfg(feature = "inference")]
+    let secondary_models: Vec<kx_mote::ModelId> = model_catalog_entries
+        .iter()
+        .filter(|e| !e.serving)
+        .map(|e| kx_mote::ModelId(e.model_id.clone()))
+        .collect();
+    #[cfg(not(feature = "inference"))]
+    let secondary_models: Vec<kx_mote::ModelId> = Vec::new();
+    let demo = Arc::new(DemoLibrary::open_serve(
         &catalog_dir,
         default_executor_class(),
         &parties,
@@ -806,6 +826,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         vision_supported,
         fs_list_binding,
         autogrant,
+        &secondary_models,
     )?);
     // One seed, two seams: the binder (Invoke) and the recipe catalog (ListRecipes
     // / GetRecipeForm) share the SAME library, so the published form and the
@@ -1132,6 +1153,39 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // wraps (PutContent lands where GetContent reads); the model catalog is
     // always wired (an FFI-free serve answers with an honest empty list).
     let content_writer: Arc<dyn kx_gateway_core::ContentWriter> = content.clone();
+    // POC-3: the FIXED registered set the lifecycle controls are scoped to (the
+    // model ids the server provisioned at startup) — load/offload of anything
+    // else is fail-closed NotFound.
+    #[cfg(feature = "inference")]
+    let registered_model_ids: std::collections::BTreeSet<String> = model_catalog_entries
+        .iter()
+        .map(|e| e.model_id.clone())
+        .collect();
+    // POC-3: build the lifecycle CONTROL seam over the live engine (inference
+    // serve only) — load/offload warm/evict the registered set's RAM residency.
+    #[cfg(feature = "inference")]
+    let model_lifecycle_view: Option<Arc<dyn kx_gateway_core::ModelLifecycleControl>> =
+        model_engine.as_ref().map(|engine| {
+            Arc::new(crate::model_lifecycle::HostModelLifecycle::new(
+                Arc::new(crate::model_lifecycle::BackendEngine(engine.clone())),
+                registered_model_ids,
+            )) as Arc<dyn kx_gateway_core::ModelLifecycleControl>
+        });
+    // The model catalog is always wired (an FFI-free serve answers ListModels with
+    // an honest empty list); on the inference serve it binds the live engine so
+    // `loaded` reflects real RAM residency (POC-3).
+    #[cfg(feature = "inference")]
+    let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> = {
+        let catalog = crate::models::HostModelCatalog::new(model_catalog_entries);
+        let catalog = match model_engine.as_ref() {
+            Some(engine) => catalog.with_engine(Arc::new(crate::model_lifecycle::BackendEngine(
+                engine.clone(),
+            ))),
+            None => catalog,
+        };
+        Arc::new(catalog)
+    };
+    #[cfg(not(feature = "inference"))]
     let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> =
         Arc::new(crate::models::HostModelCatalog::new(model_catalog_entries));
     // Batch B: the def resolver reads the SAME store the coordinator persists
@@ -1191,6 +1245,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             token_broker.clone(),
             live_shutdown_rx.clone(),
         )));
+    }
+    // POC-3: wire the model-lifecycle CONTROL seam (LoadModel/OffloadModel) over
+    // the live engine. Only present when a fit model resolved; otherwise the RPCs
+    // return `unimplemented` (the GetServerInfo precedent). Off-journal, off-digest.
+    #[cfg(feature = "inference")]
+    if let Some(lifecycle) = model_lifecycle_view {
+        gateway = gateway.with_model_lifecycle(lifecycle);
     }
     // PR-6b-1: wire the EXTERNAL MCP gateway (the 5 MCP-server RPCs + the live
     // Connections govern surface). Opens the off-journal connections.db beside the

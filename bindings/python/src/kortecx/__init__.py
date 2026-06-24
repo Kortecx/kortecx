@@ -58,7 +58,7 @@ from .errors import (
 from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
 from .flow import Flow, flow
 from .grants import AssetGrants, GrantView
-from .models import ModelSummary
+from .models import ModelLifecycleResult, ModelSummary
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
 from .react import ReactTurn, ReactTurnPage
 from .recipes import (
@@ -198,6 +198,8 @@ __all__ = [
     "SnapshotResult",
     "AdvanceResult",
     "ModelSummary",
+    # POC-3 Models lifecycle: the load/offload outcome
+    "ModelLifecycleResult",
     # POC-1 Settings: the connected gateway's effective config (display-only, SN-8)
     "ServerInfo",
     # Batch B: per-mote definition inspection (display-only)

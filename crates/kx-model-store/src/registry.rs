@@ -4,6 +4,7 @@
 
 use std::collections::BTreeMap;
 
+use kx_content::ContentRef;
 use kx_mote::ModelId;
 
 use crate::descriptor::ModelDescriptor;
@@ -24,6 +25,20 @@ pub const MAX_MODELS: usize = 4096;
 pub trait ModelResolver: Send + Sync {
     /// The descriptor for `id`, or `None` if no model is registered under it.
     fn resolve(&self, id: &ModelId) -> Option<&ModelDescriptor>;
+
+    /// The `(model_id, identity_digest)` pair of every registered model, in a
+    /// stable order. The default is empty (a resolver that cannot enumerate —
+    /// e.g. a future remote registry — opts out without breaking dyn-safety); an
+    /// in-memory registry overrides it. Used to map a live cache-residency
+    /// snapshot (keyed by `ContentRef`) back to `ModelId`s for display, and to
+    /// derive the fixed registered set the lifecycle controls are scoped to.
+    ///
+    /// NOTE: `identity_digest` is path+modalities-keyed (not `ModelId`-keyed), so
+    /// two ids over the SAME gguf+modalities share one digest ⇒ one resident
+    /// entry; a residency reverse-map should pick the first id for that digest.
+    fn iter_identities(&self) -> Vec<(ModelId, ContentRef)> {
+        Vec::new()
+    }
 }
 
 /// An in-memory model registry: a deterministic `BTreeMap<ModelId, _>`.
@@ -105,6 +120,13 @@ impl ModelResolver for ModelRegistry {
     fn resolve(&self, id: &ModelId) -> Option<&ModelDescriptor> {
         self.models.get(id)
     }
+
+    fn iter_identities(&self) -> Vec<(ModelId, ContentRef)> {
+        self.models
+            .values()
+            .map(|d| (d.model_id.clone(), d.identity_digest))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -155,5 +177,35 @@ mod tests {
         // Deterministic ModelId order.
         let ids: Vec<_> = reg.iter().map(|d| d.model_id.0.clone()).collect();
         assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn iter_identities_maps_ids_to_cache_digests_in_order() {
+        let reg = ModelRegistry::from_descriptors([
+            ModelDescriptor::text(mid("b"), "/m/b.gguf", 2048),
+            ModelDescriptor::text(mid("a"), "/m/a.gguf", 4096),
+        ])
+        .unwrap();
+        let pairs = reg.iter_identities();
+        // BTreeMap order: a before b.
+        let ids: Vec<_> = pairs.iter().map(|(id, _)| id.0.clone()).collect();
+        assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
+        // Each digest matches the descriptor's identity_digest.
+        assert_eq!(pairs[0].1, reg.resolve(&mid("a")).unwrap().identity_digest);
+        assert_eq!(pairs[1].1, reg.resolve(&mid("b")).unwrap().identity_digest);
+    }
+
+    #[test]
+    fn default_iter_identities_is_empty() {
+        // A resolver that does not override iter_identities opts out (dyn-safe).
+        struct Opaque(ModelDescriptor);
+        impl ModelResolver for Opaque {
+            fn resolve(&self, id: &ModelId) -> Option<&ModelDescriptor> {
+                (self.0.model_id == *id).then_some(&self.0)
+            }
+        }
+        let r = Opaque(ModelDescriptor::text(mid("a"), "/m/a.gguf", 4096));
+        assert!(r.resolve(&mid("a")).is_some());
+        assert!(r.iter_identities().is_empty());
     }
 }

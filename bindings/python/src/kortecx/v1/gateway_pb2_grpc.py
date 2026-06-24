@@ -314,6 +314,16 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoResponse.FromString,
                 _registered_method=True)
+        self.LoadModel = channel.unary_unary(
+                '/kortecx.v1.KxGateway/LoadModel',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.LoadModelRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.LoadModelResponse.FromString,
+                _registered_method=True)
+        self.OffloadModel = channel.unary_unary(
+                '/kortecx.v1.KxGateway/OffloadModel',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -730,6 +740,22 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def LoadModel(self, request, context):
+        """POC-3 (Models "Local lifecycle") — warm/evict a REGISTERED local model in the
+        owner-thread LRU (real load / `llama_model_free`). model_id must be in the
+        server's fixed registered set (else NOT_FOUND, fail-closed). Authenticated
+        caller required (UNAUTHENTICATED otherwise). Off-journal, off-digest.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def OffloadModel(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1012,6 +1038,16 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetServerInfo,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetServerInfoResponse.SerializeToString,
+            ),
+            'LoadModel': grpc.unary_unary_rpc_method_handler(
+                    servicer.LoadModel,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.LoadModelRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.LoadModelResponse.SerializeToString,
+            ),
+            'OffloadModel': grpc.unary_unary_rpc_method_handler(
+                    servicer.OffloadModel,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -2526,6 +2562,60 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetServerInfo',
             kortecx_dot_v1_dot_gateway__pb2.GetServerInfoRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.GetServerInfoResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LoadModel(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/LoadModel',
+            kortecx_dot_v1_dot_gateway__pb2.LoadModelRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.LoadModelResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def OffloadModel(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/OffloadModel',
+            kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.FromString,
             options,
             channel_credentials,
             insecure,

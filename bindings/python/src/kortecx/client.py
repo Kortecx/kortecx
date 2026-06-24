@@ -38,7 +38,7 @@ from .datasets import (
 from .errors import KxError, KxFailedPrecondition, KxUsage, from_rpc_error
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
-from .models import ModelSummary
+from .models import ModelLifecycleResult, ModelSummary
 from .motes import MoteDetail
 from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
@@ -759,10 +759,32 @@ class KxClient:
     def list_models(self) -> List[ModelSummary]:
         """Discover the models the connected gateway serves (Batch A). Display
         only (SN-8): selection stays a recipe ENUM free-param validated
-        server-side. An FFI-free gateway returns an EMPTY list; an old gateway
-        raises ``KxUnimplemented``."""
+        server-side. Each entry reports live RAM residency (``loaded``) and the
+        recipe ``chat_handle`` that routes a turn to it. An FFI-free gateway
+        returns an EMPTY list; an old gateway raises ``KxUnimplemented``."""
         resp = self._call(lambda: self._stub.ListModels(_g.ListModelsRequest(), metadata=self._md))
         return [ModelSummary.from_proto(m) for m in resp.models]
+
+    def load_model(self, model_id: str) -> ModelLifecycleResult:
+        """POC-3: warm a REGISTERED local model into RAM (real load). An
+        unregistered id raises ``KxNotFound`` (fail-closed — never an arbitrary
+        path); an FFI-free gateway raises ``KxUnimplemented``. Over-capacity ⇒
+        honest LRU-evict-oldest (sequential swap)."""
+        resp = self._call(
+            lambda: self._stub.LoadModel(_g.LoadModelRequest(model_id=model_id), metadata=self._md)
+        )
+        return ModelLifecycleResult.from_load(resp)
+
+    def offload_model(self, model_id: str) -> ModelLifecycleResult:
+        """POC-3: evict a REGISTERED local model from RAM (real
+        ``llama_model_free``). Idempotent (``was_resident=False`` if it was not
+        loaded); an unregistered id raises ``KxNotFound``."""
+        resp = self._call(
+            lambda: self._stub.OffloadModel(
+                _g.OffloadModelRequest(model_id=model_id), metadata=self._md
+            )
+        )
+        return ModelLifecycleResult.from_offload(resp)
 
     def get_server_info(self) -> ServerInfo:
         """The connected gateway's effective configuration (POC-1 Settings) — the
@@ -1629,9 +1651,24 @@ class AsyncKxClient:
         return [ContentItem.from_proto(i) for i in resp.items]
 
     async def list_models(self) -> List[ModelSummary]:
-        """As :meth:`KxClient.list_models` (Batch A model discovery)."""
+        """As :meth:`KxClient.list_models` (Batch A model discovery + POC-3 live
+        residency / chat handle)."""
         resp = await self._acall(self._stub.ListModels(_g.ListModelsRequest(), metadata=self._md))
         return [ModelSummary.from_proto(m) for m in resp.models]
+
+    async def load_model(self, model_id: str) -> ModelLifecycleResult:
+        """Async mirror of :meth:`KxClient.load_model` (POC-3 warm a model)."""
+        resp = await self._acall(
+            self._stub.LoadModel(_g.LoadModelRequest(model_id=model_id), metadata=self._md)
+        )
+        return ModelLifecycleResult.from_load(resp)
+
+    async def offload_model(self, model_id: str) -> ModelLifecycleResult:
+        """Async mirror of :meth:`KxClient.offload_model` (POC-3 evict a model)."""
+        resp = await self._acall(
+            self._stub.OffloadModel(_g.OffloadModelRequest(model_id=model_id), metadata=self._md)
+        )
+        return ModelLifecycleResult.from_offload(resp)
 
     async def get_server_info(self) -> ServerInfo:
         """Async mirror of :meth:`KxClient.get_server_info` (POC-1 Settings) — the

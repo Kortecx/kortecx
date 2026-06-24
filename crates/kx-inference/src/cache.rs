@@ -143,10 +143,35 @@ struct RenderJob {
     reply: Sender<Result<String, InferenceError>>,
 }
 
-/// The owner thread serves completion, embedding, and chat-template-render jobs
-/// over one channel so a single loaded-model LRU backs all three (each reuses the
-/// cached model). Boxed variants keep the enum small (the completion `Job` is
-/// heavyweight).
+/// Warm a model's weights into the LRU WITHOUT running inference (POC-3 explicit
+/// load). Reuses the same cold-load + capacity-evict path as a dispatch, so an
+/// over-capacity warm honestly LRU-evicts the oldest model (the sequential swap).
+struct WarmJob {
+    identity: ContentRef,
+    path: PathBuf,
+    reply: Sender<Result<(), InferenceError>>,
+}
+
+/// Evict a SPECIFIC model from the LRU (POC-3 explicit offload), freeing its
+/// weights via `Drop` → `llama_model_free`. Idempotent: replies `false` if the
+/// model was not resident. Unlike capacity eviction (which only ever drops the
+/// LRU front), this removes the entry at the matched position.
+struct EvictJob {
+    identity: ContentRef,
+    reply: Sender<bool>,
+}
+
+/// Snapshot the live LRU residency (the `ContentRef` of every resident model, in
+/// LRU order) so `ListModels` can report which models are loaded in RAM right now.
+/// Read-only — touches no model handle.
+struct ResidentJob {
+    reply: Sender<Vec<ContentRef>>,
+}
+
+/// The owner thread serves completion, embedding, render, and lifecycle
+/// (warm/evict/resident) jobs over one channel so a single loaded-model LRU backs
+/// all of them (each reuses the cached model). Boxed variants keep the enum small
+/// (the completion `Job` is heavyweight).
 enum OwnerJob {
     /// A completion / generation request (text or multimodal).
     Generate(Box<Job>),
@@ -154,6 +179,12 @@ enum OwnerJob {
     Embed(Box<EmbedJob>),
     /// A chat-template render request (model-agnostic prompt formatting).
     RenderChat(Box<RenderJob>),
+    /// Warm a registered model into the LRU without inferring (POC-3 load).
+    Warm(WarmJob),
+    /// Evict a specific model from the LRU (POC-3 offload).
+    Evict(EvictJob),
+    /// Snapshot live LRU residency (POC-3 `ListModels.loaded`).
+    Resident(ResidentJob),
 }
 
 /// Map the FFI-free [`EmbeddingPooling`] seam type to `kx-llamacpp`'s
@@ -324,6 +355,64 @@ impl ModelCache {
                 message: "model-cache owner thread died mid-job (recv failed)".to_string(),
             })?
     }
+
+    /// Warm `identity` (a registered model's weights) into the LRU on the owner
+    /// thread WITHOUT inferring (POC-3 load). Blocks until the load completes.
+    /// Over-capacity ⇒ honest LRU-evict-oldest (sequential swap).
+    pub(crate) fn warm(&self, identity: ContentRef, path: PathBuf) -> Result<(), InferenceError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(OwnerJob::Warm(WarmJob {
+                identity,
+                path,
+                reply: reply_tx,
+            }))
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread is gone (send failed)".to_string(),
+            })?;
+        reply_rx
+            .recv()
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread died mid-job (recv failed)".to_string(),
+            })?
+    }
+
+    /// Evict `identity` from the LRU (POC-3 offload), freeing its weights via
+    /// `llama_model_free`. Returns `true` iff the model was resident (idempotent).
+    pub(crate) fn evict(&self, identity: ContentRef) -> Result<bool, InferenceError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(OwnerJob::Evict(EvictJob {
+                identity,
+                reply: reply_tx,
+            }))
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread is gone (send failed)".to_string(),
+            })?;
+        reply_rx.recv().map_err(|_| InferenceError::BackendFailure {
+            backend: BACKEND_NAME,
+            message: "model-cache owner thread died mid-job (recv failed)".to_string(),
+        })
+    }
+
+    /// Snapshot the live LRU residency (the resident `ContentRef`s) so a caller
+    /// can report which models are loaded in RAM (POC-3 `ListModels.loaded`).
+    pub(crate) fn resident(&self) -> Result<Vec<ContentRef>, InferenceError> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(OwnerJob::Resident(ResidentJob { reply: reply_tx }))
+            .map_err(|_| InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: "model-cache owner thread is gone (send failed)".to_string(),
+            })?;
+        reply_rx.recv().map_err(|_| InferenceError::BackendFailure {
+            backend: BACKEND_NAME,
+            message: "model-cache owner thread died mid-job (recv failed)".to_string(),
+        })
+    }
 }
 
 /// The owner thread's loop. Owns the (`!Send`) backend and the loaded-model LRU
@@ -350,6 +439,17 @@ fn owner_loop(
                     }
                     OwnerJob::RenderChat(job) => {
                         let _ = job.reply.send(Err(err.clone()));
+                    }
+                    OwnerJob::Warm(job) => {
+                        let _ = job.reply.send(Err(err.clone()));
+                    }
+                    // No backend ⇒ nothing is resident; the lifecycle reads are
+                    // honest (offload finds nothing, residency is empty).
+                    OwnerJob::Evict(job) => {
+                        let _ = job.reply.send(false);
+                    }
+                    OwnerJob::Resident(job) => {
+                        let _ = job.reply.send(Vec::new());
                     }
                 }
             }
@@ -379,6 +479,32 @@ fn owner_loop(
             OwnerJob::RenderChat(job) => {
                 let result = run_render_job(&backend, &mut lru, capacity, loads, &job);
                 let _ = job.reply.send(result);
+            }
+            OwnerJob::Warm(job) => {
+                // Warm = load-without-infer: reuse get_or_load (cold-load +
+                // capacity-evict), then drop the &mut. Over-capacity honestly
+                // evicts the LRU oldest (sequential swap).
+                let result =
+                    get_or_load(&backend, &mut lru, capacity, loads, job.identity, &job.path)
+                        .map(|_| ())
+                        .map_err(map_llama_err);
+                let _ = job.reply.send(result);
+            }
+            OwnerJob::Evict(job) => {
+                // Remove the SPECIFIC entry (not just the LRU front); the dropped
+                // bundle frees the projector then the model (llama_model_free).
+                let was_resident = match lru.iter().position(|(id, _)| *id == job.identity) {
+                    Some(pos) => {
+                        let _evicted = lru.remove(pos);
+                        true
+                    }
+                    None => false,
+                };
+                let _ = job.reply.send(was_resident);
+            }
+            OwnerJob::Resident(job) => {
+                let snapshot = lru.iter().map(|(id, _)| *id).collect();
+                let _ = job.reply.send(snapshot);
             }
         }
     }

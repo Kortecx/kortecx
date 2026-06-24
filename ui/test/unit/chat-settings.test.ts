@@ -129,6 +129,38 @@ describe("resolveChatBacking — the live-recipe reconciliation (GR15)", () => {
       promptKey: ECHO_PRESET.promptKey,
     });
   });
+
+  // POC-3: per-model routing — a chosen model routes the turn to its OWN recipe.
+  it("routes the model chat turn to the chosen model's per-model handle when provisioned", () => {
+    const avail = [MODEL_CHAT_HANDLE, "kx/recipes/m-gemma", ECHO_PRESET.handle];
+    expect(resolveChatBacking(DEFAULT_CHAT_SETTINGS, avail, "kx/recipes/m-gemma")).toEqual({
+      handle: "kx/recipes/m-gemma",
+      promptKey: "prompt",
+    });
+  });
+
+  it("the PRIMARY model's handle (kx/recipes/chat) is a no-op route (byte-identical)", () => {
+    expect(resolveChatBacking(DEFAULT_CHAT_SETTINGS, withModel, MODEL_CHAT_HANDLE)).toEqual({
+      handle: MODEL_CHAT_HANDLE,
+      promptKey: "prompt",
+    });
+  });
+
+  it("never routes a deliberate echo/custom choice to a model handle", () => {
+    // On echo (a model-free choice) a per-model handle must NOT hijack the turn.
+    expect(resolveChatBacking(echoSettings, [ECHO_PRESET.handle], "kx/recipes/m-gemma")).toEqual({
+      handle: ECHO_PRESET.handle,
+      promptKey: ECHO_PRESET.promptKey,
+    });
+  });
+
+  it("a chosen model whose recipe is NOT provisioned falls back to the base handle", () => {
+    // The per-model recipe isn't in the live list ⇒ no fake route (don't-fake-gaps).
+    expect(resolveChatBacking(DEFAULT_CHAT_SETTINGS, withModel, "kx/recipes/m-absent")).toEqual({
+      handle: MODEL_CHAT_HANDLE,
+      promptKey: "prompt",
+    });
+  });
 });
 
 describe("shouldPromptNoModel — the proactive no-model honest-empty (GR15 §2.208)", () => {
