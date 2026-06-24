@@ -1018,6 +1018,74 @@ class OffloadModelResponse(_message.Message):
     was_resident: bool
     def __init__(self, model_id: _Optional[str] = ..., loaded: bool = ..., was_resident: bool = ...) -> None: ...
 
+class AppSummary(_message.Message):
+    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    APP_REF_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
+    STEP_COUNT_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    app_ref: bytes
+    name: str
+    version: str
+    description: str
+    tags: _containers.RepeatedScalarFieldContainer[str]
+    step_count: int
+    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ...) -> None: ...
+
+class SaveAppRequest(_message.Message):
+    __slots__ = ("handle", "envelope_json")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    ENVELOPE_JSON_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    envelope_json: bytes
+    def __init__(self, handle: _Optional[str] = ..., envelope_json: _Optional[bytes] = ...) -> None: ...
+
+class SaveAppResponse(_message.Message):
+    __slots__ = ("app_ref", "handle", "deduplicated")
+    APP_REF_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    app_ref: bytes
+    handle: str
+    deduplicated: bool
+    def __init__(self, app_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., deduplicated: bool = ...) -> None: ...
+
+class ListAppsRequest(_message.Message):
+    __slots__ = ("limit", "after_handle")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_handle: str
+    def __init__(self, limit: _Optional[int] = ..., after_handle: _Optional[str] = ...) -> None: ...
+
+class ListAppsResponse(_message.Message):
+    __slots__ = ("apps", "has_more")
+    APPS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    apps: _containers.RepeatedCompositeFieldContainer[AppSummary]
+    has_more: bool
+    def __init__(self, apps: _Optional[_Iterable[_Union[AppSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class GetAppRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class GetAppResponse(_message.Message):
+    __slots__ = ("found", "envelope_json", "summary")
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    ENVELOPE_JSON_FIELD_NUMBER: _ClassVar[int]
+    SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    found: bool
+    envelope_json: bytes
+    summary: AppSummary
+    def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[AppSummary, _Mapping]] = ...) -> None: ...
+
 class GetMoteDetailRequest(_message.Message):
     __slots__ = ("instance_id", "mote_id")
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]

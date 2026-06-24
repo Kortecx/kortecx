@@ -76,12 +76,15 @@ describe("Sidebar", () => {
   it("renders in-development placeholders as honest-disabled (GR15/≈D166)", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
     expect(screen.getByTestId("nav-group-dev")).toHaveTextContent("Coming");
-    for (const id of ["apps", "policies"]) {
+    // Policies is still a placeholder; Apps was PROMOTED to a real section in POC-4.
+    for (const id of ["policies"]) {
       const el = screen.getByTestId(`dev-${id}`);
       expect(el).toBeInTheDocument();
       expect(el).toHaveAttribute("aria-disabled", "true");
       expect(el.tagName).toBe("DIV");
     }
+    expect(screen.queryByTestId("dev-apps")).toBeNull();
+    expect(screen.getByTestId("nav-apps")).toBeInTheDocument(); // real, navigable now
   });
 
   it("hides labels, group labels and the footer (icon rail) when collapsed", () => {

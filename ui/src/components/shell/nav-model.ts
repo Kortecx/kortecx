@@ -45,6 +45,7 @@ export type RoutePath =
   | "/dashboard"
   | "/monitor"
   | "/chat"
+  | "/apps"
   | "/workflows"
   | "/recipes"
   | "/context"
@@ -84,6 +85,18 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     path: "/chat",
     icon: "chat",
     hint: "A fresh agentic conversation over the runtime",
+  },
+  {
+    // POC-4: durable, reusable Apps (kortecx.app/v1 envelopes) — author with the
+    // SDK/CLI, browse + run here (read-only). Subsumes the Workflows/Blueprints
+    // catalog conceptually but is ADDITIVE for now (nothing exposed disappears);
+    // the agentic scaffold + in-CAS editing arrive in POC-5a. Reuses the
+    // `artifacts` glyph (the prior DEV_PLACEHOLDERS icon).
+    id: "apps",
+    label: "Apps",
+    path: "/apps",
+    icon: "artifacts",
+    hint: "Durable, reusable Apps — browse & run",
   },
   {
     // Display says "Workflows" and the route merged to /workflows (PR-2,
@@ -218,7 +231,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     id: "workspace",
     label: "Workspace",
     color: "warning",
-    sectionIds: ["dashboard", "chat", "runs", "recipes"],
+    sectionIds: ["dashboard", "chat", "apps", "runs", "recipes"],
   },
   { id: "data", label: "Data", color: "teal", sectionIds: ["datasets", "context", "branches"] },
   { id: "tools", label: "Tools", color: "violet", sectionIds: ["tools", "models"] },
@@ -252,15 +265,13 @@ export const CLOUD_PLACEHOLDERS: readonly CloudPlaceholder[] = [
  * roadmap (≈D166) that is NOT yet built. Structurally a {@link CloudPlaceholder} — NO
  * `path`, NEVER navigable, rendered greyed with an "In dev" chip — so the nav previews
  * what's coming without fabricating a working surface. These map to ACTUAL planned POC
- * sections: Apps (the agentic-app workspace, POC-4/5 — subsumes Workflows/Blueprints)
- * and Policies (the per-App agent-write gate, POC-5b). Promote one to a real
- * {@link NAV_SECTIONS} entry in the PR that ships it.
+ * sections: Policies (the per-App agent-write gate, POC-5b). Promote one to a real
+ * {@link NAV_SECTIONS} entry in the PR that ships it. (Apps was promoted in POC-4.)
  */
 export type DevPlaceholder = CloudPlaceholder;
 
 export const DEV_GROUP_LABEL = "Coming";
 
 export const DEV_PLACEHOLDERS: readonly DevPlaceholder[] = [
-  { id: "apps", label: "Apps", icon: "artifacts" },
   { id: "policies", label: "Policies", icon: "systems" },
 ] as const;

@@ -1,0 +1,14 @@
+[
+  {
+    "canonical": "{\"blueprint\":{\"steps\":[]},\"name\":\"hello-app\",\"schema\":\"kortecx.app/v1\",\"version\":\"1\"}",
+    "name": "minimal"
+  },
+  {
+    "canonical": "{\"blueprint\":{\"seed\":0,\"steps\":[{\"kind\":\"model\",\"params\":{\"max_tool_calls\":\"6\",\"max_turns\":\"8\"},\"prompt\":\"Use the echo tool.\",\"tool_contract\":{\"mcp-echo/echo\":\"1\"}}]},\"description\":\"fires the echo tool\",\"name\":\"echo-agent\",\"schema\":\"kortecx.app/v1\",\"tags\":[\"agentic\",\"demo\"],\"version\":\"1\"}",
+    "name": "agentic"
+  },
+  {
+    "canonical": "{\"blueprint\":{\"steps\":[{\"kind\":\"model\",\"prompt\":\"Describe the image.\"}]},\"branch_handle\":\"team/apps/vision\",\"name\":\"vision-app\",\"references\":{\"context\":[{\"content_ref\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"media_type\":\"image/png\",\"name\":\"diagram\"}],\"tools\":[{\"tool_id\":\"mcp-echo/echo\",\"tool_version\":\"1\"}]},\"schema\":\"kortecx.app/v1\",\"steering_config\":{\"guards\":{\"max_turns\":8},\"model\":{\"model_route\":\"kx-serve:gemma\"}},\"version\":\"1\"}",
+    "name": "full"
+  }
+]

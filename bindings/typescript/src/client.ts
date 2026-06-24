@@ -13,9 +13,11 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
 import { AlertSummary, type AlertsPage } from "./alerts.js";
+import { AppSummary, SaveAppResult, StoredApp, canonicalJson, defaultHandle } from "./apps.js";
 import { AdvanceResult, Branch, CreateBranchResult, SnapshotResult } from "./branch.js";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
-import type { Chain } from "./chains.js";
+import { Chain } from "./chains.js";
+import type { DagSpecJson } from "./chains.js";
 import { ContentItem, PutResult } from "./content.js";
 import {
   ContextBundle,
@@ -424,6 +426,52 @@ export abstract class KxClientBase {
   async deleteContextBundle(handle: string): Promise<boolean> {
     const resp = await rpc(this.grpc.deleteContextBundle({ handle }));
     return resp.removed;
+  }
+
+  // ----- POC-4 Apps (save / list / get / run; off-journal apps.db catalog) -----
+
+  /**
+   * Persist a `kortecx.app/v1` envelope to the caller-scoped catalog. The server
+   * validates + canonicalizes it and derives `appRef` (SN-8); the envelope carries
+   * NO authority. `handle` defaults to `apps/local/<sanitized-name>`. An old gateway
+   * throws {@link KxUnimplemented}.
+   */
+  async saveApp(envelope: unknown, opts: { handle?: string } = {}): Promise<SaveAppResult> {
+    const name = String((envelope as Record<string, unknown>)?.name ?? "app");
+    const handle = opts.handle ?? defaultHandle(name);
+    const envelopeJson = new TextEncoder().encode(canonicalJson(envelope));
+    const resp = await rpc(this.grpc.saveApp({ handle, envelopeJson }));
+    return SaveAppResult.fromProto(resp);
+  }
+
+  /** List the caller's App catalog (deterministic handle order). */
+  async listApps(): Promise<AppSummary[]> {
+    const resp = await rpc(this.grpc.listApps({ limit: 0, afterHandle: "" }));
+    return resp.apps.map((a) => AppSummary.fromProto(a));
+  }
+
+  /**
+   * Fetch one App by handle, or `null` if not found / not owned (uniform — no
+   * cross-party existence oracle).
+   */
+  async getApp(handle: string): Promise<StoredApp | null> {
+    const resp = await rpc(this.grpc.getApp({ handle }));
+    return resp.found ? StoredApp.fromProto(resp) : null;
+  }
+
+  /**
+   * Compile a saved App's blueprint and run it (exactly-once). Client-compose over
+   * `GetApp` → `submitWorkflow` — the server re-resolves EVERY warrant from the
+   * caller's grants (SN-8 / BLOCKER #5). Throws {@link KxUsage} if not found.
+   */
+  async runApp(
+    handle: string,
+    opts: { wait?: boolean; timeoutMs?: number } = {},
+  ): Promise<Run | Result> {
+    const stored = await this.getApp(handle);
+    if (stored === null) throw new KxUsage(`app ${handle} not found`);
+    const request = Chain.fromBlueprint(stored.envelope.blueprint as DagSpecJson);
+    return this.submitWorkflow(request, opts);
   }
 
   /**

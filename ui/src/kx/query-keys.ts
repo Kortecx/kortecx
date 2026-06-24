@@ -44,6 +44,11 @@ export const queryKeys = {
   /** This party's context bundles (`ListContextBundles`, PR-7) — named,
    *  content-addressed grounding. Caller-scoped; `bundleRef` is server-derived (SN-8). */
   contextBundles: (endpoint: string) => ["kx", endpoint, "context-bundles"] as const,
+  /** This party's POC-4 Apps (`ListApps`) — durable kortecx.app/v1 envelopes.
+   *  Caller-scoped; `appRef` is server-derived (SN-8). */
+  apps: (endpoint: string) => ["kx", endpoint, "apps"] as const,
+  /** One App's full envelope (`GetApp`), keyed by handle. */
+  app: (endpoint: string, handle: string) => ["kx", endpoint, "app", handle] as const,
   /** A context-item's FULL body (POC-2 view/edit, uploads-scope `GetContent`),
    *  keyed by its content ref — content-addressed ⇒ immutable (cache forever). */
   contextItemBody: (endpoint: string, contentRef: string) =>

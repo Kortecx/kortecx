@@ -1,0 +1,113 @@
+---
+id: apps
+title: Apps
+sidebar_label: Apps
+description: Author, save, and run a durable, reusable App — a kortecx.app/v1 envelope over a portable blueprint.
+---
+
+# Apps
+
+An **App** is the durable, reusable unit of work you name, save, list, and re-run.
+It is a `kortecx.app/v1` **envelope** that *wraps* the existing portable
+[blueprint](./blueprint-builder.md) with:
+
+- **references** — by-*reference* pointers to context items, tools, connections,
+  datasets, plus a minimal **prompt / rule / skill / memory** artifact rail. A
+  reference is a name + a content ref (or a registry id); it never inlines bytes.
+- a **steering config** — four axes (model + routing, tools + grants, context +
+  data, guards + budgets) the server re-resolves at bind.
+- per-step **replay** intent.
+
+An App carries **no authority**. There is no warrant, grant, secret, credential, or
+`instance_id` in the envelope — when you run an App the server re-compiles its
+blueprint and re-resolves *every* warrant from your own grants (SN-8). Saving and
+running an App can never widen what you are allowed to do.
+
+The catalog is **caller-scoped** and lives in an off-journal `apps.db` sidecar; the
+server derives the App's identity (`app_ref`) from the canonical envelope. Apps are
+local to one runtime in this release — cross-instance import (sharing) is a Cloud
+capability.
+
+## Author in Python
+
+```python
+import kortecx as kx
+
+app = (
+    kx.app("research-assistant")
+    .blueprint(kx.flow().agent("Research the topic.", tools=["mcp-echo/echo"]))
+    .rule("no-pii", body="Never reveal personal data.")
+    .steer(max_turns=8, max_tool_calls=6)
+    .describe("A grounded research agent")
+)
+
+app.save()                       # persist to the catalog (uploads pending bodies first)
+app.run({"topic": "kortecx"})    # compile the blueprint + run it (exactly-once)
+```
+
+The reference primitives are thin by design (extensible later): `prompt` / `rule` /
+`memory` are named text artifacts stored in the content store; a `Skill` is a named
+(instructions + tool wish set) bundle. Pass a body (`body=...`, uploaded at `save`)
+or a content ref (`ref=...`) you already uploaded.
+
+## Author in TypeScript
+
+```ts
+import { app, flow } from "@kortecx/sdk";
+
+const a = app("research-assistant")
+  .blueprint(flow().agent("Research the topic.", { tools: ["mcp-echo/echo"] }))
+  .rule("no-pii", { body: "Never reveal personal data." })
+  .steer({ maxTurns: 8, maxToolCalls: 6 });
+
+await a.save();                       // Node zero-config client, or pass { client }
+await a.run({ topic: "kortecx" });
+```
+
+The browser entrypoint (`@kortecx/sdk/web`) is explicit-client by design — pass a
+`client` to `save` / `run`.
+
+## The CLI
+
+```sh
+# Author an envelope OFFLINE from a blueprint file (no gateway):
+kx app new "Echo Demo" --from-blueprint echo.dag.json \
+  --max-turns 8 --max-tool-calls 6 --tag demo --output echo.app.json
+
+kx app save echo.app.json            # persist (handle defaults apps/local/echo-demo)
+kx app list                          # browse the catalog
+kx app get apps/local/echo-demo      # show the summary (--output writes the envelope)
+kx app run apps/local/echo-demo --wait   # compile the blueprint + run it
+kx app export apps/local/echo-demo --output echo.app.json   # the round-trip artifact
+```
+
+`kx app run` is "the runtime as a function": it fetches the saved App's blueprint and
+submits it; the server warrants every step from your grants.
+
+## The envelope format
+
+The envelope is canonical JSON — sorted keys, compact, integers only — so it
+serializes byte-identically across the Rust CLI, the Python SDK, and the TypeScript
+SDK (pinned by `tests/golden/apps/`). The `kx app export` / `to_envelope` form is
+pretty-printed but round-trips to the same canonical bytes. The `schema` field
+(`"kortecx.app/v1"`) is the version gate — a reader fails closed on an unknown
+schema. `media_type` is carried per context reference at the envelope layer (the
+bind-time codec drops it).
+
+The optional `branch_handle` field reserves a per-App project branch; it is
+populated by the agentic App scaffold in a later release.
+
+## The Apps console
+
+Open **Apps** in the sidebar (under Workspace, below New Chat). The section is a
+read-only catalog: browse your saved Apps, **Inspect** the full envelope, and
+**Run** one (it routes to the live run). **Share** is a Cloud capability (shown
+honest-disabled). Authoring an App — and the agentic "New App" scaffold that writes a
+project tree you can edit in place — arrives in a later release.
+
+## Chains node
+
+There is **no `app()` Chains-DSL node**: a Chains node is a *step* in a DAG, while an
+App is a *whole-run artifact* that wraps a complete blueprint. An App sits one level
+above a chain — `app().blueprint(flow()...)` — it consumes a chain, it is never a
+node inside one (the same reasoning as the agent-runner).

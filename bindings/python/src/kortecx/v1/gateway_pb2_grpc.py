@@ -324,6 +324,21 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.FromString,
                 _registered_method=True)
+        self.SaveApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/SaveApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.SaveAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.SaveAppResponse.FromString,
+                _registered_method=True)
+        self.ListApps = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListApps',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAppsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAppsResponse.FromString,
+                _registered_method=True)
+        self.GetApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -756,6 +771,30 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SaveApp(self, request, context):
+        """POC-4 (Apps "App-authoring + envelope") — save / list / get a durable App
+        envelope in the caller-scoped, off-journal apps.db catalog. SaveApp validates
+        + canonicalizes the kortecx.app/v1 envelope and derives app_ref (SN-8); the
+        envelope carries NO authority. Authenticated caller required (UNAUTHENTICATED
+        otherwise); unimplemented when the apps.db sidecar is absent. NO cross-instance
+        import entrypoint (deferred). Off-journal, off-digest.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListApps(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetApp(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1048,6 +1087,21 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.OffloadModel,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.SerializeToString,
+            ),
+            'SaveApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.SaveApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.SaveAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.SaveAppResponse.SerializeToString,
+            ),
+            'ListApps': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListApps,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListAppsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListAppsResponse.SerializeToString,
+            ),
+            'GetApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -2616,6 +2670,87 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/OffloadModel',
             kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SaveApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/SaveApp',
+            kortecx_dot_v1_dot_gateway__pb2.SaveAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.SaveAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListApps(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListApps',
+            kortecx_dot_v1_dot_gateway__pb2.ListAppsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListAppsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetApp',
+            kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
             options,
             channel_credentials,
             insecure,

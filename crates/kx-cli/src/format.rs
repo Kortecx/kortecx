@@ -1172,6 +1172,95 @@ pub fn render_delete_context_bundle(
     }
 }
 
+// ----- POC-4 Apps -----
+
+/// Render `app save` — the server-derived `app_ref` + dedup signal.
+#[must_use]
+pub fn render_save_app(resp: &proto::SaveAppResponse, json: bool) -> String {
+    if json {
+        json!({
+            "app_ref": hex::encode(&resp.app_ref),
+            "handle": resp.handle,
+            "deduplicated": resp.deduplicated,
+        })
+        .to_string()
+    } else {
+        format!(
+            "app {} ref={} deduplicated={}",
+            resp.handle,
+            hex::encode(&resp.app_ref),
+            resp.deduplicated
+        )
+    }
+}
+
+/// JSON of one App summary (the catalog/display view).
+fn app_summary_json(s: &proto::AppSummary) -> Value {
+    json!({
+        "handle": s.handle,
+        "app_ref": hex::encode(&s.app_ref),
+        "name": s.name,
+        "version": s.version,
+        "description": s.description,
+        "tags": s.tags,
+        "step_count": s.step_count,
+    })
+}
+
+/// Render `app list` — the caller's App catalog (deterministic handle order).
+#[must_use]
+pub fn render_apps_list(resp: &proto::ListAppsResponse, json: bool) -> String {
+    if json {
+        let apps: Vec<Value> = resp.apps.iter().map(app_summary_json).collect();
+        json!({ "apps": apps, "has_more": resp.has_more }).to_string()
+    } else if resp.apps.is_empty() {
+        "(no apps)".to_string()
+    } else {
+        resp.apps
+            .iter()
+            .map(|a| {
+                format!(
+                    "{}  {} v{}  {} step(s)  {}",
+                    a.handle, a.name, a.version, a.step_count, a.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `app get` — one App's summary (uniform not-found, no oracle). The
+/// envelope bytes are written to `--output` by the verb, not printed here.
+#[must_use]
+pub fn render_get_app(resp: &proto::GetAppResponse, json: bool) -> String {
+    let Some(s) = resp.summary.as_ref().filter(|_| resp.found) else {
+        return if json {
+            json!({ "found": false }).to_string()
+        } else {
+            "(not found)".to_string()
+        };
+    };
+    if json {
+        json!({ "found": true, "summary": app_summary_json(s) }).to_string()
+    } else {
+        let tags = if s.tags.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", s.tags.join(", "))
+        };
+        format!(
+            "{}  {} v{}  ref={}  {} step(s){}\n  {}",
+            s.handle,
+            s.name,
+            s.version,
+            hex::encode(&s.app_ref),
+            s.step_count,
+            tags,
+            s.description
+        )
+    }
+}
+
 // ----- D155 branches -----
 
 /// JSON of a branch manifest's `{path -> ref}` items (path-sorted display).

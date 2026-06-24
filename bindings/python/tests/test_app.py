@@ -1,0 +1,147 @@
+"""POC-4 App-authoring SDK tests.
+
+- **builder**: ``app().blueprint(flow()...).to_envelope()`` produces the canonical
+  ``kortecx.app/v1`` shape; pending bodies are rejected by ``to_envelope`` (use
+  ``save``); a referenced body never inlines into the envelope (secret-leak).
+- **golden parity** (the cross-surface gate): every committed canonical envelope in
+  ``tests/golden/apps/corpus.json`` round-trips through this SDK's canonicalizer
+  byte-identically (matches the Rust ``kx-app`` + the TS SDK).
+- **server-backed** (a real ``kx serve``): ``save_app`` → ``list_apps`` → ``get_app``
+  round-trips the envelope; ``run_app`` compiles the blueprint and runs it.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+import kortecx as kx
+from kortecx import Skill
+from kortecx.apps import canonical_json
+from kortecx.chains import ChainError
+from kortecx.client import KxClient
+
+_CORPUS_PATH = Path(__file__).resolve().parents[3] / "tests" / "golden" / "apps" / "corpus.json"
+_CORPUS = json.loads(_CORPUS_PATH.read_text())
+
+
+# ---- builder (no server) ----
+
+
+def test_builder_to_envelope_shape() -> None:
+    a = (
+        kx.app("Echo Demo")
+        .blueprint(kx.flow().agent("Use the echo tool.", tools=["mcp-echo/echo"]))
+        .steer(max_turns=8, max_tool_calls=6)
+        .tags("demo")
+        .describe("fires echo")
+    )
+    env = a.to_envelope()
+    assert env["schema"] == "kortecx.app/v1"
+    assert env["name"] == "Echo Demo"
+    assert env["version"] == "1"
+    assert env["blueprint"]["steps"][0]["tool_contract"] == {"mcp-echo/echo": "1"}
+    assert env["steering_config"]["guards"] == {"max_turns": 8, "max_tool_calls": 6}
+    assert env["tags"] == ["demo"]
+    # empty rails are omitted (the canonical omit-empty discipline).
+    assert "references" not in env
+    assert "replay" not in env
+    # the envelope canonicalizes + round-trips.
+    canon = canonical_json(env)
+    assert json.loads(canon.decode()) == env
+
+
+def test_blueprint_required() -> None:
+    with pytest.raises(ChainError):
+        kx.app("x").to_envelope()
+
+
+def test_pending_body_blocks_to_envelope() -> None:
+    a = kx.app("x").blueprint(kx.flow().step(topic="hi")).rule("no-pii", body="secret-body")
+    with pytest.raises(ChainError):
+        a.to_envelope()  # an unresolved body upload — use save()
+
+
+def test_by_ref_artifact_never_inlines_a_body() -> None:
+    # A rule referenced by content_ref carries ONLY the ref, never the bytes.
+    ref = "a" * 64
+    a = kx.app("x").blueprint(kx.flow().step(topic="hi")).rule("policy", ref=ref)
+    canon = canonical_json(a.to_envelope()).decode()
+    assert ref in canon
+    assert "secret" not in canon
+
+
+def test_skill_by_ref() -> None:
+    a = (
+        kx.app("x")
+        .blueprint(kx.flow().step(topic="hi"))
+        .skill(Skill(name="researcher", instructions_ref="b" * 64, tools={"mcp-echo/echo": "1"}))
+    )
+    env = a.to_envelope()
+    assert env["references"]["skills"][0]["tools"] == {"mcp-echo/echo": "1"}
+
+
+# ---- golden corpus parity (the cross-surface byte-shape gate) ----
+
+
+@pytest.mark.parametrize("case", _CORPUS, ids=[c["name"] for c in _CORPUS])
+def test_golden_corpus_round_trips_byte_identically(case) -> None:
+    s = case["canonical"]
+    parsed = json.loads(s)
+    assert canonical_json(parsed).decode() == s, case["name"]
+
+
+def test_corpus_covers_required_shapes() -> None:
+    names = {c["name"] for c in _CORPUS}
+    assert {"minimal", "agentic", "full"} <= names
+
+
+# ---- server-backed (a real kx serve) ----
+
+
+def test_save_list_get_run_round_trip(dev_server) -> None:
+    with KxClient(dev_server.endpoint) as client:
+        # A model-free PURE blueprint so the run reaches Committed without a model.
+        a = kx.app("Pure Demo").blueprint(kx.flow().step(topic="kortecx")).describe("pure")
+        saved = a.save(client=client)
+        assert not saved.deduplicated
+        assert saved.handle == "apps/local/pure-demo"
+
+        apps = client.list_apps()
+        assert any(s.handle == "apps/local/pure-demo" and s.name == "Pure Demo" for s in apps)
+
+        stored = client.get_app("apps/local/pure-demo")
+        assert stored is not None
+        assert stored.envelope["name"] == "Pure Demo"
+        assert stored.summary.step_count == 1
+
+        # identical re-save dedups (content-addressed).
+        again = a.save(client=client)
+        assert again.deduplicated
+
+        # run_app compiles the blueprint and runs it (model-free pure step commits).
+        result = client.run_app("apps/local/pure-demo", wait=True, timeout=60.0)
+        assert result is not None
+
+
+def test_get_missing_is_none(dev_server) -> None:
+    with KxClient(dev_server.endpoint) as client:
+        assert client.get_app("apps/local/nope") is None
+
+
+def test_save_uploads_pending_body(dev_server) -> None:
+    with KxClient(dev_server.endpoint) as client:
+        a = (
+            kx.app("With Rule")
+            .blueprint(kx.flow().step(topic="hi"))
+            .rule("no-pii", body="Never reveal personal data.")
+        )
+        a.save(client=client)
+        stored = client.get_app("apps/local/with-rule")
+        assert stored is not None
+        rules = stored.envelope["references"]["rules"]
+        # the body was uploaded → a 64-hex content_ref; the bytes never inlined.
+        assert len(rules[0]["content_ref"]) == 64
+        assert "Never reveal" not in json.dumps(stored.envelope)

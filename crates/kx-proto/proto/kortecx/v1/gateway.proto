@@ -895,6 +895,50 @@ message OffloadModelResponse {
   bool was_resident = 3;  // residency BEFORE (false ⇒ idempotent no-op offload)
 }
 
+// POC-4 (Apps "App-authoring + envelope"): the durable, reusable App catalog. An
+// App is a `kortecx.app/v1` JSON envelope — a portable blueprint wrapped with
+// by-REFERENCE context/tool/connection/dataset references, a minimal prompt/rule/
+// skill/memory artifact rail, a 4-axis steering config, and per-step replay
+// intent. The envelope carries NO authority (no warrant/grant/secret/credential/
+// instance_id): `app run` re-compiles the blueprint and the server re-resolves
+// every warrant from the caller's OWN grants (SN-8). Persisted in an off-journal,
+// rebuildable-to-EMPTY `apps.db` sidecar scoped to the authoring party; the server
+// derives `app_ref` from the canonical envelope (SN-8). NO cross-instance import
+// entrypoint in this RPC set (a sharing feature with its own attack surface,
+// deferred post-POC). All three RPCs are off-journal / off-digest.
+message AppSummary {
+  string handle        = 1;  // 'namespace/collection/name' AssetPath catalog key (upsert key)
+  bytes  app_ref       = 2;  // 16B SERVER-DERIVED canonical-envelope hash (display/dedup)
+  string name          = 3;  // envelope name
+  string version       = 4;  // envelope version
+  string description   = 5;  // advisory (never parsed for enforcement)
+  repeated string tags = 6;  // catalog tags
+  uint32 step_count    = 7;  // blueprint step count (display only)
+}
+message SaveAppRequest {
+  string handle        = 1;  // catalog key (upsert key within the caller's scope)
+  bytes  envelope_json = 2;  // the kortecx.app/v1 JSON; server canonicalizes + derives app_ref
+}
+message SaveAppResponse {
+  bytes  app_ref      = 1;   // 16B server-derived (SN-8)
+  string handle       = 2;   // echoed canonical handle
+  bool   deduplicated = 3;   // true iff an identical envelope was already bound to this handle
+}
+message ListAppsRequest {
+  uint32 limit        = 1;   // 0 ⇒ server default; clamped to a server max
+  string after_handle = 2;   // exclusive cursor (deterministic handle order)
+}
+message ListAppsResponse {
+  repeated AppSummary apps = 1;
+  bool has_more            = 2;
+}
+message GetAppRequest { string handle = 1; }
+message GetAppResponse {
+  bool       found         = 1;  // uniform not-found for absent OR not-owned (no oracle)
+  bytes      envelope_json = 2;  // canonical stored bytes (empty when not found)
+  AppSummary summary       = 3;  // the derived summary (absent when not found)
+}
+
 // ---------------------------------------------------------------------------
 // Batch B — Mote definition inspection (PR-2). Additive RPC (D120.6).
 // GetMoteDetail is a per-mote unary DISPLAY read: it resolves a committed
@@ -1681,4 +1725,14 @@ service KxGateway {
   // caller required (UNAUTHENTICATED otherwise). Off-journal, off-digest.
   rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
   rpc OffloadModel(OffloadModelRequest) returns (OffloadModelResponse);
+
+  // POC-4 (Apps "App-authoring + envelope") — save / list / get a durable App
+  // envelope in the caller-scoped, off-journal apps.db catalog. SaveApp validates
+  // + canonicalizes the kortecx.app/v1 envelope and derives app_ref (SN-8); the
+  // envelope carries NO authority. Authenticated caller required (UNAUTHENTICATED
+  // otherwise); unimplemented when the apps.db sidecar is absent. NO cross-instance
+  // import entrypoint (deferred). Off-journal, off-digest.
+  rpc SaveApp(SaveAppRequest) returns (SaveAppResponse);
+  rpc ListApps(ListAppsRequest) returns (ListAppsResponse);
+  rpc GetApp(GetAppRequest) returns (GetAppResponse);
 }

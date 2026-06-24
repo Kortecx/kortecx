@@ -72,6 +72,7 @@ usage: kx <command> [args]
     kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
     kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
+    kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | run <handle> [--wait] [--out <file>] | export <handle> --output <file>   (Apps — kortecx.app/v1 envelopes)
     kx branch create <handle> [--parent <handle>] [--description <s>] | snapshot <handle> --path <p>... [--parent <handle>] | list | get <handle> | remove <handle>   (D155 file branches)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list|load <id>|offload <id>       (model discovery + local lifecycle)
@@ -141,6 +142,8 @@ pub enum Cli {
     Connections(verbs::connections::ConnectionsArgs),
     /// Context bundles (PR-7 — add/list/get/remove; attach via `invoke --context`).
     Context(verbs::context::ContextArgs),
+    /// Apps (POC-4 — new/save/list/get/run/export a kortecx.app/v1 envelope).
+    App(verbs::app::AppArgs),
     /// Branches (D155 — create/snapshot/list/get/remove; content-addressed file branches).
     Branch(verbs::branch::BranchArgs),
     /// Model discovery (Batch A `ListModels`; display-only).
@@ -204,6 +207,7 @@ impl Cli {
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
             Some("connections") => Ok(Cli::Connections(verbs::connections::parse(args)?)),
             Some("context") => Ok(Cli::Context(verbs::context::parse(args)?)),
+            Some("app") => Ok(Cli::App(verbs::app::parse(args)?)),
             Some("branch") => Ok(Cli::Branch(verbs::branch::parse(args)?)),
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
             Some("datasets") => Ok(Cli::Datasets(verbs::datasets::parse(args)?)),
@@ -280,6 +284,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Tools(a) => verbs::tools::execute(a).await,
         Cli::Connections(a) => verbs::connections::execute(a).await,
         Cli::Context(a) => verbs::context::execute(a).await,
+        Cli::App(a) => verbs::app::execute(a).await,
         Cli::Branch(a) => verbs::branch::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,
         Cli::Datasets(a) => verbs::datasets::execute(a).await,
@@ -703,6 +708,19 @@ kx models list | load <id> | offload <id> [client flags]
   (real load / llama_model_free); an unregistered id is a fail-closed `not found`.
   SN-8: listing a model never routes one — selection stays a recipe ENUM free-param
   validated server-side; load/offload only manage RAM residency, never authority."
+            .into(),
+        "app" => "\
+kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>]
+kx app save <file> [--handle <h>] | list | get <handle> [--output <file>] | run <handle> [--wait] [--timeout-secs N] [--out <file>] | export <handle> --output <file> [client flags]
+  POC-4 Apps: a durable, reusable App = a kortecx.app/v1 envelope (a portable blueprint
+  wrapped with by-reference context/tool/connection/dataset references, a minimal prompt/
+  rule/skill/memory rail, a 4-axis steering config, and per-step replay intent). `new`
+  authors an envelope OFFLINE from a blueprint file (no gateway); `save` validates +
+  canonicalizes it and persists it in the caller-scoped, off-journal apps.db catalog
+  (the server derives app_ref, SN-8); `list`/`get`/`export` browse + round-trip it; `run`
+  compiles the envelope's blueprint and submits it exactly-once. The envelope carries NO
+  authority — `run` re-resolves every warrant from the caller's own grants (SN-8). There
+  is NO cross-instance import (a sharing feature, deferred)."
             .into(),
         "health" => "\
 kx health [client flags]
