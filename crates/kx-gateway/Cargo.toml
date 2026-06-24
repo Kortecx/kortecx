@@ -136,6 +136,11 @@ kx-dataset-hnsw    = { workspace = true, optional = true }
 # the broker/admission authority path.
 kx-bundle          = { workspace = true }
 kx-toolscout       = { workspace = true }
+# POC-4: the App envelope type (kortecx.app/v1) — a pure leaf (serde/serde_json/
+# thiserror only, NO llama.cpp / NO journal), used by the apps.db host store to
+# validate + canonicalize an envelope and derive its summary + app_ref. The
+# dep-wall subtree check pins it.
+kx-app             = { workspace = true }
 # rusqlite is NON-optional: the always-on Morphic Data Engine capture.db sidecar
 # (campaign Batch 2) needs it unconditionally, and it is ALREADY in the default
 # closure (kx-catalog/kx-fleet pull it for the durable ledgers). Pure-Rust C

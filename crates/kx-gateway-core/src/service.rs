@@ -776,6 +776,11 @@ pub struct GatewayService {
     /// off-journal, off-digest, rebuildable-to-empty. `SnapshotInto` READS host
     /// files into CAS (default-OFF); it never writes the host (Phase-B).
     branches: Option<Arc<dyn crate::branches_view::BranchStore>>,
+    /// The optional App-catalog store seam (POC-4 — the host injects an
+    /// `apps.db`-backed sidecar). `None` ⇒ the 3 App RPCs return `unimplemented`.
+    /// Caller-scoped, off-journal, off-digest, rebuildable-to-empty. The envelope
+    /// carries NO authority (the host validates it); `app run` re-resolves warrants.
+    apps: Option<Arc<dyn crate::apps_view::AppCatalog>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -847,6 +852,7 @@ impl GatewayService {
             mcp_admin: None,
             bundles: None,
             branches: None,
+            apps: None,
         }
     }
 
@@ -1201,6 +1207,14 @@ impl GatewayService {
         self.branches = Some(branches);
         self
     }
+
+    /// Wire the POC-4 App-catalog store (the host's `apps.db` sidecar). Without it
+    /// the three App RPCs (`SaveApp`/`ListApps`/`GetApp`) return `unimplemented`.
+    #[must_use]
+    pub fn with_apps_catalog(mut self, apps: Arc<dyn crate::apps_view::AppCatalog>) -> Self {
+        self.apps = Some(apps);
+        self
+    }
 }
 
 /// The structured-refusal metadata key (PR-2). The value is
@@ -1366,6 +1380,19 @@ fn manifest_to_proto(m: crate::BundleManifest) -> proto::ContextBundle {
             })
             .collect(),
         item_count,
+    }
+}
+
+/// POC-4: map a host `AppRecord` (envelope-derived summary) to the wire view.
+fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
+    proto::AppSummary {
+        handle: r.handle,
+        app_ref: r.app_ref.to_vec(),
+        name: r.name,
+        version: r.version,
+        description: r.description,
+        tags: r.tags,
+        step_count: r.step_count,
     }
 }
 
@@ -1993,6 +2020,91 @@ impl KxGateway for GatewayService {
             loaded: out.loaded,
             was_resident: out.was_resident,
         }))
+    }
+
+    // ----- POC-4 — App catalog (save / list / get; off-journal apps.db) -----
+
+    async fn save_app(
+        &self,
+        request: Request<proto::SaveAppRequest>,
+    ) -> Result<Response<proto::SaveAppResponse>, Status> {
+        let apps = self.apps.as_ref().ok_or_else(|| {
+            Status::unimplemented("SaveApp: no App catalog wired (apps.db absent)")
+        })?;
+        // SERVER-DERIVED identity (SN-8): apps are scoped to the auth-resolved party.
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.handle) {
+            return Err(Status::invalid_argument(
+                "handle must be a 'namespace/collection/name' AssetPath ([a-z0-9._-] segments)",
+            ));
+        }
+        if req.envelope_json.is_empty() {
+            return Err(Status::invalid_argument("envelope_json must not be empty"));
+        }
+        if req.envelope_json.len() > crate::MAX_APP_ENVELOPE_BYTES {
+            return Err(Status::invalid_argument(
+                "app envelope exceeds the server cap (1 MiB)",
+            ));
+        }
+        // The host validates + canonicalizes the envelope and derives app_ref +
+        // the summary (it carries NO authority — a bad envelope ⇒ InvalidArgument).
+        let (record, deduplicated) = apps.save(&principal, &req.handle, &req.envelope_json)?;
+        Ok(Response::new(proto::SaveAppResponse {
+            app_ref: record.app_ref.to_vec(),
+            handle: record.handle,
+            deduplicated,
+        }))
+    }
+
+    async fn list_apps(
+        &self,
+        request: Request<proto::ListAppsRequest>,
+    ) -> Result<Response<proto::ListAppsResponse>, Status> {
+        let apps = self.apps.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListApps: no App catalog wired (apps.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100
+        } else {
+            (req.limit as usize).min(256)
+        };
+        let after = if req.after_handle.is_empty() {
+            None
+        } else {
+            Some(req.after_handle.as_str())
+        };
+        let (records, has_more) = apps.list(&principal, limit, after)?;
+        Ok(Response::new(proto::ListAppsResponse {
+            apps: records.into_iter().map(app_record_to_proto).collect(),
+            has_more,
+        }))
+    }
+
+    async fn get_app(
+        &self,
+        request: Request<proto::GetAppRequest>,
+    ) -> Result<Response<proto::GetAppResponse>, Status> {
+        let apps = self.apps.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetApp: no App catalog wired (apps.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
+        match apps.get(&principal, &req.handle)? {
+            Some((record, envelope_json)) => Ok(Response::new(proto::GetAppResponse {
+                found: true,
+                envelope_json,
+                summary: Some(app_record_to_proto(record)),
+            })),
+            None => Ok(Response::new(proto::GetAppResponse {
+                found: false,
+                envelope_json: Vec::new(),
+                summary: None,
+            })),
+        }
     }
 
     async fn get_mote_detail(

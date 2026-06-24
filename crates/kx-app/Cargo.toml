@@ -1,0 +1,20 @@
+[package]
+name         = "kx-app"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx App envelope (kortecx.app/v1) — a thin, leaf TYPE crate for the durable, reusable App: a portable blueprint (opaque JSON) wrapped with by-reference context/tool/connection/dataset references, a minimal prompt/rule/skill/memory artifact rail, a 4-axis steering config, and per-step replay intent. Carries NO authority (no warrant, grant, secret, credential, or instance_id — server re-resolves every axis at bind). Canonical JSON (sorted keys, no floats, SN-8). Pure leaf: serde/serde_json/thiserror only; never the journal, the gateway service, or the frozen trio."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[lints]
+workspace = true

@@ -24,6 +24,9 @@ kx-runtime = { workspace = true }
 kx-gateway = { workspace = true }
 # The FROZEN KxGateway client stubs + request/response messages.
 kx-proto   = { workspace = true }
+# POC-4: the App envelope type (kortecx.app/v1) — author / validate / canonicalize
+# an envelope for `kx app new|save|run` (a pure leaf, serde/serde_json/thiserror).
+kx-app     = { workspace = true }
 # T-AGENT2: decode a committed `CriticVerdict` (the judge recipe's terminal) to a
 # readable VALID/INVALID summary for `kx invoke`/`kx mote show` (tiny FFI-free leaf).
 kx-critic-types = { workspace = true }

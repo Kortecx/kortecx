@@ -839,6 +839,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // author (resolving a run's attached `context_bundles` at bind). Off-journal,
     // off-digest, rebuildable-to-empty.
     let bundles_db = Arc::new(crate::bundles::BundlesDb::open(&catalog_dir)?);
+    // POC-4: the App catalog (apps.db) — caller-scoped kortecx.app/v1 envelopes for
+    // the SaveApp/ListApps/GetApp RPCs. Off-journal, off-digest, rebuildable-to-empty
+    // (no broker dep — app_ref is a pure content hash, the bundles.db posture).
+    let apps_db = Arc::new(crate::apps::AppsDb::open(&catalog_dir)?);
     // D155 Phase-A: the branch store (branches.db) shares the content store (the
     // SnapshotInto CAS write target) and the operator FS read root (KX_SERVE_FS_ROOT,
     // default-OFF — None ⇒ SnapshotInto fails-precondition). Off-journal, off-digest.
@@ -1214,6 +1218,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_run_inputs_store(run_inputs_db)
         .with_alerts_view(alerts_db)
         .with_bundles_store(bundles_db)
+        .with_apps_catalog(apps_db)
         .with_branches_store(branches_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
             tool_registry.clone(),

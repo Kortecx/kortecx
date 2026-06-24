@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod alerts;
+pub mod app;
 pub mod blueprint;
 pub mod branch;
 pub mod capture;

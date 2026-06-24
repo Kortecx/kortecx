@@ -15,6 +15,8 @@ from __future__ import annotations
 from .agent import Agent
 from .agent_result import AgentResult, AuditedAction
 from .alerts import AlertsPage, AlertSummary
+from .app import App, app
+from .apps import AppSummary, SaveAppResult, Skill, StoredApp
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .branch import (
     AdvanceResult,
@@ -116,6 +118,13 @@ __all__ = [
     # clients
     "KxClient",
     "AsyncKxClient",
+    # POC-4 Apps (kortecx.app/v1 envelopes)
+    "app",
+    "App",
+    "Skill",
+    "AppSummary",
+    "SaveAppResult",
+    "StoredApp",
     # run + result
     "Run",
     "AsyncRun",

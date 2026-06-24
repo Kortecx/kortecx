@@ -12,7 +12,7 @@ import dataclasses as _dataclasses
 import json
 import os
 import warnings
-from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Mapping, Optional, Sequence, Union
 
 import grpc
 
@@ -23,6 +23,8 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .alerts import AlertsPage, AlertSummary
+from .apps import AppSummary, SaveAppResult, StoredApp, canonical_json
+from .apps import default_handle as _default_app_handle
 from .branch import AdvanceResult, Branch, CreateBranchResult, SnapshotResult
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
@@ -503,6 +505,56 @@ class KxClient:
             )
         )
         return resp.removed
+
+    # ----- POC-4 Apps (save / list / get / run; off-journal apps.db catalog) -----
+
+    def save_app(
+        self, envelope: "Mapping[str, object]", *, handle: Optional[str] = None
+    ) -> SaveAppResult:
+        """Persist a ``kortecx.app/v1`` envelope to the caller-scoped catalog. The
+        server validates + canonicalizes it and derives ``app_ref`` (SN-8); the
+        envelope carries NO authority. ``handle`` defaults to
+        ``apps/local/<sanitized-name>``. An old gateway raises ``KxUnimplemented``."""
+        h = handle or _default_app_handle(str(envelope.get("name", "app")))
+        resp = self._call(
+            lambda: self._stub.SaveApp(
+                _g.SaveAppRequest(handle=h, envelope_json=canonical_json(envelope)),
+                metadata=self._md,
+            )
+        )
+        return SaveAppResult.from_proto(resp)
+
+    def list_apps(self) -> List[AppSummary]:
+        """List the caller's App catalog (deterministic handle order)."""
+        resp = self._call(
+            lambda: self._stub.ListApps(
+                _g.ListAppsRequest(limit=0, after_handle=""), metadata=self._md
+            )
+        )
+        return [AppSummary.from_proto(a) for a in resp.apps]
+
+    def get_app(self, handle: str) -> Optional[StoredApp]:
+        """Fetch one App by handle, or ``None`` if not found / not owned (uniform —
+        no cross-party existence oracle)."""
+        resp = self._call(
+            lambda: self._stub.GetApp(_g.GetAppRequest(handle=handle), metadata=self._md)
+        )
+        return StoredApp.from_proto(resp) if resp.found else None
+
+    def run_app(
+        self, handle: str, *, wait: bool = False, timeout: float = 120.0
+    ) -> Union[Run, Result]:
+        """Compile a saved App's blueprint and run it (exactly-once). Client-compose
+        over ``GetApp`` → ``SubmitWorkflow`` — the server re-resolves EVERY warrant
+        from the caller's grants (SN-8 / BLOCKER #5). Raises :class:`KxUsage` if the
+        App is not found."""
+        from .chains import Chain
+
+        stored = self.get_app(handle)
+        if stored is None:
+            raise KxUsage(f"app {handle!r} not found")
+        request = Chain.from_blueprint(stored.envelope["blueprint"])
+        return self.submit_workflow(request, wait=wait, timeout=timeout)
 
     @staticmethod
     def _resolve_context_item(

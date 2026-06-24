@@ -42,6 +42,7 @@ members = [
     "crates/kx-planner",
     "crates/kx-catalog",
     "crates/kx-bundle",
+    "crates/kx-app",
     "crates/kx-toolscout",
     "crates/kx-fleet",
     "crates/kx-model-harness",
@@ -209,6 +210,9 @@ kx-catalog           = { path = "crates/kx-catalog",           version = "0.1.1"
 # machinery. Pure leaf: kx-mote + serde/bincode/blake3 only; off-journal, off
 # the identity path until the lowered DAG passes the frozen compile.
 kx-bundle            = { path = "crates/kx-bundle",            version = "0.1.1" }
+# POC-4 App envelope (kortecx.app/v1) — a pure leaf type crate (serde/serde_json/
+# thiserror only); the apps.db host store + the CLI `kx app` verb depend on it.
+kx-app               = { path = "crates/kx-app",               version = "0.1.0" }
 # W1.A5 advisory tool discovery (the MCP-intelligence core) — multilingual
 # ToolFingerprints + the integer-bp tolerance ladder + a manifest index over
 # kx-dataset::RetrievalIndex + TaskBundle→WorkflowDef lowering behind the

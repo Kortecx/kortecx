@@ -78,6 +78,11 @@ mod alerts;
 // to-empty (caller-authored, never journaled), off-journal, off-digest; like
 // uploads, no executor wrapper — always-on, FFI-free (rusqlite already in closure).
 mod bundles;
+// POC-4: the apps.db sidecar (the AppCatalog seam) — SaveApp / ListApps / GetApp.
+// Stores a caller's kortecx.app/v1 envelopes (canonicalized + summary-derived via
+// the kx-app leaf type); off-journal, off-digest, rebuildable-to-empty (like
+// bundles, no broker dep — kx_content::ContentRef::of derives app_ref).
+mod apps;
 // D155 Phase-A: the branches.db sidecar (the BranchStore seam) — CreateBranch /
 // SnapshotInto manifests of {host-path -> ContentRef}. SnapshotInto reads confined
 // host files into CAS (reusing fs-list's airtight confinement via kx-capability),

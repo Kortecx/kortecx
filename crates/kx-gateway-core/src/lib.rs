@@ -46,6 +46,7 @@
 //! (no existence oracle).
 
 mod alerts_view;
+mod apps_view;
 mod branches_view;
 mod bundles_view;
 mod capture_view;
@@ -76,6 +77,7 @@ mod view;
 mod writer;
 
 pub use alerts_view::{AlertEntry, AlertView};
+pub use apps_view::{AppCatalog, AppRecord, MAX_APP_ENVELOPE_BYTES};
 pub use branches_view::{
     BranchItemRecord, BranchManifest, BranchStore, MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
 };

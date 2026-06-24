@@ -14,6 +14,7 @@ describe("NAV_SECTIONS", () => {
     expect(NAV_SECTIONS.map((s) => s.id)).toEqual([
       "dashboard",
       "chat",
+      "apps",
       "runs",
       "recipes",
       "datasets",
@@ -164,8 +165,13 @@ describe("DEV_PLACEHOLDERS (honest in-development — GR15/≈D166)", () => {
     }
   });
 
-  it("preview the headline coming POC sections (Apps · Policies)", () => {
-    expect(DEV_PLACEHOLDERS.map((p) => p.id)).toEqual(["apps", "policies"]);
+  it("preview the headline coming POC sections (Policies; Apps promoted in POC-4)", () => {
+    expect(DEV_PLACEHOLDERS.map((p) => p.id)).toEqual(["policies"]);
+  });
+
+  it("Apps is now a REAL section (promoted from a placeholder in POC-4)", () => {
+    expect(DEV_PLACEHOLDERS.some((p) => p.id === "apps")).toBe(false);
+    expect(NAV_SECTIONS.some((s) => s.id === "apps" && s.path === "/apps")).toBe(true);
   });
 
   it("do not collide with real section ids or the cloud placeholders", () => {
