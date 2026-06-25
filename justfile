@@ -21,7 +21,7 @@ check: fmt-check clippy test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test deny doc ffi-link build-no-inference features-guard check-reproducible scale-smoke
+ci: fmt-check clippy test deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke
 
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
@@ -513,6 +513,36 @@ build-no-inference:
     cargo build -p kx-cli
     cargo build -p kx-inference --no-default-features
     echo " ✓ build-no-inference: PASS"
+
+# PR-A.1 / GR24 (dual-engine parity): prove the prebuilt release feature set
+# (`console,hnsw,serve-engine`) serves local models via Ollama with NO C++
+# toolchain. Asserts the EXACT shipped graph pulls no llama.cpp FFI, then compiles
+# the FFI-relevant serve loop (`serve-engine,hnsw`). `console` is skipped in the
+# build (it needs a node `ui/dist`, built by the `ui` job) but IS covered by the
+# cargo-tree scan. CI runs this on a runner WITHOUT a C++ toolchain or submodule,
+# so a regression that leaks the FFI into the serve-engine closure fails loudly.
+# The `inference-checks` serve-engine step runs WITH the toolchain; this is the
+# clean-room FFI-FREE complement.
+build-serve-engine:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Asserting kx-cli --features console,hnsw,serve-engine stays FFI-free (the prebuilt artifact)..."
+    if cargo tree -p kx-cli --features console,hnsw,serve-engine -e normal | grep -qE 'kx-llamacpp'; then
+        echo " ✗ FAIL: console,hnsw,serve-engine dragged the FFI into kx-cli"
+        cargo tree -p kx-cli --features console,hnsw,serve-engine -e normal | grep -E 'kx-llamacpp' || true
+        exit 1
+    fi
+    echo " ✓ no kx-llamacpp in the prebuilt (console,hnsw,serve-engine) closure"
+    echo "Asserting kx-gateway --features serve-engine,hnsw stays FFI-free..."
+    if cargo tree -p kx-gateway --features serve-engine,hnsw -e normal | grep -qE 'kx-llamacpp'; then
+        echo " ✗ FAIL: serve-engine,hnsw dragged the FFI into kx-gateway"
+        cargo tree -p kx-gateway --features serve-engine,hnsw -e normal | grep -E 'kx-llamacpp' || true
+        exit 1
+    fi
+    echo " ✓ no kx-llamacpp in the kx-gateway serve-engine,hnsw closure"
+    cargo build -p kx-cli --features serve-engine,hnsw
+    cargo build -p kx-gateway --features serve-engine,hnsw
+    echo " ✓ build-serve-engine: PASS"
 
 # The installed-binary feature matrix stays buildable (the v0.1.0 campaign
 # guard): `cargo install -p kx-cli --features hnsw` (Datasets, FFI-free) and

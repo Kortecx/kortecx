@@ -67,6 +67,46 @@ fn cargo_tree_normal_edges_exclude_the_ffi() {
     }
 }
 
+/// PR-A.1 (GR24 dual-engine parity): the FFI-FREE serve loop (`serve-engine,hnsw`)
+/// must stay llama.cpp-free — serve-engine pulls the Ollama backend (`kx-ollama`)
+/// plus the planner/critic/MCP, never `kx-llamacpp`/`kx-model-harness` (those ride
+/// the opt-in `inference`). The deterministic in-test complement to the
+/// `build-serve-engine` clean-room gate.
+#[test]
+fn cargo_tree_serve_engine_features_exclude_the_ffi() {
+    let output = std::process::Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "-p",
+            "kx-gateway",
+            "--features",
+            "serve-engine,hnsw",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+        ])
+        .output();
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        // cargo-tree may be unavailable in sandboxed CI; skip rather than false-fail.
+        _ => return,
+    };
+    let tree = String::from_utf8_lossy(&output.stdout);
+    for forbidden in FORBIDDEN {
+        assert!(
+            !tree.lines().any(|l| l.trim_start().starts_with(forbidden)),
+            "{forbidden} appeared in the kx-gateway serve-engine,hnsw tree:\n{tree}"
+        );
+    }
+    // Sanity: serve-engine MUST wire the FFI-free Ollama backend.
+    assert!(
+        tree.lines()
+            .any(|l| l.trim_start().starts_with("kx-ollama")),
+        "serve-engine did not pull the kx-ollama backend:\n{tree}"
+    );
+}
+
 #[test]
 fn cargo_manifest_includes_the_catalog_edge() {
     // R2a intentionally adds kx-catalog (the signature registry) to the host. It

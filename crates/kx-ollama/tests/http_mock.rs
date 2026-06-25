@@ -110,6 +110,20 @@ fn ollama_routes(method: &str, path: &str, body: &str) -> (u16, String) {
             r#"{"models":[{"name":"gemma3:12b"},{"name":"qwen2.5:3b"}]}"#.to_string(),
         ),
         ("GET", "/api/ps") => (200, r#"{"models":[{"name":"gemma3:12b"}]}"#.to_string()),
+        ("POST", "/api/show") => {
+            // Per-tag declared window; arch-keyed under model_info (arch-agnostic match).
+            if body.contains("qwen2.5:3b") {
+                (
+                    200,
+                    r#"{"model_info":{"qwen2.context_length":32768}}"#.to_string(),
+                )
+            } else {
+                (
+                    200,
+                    r#"{"model_info":{"gemma3.context_length":131072}}"#.to_string(),
+                )
+            }
+        }
         ("POST", "/api/embed") => (200, r#"{"embeddings":[[0.25,0.5,0.75]]}"#.to_string()),
         ("POST", "/api/generate") => {
             if !body.contains("\"raw\":true") {
@@ -172,6 +186,38 @@ fn discover_filters_by_allowlist() {
     assert_eq!(backend.model_ids(), vec![ModelId("gemma3:12b".to_string())]);
     assert!(backend.supports(&ModelId("gemma3:12b".to_string())));
     assert!(!backend.supports(&ModelId("qwen2.5:3b".to_string())));
+}
+
+#[test]
+fn discover_populates_context_len_from_show() {
+    // `/api/show` per tag at discovery ⇒ the declared window reaches the catalog.
+    // Per-tag + arch-agnostic: gemma3.* vs qwen2.* both resolve by `.context_length`.
+    let base = spawn_mock(ollama_routes);
+    let client = Arc::new(OllamaClient::new(&base, false).unwrap());
+    let backend = OllamaBackend::discover(client, None).unwrap();
+    assert_eq!(
+        backend.context_len(&ModelId("gemma3:12b".to_string())),
+        131072
+    );
+    assert_eq!(
+        backend.context_len(&ModelId("qwen2.5:3b".to_string())),
+        32768
+    );
+}
+
+#[test]
+fn discover_degrades_to_zero_ctx_when_show_unavailable() {
+    // A daemon that serves tags but 404s `/api/show` ⇒ ctx stays 0; serving is never
+    // blocked (the honest-degrade path).
+    let base = spawn_mock(|method, path, body| {
+        if (method, path) == ("POST", "/api/show") {
+            return (404, r#"{"error":"not found"}"#.to_string());
+        }
+        ollama_routes(method, path, body)
+    });
+    let client = Arc::new(OllamaClient::new(&base, false).unwrap());
+    let backend = OllamaBackend::discover(client, None).unwrap();
+    assert_eq!(backend.context_len(&ModelId("gemma3:12b".to_string())), 0);
 }
 
 #[test]

@@ -16,11 +16,48 @@ description: Serve local models with zero friction via Ollama, or the self-conta
 | **Ollama** (recommended) | a precompiled installer; no C++ toolchain | zero-friction onboarding, GPU on every platform |
 | **llama.cpp** (`--features inference`) | builds from source (CMake + clang) | a single self-contained binary, no background daemon |
 
+The **prebuilt binary** (`curl | install.sh`) ships the serve engine, so it
+**auto-detects a running Ollama daemon and serves local models out of the box** —
+no build, no C++ toolchain. llama.cpp is the opt-in `--features inference` build.
+
 Whichever engine serves a model is shown everywhere: `kx models list` prints an
 engine badge (`[text · ollama]`), the SDKs expose `ModelSummary.engine`, and the
 **Models** view shows an engine badge per card. The engine is a display/audit field
 only — it never authorizes a route (SN-8), and it is **never journaled**, so the
 canonical projection digest is unaffected by which engine answered.
+
+## Which engine? (positioning)
+
+The two engines are **co-equal first-class backends** — pick by what you need, and
+switch (or run both) at any time:
+
+- **Ollama — the quick/easy path for agent users.** Zero-friction onboarding (no C++
+  toolchain), auto-detected on the loopback port, `ollama pull` model management. The
+  default recommendation for *"just run an agent now."*
+- **llama.cpp — the performance / parallel / multi-modal path.** A self-contained
+  single binary with in-process control (KV-cache capacity, batched serving, vision
+  via an mmproj projector). The recommendation when you need throughput, parallelism,
+  or multi-modal input.
+
+### Capability parity
+
+Every core capability rides the shared `InferenceBackend` seam, so it behaves the
+same on either engine. Where a capability is engine-specific today, it is an honest
+gap (a visible "unavailable on this engine"), never a silent one:
+
+| Capability | Ollama | llama.cpp |
+|---|---|---|
+| Chat + agentic ReAct / tool loop | ✅ | ✅ |
+| Model lifecycle (load / offload / residency) | ✅ | ✅ |
+| Streaming tokens | ✅ | ✅ |
+| Context window surfaced (`kx models list` `ctx=`) | ✅ (`/api/show`) | ✅ (GGUF `n_ctx`) |
+| Tool-call parsing (multi-format) | ✅ | ✅ |
+| Embeddings / RAG (Datasets) | ⏳ planned | ✅ |
+| Vision / multi-modal input | ⏳ planned | ✅ (mmproj) |
+| Constrained decode (grammar) | reserved | reserved |
+
+⏳ *planned* capabilities land in a follow-up release; until then the gateway
+honest-degrades (e.g. a vision turn on an Ollama-only serve is refused, not faked).
 
 ## Option A — Ollama (zero-friction)
 
@@ -39,8 +76,13 @@ for you.
 
 ```sh
 kx models list
-# gemma3:12b  [text · ollama]  ctx=0  gemma3:12b  (serving)
+# gemma3:12b  [text · ollama]  ctx=131072  gemma3:12b  (serving)
 ```
+
+The `ctx=` window is read from the daemon's `/api/show` (the model's declared
+context length) — the same kind of number the llama.cpp path reads from the GGUF.
+It is best-effort: if the daemon doesn't report one, `ctx=0` is shown rather than a
+fabricated value.
 
 ### Configuration (operator-only, SN-8)
 

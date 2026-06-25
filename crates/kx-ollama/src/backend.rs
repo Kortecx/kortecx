@@ -7,7 +7,7 @@
 //! HTTP egress. The inherent `warm`/`evict`/`resident` mirror the llama backend's
 //! lifecycle surface so the host can drive both engines through one trait.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -33,17 +33,30 @@ pub struct OllamaBackend {
     /// The tags this backend serves (the `/api/tags` set, optionally narrowed by an
     /// operator allowlist). Membership is the `supports()` gate.
     models: BTreeSet<String>,
+    /// Per-tag declared context window from `/api/show` (populated best-effort at
+    /// discovery; `0` when the daemon doesn't report one). Display/discovery only
+    /// (SN-8) — it never authorizes a route, and it is never journaled.
+    context_len: BTreeMap<String, u32>,
 }
 
 impl OllamaBackend {
-    /// Construct a backend that serves exactly `models` through `client`.
+    /// Construct a backend that serves exactly `models` through `client`. Context
+    /// windows are left empty (reported `0`); [`Self::discover`] is the path that
+    /// populates them from `/api/show`.
     #[must_use]
     pub fn new(client: Arc<OllamaClient>, models: BTreeSet<String>) -> Self {
-        Self { client, models }
+        Self {
+            client,
+            models,
+            context_len: BTreeMap::new(),
+        }
     }
 
     /// Discover the served set from the daemon's `/api/tags`, optionally narrowed to
     /// an operator allowlist (an empty / absent allowlist serves every installed tag).
+    /// Also fetches each served tag's declared context window via `/api/show`
+    /// (best-effort: a failed/absent window honest-degrades to `0` and never blocks
+    /// serving).
     ///
     /// # Errors
     /// Propagates the [`OllamaClient::tags`] transport / status / protocol failure.
@@ -61,13 +74,31 @@ impl OllamaBackend {
             }
             _ => tags.into_iter().collect(),
         };
-        Ok(Self::new(client, models))
+        // One `/api/show` per served tag, best-effort. `unwrap_or(0)` so a daemon
+        // that errors / omits the window never blocks startup (honest-degrade).
+        let context_len = models
+            .iter()
+            .map(|tag| (tag.clone(), client.show_context_length(tag).unwrap_or(0)))
+            .collect();
+        Ok(Self {
+            client,
+            models,
+            context_len,
+        })
     }
 
     /// The model ids this backend serves (for the host's model catalog).
     #[must_use]
     pub fn model_ids(&self) -> Vec<ModelId> {
         self.models.iter().cloned().map(ModelId).collect()
+    }
+
+    /// The declared context window for `model_id` (fetched from `/api/show` at
+    /// discovery), or `0` when unknown. Display/discovery only (SN-8) — for parity
+    /// with the llama backend's GGUF `n_ctx`, surfaced in `kx models list`.
+    #[must_use]
+    pub fn context_len(&self, model_id: &ModelId) -> u32 {
+        self.context_len.get(&model_id.0).copied().unwrap_or(0)
     }
 
     /// Warm `model_id` into the daemon's memory (`keep_alive = -1`). Fail-closed:

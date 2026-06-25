@@ -332,7 +332,7 @@ fn build_ollama_engine(
         .iter()
         .enumerate()
         // The GLOBAL primary uses `kx/recipes/chat`; everything else `kx/recipes/m-<id>`.
-        .map(|(i, id)| ollama_catalog_entry(id, !have_gguf && i == primary_idx))
+        .map(|(i, id)| ollama_catalog_entry(&backend, id, !have_gguf && i == primary_idx))
         .collect();
     let primary = ids[primary_idx].clone();
     tracing::info!(count, primary = %primary.0, %url, "registered Ollama models");
@@ -353,7 +353,11 @@ fn parse_ollama_allowlist() -> Option<Vec<String>> {
 }
 
 /// The `ListModels` display entry for an Ollama-served model (engine `"kx-ollama"`).
-fn ollama_catalog_entry(model_id: &ModelId, serving: bool) -> kx_gateway_core::ModelSummaryEntry {
+fn ollama_catalog_entry(
+    backend: &kx_ollama::OllamaBackend,
+    model_id: &ModelId,
+    serving: bool,
+) -> kx_gateway_core::ModelSummaryEntry {
     kx_gateway_core::ModelSummaryEntry {
         model_id: model_id.0.clone(),
         // PR-B will surface Ollama vision/embedding modalities; text for PR-A.
@@ -361,8 +365,10 @@ fn ollama_catalog_entry(model_id: &ModelId, serving: bool) -> kx_gateway_core::M
         // The tag is its own honest description (the daemon owns the GGUF metadata).
         description: model_id.0.clone(),
         serving,
-        // The daemon owns the context window; `/api/show` per-model is a PR-B detail.
-        context_len: 0,
+        // The daemon owns the context window; surfaced best-effort via `/api/show`
+        // at discovery (`0` when the daemon doesn't report one). Display-only (SN-8),
+        // un-clamped — the daemon serves its own window, unlike the GGUF KV ceiling.
+        context_len: backend.context_len(model_id),
         loaded: false,
         chat_handle: crate::provision::chat_handle_for(model_id, serving),
         engine: "kx-ollama".to_string(),

@@ -402,6 +402,59 @@ jobs:
         run: just build-no-inference
 
   # ---------------------------------------------------------------------------
+  # build-serve-engine — the PR-A.1 dual-engine adoption gate (GR24).
+  #
+  # Proves the prebuilt release feature set (`console,hnsw,serve-engine`) is
+  # GENUINELY FFI-free: this job deliberately checks out WITHOUT submodules and
+  # installs NO native build deps (no libclang/clang/cmake), then asserts via
+  # `cargo tree` that `console,hnsw,serve-engine` pulls no `kx-llamacpp`, and
+  # compiles the serve loop (`--features serve-engine,hnsw`) toolchain-free. So a
+  # `curl | install.sh` user serves local models via Ollama with zero toolchain,
+  # while llama.cpp stays the opt-in `inference` build. The non-required
+  # serve-engine step in `inference-checks` runs WITH the toolchain; this is the
+  # clean-room FFI-FREE complement.
+  #
+  # REQUIRED: promote it to a branch-protection check once green across a few runs
+  # (a separate, explicitly-authorized branch-protection change), mirroring
+  # build-no-inference / ui / sdk-* / scale-smoke.
+  # ---------------------------------------------------------------------------
+  build-serve-engine:
+    name: build-serve-engine (kx serves via Ollama without a C++ toolchain)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — serve-engine must stay FFI-free)
+        uses: actions/checkout@v6
+        # Deliberately NO submodules and NO C++ toolchain install below.
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-serveengine-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-serveengine-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Configure RUSTFLAGS for path-stripping
+        run: |
+          echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: just build-serve-engine
+        run: just build-serve-engine
+
+  # ---------------------------------------------------------------------------
   # verify-quickstart — docs-as-test gate (R7). Runs `just verify-quickstart`,
   # which builds the FFI-free `kx` binary and drives the README quickstart
   # (run → crash → replay → digest), asserting the canonical projection digest at

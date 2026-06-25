@@ -8,13 +8,17 @@
 //! spikes; the captured JSON is then copied into the PRIVATE
 //! `docs/benchmarks/` trend record (never committed to OSS — SN-2).
 //!
-//! Usage: `kx-profile [--iterations N] [--out PATH]` (default `N = 8`).
+//! Usage:
+//! - In-process spikes (default): `kx-profile [--iterations N] [--out PATH]` (`N = 8`).
+//! - Attach mode (GR24 dual-engine chat baseline): `kx-profile --serve <addr> chat
+//!   [--iterations N] [--prompt "..."] [--model <id>] [--token <t> | --token-file <p>]`
+//!   — times a real chat against an EXTERNAL `kx serve` (whichever engine it runs).
 
 use std::path::PathBuf;
 
 use kx_profile::{
-    capture_git_sha, content_spikes, mote_detail_spikes, percentile, react_spikes, spikes,
-    Environment, Metric, ProfileError, Report,
+    capture_git_sha, chat_spikes, content_spikes, mote_detail_spikes, percentile, react_spikes,
+    spikes, ChatOpts, Environment, Metric, ProfileError, Report,
 };
 
 #[tokio::main]
@@ -51,82 +55,14 @@ async fn run() -> Result<(), ProfileError> {
         n = args.iterations,
     );
 
-    let mut metrics = Vec::new();
-    // Warm-up + submit→Committed (the latter doubles as the PR-2 admission-
-    // persist overhead measurement against the pre-PR-2 baseline).
-    let samples = spikes::measure(args.iterations).await?;
-    push_spikes(
-        &mut metrics,
-        &[
-            ("warmup_to_serving_p50", percentile(&samples.warmup_ms, 50)),
-            (
-                "submit_to_committed_p50",
-                percentile(&samples.submit_ms, 50),
-            ),
-            (
-                "submit_to_committed_p99",
-                percentile(&samples.submit_ms, 99),
-            ),
-        ],
-    );
-
-    // PR-2d-2 — M7a/M7b: the live react chain's settle machinery, model-free at
-    // the coordinator layer (M7b fires the REAL bundled stdio tool; skipped —
-    // empty samples — when the bin is absent).
-    let react = react_spikes::measure(args.iterations).await?;
-    push_spikes(
-        &mut metrics,
-        &[
-            ("react_answer_settle_p50", percentile(&react.answer_ms, 50)),
-            ("react_answer_settle_p99", percentile(&react.answer_ms, 99)),
-        ],
-    );
-    if !react.tool_round_ms.is_empty() {
-        push_spikes(
-            &mut metrics,
-            &[
-                ("react_tool_round_p50", percentile(&react.tool_round_ms, 50)),
-                ("react_tool_round_p99", percentile(&react.tool_round_ms, 99)),
-            ],
-        );
-    }
-
-    // Batch A — the content path: a 1 MiB client upload (the first client
-    // write path) + the full 64-ref × 4 KiB batch read (the N+1 collapse).
-    let content = content_spikes::measure(args.iterations).await?;
-    push_spikes(
-        &mut metrics,
-        &[
-            ("put_content_1mib_p50", percentile(&content.put_1mib_ms, 50)),
-            ("put_content_1mib_p95", percentile(&content.put_1mib_ms, 95)),
-            (
-                "content_batch_64x4k_p50",
-                percentile(&content.batch_64x4k_ms, 50),
-            ),
-            (
-                "content_batch_64x4k_p95",
-                percentile(&content.batch_64x4k_ms, 95),
-            ),
-        ],
-    );
-
-    // Batch B — the inspector path: GetMoteDetail cold (fold + store get +
-    // decode) and warm (the host's def cache).
-    let detail = mote_detail_spikes::measure(args.iterations).await?;
-    push_spikes(
-        &mut metrics,
-        &[
-            ("mote_detail_cold", percentile(&detail.detail_cold_ms, 50)),
-            (
-                "mote_detail_warm_p50",
-                percentile(&detail.detail_warm_ms, 50),
-            ),
-            (
-                "mote_detail_warm_p95",
-                percentile(&detail.detail_warm_ms, 95),
-            ),
-        ],
-    );
+    // Attach mode (`--serve <addr>`): profile a real chat against an EXTERNAL
+    // `kx serve` (whichever engine it runs — Ollama or llama.cpp), the GR10/GR24
+    // dual-engine baseline. Otherwise run the in-process FFI-free spikes.
+    let metrics = if let Some(endpoint) = args.serve.clone() {
+        attach_chat_metrics(&endpoint, &args).await?
+    } else {
+        inproc_metrics(args.iterations).await?
+    };
 
     let report = Report::new(git_sha.clone(), env, metrics);
     let json = report
@@ -148,6 +84,152 @@ async fn run() -> Result<(), ProfileError> {
     Ok(())
 }
 
+/// The in-process FFI-free spikes (warm-up + submit→Committed, react settle,
+/// content path, inspector path). The default profile when `--serve` is absent.
+async fn inproc_metrics(iterations: usize) -> Result<Vec<Metric>, ProfileError> {
+    let mut metrics = Vec::new();
+    // Warm-up + submit→Committed (the latter doubles as the PR-2 admission-
+    // persist overhead measurement against the pre-PR-2 baseline).
+    let samples = spikes::measure(iterations).await?;
+    push_spikes(
+        &mut metrics,
+        &[
+            ("warmup_to_serving_p50", percentile(&samples.warmup_ms, 50)),
+            (
+                "submit_to_committed_p50",
+                percentile(&samples.submit_ms, 50),
+            ),
+            (
+                "submit_to_committed_p99",
+                percentile(&samples.submit_ms, 99),
+            ),
+        ],
+    );
+
+    // PR-2d-2 — M7a/M7b: the live react chain's settle machinery, model-free at
+    // the coordinator layer (M7b fires the REAL bundled stdio tool; skipped —
+    // empty samples — when the bin is absent).
+    let react = react_spikes::measure(iterations).await?;
+    push_spikes(
+        &mut metrics,
+        &[
+            ("react_answer_settle_p50", percentile(&react.answer_ms, 50)),
+            ("react_answer_settle_p99", percentile(&react.answer_ms, 99)),
+        ],
+    );
+    if !react.tool_round_ms.is_empty() {
+        push_spikes(
+            &mut metrics,
+            &[
+                ("react_tool_round_p50", percentile(&react.tool_round_ms, 50)),
+                ("react_tool_round_p99", percentile(&react.tool_round_ms, 99)),
+            ],
+        );
+    }
+
+    // Batch A — the content path: a 1 MiB client upload (the first client
+    // write path) + the full 64-ref × 4 KiB batch read (the N+1 collapse).
+    let content = content_spikes::measure(iterations).await?;
+    push_spikes(
+        &mut metrics,
+        &[
+            ("put_content_1mib_p50", percentile(&content.put_1mib_ms, 50)),
+            ("put_content_1mib_p95", percentile(&content.put_1mib_ms, 95)),
+            (
+                "content_batch_64x4k_p50",
+                percentile(&content.batch_64x4k_ms, 50),
+            ),
+            (
+                "content_batch_64x4k_p95",
+                percentile(&content.batch_64x4k_ms, 95),
+            ),
+        ],
+    );
+
+    // Batch B — the inspector path: GetMoteDetail cold (fold + store get +
+    // decode) and warm (the host's def cache).
+    let detail = mote_detail_spikes::measure(iterations).await?;
+    push_spikes(
+        &mut metrics,
+        &[
+            ("mote_detail_cold", percentile(&detail.detail_cold_ms, 50)),
+            (
+                "mote_detail_warm_p50",
+                percentile(&detail.detail_warm_ms, 50),
+            ),
+            (
+                "mote_detail_warm_p95",
+                percentile(&detail.detail_warm_ms, 95),
+            ),
+        ],
+    );
+    Ok(metrics)
+}
+
+/// Profile a real chat against an EXTERNAL `kx serve` at `endpoint` (GR10 + GR24
+/// dual-engine baseline). Each metric id is prefixed with the engine that answered
+/// (`chat__kx-ollama__…` / `chat__kx-llamacpp__…`) so an Ollama capture and a
+/// llama.cpp capture never collide in the private trend record.
+async fn attach_chat_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric>, ProfileError> {
+    let channel = chat_spikes::connect(endpoint).await?;
+    let token = match (&args.token, &args.token_file) {
+        (Some(t), _) => Some(t.clone()),
+        (None, Some(path)) => Some(read_token_file(path)?),
+        (None, None) => None,
+    };
+    let opts = ChatOpts {
+        iterations: args.iterations,
+        prompt: args
+            .prompt
+            .clone()
+            .unwrap_or_else(|| chat_spikes::DEFAULT_PROMPT.to_string()),
+        model: args.model.clone(),
+        token,
+    };
+    let chat = chat_spikes::measure(&channel, &opts).await?;
+    eprintln!(
+        "kx-profile: chat baseline | engine={engine} | model={model} | ctx={ctx} | \
+         {n} timed iter(s){ttft}",
+        engine = chat.engine,
+        model = chat.model_id,
+        ctx = chat.context_len,
+        n = chat.total_ms.len(),
+        ttft = if chat.ttft_ms.is_empty() {
+            " | ttft: unavailable (no token stream)"
+        } else {
+            ""
+        },
+    );
+    let p = |m: &str| format!("chat__{}__{m}", chat.engine);
+    let mut metrics = Vec::new();
+    push_spikes(
+        &mut metrics,
+        &[
+            (p("warmup_first_ms").as_str(), chat.warmup_first_ms),
+            (p("total_p50").as_str(), percentile(&chat.total_ms, 50)),
+            (p("total_p95").as_str(), percentile(&chat.total_ms, 95)),
+            (p("total_p99").as_str(), percentile(&chat.total_ms, 99)),
+        ],
+    );
+    if !chat.ttft_ms.is_empty() {
+        push_spikes(
+            &mut metrics,
+            &[
+                (p("ttft_p50").as_str(), percentile(&chat.ttft_ms, 50)),
+                (p("ttft_p99").as_str(), percentile(&chat.ttft_ms, 99)),
+            ],
+        );
+    }
+    Ok(metrics)
+}
+
+/// Read a bearer token from a file (trimmed of surrounding whitespace).
+fn read_token_file(path: &str) -> Result<String, ProfileError> {
+    std::fs::read_to_string(path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| ProfileError::Client(format!("read token file {path}: {e}")))
+}
+
 /// Push a batch of millisecond spike metrics (one `Metric::spike` per pair).
 fn push_spikes(metrics: &mut Vec<Metric>, spikes: &[(&str, f64)]) {
     for (id, value) in spikes {
@@ -159,12 +241,28 @@ fn push_spikes(metrics: &mut Vec<Metric>, spikes: &[(&str, f64)]) {
 struct Args {
     iterations: usize,
     out: Option<PathBuf>,
+    /// `--serve <addr>`: profile a real chat against an EXTERNAL `kx serve` (attach
+    /// mode). Absent ⇒ run the in-process FFI-free spikes.
+    serve: Option<String>,
+    /// `--prompt <text>`: the chat prompt in attach mode (default in `chat_spikes`).
+    prompt: Option<String>,
+    /// `--model <id>`: chat a specific served model (default = the primary).
+    model: Option<String>,
+    /// `--token <bearer>`: auth metadata for a non-dev serve.
+    token: Option<String>,
+    /// `--token-file <path>`: read the bearer token from a file.
+    token_file: Option<String>,
 }
 
 impl Args {
     fn parse(mut argv: impl Iterator<Item = String>) -> Self {
         let mut iterations = 8usize;
         let mut out = None;
+        let mut serve = None;
+        let mut prompt = None;
+        let mut model = None;
+        let mut token = None;
+        let mut token_file = None;
         while let Some(flag) = argv.next() {
             match flag.as_str() {
                 "--iterations" | "-n" => {
@@ -179,12 +277,38 @@ impl Args {
                 "--out" | "-o" => {
                     out = argv.next().map(PathBuf::from);
                 }
+                "--serve" => {
+                    serve = argv.next();
+                }
+                "--prompt" => {
+                    prompt = argv.next();
+                }
+                "--model" => {
+                    model = argv.next();
+                }
+                "--token" => {
+                    token = argv.next();
+                }
+                "--token-file" => {
+                    token_file = argv.next();
+                }
+                // The attach subverb marker; the only mode today (presence of
+                // `--serve` selects attach), accepted so it is not flagged.
+                "chat" => {}
                 other => {
                     eprintln!("kx-profile: ignoring unrecognized argument {other:?}");
                 }
             }
         }
-        Self { iterations, out }
+        Self {
+            iterations,
+            out,
+            serve,
+            prompt,
+            model,
+            token,
+            token_file,
+        }
     }
 }
 

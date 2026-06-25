@@ -135,6 +135,35 @@ impl OllamaClient {
         Ok(model_names(&value))
     }
 
+    /// `POST /api/show` — the model's declared context window (`model_info`
+    /// `<arch>.context_length`). The body is `{ "model": <tag> }`. The returned
+    /// number is the direct analogue of the GGUF `.context_length` the in-process
+    /// llama backend reads, so `kx models list` shows the same kind of value for
+    /// either engine. Carries the short control-plane timeout (it is called once
+    /// per tag at startup — a hung daemon must not stall serving).
+    ///
+    /// # Errors
+    /// [`OllamaError::Unreachable`] / [`OllamaError::Status`] / [`OllamaError::Protocol`]
+    /// (the last also when the response carries no `*.context_length` key).
+    pub fn show_context_length(&self, model: &str) -> Result<u32, OllamaError> {
+        let body = serde_json::json!({ "model": model });
+        let bytes = to_body(&body)?;
+        let url = format!("{}/api/show", self.base);
+        let resp = self
+            .agent
+            .post(&url)
+            .timeout(Duration::from_millis(CONTROL_TIMEOUT_MS))
+            .set("Content-Type", "application/json")
+            .send_bytes(&bytes)
+            .map_err(classify)?;
+        let text = resp
+            .into_string()
+            .map_err(|e| OllamaError::Protocol(e.to_string()))?;
+        let value: serde_json::Value = parse_json(&text)?;
+        context_length_of(&value)
+            .ok_or_else(|| OllamaError::Protocol("no context_length in /api/show".to_string()))
+    }
+
     /// Load (`keep_alive = -1`) or unload (`keep_alive = 0`) `model` via an
     /// empty-prompt `/api/generate` — the daemon's documented warm/evict control.
     ///
@@ -354,6 +383,22 @@ fn eval_count_of(value: &serde_json::Value) -> u32 {
         .unwrap_or(0)
 }
 
+/// Extract the model's declared context window from an `/api/show` response. The
+/// daemon reports it under `model_info` as `"<arch>.context_length"` (e.g.
+/// `gemma3.context_length`, `llama.context_length`, `qwen2.context_length`). Matched
+/// by suffix (arch-agnostic — exactly like the GGUF reader keys on `.context_length`)
+/// and clamped into `u32`. `None` when absent / non-numeric so the catalog honest-
+/// degrades to `0` rather than fabricating a window.
+fn context_length_of(value: &serde_json::Value) -> Option<u32> {
+    value
+        .get("model_info")
+        .and_then(serde_json::Value::as_object)?
+        .iter()
+        .find(|(k, _)| k.ends_with(".context_length"))
+        .and_then(|(_, v)| v.as_u64())
+        .and_then(|n| u32::try_from(n).ok())
+}
+
 /// Narrow a JSON `f64` embedding element to the `f32` embeddings are stored in.
 #[allow(clippy::cast_possible_truncation)] // embeddings are f32; the daemon emits f64 JSON numbers
 fn f64_to_f32(f: f64) -> f32 {
@@ -487,5 +532,26 @@ mod tests {
     fn new_allows_loopback() {
         let c = OllamaClient::new("http://127.0.0.1:11434/", false).expect("loopback ok");
         assert_eq!(c.base, "http://127.0.0.1:11434"); // trailing slash trimmed
+    }
+
+    #[test]
+    fn context_length_of_reads_arch_keyed_window() {
+        // Arch-agnostic: any `<arch>.context_length` key under model_info.
+        let gemma = serde_json::json!({ "model_info": { "gemma3.context_length": 131_072 } });
+        assert_eq!(context_length_of(&gemma), Some(131_072));
+        let qwen = serde_json::json!({ "model_info": { "qwen2.context_length": 32_768 } });
+        assert_eq!(context_length_of(&qwen), Some(32_768));
+    }
+
+    #[test]
+    fn context_length_of_degrades_when_absent_or_non_numeric() {
+        // No `*.context_length` key ⇒ None (honest-degrade to 0 at the call site).
+        let none = serde_json::json!({ "model_info": { "general.architecture": "gemma3" } });
+        assert_eq!(context_length_of(&none), None);
+        // A non-numeric value ⇒ None, never a fabricated window.
+        let bad = serde_json::json!({ "model_info": { "gemma3.context_length": "lots" } });
+        assert_eq!(context_length_of(&bad), None);
+        // Missing model_info entirely ⇒ None.
+        assert_eq!(context_length_of(&serde_json::json!({})), None);
     }
 }
