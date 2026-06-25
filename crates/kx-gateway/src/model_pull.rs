@@ -46,9 +46,13 @@ pub(crate) fn pull_enabled() -> bool {
 pub(crate) struct PullPolicy {
     /// The master opt-in (`KX_SERVE_ALLOW_MODEL_PULL`). `false` ⇒ every pull is refused.
     enabled: bool,
-    /// The host allowlist a direct-URL pull (and every redirect hop) must match.
+    /// The host allowlist a direct-URL pull (and every redirect hop) must match. Read
+    /// only by the `inference`-gated direct-URL path (constructed always via env).
+    #[cfg_attr(not(feature = "inference"), allow(dead_code))]
     allowlist: Vec<String>,
     /// Where a direct-URL GGUF lands (`KX_SERVE_MODELS_DIR`, else a serve-relative dir).
+    /// Read only by the `inference`-gated direct-URL path.
+    #[cfg_attr(not(feature = "inference"), allow(dead_code))]
     models_dir: PathBuf,
 }
 
@@ -366,6 +370,7 @@ impl ModelPuller for HostModelPuller {
 }
 
 /// Lowercase hex of a byte slice (the SHA-256 comparison form).
+#[cfg_attr(not(feature = "inference"), allow(dead_code))] // only the inference URL path hashes
 fn hex_lower(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
@@ -379,6 +384,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// two-gate egress split; the resolved-IP DNS-rebind re-check at connect time is a
 /// follow-up). Requires `https`, a host on `allowlist` (or a public IP literal), no
 /// userinfo, a `/resolve/` path, and a `.gguf` filename. Returns the filename.
+#[cfg_attr(not(feature = "inference"), allow(dead_code))] // the direct-URL path is inference-gated
 fn validate_url(url: &str, allowlist: &[String]) -> Result<String, String> {
     let rest = url
         .strip_prefix("https://")
@@ -425,6 +431,7 @@ fn validate_url(url: &str, allowlist: &[String]) -> Result<String, String> {
 
 /// Whether `ip` is a public address (the std-only SSRF classifier — internal,
 /// loopback, link-local, metadata, CGNAT, and ULA are NOT public).
+#[cfg_attr(not(feature = "inference"), allow(dead_code))] // only the direct-URL SSRF guard uses it
 fn is_public_ip(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
     match ip {

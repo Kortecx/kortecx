@@ -191,7 +191,9 @@ pub(crate) struct ServeRuntime {
     pub(crate) primary: ModelId,
     /// PR-B: the dataset server-embed model — `KX_SERVE_EMBED_MODEL` (operator-config)
     /// when set + served, else `primary`. The embedder routes through `routing`, so it
-    /// embeds via whichever engine (llama.cpp / Ollama) serves this id.
+    /// embeds via whichever engine (llama.cpp / Ollama) serves this id. Read only by the
+    /// `hnsw` dataset-embedder wiring (constructed always on a serve-engine serve).
+    #[cfg_attr(not(feature = "hnsw"), allow(dead_code))]
     pub(crate) embed_model: ModelId,
     /// Model Control v2: the Ollama engine handle (if Ollama resolved), retained so a
     /// runtime `kx models pull <tag>` can `register_tag` a freshly-pulled tag on the
