@@ -49,6 +49,16 @@ pub struct GenOutcome {
     pub eval_count: u32,
 }
 
+/// A model's `/api/show` metadata, fetched in one round-trip at discovery (PR-B2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShowMeta {
+    /// The declared context window (`<arch>.context_length`), `0` when absent.
+    pub context_length: u32,
+    /// `true` iff the model declares vision (`/api/show` `capabilities ∋ "vision"`
+    /// or a `projector_info` block). Display/discovery only (SN-8).
+    pub vision: bool,
+}
+
 /// A blocking HTTP client for one Ollama daemon endpoint.
 pub struct OllamaClient {
     agent: ureq::Agent,
@@ -146,6 +156,31 @@ impl OllamaClient {
     /// [`OllamaError::Unreachable`] / [`OllamaError::Status`] / [`OllamaError::Protocol`]
     /// (the last also when the response carries no `*.context_length` key).
     pub fn show_context_length(&self, model: &str) -> Result<u32, OllamaError> {
+        let value = self.show_raw(model)?;
+        context_length_of(&value)
+            .ok_or_else(|| OllamaError::Protocol("no context_length in /api/show".to_string()))
+    }
+
+    /// `POST /api/show` — the model's metadata in ONE round-trip: the declared
+    /// context window AND whether the model is vision-capable (PR-B2). Used at
+    /// discovery so a served vision tag is detected without a second `/api/show`
+    /// call. Both fields honest-degrade — a missing context window is `0`, a model
+    /// with no vision signal is `false`; the call still succeeds (only a transport /
+    /// status / decode failure errors).
+    ///
+    /// # Errors
+    /// [`OllamaError::Unreachable`] / [`OllamaError::Status`] / [`OllamaError::Protocol`].
+    pub fn show_meta(&self, model: &str) -> Result<ShowMeta, OllamaError> {
+        let value = self.show_raw(model)?;
+        Ok(ShowMeta {
+            context_length: context_length_of(&value).unwrap_or(0),
+            vision: vision_of(&value),
+        })
+    }
+
+    /// Shared `POST /api/show` body fetch + JSON parse (the control-plane timeout —
+    /// it is called once per tag at startup, so a hung daemon must not stall serving).
+    fn show_raw(&self, model: &str) -> Result<serde_json::Value, OllamaError> {
         let body = serde_json::json!({ "model": model });
         let bytes = to_body(&body)?;
         let url = format!("{}/api/show", self.base);
@@ -159,9 +194,7 @@ impl OllamaClient {
         let text = resp
             .into_string()
             .map_err(|e| OllamaError::Protocol(e.to_string()))?;
-        let value: serde_json::Value = parse_json(&text)?;
-        context_length_of(&value)
-            .ok_or_else(|| OllamaError::Protocol("no context_length in /api/show".to_string()))
+        parse_json(&text)
     }
 
     /// Load (`keep_alive = -1`) or unload (`keep_alive = 0`) `model` via an
@@ -245,6 +278,7 @@ impl OllamaClient {
         prompt: &str,
         options: &serde_json::Value,
         wall_clock_ms: u64,
+        images: &[String],
         sink: Option<TokenSink>,
     ) -> Result<GenOutcome, OllamaError> {
         let budget_ms = if wall_clock_ms == 0 {
@@ -257,13 +291,21 @@ impl OllamaClient {
             Duration::from_millis(budget_ms.saturating_add(WORKER_BACKSTOP_SLACK_MS));
 
         let streaming = sink.is_some();
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "model": model,
             "prompt": prompt,
             "raw": true,
             "stream": streaming,
             "options": options,
         });
+        // PR-B2 vision: a Multimodal dispatch passes base64-encoded image(s); they
+        // ride the documented `/api/generate` `images` array. ABSENT (text dispatch)
+        // ⇒ the key is omitted ⇒ the body is byte-identical to the pre-PR-B2 text
+        // path. `raw: true` is preserved — the prompt is still the verbatim rendered
+        // chat string; the daemon splices the image(s) per the model's projector.
+        if !images.is_empty() {
+            body["images"] = serde_json::json!(images);
+        }
         let url = format!("{}/api/generate", self.base);
         let agent = self.agent.clone();
 
@@ -509,6 +551,27 @@ fn context_length_of(value: &serde_json::Value) -> Option<u32> {
         .and_then(|n| u32::try_from(n).ok())
 }
 
+/// Whether an `/api/show` response declares vision (PR-B2). Ollama surfaces this two
+/// ways depending on the model/daemon version: a top-level `"capabilities"` array
+/// containing `"vision"` (newer daemons), OR a `"projector_info"` block (a model
+/// with a bundled mmproj projector). Either signal ⇒ vision-capable. Conservative:
+/// absent both ⇒ `false` (honest-degrade — never claim a capability the daemon
+/// doesn't report).
+fn vision_of(value: &serde_json::Value) -> bool {
+    let has_capability = value
+        .get("capabilities")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|caps| {
+            caps.iter()
+                .filter_map(serde_json::Value::as_str)
+                .any(|c| c.eq_ignore_ascii_case("vision"))
+        });
+    let has_projector = value
+        .get("projector_info")
+        .is_some_and(|p| !p.is_null());
+    has_capability || has_projector
+}
+
 /// Narrow a JSON `f64` embedding element to the `f32` embeddings are stored in.
 #[allow(clippy::cast_possible_truncation)] // embeddings are f32; the daemon emits f64 JSON numbers
 fn f64_to_f32(f: f64) -> f32 {
@@ -651,6 +714,29 @@ mod tests {
         assert_eq!(context_length_of(&gemma), Some(131_072));
         let qwen = serde_json::json!({ "model_info": { "qwen2.context_length": 32_768 } });
         assert_eq!(context_length_of(&qwen), Some(32_768));
+    }
+
+    #[test]
+    fn vision_of_reads_capability_array_and_projector() {
+        // (a) the newer `capabilities` array signal (case-insensitive).
+        let caps = serde_json::json!({ "capabilities": ["completion", "vision"] });
+        assert!(vision_of(&caps));
+        let caps_upper = serde_json::json!({ "capabilities": ["Completion", "Vision"] });
+        assert!(vision_of(&caps_upper));
+        // (b) the `projector_info` (bundled mmproj) signal.
+        let proj = serde_json::json!({ "projector_info": { "general.architecture": "clip" } });
+        assert!(vision_of(&proj));
+    }
+
+    #[test]
+    fn vision_of_degrades_when_absent_or_text_only() {
+        // A text-only model: no vision capability, no projector ⇒ false (never claim it).
+        let text_only = serde_json::json!({ "capabilities": ["completion"] });
+        assert!(!vision_of(&text_only));
+        let bare = serde_json::json!({ "model_info": { "gemma3.context_length": 131_072 } });
+        assert!(!vision_of(&bare));
+        let null_proj = serde_json::json!({ "projector_info": serde_json::Value::Null });
+        assert!(!vision_of(&null_proj));
     }
 
     #[test]

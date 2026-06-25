@@ -241,15 +241,15 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
             }
         }
     }
-    #[cfg(not(feature = "inference"))]
-    let _ = store; // the content store is only consumed by the (vision) llama path
-
     // (2) Ollama (FFI-free) — auto-detected. With a GGUF primary present, Ollama
     // models register as secondaries (the GGUF keeps the default chat route). The
     // engine Arc is retained (Model Control v2: a runtime `pull <tag>` register_tag's
-    // a freshly-pulled tag on this same instance).
+    // a freshly-pulled tag on this same instance). The content store is passed so a
+    // vision-capable Ollama tag can fetch image `content_ref`s (PR-B2); a text-only
+    // Ollama serve leaves it unbound.
     let have_gguf = primary.is_some();
-    if let Some((ollama, mut ollama_entries, ollama_primary)) = build_ollama_engine(have_gguf) {
+    if let Some((ollama, mut ollama_entries, ollama_primary)) = build_ollama_engine(have_gguf, store)
+    {
         if primary.is_none() {
             primary = Some(ollama_primary);
         }
@@ -317,6 +317,7 @@ fn resolve_embed_model(
 /// one-line install hint).
 fn build_ollama_engine(
     have_gguf: bool,
+    store: &Arc<LocalFsContentStore>,
 ) -> Option<(
     kx_ollama::OllamaBackend,
     Vec<kx_gateway_core::ModelSummaryEntry>,
@@ -375,6 +376,15 @@ fn build_ollama_engine(
         tracing::warn!("Ollama is reachable but has no models; run `ollama pull <model>`");
         return None;
     }
+    // PR-B2 vision: bind the content store so the Multimodal arm can fetch image
+    // `content_ref`s, but ONLY when a served tag actually declares vision (a text-only
+    // Ollama serve leaves it unbound ⇒ a Multimodal dispatch fails closed). The store
+    // coerces to `Arc<dyn ContentFetcher>` via the ungated blanket impl.
+    let backend = if ids.iter().any(|id| backend.is_vision(id)) {
+        backend.with_content_store(store.clone())
+    } else {
+        backend
+    };
     let count = ids.len();
     // Pick the chat primary: prefer a non-embedding tag (a user with a chat model AND
     // an embedding model — e.g. for RAG — should get the chat model as the default
@@ -413,11 +423,18 @@ fn ollama_catalog_entry(
     model_id: &ModelId,
     serving: bool,
 ) -> kx_gateway_core::ModelSummaryEntry {
+    // PR-B2: a vision-capable tag (`/api/show` capability / projector_info) declares
+    // the `"image"` input modality alongside `"text"` — exactly the signal the llama
+    // catalog uses, so the UI badge / honest-degrade / `vision_handle` are engine-
+    // agnostic. Embedding is the distinct `can_embed` OUTPUT flag below, not a modality.
+    let modalities = if backend.is_vision(model_id) {
+        vec!["text".to_string(), "image".to_string()]
+    } else {
+        vec!["text".to_string()]
+    };
     kx_gateway_core::ModelSummaryEntry {
         model_id: model_id.0.clone(),
-        // PR-B2 will surface Ollama vision modalities; embedding is the `can_embed`
-        // flag below (a distinct output capability, not an input modality).
-        modalities: vec!["text".to_string()],
+        modalities,
         // The tag is its own honest description (the daemon owns the GGUF metadata).
         description: model_id.0.clone(),
         serving,

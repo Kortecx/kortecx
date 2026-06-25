@@ -1866,6 +1866,8 @@ dependencies = [
 name = "kx-ollama"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "kx-content",
  "kx-inference",
  "kx-mote",
  "kx-warrant",

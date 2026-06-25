@@ -43,12 +43,17 @@ const TREE_FORBIDDEN: &[&str] = &[
     "kx-runtime",
 ];
 
-/// The minimal direct dependency set (Cargo.toml `[dependencies]`).
+/// The minimal direct dependency set (Cargo.toml `[dependencies]`). `kx-content`
+/// (`ContentRef` + `sniff_image_format`) and `base64` (image encode) are PR-B2 vision
+/// additions — both FFI-free leaves (`kx-content` already rode the `kx-inference`
+/// edge; `base64` is a pure encoder), so the FFI-free wall is unchanged.
 const ALLOWED: &[&str] = &[
     "kx-inference",
+    "kx-content",
     "kx-mote",
     "kx-warrant",
     "ureq",
+    "base64",
     "serde",
     "serde_json",
     "thiserror",

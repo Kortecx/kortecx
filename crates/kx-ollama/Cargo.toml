@@ -18,6 +18,11 @@ path = "src/lib.rs"
 # `InferenceBackend`/`EmbeddingBackend` traits + types WITHOUT the `llamacpp`
 # feature (no kx-llamacpp, no C++). The `tests/dep_wall.rs` pins that.
 kx-inference = { workspace = true }
+# `ContentRef` + `sniff_image_format` (PR-B2 vision): the Multimodal arm fetches an
+# image `content_ref`'s bytes (via the ungated `kx_inference::ContentFetcher` seam)
+# and sniffs the format BEFORE egress. An FFI-free leaf already in the tree via the
+# kx-inference edge; `tests/dep_wall.rs` keeps the whole crate FFI-free.
+kx-content   = { workspace = true }
 # `ModelId` (the dispatch route identity) + `WarrantSpec` (the model-route /
 # ceiling the backend enforces, SN-8 / D35). Both FFI-free leaves.
 kx-mote      = { workspace = true }
@@ -26,6 +31,10 @@ kx-warrant   = { workspace = true }
 # no deny.toml change). `tls` is on for a future `https://` operator URL; the
 # loopback default dials plaintext `http://127.0.0.1`.
 ureq         = { workspace = true }
+# Base64-encode an image's bytes for the Ollama `/api/generate` `images` array
+# (PR-B2 vision). Already in the lock at `0.22.1` (a transitive dep) ⇒ Cargo.lock
+# edge-only, no `deny.toml` change. FFI-free.
+base64       = { workspace = true }
 serde        = { workspace = true }
 serde_json   = { workspace = true }
 thiserror    = { workspace = true }
