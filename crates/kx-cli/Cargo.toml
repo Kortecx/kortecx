@@ -51,10 +51,15 @@ tracing-subscriber = { workspace = true }
 thiserror          = { workspace = true }
 
 [features]
-# AL1: build `kx serve` with live in-process model dispatch — forwards to the
-# kx-gateway `inference` feature (which pulls the llama.cpp FFI via kx-inference).
-# OFF by default so the default `kx` build stays FFI-free (the `build-no-inference`
-# gate + the dep-wall). Opt in with `cargo build -p kx-cli --features inference`.
+# serve-engine: build `kx serve` with the FFI-FREE live model loop (the shaper/
+# re-plan/critic/ReAct loop + an auto-detected Ollama backend). Forwards to the
+# kx-gateway `serve-engine` feature; pulls NO llama.cpp, so a `--features serve-engine`
+# build needs no C++ toolchain (the `build-no-inference`-class gate + the dep-wall stay
+# green). This is what the toolchain-free install ships to serve via Ollama.
+serve-engine = ["kx-gateway/serve-engine"]
+# AL1: build `kx serve` with the in-process llama.cpp backend too — forwards to the
+# kx-gateway `inference` feature (which adds the C++ FFI via kx-inference/llamacpp on
+# top of serve-engine). Opt in with `cargo build -p kx-cli --features inference`.
 inference = ["kx-gateway/inference"]
 # T3.7: build `kx serve` with the Datasets data-plane (RAG) — forwards to the
 # kx-gateway `hnsw` feature. FFI-FREE (pure-Rust kx-dataset-hnsw + rusqlite; no

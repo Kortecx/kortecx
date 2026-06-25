@@ -1,56 +1,31 @@
-//! POC-3 host-side model lifecycle: the live-engine adapter over the inference
-//! backend + the `ModelLifecycleControl` host impl behind `LoadModel`/
-//! `OffloadModel`.
+//! POC-3 host-side model lifecycle: the `ModelEngine` seam (warm/evict/residency)
+//! + the `ModelLifecycleControl` host impl behind `LoadModel`/`OffloadModel`.
 //!
-//! Only the inference serve has a live model engine, so this whole module is
-//! inference-gated. The control is scoped to the FIXED registered set (an
-//! unregistered id is `NotFound`, fail-closed BEFORE the engine is asked — never
-//! a warm of an arbitrary path). Off-journal / off-digest: residency is ephemeral
-//! RAM state that rebuilds EMPTY on restart.
+//! Only a serve-engine build has a live model engine, so this whole module is
+//! serve-engine-gated. The live engine is the host's `RoutingBackend` (which
+//! implements [`ModelEngine`] by routing warm/evict to the owning member backend —
+//! llama.cpp or Ollama); this module owns only the FFI-free seam + the
+//! registered-set gate, so it carries no backend dependency. The control is scoped
+//! to the FIXED registered set (an unregistered id is `NotFound`, fail-closed BEFORE
+//! the engine is asked — never a warm of an arbitrary path). Off-journal /
+//! off-digest: residency is ephemeral RAM state that rebuilds EMPTY on restart.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use kx_gateway_core::{GatewayError, ModelLifecycleControl, ModelLifecycleOutcome};
-use kx_inference::LlamaInferenceBackend;
-use kx_mote::ModelId;
 
 use crate::models::ModelResidency;
 
 /// The live model engine the lifecycle host drives: residency reads
 /// ([`ModelResidency`] supertrait, shared with the catalog) PLUS the mutating
-/// warm/evict controls. Implemented over the inference backend (`BackendEngine`);
-/// abstracted as a trait so the host impl is unit-testable without the FFI.
+/// warm/evict controls. Implemented by the host's `RoutingBackend`; abstracted as a
+/// trait so the host impl is unit-testable without any backend.
 pub(crate) trait ModelEngine: ModelResidency {
     /// Warm a registered model into RAM. `Err(msg)` on a backend/load failure.
     fn warm(&self, model_id: &str) -> Result<(), String>;
     /// Evict a registered model from RAM; `Ok(true)` iff it was resident.
     fn evict(&self, model_id: &str) -> Result<bool, String>;
-}
-
-/// The live-engine adapter over the concrete inference backend. A newtype (not an
-/// inherent-method `impl` on the backend) so the trait `warm`/`evict` never
-/// collide with the backend's inherent `warm`/`evict`.
-pub(crate) struct BackendEngine(pub(crate) Arc<LlamaInferenceBackend>);
-
-impl ModelResidency for BackendEngine {
-    fn resident_ids(&self) -> Vec<String> {
-        self.0.resident().into_iter().map(|m| m.0).collect()
-    }
-}
-
-impl ModelEngine for BackendEngine {
-    fn warm(&self, model_id: &str) -> Result<(), String> {
-        self.0
-            .warm(&ModelId(model_id.to_string()))
-            .map_err(|e| e.to_string())
-    }
-
-    fn evict(&self, model_id: &str) -> Result<bool, String> {
-        self.0
-            .evict(&ModelId(model_id.to_string()))
-            .map_err(|e| e.to_string())
-    }
 }
 
 /// The host impl behind `LoadModel`/`OffloadModel`. Holds the live engine + the

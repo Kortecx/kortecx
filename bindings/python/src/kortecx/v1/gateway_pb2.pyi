@@ -963,7 +963,7 @@ class ListModelsRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class ModelSummary(_message.Message):
-    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle")
+    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle", "engine")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODALITIES_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
@@ -971,6 +971,7 @@ class ModelSummary(_message.Message):
     CONTEXT_LEN_FIELD_NUMBER: _ClassVar[int]
     LOADED_FIELD_NUMBER: _ClassVar[int]
     CHAT_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    ENGINE_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     modalities: _containers.RepeatedScalarFieldContainer[str]
     description: str
@@ -978,7 +979,8 @@ class ModelSummary(_message.Message):
     context_len: int
     loaded: bool
     chat_handle: str
-    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ...) -> None: ...
+    engine: str
+    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ..., engine: _Optional[str] = ...) -> None: ...
 
 class ListModelsResponse(_message.Message):
     __slots__ = ("models",)

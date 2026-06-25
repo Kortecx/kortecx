@@ -83,6 +83,7 @@ describe("ModelSummary.fromProto", () => {
       contextLen: 8192,
       loaded: true,
       chatHandle: "kx/recipes/chat",
+      engine: "kx-llamacpp",
     });
     const s = ModelSummary.fromProto(m);
     expect(s.modelId).toBe("kx-serve:qwen3-4b");
@@ -92,6 +93,8 @@ describe("ModelSummary.fromProto", () => {
     // POC-3: the additive residency + routing fields carry through.
     expect(s.loaded).toBe(true);
     expect(s.chatHandle).toBe("kx/recipes/chat");
+    // PR-A: the serving engine carries through (pluggable inference engine).
+    expect(s.engine).toBe("kx-llamacpp");
     expect(s.toJSON()).toEqual({
       model_id: "kx-serve:qwen3-4b",
       modalities: ["text", "image"],
@@ -100,6 +103,7 @@ describe("ModelSummary.fromProto", () => {
       context_len: 8192,
       loaded: true,
       chat_handle: "kx/recipes/chat",
+      engine: "kx-llamacpp",
     });
   });
 });

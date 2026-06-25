@@ -20,6 +20,7 @@ members = [
     "crates/kx-memoizer",
     "crates/kx-normalizer",
     "crates/kx-inference",
+    "crates/kx-ollama",
     "crates/kx-capability",
     "crates/kx-executor",
     "crates/kx-scheduler",
@@ -137,6 +138,10 @@ kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.1.1"
 # `features = ["llamacpp"]`. kx-inference's own `default = ["llamacpp"]` keeps its
 # own build/test/doctests on the FFI when it is itself the target.
 kx-inference         = { path = "crates/kx-inference",         version = "0.1.1", default-features = false }
+# kx-ollama: the FFI-FREE out-of-process Ollama InferenceBackend. Pulls kx-inference
+# WITHOUT the llamacpp feature (the default-features=false above), so a serve build
+# that uses Ollama needs no C++ toolchain. The crate's dep_wall test pins it.
+kx-ollama            = { path = "crates/kx-ollama",            version = "0.1.0" }
 kx-capability        = { path = "crates/kx-capability",        version = "0.1.1" }
 kx-executor          = { path = "crates/kx-executor",          version = "0.1.1" }
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.1.1" }

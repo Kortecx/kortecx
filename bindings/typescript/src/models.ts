@@ -28,6 +28,8 @@ export class ModelSummary {
     readonly loaded: boolean = false,
     /** POC-3: the recipe handle to chat with THIS model (the routing key). */
     readonly chatHandle: string = "",
+    /** The serving engine: `"kx-llamacpp" | "kx-ollama"` (empty on an old host). */
+    readonly engine: string = "",
   ) {}
 
   static fromProto(m: PbModelSummary): ModelSummary {
@@ -39,6 +41,7 @@ export class ModelSummary {
       m.contextLen,
       m.loaded,
       m.chatHandle,
+      m.engine,
     );
   }
 
@@ -52,6 +55,7 @@ export class ModelSummary {
       context_len: this.contextLen,
       loaded: this.loaded,
       chat_handle: this.chatHandle,
+      engine: this.engine,
     };
   }
 }

@@ -29,6 +29,10 @@ pub struct ModelSummaryEntry {
     /// binder-free routing key — primary = `kx/recipes/chat`, secondary =
     /// `kx/recipes/m-<id>`). Empty when no model is served.
     pub chat_handle: String,
+    /// The serving engine that backs this model — `"kx-llamacpp"` (in-process
+    /// llama.cpp) or `"kx-ollama"` (a local Ollama daemon). A display/audit field
+    /// (never identity); empty on an old host. Additive (proto tag 8).
+    pub engine: String,
 }
 
 /// The model-catalog read seam. The host implements it over the model registry

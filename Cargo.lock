@@ -1574,6 +1574,7 @@ dependencies = [
  "kx-model-store",
  "kx-model-validator",
  "kx-mote",
+ "kx-ollama",
  "kx-otel",
  "kx-planner",
  "kx-proto",
@@ -1857,6 +1858,20 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kx-ollama"
+version = "0.1.0"
+dependencies = [
+ "kx-inference",
+ "kx-mote",
+ "kx-warrant",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tracing",
+ "ureq",
 ]
 
 [[package]]

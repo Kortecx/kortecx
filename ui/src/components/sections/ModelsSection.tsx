@@ -50,7 +50,7 @@ export function ModelsSection() {
       {!loading && !unsupported && models?.length === 0 ? (
         <EmptyState
           title="No models on this serve"
-          detail="This gateway serves no model (an FFI-free build). Start kx serve with KX_SERVE_MODEL_GGUF to serve one."
+          detail="This gateway serves no model. Run a local Ollama and (re)start kx serve to auto-detect it, set KX_SERVE_MODEL_GGUF for a llama.cpp model, or build with --features inference."
         />
       ) : null}
 
@@ -109,6 +109,11 @@ export function ModelsSection() {
                   <span className="card-grid__handle">
                     ctx {mdl.contextLen.toLocaleString()} tokens
                   </span>
+                  {/* The serving engine (llamacpp / ollama), display only. Empty on
+                      an old host that does not report an engine. */}
+                  {mdl.engine ? (
+                    <Badge label={mdl.engine.replace(/^kx-/, "")} color="var(--text-2)" />
+                  ) : null}
                   {/* POC-3: live RAM residency (the LRU snapshot), display only. */}
                   <Badge
                     label={mdl.loaded ? "loaded" : "not loaded"}

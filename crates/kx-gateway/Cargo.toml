@@ -77,12 +77,18 @@ kx-capability   = { workspace = true, optional = true }
 # of kx-executor); gated under `embedded-worker` so the gateway-only closure that
 # `build-no-inference` asserts stays unchanged.
 tempfile        = { workspace = true, optional = true }
-# AL1 (the live `kx serve` LLM loop): the in-process inference backend + model
-# registry/validator, all OPTIONAL + behind the `inference` feature so the DEFAULT
-# build stays FFI-free (`build-no-inference` + the dep-wall). We depend on
-# `kx-inference` WITH its `llamacpp` feature — pulling the C++ FFI transitively
-# WITHOUT naming the FFI crate here (the dep-wall manifest scan forbids that name).
-kx-inference       = { workspace = true, optional = true, features = ["llamacpp"] }
+# AL1 (the live `kx serve` LLM loop): the model-serving seam + planner/critic/mcp,
+# all OPTIONAL. `kx-inference` is pulled FFI-FREE here (NO `features = ["llamacpp"]`):
+# the FFI-free `serve-engine` feature gets the `InferenceBackend` trait + `Dispatcher`
+# + types (the bring-your-own-backend path), and the heavier `inference` feature adds
+# `kx-inference/llamacpp` (the C++ FFI) on top. So a serve build that uses Ollama needs
+# no C++ toolchain (`build-no-inference`-class + the dep-wall stay green).
+kx-inference       = { workspace = true, optional = true }
+# The FFI-free out-of-process Ollama backend (rides `serve-engine`). Pulls
+# `kx-inference` WITHOUT llamacpp; the crate's own dep_wall pins it FFI-free.
+kx-ollama          = { workspace = true, optional = true }
+# The GGUF resolver + bind-time validator — only the in-process llama backend needs
+# them (Ollama owns its own tag resolver), so they ride `inference`, not `serve-engine`.
 kx-model-store     = { workspace = true, optional = true }
 kx-model-validator = { workspace = true, optional = true }
 # PR-2b (T1.1): the planner's decode→budget→lower trust boundary for the LIVE shaper
@@ -232,20 +238,29 @@ mcp-gateway = ["dep:kx-mcp", "dep:kx-mcp-gateway", "embedded-worker"]
 # consumer can disable it to embed a gateway-only front end (then `serve` requires an
 # external coordinator — a later step; R1 refuses without the feature).
 embedded-worker = ["dep:kx-coordinator", "dep:kx-worker", "dep:kx-executor", "dep:kx-capability", "dep:tempfile"]
-# AL1: the in-process model dispatch path for `kx serve` — the embedded worker can
-# execute model Motes through the in-process inference backend. OFF by default so
-# the default `kx serve` stays FFI-free (`build-no-inference` + the dep-wall stay
-# green); a toolchain build opts in with `--features inference`. Implies the
-# embedded worker (the loop runs in the in-process worker).
-inference = [
+# serve-engine: the FFI-FREE serve model-loop for `kx serve` — the embedded worker
+# runs model Motes through a backend, drives the shaper/re-plan/critic/ReAct loop, and
+# serves an auto-detected Ollama daemon (`kx-ollama`). It pulls `kx-inference` WITHOUT
+# the llama.cpp FFI (the trait + Dispatcher + types only), so a `--features serve-engine`
+# build needs NO C++ toolchain (`build-no-inference`-class + the dep-wall stay green).
+# OFF by default. Implies the embedded worker (the loop runs in the in-process worker).
+serve-engine = [
     "embedded-worker",
     "dep:kx-inference",
-    "dep:kx-model-store",
-    "dep:kx-model-validator",
+    "dep:kx-ollama",
     "dep:kx-planner",
     "dep:kx-critic",
     "dep:kx-mcp",
     "mcp-gateway",
+]
+# inference: serve-engine PLUS the in-process llama.cpp backend (the C++ FFI via
+# `kx-inference/llamacpp`) + its GGUF resolver/validator. `cargo install --features
+# inference` is the self-contained on-device path (requires a C++ toolchain to build).
+inference = [
+    "serve-engine",
+    "kx-inference/llamacpp",
+    "dep:kx-model-store",
+    "dep:kx-model-validator",
 ]
 # T3.7: the Datasets data-plane (RAG) read/write surface. The client-provided-vector
 # path is FFI-FREE + deterministic (CI-exercisable on Linux with no model). Pulls only

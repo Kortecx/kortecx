@@ -35,6 +35,7 @@ const sidebars: SidebarsConfig = {
         "tools",
         "context",
         "models",
+        "local-inference-engines",
         "datasets",
         "branches",
         "scripts",

@@ -18,17 +18,27 @@
 //! recomputable, so it is sound through the per-Mote executor seam. Stochastic
 //! (ReadOnlyNondet) dispatch + D78 upstream-context assembly are follow-ons.
 
+// Only the `inference` GGUF resolver/validator uses these (path handling + the
+// dedup set); the FFI-free serve-engine loop never touches a GGUF path.
+#[cfg(feature = "inference")]
 use std::collections::BTreeSet;
+#[cfg(feature = "inference")]
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use kx_content::{ContentStore, LocalFsContentStore};
 use kx_executor::{MoteExecutionResult, MoteExecutor, MoteExecutorError, Rootfs};
-use kx_inference::{
-    inference_params_from_mote, InferenceBackend, InferenceInput, LlamaInferenceBackend,
-    MEDIA_MARKER,
-};
+use kx_inference::{inference_params_from_mote, InferenceBackend, InferenceInput, MEDIA_MARKER};
+// The in-process llama.cpp backend + its GGUF resolver/validator are the
+// `inference`-only half: the FFI-free `serve-engine` build (Ollama) compiles the
+// generic executor below without them. The `RoutingBackend` (which both engines ride)
+// is the seam the shaper/executor wiring actually holds.
+use crate::routing_backend::RoutingBackend;
+#[cfg(feature = "inference")]
+use kx_inference::LlamaInferenceBackend;
+#[cfg(feature = "inference")]
 use kx_model_store::{read_context_length, ModelDescriptor, ModelRegistry};
+#[cfg(feature = "inference")]
 use kx_model_validator::{
     check, License, LicenseConstraint, Modality, ProvidedCapabilities, Quantization,
     RequiredCapabilities, ValidatorOutcome,
@@ -76,7 +86,9 @@ pub(crate) const WORKER_ROLE: &str = "worker";
 /// coordinator's narrowing agree on the same `worker` role.
 #[derive(Clone)]
 pub(crate) struct ShaperRuntime {
-    pub(crate) backend: Arc<LlamaInferenceBackend>,
+    /// The serve backend the executor + shaper arms dispatch through — the host's
+    /// [`RoutingBackend`] over whichever engines resolved (llama.cpp and/or Ollama).
+    pub(crate) backend: Arc<RoutingBackend>,
     pub(crate) model_id: ModelId,
     pub(crate) recipes: Arc<dyn RoleRecipeResolver>,
     pub(crate) role_registry: Arc<dyn RoleRegistry>,
@@ -115,13 +127,13 @@ pub(crate) fn shaper_warrant(model_id: &ModelId, exec_class: ExecutorClass) -> W
     }
 }
 
-/// Build the shaper runtime from a resolved serve model (`#[cfg(feature = "inference")]`).
-/// The `worker` role maps (in the recipe allowlist) to a PURE model step and (in the role
-/// registry) to the shaper's own warrant — so a lowered child inherits the model route and
-/// runs its per-child intent through the same backend.
+/// Build the shaper runtime from the resolved serve backend. The `worker` role maps
+/// (in the recipe allowlist) to a PURE model step and (in the role registry) to the
+/// shaper's own warrant — so a lowered child inherits the model route and runs its
+/// per-child intent through the same routing backend.
 pub(crate) fn build_shaper_runtime(
     model_id: &ModelId,
-    backend: Arc<LlamaInferenceBackend>,
+    backend: Arc<RoutingBackend>,
     exec_class: ExecutorClass,
 ) -> ShaperRuntime {
     let warrant = shaper_warrant(model_id, exec_class);
@@ -166,13 +178,209 @@ pub(crate) fn worker_recipes(model_id: &ModelId) -> Arc<dyn RoleRecipeResolver> 
     Arc::new(recipes)
 }
 
-/// Default context window when the GGUF declares none.
+/// The provisioned serve backend + its model catalog — the UNION of the in-process
+/// llama.cpp GGUF models (only on the `inference` build) and an auto-detected Ollama
+/// daemon's models (the FFI-free path), built once at startup.
+pub(crate) struct ServeRuntime {
+    /// The routing backend over whichever engines resolved (the executor backend +
+    /// the lifecycle engine + the catalog residency source).
+    pub(crate) routing: Arc<RoutingBackend>,
+    /// The `ListModels` catalog entries (engine-tagged), in display order.
+    pub(crate) entries: Vec<kx_gateway_core::ModelSummaryEntry>,
+    /// The PRIMARY/default model (drives the shaper loop + the `kx/recipes/chat` route).
+    pub(crate) primary: ModelId,
+    /// The in-process llama.cpp backend (when a GGUF resolved) — kept so the Datasets
+    /// server-embed path reuses it as an `EmbeddingBackend` (Ollama embeddings = PR-B).
+    /// Only the `hnsw` server-embed path reads it; on an inference build without `hnsw`
+    /// it is carried but unused.
+    #[cfg(feature = "inference")]
+    #[cfg_attr(not(feature = "hnsw"), allow(dead_code))]
+    pub(crate) llama: Option<Arc<LlamaInferenceBackend>>,
+}
+
+/// Resolve the full serve runtime: the union of the in-process llama.cpp GGUF models
+/// (only on the `inference` build) and an auto-detected Ollama daemon's models (the
+/// FFI-free path). Member order is llama-first, so an explicitly-configured GGUF wins
+/// a `supports()` tie and keeps the default `kx/recipes/chat` route. `None` ⇒ no model
+/// resolved ⇒ a model-less serve (the durable spine + demo recipes still run).
+pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<ServeRuntime> {
+    let mut engines: Vec<Arc<dyn crate::routing_backend::ServeEngine>> = Vec::new();
+    let mut entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
+    let mut primary: Option<ModelId> = None;
+
+    // (1) In-process llama.cpp GGUF candidates — only on the FFI build.
+    #[cfg(feature = "inference")]
+    let llama: Option<Arc<LlamaInferenceBackend>> = {
+        let candidates = resolve_serve_models();
+        if candidates.is_empty() {
+            None
+        } else {
+            match build_serve_models(&candidates, store.clone()) {
+                Ok((backend, mut llama_entries, primary_id)) => {
+                    primary = Some(primary_id);
+                    entries.append(&mut llama_entries);
+                    engines.push(backend.clone());
+                    Some(backend)
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "serve model is not fit; llama loop NOT enabled");
+                    None
+                }
+            }
+        }
+    };
+    #[cfg(not(feature = "inference"))]
+    let _ = store; // the content store is only consumed by the (vision) llama path
+
+    // (2) Ollama (FFI-free) — auto-detected. With a GGUF primary present, Ollama
+    // models register as secondaries (the GGUF keeps the default chat route).
+    let have_gguf = primary.is_some();
+    if let Some((ollama, mut ollama_entries, ollama_primary)) = build_ollama_engine(have_gguf) {
+        if primary.is_none() {
+            primary = Some(ollama_primary);
+        }
+        entries.append(&mut ollama_entries);
+        engines.push(Arc::new(ollama));
+    }
+
+    let primary = primary?;
+    Some(ServeRuntime {
+        routing: Arc::new(RoutingBackend::new(engines)),
+        entries,
+        primary,
+        #[cfg(feature = "inference")]
+        llama,
+    })
+}
+
+/// Auto-detect a running Ollama daemon and build its backend + engine-tagged catalog
+/// entries. Operator-config ONLY (SN-8 — never model/client-controlled):
+/// `KX_SERVE_OLLAMA` (`auto` default | `1`/`on` | `off`), `KX_SERVE_OLLAMA_URL`
+/// (loopback default; non-loopback refused unless `KX_SERVE_OLLAMA_ALLOW_REMOTE=1`),
+/// `KX_SERVE_OLLAMA_MODELS` (tag allowlist). `auto` serves Ollama only when no GGUF is
+/// configured. `None` ⇒ disabled / unreachable / no models (the host degrades to a
+/// one-line install hint).
+fn build_ollama_engine(
+    have_gguf: bool,
+) -> Option<(
+    kx_ollama::OllamaBackend,
+    Vec<kx_gateway_core::ModelSummaryEntry>,
+    ModelId,
+)> {
+    let mode = std::env::var("KX_SERVE_OLLAMA").unwrap_or_else(|_| "auto".to_string());
+    let enabled = match mode.trim().to_ascii_lowercase().as_str() {
+        "off" | "0" | "false" | "no" => false,
+        "1" | "on" | "true" | "yes" => true,
+        // `auto` (and any unrecognized value): serve Ollama only when no GGUF resolved.
+        _ => !have_gguf,
+    };
+    if !enabled {
+        return None;
+    }
+    let url = std::env::var("KX_SERVE_OLLAMA_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
+    let allow_remote = matches!(
+        std::env::var("KX_SERVE_OLLAMA_ALLOW_REMOTE")
+            .ok()
+            .as_deref(),
+        Some("1" | "true" | "TRUE" | "yes")
+    );
+    let client = match kx_ollama::OllamaClient::new(&url, allow_remote) {
+        Ok(client) => Arc::new(client),
+        Err(error) => {
+            tracing::warn!(%error, %url, "Ollama endpoint refused; not serving Ollama");
+            return None;
+        }
+    };
+    match client.version() {
+        Ok(version) => tracing::info!(%version, %url, "Ollama detected"),
+        Err(error) if error.is_absent() => {
+            tracing::info!(
+                %url,
+                "no Ollama daemon detected — install Ollama (https://ollama.com) and \
+                 `ollama pull` a model (e.g. gemma3:12b), or build with --features inference"
+            );
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(%error, %url, "Ollama probe failed; not serving Ollama");
+            return None;
+        }
+    }
+    let allowlist = parse_ollama_allowlist();
+    let backend = match kx_ollama::OllamaBackend::discover(client, allowlist.as_deref()) {
+        Ok(backend) => backend,
+        Err(error) => {
+            tracing::warn!(%error, "Ollama tag discovery failed; not serving Ollama");
+            return None;
+        }
+    };
+    let ids = backend.model_ids();
+    if ids.is_empty() {
+        tracing::warn!("Ollama is reachable but has no models; run `ollama pull <model>`");
+        return None;
+    }
+    let count = ids.len();
+    // Pick the chat primary: prefer a non-embedding tag (a user with a chat model AND
+    // an embedding model — e.g. for RAG — should get the chat model as the default
+    // route), else the first. Only meaningful when no GGUF is the global primary.
+    let primary_idx = ids
+        .iter()
+        .position(|id| !id.0.to_ascii_lowercase().contains("embed"))
+        .unwrap_or(0);
+    let entries: Vec<kx_gateway_core::ModelSummaryEntry> = ids
+        .iter()
+        .enumerate()
+        // The GLOBAL primary uses `kx/recipes/chat`; everything else `kx/recipes/m-<id>`.
+        .map(|(i, id)| ollama_catalog_entry(id, !have_gguf && i == primary_idx))
+        .collect();
+    let primary = ids[primary_idx].clone();
+    tracing::info!(count, primary = %primary.0, %url, "registered Ollama models");
+    Some((backend, entries, primary))
+}
+
+/// Parse the optional `KX_SERVE_OLLAMA_MODELS` tag allowlist (comma / `;` / newline
+/// separated). `None` ⇒ serve every installed tag.
+fn parse_ollama_allowlist() -> Option<Vec<String>> {
+    let raw = std::env::var("KX_SERVE_OLLAMA_MODELS").ok()?;
+    let list: Vec<String> = raw
+        .split([',', ';', '\n', '\r'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    (!list.is_empty()).then_some(list)
+}
+
+/// The `ListModels` display entry for an Ollama-served model (engine `"kx-ollama"`).
+fn ollama_catalog_entry(model_id: &ModelId, serving: bool) -> kx_gateway_core::ModelSummaryEntry {
+    kx_gateway_core::ModelSummaryEntry {
+        model_id: model_id.0.clone(),
+        // PR-B will surface Ollama vision/embedding modalities; text for PR-A.
+        modalities: vec!["text".to_string()],
+        // The tag is its own honest description (the daemon owns the GGUF metadata).
+        description: model_id.0.clone(),
+        serving,
+        // The daemon owns the context window; `/api/show` per-model is a PR-B detail.
+        context_len: 0,
+        loaded: false,
+        chat_handle: crate::provision::chat_handle_for(model_id, serving),
+        engine: "kx-ollama".to_string(),
+    }
+}
+
+/// Default context window when the GGUF declares none. Used only by the GGUF
+/// resolver (`inference`); the FFI-free Ollama path reports the daemon's own window.
+#[cfg(feature = "inference")]
 const DEFAULT_SERVE_N_CTX: u32 = 4096;
 /// Ceiling on the served context window — bounds KV-cache memory regardless of
-/// the model's (possibly very large) declared training context.
+/// the model's (possibly very large) declared training context. Also the shaper
+/// warrant's token ceiling, so it is NOT feature-gated.
 const MAX_SERVE_N_CTX: u32 = 8192;
 /// Minimum context the agent's tool-use loop needs (mirrors the harness's
-/// `kx_model_harness::registration::AGENT_MIN_CTX_TOKENS`).
+/// `kx_model_harness::registration::AGENT_MIN_CTX_TOKENS`). Used only by the GGUF
+/// resolver + validator (`inference`).
+#[cfg(feature = "inference")]
 const AGENT_MIN_CTX_TOKENS: u32 = 2048;
 
 /// The fixed system instruction for the served chat / agentic model (the
@@ -277,6 +485,7 @@ fn parse_judge_verdict(bytes: &[u8]) -> kx_critic::CriticVerdict {
 /// Resolve the serve model GGUF: the `KX_SERVE_MODEL_GGUF` env path, iff it
 /// exists. `None` ⇒ no model serving (the model recipe is not provisioned), so
 /// `kx serve --features inference` still runs the durable spine + demo recipes.
+#[cfg(feature = "inference")]
 pub(crate) fn resolve_serve_model() -> Option<std::path::PathBuf> {
     let p = std::path::PathBuf::from(std::env::var_os("KX_SERVE_MODEL_GGUF")?);
     p.is_file().then_some(p)
@@ -286,6 +495,7 @@ pub(crate) fn resolve_serve_model() -> Option<std::path::PathBuf> {
 /// `KX_SERVE_MMPROJ_GGUF` env path, iff it exists (Batch A — the serve vision
 /// path). `None` ⇒ the serve model registers TEXT-only and the vision recipe is
 /// not provisioned; the chat path is byte-identical to pre-vision.
+#[cfg(feature = "inference")]
 pub(crate) fn resolve_serve_mmproj() -> Option<std::path::PathBuf> {
     let p = std::path::PathBuf::from(std::env::var_os("KX_SERVE_MMPROJ_GGUF")?);
     p.is_file().then_some(p)
@@ -296,6 +506,7 @@ pub(crate) fn resolve_serve_mmproj() -> Option<std::path::PathBuf> {
 /// Used identically by [`build_serve_models`] (registration) and the model
 /// recipe's warrant (`model_route.model_id`), so the backend's warrant check
 /// (`model_id == warrant.model_route.model_id`) holds.
+#[cfg(feature = "inference")]
 #[must_use]
 pub(crate) fn serve_model_id(gguf: &Path) -> ModelId {
     let stem = gguf
@@ -311,6 +522,7 @@ pub(crate) fn serve_model_id(gguf: &Path) -> ModelId {
 /// the GGUF `general.name` (file stem fallback). Display/discovery ONLY (SN-8):
 /// nothing here authorizes a model route — selection stays a recipe ENUM
 /// free-param.
+#[cfg(feature = "inference")]
 #[must_use]
 pub(crate) fn catalog_entry(
     gguf: &Path,
@@ -338,12 +550,15 @@ pub(crate) fn catalog_entry(
         loaded: false,
         // POC-3: the recipe handle that routes a chat turn to THIS model.
         chat_handle: crate::provision::chat_handle_for(model_id, serving),
+        // The in-process llama.cpp engine (matches `InferenceOutput.backend_name`).
+        engine: "kx-llamacpp".to_string(),
     }
 }
 
 /// One resolved serve-model candidate (POC-3 N-GGUF provisioning): a weights
 /// path, the (PRIMARY-only) vision projector, and whether it is the primary
 /// (default-route) model.
+#[cfg(feature = "inference")]
 pub(crate) struct ServeModelCandidate {
     pub gguf: PathBuf,
     pub mmproj: Option<PathBuf>,
@@ -357,6 +572,7 @@ pub(crate) struct ServeModelCandidate {
 /// path. The PRIMARY (index 0) carries the optional vision projector
 /// (`KX_SERVE_MMPROJ_GGUF`); secondaries register TEXT-only in this POC. An empty
 /// result ⇒ a model-less serve (unchanged FFI-free behavior).
+#[cfg(feature = "inference")]
 pub(crate) fn resolve_serve_models() -> Vec<ServeModelCandidate> {
     let primary_mmproj = resolve_serve_mmproj();
     // Ordered candidate paths: primary first, then the manifest.
@@ -403,6 +619,7 @@ pub(crate) fn resolve_serve_models() -> Vec<ServeModelCandidate> {
 /// The kortecx agent's required model signature (mirrors the harness's
 /// `kortecx_agent_requirements`): native tool-calling, Text, a chat template, a
 /// commercial-OK license, a `q4_k_m`/`q8_0`/`f16` quantization.
+#[cfg(feature = "inference")]
 fn agent_requirements() -> RequiredCapabilities {
     RequiredCapabilities {
         min_context_window_tokens: AGENT_MIN_CTX_TOKENS,
@@ -421,6 +638,7 @@ fn agent_requirements() -> RequiredCapabilities {
 
 /// The Apache-2.0 / Text / native-tool-calling / ChatML / `q4_k_m` capabilities
 /// the campaign model declares at `context_window`.
+#[cfg(feature = "inference")]
 fn agent_provided(context_window: u32) -> ProvidedCapabilities {
     ProvidedCapabilities::declared()
         .with_context_window_tokens(context_window)
@@ -433,6 +651,7 @@ fn agent_provided(context_window: u32) -> ProvidedCapabilities {
 
 /// Resolve the served context window: the GGUF's declared `*.context_length`
 /// (fail-soft), else [`DEFAULT_SERVE_N_CTX`], clamped to [`MAX_SERVE_N_CTX`].
+#[cfg(feature = "inference")]
 fn resolve_n_ctx(gguf: &Path) -> u32 {
     read_context_length(gguf)
         .unwrap_or(DEFAULT_SERVE_N_CTX)
@@ -449,6 +668,7 @@ fn resolve_n_ctx(gguf: &Path) -> u32 {
 /// # Errors
 /// A string diagnostic if the model is not fit (not `TypeOk`) or the registry
 /// rejects the descriptor.
+#[cfg(feature = "inference")]
 pub(crate) fn build_serve_models(
     candidates: &[ServeModelCandidate],
     store: Arc<LocalFsContentStore>,
@@ -525,6 +745,7 @@ pub(crate) fn build_serve_models(
 
 /// Fail-closed TypeOk gate for a serve model: its declared capabilities must
 /// type-check against the agent's required signature.
+#[cfg(feature = "inference")]
 fn type_ok(gguf: &Path) -> Result<(), String> {
     let provided = agent_provided(resolve_n_ctx(gguf));
     match check(&provided, &agent_requirements()) {
@@ -548,8 +769,7 @@ pub(crate) fn warm_on_start_enabled() -> bool {
 }
 
 /// Resolve the operator-tunable loaded-model cache capacity (`KX_SERVE_CACHE_CAPACITY`).
-/// `None` ⇒ keep the backend default. Floored at 1 (a 0/garbage value can't zero
-/// the cache).
+#[cfg(feature = "inference")]
 fn resolve_cache_capacity() -> Option<usize> {
     let raw = std::env::var("KX_SERVE_CACHE_CAPACITY").ok()?;
     if let Ok(n) = raw.trim().parse::<usize>() {
@@ -1438,12 +1658,14 @@ fn internal(reason: &str) -> MoteExecutorError {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "inference")]
     #[test]
     fn serve_model_id_is_stem_derived() {
         let id = serve_model_id(Path::new("/m/qwen3-0.6b-q4_k_m.gguf"));
         assert_eq!(id.0, "kx-serve:qwen3-0.6b-q4_k_m");
     }
 
+    #[cfg(feature = "inference")]
     #[test]
     fn agent_signature_is_self_consistent() {
         // The capabilities we DECLARE for the served model satisfy the agent's
@@ -1454,6 +1676,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "inference")]
     #[test]
     fn n_ctx_is_clamped_to_ceiling() {
         // A missing GGUF → default, clamped within [min, max].
