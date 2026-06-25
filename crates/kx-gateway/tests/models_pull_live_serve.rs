@@ -177,7 +177,10 @@ async fn model_control_v2_switch_and_pull_deny_by_default() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "live pull; needs Ollama + KX_SERVE_ALLOW_MODEL_PULL=1 + KX_TEST_OLLAMA_PULL_TAG"]
 async fn model_control_v2_live_ollama_pull_registers_without_restart() {
-    let Some(tag) = std::env::var("KX_TEST_OLLAMA_PULL_TAG").ok().filter(|t| !t.is_empty()) else {
+    let Some(tag) = std::env::var("KX_TEST_OLLAMA_PULL_TAG")
+        .ok()
+        .filter(|t| !t.is_empty())
+    else {
         eprintln!("skipping: set KX_TEST_OLLAMA_PULL_TAG=<tag> + KX_SERVE_ALLOW_MODEL_PULL=1 + run Ollama");
         return;
     };
