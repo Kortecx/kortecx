@@ -490,6 +490,13 @@ fn dispatch_multimodal_sends_base64_images_and_strips_marker() {
     // The image rides the `images` array as base64 of the raw bytes.
     let expected_b64 = base64::engine::general_purpose::STANDARD.encode(PNG_BYTES);
     assert_eq!(json["images"][0].as_str().unwrap(), expected_b64);
+    // A multimodal request MUST run in TEMPLATE mode (`raw: false`) so the daemon
+    // places the image token — `raw: true` + images is an HTTP 400 (live-found bug).
+    assert_eq!(
+        json["raw"].as_bool(),
+        Some(false),
+        "a vision request must use raw:false so Ollama templates the image in"
+    );
     // The media marker is stripped from the prompt (Ollama splices the image itself).
     let prompt = json["prompt"].as_str().unwrap();
     assert!(

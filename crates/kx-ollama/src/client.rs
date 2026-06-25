@@ -291,18 +291,21 @@ impl OllamaClient {
             Duration::from_millis(budget_ms.saturating_add(WORKER_BACKSTOP_SLACK_MS));
 
         let streaming = sink.is_some();
+        // PR-B2 vision: `raw: true` (the text path) tokenizes the already-rendered chat
+        // prompt verbatim. But with `images`, raw mode DISABLES templating — so the
+        // daemon has nowhere to splice the image token and rejects the request (HTTP
+        // 400, found in live Gemma-3 testing). A multimodal request therefore runs in
+        // TEMPLATE mode (`raw: false`): the daemon applies the model's own chat template
+        // (which places the image) around the instruction. Text dispatch is byte-
+        // identical to the pre-PR-B2 path (`raw: true`, no `images` key).
+        let raw = images.is_empty();
         let mut body = serde_json::json!({
             "model": model,
             "prompt": prompt,
-            "raw": true,
+            "raw": raw,
             "stream": streaming,
             "options": options,
         });
-        // PR-B2 vision: a Multimodal dispatch passes base64-encoded image(s); they
-        // ride the documented `/api/generate` `images` array. ABSENT (text dispatch)
-        // ⇒ the key is omitted ⇒ the body is byte-identical to the pre-PR-B2 text
-        // path. `raw: true` is preserved — the prompt is still the verbatim rendered
-        // chat string; the daemon splices the image(s) per the model's projector.
         if !images.is_empty() {
             body["images"] = serde_json::json!(images);
         }
