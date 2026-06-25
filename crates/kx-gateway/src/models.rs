@@ -47,8 +47,8 @@ impl HostModelCatalog {
     }
 
     /// Bind the live model engine so `list()` reports live RAM residency (POC-3).
-    /// Only the inference serve calls this; an FFI-free build never does.
-    #[cfg(feature = "inference")]
+    /// Only a serve-engine serve calls this; a model-less build never does.
+    #[cfg(feature = "serve-engine")]
     #[must_use]
     pub(crate) fn with_engine(mut self, engine: Arc<dyn ModelResidency>) -> Self {
         self.engine = Some(engine);
@@ -90,6 +90,7 @@ mod tests {
             context_len: 8192,
             loaded: false,
             chat_handle: "kx/recipes/chat".into(),
+            engine: "kx-llamacpp".into(),
         }]);
         let listed = catalog.list().unwrap();
         assert_eq!(listed.len(), 1);
@@ -118,6 +119,7 @@ mod tests {
                 context_len: 4096,
                 loaded: false,
                 chat_handle: "kx/recipes/chat".into(),
+                engine: "kx-llamacpp".into(),
             },
             ModelSummaryEntry {
                 model_id: "b".into(),
@@ -127,6 +129,7 @@ mod tests {
                 context_len: 4096,
                 loaded: false,
                 chat_handle: "kx/recipes/m-b".into(),
+                engine: "kx-ollama".into(),
             },
         ];
         // Only "b" resident.

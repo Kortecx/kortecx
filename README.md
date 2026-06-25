@@ -78,7 +78,8 @@ From source (Rust 1.94+; each variant adds a capability):
 git clone https://github.com/Kortecx/kortecx.git && cd kortecx
 cargo install --path crates/kx-cli                          # the core runtime — no C++, no node
 cargo install --path crates/kx-cli --features hnsw          # + Datasets/RAG (still no C++)
-cargo install --path crates/kx-cli --features inference,hnsw  # + local LLM inference (needs a C++ toolchain)
+cargo install --path crates/kx-cli --features serve-engine,hnsw  # + serve local models via Ollama (still no C++)
+cargo install --path crates/kx-cli --features inference,hnsw  # + in-process llama.cpp inference (needs a C++ toolchain)
 just console-build                                          # + the embedded web console (needs node 22; repo checkout only)
 ```
 
@@ -150,21 +151,33 @@ kx content    --ref <content-ref> --instance <instance-id>   # a committed resul
 kx events     --instance <instance-id> --follow              # live-tail the run's events
 ```
 
-**4. Add a local model** (inference build — `--features inference,hnsw`). Download
-any **fit** GGUF from Hugging Face and point the server at it. The runtime
-validates fitness at startup: a chat template (ChatML), **native tool-calling**,
-a commercial-friendly license, `q4_k_m`/`q8_0`/`f16` quantization, and a context
-window ≥ 2048. The Qwen3 family fits; the 0.6B stand-in below runs on ~0.5 GB:
+**4. Add a local model.** Two paths — see
+[Local inference engines](docs/site/docs/local-inference-engines.md):
 
-```bash
-curl -fsSL -o qwen3-0.6b-q4_k_m.gguf \
-  https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
-shasum -a 256 qwen3-0.6b-q4_k_m.gguf
-#    → ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a
+- **Ollama (zero-friction, no C++).** Build with `--features serve-engine,hnsw`,
+  [install Ollama](https://ollama.com), and `kx serve` auto-detects it on the
+  loopback port:
 
-KX_SERVE_MODEL_GGUF="$PWD/qwen3-0.6b-q4_k_m.gguf" \
+  ```bash
+  ollama pull gemma3:12b
   kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
-```
+  ```
+
+- **llama.cpp (self-contained).** Build with `--features inference,hnsw`, download a
+  **fit** GGUF, and point the server at it. The runtime validates fitness at startup:
+  a chat template (ChatML), **native tool-calling**, a commercial-friendly license,
+  `q4_k_m`/`q8_0`/`f16` quantization, and a context window ≥ 2048. The Qwen3 family
+  fits; the 0.6B stand-in below runs on ~0.5 GB:
+
+  ```bash
+  curl -fsSL -o qwen3-0.6b-q4_k_m.gguf \
+    https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
+  shasum -a 256 qwen3-0.6b-q4_k_m.gguf
+  #    → ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a
+
+  KX_SERVE_MODEL_GGUF="$PWD/qwen3-0.6b-q4_k_m.gguf" \
+    kx serve --journal /tmp/kx.db --content /tmp/kx-content --dev-allow-local
+  ```
 
 **5. Chat and run the live agent loop** — real on-device inference, durable every
 turn:

@@ -54,7 +54,7 @@
 // PR-2c F-7: render a model Mote's resolved Data context (WorkItem.parent_results)
 // into the prompt. Self-contained + FFI-free; shares the `inference` feature with
 // the model executor that consumes it.
-#[cfg(feature = "inference")]
+#[cfg(feature = "serve-engine")]
 mod assemble_serve;
 mod auth;
 mod config;
@@ -118,9 +118,9 @@ mod live_tail;
 // `--metrics-listen`). FFI-free (hyper http1 only); not feature-gated.
 mod metrics;
 // PR-2d-2: the bundled deterministic stdio MCP tool's wiring (locate the bin,
-// register the capability + the typed ToolDef). Behind `inference` (the react
-// decode arm lives in the inference-gated executor; the MCP adapter is FFI-free).
-#[cfg(feature = "inference")]
+// register the capability + the typed ToolDef). Behind `serve-engine` (the react
+// decode arm lives in the serve-engine executor; the MCP adapter is FFI-free).
+#[cfg(feature = "serve-engine")]
 mod mcp_tool;
 // PR-6b-1 (D159): the EXTERNAL MCP gateway host wiring — the McpGatewayAdmin impl
 // over kx_mcp_gateway::McpGateway + the BrokerCapabilitySink. Behind the
@@ -129,28 +129,34 @@ mod mcp_tool;
 // PR-6b-2 (a dialed tool is registered + fireable through a granting warrant).
 #[cfg(feature = "mcp-gateway")]
 mod mcp_gateway;
-// AL1: the in-process model executor for `kx serve` (live LLM dispatch). Pulls
-// the inference FFI, so it's behind the off-by-default `inference` feature.
-#[cfg(feature = "inference")]
+// AL1: the in-process model executor for `kx serve` (live LLM dispatch). FFI-FREE
+// (the generic loop), so it's behind the off-by-default `serve-engine` feature; the
+// llama.cpp-specific bits inside are additionally `inference`-gated.
+#[cfg(feature = "serve-engine")]
 mod model_exec;
+// The host-owned routing backend (one InferenceBackend + lifecycle over N serve
+// engines — llama.cpp and/or Ollama). FFI-free; rides `serve-engine`.
+#[cfg(feature = "serve-engine")]
+mod routing_backend;
 // PR-4.2 (T-STREAM1): the ADVISORY in-process token broker — the rendezvous
 // between the model executor (publisher) and the live-token subscribers. Only
-// the inference build dispatches models + publishes tokens, so it's inference-
+// a serve-engine build dispatches models + publishes tokens, so it's serve-engine-
 // gated; out-of-band (never journal / digest / identity).
-#[cfg(feature = "inference")]
+#[cfg(feature = "serve-engine")]
 mod token_broker;
 // PR-4.2 (T-STREAM1): the LiveTokenTailer — the broker-backed `TokenTailer` impl
 // the gRPC `StreamModelTokens` handler + the WS `/tokens` bridge subscribe
-// through. Needs the broker, so inference-gated; the FFI-free build serves the
+// through. Needs the broker, so serve-engine-gated; the model-less build serves the
 // core `NoTokenTailer` (an honest empty stream).
-#[cfg(feature = "inference")]
+#[cfg(feature = "serve-engine")]
 mod token_tail;
 // Batch A: the host-side model catalog (the ModelCatalogView seam) — always
 // wired so an FFI-free serve answers ListModels with an honest empty list.
 mod models;
-// POC-3: the host-side model lifecycle (the ModelLifecycleControl seam +
-// BackendEngine adapter) — only the inference serve has a live model engine.
-#[cfg(feature = "inference")]
+// POC-3: the host-side model lifecycle (the ModelLifecycleControl seam + the
+// BackendEngine adapter). FFI-free traits, so it rides `serve-engine`; the llama
+// `BackendEngine` newtype inside is additionally `inference`-gated.
+#[cfg(feature = "serve-engine")]
 mod model_lifecycle;
 // Batch B: the host-side def resolver (the MoteDefView seam) — always wired
 // over the SAME content store the coordinator persists admitted defs into.

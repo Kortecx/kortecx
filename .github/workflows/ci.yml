@@ -860,6 +860,18 @@ jobs:
         run: |
           cargo test -p kx-gateway --features inference,embedded-worker,hnsw -- --nocapture
 
+      # PR-A (pluggable inference engine): exercise the FFI-FREE `serve-engine` path —
+      # the Ollama backend + the host RoutingBackend + the re-gated serve loop — so the
+      # feature is never merged unbuilt. This runs WITH the toolchain (it just compiles
+      # + tests the FFI-free feature here); the no-toolchain FFI-FREE PROOF (a
+      # build-no-inference-style `build-serve-engine` gate) + the release-artifact flip
+      # land in the immediate PR-A.1 follow-up.
+      - name: clippy + lib tests under --features serve-engine (FFI-free serve loop)
+        run: |
+          cargo clippy -p kx-ollama --all-targets -- -D warnings
+          cargo clippy -p kx-gateway --features serve-engine,hnsw --all-targets -- -D warnings
+          cargo test -p kx-gateway --features serve-engine,hnsw --lib -- --nocapture
+
   # ---------------------------------------------------------------------------
   # real-model-e2e — the GR15 real-model behavioral gate. Serves the public
   # Qwen3-0.6B stand-in through the FULL serve path (invoke kx/recipes/chat →

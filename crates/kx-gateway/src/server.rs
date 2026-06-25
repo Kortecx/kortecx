@@ -73,7 +73,7 @@ const POLL_ERR: Duration = Duration::from_millis(200);
 
 /// F-7 wiring: the model executor (as the worker's `MoteExecutor`) + the SAME `Arc`
 /// in its `ContextSink` role + the served model id. `None`s ⇒ no model wired.
-#[cfg(feature = "inference")]
+#[cfg(feature = "serve-engine")]
 type WiredExecutor = (
     Arc<dyn MoteExecutor>,
     Option<Arc<dyn kx_worker::ContextSink>>,
@@ -371,69 +371,63 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //     materialized children against it). Resolved BEFORE the coordinator because the
     //     coordinator needs the role registry. Fail-soft: no/unfit model ⇒ `None` ⇒ the
     //     durable spine + AL1 leaf-model path are unaffected (no shaper loop).
-    #[cfg(feature = "inference")]
-    let (shaper_runtime, model_catalog_entries, model_engine): (
-        Option<crate::model_exec::ShaperRuntime>,
-        Vec<kx_gateway_core::ModelSummaryEntry>,
-        Option<Arc<kx_inference::LlamaInferenceBackend>>,
-    ) = {
-        // POC-3: resolve the FULL registered set (KX_SERVE_MODEL_GGUF primary +
-        // KX_SERVE_MODELS) and register N descriptors into one backend. The
-        // PRIMARY (index 0) drives the shaper loop + the default chat route.
-        let candidates = crate::model_exec::resolve_serve_models();
-        if candidates.is_empty() {
-            (None, Vec::new(), None)
-        } else {
-            match crate::model_exec::build_serve_models(&candidates, content.clone()) {
-                Ok((backend, entries, primary_id)) => {
-                    // POC-3: OPT-IN warm the PRIMARY model on startup (KX_SERVE_WARM_ON_START=1)
-                    // so the first chat is not a cold 12B load. OFF by default so the
-                    // default serve's startup + shutdown are byte-identical to baseline
-                    // (a model resident at process exit hits an upstream llama.cpp Metal
-                    // teardown assert, PR 17869 — pre-existing, ticketed; warming makes it
-                    // deterministic, so it stays opt-in). Off-journal; just RAM residency.
-                    if crate::model_exec::warm_on_start_enabled() {
-                        if let Err(error) = backend.warm(&primary_id) {
-                            tracing::warn!(%error, "primary model warm-on-startup failed (will cold-load on first use)");
-                        }
-                    }
-                    // A separate Arc clone is the live ENGINE handle for the host
-                    // catalog (live residency) + the lifecycle controls; the
-                    // shaper runtime gets its own clone.
-                    let engine = backend.clone();
-                    (
-                        Some(crate::model_exec::build_shaper_runtime(
-                            &primary_id,
-                            backend,
-                            default_executor_class(),
-                        )),
-                        entries,
-                        Some(engine),
-                    )
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "serve model is not fit; live loop NOT enabled");
-                    (None, Vec::new(), None)
+    // Resolve the serve runtime — the UNION of the in-process llama.cpp GGUF models
+    // (only on the `inference` build) and an auto-detected Ollama daemon's models (the
+    // FFI-free path). The `RoutingBackend` it holds is the executor backend + the
+    // lifecycle engine + the catalog residency source; `None` ⇒ a model-less serve
+    // (the durable spine + demo recipes still run). The shaper runtime + the engine
+    // handle are derived from the same routing backend (Arc clones).
+    #[cfg(feature = "serve-engine")]
+    let serve_rt: Option<crate::model_exec::ServeRuntime> = {
+        let rt = crate::model_exec::build_serve_runtime(&content);
+        if let Some(r) = &rt {
+            // POC-3: OPT-IN warm the PRIMARY model on startup (KX_SERVE_WARM_ON_START=1)
+            // so the first chat is not a cold 12B load. OFF by default. Off-journal.
+            if crate::model_exec::warm_on_start_enabled() {
+                if let Err(error) = r.routing.warm(&r.primary) {
+                    tracing::warn!(%error, "primary model warm-on-startup failed (will cold-load on first use)");
                 }
             }
         }
+        rt
     };
-    #[cfg(not(feature = "inference"))]
+    #[cfg(feature = "serve-engine")]
+    let model_catalog_entries: Vec<kx_gateway_core::ModelSummaryEntry> = serve_rt
+        .as_ref()
+        .map(|r| r.entries.clone())
+        .unwrap_or_default();
+    #[cfg(feature = "serve-engine")]
+    let shaper_runtime: Option<crate::model_exec::ShaperRuntime> = serve_rt.as_ref().map(|r| {
+        crate::model_exec::build_shaper_runtime(
+            &r.primary,
+            r.routing.clone(),
+            default_executor_class(),
+        )
+    });
+    #[cfg(feature = "serve-engine")]
+    let model_engine: Option<Arc<crate::routing_backend::RoutingBackend>> =
+        serve_rt.as_ref().map(|r| r.routing.clone());
+    #[cfg(not(feature = "serve-engine"))]
     let model_catalog_entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
 
     // T3.7: capture an OPTIONAL dataset embedder from the resolved serve backend (the
     // server-embed path). `LlamaInferenceBackend` impls `EmbeddingBackend`, so datasets
     // reuse the SAME loaded model — no new FFI surface + no kx-model-harness dep. `None`
     // when no fit model resolved ⇒ datasets fall back to the FFI-free client-vector path.
+    // The Datasets server-embed path reuses the in-process llama.cpp backend (the only
+    // `EmbeddingBackend` in PR-A — Ollama embeddings are PR-B), sourced from the serve
+    // runtime's llama handle. `None` (no GGUF, or an Ollama-only serve) ⇒ datasets fall
+    // back to the FFI-free client-vector path.
     #[cfg(all(feature = "hnsw", feature = "inference"))]
-    let dataset_embedder: Option<crate::datasets::HostEmbedder> =
-        shaper_runtime.as_ref().map(|rt| {
+    let dataset_embedder: Option<crate::datasets::HostEmbedder> = serve_rt.as_ref().and_then(|r| {
+        r.llama.as_ref().map(|llama| {
             crate::datasets::HostEmbedder::new(
-                rt.backend.clone(),
-                rt.model_id.clone(),
-                crate::model_exec::shaper_warrant(&rt.model_id, default_executor_class()),
+                llama.clone(),
+                r.primary.clone(),
+                crate::model_exec::shaper_warrant(&r.primary, default_executor_class()),
             )
-        });
+        })
+    });
 
     // (1) Embedded coordinator — the SOLE journal writer. It opens the journal
     //     read-write (by value) and verifies each committed result_ref against
@@ -468,7 +462,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         kx_tool_registry::SqliteToolRegistry::open(catalog_dir.join("tools.db"))
             .map_err(|e| GatewayError::Config(format!("tools.db: {e}")))?,
     );
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let coordinator = match shaper_runtime.as_ref() {
         Some(rt) => {
             tracing::info!("PR-2b: live model-driven topology loop enabled (kx/recipes/plan)");
@@ -497,7 +491,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // PR-9a (D66 model-free): the FFI-free serve shares the live tool registry too,
     // so a dialed/RegisterTool'd `tool()` resolves at the coordinator D66 gate
     // (parity with the inference-shaper arm; the topology path stays inert).
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let coordinator =
         CoordinatorService::with_store_and_tools(writer, content.clone(), tool_registry.clone());
     // W1a (T-OBS1): build the optional serve-path operator audit sink ONCE. Opened
@@ -576,9 +570,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // `StreamModelTokens` tailer + the WS `/tokens` bridge). Out-of-band — never
     // journal / digest / identity. Built once on the inference build; the FFI-free
     // build has no model dispatch and serves the empty `NoTokenTailer`.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let token_broker = Arc::new(crate::token_broker::TokenBroker::new());
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let (executor, context_sink, serve_model): WiredExecutor = match shaper_runtime {
         Some(rt) => {
             tracing::info!(model = %rt.model_id.0, "AL1+PR-2b: live model + topology loop enabled");
@@ -603,9 +597,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         }
         None => (executor, None, None),
     };
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let context_sink: Option<Arc<dyn kx_worker::ContextSink>> = None;
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let serve_model: Option<kx_mote::ModelId> = None;
     // Batch C: the OUTERMOST executor wrapper — every leased mote (echo /
     // real-exec / model / shaper / react turn / critic) gets a wall-clock row.
@@ -624,18 +618,18 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // capability — the live ReAct loop's "Act" step — when its binary is present
     // AND a fit serve model resolved (no model ⇒ no react chain can drive it).
     // Fail-soft: no binary ⇒ no capability, no `kx/recipes/react`; unchanged serve.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let react_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = if serve_model.is_some() {
         crate::mcp_tool::register_echo_capability(&local_broker)
     } else {
         None
     };
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let react_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
     // PR-6a/D155 (fs-list): register the read-only host fs-list@1 capability when a
     // read root is granted (`KX_SERVE_FS_ROOT`) AND a model is served (no model ⇒
     // no react chain to drive it). Default-OFF ⇒ no capability, no `react-fs`.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let fs_list_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> =
         if serve_model.is_some() && fs_list_root.is_some() {
             crate::mcp_tool::register_fs_list_capability(&local_broker);
@@ -643,13 +637,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         } else {
             None
         };
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let fs_list_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
     // D155 Phase-A (fs-read): register the read-into-CAS fs-read@1 capability under
     // the SAME operator gate as fs-list (`KX_SERVE_FS_ROOT` + a served model). It
     // joins fs-list in the `react-fs` recipe (list-to-discover + read-to-ingest) and
     // the autonomous `react-auto` auto-grant set. Default-OFF ⇒ byte-identical serve.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let fs_read_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> =
         if serve_model.is_some() && fs_list_root.is_some() {
             crate::mcp_tool::register_fs_read_capability(&local_broker);
@@ -657,15 +651,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         } else {
             None
         };
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let fs_read_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
     // PR-6b-4 (auto-grant): the operator opt-in (`KX_SERVE_AUTOGRANT`, default-OFF)
     // for the autonomous-loop tool auto-grant — gates seeding `kx/recipes/react-auto`
     // AND wiring the binder's live-warrant rebuild. Requires a served model (no model
     // ⇒ no react chain to drive). OFF ⇒ byte-identical serve (react-auto absent).
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let autogrant = serve_model.is_some() && crate::mcp_tool::autogrant_enabled();
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let autogrant = false;
     let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
     let worker = Worker::register(
@@ -743,7 +737,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // the bundled echo capability resolved (`react_tool`), register `mcp-echo@1`
     // as a server-built (non-deregisterable) tool — matching the coordinator's
     // `registry_with_echo` so the inventory agrees with what the loop can fire.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     if react_tool.is_some() {
         if let Err(error) = tool_registry.register_server_tool(
             crate::mcp_tool::echo_tool_def(),
@@ -757,7 +751,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     }
     // PR-6a/D155 (fs-list): seed fs-list@1 into the durable registry (so
     // DiscoverTools shows the real runnable set) when the read root is granted.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     if let Some(root) = fs_list_root.as_deref() {
         if fs_list_tool.is_some() {
             if let Err(error) = tool_registry.register_server_tool(
@@ -809,13 +803,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // POC-3: the NON-primary registered models — each gets its OWN chat recipe
     // (`kx/recipes/m-<id>`) so a chat turn can route to a chosen model. Derived from
     // the catalog entries (serving == primary); empty on a single-model serve.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let secondary_models: Vec<kx_mote::ModelId> = model_catalog_entries
         .iter()
         .filter(|e| !e.serving)
         .map(|e| kx_mote::ModelId(e.model_id.clone()))
         .collect();
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let secondary_models: Vec<kx_mote::ModelId> = Vec::new();
     let demo = Arc::new(DemoLibrary::open_serve(
         &catalog_dir,
@@ -1164,36 +1158,36 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // POC-3: the FIXED registered set the lifecycle controls are scoped to (the
     // model ids the server provisioned at startup) — load/offload of anything
     // else is fail-closed NotFound.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let registered_model_ids: std::collections::BTreeSet<String> = model_catalog_entries
         .iter()
         .map(|e| e.model_id.clone())
         .collect();
-    // POC-3: build the lifecycle CONTROL seam over the live engine (inference
-    // serve only) — load/offload warm/evict the registered set's RAM residency.
-    #[cfg(feature = "inference")]
+    // POC-3: build the lifecycle CONTROL seam over the live routing backend (a
+    // serve-engine serve only) — load/offload warm/evict the registered set's RAM
+    // residency; the routing backend routes each to the owning engine (llama.cpp or
+    // Ollama).
+    #[cfg(feature = "serve-engine")]
     let model_lifecycle_view: Option<Arc<dyn kx_gateway_core::ModelLifecycleControl>> =
         model_engine.as_ref().map(|engine| {
             Arc::new(crate::model_lifecycle::HostModelLifecycle::new(
-                Arc::new(crate::model_lifecycle::BackendEngine(engine.clone())),
+                engine.clone(),
                 registered_model_ids,
             )) as Arc<dyn kx_gateway_core::ModelLifecycleControl>
         });
-    // The model catalog is always wired (an FFI-free serve answers ListModels with
-    // an honest empty list); on the inference serve it binds the live engine so
-    // `loaded` reflects real RAM residency (POC-3).
-    #[cfg(feature = "inference")]
+    // The model catalog is always wired (a model-less serve answers ListModels with
+    // an honest empty list); on a serve-engine serve it binds the live routing backend
+    // so `loaded` reflects real RAM residency (POC-3).
+    #[cfg(feature = "serve-engine")]
     let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> = {
         let catalog = crate::models::HostModelCatalog::new(model_catalog_entries);
         let catalog = match model_engine.as_ref() {
-            Some(engine) => catalog.with_engine(Arc::new(crate::model_lifecycle::BackendEngine(
-                engine.clone(),
-            ))),
+            Some(engine) => catalog.with_engine(engine.clone()),
             None => catalog,
         };
         Arc::new(catalog)
     };
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> =
         Arc::new(crate::models::HostModelCatalog::new(model_catalog_entries));
     // Batch B: the def resolver reads the SAME store the coordinator persists
@@ -1265,7 +1259,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // PR-4.2 (T-STREAM1): wire the broker-backed live token tailer behind the gRPC
     // `StreamModelTokens` RPC (the inference build only; the default `NoTokenTailer`
     // serves an honest empty stream otherwise). Read-side / out-of-band.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     {
         gateway = gateway.with_token_tailer(Arc::new(crate::token_tail::LiveTokenTailer::new(
             token_broker.clone(),
@@ -1275,7 +1269,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // POC-3: wire the model-lifecycle CONTROL seam (LoadModel/OffloadModel) over
     // the live engine. Only present when a fit model resolved; otherwise the RPCs
     // return `unimplemented` (the GetServerInfo precedent). Off-journal, off-digest.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     if let Some(lifecycle) = model_lifecycle_view {
         gateway = gateway.with_model_lifecycle(lifecycle);
     }
@@ -1343,17 +1337,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // `LiveTokenTailer` on the inference build (the browser's only live path; a
     // browser cannot speak gRPC server-streaming), the empty `NoTokenTailer`
     // otherwise. Read-side / out-of-band; same shutdown discipline.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let ws_token_tailer: Arc<dyn kx_gateway_core::TokenTailer> = Arc::new(
         crate::token_tail::LiveTokenTailer::new(token_broker.clone(), live_shutdown_rx.clone()),
     );
-    #[cfg(not(feature = "inference"))]
+    #[cfg(not(feature = "serve-engine"))]
     let ws_token_tailer: Arc<dyn kx_gateway_core::TokenTailer> =
         Arc::new(kx_gateway_core::NoTokenTailer);
     // PR-4.2: a background sweep that reclaims idle/finished per-mote token
     // channels (bounded memory on a long-lived serve). Aborted on shutdown like
     // the other aux tasks.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     let token_evict_task = {
         let broker = token_broker.clone();
         let mut shutdown = live_shutdown_rx.clone();
@@ -1537,9 +1531,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         ws_token_tailer,
         ws_resolver,
     ));
-    // `mut` consumed by the console push (feature-gated) and the token-evict push.
+    // `mut` consumed by the console push (feature-gated) and the token-evict push
+    // (serve-engine-gated).
     #[cfg_attr(
-        all(not(feature = "console"), not(feature = "inference")),
+        all(not(feature = "console"), not(feature = "serve-engine")),
         allow(unused_mut)
     )]
     let mut aux = vec![
@@ -1551,7 +1546,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         telemetry_task,
         alerts_task,
     ];
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     aux.push(token_evict_task);
     #[cfg(feature = "console")]
     if let Some(tcp) = console_tcp {

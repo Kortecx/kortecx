@@ -870,6 +870,9 @@ message ModelSummary {
   string chat_handle = 7;                // POC-3: the recipe handle a client invokes to chat with
                                          //   THIS model (primary = kx/recipes/chat; secondary =
                                          //   kx/recipes/m-<id>) — the binder-free routing key
+  string engine = 8;                     // the serving engine: "kx-llamacpp" (in-process llama.cpp)
+                                         //   or "kx-ollama" (a local Ollama daemon). Display/audit
+                                         //   only (never identity); empty on an old host (additive)
 }
 
 message ListModelsResponse {

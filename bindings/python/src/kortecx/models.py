@@ -24,6 +24,7 @@ class ModelSummary:
     context_len: int  # the served context window in tokens
     loaded: bool = False  # POC-3: resident in RAM right now (live LRU residency)
     chat_handle: str = ""  # POC-3: the recipe handle to chat with THIS model
+    engine: str = ""  # serving engine: "kx-llamacpp" | "kx-ollama" (empty on an old host)
 
     @classmethod
     def from_proto(cls, m: "_g.ModelSummary") -> "ModelSummary":
@@ -35,6 +36,7 @@ class ModelSummary:
             context_len=m.context_len,
             loaded=m.loaded,
             chat_handle=m.chat_handle,
+            engine=m.engine,
         )
 
 

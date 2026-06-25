@@ -1983,6 +1983,7 @@ impl KxGateway for GatewayService {
                 context_len: m.context_len,
                 loaded: m.loaded,
                 chat_handle: m.chat_handle,
+                engine: m.engine,
             })
             .collect();
         Ok(Response::new(proto::ListModelsResponse { models }))

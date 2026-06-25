@@ -573,6 +573,7 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
                     "context_len": m.context_len,
                     "loaded": m.loaded,
                     "chat_handle": m.chat_handle,
+                    "engine": m.engine,
                 })
             })
             .collect();
@@ -583,10 +584,18 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
         resp.models
             .iter()
             .map(|m| {
+                // Engine badge after the modalities (e.g. `[text · ollama]`); empty on
+                // an old host that does not report an engine.
+                let engine = if m.engine.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {}", m.engine.strip_prefix("kx-").unwrap_or(&m.engine))
+                };
                 format!(
-                    "{}  [{}]  ctx={}  {}{}{}",
+                    "{}  [{}{}]  ctx={}  {}{}{}",
                     m.model_id,
                     m.modalities.join("+"),
+                    engine,
                     m.context_len,
                     m.description,
                     if m.serving { "  (serving)" } else { "" },

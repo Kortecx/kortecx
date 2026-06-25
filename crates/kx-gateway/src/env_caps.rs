@@ -17,7 +17,7 @@
 
 /// Default F-7 serve-context window. Used only on the inference serve path
 /// (`window_bytes` + the `assemble_serve` overflow test), so it is gated to match.
-#[cfg(feature = "inference")]
+#[cfg(feature = "serve-engine")]
 pub(crate) const DEFAULT_WINDOW_BYTES: usize = 32 * 1024;
 /// Default agentic-edit / scaffold-write input-token budget (the react-edit ceiling).
 pub(crate) const DEFAULT_EDIT_MAX_INPUT_TOKENS: u32 = 8_192;
@@ -29,7 +29,7 @@ pub(crate) const DEFAULT_CHAT_RAG_MAX_K: usize = 16;
 // Defensive upper bounds — a garbage-large env value clamps here rather than blowing
 // the model window / decode loop. Generous (these are operator opt-ins), never silent
 // (out-of-range falls back to the default, see `parse_cap`).
-#[cfg(feature = "inference")]
+#[cfg(feature = "serve-engine")]
 const MAX_WINDOW_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 const MAX_EDIT_TOKENS: u32 = 131_072; // 128k
 const MAX_CHAT_RAG_K: usize = 256;
@@ -50,7 +50,7 @@ fn parse_cap_u32(raw: Option<&str>, default: u32, max: u32) -> u32 {
 }
 
 /// The F-7 serve-context window cap (`KX_SERVE_WINDOW_BYTES`).
-#[cfg(feature = "inference")]
+#[cfg(feature = "serve-engine")]
 pub(crate) fn window_bytes() -> usize {
     parse_cap(
         std::env::var("KX_SERVE_WINDOW_BYTES").ok().as_deref(),

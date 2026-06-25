@@ -40,6 +40,7 @@ def test_model_summary_from_proto_carries_display_fields():
         description="Qwen3 4B",
         serving=True,
         context_len=8192,
+        engine="kx-llamacpp",
     )
     s = ModelSummary.from_proto(m)
     assert s.model_id == "kx-serve:qwen3-4b"
@@ -47,3 +48,5 @@ def test_model_summary_from_proto_carries_display_fields():
     assert s.description == "Qwen3 4B"
     assert s.serving is True
     assert s.context_len == 8192
+    # PR-A: the serving engine carries through (pluggable inference engine).
+    assert s.engine == "kx-llamacpp"
