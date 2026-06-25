@@ -197,8 +197,8 @@ export type {
 export { WaitState } from "./wait.js";
 export type { WaitOutcome, WaitMode } from "./wait.js";
 
-export { KxClientBase } from "./client.js";
-export type { KxClientOptions, InvokeOptions, Id } from "./client.js";
+export { KxClientBase, VISION_RECIPE_HANDLE } from "./client.js";
+export type { KxClientOptions, InvokeOptions, Id, ImageInput } from "./client.js";
 
 export { DEFAULT_ENDPOINT, isNonloopbackPlaintext } from "./transport.js";
 export type { Args } from "./transport.js";

@@ -14,6 +14,7 @@ import os
 import warnings
 from typing import (
     TYPE_CHECKING,
+    Any,
     AsyncIterator,
     Dict,
     Iterator,
@@ -21,6 +22,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Tuple,
     Union,
 )
 
@@ -151,8 +153,17 @@ REACT_RECIPE_HANDLE = "kx/recipes/react"
 CHAT_RECIPE_HANDLE = "kx/recipes/chat"
 CHAT_RAG_RECIPE_HANDLE = "kx/recipes/chat-rag"
 
+#: PR-B2: the vision recipe handle — an image→text chat over a vision-capable model
+#: on either engine (Ollama vision tags / llama.cpp mmproj). Also serves prompted OCR
+#: ("transcribe the text in this image") — the same vision dispatch.
+VISION_RECIPE_HANDLE = "kx/recipes/vision"
+
 ArgsType = Union[dict, bytes, bytearray, str]
 IdType = Union[str, bytes]
+#: PR-B2: an image to attach to :meth:`chat`. Raw ``bytes`` (uploaded), or a dict
+#: ``{"ref": <64-hex>}`` (an existing ``PutContent`` ref) / ``{"bytes": ...,
+#: "media_type": ...}``.
+ImageInput = Union[bytes, bytearray, Dict[str, Any]]
 
 #: Default channel message-size options (Batch A): receive covers large committed
 #: results + full content batches; send covers a default-cap (32 MiB) PutContent
@@ -356,6 +367,44 @@ class KxClient:
                 fh.write(result.payload)
         return result
 
+    def _resolve_image_ref(self, image: ImageInput) -> str:
+        """Resolve an :data:`ImageInput` to a 64-hex ``PutContent`` ref (PR-B2)."""
+        if isinstance(image, (bytes, bytearray)):
+            return self.put_content(bytes(image)).content_ref
+        if isinstance(image, dict):
+            if "ref" in image:
+                return str(image["ref"])
+            if "bytes" in image:
+                return self.put_content(
+                    bytes(image["bytes"]), media_type=image.get("media_type", "")
+                ).content_ref
+        raise KxUsage("image must be bytes, {'ref': <hex>}, or {'bytes': ..., 'media_type': ...}")
+
+    def _bind_vision(self, prompt: str, image_ref: str) -> Tuple[str, dict]:
+        """Bind ``kx/recipes/vision`` for an image-bearing chat (PR-B2), honest-degrading
+        with a clear error when no image-capable model is served."""
+        try:
+            form = self.get_recipe_form(VISION_RECIPE_HANDLE)
+        except Exception as e:  # recipe not provisioned / old gateway
+            raise KxUsage(
+                "vision is not available on this serve (no image-capable model). Pull/serve a "
+                "vision model (e.g. gemma3 via Ollama, or Gemma-4 + mmproj via llama.cpp)."
+            ) from e
+        by = {f.name: f for f in form.fields}
+        if "image_ref" not in by:
+            raise KxUsage("the kx/recipes/vision form does not declare an image_ref slot")
+        args: dict = {"image_ref": image_ref}
+        if "prompt" in by:
+            args["prompt"] = prompt
+        model = by.get("model")
+        if model is not None:
+            args["model"] = (
+                self.default_model
+                if (self.default_model and self.default_model in model.allowed)
+                else model.allowed[0]
+            )
+        return VISION_RECIPE_HANDLE, args
+
     def chat(
         self,
         prompt: str,
@@ -363,6 +412,7 @@ class KxClient:
         dataset: Optional[str] = None,
         k: int = 4,
         timeout: float = 120.0,
+        image: Optional[ImageInput] = None,
     ) -> str:
         """Ask the served model a single question and get its answer text (POC-1).
 
@@ -379,7 +429,24 @@ class KxClient:
         Raises :class:`~kortecx.errors.KxRunFailed` if the run fails and
         :class:`~kortecx.errors.KxWaitTimeout` if it does not commit in time — same
         as ``invoke(wait=True)``. ``chat-rag`` needs a gateway with the retrieval
-        features (a recipe-not-found / unsupported run surfaces the usual error)."""
+        features (a recipe-not-found / unsupported run surfaces the usual error).
+
+        PR-B2: pass ``image`` (raw ``bytes`` or ``{"ref": <hex>}``) to attach an image
+        and bind ``kx/recipes/vision`` (image→text on a vision-capable model on either
+        engine; also prompted OCR). ``dataset`` + ``image`` together is not yet
+        supported (vision-RAG is a follow-up) — a clear :class:`KxUsage`, never a
+        silent drop."""
+        if image is not None:
+            if dataset is not None:
+                raise KxUsage(
+                    "chat: 'dataset' and 'image' cannot be combined "
+                    "(vision-RAG is not yet supported)"
+                )
+            image_ref = self._resolve_image_ref(image)
+            v_handle, v_args = self._bind_vision(prompt, image_ref)
+            v_result = self.invoke(v_handle, v_args, wait=True, timeout=timeout)
+            assert isinstance(v_result, Result)
+            return v_result.text or ""
         if dataset is not None:
             handle = CHAT_RAG_RECIPE_HANDLE
             args: dict = {"prompt": prompt, "dataset": dataset, "k": k}
@@ -1793,6 +1860,45 @@ class AsyncKxClient:
                 fh.write(result.payload)
         return result
 
+    async def _resolve_image_ref(self, image: ImageInput) -> str:
+        """Async mirror of :meth:`KxClient._resolve_image_ref` (PR-B2)."""
+        if isinstance(image, (bytes, bytearray)):
+            return (await self.put_content(bytes(image))).content_ref
+        if isinstance(image, dict):
+            if "ref" in image:
+                return str(image["ref"])
+            if "bytes" in image:
+                return (
+                    await self.put_content(
+                        bytes(image["bytes"]), media_type=image.get("media_type", "")
+                    )
+                ).content_ref
+        raise KxUsage("image must be bytes, {'ref': <hex>}, or {'bytes': ..., 'media_type': ...}")
+
+    async def _bind_vision(self, prompt: str, image_ref: str) -> Tuple[str, dict]:
+        """Async mirror of :meth:`KxClient._bind_vision` (PR-B2)."""
+        try:
+            form = await self.get_recipe_form(VISION_RECIPE_HANDLE)
+        except Exception as e:
+            raise KxUsage(
+                "vision is not available on this serve (no image-capable model). Pull/serve a "
+                "vision model (e.g. gemma3 via Ollama, or Gemma-4 + mmproj via llama.cpp)."
+            ) from e
+        by = {f.name: f for f in form.fields}
+        if "image_ref" not in by:
+            raise KxUsage("the kx/recipes/vision form does not declare an image_ref slot")
+        args: dict = {"image_ref": image_ref}
+        if "prompt" in by:
+            args["prompt"] = prompt
+        model = by.get("model")
+        if model is not None:
+            args["model"] = (
+                self.default_model
+                if (self.default_model and self.default_model in model.allowed)
+                else model.allowed[0]
+            )
+        return VISION_RECIPE_HANDLE, args
+
     async def chat(
         self,
         prompt: str,
@@ -1800,11 +1906,25 @@ class AsyncKxClient:
         dataset: Optional[str] = None,
         k: int = 4,
         timeout: float = 120.0,
+        image: Optional[ImageInput] = None,
     ) -> str:
         """Async mirror of :meth:`KxClient.chat` — ask the served model a single
-        question (optionally AUTO-RAG-grounded against ``dataset``) and return the
-        committed answer text. The server degrades honestly to a plain answer when
-        the dataset is missing/empty (never fakes grounding)."""
+        question (optionally AUTO-RAG-grounded against ``dataset``, or image-bearing
+        via ``image`` → ``kx/recipes/vision``) and return the committed answer text.
+        The server degrades honestly to a plain answer when the dataset is
+        missing/empty (never fakes grounding); ``dataset`` + ``image`` together is a
+        :class:`KxUsage` (vision-RAG is a follow-up)."""
+        if image is not None:
+            if dataset is not None:
+                raise KxUsage(
+                    "chat: 'dataset' and 'image' cannot be combined "
+                    "(vision-RAG is not yet supported)"
+                )
+            image_ref = await self._resolve_image_ref(image)
+            v_handle, v_args = await self._bind_vision(prompt, image_ref)
+            v_result = await self.invoke(v_handle, v_args, wait=True, timeout=timeout)
+            assert isinstance(v_result, Result)
+            return v_result.text or ""
         if dataset is not None:
             handle = CHAT_RAG_RECIPE_HANDLE
             args: dict = {"prompt": prompt, "dataset": dataset, "k": k}

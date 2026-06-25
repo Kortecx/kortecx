@@ -108,6 +108,21 @@ import {
  */
 export const REACT_RECIPE_HANDLE = "kx/recipes/react";
 
+/** The vision recipe handle (PR-B2) — an image→text chat over a vision-capable model
+ * on either engine (Ollama vision tags / llama.cpp mmproj). */
+export const VISION_RECIPE_HANDLE = "kx/recipes/vision";
+
+/**
+ * An image to attach to a {@link KxClientBase.chat} call (PR-B2). Either an existing
+ * `{ ref }` (a 64-hex `PutContent` ref) or raw `bytes` to upload (a bare `Uint8Array`
+ * is shorthand for `{ bytes }`). Used for image→text vision AND prompted OCR
+ * ("transcribe the text in this image") — both are the same vision dispatch.
+ */
+export type ImageInput =
+  | Uint8Array
+  | { ref: string }
+  | { bytes: Uint8Array; mediaType?: string };
+
 /** An id argument: hex string OR raw server-derived bytes. */
 export type Id = string | Uint8Array;
 
@@ -283,8 +298,26 @@ export abstract class KxClientBase {
    */
   async chat(
     prompt: string,
-    opts: { dataset?: string; k?: number; timeoutMs?: number } = {},
+    opts: { dataset?: string; k?: number; timeoutMs?: number; image?: ImageInput } = {},
   ): Promise<string> {
+    // PR-B2 vision: an `image` attaches to the SAME single-entry chat call and binds
+    // the `kx/recipes/vision` recipe (image→text on whichever engine serves a
+    // vision-capable model). `dataset` + `image` together is not yet supported
+    // (vision-RAG is a follow-up) — a clear usage error, never a silent drop.
+    if (opts.image !== undefined) {
+      if (opts.dataset !== undefined) {
+        throw new KxUsage(
+          "chat: `dataset` and `image` cannot be combined (vision-RAG is not yet supported)",
+        );
+      }
+      const imageRef = await this.resolveImageRef(opts.image);
+      const { handle, args } = await this.bindVision(prompt, imageRef);
+      const result = (await this.invoke(handle, args, {
+        wait: true,
+        timeoutMs: opts.timeoutMs,
+      })) as Result;
+      return result.text ?? "";
+    }
     const dataset = opts.dataset;
     const handle = dataset ? "kx/recipes/chat-rag" : "kx/recipes/chat";
     const args: Args = dataset ? { prompt, dataset, k: opts.k ?? 4 } : { prompt };
@@ -293,6 +326,56 @@ export abstract class KxClientBase {
       timeoutMs: opts.timeoutMs,
     })) as Result;
     return result.text ?? "";
+  }
+
+  /**
+   * Resolve an {@link ImageInput} to a 64-hex `PutContent` ref (PR-B2): an existing
+   * `{ ref }` passes through; raw `bytes` (or a bare `Uint8Array`) are uploaded via
+   * {@link KxClientBase.putContent} and the server-derived ref returned.
+   */
+  private async resolveImageRef(image: ImageInput): Promise<string> {
+    if (image instanceof Uint8Array) {
+      return (await this.putContent(image)).contentRef;
+    }
+    if ("ref" in image) return image.ref;
+    return (await this.putContent(image.bytes, { mediaType: image.mediaType })).contentRef;
+  }
+
+  /**
+   * Bind the `kx/recipes/vision` recipe for an image-bearing chat (PR-B2): resolve the
+   * published form (the SAME form-gate the console uses), pick a legal `model` ENUM
+   * value, and assemble `{ prompt, image_ref, model }`. Honest-degrade: if no
+   * image-capable model is served the recipe form is absent ⇒ a clear usage error
+   * (never a silent text answer that ignores the image).
+   */
+  private async bindVision(
+    prompt: string,
+    imageRef: string,
+  ): Promise<{ handle: string; args: Args }> {
+    let form: RecipeForm;
+    try {
+      form = await this.getRecipeForm(VISION_RECIPE_HANDLE);
+    } catch {
+      throw new KxUsage(
+        "vision is not available on this serve (no image-capable model). Pull/serve a vision model (e.g. gemma3 via Ollama, or Gemma-4 + mmproj via llama.cpp).",
+      );
+    }
+    const has = (n: string) => form.fields.find((f) => f.name === n);
+    if (!has("image_ref")) {
+      throw new KxUsage("the kx/recipes/vision form does not declare an image_ref slot");
+    }
+    const args: Args = { image_ref: imageRef };
+    if (has("prompt")) args.prompt = prompt;
+    const model = has("model");
+    if (model) {
+      // The server validates ENUM membership; pre-pick a legal value so the happy
+      // path never round-trips a refusal (mirrors the console's planVisionArgs).
+      args.model =
+        this.defaultModel !== undefined && model.allowed.includes(this.defaultModel)
+          ? this.defaultModel
+          : model.allowed[0];
+    }
+    return { handle: VISION_RECIPE_HANDLE, args };
   }
 
   /**
