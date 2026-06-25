@@ -70,4 +70,8 @@ pub struct ServerInfoFacts {
     /// this is independent of `react_max_turns`. Read-only; overridable per-invocation
     /// via `--max-tool-calls` / SDK `max_tool_calls`.
     pub react_max_tool_calls: u32,
+    /// Model Control v2: whether operator-enabled model downloads are ON
+    /// (`KX_SERVE_ALLOW_MODEL_PULL`). `false` ⇒ `PullModel` refuses (deny-by-default);
+    /// the UI renders an honest-disabled Pull panel. Posture only (never a URL/secret).
+    pub allow_model_pull: bool,
 }

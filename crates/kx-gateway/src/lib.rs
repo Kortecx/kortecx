@@ -158,6 +158,14 @@ mod models;
 // `BackendEngine` newtype inside is additionally `inference`-gated.
 #[cfg(feature = "serve-engine")]
 mod model_lifecycle;
+// Model Control v2: the host-side active-default-model control (SetActiveModel) +
+// the model-acquisition orchestrator (PullModel/GetPullStatus). serve-engine-gated
+// (they register into the live routing/catalog; the direct-URL download arm inside
+// `model_pull` is additionally `inference`-gated).
+#[cfg(feature = "serve-engine")]
+mod active_model;
+#[cfg(feature = "serve-engine")]
+mod model_pull;
 // Batch B: the host-side def resolver (the MoteDefView seam) — always wired
 // over the SAME content store the coordinator persists admitted defs into.
 mod mote_defs;

@@ -16,7 +16,11 @@ const MODELS = [
     contextLen: 8192,
     loaded: true,
     chatHandle: "kx/recipes/chat",
+    engine: "kx-llamacpp",
     canEmbed: true,
+    source: "local",
+    active: false,
+    chatRagHandle: "",
   },
   {
     modelId: "gemma-2b",
@@ -26,7 +30,11 @@ const MODELS = [
     contextLen: 4096,
     loaded: false,
     chatHandle: "kx/recipes/m-gemma-2b",
+    engine: "kx-ollama",
     canEmbed: false,
+    source: "ollama",
+    active: false,
+    chatRagHandle: "",
   },
 ];
 
@@ -91,16 +99,54 @@ describe("ModelsSection", () => {
     await waitFor(() => expect(screen.getByTestId("model-action-error")).toBeInTheDocument());
   });
 
-  it("always shows the honest-disabled Cloud / coming-soon cards (D129/GR15, never faked)", async () => {
+  it("shows the honest-disabled Cloud card + an honest-disabled Pull panel when downloads are off (D129/GR15)", async () => {
+    // Model Control v2: downloads OFF by default (deny-by-default) ⇒ the Pull panel
+    // renders disabled WITH the reason, never a faked control.
     const mock = makeMockClient({ listModels: async () => MODELS });
     render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
 
     const connect = await screen.findByTestId("models-cloud-connect");
-    const pull = screen.getByTestId("models-cloud-pull");
     expect(connect).toHaveAttribute("aria-disabled", "true");
-    expect(pull).toHaveAttribute("aria-disabled", "true");
     expect(connect).toHaveTextContent(/connect a cloud provider/i);
-    expect(pull).toHaveTextContent(/pull a model/i);
+
+    const pullDisabled = await screen.findByTestId("models-pull-disabled");
+    expect(pullDisabled).toHaveAttribute("aria-disabled", "true");
+    expect(pullDisabled).toHaveTextContent(/KX_SERVE_ALLOW_MODEL_PULL/);
+  });
+
+  it("Model Control v2: an enabled Pull panel pulls an Ollama tag + polls to done", async () => {
+    const user = userEvent.setup();
+    const mock = makeMockClient({
+      listModels: async () => MODELS,
+      getServerInfo: async () => ({ allowModelPull: true, activeModelId: "" }),
+      pullModel: async () => "gemma3:12b",
+      getPullStatus: async () => ({
+        modelId: "gemma3:12b",
+        phase: "done",
+        bytesDownloaded: 100,
+        bytesTotal: 100,
+        detail: "registered",
+      }),
+    });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+
+    // The enabled panel is shown (not the disabled placeholder).
+    const tag = await screen.findByTestId("models-pull-tag");
+    await user.type(tag, "gemma3:12b");
+    await user.click(screen.getByTestId("models-pull-go"));
+    // The pull fires with the Ollama tag, then polls to a terminal status.
+    await waitFor(() => expect(mock.pullModel).toHaveBeenCalledWith({ ollamaTag: "gemma3:12b" }));
+    await waitFor(() => expect(screen.getByTestId("models-pull-progress")).toBeInTheDocument());
+  });
+
+  it("Model Control v2: 'Make active' sets the server's active default", async () => {
+    const user = userEvent.setup();
+    const mock = makeMockClient({ listModels: async () => MODELS });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+    await waitFor(() => expect(screen.getAllByTestId("model-card")).toHaveLength(2));
+
+    await user.click(screen.getByTestId("model-make-active-qwen3-4b"));
+    await waitFor(() => expect(mock.setActiveModel).toHaveBeenCalledWith("qwen3-4b"));
   });
 
   it("shows an honest empty state on an FFI-free serve (empty list, not an error)", async () => {

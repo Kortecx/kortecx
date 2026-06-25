@@ -53,6 +53,10 @@ class ServerInfo:
     react_max_tool_calls: int = 0
     # PR-B: the configured datasets/RAG embed model id ("" on a model-less serve).
     embed_model_id: str = ""
+    # Model Control v2: the active default model ("" ⇒ the primary) + the download
+    # posture (operator opt-in; the UI renders an honest-disabled Pull panel when off).
+    active_model_id: str = ""
+    allow_model_pull: bool = False
 
     @classmethod
     def from_proto(cls, r: "_g.GetServerInfoResponse") -> "ServerInfo":
@@ -79,4 +83,6 @@ class ServerInfo:
             react_max_turns=r.react_max_turns,
             react_max_tool_calls=r.react_max_tool_calls,
             embed_model_id=r.embed_model_id,
+            active_model_id=r.active_model_id,
+            allow_model_pull=r.allow_model_pull,
         )

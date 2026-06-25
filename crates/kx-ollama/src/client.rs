@@ -287,6 +287,64 @@ impl OllamaClient {
         }
     }
 
+    /// `POST /api/pull` (stream) — download `tag` from the Ollama registry, invoking
+    /// `on_progress(status, completed, total)` for each NDJSON progress object so the
+    /// caller can surface live byte progress. Returns `Ok(())` once the daemon reports
+    /// a terminal `success`.
+    ///
+    /// Model Control v2 (the "quick/easy" Ollama acquisition path). Resumable: the
+    /// daemon resumes an interrupted pull server-side, so a re-issued pull continues
+    /// from where it left off. NO short control timeout — a pull legitimately runs for
+    /// minutes; the HOST drives this on a blocking task it owns (and can abandon).
+    ///
+    /// # Errors
+    /// [`OllamaError::Unreachable`] / [`OllamaError::Status`] when the daemon is down /
+    /// rejects the request; [`OllamaError::Protocol`] on a malformed stream, a pull
+    /// `error` object (e.g. an unknown model), or a stream that ends without `success`.
+    pub fn pull(
+        &self,
+        tag: &str,
+        on_progress: &mut dyn FnMut(&str, u64, u64),
+    ) -> Result<(), OllamaError> {
+        let body = serde_json::json!({ "model": tag, "stream": true });
+        let bytes = to_body(&body)?;
+        let url = format!("{}/api/pull", self.base);
+        let resp = self
+            .agent
+            .post(&url)
+            .set("Content-Type", "application/json")
+            .send_bytes(&bytes)
+            .map_err(classify)?;
+        // NDJSON: one small progress object per line, many lines. No body cap (the
+        // lines are tiny); the daemon terminates the stream on success/error.
+        let mut saw_success = false;
+        for line in BufReader::new(resp.into_reader()).lines() {
+            let line = line.map_err(|e| OllamaError::Protocol(e.to_string()))?;
+            match parse_pull_line(&line)? {
+                Some(PullTick::Error(message)) => {
+                    return Err(OllamaError::Protocol(format!("pull failed: {message}")));
+                }
+                Some(PullTick::Progress {
+                    status,
+                    completed,
+                    total,
+                }) => on_progress(&status, completed, total),
+                Some(PullTick::Success) => {
+                    on_progress("success", 0, 0);
+                    saw_success = true;
+                }
+                None => {}
+            }
+        }
+        if saw_success {
+            Ok(())
+        } else {
+            Err(OllamaError::Protocol(
+                "pull stream ended without a success status".to_string(),
+            ))
+        }
+    }
+
     /// `GET path` with the control-plane timeout, returning the response body.
     fn get(&self, path: &str) -> Result<String, OllamaError> {
         let url = format!("{}{path}", self.base);
@@ -372,6 +430,58 @@ fn read_stream(reader: impl Read, sink: &TokenSink) -> Result<GenOutcome, Ollama
         }
     }
     Ok(GenOutcome { text, eval_count })
+}
+
+/// One parsed `/api/pull` NDJSON progress line.
+enum PullTick {
+    /// A download-progress object (`{status, completed?, total?}`).
+    Progress {
+        /// The daemon's status string (e.g. `"pulling <digest>"`, `"verifying sha256"`).
+        status: String,
+        /// Bytes downloaded so far (`0` when the daemon omits it for this line).
+        completed: u64,
+        /// Total bytes for the current layer (`0` when unknown).
+        total: u64,
+    },
+    /// A pull `error` object — the pull failed (carries the daemon's message).
+    Error(String),
+    /// The terminal `{"status":"success"}` line.
+    Success,
+}
+
+/// Parse one `/api/pull` NDJSON line into a [`PullTick`] (pure — unit-tested with
+/// recorded daemon output, no live daemon). A blank line is `None` (skip).
+///
+/// # Errors
+/// [`OllamaError::Protocol`] on a non-JSON line.
+fn parse_pull_line(line: &str) -> Result<Option<PullTick>, OllamaError> {
+    if line.trim().is_empty() {
+        return Ok(None);
+    }
+    let value: serde_json::Value = parse_json(line)?;
+    if let Some(message) = value.get("error").and_then(serde_json::Value::as_str) {
+        return Ok(Some(PullTick::Error(message.to_string())));
+    }
+    let status = value
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    if status.eq_ignore_ascii_case("success") {
+        return Ok(Some(PullTick::Success));
+    }
+    let completed = value
+        .get("completed")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let total = value
+        .get("total")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    Ok(Some(PullTick::Progress {
+        status: status.to_string(),
+        completed,
+        total,
+    }))
 }
 
 /// Extract `eval_count` (clamped into `u32`) from a generate response object.
@@ -541,6 +651,47 @@ mod tests {
         assert_eq!(context_length_of(&gemma), Some(131_072));
         let qwen = serde_json::json!({ "model_info": { "qwen2.context_length": 32_768 } });
         assert_eq!(context_length_of(&qwen), Some(32_768));
+    }
+
+    #[test]
+    fn pull_line_parses_recorded_api_pull_ndjson() {
+        // B3: the `/api/pull` progress parser, driven by recorded daemon NDJSON
+        // (no live daemon). The shape mirrors the documented `/api/pull` stream.
+        assert!(parse_pull_line("   ").unwrap().is_none());
+        assert!(matches!(
+            parse_pull_line(r#"{"status":"pulling manifest"}"#).unwrap(),
+            Some(PullTick::Progress {
+                completed: 0,
+                total: 0,
+                ..
+            })
+        ));
+        match parse_pull_line(
+            r#"{"status":"pulling abc123","digest":"sha256:abc123","total":2142590208,"completed":241970}"#,
+        )
+        .unwrap()
+        {
+            Some(PullTick::Progress {
+                status,
+                completed,
+                total,
+            }) => {
+                assert_eq!(status, "pulling abc123");
+                assert_eq!(completed, 241_970);
+                assert_eq!(total, 2_142_590_208);
+            }
+            _ => panic!("expected a progress tick"),
+        }
+        assert!(matches!(
+            parse_pull_line(r#"{"status":"success"}"#).unwrap(),
+            Some(PullTick::Success)
+        ));
+        match parse_pull_line(r#"{"error":"model 'nope' not found"}"#).unwrap() {
+            Some(PullTick::Error(m)) => assert!(m.contains("not found")),
+            _ => panic!("expected an error tick"),
+        }
+        // A non-JSON line is a protocol error, never a silent skip.
+        assert!(parse_pull_line("not json").is_err());
     }
 
     #[test]

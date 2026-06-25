@@ -45,6 +45,7 @@
 //! names that `instance_id`; `GetContent` returns a **uniform** not-authorized
 //! (no existence oracle).
 
+mod active_model;
 mod alerts_view;
 mod apps_view;
 mod branches_view;
@@ -59,6 +60,7 @@ mod identity;
 mod locks_view;
 mod mcp_gateway_admin;
 mod model_lifecycle;
+mod model_pull;
 mod models_view;
 mod mote_def_view;
 mod mote_detail;
@@ -105,6 +107,7 @@ pub use scaffold::{
 // crate-private (it backs the default `SnapshotTailer`). Batch C adds the
 // GLOBAL twin's pieces (cursor seed + per-range builder) for the live global
 // tailer.
+pub use active_model::ActiveModelControl;
 pub use events::{
     check_run_ownership, frames_for_range, global_frames_for_range, seed_global_cursor,
     GlobalCursor,
@@ -114,6 +117,7 @@ pub use mcp_gateway_admin::{
     McpAdminError, McpGatewayAdmin, McpServerRegistration, McpServerView, RegisterServerOutcome,
 };
 pub use model_lifecycle::{ModelLifecycleControl, ModelLifecycleOutcome};
+pub use model_pull::{ModelPuller, PullAdmission, PullPhase, PullProgress, PullSource};
 pub use models_view::{ModelCatalogView, ModelSummaryEntry};
 pub use mote_def_view::MoteDefView;
 pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYTES};

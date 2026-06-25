@@ -65,7 +65,7 @@ import {
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
-import { ModelLifecycleResult, ModelSummary } from "./models.js";
+import { ModelLifecycleResult, ModelSummary, PullStatus } from "./models.js";
 import { MoteDetail } from "./motes.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
 import { RecipeForm, RecipeInfo, ScoredRecipe } from "./recipes.js";
@@ -883,6 +883,49 @@ export abstract class KxClientBase {
   async getServerInfo(): Promise<ServerInfo> {
     const resp = await rpc(this.grpc.getServerInfo({}));
     return ServerInfo.fromProto(resp);
+  }
+
+  /**
+   * Model Control v2: download + RUNTIME-register a model (no restart). Pass
+   * `{ ollamaTag }` to pull from the Ollama registry, OR `{ url, sha256 }` (a
+   * `huggingface.co` `/resolve/` GGUF link). Returns the `modelId` to poll via
+   * {@link getPullStatus}. Deny-by-default: a refusal (downloads disabled / host
+   * not allowlisted / missing sha256) throws {@link KxFailedPrecondition}. HOST
+   * INFRASTRUCTURE, not a client Mote (SN-8).
+   */
+  async pullModel(args: { ollamaTag?: string; url?: string; sha256?: string }): Promise<string> {
+    if ((args.ollamaTag == null) === (args.url == null)) {
+      throw new Error("pullModel requires exactly one of ollamaTag or url");
+    }
+    const source =
+      args.ollamaTag != null
+        ? { case: "ollamaTag" as const, value: args.ollamaTag }
+        : { case: "url" as const, value: args.url ?? "" };
+    const resp = await rpc(this.grpc.pullModel({ source, sha256: args.sha256 ?? "" }));
+    if (!resp.accepted) {
+      throw new KxFailedPrecondition(`pull refused: ${resp.detail}`);
+    }
+    return resp.modelId;
+  }
+
+  /**
+   * Model Control v2: the current progress of a {@link pullModel} download +
+   * registration (advisory). An unknown id throws {@link KxNotFound}.
+   */
+  async getPullStatus(modelId: string): Promise<PullStatus> {
+    const resp = await rpc(this.grpc.getPullStatus({ modelId }));
+    return PullStatus.fromProto(modelId, resp);
+  }
+
+  /**
+   * Model Control v2: set the server's ACTIVE default model (an off-journal
+   * advisory hint; the server never re-routes `kx/recipes/chat`). An empty
+   * `modelId` CLEARS it (back to the primary). A non-served id throws
+   * {@link KxNotFound}. Returns the active id after the op ("" ⇒ cleared).
+   */
+  async setActiveModel(modelId = ""): Promise<string> {
+    const resp = await rpc(this.grpc.setActiveModel({ modelId }));
+    return resp.activeModelId;
   }
 
   /** Native gRPC server-streaming event tail (Node + browser via Connect). */

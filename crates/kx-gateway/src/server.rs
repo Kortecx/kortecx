@@ -96,6 +96,18 @@ pub fn default_executor_class() -> ExecutorClass {
     }
 }
 
+/// Model Control v2: whether operator-enabled model downloads are ON. `false` on a
+/// non-serve-engine build (a pull has no engine to register onto), else the
+/// `KX_SERVE_ALLOW_MODEL_PULL` opt-in. Surfaced via `GetServerInfo.allow_model_pull`.
+#[cfg(feature = "serve-engine")]
+fn model_pull_allowed() -> bool {
+    crate::model_pull::pull_enabled()
+}
+#[cfg(not(feature = "serve-engine"))]
+fn model_pull_allowed() -> bool {
+    false
+}
+
 /// A ready-to-send [`proto::SubmitRunRequest`](kx_proto::proto::SubmitRunRequest)
 /// admitting a single PURE Mote whose warrant names the embedded worker's
 /// [`default_executor_class`], so a bound `SubmitRun` leases → runs (the honest
@@ -407,6 +419,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(feature = "serve-engine")]
     let model_engine: Option<Arc<crate::routing_backend::RoutingBackend>> =
         serve_rt.as_ref().map(|r| r.routing.clone());
+    // Model Control v2: the typed engine handles a runtime `kx models pull` registers
+    // onto (the SAME instances the router serves through) — captured before the
+    // builder chain consumes `serve_rt`.
+    #[cfg(feature = "serve-engine")]
+    let pull_ollama: Option<Arc<kx_ollama::OllamaBackend>> =
+        serve_rt.as_ref().and_then(|r| r.ollama.clone());
+    #[cfg(feature = "inference")]
+    let pull_llama_registry: Option<Arc<kx_model_store::MutableRegistry>> =
+        serve_rt.as_ref().and_then(|r| r.llama_registry.clone());
     #[cfg(not(feature = "serve-engine"))]
     let model_catalog_entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
 
@@ -1154,6 +1175,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             // (also the hard ceilings) — a run overrides them per-invocation.
             react_max_turns: kx_coordinator::REACT_MAX_TURNS,
             react_max_tool_calls: kx_coordinator::REACT_DEFAULT_MAX_TOOL_CALLS,
+            // Model Control v2: the model-download posture (operator opt-in, OFF by
+            // default; never possible on a non-serve-engine build). Read once here so
+            // GetServerInfo / the UI render honestly.
+            allow_model_pull: model_pull_allowed(),
         }
     };
     // Batch A: the content WRITE seam shares the same store Arc the read seam
@@ -1171,30 +1196,64 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // POC-3: build the lifecycle CONTROL seam over the live routing backend (a
     // serve-engine serve only) — load/offload warm/evict the registered set's RAM
     // residency; the routing backend routes each to the owning engine (llama.cpp or
-    // Ollama).
+    // Ollama). Held TYPED so Model Control v2 shares its (now interior-mutable)
+    // registered-set handle with the puller.
     #[cfg(feature = "serve-engine")]
-    let model_lifecycle_view: Option<Arc<dyn kx_gateway_core::ModelLifecycleControl>> =
+    let host_lifecycle: Option<Arc<crate::model_lifecycle::HostModelLifecycle>> =
         model_engine.as_ref().map(|engine| {
             Arc::new(crate::model_lifecycle::HostModelLifecycle::new(
                 engine.clone(),
                 registered_model_ids,
-            )) as Arc<dyn kx_gateway_core::ModelLifecycleControl>
+            ))
         });
+    #[cfg(feature = "serve-engine")]
+    let model_lifecycle_view: Option<Arc<dyn kx_gateway_core::ModelLifecycleControl>> =
+        host_lifecycle
+            .clone()
+            .map(|l| l as Arc<dyn kx_gateway_core::ModelLifecycleControl>);
     // The model catalog is always wired (a model-less serve answers ListModels with
     // an honest empty list); on a serve-engine serve it binds the live routing backend
-    // so `loaded` reflects real RAM residency (POC-3).
+    // so `loaded` reflects real RAM residency (POC-3). Held TYPED so Model Control v2
+    // shares its interior-mutable entries handle (active-model + puller register into it).
     #[cfg(feature = "serve-engine")]
-    let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> = {
-        let catalog = crate::models::HostModelCatalog::new(model_catalog_entries);
+    let host_catalog: Arc<crate::models::HostModelCatalog> = {
+        let catalog = crate::models::HostModelCatalog::new(model_catalog_entries.clone());
         let catalog = match model_engine.as_ref() {
             Some(engine) => catalog.with_engine(engine.clone()),
             None => catalog,
         };
         Arc::new(catalog)
     };
+    #[cfg(feature = "serve-engine")]
+    let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> = host_catalog.clone();
     #[cfg(not(feature = "serve-engine"))]
     let models_view: Arc<dyn kx_gateway_core::ModelCatalogView> =
         Arc::new(crate::models::HostModelCatalog::new(model_catalog_entries));
+    // Model Control v2: the active-default-model control (validated against the live
+    // catalog) + the model-acquisition orchestrator (download + runtime-register). The
+    // puller is wired only when an engine resolved (something to register onto); it
+    // shares the catalog's entries handle + the lifecycle's registered-set handle so a
+    // pull is immediately visible + load/offload-able + switchable WITHOUT a restart.
+    #[cfg(feature = "serve-engine")]
+    let active_model_view: Arc<dyn kx_gateway_core::ActiveModelControl> = Arc::new(
+        crate::active_model::HostActiveModel::new(host_catalog.entries_handle()),
+    );
+    #[cfg(feature = "serve-engine")]
+    let model_puller: Option<Arc<dyn kx_gateway_core::ModelPuller>> =
+        host_lifecycle.as_ref().map(|lc| {
+            let policy = Arc::new(crate::model_pull::PullPolicy::from_env(
+                catalog_dir.join("models"),
+            ));
+            Arc::new(crate::model_pull::HostModelPuller::new(
+                policy,
+                host_catalog.entries_handle(),
+                lc.registered_handle(),
+                demo.clone(),
+                pull_ollama.clone(),
+                #[cfg(feature = "inference")]
+                pull_llama_registry.clone(),
+            )) as Arc<dyn kx_gateway_core::ModelPuller>
+        });
     // Batch B: the def resolver reads the SAME store the coordinator persists
     // admitted defs into (always wired — an absent blob is `def_found = false`).
     let mote_defs_view: Arc<dyn kx_gateway_core::MoteDefView> =
@@ -1277,6 +1336,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(feature = "serve-engine")]
     if let Some(lifecycle) = model_lifecycle_view {
         gateway = gateway.with_model_lifecycle(lifecycle);
+    }
+    // Model Control v2: wire the active-default-model control (SetActiveModel) + the
+    // model-acquisition orchestrator (PullModel/GetPullStatus). The active-model
+    // control is always wired on a serve-engine serve (the catalog exists); the puller
+    // only when an engine resolved (else PullModel returns `unimplemented`).
+    #[cfg(feature = "serve-engine")]
+    {
+        gateway = gateway.with_active_model_control(active_model_view);
+        if let Some(puller) = model_puller {
+            gateway = gateway.with_model_puller(puller);
+        }
     }
     // POC-5a: wire the App-scaffold orchestrator (present only when a model is
     // served). Without it ScaffoldApp/GetScaffoldStatus return `unimplemented`.

@@ -329,6 +329,21 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.FromString,
                 _registered_method=True)
+        self.PullModel = channel.unary_unary(
+                '/kortecx.v1.KxGateway/PullModel',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.PullModelRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.PullModelResponse.FromString,
+                _registered_method=True)
+        self.GetPullStatus = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetPullStatus',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetPullStatusRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetPullStatusResponse.FromString,
+                _registered_method=True)
+        self.SetActiveModel = channel.unary_unary(
+                '/kortecx.v1.KxGateway/SetActiveModel',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.SetActiveModelRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.SetActiveModelResponse.FromString,
+                _registered_method=True)
         self.SaveApp = channel.unary_unary(
                 '/kortecx.v1.KxGateway/SaveApp',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.SaveAppRequest.SerializeToString,
@@ -804,6 +819,32 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PullModel(self, request, context):
+        """Model Control v2 (Models "acquire + switch") — HOST-INFRASTRUCTURE, off-journal.
+        PullModel downloads a model (Ollama /api/pull or a huggingface.co /resolve/ GGUF
+        URL) and REGISTERS it at runtime so it is immediately usable WITHOUT restart;
+        it returns immediately (poll GetPullStatus). Deny-by-default: refused unless the
+        operator sets KX_SERVE_ALLOW_MODEL_PULL and the URL host is allowlisted (SN-8 —
+        a client requests, the operator authorizes). SetActiveModel switches the server's
+        active default (an advisory hint; the server never silently re-routes chat).
+        Authenticated caller required (UNAUTHENTICATED otherwise).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetPullStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetActiveModel(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def SaveApp(self, request, context):
         """POC-4 (Apps "App-authoring + envelope") — save / list / get a durable App
         envelope in the caller-scoped, off-journal apps.db catalog. SaveApp validates
@@ -1159,6 +1200,21 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.OffloadModel,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.SerializeToString,
+            ),
+            'PullModel': grpc.unary_unary_rpc_method_handler(
+                    servicer.PullModel,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.PullModelRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.PullModelResponse.SerializeToString,
+            ),
+            'GetPullStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetPullStatus,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetPullStatusRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetPullStatusResponse.SerializeToString,
+            ),
+            'SetActiveModel': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetActiveModel,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.SetActiveModelRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.SetActiveModelResponse.SerializeToString,
             ),
             'SaveApp': grpc.unary_unary_rpc_method_handler(
                     servicer.SaveApp,
@@ -2789,6 +2845,87 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/OffloadModel',
             kortecx_dot_v1_dot_gateway__pb2.OffloadModelRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.OffloadModelResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PullModel(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/PullModel',
+            kortecx_dot_v1_dot_gateway__pb2.PullModelRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.PullModelResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetPullStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetPullStatus',
+            kortecx_dot_v1_dot_gateway__pb2.GetPullStatusRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetPullStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetActiveModel(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/SetActiveModel',
+            kortecx_dot_v1_dot_gateway__pb2.SetActiveModelRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.SetActiveModelResponse.FromString,
             options,
             channel_credentials,
             insecure,

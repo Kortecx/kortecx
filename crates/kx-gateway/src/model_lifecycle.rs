@@ -11,7 +11,7 @@
 //! off-digest: residency is ephemeral RAM state that rebuilds EMPTY on restart.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use kx_gateway_core::{GatewayError, ModelLifecycleControl, ModelLifecycleOutcome};
 
@@ -29,23 +29,51 @@ pub(crate) trait ModelEngine: ModelResidency {
 }
 
 /// The host impl behind `LoadModel`/`OffloadModel`. Holds the live engine + the
-/// FIXED registered set (the server's startup-provisioned model ids); an
-/// unregistered id is refused with `NotFound` BEFORE the engine is touched.
+/// registered set (the server's startup-provisioned model ids, GROWN at runtime by a
+/// `kx models pull` via [`register_model_id`](Self::register_model_id)); an
+/// unregistered id is refused with `NotFound` BEFORE the engine is touched. The set is
+/// shared (the model puller holds the same `Arc`) + interior-mutable (read-mostly).
+#[derive(Clone)]
 pub(crate) struct HostModelLifecycle {
     engine: Arc<dyn ModelEngine>,
-    registered: BTreeSet<String>,
+    registered: Arc<RwLock<BTreeSet<String>>>,
 }
 
 impl HostModelLifecycle {
     pub(crate) fn new(engine: Arc<dyn ModelEngine>, registered: BTreeSet<String>) -> Self {
-        Self { engine, registered }
+        Self {
+            engine,
+            registered: Arc::new(RwLock::new(registered)),
+        }
     }
 
-    /// Fail-closed gate: only a model in the server's fixed registered set can be
-    /// warmed/evicted. A static message (no id echo) — the registered set is
-    /// already enumerable via `ListModels`, so this is honest, not an oracle.
+    /// The shared registered-set handle — the model puller holds a clone so a runtime
+    /// registration ([`register_model_id`](Self::register_model_id)) flips this gate.
+    #[cfg(feature = "serve-engine")]
+    pub(crate) fn registered_handle(&self) -> Arc<RwLock<BTreeSet<String>>> {
+        self.registered.clone()
+    }
+
+    /// Add a model id to the registered set at runtime (Model Control v2: a pulled
+    /// model becomes load/offload-able WITHOUT a restart). Idempotent.
+    #[cfg(feature = "serve-engine")]
+    pub(crate) fn register_model_id(registered: &RwLock<BTreeSet<String>>, model_id: &str) {
+        registered
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(model_id.to_string());
+    }
+
+    /// Fail-closed gate: only a model in the registered set can be warmed/evicted. A
+    /// static message (no id echo) — the registered set is already enumerable via
+    /// `ListModels`, so this is honest, not an oracle.
     fn ensure_registered(&self, model_id: &str) -> Result<(), GatewayError> {
-        if self.registered.contains(model_id) {
+        if self
+            .registered
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(model_id)
+        {
             Ok(())
         } else {
             Err(GatewayError::NotFound("model not registered"))

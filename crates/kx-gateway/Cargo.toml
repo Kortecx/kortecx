@@ -108,6 +108,14 @@ kx-critic          = { workspace = true, optional = true }
 # OPTIONAL + behind `inference` (the react decode arm lives in the
 # inference-gated executor), so the DEFAULT build is byte-unchanged.
 kx-mcp             = { workspace = true, optional = true }
+# Model Control v2 (`kx models pull --url`): the direct-GGUF download path. A blocking
+# `ureq` stream (run on `spawn_blocking`, OFF the durable-spine tokio workers) +
+# `sha2` for the mandatory SHA-256 verify before a downloaded GGUF is registered.
+# Both are already in the lock (kx-mcp/kx-content); OPTIONAL + behind `inference`
+# (the URL pull registers an in-process llama model), so the FFI-free floor is
+# byte-unchanged. The Ollama `pull <tag>` path needs NEITHER (it uses kx-ollama).
+ureq               = { workspace = true, optional = true }
+sha2               = { workspace = true, optional = true }
 # PR-6b-1 (D159): the EXTERNAL MCP gateway — dials external MCP servers (stdio +
 # Streamable-HTTP) over kx-mcp's session seam, discovers their tools into the
 # durable tools.db, and governs them via an off-journal connections.db sidecar.
@@ -261,6 +269,9 @@ inference = [
     "kx-inference/llamacpp",
     "dep:kx-model-store",
     "dep:kx-model-validator",
+    # Model Control v2: the direct-GGUF `--url` download + SHA-256 verify path.
+    "dep:ureq",
+    "dep:sha2",
 ]
 # T3.7: the Datasets data-plane (RAG) read/write surface. The client-provided-vector
 # path is FFI-FREE + deterministic (CI-exercisable on Linux with no model). Pulls only

@@ -37,7 +37,7 @@ use crate::routing_backend::RoutingBackend;
 #[cfg(feature = "inference")]
 use kx_inference::LlamaInferenceBackend;
 #[cfg(feature = "inference")]
-use kx_model_store::{read_context_length, ModelDescriptor, ModelRegistry};
+use kx_model_store::{read_context_length, ModelDescriptor, MutableRegistry};
 #[cfg(feature = "inference")]
 use kx_model_validator::{
     check, License, LicenseConstraint, Modality, ProvidedCapabilities, Quantization,
@@ -191,8 +191,19 @@ pub(crate) struct ServeRuntime {
     pub(crate) primary: ModelId,
     /// PR-B: the dataset server-embed model — `KX_SERVE_EMBED_MODEL` (operator-config)
     /// when set + served, else `primary`. The embedder routes through `routing`, so it
-    /// embeds via whichever engine (llama.cpp / Ollama) serves this id.
+    /// embeds via whichever engine (llama.cpp / Ollama) serves this id. Read only by the
+    /// `hnsw` dataset-embedder wiring (constructed always on a serve-engine serve).
+    #[cfg_attr(not(feature = "hnsw"), allow(dead_code))]
     pub(crate) embed_model: ModelId,
+    /// Model Control v2: the Ollama engine handle (if Ollama resolved), retained so a
+    /// runtime `kx models pull <tag>` can `register_tag` a freshly-pulled tag on the
+    /// SAME engine instance the router serves through.
+    pub(crate) ollama: Option<Arc<kx_ollama::OllamaBackend>>,
+    /// Model Control v2: the runtime-mutable llama.cpp model resolver (if a GGUF
+    /// resolved), retained so a runtime `kx models pull --url` can register a freshly
+    /// downloaded GGUF into the SAME resolver the in-process backend reads through.
+    #[cfg(feature = "inference")]
+    pub(crate) llama_registry: Option<Arc<MutableRegistry>>,
 }
 
 /// Resolve the full serve runtime: the union of the in-process llama.cpp GGUF models
@@ -204,20 +215,25 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
     let mut engines: Vec<Arc<dyn crate::routing_backend::ServeEngine>> = Vec::new();
     let mut entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
     let mut primary: Option<ModelId> = None;
+    let mut ollama_handle: Option<Arc<kx_ollama::OllamaBackend>> = None;
+    #[cfg(feature = "inference")]
+    let mut llama_registry: Option<Arc<MutableRegistry>> = None;
 
     // (1) In-process llama.cpp GGUF candidates — only on the FFI build. Registered as
     //     serve engines; chat AND embeddings route through the `RoutingBackend`, so the
     //     concrete llama handle is not retained on `ServeRuntime` (the embedder reaches
-    //     it via routing — PR-B).
+    //     it via routing — PR-B). The MUTABLE resolver IS retained (Model Control v2:
+    //     a runtime `--url` pull registers a downloaded GGUF into it).
     #[cfg(feature = "inference")]
     {
         let candidates = resolve_serve_models();
         if !candidates.is_empty() {
             match build_serve_models(&candidates, store.clone()) {
-                Ok((backend, mut llama_entries, primary_id)) => {
+                Ok((backend, mut llama_entries, primary_id, registry)) => {
                     primary = Some(primary_id);
                     entries.append(&mut llama_entries);
                     engines.push(backend);
+                    llama_registry = Some(registry);
                 }
                 Err(error) => {
                     tracing::warn!(%error, "serve model is not fit; llama loop NOT enabled");
@@ -229,14 +245,18 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
     let _ = store; // the content store is only consumed by the (vision) llama path
 
     // (2) Ollama (FFI-free) — auto-detected. With a GGUF primary present, Ollama
-    // models register as secondaries (the GGUF keeps the default chat route).
+    // models register as secondaries (the GGUF keeps the default chat route). The
+    // engine Arc is retained (Model Control v2: a runtime `pull <tag>` register_tag's
+    // a freshly-pulled tag on this same instance).
     let have_gguf = primary.is_some();
     if let Some((ollama, mut ollama_entries, ollama_primary)) = build_ollama_engine(have_gguf) {
         if primary.is_none() {
             primary = Some(ollama_primary);
         }
         entries.append(&mut ollama_entries);
-        engines.push(Arc::new(ollama));
+        let ollama = Arc::new(ollama);
+        engines.push(ollama.clone());
+        ollama_handle = Some(ollama);
     }
 
     let primary = primary?;
@@ -251,6 +271,9 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
         entries,
         primary,
         embed_model,
+        ollama: ollama_handle,
+        #[cfg(feature = "inference")]
+        llama_registry,
     })
 }
 
@@ -407,7 +430,26 @@ fn ollama_catalog_entry(
         engine: "kx-ollama".to_string(),
         // Set in `build_serve_runtime` once the embed model is resolved.
         can_embed: false,
+        // A daemon-discovered tag (a runtime pull overrides this to "pulled-ollama").
+        source: "ollama".to_string(),
+        // Set live by the host catalog from the active-model selection.
+        active: false,
+        // Set in `build_serve_runtime` once chat-RAG recipes are resolved.
+        chat_rag_handle: String::new(),
     }
+}
+
+/// Model Control v2: the `ListModels` entry for a freshly-PULLED Ollama tag (the
+/// `pull <tag>` path) — a SECONDARY (`serving = false`, `kx/recipes/m-<id>`), with
+/// `source = "pulled-ollama"`. Built AFTER `register_tag` so the daemon-reported
+/// context window is populated.
+pub(crate) fn pulled_ollama_entry(
+    backend: &kx_ollama::OllamaBackend,
+    model_id: &ModelId,
+) -> kx_gateway_core::ModelSummaryEntry {
+    let mut entry = ollama_catalog_entry(backend, model_id, false);
+    entry.source = "pulled-ollama".to_string();
+    entry
 }
 
 /// Default context window when the GGUF declares none. Used only by the GGUF
@@ -595,6 +637,12 @@ pub(crate) fn catalog_entry(
         engine: "kx-llamacpp".to_string(),
         // Set in `build_serve_runtime` once the embed model is resolved.
         can_embed: false,
+        // A startup-configured GGUF (a runtime URL pull overrides this to "pulled-url").
+        source: "local".to_string(),
+        // Set live by the host catalog from the active-model selection.
+        active: false,
+        // Set in `build_serve_runtime` once chat-RAG recipes are resolved.
+        chat_rag_handle: String::new(),
     }
 }
 
@@ -712,6 +760,7 @@ fn resolve_n_ctx(gguf: &Path) -> u32 {
 /// A string diagnostic if the model is not fit (not `TypeOk`) or the registry
 /// rejects the descriptor.
 #[cfg(feature = "inference")]
+#[allow(clippy::type_complexity)] // a one-off internal 4-tuple (backend + entries + id + resolver)
 pub(crate) fn build_serve_models(
     candidates: &[ServeModelCandidate],
     store: Arc<LocalFsContentStore>,
@@ -720,6 +769,7 @@ pub(crate) fn build_serve_models(
         Arc<LlamaInferenceBackend>,
         Vec<kx_gateway_core::ModelSummaryEntry>,
         ModelId,
+        Arc<MutableRegistry>,
     ),
     String,
 > {
@@ -732,7 +782,8 @@ pub(crate) fn build_serve_models(
     // that is unfit or collides is warn-skipped, never aborting serve.
     type_ok(&primary.gguf)?;
 
-    let mut registry = ModelRegistry::new();
+    // Model Control v2: the runtime-mutable resolver (append a pulled GGUF later).
+    let registry = Arc::new(MutableRegistry::new());
     let mut entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
     let mut any_vision = false;
     for cand in candidates {
@@ -772,8 +823,10 @@ pub(crate) fn build_serve_models(
         ));
     }
 
-    let mut backend =
-        LlamaInferenceBackend::with_resolver(Arc::new(registry)).with_n_ctx(primary_n_ctx);
+    let mut backend = LlamaInferenceBackend::with_resolver(
+        registry.clone() as Arc<dyn kx_model_store::ModelResolver>
+    )
+    .with_n_ctx(primary_n_ctx);
     if any_vision {
         backend = backend.with_content_store(store);
     }
@@ -783,7 +836,31 @@ pub(crate) fn build_serve_models(
     if let Some(cap) = resolve_cache_capacity() {
         backend = backend.with_cache_capacity(cap);
     }
-    Ok((Arc::new(backend), entries, primary_id))
+    Ok((Arc::new(backend), entries, primary_id, registry))
+}
+
+/// Model Control v2: register a freshly-downloaded GGUF into the runtime-mutable
+/// resolver (the `--url` pull path) + build its `ListModels` entry, fail-closed: the
+/// model must type-check `TypeOk` for the agent (else the file is rejected and the
+/// caller deletes it). Returns the derived id + the catalog entry (`source` =
+/// `"pulled-url"`, a secondary `kx/recipes/m-<id>` route).
+///
+/// # Errors
+/// A diagnostic string when the GGUF is not fit or the registry refuses it.
+#[cfg(feature = "inference")]
+pub(crate) fn register_pulled_gguf(
+    registry: &MutableRegistry,
+    gguf: &Path,
+) -> Result<(ModelId, kx_gateway_core::ModelSummaryEntry), String> {
+    type_ok(gguf)?;
+    let model_id = serve_model_id(gguf);
+    let n_ctx = resolve_n_ctx(gguf);
+    registry
+        .register(ModelDescriptor::text(model_id.clone(), gguf, n_ctx))
+        .map_err(|e| format!("model registry refused the pulled GGUF: {e}"))?;
+    let mut entry = catalog_entry(gguf, &model_id, false, false);
+    entry.source = "pulled-url".to_string();
+    Ok((model_id, entry))
 }
 
 /// Fail-closed TypeOk gate for a serve model: its declared capabilities must

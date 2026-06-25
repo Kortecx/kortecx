@@ -793,6 +793,17 @@ pub struct GatewayService {
     /// / `GetScaffoldStatus` return `unimplemented` (no served model / branch store).
     /// Off-journal, off-digest.
     scaffolder: Option<Arc<dyn crate::scaffold::AppScaffolder>>,
+    /// Model Control v2: the optional model-acquisition orchestrator seam behind
+    /// `PullModel` / `GetPullStatus` (download + runtime-register a model). `None` ⇒
+    /// both RPCs return `unimplemented`. The host impl owns the deny-by-default
+    /// opt-in/allowlist/SHA gate; HOST INFRASTRUCTURE, not a client Mote (SN-8).
+    /// Off-journal, off-digest.
+    model_puller: Option<Arc<dyn crate::model_pull::ModelPuller>>,
+    /// Model Control v2: the optional active-default-model CONTROL seam behind
+    /// `SetActiveModel` (+ projected on `ModelSummary.active` /
+    /// `GetServerInfo.active_model_id`). `None` ⇒ `SetActiveModel` is `unimplemented`
+    /// and `active` is always false. An off-journal advisory hint (SN-8).
+    active_model: Option<Arc<dyn crate::active_model::ActiveModelControl>>,
 }
 
 /// The default fail-closed `PutContent` payload cap (32 MiB).
@@ -867,6 +878,8 @@ impl GatewayService {
             apps: None,
             locks: None,
             scaffolder: None,
+            model_puller: None,
+            active_model: None,
         }
     }
 
@@ -1113,6 +1126,28 @@ impl GatewayService {
         control: Arc<dyn crate::model_lifecycle::ModelLifecycleControl>,
     ) -> Self {
         self.model_lifecycle = Some(control);
+        self
+    }
+
+    /// Model Control v2: wire the model-acquisition orchestrator seam (download +
+    /// runtime-register a model). Enables `PullModel`/`GetPullStatus`; without it they
+    /// return `unimplemented`. The host impl owns the deny-by-default opt-in/allowlist/
+    /// SHA gate — HOST INFRASTRUCTURE, not a client Mote (SN-8). Off-journal.
+    #[must_use]
+    pub fn with_model_puller(mut self, puller: Arc<dyn crate::model_pull::ModelPuller>) -> Self {
+        self.model_puller = Some(puller);
+        self
+    }
+
+    /// Model Control v2: wire the active-default-model CONTROL seam. Enables
+    /// `SetActiveModel` + the `ModelSummary.active` / `GetServerInfo.active_model_id`
+    /// projection. An off-journal advisory hint (the server never re-routes chat).
+    #[must_use]
+    pub fn with_active_model_control(
+        mut self,
+        control: Arc<dyn crate::active_model::ActiveModelControl>,
+    ) -> Self {
+        self.active_model = Some(control);
         self
     }
 
@@ -1972,19 +2007,28 @@ impl KxGateway for GatewayService {
             .models
             .as_ref()
             .ok_or_else(|| Status::unimplemented("ListModels: no model catalog wired"))?;
+        // Model Control v2: recompute `active` live from the active-model selection
+        // (the `loaded`-from-residency precedent) — an advisory display bit, SN-8.
+        let active_id = self.active_model.as_ref().and_then(|a| a.get());
         let models = models
             .list()?
             .into_iter()
-            .map(|m| proto::ModelSummary {
-                model_id: m.model_id,
-                modalities: m.modalities,
-                description: m.description,
-                serving: m.serving,
-                context_len: m.context_len,
-                loaded: m.loaded,
-                chat_handle: m.chat_handle,
-                engine: m.engine,
-                can_embed: m.can_embed,
+            .map(|m| {
+                let active = active_id.as_deref() == Some(m.model_id.as_str());
+                proto::ModelSummary {
+                    model_id: m.model_id,
+                    modalities: m.modalities,
+                    description: m.description,
+                    serving: m.serving,
+                    context_len: m.context_len,
+                    loaded: m.loaded,
+                    chat_handle: m.chat_handle,
+                    engine: m.engine,
+                    can_embed: m.can_embed,
+                    source: m.source,
+                    active,
+                    chat_rag_handle: m.chat_rag_handle,
+                }
             })
             .collect();
         Ok(Response::new(proto::ListModelsResponse { models }))
@@ -2030,6 +2074,13 @@ impl KxGateway for GatewayService {
             react_max_turns: facts.react_max_turns,
             react_max_tool_calls: facts.react_max_tool_calls,
             embed_model_id: facts.embed_model_id.clone(),
+            // Model Control v2: the active default (advisory) + the download posture.
+            active_model_id: self
+                .active_model
+                .as_ref()
+                .and_then(|a| a.get())
+                .unwrap_or_default(),
+            allow_model_pull: facts.allow_model_pull,
         }))
     }
 
@@ -2075,6 +2126,127 @@ impl KxGateway for GatewayService {
             model_id: out.model_id,
             loaded: out.loaded,
             was_resident: out.was_resident,
+        }))
+    }
+
+    // ----- Model Control v2 — acquire (pull + runtime-register) + switch -----
+
+    async fn pull_model(
+        &self,
+        request: Request<proto::PullModelRequest>,
+    ) -> Result<Response<proto::PullModelResponse>, Status> {
+        // SERVER-DERIVED identity (SN-8): an authenticated caller may REQUEST a pull;
+        // the operator's env opt-in (enforced in the host puller) AUTHORIZES the
+        // egress. The wire carries no party field.
+        let _party = request
+            .extensions()
+            .get::<CallerParty>()
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let puller = self
+            .model_puller
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("PullModel: no model puller wired"))?;
+        let req = request.into_inner();
+        // Discriminate the proto `oneof` into the host vocabulary; a missing/empty
+        // source is an invalid request (never an egress).
+        let source = match req.source {
+            Some(proto::pull_model_request::Source::OllamaTag(tag)) if !tag.trim().is_empty() => {
+                crate::model_pull::PullSource::OllamaTag(tag)
+            }
+            Some(proto::pull_model_request::Source::Url(url)) if !url.trim().is_empty() => {
+                // SHA-256 is REQUIRED for a direct-URL pull (the bytes are otherwise
+                // untrusted) — refuse at the boundary before any egress.
+                if req.sha256.trim().is_empty() {
+                    return Ok(Response::new(proto::PullModelResponse {
+                        model_id: String::new(),
+                        accepted: false,
+                        detail: "a sha256 is required for a direct --url pull (the download \
+                                 is verified before it is registered)"
+                            .to_string(),
+                    }));
+                }
+                crate::model_pull::PullSource::Url {
+                    url,
+                    sha256: req.sha256,
+                }
+            }
+            _ => {
+                return Err(Status::invalid_argument(
+                    "PullModel requires a non-empty ollama_tag or url source",
+                ));
+            }
+        };
+        let resp = match puller.start(source, req.model_id.trim()) {
+            crate::model_pull::PullAdmission::Accepted { model_id } => proto::PullModelResponse {
+                model_id,
+                accepted: true,
+                detail: String::new(),
+            },
+            crate::model_pull::PullAdmission::Refused { detail } => proto::PullModelResponse {
+                model_id: String::new(),
+                accepted: false,
+                detail,
+            },
+        };
+        Ok(Response::new(resp))
+    }
+
+    async fn get_pull_status(
+        &self,
+        request: Request<proto::GetPullStatusRequest>,
+    ) -> Result<Response<proto::GetPullStatusResponse>, Status> {
+        let _party = request
+            .extensions()
+            .get::<CallerParty>()
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let puller = self
+            .model_puller
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("GetPullStatus: no model puller wired"))?;
+        let model_id = request.into_inner().model_id;
+        // An unknown id ⇒ NOT_FOUND (never a fabricated progress).
+        let progress = puller
+            .status(&model_id)
+            .ok_or_else(|| Status::not_found("no pull is tracked for that model id"))?;
+        let phase = match progress.phase {
+            crate::model_pull::PullPhase::Resolving => {
+                proto::get_pull_status_response::Phase::Resolving
+            }
+            crate::model_pull::PullPhase::Downloading => {
+                proto::get_pull_status_response::Phase::Downloading
+            }
+            crate::model_pull::PullPhase::Verifying => {
+                proto::get_pull_status_response::Phase::Verifying
+            }
+            crate::model_pull::PullPhase::Registering => {
+                proto::get_pull_status_response::Phase::Registering
+            }
+            crate::model_pull::PullPhase::Done => proto::get_pull_status_response::Phase::Done,
+            crate::model_pull::PullPhase::Failed => proto::get_pull_status_response::Phase::Failed,
+        };
+        Ok(Response::new(proto::GetPullStatusResponse {
+            phase: phase as i32,
+            bytes_downloaded: progress.bytes_downloaded,
+            bytes_total: progress.bytes_total,
+            detail: progress.detail,
+        }))
+    }
+
+    async fn set_active_model(
+        &self,
+        request: Request<proto::SetActiveModelRequest>,
+    ) -> Result<Response<proto::SetActiveModelResponse>, Status> {
+        let _party = request
+            .extensions()
+            .get::<CallerParty>()
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let control = self.active_model.as_ref().ok_or_else(|| {
+            Status::unimplemented("SetActiveModel: no active-model control wired")
+        })?;
+        // An unknown id ⇒ NotFound → not_found (fail-closed; never an unrouteable active model).
+        let active = control.set(request.into_inner().model_id.trim())?;
+        Ok(Response::new(proto::SetActiveModelResponse {
+            active_model_id: active.unwrap_or_default(),
         }))
     }
 

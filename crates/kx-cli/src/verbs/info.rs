@@ -77,10 +77,18 @@ fn print_human(info: &proto::GetServerInfoResponse) {
     };
     println!("kortecx server");
     println!("  model      {model}");
+    if !info.active_model_id.is_empty() {
+        // Model Control v2: the active default model (the SetActiveModel choice).
+        println!(
+            "  active     {} (default for new chats)",
+            info.active_model_id
+        );
+    }
     if !info.embed_model_id.is_empty() {
         // PR-B: the configured datasets/RAG embed model (operator-config else primary).
         println!("  embed      {} (datasets/RAG)", info.embed_model_id);
     }
+    println!("  downloads  {}", on_off(info.allow_model_pull));
     println!(
         "  endpoints  grpc {} · ws {} · console {} · metrics {}",
         or_dash(&info.listen_addr),
@@ -141,6 +149,9 @@ fn render_json(info: &proto::GetServerInfoResponse) -> String {
         "audit_log_enabled": info.audit_log_enabled,
         "react_max_turns": info.react_max_turns,
         "react_max_tool_calls": info.react_max_tool_calls,
+        // Model Control v2 (additive).
+        "active_model_id": info.active_model_id,
+        "allow_model_pull": info.allow_model_pull,
     })
     .to_string()
 }

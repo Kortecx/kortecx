@@ -66,6 +66,8 @@ describe("ServerInfo.fromProto", () => {
       react_max_turns: 0,
       react_max_tool_calls: 0,
       embed_model_id: "embeddinggemma",
+      active_model_id: "",
+      allow_model_pull: false,
     });
   });
 

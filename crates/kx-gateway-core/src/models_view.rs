@@ -9,7 +9,12 @@
 use crate::error::GatewayError;
 
 /// One discoverable model, as display fields (mirrors `proto::ModelSummary`).
+///
+/// The boolean fields (`serving`/`loaded`/`can_embed`/`active`) are independent display
+/// flags mirroring the wire `ModelSummary` one-to-one, NOT a state machine — so the
+/// `struct_excessive_bools` enum/state-machine refactor does not apply.
 #[derive(Clone, Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ModelSummaryEntry {
     /// The model's id (the value a recipe `model` ENUM free-param accepts).
     pub model_id: String,
@@ -39,6 +44,21 @@ pub struct ModelSummaryEntry {
     /// server-embed path uses. Display/audit only (never identity); `false` on an old
     /// host or a model-less serve. Additive (proto tag 9).
     pub can_embed: bool,
+    /// Model Control v2: the model's PROVENANCE — `"local"` (a startup GGUF),
+    /// `"ollama"` (a daemon-discovered tag), `"pulled-ollama"` / `"pulled-url"` (a
+    /// runtime `kx models pull`). Display/audit ONLY (SN-8); empty on an old host.
+    /// Additive (proto tag 10).
+    pub source: String,
+    /// Model Control v2: `true` iff this model is the server's ACTIVE default (the
+    /// `SetActiveModel` choice — an off-journal advisory hint a client uses to pick
+    /// the per-model chat handle; the server never silently re-routes `kx/recipes/chat`).
+    /// Recomputed per `list()` from the live active-model selection. Additive (proto tag 11).
+    pub active: bool,
+    /// Model Control v2: the RAG-grounded chat recipe handle for THIS model (the
+    /// per-model `kx/recipes/chat-rag` / `kx/recipes/chat-rag-m-<id>`), so New Chat can
+    /// ground a switched model. Empty when no dataset/embedder is configured for it.
+    /// Additive (proto tag 12).
+    pub chat_rag_handle: String,
 }
 
 /// The model-catalog read seam. The host implements it over the model registry

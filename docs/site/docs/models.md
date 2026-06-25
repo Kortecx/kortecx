@@ -60,6 +60,59 @@ restart, written to no journal. The same controls are available in the SDKs
 (`load_model` / `offload_model` in Python, `loadModel` / `offloadModel` in
 TypeScript) and as Load / Offload chips in the console **Models** view.
 
+## Switch the active model
+
+The console **Models** view groups models by **engine** (`llamacpp` / `ollama`) so a
+dual-engine setup is obvious at a glance. Pick the server's **active default** for new
+chats — a shared, off-journal advisory hint every surface reads:
+
+```sh
+kx models use kx-serve:qwen2.5-3b-instruct-q4_k_m   # make it the active default
+kx models use --clear                               # back to the primary
+```
+
+The active default is **advisory** (SN-8): it never re-routes `kx/recipes/chat`. A chat
+turn still picks its model by the per-model recipe handle the server validates at
+binding — `use` just sets the default that the **New Chat** model picker resolves to
+(precedence: an explicit pick → the server active → a per-browser default → the first
+served). The same control is `set_active_model` (Python) / `setActiveModel` (TypeScript)
+and the **Make active** chip in the console.
+
+## Pull a model (download + register, no restart)
+
+Model downloads are **off by default** (deny-by-default). An operator enables them with
+`KX_SERVE_ALLOW_MODEL_PULL=1`; then any surface can pull a model and use it
+**immediately, without restarting** the serve:
+
+```sh
+# The quick/easy path — pull from the Ollama registry (needs a running Ollama daemon):
+kx models pull gemma3:12b
+
+# A direct GGUF download from HuggingFace — verified by a required SHA-256:
+kx models pull --url https://huggingface.co/<repo>/resolve/<rev>/<file>.gguf \
+  --sha256 <hex>
+```
+
+A pulled model streams its byte progress, registers into the live catalog + routing +
+its own `kx/recipes/m-<id>` chat recipe, and appears in `kx models list` (tagged
+`(pulled)`) ready to `use`. Security is **operator-gated, deny-by-default**:
+
+- **Operator opt-in.** A pull is refused unless `KX_SERVE_ALLOW_MODEL_PULL` is set — the
+  authenticated caller *requests* a pull, the operator's env flag *authorizes* the
+  egress (host infrastructure, never a client warrant axis, SN-8).
+- **Host allowlist + SSRF guard.** A direct URL must be `https` to an allowlisted host
+  (HuggingFace by default; extend with `KX_SERVE_MODEL_PULL_HOSTS`), a `/resolve/` GGUF
+  link, with no embedded credentials; internal / loopback / metadata addresses and
+  disallowed redirect hops are refused.
+- **SHA-256 verify.** A direct download is verified against the supplied digest **before**
+  it is registered; a mismatch discards the file (no half-registered model).
+- **Where files land.** Direct-GGUF downloads write to `KX_SERVE_MODELS_DIR` (default a
+  `models/` dir beside the catalog).
+
+The same controls are `pull_model` / `get_pull_status` (Python), `pullModel` /
+`getPullStatus` (TypeScript), and the **Pull a model** panel in the console (an
+honest-disabled card with the reason when downloads are off).
+
 ## Listing never routes a model (SN-8)
 
 Listing a model **grants nothing**. Selecting a model to run is always a
@@ -102,8 +155,9 @@ Because every model is templated with its own format, registering models from
 `<tool_call>{…}</tool_call>`). The runtime parses each model's tool-call format
 fail-closed. Pull a small second model with `just fetch-2nd-model`.
 
-## Cloud & coming soon
+## Cloud
 
-Connecting a managed cloud provider (vendor keys + OAuth) is a **Cloud**
-capability, and pulling a model locally is **coming soon** — both render as
-disabled cards in the view. They are never faked as local actions.
+Connecting a managed cloud provider (vendor keys + OAuth) is a **Cloud** capability and
+renders as a disabled card in the view — never faked as a local action. (Local model
+**downloads** are now a first-class operator-gated capability — see
+[Pull a model](#pull-a-model-download--register-no-restart) above.)

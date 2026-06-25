@@ -60,6 +60,10 @@ export class ServerInfo {
     readonly reactMaxToolCalls: number = 0,
     /** PR-B: the configured datasets/RAG embed model id (`""` on a model-less serve). */
     readonly embedModelId: string = "",
+    /** Model Control v2: the active default model (`""` ⇒ the primary; advisory). */
+    readonly activeModelId: string = "",
+    /** Model Control v2: operator-enabled model downloads (`KX_SERVE_ALLOW_MODEL_PULL`). */
+    readonly allowModelPull: boolean = false,
   ) {}
 
   static fromProto(r: PbGetServerInfoResponse): ServerInfo {
@@ -86,6 +90,8 @@ export class ServerInfo {
       r.reactMaxTurns,
       r.reactMaxToolCalls,
       r.embedModelId,
+      r.activeModelId,
+      r.allowModelPull,
     );
   }
 
@@ -114,6 +120,8 @@ export class ServerInfo {
       react_max_turns: this.reactMaxTurns,
       react_max_tool_calls: this.reactMaxToolCalls,
       embed_model_id: this.embedModelId,
+      active_model_id: this.activeModelId,
+      allow_model_pull: this.allowModelPull,
     };
   }
 }
