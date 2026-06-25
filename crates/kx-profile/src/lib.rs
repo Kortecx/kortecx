@@ -23,6 +23,7 @@
     allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)
 )]
 
+pub mod chat_spikes;
 pub mod content_spikes;
 pub mod env;
 pub mod error;
@@ -31,6 +32,7 @@ pub mod react_spikes;
 pub mod report;
 pub mod spikes;
 
+pub use chat_spikes::{ChatOpts, ChatSamples};
 pub use content_spikes::ContentSamples;
 pub use env::{capture_git_sha, Environment};
 pub use error::ProfileError;

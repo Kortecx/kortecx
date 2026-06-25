@@ -63,7 +63,8 @@ SDKs**, and the **web console** — same wire, same guarantees.
 
 ```bash
 # Prebuilt binary (Linux x86_64/arm64, macOS arm64) — SHA-256 verified, no sudo,
-# installs to ~/.local/bin. The prebuilt ships the web console + Datasets built in.
+# installs to ~/.local/bin. The prebuilt ships the web console + Datasets, and
+# serves local models via a running Ollama daemon out of the box (no C++ toolchain).
 curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
 ```
 
@@ -91,8 +92,13 @@ just console-build                                          # + the embedded web
 
 | Tier | You get | You need |
 |---|---|---|
-| **Tier 0 — the runtime** | everything except on-device inference | nothing (prebuilt) or **Rust 1.94+** (source) |
-| **Tier 1 — local LLM inference** | on-device model inference via llama.cpp | a **C++ toolchain** (CMake, clang/libclang) + a **GGUF** model |
+| **Tier 0 — the runtime (prebuilt)** | the full runtime + the web console + Datasets, and serves local models via a running **Ollama** daemon (zero toolchain) | nothing (prebuilt) or **Rust 1.94+** (source); **Ollama** installed for local inference |
+| **Tier 1 — in-process llama.cpp** | self-contained on-device inference (no daemon) + multi-modal / vision | a **C++ toolchain** (CMake, clang/libclang) + a **GGUF** model |
+
+Both engines are co-equal first-class backends — see
+[Local inference engines](docs/site/docs/local-inference-engines.md) for the
+positioning (Ollama = quick/easy; llama.cpp = performance / parallel / multi-modal)
+and the capability matrix.
 
 Run **`just doctor`** (repo checkout) for a tiered preflight that prints the
 exact install command for anything missing. Tier 1 hints — macOS:

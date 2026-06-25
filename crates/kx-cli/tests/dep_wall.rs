@@ -52,3 +52,44 @@ fn cargo_tree_normal_edges_exclude_the_ffi() {
         );
     }
 }
+
+/// PR-A.1 (GR24 dual-engine parity): the prebuilt release feature set
+/// (`console,hnsw,serve-engine`) must stay FFI-free — serve-engine adds the
+/// FFI-FREE Ollama backend (`kx-ollama`), never the llama.cpp FFI (that rides the
+/// opt-in `inference`). The deterministic in-test complement to the
+/// `build-serve-engine` CI/justfile clean-room gate.
+#[test]
+fn cargo_tree_serve_engine_features_exclude_the_ffi() {
+    let output = std::process::Command::new(env!("CARGO"))
+        .args([
+            "tree",
+            "-p",
+            "kx-cli",
+            "--features",
+            "console,hnsw,serve-engine",
+            "--edges",
+            "normal",
+            "--prefix",
+            "none",
+        ])
+        .output();
+    let output = match output {
+        Ok(o) if o.status.success() => o,
+        // cargo-tree may be unavailable in sandboxed CI; skip rather than false-fail.
+        _ => return,
+    };
+    let tree = String::from_utf8_lossy(&output.stdout);
+    for forbidden in FORBIDDEN {
+        assert!(
+            !tree.lines().any(|l| l.trim_start().starts_with(forbidden)),
+            "{forbidden} appeared in the kx-cli console,hnsw,serve-engine tree:\n{tree}"
+        );
+    }
+    // Sanity: serve-engine MUST wire the FFI-free Ollama backend — otherwise the
+    // FFI-free assertion above would be vacuously true on a build that can't serve.
+    assert!(
+        tree.lines()
+            .any(|l| l.trim_start().starts_with("kx-ollama")),
+        "serve-engine did not pull the kx-ollama backend:\n{tree}"
+    );
+}
