@@ -114,6 +114,11 @@ export function ModelsSection() {
                   {mdl.engine ? (
                     <Badge label={mdl.engine.replace(/^kx-/, "")} color="var(--text-2)" />
                   ) : null}
+                  {/* PR-B: the configured datasets/RAG embedder (KX_SERVE_EMBED_MODEL
+                      else the primary), display only. */}
+                  {mdl.canEmbed ? (
+                    <Badge label="embed" color="var(--accent-2, var(--accent))" />
+                  ) : null}
                   {/* POC-3: live RAM residency (the LRU snapshot), display only. */}
                   <Badge
                     label={mdl.loaded ? "loaded" : "not loaded"}

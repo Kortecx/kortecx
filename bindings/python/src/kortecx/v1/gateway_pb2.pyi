@@ -963,7 +963,7 @@ class ListModelsRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class ModelSummary(_message.Message):
-    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle", "engine")
+    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle", "engine", "can_embed")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODALITIES_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
@@ -972,6 +972,7 @@ class ModelSummary(_message.Message):
     LOADED_FIELD_NUMBER: _ClassVar[int]
     CHAT_HANDLE_FIELD_NUMBER: _ClassVar[int]
     ENGINE_FIELD_NUMBER: _ClassVar[int]
+    CAN_EMBED_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     modalities: _containers.RepeatedScalarFieldContainer[str]
     description: str
@@ -980,7 +981,8 @@ class ModelSummary(_message.Message):
     loaded: bool
     chat_handle: str
     engine: str
-    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ..., engine: _Optional[str] = ...) -> None: ...
+    can_embed: bool
+    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ..., engine: _Optional[str] = ..., can_embed: bool = ...) -> None: ...
 
 class ListModelsResponse(_message.Message):
     __slots__ = ("models",)
@@ -1920,7 +1922,7 @@ class GetServerInfoRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class GetServerInfoResponse(_message.Message):
-    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls")
+    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls", "embed_model_id")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODEL_PATH_FIELD_NUMBER: _ClassVar[int]
     LISTEN_ADDR_FIELD_NUMBER: _ClassVar[int]
@@ -1942,6 +1944,7 @@ class GetServerInfoResponse(_message.Message):
     AUDIT_LOG_ENABLED_FIELD_NUMBER: _ClassVar[int]
     REACT_MAX_TURNS_FIELD_NUMBER: _ClassVar[int]
     REACT_MAX_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
+    EMBED_MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     model_path: str
     listen_addr: str
@@ -1963,4 +1966,5 @@ class GetServerInfoResponse(_message.Message):
     audit_log_enabled: bool
     react_max_turns: int
     react_max_tool_calls: int
-    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ...) -> None: ...
+    embed_model_id: str
+    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ..., embed_model_id: _Optional[str] = ...) -> None: ...

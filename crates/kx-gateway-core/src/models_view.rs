@@ -33,6 +33,12 @@ pub struct ModelSummaryEntry {
     /// llama.cpp) or `"kx-ollama"` (a local Ollama daemon). A display/audit field
     /// (never identity); empty on an old host. Additive (proto tag 8).
     pub engine: String,
+    /// PR-B: `true` iff this model is the server's CONFIGURED dataset embedder (the
+    /// `KX_SERVE_EMBED_MODEL` model, else the primary). NOT a per-model embedding-
+    /// capability claim (the engines expose none) — it marks WHICH model the
+    /// server-embed path uses. Display/audit only (never identity); `false` on an old
+    /// host or a model-less serve. Additive (proto tag 9).
+    pub can_embed: bool,
 }
 
 /// The model-catalog read seam. The host implements it over the model registry

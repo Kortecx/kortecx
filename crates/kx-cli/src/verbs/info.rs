@@ -77,6 +77,10 @@ fn print_human(info: &proto::GetServerInfoResponse) {
     };
     println!("kortecx server");
     println!("  model      {model}");
+    if !info.embed_model_id.is_empty() {
+        // PR-B: the configured datasets/RAG embed model (operator-config else primary).
+        println!("  embed      {} (datasets/RAG)", info.embed_model_id);
+    }
     println!(
         "  endpoints  grpc {} · ws {} · console {} · metrics {}",
         or_dash(&info.listen_addr),
@@ -116,6 +120,7 @@ fn print_human(info: &proto::GetServerInfoResponse) {
 fn render_json(info: &proto::GetServerInfoResponse) -> String {
     json!({
         "model_id": info.model_id,
+        "embed_model_id": info.embed_model_id,
         "model_path": info.model_path,
         "listen_addr": info.listen_addr,
         "ws_addr": info.ws_addr,

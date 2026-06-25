@@ -35,10 +35,13 @@ the SDKs).
 
 Ingest and query are **pluggable** on embedding:
 
-- **Server-embed (text).** The CLI and the UI embed text server-side — this needs an
-  inference build with a model: `kx serve --features inference` with `KX_SERVE_MODEL_GGUF`
-  set. Without one, the gateway answers `FAILED_PRECONDITION` and the UI shows an
-  actionable notice (never a crash).
+- **Server-embed (text).** The CLI and the UI embed text server-side. This works on
+  **either inference engine** — `kx serve --features hnsw,serve-engine` with a reachable
+  Ollama (set `KX_SERVE_EMBED_MODEL=embeddinggemma`), or `--features hnsw,inference` with
+  a GGUF. The embed model defaults to the primary; override it with `KX_SERVE_EMBED_MODEL`
+  (see [Local inference engines → Embeddings & RAG](./local-inference-engines.md)). With
+  no embedder the gateway answers `FAILED_PRECONDITION` and the UI shows an actionable
+  notice (never a crash).
 - **Client vectors (FFI-free).** The SDKs accept a pre-computed `embedding` per
   document/query — the FFI-free path that needs no server model (compute vectors with,
   e.g., HuggingFace `sentence-transformers` in Python or `transformers.js` in the browser).
@@ -98,6 +101,6 @@ as honest, disabled cards (never fakes):
 
 - **No `hnsw` feature.** A gateway built without `--features hnsw` has no dataset view;
   the RPCs answer `UNIMPLEMENTED` and the surfaces say so honestly (`run kx serve --features hnsw`).
-- **No embedder.** Text ingest/query without an inference model returns
-  `FAILED_PRECONDITION` with actionable guidance — the client-vector path is the
-  FFI-free alternative.
+- **No embedder.** Text ingest/query on a serve with no embed model (no Ollama and no
+  GGUF) returns `FAILED_PRECONDITION` with actionable guidance — the client-vector path
+  is the FFI-free alternative.

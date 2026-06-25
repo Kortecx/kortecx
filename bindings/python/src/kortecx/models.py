@@ -25,6 +25,7 @@ class ModelSummary:
     loaded: bool = False  # POC-3: resident in RAM right now (live LRU residency)
     chat_handle: str = ""  # POC-3: the recipe handle to chat with THIS model
     engine: str = ""  # serving engine: "kx-llamacpp" | "kx-ollama" (empty on an old host)
+    can_embed: bool = False  # PR-B: this model is the server's configured datasets/RAG embedder
 
     @classmethod
     def from_proto(cls, m: "_g.ModelSummary") -> "ModelSummary":
@@ -37,6 +38,7 @@ class ModelSummary:
             loaded=m.loaded,
             chat_handle=m.chat_handle,
             engine=m.engine,
+            can_embed=m.can_embed,
         )
 
 

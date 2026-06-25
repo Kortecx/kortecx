@@ -203,7 +203,7 @@ pub use config::{
 };
 #[cfg(feature = "hnsw")]
 pub use datasets::HostDatasetView;
-#[cfg(all(feature = "hnsw", feature = "inference"))]
+#[cfg(all(feature = "hnsw", feature = "serve-engine"))]
 pub use datasets::HostEmbedder;
 pub use error::GatewayError;
 pub use live_tail::{GlobalLiveTailer, LiveTailer};

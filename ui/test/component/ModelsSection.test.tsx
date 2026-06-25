@@ -16,6 +16,7 @@ const MODELS = [
     contextLen: 8192,
     loaded: true,
     chatHandle: "kx/recipes/chat",
+    canEmbed: true,
   },
   {
     modelId: "gemma-2b",
@@ -25,6 +26,7 @@ const MODELS = [
     contextLen: 4096,
     loaded: false,
     chatHandle: "kx/recipes/m-gemma-2b",
+    canEmbed: false,
   },
 ];
 
@@ -52,6 +54,14 @@ describe("ModelsSection", () => {
     // The loaded model offers Offload; the idle one offers Load.
     expect(screen.getByTestId("model-offload-btn")).toBeInTheDocument();
     expect(screen.getByTestId("model-load-btn")).toBeInTheDocument();
+  });
+
+  it("marks the configured embedder with an 'embed' badge (PR-B)", async () => {
+    const mock = makeMockClient({ listModels: async () => MODELS });
+    render(<ModelsSection />, { wrapper: connectedWrapper(mock.client) });
+    await waitFor(() => expect(screen.getAllByTestId("model-card")).toHaveLength(2));
+    // Exactly the can_embed model carries the badge (the other does not).
+    expect(screen.getAllByText("embed")).toHaveLength(1);
   });
 
   it("loads an idle model (POC-3): clicking Load calls loadModel + refetches", async () => {

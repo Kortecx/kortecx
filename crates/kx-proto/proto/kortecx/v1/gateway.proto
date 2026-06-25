@@ -873,6 +873,11 @@ message ModelSummary {
   string engine = 8;                     // the serving engine: "kx-llamacpp" (in-process llama.cpp)
                                          //   or "kx-ollama" (a local Ollama daemon). Display/audit
                                          //   only (never identity); empty on an old host (additive)
+  bool can_embed = 9;                    // PR-B: true iff this model is the server's CONFIGURED
+                                         //   dataset embedder (KX_SERVE_EMBED_MODEL else the
+                                         //   primary). NOT a per-model capability claim — marks
+                                         //   WHICH model the server-embed/RAG path uses. Display/
+                                         //   audit only (never identity); additive (old host = false)
 }
 
 message ListModelsResponse {
@@ -1637,6 +1642,9 @@ message GetServerInfoResponse {
   // (D120.6): an old client ignores them; a new client reads 0 from an old server.
   uint32 react_max_turns      = 20;  // default/ceiling model-turn budget (8)
   uint32 react_max_tool_calls = 21;  // default/ceiling total tool-call budget (20)
+  // PR-B (additive): the configured dataset embed model id (KX_SERVE_EMBED_MODEL else
+  // the primary). "" on a model-less serve or an old server. Display/Settings only.
+  string embed_model_id       = 22;
 }
 
 service KxGateway {

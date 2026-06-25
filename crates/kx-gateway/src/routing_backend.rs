@@ -15,7 +15,8 @@
 use std::sync::Arc;
 
 use kx_inference::{
-    InferenceBackend, InferenceError, InferenceInput, InferenceOutput, InferenceParams, TokenSink,
+    EmbeddingBackend, EmbeddingOutput, EmbeddingPooling, InferenceBackend, InferenceError,
+    InferenceInput, InferenceOutput, InferenceParams, TokenSink,
 };
 use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
@@ -35,6 +36,27 @@ pub(crate) trait ServeEngine: InferenceBackend {
     fn evict(&self, model_id: &str) -> Result<bool, String>;
     /// The model ids currently resident in this engine.
     fn resident_ids(&self) -> Vec<String>;
+
+    /// Embed `text` for `model_id` if this engine has the embedding capability.
+    ///
+    /// The default returns [`InferenceError::Unsupported`] (an engine without the
+    /// [`EmbeddingBackend`] capability); a capable engine overrides this to delegate
+    /// to its own [`EmbeddingBackend::dispatch_embedding`]. This keeps the embedding
+    /// capability OFF the dyn-held [`InferenceBackend`] surface (the frozen
+    /// `Dispatcher` is untouched) while letting [`RoutingBackend`] route an embed call
+    /// to the owning engine — datasets server-embed at parity across engines (PR-B).
+    fn embed(
+        &self,
+        model_id: &ModelId,
+        text: &str,
+        pooling: EmbeddingPooling,
+        warrant: &WarrantSpec,
+    ) -> Result<EmbeddingOutput, InferenceError> {
+        let _ = (model_id, text, pooling, warrant);
+        Err(InferenceError::Unsupported {
+            reason: "embedding not supported by this serve engine",
+        })
+    }
 }
 
 #[cfg(feature = "inference")]
@@ -53,6 +75,15 @@ impl ServeEngine for kx_inference::LlamaInferenceBackend {
             .map(|m| m.0)
             .collect()
     }
+    fn embed(
+        &self,
+        model_id: &ModelId,
+        text: &str,
+        pooling: EmbeddingPooling,
+        warrant: &WarrantSpec,
+    ) -> Result<EmbeddingOutput, InferenceError> {
+        kx_inference::EmbeddingBackend::dispatch_embedding(self, model_id, text, pooling, warrant)
+    }
 }
 
 impl ServeEngine for kx_ollama::OllamaBackend {
@@ -69,6 +100,15 @@ impl ServeEngine for kx_ollama::OllamaBackend {
             .into_iter()
             .map(|m| m.0)
             .collect()
+    }
+    fn embed(
+        &self,
+        model_id: &ModelId,
+        text: &str,
+        pooling: EmbeddingPooling,
+        warrant: &WarrantSpec,
+    ) -> Result<EmbeddingOutput, InferenceError> {
+        kx_inference::EmbeddingBackend::dispatch_embedding(self, model_id, text, pooling, warrant)
     }
 }
 
@@ -169,6 +209,28 @@ impl InferenceBackend for RoutingBackend {
     }
 }
 
+impl EmbeddingBackend for RoutingBackend {
+    /// Route an embed call to the FIRST member that serves `model_id` (the same
+    /// `route()` rule as `dispatch`), forwarding to its [`ServeEngine::embed`]. A
+    /// served-but-non-embedding engine returns [`InferenceError::Unsupported`]
+    /// (bubbled, NOT collapsed into `ModelNotFound`); no member serving the model
+    /// fails closed with [`InferenceError::ModelNotFound`].
+    fn dispatch_embedding(
+        &self,
+        model_id: &ModelId,
+        text: &str,
+        pooling: EmbeddingPooling,
+        warrant: &WarrantSpec,
+    ) -> Result<EmbeddingOutput, InferenceError> {
+        match self.route(model_id) {
+            Some(engine) => engine.embed(model_id, text, pooling, warrant),
+            None => Err(InferenceError::ModelNotFound {
+                model_id: model_id.0.clone(),
+            }),
+        }
+    }
+}
+
 impl ModelResidency for RoutingBackend {
     fn resident_ids(&self) -> Vec<String> {
         self.engines.iter().flat_map(|e| e.resident_ids()).collect()
@@ -206,6 +268,7 @@ mod tests {
         name: &'static str,
         models: BTreeSet<String>,
         resident: Mutex<BTreeSet<String>>,
+        embeds: bool,
     }
     impl FakeEngine {
         fn new(name: &'static str, models: &[&str]) -> Self {
@@ -213,7 +276,13 @@ mod tests {
                 name,
                 models: models.iter().map(|m| (*m).to_string()).collect(),
                 resident: Mutex::new(BTreeSet::new()),
+                embeds: false,
             }
+        }
+        /// Mark this fake as embedding-capable (mirrors a real `EmbeddingBackend`).
+        fn embedding(mut self) -> Self {
+            self.embeds = true;
+            self
         }
     }
     impl InferenceBackend for FakeEngine {
@@ -249,6 +318,39 @@ mod tests {
         }
         fn resident_ids(&self) -> Vec<String> {
             self.resident.lock().unwrap().iter().cloned().collect()
+        }
+        fn embed(
+            &self,
+            model_id: &ModelId,
+            _text: &str,
+            _pooling: EmbeddingPooling,
+            warrant: &WarrantSpec,
+        ) -> Result<EmbeddingOutput, InferenceError> {
+            if !self.embeds {
+                // Served but non-embedding: bubble Unsupported (NOT ModelNotFound).
+                return Err(InferenceError::Unsupported {
+                    reason: "fake: no embedding capability",
+                });
+            }
+            if model_id != &warrant.model_route.model_id {
+                return Err(InferenceError::WarrantDeniesModel {
+                    model_id: model_id.0.clone(),
+                    route: warrant.model_route.model_id.0.clone(),
+                });
+            }
+            if !self.supports(model_id) {
+                return Err(InferenceError::ModelNotFound {
+                    model_id: model_id.0.clone(),
+                });
+            }
+            // Echo the model id so the caller can confirm WHICH engine/model embedded.
+            Ok(EmbeddingOutput {
+                vector: vec![1.0, 2.0, 3.0],
+                dim: 3,
+                backend_name: "fake",
+                model_id: model_id.clone(),
+                elapsed: std::time::Duration::ZERO,
+            })
         }
     }
 
@@ -313,5 +415,74 @@ mod tests {
         );
         // An unregistered model is fail-closed.
         assert!(ModelEngine::warm(&rb, "nope").is_err());
+    }
+
+    // ---- PR-B: embedding routing (datasets server-embed at parity) ----
+
+    fn warrant_for(model: &str) -> WarrantSpec {
+        let mut w = WarrantSpec::default();
+        w.model_route.model_id = ModelId(model.to_string());
+        w
+    }
+
+    /// Routing where llama embeds `gguf-a` and ollama embeds `gemma3:12b`.
+    fn routing_embed() -> RoutingBackend {
+        RoutingBackend::new(vec![
+            Arc::new(FakeEngine::new("llama", &["gguf-a"]).embedding()),
+            Arc::new(FakeEngine::new("ollama", &["gemma3:12b"]).embedding()),
+        ])
+    }
+
+    fn embed(rb: &RoutingBackend, model: &str) -> Result<EmbeddingOutput, InferenceError> {
+        rb.dispatch_embedding(
+            &ModelId(model.to_string()),
+            "hello",
+            EmbeddingPooling::Mean,
+            &warrant_for(model),
+        )
+    }
+
+    #[test]
+    fn embedding_routes_to_the_capable_engine() {
+        let rb = routing_embed();
+        let out = embed(&rb, "gemma3:12b").unwrap();
+        assert_eq!(out.model_id.0, "gemma3:12b");
+        assert_eq!(out.dim, 3);
+        // The llama-served model routes to the llama member.
+        assert_eq!(embed(&rb, "gguf-a").unwrap().model_id.0, "gguf-a");
+    }
+
+    #[test]
+    fn embedding_on_a_served_but_non_embedding_engine_is_unsupported() {
+        // ollama serves gemma3:12b but is NOT embedding-capable.
+        let rb = RoutingBackend::new(vec![Arc::new(FakeEngine::new("ollama", &["gemma3:12b"]))]);
+        assert!(matches!(
+            embed(&rb, "gemma3:12b").unwrap_err(),
+            InferenceError::Unsupported { .. }
+        ));
+    }
+
+    #[test]
+    fn embedding_unknown_model_is_model_not_found() {
+        let rb = routing_embed();
+        assert!(matches!(
+            embed(&rb, "nope").unwrap_err(),
+            InferenceError::ModelNotFound { .. }
+        ));
+    }
+
+    #[test]
+    fn embedding_off_route_is_warrant_denied() {
+        let rb = routing_embed();
+        // The warrant authorizes a different model than the one embedded.
+        let err = rb
+            .dispatch_embedding(
+                &ModelId("gemma3:12b".into()),
+                "hi",
+                EmbeddingPooling::Mean,
+                &warrant_for("gguf-a"),
+            )
+            .unwrap_err();
+        assert!(matches!(err, InferenceError::WarrantDeniesModel { .. }));
     }
 }

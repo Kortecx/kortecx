@@ -10,15 +10,16 @@
 //!
 //! Usage:
 //! - In-process spikes (default): `kx-profile [--iterations N] [--out PATH]` (`N = 8`).
-//! - Attach mode (GR24 dual-engine chat baseline): `kx-profile --serve <addr> chat
+//! - Attach mode (GR24 dual-engine baseline): `kx-profile --serve <addr> <chat|embed>
 //!   [--iterations N] [--prompt "..."] [--model <id>] [--token <t> | --token-file <p>]`
-//!   — times a real chat against an EXTERNAL `kx serve` (whichever engine it runs).
+//!   — `chat` times a real chat; `embed` times a datasets server-embed ingest+query —
+//!   against an EXTERNAL `kx serve` (whichever engine it runs).
 
 use std::path::PathBuf;
 
 use kx_profile::{
-    capture_git_sha, chat_spikes, content_spikes, mote_detail_spikes, percentile, react_spikes,
-    spikes, ChatOpts, Environment, Metric, ProfileError, Report,
+    capture_git_sha, chat_spikes, content_spikes, embed_spikes, mote_detail_spikes, percentile,
+    react_spikes, spikes, ChatOpts, EmbedOpts, Environment, Metric, ProfileError, Report,
 };
 
 #[tokio::main]
@@ -59,7 +60,10 @@ async fn run() -> Result<(), ProfileError> {
     // `kx serve` (whichever engine it runs — Ollama or llama.cpp), the GR10/GR24
     // dual-engine baseline. Otherwise run the in-process FFI-free spikes.
     let metrics = if let Some(endpoint) = args.serve.clone() {
-        attach_chat_metrics(&endpoint, &args).await?
+        match args.mode {
+            AttachMode::Chat => attach_chat_metrics(&endpoint, &args).await?,
+            AttachMode::Embed => attach_embed_metrics(&endpoint, &args).await?,
+        }
     } else {
         inproc_metrics(args.iterations).await?
     };
@@ -223,6 +227,47 @@ async fn attach_chat_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric>,
     Ok(metrics)
 }
 
+/// Profile real datasets server-embed (ingest + query) against an EXTERNAL `kx serve`
+/// at `endpoint` (GR10 + GR24 dual-engine baseline). Each metric id is prefixed with
+/// the engine that embeds (`embed__kx-ollama__…` / `embed__kx-llamacpp__…`) so an
+/// Ollama capture and a llama.cpp capture never collide in the trend record.
+async fn attach_embed_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric>, ProfileError> {
+    let channel = chat_spikes::connect(endpoint).await?;
+    let token = match (&args.token, &args.token_file) {
+        (Some(t), _) => Some(t.clone()),
+        (None, Some(path)) => Some(read_token_file(path)?),
+        (None, None) => None,
+    };
+    let opts = EmbedOpts {
+        iterations: args.iterations,
+        text: args
+            .prompt
+            .clone()
+            .unwrap_or_else(|| embed_spikes::DEFAULT_TEXT.to_string()),
+        model: args.model.clone(),
+        token,
+    };
+    let embed = embed_spikes::measure(&channel, &opts).await?;
+    eprintln!(
+        "kx-profile: embed baseline | engine={engine} | model={model} | {n} timed iter(s)",
+        engine = embed.engine,
+        model = embed.model_id,
+        n = embed.ingest_ms.len(),
+    );
+    let p = |m: &str| format!("embed__{}__{m}", embed.engine);
+    let mut metrics = Vec::new();
+    push_spikes(
+        &mut metrics,
+        &[
+            (p("ingest_p50").as_str(), percentile(&embed.ingest_ms, 50)),
+            (p("ingest_p95").as_str(), percentile(&embed.ingest_ms, 95)),
+            (p("query_p50").as_str(), percentile(&embed.query_ms, 50)),
+            (p("query_p95").as_str(), percentile(&embed.query_ms, 95)),
+        ],
+    );
+    Ok(metrics)
+}
+
 /// Read a bearer token from a file (trimmed of surrounding whitespace).
 fn read_token_file(path: &str) -> Result<String, ProfileError> {
     std::fs::read_to_string(path)
@@ -237,13 +282,22 @@ fn push_spikes(metrics: &mut Vec<Metric>, spikes: &[(&str, f64)]) {
     }
 }
 
+/// Which attach-mode baseline to capture (the subverb after `--serve`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AttachMode {
+    Chat,
+    Embed,
+}
+
 /// Parsed CLI arguments (hand-rolled, no clap — the FFI-free `kx` convention).
 struct Args {
     iterations: usize,
     out: Option<PathBuf>,
-    /// `--serve <addr>`: profile a real chat against an EXTERNAL `kx serve` (attach
-    /// mode). Absent ⇒ run the in-process FFI-free spikes.
+    /// `--serve <addr>`: profile against an EXTERNAL `kx serve` (attach mode). Absent ⇒
+    /// run the in-process FFI-free spikes.
     serve: Option<String>,
+    /// The attach SUBVERB: `chat` (default) or `embed`.
+    mode: AttachMode,
     /// `--prompt <text>`: the chat prompt in attach mode (default in `chat_spikes`).
     prompt: Option<String>,
     /// `--model <id>`: chat a specific served model (default = the primary).
@@ -263,6 +317,7 @@ impl Args {
         let mut model = None;
         let mut token = None;
         let mut token_file = None;
+        let mut mode = AttachMode::Chat;
         while let Some(flag) = argv.next() {
             match flag.as_str() {
                 "--iterations" | "-n" => {
@@ -292,9 +347,9 @@ impl Args {
                 "--token-file" => {
                     token_file = argv.next();
                 }
-                // The attach subverb marker; the only mode today (presence of
-                // `--serve` selects attach), accepted so it is not flagged.
-                "chat" => {}
+                // The attach subverb: selects the baseline (`chat` default | `embed`).
+                "chat" => mode = AttachMode::Chat,
+                "embed" => mode = AttachMode::Embed,
                 other => {
                     eprintln!("kx-profile: ignoring unrecognized argument {other:?}");
                 }
@@ -304,6 +359,7 @@ impl Args {
             iterations,
             out,
             serve,
+            mode,
             prompt,
             model,
             token,

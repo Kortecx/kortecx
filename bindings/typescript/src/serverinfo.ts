@@ -58,6 +58,8 @@ export class ServerInfo {
     /** T-MULTI-ELEMENT-TOOLCALLS: the server's DEFAULT total tool-call budget (a turn
      *  may fire several at once, so independent of `reactMaxTurns`); overridable per-run. */
     readonly reactMaxToolCalls: number = 0,
+    /** PR-B: the configured datasets/RAG embed model id (`""` on a model-less serve). */
+    readonly embedModelId: string = "",
   ) {}
 
   static fromProto(r: PbGetServerInfoResponse): ServerInfo {
@@ -83,6 +85,7 @@ export class ServerInfo {
       r.auditLogEnabled,
       r.reactMaxTurns,
       r.reactMaxToolCalls,
+      r.embedModelId,
     );
   }
 
@@ -110,6 +113,7 @@ export class ServerInfo {
       audit_log_enabled: this.auditLogEnabled,
       react_max_turns: this.reactMaxTurns,
       react_max_tool_calls: this.reactMaxToolCalls,
+      embed_model_id: this.embedModelId,
     };
   }
 }

@@ -16,9 +16,11 @@ kx models list
 
 Each model shows its id, modalities (`text` / `image` / `audio` / `video`), a
 `serving` badge (the primary/default route), a **`loaded`** badge (whether it is
-resident in RAM right now), the served context window, and a host-synthesized
-description. The data comes straight from the gateway's `ListModels` RPC — nothing
-here is fabricated.
+resident in RAM right now), an **`(embed)`** marker on the configured datasets/RAG
+embedder (`KX_SERVE_EMBED_MODEL` else the primary — see
+[Embeddings & RAG](./local-inference-engines.md)), the served context window, and a
+host-synthesized description. The data comes straight from the gateway's `ListModels`
+RPC — nothing here is fabricated.
 
 ## Local model lifecycle: register N, load / offload, route
 
