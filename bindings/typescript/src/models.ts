@@ -6,6 +6,7 @@
  */
 
 import type {
+  GetPullStatusResponse as PbGetPullStatusResponse,
   LoadModelResponse as PbLoadModelResponse,
   ModelSummary as PbModelSummary,
   OffloadModelResponse as PbOffloadModelResponse,
@@ -32,6 +33,12 @@ export class ModelSummary {
     readonly engine: string = "",
     /** PR-B: `true` iff this model is the server's configured datasets/RAG embedder. */
     readonly canEmbed: boolean = false,
+    /** Model Control v2: provenance — `"local" | "ollama" | "pulled-ollama" | "pulled-url"`. */
+    readonly source: string = "",
+    /** Model Control v2: `true` iff this is the server's ACTIVE default (advisory). */
+    readonly active: boolean = false,
+    /** Model Control v2: the RAG-grounded chat recipe handle for THIS model (or ""). */
+    readonly chatRagHandle: string = "",
   ) {}
 
   static fromProto(m: PbModelSummary): ModelSummary {
@@ -45,6 +52,9 @@ export class ModelSummary {
       m.chatHandle,
       m.engine,
       m.canEmbed,
+      m.source,
+      m.active,
+      m.chatRagHandle,
     );
   }
 
@@ -60,6 +70,54 @@ export class ModelSummary {
       chat_handle: this.chatHandle,
       engine: this.engine,
       can_embed: this.canEmbed,
+      source: this.source,
+      active: this.active,
+      chat_rag_handle: this.chatRagHandle,
+    };
+  }
+}
+
+/** Model Control v2: the progress of a `pullModel` download + registration. */
+export class PullStatus {
+  constructor(
+    readonly modelId: string,
+    /** `"resolving" | "downloading" | "verifying" | "registering" | "done" | "failed"`. */
+    readonly phase: string,
+    readonly bytesDownloaded: number = 0,
+    readonly bytesTotal: number = 0,
+    readonly detail: string = "",
+  ) {}
+
+  static fromProto(modelId: string, r: PbGetPullStatusResponse): PullStatus {
+    const phases = [
+      "unspecified",
+      "resolving",
+      "downloading",
+      "verifying",
+      "registering",
+      "done",
+      "failed",
+    ];
+    return new PullStatus(
+      modelId,
+      phases[r.phase] ?? "unspecified",
+      Number(r.bytesDownloaded),
+      Number(r.bytesTotal),
+      r.detail,
+    );
+  }
+
+  get isTerminal(): boolean {
+    return this.phase === "done" || this.phase === "failed";
+  }
+
+  toJSON() {
+    return {
+      model_id: this.modelId,
+      phase: this.phase,
+      bytes_downloaded: this.bytesDownloaded,
+      bytes_total: this.bytesTotal,
+      detail: this.detail,
     };
   }
 }

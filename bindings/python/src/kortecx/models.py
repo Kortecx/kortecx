@@ -26,6 +26,9 @@ class ModelSummary:
     chat_handle: str = ""  # POC-3: the recipe handle to chat with THIS model
     engine: str = ""  # serving engine: "kx-llamacpp" | "kx-ollama" (empty on an old host)
     can_embed: bool = False  # PR-B: this model is the server's configured datasets/RAG embedder
+    source: str = ""  # Model Control v2: "local" | "ollama" | "pulled-ollama" | "pulled-url"
+    active: bool = False  # Model Control v2: the server's ACTIVE default model (advisory)
+    chat_rag_handle: str = ""  # Model Control v2: the RAG-grounded chat recipe for THIS model
 
     @classmethod
     def from_proto(cls, m: "_g.ModelSummary") -> "ModelSummary":
@@ -39,6 +42,39 @@ class ModelSummary:
             chat_handle=m.chat_handle,
             engine=m.engine,
             can_embed=m.can_embed,
+            source=m.source,
+            active=m.active,
+            chat_rag_handle=m.chat_rag_handle,
+        )
+
+
+@dataclass(frozen=True)
+class PullStatus:
+    """Model Control v2: the progress of a ``pull_model`` download + registration."""
+
+    model_id: str
+    phase: str  # "resolving" | "downloading" | "verifying" | "registering" | "done" | "failed"
+    bytes_downloaded: int = 0
+    bytes_total: int = 0  # 0 when unknown
+    detail: str = ""  # advisory progress / failure text (never authority)
+
+    @classmethod
+    def from_proto(cls, model_id: str, r: "_g.GetPullStatusResponse") -> "PullStatus":
+        phases = {
+            0: "unspecified",
+            1: "resolving",
+            2: "downloading",
+            3: "verifying",
+            4: "registering",
+            5: "done",
+            6: "failed",
+        }
+        return cls(
+            model_id=model_id,
+            phase=phases.get(int(r.phase), "unspecified"),
+            bytes_downloaded=r.bytes_downloaded,
+            bytes_total=r.bytes_total,
+            detail=r.detail,
         )
 
 

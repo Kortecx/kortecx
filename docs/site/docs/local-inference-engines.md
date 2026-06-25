@@ -49,6 +49,8 @@ gap (a visible "unavailable on this engine"), never a silent one:
 |---|---|---|
 | Chat + agentic ReAct / tool loop | ✅ | ✅ |
 | Model lifecycle (load / offload / residency) | ✅ | ✅ |
+| Model switching (active default, `kx models use`) | ✅ | ✅ |
+| Model download (`kx models pull`, runtime-register) | ✅ (`/api/pull`) | ✅ (direct GGUF URL) |
 | Streaming tokens | ✅ | ✅ |
 | Context window surfaced (`kx models list` `ctx=`) | ✅ (`/api/show`) | ✅ (GGUF `n_ctx`) |
 | Tool-call parsing (multi-format) | ✅ | ✅ |
@@ -154,6 +156,23 @@ Ollama models are reachable through their per-model recipe handles. A dispatch
 routes to the first engine that serves the requested model id (llama.cpp first when
 a GGUF is configured); model ids never collide in practice (GGUF-stem ids vs Ollama
 tags like `gemma3:12b`).
+
+## Switching & downloading models
+
+Switch the active default and download new models on either engine without a restart —
+see [Models → Switch the active model](./models.md#switch-the-active-model) and
+[Pull a model](./models.md#pull-a-model-download--register-no-restart). Downloads are
+operator-gated (deny-by-default), configured by:
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `KX_SERVE_ALLOW_MODEL_PULL` | `off` | the operator opt-in that authorizes `kx models pull` (egress). Off ⇒ every pull is refused. |
+| `KX_SERVE_MODEL_PULL_HOSTS` | `huggingface.co` (+ CDNs) | extra allowlisted download hosts for a direct-URL pull (comma-separated). |
+| `KX_SERVE_MODELS_DIR` | `<catalog>/models` | where a direct-GGUF download lands. |
+
+Ollama pulls go through the daemon's `/api/pull` (the registry digest verifies them); a
+direct GGUF URL is `https`, allowlisted, `/resolve/`-shaped, and SHA-256-verified before
+registration (SN-8).
 
 ## What's served where (OSS vs Cloud)
 

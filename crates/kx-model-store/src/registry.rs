@@ -3,6 +3,7 @@
 //! in-memory [`ModelRegistry`] implementation.
 
 use std::collections::BTreeMap;
+use std::sync::{PoisonError, RwLock};
 
 use kx_content::ContentRef;
 use kx_mote::ModelId;
@@ -129,6 +130,130 @@ impl ModelResolver for ModelRegistry {
     }
 }
 
+/// An append-only, interior-mutable [`ModelResolver`] — the registry a serve host
+/// can grow at RUNTIME (Model Control v2: `kx models pull` registers a freshly
+/// downloaded model WITHOUT restarting `kx serve`).
+///
+/// ## Why a separate type (the borrow contract)
+///
+/// [`ModelResolver::resolve`] returns `Option<&ModelDescriptor>` — a borrow the
+/// frozen `kx-inference` dispatch path holds across a dispatch. A plain
+/// `RwLock<BTreeMap<…>>` cannot satisfy that: the returned reference would borrow
+/// the dropped lock guard. So registration **leaks** each descriptor to obtain a
+/// `'static` reference that outlives the guard. This is sound and bounded:
+///
+/// - a registered model is **permanent for the process** (this registry never
+///   removes — offload evicts *RAM residency* in the backend cache, not the
+///   descriptor), so the leak is process-lifetime data, not unbounded growth;
+/// - a [`ModelDescriptor`] is a tiny path + metadata struct (no weights), and the
+///   count is capped at [`MAX_MODELS`] — the same resource-exhaustion guard
+///   [`ModelRegistry`] enforces.
+///
+/// Re-registration is refused ([`ModelStoreError::DuplicateModel`]) so identity
+/// can never silently change under a live cache, exactly as [`ModelRegistry`].
+/// Off the trust path (SN-8): the store gates nothing; this only widens *which
+/// models exist*, never *what is authorized*.
+#[derive(Debug, Default)]
+pub struct MutableRegistry {
+    /// `ModelId` → a leaked, stable-address descriptor (see the type docs).
+    models: RwLock<BTreeMap<ModelId, &'static ModelDescriptor>>,
+}
+
+impl MutableRegistry {
+    /// An empty mutable registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Seed a mutable registry from an iterator of descriptors (the startup set),
+    /// failing closed on the first duplicate or over-cap.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`register`](Self::register)'s errors.
+    pub fn from_descriptors(
+        descriptors: impl IntoIterator<Item = ModelDescriptor>,
+    ) -> Result<Self, ModelStoreError> {
+        let reg = Self::new();
+        for d in descriptors {
+            reg.register(d)?;
+        }
+        Ok(reg)
+    }
+
+    /// Register a descriptor at runtime (through `&self` — interior mutability).
+    ///
+    /// Lazy: does NOT touch the model file (call
+    /// [`ModelDescriptor::validate`](crate::ModelDescriptor::validate) for that).
+    ///
+    /// # Errors
+    ///
+    /// - [`ModelStoreError::DuplicateModel`] if the id is already registered.
+    /// - [`ModelStoreError::TooManyModels`] if the registry is at [`MAX_MODELS`].
+    pub fn register(&self, descriptor: ModelDescriptor) -> Result<(), ModelStoreError> {
+        // Recover from a poisoned lock (a panicked writer): the map is still a
+        // valid, readable structure — fail-closed on the descriptor, never on a
+        // transient panic elsewhere. (`expect`/`unwrap` are denied in lib code.)
+        let mut models = self.models.write().unwrap_or_else(PoisonError::into_inner);
+        if models.contains_key(&descriptor.model_id) {
+            return Err(ModelStoreError::DuplicateModel {
+                model_id: descriptor.model_id.0.clone(),
+            });
+        }
+        if models.len() >= MAX_MODELS {
+            return Err(ModelStoreError::TooManyModels { cap: MAX_MODELS });
+        }
+        tracing::debug!(model_id = %descriptor.model_id.0, "registering model descriptor (runtime)");
+        let id = descriptor.model_id.clone();
+        // Leak to obtain a `'static` reference with a stable address (see the type
+        // docs): the descriptor lives for the process, the count is `MAX_MODELS`-bounded.
+        let leaked: &'static ModelDescriptor = Box::leak(Box::new(descriptor));
+        models.insert(id, leaked);
+        Ok(())
+    }
+
+    /// Number of registered models.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.models
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// Whether the registry is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.models
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty()
+    }
+}
+
+impl ModelResolver for MutableRegistry {
+    fn resolve(&self, id: &ModelId) -> Option<&ModelDescriptor> {
+        // Copy the `'static` reference OUT of the guard: it does not borrow the
+        // guard, so it outlives the read lock and satisfies the `&self`-bounded
+        // return (`'static` coerces to any shorter lifetime).
+        self.models
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(id)
+            .copied()
+    }
+
+    fn iter_identities(&self) -> Vec<(ModelId, ContentRef)> {
+        self.models
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(id, d)| (id.clone(), d.identity_digest))
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +332,103 @@ mod tests {
         let r = Opaque(ModelDescriptor::text(mid("a"), "/m/a.gguf", 4096));
         assert!(r.resolve(&mid("a")).is_some());
         assert!(r.iter_identities().is_empty());
+    }
+
+    // ---- Model Control v2: the runtime-mutable registry ----
+
+    #[test]
+    fn mutable_register_then_resolve_through_shared_ref() {
+        // Registration is through `&self` (interior mutability) so the host can
+        // grow the registry at runtime while the backend holds it immutably.
+        let reg = MutableRegistry::new();
+        assert!(reg.is_empty());
+        reg.register(ModelDescriptor::text(mid("a"), "/m/a.gguf", 4096))
+            .unwrap();
+        reg.register(ModelDescriptor::text(mid("b"), "/m/b.gguf", 2048))
+            .unwrap();
+        assert_eq!(reg.len(), 2);
+        let d = reg.resolve(&mid("a")).expect("registered");
+        assert_eq!(d.gguf_path.to_str().unwrap(), "/m/a.gguf");
+        assert!(d.supports(Modality::Text));
+        assert!(reg.resolve(&mid("missing")).is_none());
+    }
+
+    #[test]
+    fn mutable_resolved_ref_outlives_the_read_lock() {
+        // The borrow contract: the `'static`-backed reference must remain valid
+        // after `resolve` returns (it does NOT borrow the dropped lock guard).
+        let reg = MutableRegistry::new();
+        reg.register(ModelDescriptor::text(mid("a"), "/m/a.gguf", 4096))
+            .unwrap();
+        let held = reg.resolve(&mid("a")).expect("registered");
+        // A concurrent registration takes the write lock; the earlier borrow stays valid.
+        reg.register(ModelDescriptor::text(mid("b"), "/m/b.gguf", 2048))
+            .unwrap();
+        assert_eq!(held.gguf_path.to_str().unwrap(), "/m/a.gguf");
+        assert_eq!(reg.len(), 2);
+    }
+
+    #[test]
+    fn mutable_double_registration_is_refused_and_original_intact() {
+        let reg = MutableRegistry::new();
+        reg.register(ModelDescriptor::text(mid("a"), "/m/a.gguf", 4096))
+            .unwrap();
+        let err = reg
+            .register(ModelDescriptor::text(mid("a"), "/m/other.gguf", 4096))
+            .unwrap_err();
+        assert!(matches!(err, ModelStoreError::DuplicateModel { .. }));
+        // Identity never silently changes under a live cache.
+        assert_eq!(
+            reg.resolve(&mid("a")).unwrap().gguf_path.to_str().unwrap(),
+            "/m/a.gguf"
+        );
+        assert_eq!(reg.len(), 1);
+    }
+
+    #[test]
+    fn mutable_from_descriptors_seeds_the_startup_set() {
+        let reg = MutableRegistry::from_descriptors([
+            ModelDescriptor::text(mid("b"), "/m/b.gguf", 2048),
+            ModelDescriptor::text(mid("a"), "/m/a.gguf", 4096),
+        ])
+        .unwrap();
+        assert_eq!(reg.len(), 2);
+        // BTreeMap order: a before b (deterministic identities).
+        let ids: Vec<_> = reg
+            .iter_identities()
+            .into_iter()
+            .map(|(id, _)| id.0)
+            .collect();
+        assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn mutable_concurrent_register_and_resolve_no_torn_read() {
+        // A4: many concurrent registers + resolves never panic and never observe a
+        // half-registered entry (the write critical section is atomic).
+        use std::sync::Arc;
+        let reg = Arc::new(MutableRegistry::new());
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let r = reg.clone();
+            handles.push(std::thread::spawn(move || {
+                r.register(ModelDescriptor::text(
+                    mid(&format!("m{i}")),
+                    format!("/m/m{i}.gguf"),
+                    4096,
+                ))
+                .unwrap();
+                // Interleave reads: any resolved entry is fully-formed.
+                for j in 0..=i {
+                    if let Some(d) = r.resolve(&mid(&format!("m{j}"))) {
+                        assert_eq!(d.gguf_path.to_str().unwrap(), format!("/m/m{j}.gguf"));
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(reg.len(), 16);
     }
 }

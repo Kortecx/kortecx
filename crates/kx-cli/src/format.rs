@@ -575,6 +575,10 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
                     "chat_handle": m.chat_handle,
                     "engine": m.engine,
                     "can_embed": m.can_embed,
+                    // Model Control v2 (additive).
+                    "source": m.source,
+                    "active": m.active,
+                    "chat_rag_handle": m.chat_rag_handle,
                 })
             })
             .collect();
@@ -582,31 +586,94 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
     } else if resp.models.is_empty() {
         "(no models on this serve)".to_string()
     } else {
-        resp.models
-            .iter()
-            .map(|m| {
-                // Engine badge after the modalities (e.g. `[text · ollama]`); empty on
-                // an old host that does not report an engine.
-                let engine = if m.engine.is_empty() {
-                    String::new()
-                } else {
-                    format!(" · {}", m.engine.strip_prefix("kx-").unwrap_or(&m.engine))
-                };
-                format!(
-                    "{}  [{}{}]  ctx={}  {}{}{}{}",
+        // Model Control v2: group by engine so an Ollama ∥ llama.cpp split is obvious.
+        let mut engines: Vec<&str> = resp.models.iter().map(|m| m.engine.as_str()).collect();
+        engines.sort_unstable();
+        engines.dedup();
+        let mut out: Vec<String> = Vec::new();
+        for eng in engines {
+            let label = if eng.is_empty() {
+                "models".to_string()
+            } else {
+                eng.strip_prefix("kx-").unwrap_or(eng).to_string()
+            };
+            out.push(format!("[{label}]"));
+            for m in resp.models.iter().filter(|m| m.engine == eng) {
+                out.push(format!(
+                    "  {}  [{}]  ctx={}  {}{}{}{}{}{}",
                     m.model_id,
                     m.modalities.join("+"),
-                    engine,
                     m.context_len,
                     m.description,
                     if m.serving { "  (serving)" } else { "" },
+                    if m.active { "  (active)" } else { "" },
                     if m.loaded { "  (loaded)" } else { "" },
-                    // PR-B: mark the configured datasets/RAG embedder.
-                    if m.can_embed { "  (embed)" } else { "" }
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+                    if m.can_embed { "  (embed)" } else { "" },
+                    // Model Control v2: provenance of a pulled/runtime model.
+                    match m.source.as_str() {
+                        "pulled-ollama" | "pulled-url" => "  (pulled)",
+                        _ => "",
+                    },
+                ));
+            }
+        }
+        out.join("\n")
+    }
+}
+
+/// Render `models pull` — the terminal pull status (Model Control v2).
+#[must_use]
+pub fn render_pull_status(
+    model_id: &str,
+    resp: &proto::GetPullStatusResponse,
+    json: bool,
+) -> String {
+    let phase = pull_phase_label(resp.phase);
+    if json {
+        json!({
+            "model_id": model_id,
+            "phase": phase,
+            "bytes_downloaded": resp.bytes_downloaded,
+            "bytes_total": resp.bytes_total,
+            "detail": resp.detail,
+        })
+        .to_string()
+    } else {
+        match proto::get_pull_status_response::Phase::try_from(resp.phase) {
+            Ok(proto::get_pull_status_response::Phase::Done) => {
+                format!("{model_id} pulled + registered (switch with `kx models use {model_id}`)")
+            }
+            Ok(proto::get_pull_status_response::Phase::Failed) => {
+                format!("{model_id} pull FAILED: {}", resp.detail)
+            }
+            _ => format!("{model_id}: {phase} {}", resp.detail),
+        }
+    }
+}
+
+/// Render `models use` — the active-default switch (Model Control v2).
+#[must_use]
+pub fn render_set_active(resp: &proto::SetActiveModelResponse, json: bool) -> String {
+    if json {
+        json!({ "active_model_id": resp.active_model_id }).to_string()
+    } else if resp.active_model_id.is_empty() {
+        "active model cleared (back to the primary)".to_string()
+    } else {
+        format!("active model set to {}", resp.active_model_id)
+    }
+}
+
+/// The display label for a `GetPullStatusResponse.phase` discriminant.
+#[must_use]
+fn pull_phase_label(phase: i32) -> &'static str {
+    match proto::get_pull_status_response::Phase::try_from(phase) {
+        Ok(proto::get_pull_status_response::Phase::Resolving) => "resolving",
+        Ok(proto::get_pull_status_response::Phase::Downloading) => "downloading",
+        Ok(proto::get_pull_status_response::Phase::Verifying) => "verifying",
+        Ok(proto::get_pull_status_response::Phase::Registering) => "registering",
+        Ok(proto::get_pull_status_response::Phase::Done) => "done",
+        Ok(proto::get_pull_status_response::Phase::Failed) => "failed",
+        _ => "unknown",
     }
 }
 

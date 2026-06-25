@@ -28,6 +28,10 @@ export interface MockClientImpl {
   listModels?: (...args: unknown[]) => Promise<unknown>;
   loadModel?: (...args: unknown[]) => Promise<unknown>;
   offloadModel?: (...args: unknown[]) => Promise<unknown>;
+  getServerInfo?: (...args: unknown[]) => Promise<unknown>;
+  pullModel?: (...args: unknown[]) => Promise<unknown>;
+  getPullStatus?: (...args: unknown[]) => Promise<unknown>;
+  setActiveModel?: (...args: unknown[]) => Promise<unknown>;
   listContextBundles?: (...args: unknown[]) => Promise<unknown>;
   putContextBundle?: (...args: unknown[]) => Promise<unknown>;
   deleteContextBundle?: (...args: unknown[]) => Promise<unknown>;
@@ -104,6 +108,22 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     impl.offloadModel ??
       (async (modelId: string) => ({ modelId, loaded: false, wasResident: true })),
   );
+  // Model Control v2: downloads OFF by default (deny-by-default); a test opts in.
+  const getServerInfo = vi.fn(
+    impl.getServerInfo ?? (async () => ({ allowModelPull: false, activeModelId: "" })),
+  );
+  const pullModel = vi.fn(impl.pullModel ?? (async () => "pulled-model"));
+  const getPullStatus = vi.fn(
+    impl.getPullStatus ??
+      (async (modelId: string) => ({
+        modelId,
+        phase: "done",
+        bytesDownloaded: 0,
+        bytesTotal: 0,
+        detail: "",
+      })),
+  );
+  const setActiveModel = vi.fn(impl.setActiveModel ?? (async (modelId: string) => modelId));
   const listContextBundles = vi.fn(impl.listContextBundles ?? (async () => []));
   const putContextBundle = vi.fn(
     impl.putContextBundle ??
@@ -138,6 +158,10 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listModels,
     loadModel,
     offloadModel,
+    getServerInfo,
+    pullModel,
+    getPullStatus,
+    setActiveModel,
     listContextBundles,
     putContextBundle,
     deleteContextBundle,
@@ -172,6 +196,10 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listModels,
     loadModel,
     offloadModel,
+    getServerInfo,
+    pullModel,
+    getPullStatus,
+    setActiveModel,
     listContextBundles,
     putContextBundle,
     deleteContextBundle,

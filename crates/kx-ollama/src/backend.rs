@@ -8,7 +8,7 @@
 //! lifecycle surface so the host can drive both engines through one trait.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Instant;
 
 use kx_inference::{
@@ -25,18 +25,21 @@ use crate::error::OllamaError;
 /// never journaled).
 pub const BACKEND_NAME: &str = "kx-ollama";
 
-/// An [`InferenceBackend`] that serves a fixed, discovered set of Ollama model tags
-/// over HTTP.
+/// An [`InferenceBackend`] that serves a discovered set of Ollama model tags over
+/// HTTP. The served set is interior-mutable so a runtime `kx models pull` can add a
+/// freshly-downloaded tag WITHOUT restarting `kx serve` (Model Control v2); the
+/// `RwLock`s are read-mostly (a `supports()`/dispatch read vs. a rare pull write).
 #[derive(Debug)]
 pub struct OllamaBackend {
     client: Arc<OllamaClient>,
     /// The tags this backend serves (the `/api/tags` set, optionally narrowed by an
-    /// operator allowlist). Membership is the `supports()` gate.
-    models: BTreeSet<String>,
+    /// operator allowlist). Membership is the `supports()` gate. Grown at runtime by
+    /// [`Self::register_tag`] after a pull.
+    models: RwLock<BTreeSet<String>>,
     /// Per-tag declared context window from `/api/show` (populated best-effort at
     /// discovery; `0` when the daemon doesn't report one). Display/discovery only
     /// (SN-8) — it never authorizes a route, and it is never journaled.
-    context_len: BTreeMap<String, u32>,
+    context_len: RwLock<BTreeMap<String, u32>>,
 }
 
 impl OllamaBackend {
@@ -47,8 +50,8 @@ impl OllamaBackend {
     pub fn new(client: Arc<OllamaClient>, models: BTreeSet<String>) -> Self {
         Self {
             client,
-            models,
-            context_len: BTreeMap::new(),
+            models: RwLock::new(models),
+            context_len: RwLock::new(BTreeMap::new()),
         }
     }
 
@@ -82,15 +85,74 @@ impl OllamaBackend {
             .collect();
         Ok(Self {
             client,
-            models,
-            context_len,
+            models: RwLock::new(models),
+            context_len: RwLock::new(context_len),
         })
+    }
+
+    /// Download `tag` from the Ollama registry via `/api/pull` (Model Control v2),
+    /// forwarding byte progress to `on_progress`. The served set is NOT changed here —
+    /// call [`Self::register_tag`] after a successful pull to start serving it.
+    ///
+    /// # Errors
+    /// Propagates [`OllamaClient::pull`]'s transport / status / protocol failures.
+    pub fn pull(
+        &self,
+        tag: &str,
+        on_progress: &mut dyn FnMut(&str, u64, u64),
+    ) -> Result<(), OllamaError> {
+        self.client.pull(tag, on_progress)
+    }
+
+    /// Register a tag at RUNTIME after `kx models pull` (Model Control v2). Re-probes
+    /// `/api/tags` to CONFIRM the daemon now serves the tag (never serve a phantom),
+    /// then adds it to the served set + caches its `/api/show` context window. A tag
+    /// already served is a benign no-op (idempotent).
+    ///
+    /// # Errors
+    /// [`OllamaError`] from the `/api/tags` re-probe; [`OllamaError::Protocol`] when
+    /// the daemon does not report the tag after the pull (fail-closed).
+    pub fn register_tag(&self, tag: &str) -> Result<(), OllamaError> {
+        if self.supports_tag(tag) {
+            return Ok(());
+        }
+        // Re-probe: only register a tag the daemon actually has now.
+        let tags = self.client.tags()?;
+        if !tags.iter().any(|t| t == tag) {
+            return Err(OllamaError::Protocol(format!(
+                "tag {tag} is not present in the daemon after the pull"
+            )));
+        }
+        let ctx = self.client.show_context_length(tag).unwrap_or(0);
+        self.models
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(tag.to_string());
+        self.context_len
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(tag.to_string(), ctx);
+        Ok(())
+    }
+
+    /// Whether the served set currently contains `tag` (read-lock).
+    fn supports_tag(&self, tag: &str) -> bool {
+        self.models
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(tag)
     }
 
     /// The model ids this backend serves (for the host's model catalog).
     #[must_use]
     pub fn model_ids(&self) -> Vec<ModelId> {
-        self.models.iter().cloned().map(ModelId).collect()
+        self.models
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .map(ModelId)
+            .collect()
     }
 
     /// The declared context window for `model_id` (fetched from `/api/show` at
@@ -98,7 +160,12 @@ impl OllamaBackend {
     /// with the llama backend's GGUF `n_ctx`, surfaced in `kx models list`.
     #[must_use]
     pub fn context_len(&self, model_id: &ModelId) -> u32 {
-        self.context_len.get(&model_id.0).copied().unwrap_or(0)
+        self.context_len
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&model_id.0)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Warm `model_id` into the daemon's memory (`keep_alive = -1`). Fail-closed:
@@ -135,18 +202,21 @@ impl OllamaBackend {
     #[must_use]
     pub fn resident(&self) -> Vec<ModelId> {
         match self.client.ps() {
-            Ok(names) => names
-                .into_iter()
-                .filter(|n| self.models.contains(n))
-                .map(ModelId)
-                .collect(),
+            Ok(names) => {
+                let served = self.models.read().unwrap_or_else(PoisonError::into_inner);
+                names
+                    .into_iter()
+                    .filter(|n| served.contains(n))
+                    .map(ModelId)
+                    .collect()
+            }
             Err(_) => Vec::new(),
         }
     }
 
     /// Fail-closed served-set gate.
     fn ensure_served(&self, model_id: &ModelId) -> Result<(), InferenceError> {
-        if self.models.contains(&model_id.0) {
+        if self.supports_tag(&model_id.0) {
             Ok(())
         } else {
             Err(InferenceError::ModelNotFound {
@@ -255,7 +325,7 @@ impl InferenceBackend for OllamaBackend {
     // already-rendered prompt — so no second template pass is applied.
 
     fn supports(&self, model_id: &ModelId) -> bool {
-        self.models.contains(&model_id.0)
+        self.supports_tag(&model_id.0)
     }
 
     fn name(&self) -> &'static str {

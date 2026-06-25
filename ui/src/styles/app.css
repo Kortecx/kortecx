@@ -2093,6 +2093,41 @@ select {
   gap: 0.4rem;
   margin: 0.5rem 0 0.75rem;
 }
+/* Model Control v2: engine-grouped model cards + the Pull-a-model panel. Token-based
+   so both themes + AA carry by construction (D142). */
+.models-engine-group {
+  margin-top: 0.75rem;
+}
+.models-engine-head {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+.models-pull-panel {
+  margin-top: 1rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.models-pull-panel .form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.models-pull-panel .input {
+  width: 100%;
+}
+.models-pull-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border, var(--text-3));
+}
 .chip {
   display: inline-flex;
   flex-direction: column;

@@ -878,6 +878,17 @@ message ModelSummary {
                                          //   primary). NOT a per-model capability claim — marks
                                          //   WHICH model the server-embed/RAG path uses. Display/
                                          //   audit only (never identity); additive (old host = false)
+  string source = 10;                    // Model Control v2: provenance — "local" (startup GGUF) |
+                                         //   "ollama" (daemon-discovered) | "pulled-ollama" |
+                                         //   "pulled-url" (runtime `kx models pull`). Display/audit
+                                         //   only (SN-8); empty on an old host (additive)
+  bool active = 11;                      // Model Control v2: true iff this is the server's ACTIVE
+                                         //   default (the SetActiveModel choice — an off-journal
+                                         //   advisory hint; the server never silently re-routes
+                                         //   kx/recipes/chat). Additive (old host = false)
+  string chat_rag_handle = 12;           // Model Control v2: the RAG-grounded chat recipe handle for
+                                         //   THIS model (kx/recipes/chat-rag[-m-<id>]) so New Chat can
+                                         //   ground a switched model; empty when none. Additive
 }
 
 message ListModelsResponse {
@@ -901,6 +912,53 @@ message OffloadModelResponse {
   string model_id = 1;
   bool loaded = 2;        // residency AFTER the op (false on success)
   bool was_resident = 3;  // residency BEFORE (false ⇒ idempotent no-op offload)
+}
+
+// Model Control v2 (model acquisition): download a model and REGISTER it at runtime
+// so it is immediately usable WITHOUT restarting `kx serve`. HOST INFRASTRUCTURE, not
+// a client Mote (SN-8): a download mutates operator/host state (filesystem, served
+// set, network egress) — axes a client warrant never asserts. TWO-KEY GATE: an
+// authenticated caller REQUESTS the pull; the operator's env opt-in
+// (KX_SERVE_ALLOW_MODEL_PULL) AUTHORIZES the egress. Off-journal / off-digest.
+message PullModelRequest {
+  oneof source {
+    string ollama_tag = 1;  // pull from the Ollama registry via /api/pull (the quick/easy path)
+    string url = 2;          // a huggingface.co /resolve/<rev>/<file>.gguf URL (direct download)
+  }
+  string sha256 = 3;         // REQUIRED for `url` (hex; the download is verified before register);
+                            //   ignored for `ollama_tag` (the registry digest-verifies)
+  string model_id = 4;       // desired catalog id; empty ⇒ derive from the tag / filename
+}
+message PullModelResponse {
+  string model_id = 1;       // the id GetPullStatus is keyed by (poll it for progress)
+  bool accepted = 2;         // false ⇒ refused (downloads disabled / host not allowlisted / no sha256)
+  string detail = 3;         // honest refusal reason on !accepted (the deny-by-default negative path)
+}
+message GetPullStatusRequest { string model_id = 1; }
+message GetPullStatusResponse {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    RESOLVING = 1;           // validating the request (allowlist, sha presence)
+    DOWNLOADING = 2;         // bytes in flight
+    VERIFYING = 3;           // SHA-256 verify (direct-URL path)
+    REGISTERING = 4;         // adding to the catalog + routing + chat recipe
+    DONE = 5;                // registered + switchable
+    FAILED = 6;              // the `detail` carries the advisory reason
+  }
+  Phase phase = 1;
+  uint64 bytes_downloaded = 2;
+  uint64 bytes_total = 3;    // 0 when unknown (Ollama may not report; HF Content-Length)
+  string detail = 4;         // advisory progress / failure text (never authority)
+}
+
+// Model Control v2 (model switching): set the server's ACTIVE default model — an
+// off-journal advisory hint a client uses to pick the per-model chat handle, so the
+// default is switchable from CLI/SDK (a client-local default cannot be). The server
+// NEVER silently re-routes kx/recipes/chat; routing stays the recipe-handle / ENUM
+// free-param (SN-8). The model_id MUST be in the served catalog (fail-closed).
+message SetActiveModelRequest { string model_id = 1; }  // empty ⇒ clear (back to the primary)
+message SetActiveModelResponse {
+  string active_model_id = 1;  // the active model AFTER the op ("" ⇒ cleared/primary)
 }
 
 // POC-4 (Apps "App-authoring + envelope"): the durable, reusable App catalog. An
@@ -1645,6 +1703,14 @@ message GetServerInfoResponse {
   // PR-B (additive): the configured dataset embed model id (KX_SERVE_EMBED_MODEL else
   // the primary). "" on a model-less serve or an old server. Display/Settings only.
   string embed_model_id       = 22;
+  // Model Control v2 (additive): the server's ACTIVE default model (the SetActiveModel
+  // choice; "" ⇒ the primary). An off-journal advisory hint the client uses to pick the
+  // per-model chat handle. Display/Settings only.
+  string active_model_id      = 23;
+  // Model Control v2 (additive): true iff operator-enabled model downloads
+  // (KX_SERVE_ALLOW_MODEL_PULL). false ⇒ PullModel refuses (deny-by-default). The UI
+  // renders an honest-disabled Pull panel when false. Display only.
+  bool   allow_model_pull     = 24;
 }
 
 service KxGateway {
@@ -1792,6 +1858,18 @@ service KxGateway {
   // caller required (UNAUTHENTICATED otherwise). Off-journal, off-digest.
   rpc LoadModel(LoadModelRequest) returns (LoadModelResponse);
   rpc OffloadModel(OffloadModelRequest) returns (OffloadModelResponse);
+
+  // Model Control v2 (Models "acquire + switch") — HOST-INFRASTRUCTURE, off-journal.
+  // PullModel downloads a model (Ollama /api/pull or a huggingface.co /resolve/ GGUF
+  // URL) and REGISTERS it at runtime so it is immediately usable WITHOUT restart;
+  // it returns immediately (poll GetPullStatus). Deny-by-default: refused unless the
+  // operator sets KX_SERVE_ALLOW_MODEL_PULL and the URL host is allowlisted (SN-8 —
+  // a client requests, the operator authorizes). SetActiveModel switches the server's
+  // active default (an advisory hint; the server never silently re-routes chat).
+  // Authenticated caller required (UNAUTHENTICATED otherwise).
+  rpc PullModel(PullModelRequest) returns (PullModelResponse);
+  rpc GetPullStatus(GetPullStatusRequest) returns (GetPullStatusResponse);
+  rpc SetActiveModel(SetActiveModelRequest) returns (SetActiveModelResponse);
 
   // POC-4 (Apps "App-authoring + envelope") — save / list / get a durable App
   // envelope in the caller-scoped, off-journal apps.db catalog. SaveApp validates

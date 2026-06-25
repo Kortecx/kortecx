@@ -518,6 +518,9 @@ async fn list_models_maps_the_catalog_and_degrades_without_a_seam() {
         chat_handle: "kx/recipes/chat".into(),
         engine: "kx-llamacpp".into(),
         can_embed: true,
+        source: "local".into(),
+        active: true,
+        chat_rag_handle: "kx/recipes/chat-rag".into(),
     }]);
     let service = GatewayService::new(reader, no_submitter(), content)
         .with_model_catalog_view(Arc::new(catalog));

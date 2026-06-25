@@ -963,7 +963,7 @@ class ListModelsRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class ModelSummary(_message.Message):
-    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle", "engine", "can_embed")
+    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle", "engine", "can_embed", "source", "active", "chat_rag_handle")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODALITIES_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
@@ -973,6 +973,9 @@ class ModelSummary(_message.Message):
     CHAT_HANDLE_FIELD_NUMBER: _ClassVar[int]
     ENGINE_FIELD_NUMBER: _ClassVar[int]
     CAN_EMBED_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_FIELD_NUMBER: _ClassVar[int]
+    CHAT_RAG_HANDLE_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     modalities: _containers.RepeatedScalarFieldContainer[str]
     description: str
@@ -982,7 +985,10 @@ class ModelSummary(_message.Message):
     chat_handle: str
     engine: str
     can_embed: bool
-    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ..., engine: _Optional[str] = ..., can_embed: bool = ...) -> None: ...
+    source: str
+    active: bool
+    chat_rag_handle: str
+    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ..., engine: _Optional[str] = ..., can_embed: bool = ..., source: _Optional[str] = ..., active: bool = ..., chat_rag_handle: _Optional[str] = ...) -> None: ...
 
 class ListModelsResponse(_message.Message):
     __slots__ = ("models",)
@@ -1021,6 +1027,74 @@ class OffloadModelResponse(_message.Message):
     loaded: bool
     was_resident: bool
     def __init__(self, model_id: _Optional[str] = ..., loaded: bool = ..., was_resident: bool = ...) -> None: ...
+
+class PullModelRequest(_message.Message):
+    __slots__ = ("ollama_tag", "url", "sha256", "model_id")
+    OLLAMA_TAG_FIELD_NUMBER: _ClassVar[int]
+    URL_FIELD_NUMBER: _ClassVar[int]
+    SHA256_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    ollama_tag: str
+    url: str
+    sha256: str
+    model_id: str
+    def __init__(self, ollama_tag: _Optional[str] = ..., url: _Optional[str] = ..., sha256: _Optional[str] = ..., model_id: _Optional[str] = ...) -> None: ...
+
+class PullModelResponse(_message.Message):
+    __slots__ = ("model_id", "accepted", "detail")
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    ACCEPTED_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    accepted: bool
+    detail: str
+    def __init__(self, model_id: _Optional[str] = ..., accepted: bool = ..., detail: _Optional[str] = ...) -> None: ...
+
+class GetPullStatusRequest(_message.Message):
+    __slots__ = ("model_id",)
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    def __init__(self, model_id: _Optional[str] = ...) -> None: ...
+
+class GetPullStatusResponse(_message.Message):
+    __slots__ = ("phase", "bytes_downloaded", "bytes_total", "detail")
+    class Phase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        PHASE_UNSPECIFIED: _ClassVar[GetPullStatusResponse.Phase]
+        RESOLVING: _ClassVar[GetPullStatusResponse.Phase]
+        DOWNLOADING: _ClassVar[GetPullStatusResponse.Phase]
+        VERIFYING: _ClassVar[GetPullStatusResponse.Phase]
+        REGISTERING: _ClassVar[GetPullStatusResponse.Phase]
+        DONE: _ClassVar[GetPullStatusResponse.Phase]
+        FAILED: _ClassVar[GetPullStatusResponse.Phase]
+    PHASE_UNSPECIFIED: GetPullStatusResponse.Phase
+    RESOLVING: GetPullStatusResponse.Phase
+    DOWNLOADING: GetPullStatusResponse.Phase
+    VERIFYING: GetPullStatusResponse.Phase
+    REGISTERING: GetPullStatusResponse.Phase
+    DONE: GetPullStatusResponse.Phase
+    FAILED: GetPullStatusResponse.Phase
+    PHASE_FIELD_NUMBER: _ClassVar[int]
+    BYTES_DOWNLOADED_FIELD_NUMBER: _ClassVar[int]
+    BYTES_TOTAL_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    phase: GetPullStatusResponse.Phase
+    bytes_downloaded: int
+    bytes_total: int
+    detail: str
+    def __init__(self, phase: _Optional[_Union[GetPullStatusResponse.Phase, str]] = ..., bytes_downloaded: _Optional[int] = ..., bytes_total: _Optional[int] = ..., detail: _Optional[str] = ...) -> None: ...
+
+class SetActiveModelRequest(_message.Message):
+    __slots__ = ("model_id",)
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    model_id: str
+    def __init__(self, model_id: _Optional[str] = ...) -> None: ...
+
+class SetActiveModelResponse(_message.Message):
+    __slots__ = ("active_model_id",)
+    ACTIVE_MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    active_model_id: str
+    def __init__(self, active_model_id: _Optional[str] = ...) -> None: ...
 
 class AppSummary(_message.Message):
     __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked")
@@ -1922,7 +1996,7 @@ class GetServerInfoRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class GetServerInfoResponse(_message.Message):
-    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls", "embed_model_id")
+    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls", "embed_model_id", "active_model_id", "allow_model_pull")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODEL_PATH_FIELD_NUMBER: _ClassVar[int]
     LISTEN_ADDR_FIELD_NUMBER: _ClassVar[int]
@@ -1945,6 +2019,8 @@ class GetServerInfoResponse(_message.Message):
     REACT_MAX_TURNS_FIELD_NUMBER: _ClassVar[int]
     REACT_MAX_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
     EMBED_MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    ALLOW_MODEL_PULL_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     model_path: str
     listen_addr: str
@@ -1967,4 +2043,6 @@ class GetServerInfoResponse(_message.Message):
     react_max_turns: int
     react_max_tool_calls: int
     embed_model_id: str
-    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ..., embed_model_id: _Optional[str] = ...) -> None: ...
+    active_model_id: str
+    allow_model_pull: bool
+    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ..., embed_model_id: _Optional[str] = ..., active_model_id: _Optional[str] = ..., allow_model_pull: bool = ...) -> None: ...

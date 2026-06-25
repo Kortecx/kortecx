@@ -10,9 +10,10 @@ import { useModels } from "../../kx/use-models";
  * ever rides as a recipe ENUM free-param the SERVER validates at binding
  * (SN-8) — picking a model here grants nothing.
  *
- * POC-5c: when the user has NOT explicitly picked (`value` unset), pre-select the
- * client-local default model (set in the Models section) instead of the first
- * listed — falling back to the first when no default is set or it isn't served here.
+ * Selection precedence when the user has NOT explicitly picked (`value` unset):
+ * the server's ACTIVE default (Model Control v2 — shared across surfaces), then the
+ * client-local default (set in the Models section, this browser), then the first
+ * listed. Each option shows its engine so an Ollama ∥ llama.cpp switch is unmistakable.
  */
 export function ModelPicker({
   value,
@@ -36,7 +37,10 @@ export function ModelPicker({
       </span>
     );
   }
-  const selected = models.find((m) => m.modelId === (value ?? defaultModelId)) ?? models[0];
+  // Precedence: explicit pick → server active → client-local default → first.
+  const serverActive = models.find((m) => m.active)?.modelId;
+  const selected =
+    models.find((m) => m.modelId === (value ?? serverActive ?? defaultModelId)) ?? models[0];
   return (
     <label className="modelpicker" data-testid="model-picker">
       <span className="modelpicker__label">Model</span>
@@ -49,8 +53,9 @@ export function ModelPicker({
         {models.map((m) => (
           <option key={m.modelId} value={m.modelId}>
             {m.modelId}
+            {m.engine ? ` · ${m.engine.replace(/^kx-/, "")}` : ""}
             {m.modalities.includes("image") ? " (vision)" : ""}
-            {m.serving ? " · serving" : ""}
+            {m.active ? " · active" : ""}
             {m.loaded ? " · loaded" : ""}
           </option>
         ))}

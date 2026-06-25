@@ -85,6 +85,9 @@ describe("ModelSummary.fromProto", () => {
       chatHandle: "kx/recipes/chat",
       engine: "kx-llamacpp",
       canEmbed: true,
+      source: "local",
+      active: true,
+      chatRagHandle: "kx/recipes/chat-rag",
     });
     const s = ModelSummary.fromProto(m);
     expect(s.modelId).toBe("kx-serve:qwen3-4b");
@@ -98,6 +101,10 @@ describe("ModelSummary.fromProto", () => {
     expect(s.engine).toBe("kx-llamacpp");
     // PR-B: the configured-embedder flag carries through.
     expect(s.canEmbed).toBe(true);
+    // Model Control v2: the additive provenance/active/chat-rag fields carry through.
+    expect(s.source).toBe("local");
+    expect(s.active).toBe(true);
+    expect(s.chatRagHandle).toBe("kx/recipes/chat-rag");
     expect(s.toJSON()).toEqual({
       model_id: "kx-serve:qwen3-4b",
       modalities: ["text", "image"],
@@ -108,6 +115,9 @@ describe("ModelSummary.fromProto", () => {
       chat_handle: "kx/recipes/chat",
       engine: "kx-llamacpp",
       can_embed: true,
+      source: "local",
+      active: true,
+      chat_rag_handle: "kx/recipes/chat-rag",
     });
   });
 });

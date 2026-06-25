@@ -361,7 +361,17 @@ pub struct DemoLibrary {
     /// fit serve model / bundled tool resolved).
     /// `bind` looks the handle up here for its owner-root warrant + free-param
     /// contract; an unknown handle is a uniform `NotAuthorized` (no oracle).
-    recipes: Vec<(AssetPath, RecipeMeta)>,
+    /// Model Control v2: interior-mutable so a runtime `kx models pull` can seed a
+    /// pulled model's `kx/recipes/m-<id>` chat recipe (read-mostly — many binds /
+    /// list reads vs. a rare pull write).
+    recipes: std::sync::RwLock<Vec<(AssetPath, RecipeMeta)>>,
+    /// Model Control v2: the executor class + parties retained so a runtime model
+    /// recipe is seeded with the SAME warrant scope + grants as the startup recipes.
+    /// Read only by `seed_model_recipe` (serve-engine); harmlessly carried otherwise.
+    #[cfg_attr(not(feature = "serve-engine"), allow(dead_code))]
+    runtime_exec_class: ExecutorClass,
+    #[cfg_attr(not(feature = "serve-engine"), allow(dead_code))]
+    runtime_parties: Vec<String>,
     /// The owner-root warrant on the `kx/blueprints/author` asset — the base
     /// each authored step's warrant uses AND the ceiling the party's resolved Use
     /// authority intersects against ([`HostWorkflowAuthor`]).
@@ -378,7 +388,9 @@ pub struct DemoLibrary {
 /// Per-recipe binding metadata: the owner's base warrant the grant fold narrows
 /// from (== the recipe step warrant, so every `intersect` in the bind chain is a
 /// no-op narrowing and the bound run keeps the worker's `executor_class`) + the
-/// recipe's free-param contract.
+/// recipe's free-param contract. `Clone` so a reader can copy it OUT from under the
+/// recipes `RwLock` (Model Control v2 made the recipe list runtime-mutable).
+#[derive(Clone)]
 struct RecipeMeta {
     owner_root: WarrantSpec,
     free_params: FreeParamContract,
@@ -941,17 +953,72 @@ impl DemoLibrary {
             versions,
             bodies,
             grants: std::sync::Arc::new(grants),
-            recipes,
+            recipes: std::sync::RwLock::new(recipes),
+            runtime_exec_class: exec_class,
+            runtime_parties: parties.to_vec(),
             blueprint_base,
             serve_model: serve_model.cloned(),
             serve_models,
         })
     }
 
+    /// Read-lock the runtime-mutable recipe list (poison-tolerant — a panicked
+    /// writer still leaves a valid, readable Vec).
+    fn recipes_read(&self) -> std::sync::RwLockReadGuard<'_, Vec<(AssetPath, RecipeMeta)>> {
+        self.recipes
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Every provisioned, invocable recipe handle (`"namespace/collection/name"`),
     /// in provision order. Backs the gateway's `ListRecipes` (UI-2 recipe catalog).
     pub fn recipe_handles(&self) -> Vec<String> {
-        self.recipes.iter().map(|(h, _)| h.to_string()).collect()
+        self.recipes_read()
+            .iter()
+            .map(|(h, _)| h.to_string())
+            .collect()
+    }
+
+    /// Model Control v2: seed a per-model CHAT recipe (`kx/recipes/m-<id>`) for a
+    /// model REGISTERED at RUNTIME (after `kx models pull`), so it is immediately
+    /// invocable WITHOUT a restart. Mirrors the startup secondary-model seeding
+    /// (binder-free routing: the step warrant + MoteDef.model_id are pinned to THIS
+    /// model). Idempotent: an already-seeded handle is a no-op. Seeds into the SAME
+    /// durable ledgers + grants the startup recipes use (the `runtime_exec_class` /
+    /// `runtime_parties` retained at seed). Returns the chat handle string.
+    ///
+    /// # Errors
+    /// [`GatewayError::Catalog`] on a ledger seed failure.
+    #[cfg(feature = "serve-engine")]
+    pub fn seed_model_recipe(&self, model_id: &ModelId) -> Result<String, GatewayError> {
+        let per_h = per_model_chat_handle(model_id)?;
+        // Idempotent: a re-pull of an already-seeded model is a no-op.
+        if self.recipes_read().iter().any(|(h, _)| *h == per_h) {
+            return Ok(per_h.to_string());
+        }
+        let owner = PartyId::new("kx-gateway");
+        let per_w = model_warrant(self.runtime_exec_class, model_id);
+        seed_recipe(
+            &self.versions,
+            &self.bodies,
+            &self.grants,
+            &owner,
+            &self.runtime_parties,
+            &per_h,
+            recipe_body(LogicRef::from_bytes(MODEL_LOGIC_REF), &per_w, &[PROMPT_KEY]),
+            &per_w,
+        )?;
+        self.recipes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((
+                per_h.clone(),
+                RecipeMeta {
+                    owner_root: per_w,
+                    free_params: prompt_contract(),
+                },
+            ));
+        Ok(per_h.to_string())
     }
 
     /// The published workflow fingerprint a bound run of `handle` registers
@@ -960,11 +1027,11 @@ impl DemoLibrary {
     /// agree by construction. Display/join only — never identity.
     pub fn recipe_fingerprint(&self, handle: &str) -> Option<[u8; 32]> {
         let path = self
-            .recipes
+            .recipes_read()
             .iter()
-            .map(|(h, _)| h)
+            .map(|(h, _)| h.clone())
             .find(|h| h.to_string() == handle)?;
-        match self.versions.resolve(path)? {
+        match self.versions.resolve(&path)? {
             (VersionedContent::Workflow(manifest_id), _) => Some(manifest_id.0),
             _ => None,
         }
@@ -997,7 +1064,9 @@ impl DemoLibrary {
     /// the kx-fleet thesis, demonstrated end-to-end. `None` only if no recipe seeded.
     #[must_use]
     pub fn demo_team_grant_asset(&self) -> Option<AssetRef> {
-        self.recipes.first().map(|(h, _)| AssetRef::Path(h.clone()))
+        self.recipes_read()
+            .first()
+            .map(|(h, _)| AssetRef::Path(h.clone()))
     }
 
     /// The owner-root warrant for `asset` (the base the grant fold narrows from), or
@@ -1005,7 +1074,7 @@ impl DemoLibrary {
     /// `resolve_member_warrant` owner-root + the demo team grant's runtime scope.
     #[must_use]
     pub fn owner_root_for(&self, asset: &AssetRef) -> Option<WarrantSpec> {
-        self.recipes
+        self.recipes_read()
             .iter()
             .find(|(h, _)| AssetRef::Path(h.clone()) == *asset)
             .map(|(_, m)| m.owner_root.clone())
@@ -1023,10 +1092,10 @@ impl DemoLibrary {
     pub fn recipe_form(&self, handle: &str) -> Option<Vec<RecipeFormFieldEntry>> {
         let asset_path = parse_handle(handle)?;
         let meta = self
-            .recipes
+            .recipes_read()
             .iter()
             .find(|(h, _)| *h == asset_path)
-            .map(|(_, m)| m)?;
+            .map(|(_, m)| m.clone())?;
         let resolver = self.schema_resolver();
         let fields = meta
             .free_params
@@ -1046,7 +1115,7 @@ impl DemoLibrary {
     #[must_use]
     pub fn recipe_metadata(&self, handle: &str) -> Option<RecipeMetadataEntry> {
         let path = parse_handle(handle)?;
-        if !self.recipes.iter().any(|(h, _)| *h == path) {
+        if !self.recipes_read().iter().any(|(h, _)| *h == path) {
             return None;
         }
         let (description, tags) = recipe_advisory(handle);
@@ -1656,12 +1725,13 @@ impl RecipeBinder for HostRecipeBinder {
         )?;
         // Resolve the recipe's binding metadata; an unknown handle is the same
         // uniform NotAuthorized (no existence oracle on the execution surface).
+        // Clone it OUT from under the recipes read-lock (the list is runtime-mutable).
         let meta = self
             .lib
-            .recipes
+            .recipes_read()
             .iter()
             .find(|(h, _)| *h == asset_path)
-            .map(|(_, m)| m)
+            .map(|(_, m)| m.clone())
             .ok_or(BinderError::NotAuthorized)?;
         let party_id = PartyId::new(party);
         let resolver = HostUseResolver {

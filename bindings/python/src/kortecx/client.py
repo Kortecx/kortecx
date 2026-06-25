@@ -57,7 +57,7 @@ from .datasets import (
 from .errors import KxError, KxFailedPrecondition, KxUsage, from_rpc_error
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
-from .models import ModelLifecycleResult, ModelSummary
+from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteDetail
 from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
@@ -994,6 +994,55 @@ class KxClient:
         )
         return ServerInfo.from_proto(resp)
 
+    def pull_model(
+        self,
+        *,
+        ollama_tag: Optional[str] = None,
+        url: Optional[str] = None,
+        sha256: Optional[str] = None,
+    ) -> str:
+        """Model Control v2: download + RUNTIME-register a model (no restart). Pass
+        ``ollama_tag`` to pull from the Ollama registry, OR ``url`` (a
+        ``huggingface.co`` ``/resolve/`` GGUF link) WITH ``sha256``. Returns the
+        ``model_id`` to poll via :meth:`get_pull_status`. Deny-by-default: a refusal
+        (downloads disabled / host not allowlisted / missing sha256) raises
+        ``KxFailedPrecondition``. HOST INFRASTRUCTURE, not a client Mote (SN-8)."""
+        if (ollama_tag is None) == (url is None):
+            raise ValueError("pull_model requires exactly one of ollama_tag or url")
+        req = _g.PullModelRequest(sha256=sha256 or "")
+        if ollama_tag is not None:
+            req.ollama_tag = ollama_tag
+        else:
+            req.url = url or ""
+        resp = self._call(lambda: self._stub.PullModel(req, metadata=self._md))
+        if not resp.accepted:
+            from .errors import KxFailedPrecondition
+
+            raise KxFailedPrecondition(f"pull refused: {resp.detail}")
+        return resp.model_id
+
+    def get_pull_status(self, model_id: str) -> PullStatus:
+        """Model Control v2: the current progress of a :meth:`pull_model` download +
+        registration (advisory). An unknown id raises ``KxNotFound``."""
+        resp = self._call(
+            lambda: self._stub.GetPullStatus(
+                _g.GetPullStatusRequest(model_id=model_id), metadata=self._md
+            )
+        )
+        return PullStatus.from_proto(model_id, resp)
+
+    def set_active_model(self, model_id: str = "") -> str:
+        """Model Control v2: set the server's ACTIVE default model (an off-journal
+        advisory hint; the server never re-routes ``kx/recipes/chat``). An empty
+        ``model_id`` CLEARS it (back to the primary). A non-served id raises
+        ``KxNotFound``. Returns the active id after the op ("" ⇒ cleared)."""
+        resp = self._call(
+            lambda: self._stub.SetActiveModel(
+                _g.SetActiveModelRequest(model_id=model_id), metadata=self._md
+            )
+        )
+        return resp.active_model_id
+
     def stream_events(
         self, instance_id: IdType, *, since: int = 0, follow: bool = False
     ) -> Iterator[types.Delta]:
@@ -1874,6 +1923,45 @@ class AsyncKxClient:
             self._stub.GetServerInfo(_g.GetServerInfoRequest(), metadata=self._md)
         )
         return ServerInfo.from_proto(resp)
+
+    async def pull_model(
+        self,
+        *,
+        ollama_tag: Optional[str] = None,
+        url: Optional[str] = None,
+        sha256: Optional[str] = None,
+    ) -> str:
+        """Async mirror of :meth:`KxClient.pull_model` (Model Control v2 — download +
+        runtime-register a model). Returns the ``model_id`` to poll."""
+        if (ollama_tag is None) == (url is None):
+            raise ValueError("pull_model requires exactly one of ollama_tag or url")
+        req = _g.PullModelRequest(sha256=sha256 or "")
+        if ollama_tag is not None:
+            req.ollama_tag = ollama_tag
+        else:
+            req.url = url or ""
+        resp = await self._acall(self._stub.PullModel(req, metadata=self._md))
+        if not resp.accepted:
+            from .errors import KxFailedPrecondition
+
+            raise KxFailedPrecondition(f"pull refused: {resp.detail}")
+        return resp.model_id
+
+    async def get_pull_status(self, model_id: str) -> PullStatus:
+        """Async mirror of :meth:`KxClient.get_pull_status` (Model Control v2)."""
+        resp = await self._acall(
+            self._stub.GetPullStatus(_g.GetPullStatusRequest(model_id=model_id), metadata=self._md)
+        )
+        return PullStatus.from_proto(model_id, resp)
+
+    async def set_active_model(self, model_id: str = "") -> str:
+        """Async mirror of :meth:`KxClient.set_active_model` (Model Control v2)."""
+        resp = await self._acall(
+            self._stub.SetActiveModel(
+                _g.SetActiveModelRequest(model_id=model_id), metadata=self._md
+            )
+        )
+        return resp.active_model_id
 
     def stream_events(
         self, instance_id: IdType, *, since: int = 0, follow: bool = False

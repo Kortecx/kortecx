@@ -24,12 +24,15 @@ test("Models: honest-empty + disabled-Cloud on a model-less serve (both themes)"
   await expect(page.getByText(/no models on this serve/i)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("model-card")).toHaveCount(0);
 
-  // Connecting a vendor / pulling a model are Cloud / coming-soon — disabled, never faked.
+  // Connecting a vendor is Cloud (disabled, never faked). Model Control v2: this test
+  // serve runs with downloads OFF (no KX_SERVE_ALLOW_MODEL_PULL), so the Pull panel
+  // renders its honest-disabled state with the reason — never a faked control.
   const connect = page.getByTestId("models-cloud-connect");
-  const pull = page.getByTestId("models-cloud-pull");
   await expect(connect).toBeVisible();
   await expect(connect).toHaveAttribute("aria-disabled", "true");
-  await expect(pull).toHaveAttribute("aria-disabled", "true");
+  const pullDisabled = page.getByTestId("models-pull-disabled");
+  await expect(pullDisabled).toHaveAttribute("aria-disabled", "true");
+  await expect(pullDisabled).toContainText("KX_SERVE_ALLOW_MODEL_PULL");
 
   // BOTH THEMES (D142.1 / GR13): the section renders under the dark palette.
   await page.getByTestId("theme-toggle").click();
