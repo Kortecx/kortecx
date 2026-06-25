@@ -410,23 +410,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(not(feature = "serve-engine"))]
     let model_catalog_entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
 
-    // T3.7: capture an OPTIONAL dataset embedder from the resolved serve backend (the
-    // server-embed path). `LlamaInferenceBackend` impls `EmbeddingBackend`, so datasets
-    // reuse the SAME loaded model — no new FFI surface + no kx-model-harness dep. `None`
-    // when no fit model resolved ⇒ datasets fall back to the FFI-free client-vector path.
-    // The Datasets server-embed path reuses the in-process llama.cpp backend (the only
-    // `EmbeddingBackend` in PR-A — Ollama embeddings are PR-B), sourced from the serve
-    // runtime's llama handle. `None` (no GGUF, or an Ollama-only serve) ⇒ datasets fall
-    // back to the FFI-free client-vector path.
-    #[cfg(all(feature = "hnsw", feature = "inference"))]
-    let dataset_embedder: Option<crate::datasets::HostEmbedder> = serve_rt.as_ref().and_then(|r| {
-        r.llama.as_ref().map(|llama| {
-            crate::datasets::HostEmbedder::new(
-                llama.clone(),
-                r.primary.clone(),
-                crate::model_exec::shaper_warrant(&r.primary, default_executor_class()),
-            )
-        })
+    // PR-B: capture the dataset server embedder from the resolved serve runtime. It
+    // routes through the host `RoutingBackend`, so it embeds via the in-process
+    // llama.cpp backend OR an Ollama daemon — whichever serves the embed model
+    // (`KX_SERVE_EMBED_MODEL` else the primary). The warrant route names the embed
+    // model (the backend refuses an off-route model). `None` (a model-less serve) ⇒
+    // datasets fall back to the FFI-free client-vector path.
+    #[cfg(all(feature = "hnsw", feature = "serve-engine"))]
+    let dataset_embedder: Option<crate::datasets::HostEmbedder> = serve_rt.as_ref().map(|r| {
+        let embed_model = r.embed_model.clone();
+        crate::datasets::HostEmbedder::new(
+            r.routing.clone(),
+            embed_model.clone(),
+            crate::model_exec::shaper_warrant(&embed_model, default_executor_class()),
+        )
     });
 
     // (1) Embedded coordinator — the SOLE journal writer. It opens the journal
@@ -861,9 +858,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(feature = "hnsw")]
     let dataset_view: Arc<crate::datasets::HostDatasetView> = {
         let datasets_dir = catalog_dir.join("datasets");
-        #[cfg_attr(not(feature = "inference"), allow(unused_mut))]
+        #[cfg_attr(not(feature = "serve-engine"), allow(unused_mut))]
         let mut view = crate::datasets::HostDatasetView::open(&datasets_dir)?;
-        #[cfg(feature = "inference")]
+        #[cfg(feature = "serve-engine")]
         if let Some(embedder) = dataset_embedder {
             view = view.with_embedder(embedder);
         }
@@ -1122,8 +1119,16 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         } else {
             String::new()
         };
+        // PR-B: the configured dataset embed model (the entry flagged `can_embed`, set
+        // from KX_SERVE_EMBED_MODEL else the primary). Empty on a model-less serve.
+        let embed_model_id = model_catalog_entries
+            .iter()
+            .find(|e| e.can_embed)
+            .map(|e| e.model_id.clone())
+            .unwrap_or_default();
         kx_gateway_core::ServerInfoFacts {
             model_id,
+            embed_model_id,
             model_path,
             listen_addr: cfg.listen.to_string(),
             ws_addr: cfg.ws_listen.to_string(),

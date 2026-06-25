@@ -1984,6 +1984,7 @@ impl KxGateway for GatewayService {
                 loaded: m.loaded,
                 chat_handle: m.chat_handle,
                 engine: m.engine,
+                can_embed: m.can_embed,
             })
             .collect();
         Ok(Response::new(proto::ListModelsResponse { models }))
@@ -2028,6 +2029,7 @@ impl KxGateway for GatewayService {
             audit_log_enabled: facts.audit_log_enabled,
             react_max_turns: facts.react_max_turns,
             react_max_tool_calls: facts.react_max_tool_calls,
+            embed_model_id: facts.embed_model_id.clone(),
         }))
     }
 

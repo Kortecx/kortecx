@@ -21,6 +21,9 @@
 pub struct ServerInfoFacts {
     /// Resolved serve model id (empty on a model-less serve).
     pub model_id: String,
+    /// PR-B: the configured dataset embed model id (`KX_SERVE_EMBED_MODEL` else the
+    /// primary). Empty on a model-less serve. Display/Settings only (never identity).
+    pub embed_model_id: String,
     /// Resolved serve model GGUF path (empty on a model-less serve).
     pub model_path: String,
     /// gRPC listener bind address (`addr:port`).

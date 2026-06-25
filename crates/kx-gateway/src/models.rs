@@ -91,6 +91,7 @@ mod tests {
             loaded: false,
             chat_handle: "kx/recipes/chat".into(),
             engine: "kx-llamacpp".into(),
+            can_embed: true,
         }]);
         let listed = catalog.list().unwrap();
         assert_eq!(listed.len(), 1);
@@ -98,6 +99,8 @@ mod tests {
         assert!(listed[0].serving);
         // No engine bound ⇒ residency is honestly false.
         assert!(!listed[0].loaded);
+        // PR-B: the embedder flag passes through unchanged.
+        assert!(listed[0].can_embed);
     }
 
     /// A fake residency view to drive the `loaded` recompute without the FFI.
@@ -120,6 +123,7 @@ mod tests {
                 loaded: false,
                 chat_handle: "kx/recipes/chat".into(),
                 engine: "kx-llamacpp".into(),
+                can_embed: false,
             },
             ModelSummaryEntry {
                 model_id: "b".into(),
@@ -130,6 +134,7 @@ mod tests {
                 loaded: false,
                 chat_handle: "kx/recipes/m-b".into(),
                 engine: "kx-ollama".into(),
+                can_embed: false,
             },
         ];
         // Only "b" resident.

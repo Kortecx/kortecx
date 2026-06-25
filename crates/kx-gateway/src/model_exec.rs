@@ -189,13 +189,10 @@ pub(crate) struct ServeRuntime {
     pub(crate) entries: Vec<kx_gateway_core::ModelSummaryEntry>,
     /// The PRIMARY/default model (drives the shaper loop + the `kx/recipes/chat` route).
     pub(crate) primary: ModelId,
-    /// The in-process llama.cpp backend (when a GGUF resolved) — kept so the Datasets
-    /// server-embed path reuses it as an `EmbeddingBackend` (Ollama embeddings = PR-B).
-    /// Only the `hnsw` server-embed path reads it; on an inference build without `hnsw`
-    /// it is carried but unused.
-    #[cfg(feature = "inference")]
-    #[cfg_attr(not(feature = "hnsw"), allow(dead_code))]
-    pub(crate) llama: Option<Arc<LlamaInferenceBackend>>,
+    /// PR-B: the dataset server-embed model — `KX_SERVE_EMBED_MODEL` (operator-config)
+    /// when set + served, else `primary`. The embedder routes through `routing`, so it
+    /// embeds via whichever engine (llama.cpp / Ollama) serves this id.
+    pub(crate) embed_model: ModelId,
 }
 
 /// Resolve the full serve runtime: the union of the in-process llama.cpp GGUF models
@@ -208,27 +205,26 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
     let mut entries: Vec<kx_gateway_core::ModelSummaryEntry> = Vec::new();
     let mut primary: Option<ModelId> = None;
 
-    // (1) In-process llama.cpp GGUF candidates — only on the FFI build.
+    // (1) In-process llama.cpp GGUF candidates — only on the FFI build. Registered as
+    //     serve engines; chat AND embeddings route through the `RoutingBackend`, so the
+    //     concrete llama handle is not retained on `ServeRuntime` (the embedder reaches
+    //     it via routing — PR-B).
     #[cfg(feature = "inference")]
-    let llama: Option<Arc<LlamaInferenceBackend>> = {
+    {
         let candidates = resolve_serve_models();
-        if candidates.is_empty() {
-            None
-        } else {
+        if !candidates.is_empty() {
             match build_serve_models(&candidates, store.clone()) {
                 Ok((backend, mut llama_entries, primary_id)) => {
                     primary = Some(primary_id);
                     entries.append(&mut llama_entries);
-                    engines.push(backend.clone());
-                    Some(backend)
+                    engines.push(backend);
                 }
                 Err(error) => {
                     tracing::warn!(%error, "serve model is not fit; llama loop NOT enabled");
-                    None
                 }
             }
         }
-    };
+    }
     #[cfg(not(feature = "inference"))]
     let _ = store; // the content store is only consumed by the (vision) llama path
 
@@ -244,13 +240,49 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
     }
 
     let primary = primary?;
+    // PR-B: resolve the dataset embed model (operator-config else primary) + flag the
+    // matching catalog entry `can_embed` so ListModels / Settings surface the embedder.
+    let embed_model = resolve_embed_model(&primary, &entries);
+    for entry in &mut entries {
+        entry.can_embed = entry.model_id == embed_model.0;
+    }
     Some(ServeRuntime {
         routing: Arc::new(RoutingBackend::new(engines)),
         entries,
         primary,
-        #[cfg(feature = "inference")]
-        llama,
+        embed_model,
     })
+}
+
+/// Resolve the dataset server-embed model. `KX_SERVE_EMBED_MODEL` (operator-config,
+/// SN-8 — never client-chosen) when set AND served by some engine; else the primary
+/// chat model (back-compat). NOTE: this is a SERVED-set check, NOT an embed-CAPABILITY
+/// check — neither the Ollama daemon nor a GGUF exposes a per-model "can embed" flag,
+/// so a non-embedding model passes here and surfaces an honest `BackendFailure` on the
+/// first embed. The env value MUST therefore name an embedding-capable model (e.g.
+/// `embeddinggemma` on Ollama, or an embedding GGUF on llama.cpp).
+fn resolve_embed_model(
+    primary: &ModelId,
+    entries: &[kx_gateway_core::ModelSummaryEntry],
+) -> ModelId {
+    let Ok(raw) = std::env::var("KX_SERVE_EMBED_MODEL") else {
+        return primary.clone();
+    };
+    let id = raw.trim();
+    if id.is_empty() {
+        return primary.clone();
+    }
+    if entries.iter().any(|e| e.model_id == id) {
+        tracing::info!(embed_model = %id, "dataset embed model set via KX_SERVE_EMBED_MODEL");
+        ModelId(id.to_string())
+    } else {
+        tracing::warn!(
+            requested = %id,
+            fallback = %primary.0,
+            "KX_SERVE_EMBED_MODEL is not served by any engine; using the primary for embeddings"
+        );
+        primary.clone()
+    }
 }
 
 /// Auto-detect a running Ollama daemon and build its backend + engine-tagged catalog
@@ -360,7 +392,8 @@ fn ollama_catalog_entry(
 ) -> kx_gateway_core::ModelSummaryEntry {
     kx_gateway_core::ModelSummaryEntry {
         model_id: model_id.0.clone(),
-        // PR-B will surface Ollama vision/embedding modalities; text for PR-A.
+        // PR-B2 will surface Ollama vision modalities; embedding is the `can_embed`
+        // flag below (a distinct output capability, not an input modality).
         modalities: vec!["text".to_string()],
         // The tag is its own honest description (the daemon owns the GGUF metadata).
         description: model_id.0.clone(),
@@ -372,6 +405,8 @@ fn ollama_catalog_entry(
         loaded: false,
         chat_handle: crate::provision::chat_handle_for(model_id, serving),
         engine: "kx-ollama".to_string(),
+        // Set in `build_serve_runtime` once the embed model is resolved.
+        can_embed: false,
     }
 }
 
@@ -558,6 +593,8 @@ pub(crate) fn catalog_entry(
         chat_handle: crate::provision::chat_handle_for(model_id, serving),
         // The in-process llama.cpp engine (matches `InferenceOutput.backend_name`).
         engine: "kx-llamacpp".to_string(),
+        // Set in `build_serve_runtime` once the embed model is resolved.
+        can_embed: false,
     }
 }
 

@@ -517,6 +517,7 @@ async fn list_models_maps_the_catalog_and_degrades_without_a_seam() {
         loaded: true,
         chat_handle: "kx/recipes/chat".into(),
         engine: "kx-llamacpp".into(),
+        can_embed: true,
     }]);
     let service = GatewayService::new(reader, no_submitter(), content)
         .with_model_catalog_view(Arc::new(catalog));
@@ -536,6 +537,8 @@ async fn list_models_maps_the_catalog_and_degrades_without_a_seam() {
     // POC-3: the additive residency + routing fields map through.
     assert!(m.loaded);
     assert_eq!(m.chat_handle, "kx/recipes/chat");
+    // PR-B: the additive embedder flag maps through.
+    assert!(m.can_embed);
 }
 
 // --- Model lifecycle (POC-3 LoadModel / OffloadModel) --------------------------

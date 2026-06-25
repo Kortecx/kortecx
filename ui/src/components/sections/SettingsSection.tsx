@@ -58,6 +58,12 @@ export function SettingsSection() {
             <dl className="facts" data-testid="workspace-facts">
               <dt>Model</dt>
               <dd className="mono">{info.data.modelId || "none — model-less serve"}</dd>
+              {/* PR-B: the configured datasets/RAG embed model (KX_SERVE_EMBED_MODEL
+                  else the primary). Empty ⇒ only the FFI-free client-vector path. */}
+              <dt>Embed model</dt>
+              <dd className="mono" data-testid="settings-embed-model">
+                {info.data.embedModelId || "none — client-vector RAG only"}
+              </dd>
               <dt>gRPC</dt>
               <dd className="mono">{info.data.listenAddr}</dd>
               <dt>WS bridge</dt>

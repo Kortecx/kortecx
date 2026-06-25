@@ -51,6 +51,8 @@ class ServerInfo:
     # run --max-tool-calls``.
     react_max_turns: int = 0
     react_max_tool_calls: int = 0
+    # PR-B: the configured datasets/RAG embed model id ("" on a model-less serve).
+    embed_model_id: str = ""
 
     @classmethod
     def from_proto(cls, r: "_g.GetServerInfoResponse") -> "ServerInfo":
@@ -76,4 +78,5 @@ class ServerInfo:
             audit_log_enabled=r.audit_log_enabled,
             react_max_turns=r.react_max_turns,
             react_max_tool_calls=r.react_max_tool_calls,
+            embed_model_id=r.embed_model_id,
         )

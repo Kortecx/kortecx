@@ -278,9 +278,11 @@ impl Inner {
     }
 }
 
-/// The bundled server embedder (the `inference` path): a `kx_inference::EmbeddingBackend`
-/// + the model route + warrant + pooling that travel together for every embed call.
-#[cfg(feature = "inference")]
+/// The bundled server embedder (the `serve-engine` path — routes to the in-process
+/// llama.cpp backend OR an Ollama daemon via the host `RoutingBackend`): a
+/// `kx_inference::EmbeddingBackend` + the model route + warrant + pooling that travel
+/// together for every embed call.
+#[cfg(feature = "serve-engine")]
 pub struct HostEmbedder {
     backend: std::sync::Arc<dyn kx_inference::EmbeddingBackend>,
     model_id: kx_mote::ModelId,
@@ -288,7 +290,7 @@ pub struct HostEmbedder {
     pooling: kx_inference::EmbeddingPooling,
 }
 
-#[cfg(feature = "inference")]
+#[cfg(feature = "serve-engine")]
 impl HostEmbedder {
     /// Bind a backend + model route + warrant (mean pooling — the HF default).
     #[must_use]
@@ -316,10 +318,10 @@ impl HostEmbedder {
 
 /// A [`DatasetView`] over a durable SQLite store + a rebuilt-on-open HNSW ANN index.
 /// VIEW + INGEST (no journal write). Optionally carries a server `HostEmbedder`
-/// (the `inference` path); without it, only the client-vector path is available.
+/// (the `serve-engine` path); without it, only the client-vector path is available.
 pub struct HostDatasetView {
     inner: Mutex<Inner>,
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     embedder: Option<HostEmbedder>,
 }
 
@@ -347,14 +349,14 @@ impl HostDatasetView {
             .map_err(|e| GatewayError::Catalog(format!("datasets rebuild: {e}")))?;
         Ok(Self {
             inner: Mutex::new(Inner { db: conn, datasets }),
-            #[cfg(feature = "inference")]
+            #[cfg(feature = "serve-engine")]
             embedder: None,
         })
     }
 
-    /// Attach a server embedder (the `inference` path), enabling text-only ingest
+    /// Attach a server embedder (the `serve-engine` path), enabling text-only ingest
     /// and `query_text`.
-    #[cfg(feature = "inference")]
+    #[cfg(feature = "serve-engine")]
     #[must_use]
     pub fn with_embedder(mut self, embedder: HostEmbedder) -> Self {
         self.embedder = Some(embedder);
@@ -362,10 +364,10 @@ impl HostDatasetView {
     }
 
     /// Embed `content` server-side (UTF-8), or [`DatasetError::EmbedderUnavailable`]
-    /// when no embedder is wired (the `hnsw`-only build, or `inference` without a model).
-    #[cfg_attr(not(feature = "inference"), allow(clippy::unused_self))]
+    /// when no embedder is wired (an `hnsw`-only build, or `serve-engine` without a model).
+    #[cfg_attr(not(feature = "serve-engine"), allow(clippy::unused_self))]
     fn embed_bytes(&self, content: &[u8]) -> Result<Vec<f32>, DatasetError> {
-        #[cfg(feature = "inference")]
+        #[cfg(feature = "serve-engine")]
         {
             let text = std::str::from_utf8(content).map_err(|_| {
                 DatasetError::InvalidArgument("server-embed requires UTF-8 text".to_string())
@@ -375,7 +377,7 @@ impl HostDatasetView {
                 .ok_or(DatasetError::EmbedderUnavailable)?
                 .embed(text)
         }
-        #[cfg(not(feature = "inference"))]
+        #[cfg(not(feature = "serve-engine"))]
         {
             let _ = content;
             Err(DatasetError::EmbedderUnavailable)
@@ -383,16 +385,16 @@ impl HostDatasetView {
     }
 
     /// Embed a query string server-side, or [`DatasetError::EmbedderUnavailable`].
-    #[cfg_attr(not(feature = "inference"), allow(clippy::unused_self))]
+    #[cfg_attr(not(feature = "serve-engine"), allow(clippy::unused_self))]
     fn embed_query(&self, text: &str) -> Result<Vec<f32>, DatasetError> {
-        #[cfg(feature = "inference")]
+        #[cfg(feature = "serve-engine")]
         {
             self.embedder
                 .as_ref()
                 .ok_or(DatasetError::EmbedderUnavailable)?
                 .embed(text)
         }
-        #[cfg(not(feature = "inference"))]
+        #[cfg(not(feature = "serve-engine"))]
         {
             let _ = text;
             Err(DatasetError::EmbedderUnavailable)
@@ -712,6 +714,20 @@ mod tests {
         assert!(matches!(err, DatasetError::DimMismatch(_)));
     }
 
+    /// PR-B back-compat (E3): a dataset's vector dimension is fixed by its first
+    /// insert, so a QUERY vector of a different dimension — e.g. after switching
+    /// `KX_SERVE_EMBED_MODEL` to a model of another dim on an existing corpus — is
+    /// refused loudly, never silently returning garbage neighbours.
+    #[test]
+    fn query_dim_mismatch_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let view = open_view(dir.path());
+        view.ingest("c", &[doc(b"a", &axis_vec(0))]).unwrap(); // dim 4
+        let three = vec![0.0f32; 3];
+        let err = view.query("c", Some(&three), "", 1).unwrap_err();
+        assert!(matches!(err, DatasetError::DimMismatch(_)));
+    }
+
     #[test]
     fn unknown_dataset_is_not_found() {
         let dir = tempfile::tempdir().unwrap();
@@ -734,6 +750,101 @@ mod tests {
         // unknown dataset OR embedder-unavailable — both are honest; the embed is
         // attempted first (before the lock), so EmbedderUnavailable wins here.
         assert!(matches!(qerr, DatasetError::EmbedderUnavailable));
+    }
+
+    /// PR-B: a deterministic FFI-free embedder — a one-hot 4-dim vector keyed on the
+    /// first matching keyword (mirrors the harness `KeywordEmbed` stub). Proves the
+    /// re-gated server-embed path (`HostEmbedder` → `HostDatasetView`) runs with NO
+    /// model and NO FFI, i.e. an Ollama-only (`serve-engine`) serve embeds datasets at
+    /// parity. The `EmbeddingBackend` capability rides the host `RoutingBackend` in
+    /// production (unit-tested in `routing_backend`); here we drive the embedder seam
+    /// directly so the datasets path is exercised without a live daemon.
+    #[cfg(feature = "serve-engine")]
+    struct KeywordEmbed;
+    #[cfg(feature = "serve-engine")]
+    impl kx_inference::InferenceBackend for KeywordEmbed {
+        fn dispatch(
+            &self,
+            _model_id: &kx_mote::ModelId,
+            _input: &kx_inference::InferenceInput,
+            _params: &kx_inference::InferenceParams,
+            _warrant: &kx_warrant::WarrantSpec,
+        ) -> Result<kx_inference::InferenceOutput, kx_inference::InferenceError> {
+            Err(kx_inference::InferenceError::Unsupported {
+                reason: "fake: chat unsupported",
+            })
+        }
+        fn supports(&self, _model_id: &kx_mote::ModelId) -> bool {
+            true
+        }
+        fn name(&self) -> &'static str {
+            "fake-embed"
+        }
+    }
+    #[cfg(feature = "serve-engine")]
+    impl kx_inference::EmbeddingBackend for KeywordEmbed {
+        fn dispatch_embedding(
+            &self,
+            model_id: &kx_mote::ModelId,
+            text: &str,
+            _pooling: kx_inference::EmbeddingPooling,
+            _warrant: &kx_warrant::WarrantSpec,
+        ) -> Result<kx_inference::EmbeddingOutput, kx_inference::InferenceError> {
+            let t = text.to_ascii_lowercase();
+            let i = if t.contains("alpha") {
+                0
+            } else if t.contains("bravo") {
+                1
+            } else if t.contains("charlie") {
+                2
+            } else {
+                3
+            };
+            let mut v = vec![0.1f32; 4];
+            v[i] = 1.0;
+            Ok(kx_inference::EmbeddingOutput {
+                vector: v,
+                dim: 4,
+                backend_name: "fake-embed",
+                model_id: model_id.clone(),
+                elapsed: std::time::Duration::ZERO,
+            })
+        }
+    }
+
+    #[cfg(feature = "serve-engine")]
+    #[test]
+    fn server_embed_text_only_via_host_embedder_runs_ffi_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder = HostEmbedder::new(
+            std::sync::Arc::new(KeywordEmbed),
+            kx_mote::ModelId("fake-embed".into()),
+            kx_warrant::WarrantSpec::default(),
+        );
+        let view = HostDatasetView::open(dir.path())
+            .unwrap()
+            .with_embedder(embedder);
+        // Text-only ingest (embedding: None) ⇒ the server embedder runs per doc.
+        let textonly = |c: &'static [u8]| IngestDoc {
+            content: c,
+            embedding: None,
+        };
+        let out = view
+            .ingest(
+                "corpus",
+                &[
+                    textonly(b"alpha one"),
+                    textonly(b"bravo two"),
+                    textonly(b"charlie three"),
+                ],
+            )
+            .unwrap();
+        assert_eq!(out.inserted, 3);
+        assert_eq!(out.dim, 4);
+        // A text-only query is embedded server-side ⇒ the "bravo" doc is nearest.
+        let hits = view.query("corpus", None, "where is bravo", 1).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].content, b"bravo two");
     }
 
     #[test]

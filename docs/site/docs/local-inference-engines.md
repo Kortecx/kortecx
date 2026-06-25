@@ -52,7 +52,7 @@ gap (a visible "unavailable on this engine"), never a silent one:
 | Streaming tokens | ✅ | ✅ |
 | Context window surfaced (`kx models list` `ctx=`) | ✅ (`/api/show`) | ✅ (GGUF `n_ctx`) |
 | Tool-call parsing (multi-format) | ✅ | ✅ |
-| Embeddings / RAG (Datasets) | ⏳ planned | ✅ |
+| Embeddings / RAG (Datasets) | ✅ (`/api/embed`) | ✅ |
 | Vision / multi-modal input | ⏳ planned | ✅ (mmproj) |
 | Constrained decode (grammar) | reserved | reserved |
 
@@ -113,6 +113,38 @@ KX_SERVE_MODEL_GGUF=/path/to/gemma-3-12b-it-q4_k_m.gguf kx serve --dev-allow-loc
 `kx models list` then tags those models `[text · llamacpp]`. See
 [Models](./models.md) for the local model lifecycle (register N, load / offload,
 per-model routing) — it is identical regardless of engine.
+
+## Embeddings & RAG (datasets)
+
+The datasets / RAG **server-embed** path (text-only ingest + query) works on **either
+engine** — it routes through the same `RoutingBackend`, embedding via the in-process
+llama.cpp backend or an Ollama daemon, whichever serves the embed model. (Without an
+embed model the FFI-free **client-vector** path still works: supply vectors yourself.)
+
+By default the embedder is the **primary chat model**. To use a dedicated
+embedding model, set `KX_SERVE_EMBED_MODEL` (operator config, SN-8 — never
+client-chosen):
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `KX_SERVE_EMBED_MODEL` | *(primary model)* | the model used to embed dataset text. **Must be an embedding-capable model** — e.g. `embeddinggemma` on Ollama (`ollama pull embeddinggemma`), or an embedding GGUF on llama.cpp. A non-embedding model is accepted at startup but fails on the first embed. |
+
+```sh
+ollama pull gemma3:12b && ollama pull embeddinggemma
+KX_SERVE_EMBED_MODEL=embeddinggemma kx serve --dev-allow-local --features hnsw
+kx info        # shows: embed  embeddinggemma (datasets/RAG)
+kx models list # the embed model carries an (embed) marker
+```
+
+Two parity notes:
+
+- **Pooling.** Ollama applies the embedding model's **native** pooling; the `pooling`
+  argument is advisory there (llama.cpp honours it). For mean-pooled embedding models
+  (the common case) the results match.
+- **Dimension is fixed per dataset.** A dataset's vector dimension is set by its first
+  insert. Embedding models of different dimensions are **not** interchangeable within
+  one dataset — changing `KX_SERVE_EMBED_MODEL` for an existing corpus requires a fresh
+  dataset (a dimension mismatch is refused loudly, never silently corrupting results).
 
 ## Running both
 

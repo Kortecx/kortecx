@@ -27,6 +27,7 @@ describe("ServerInfo.fromProto", () => {
       featureConsole: true,
       featureVision: false,
       auditLogEnabled: true,
+      embedModelId: "embeddinggemma",
     });
     const info = ServerInfo.fromProto(r);
     expect(info.modelId).toBe("kx-serve:gemma-4-12b");
@@ -40,6 +41,8 @@ describe("ServerInfo.fromProto", () => {
     expect(info.tlsEnabled).toBe(true);
     expect(info.authMode).toBe("token");
     expect(info.featureVision).toBe(false);
+    // PR-B: the configured datasets/RAG embed model carries through.
+    expect(info.embedModelId).toBe("embeddinggemma");
     expect(info.toJSON()).toEqual({
       model_id: "kx-serve:gemma-4-12b",
       model_path: "/models/gemma-4-12b.gguf",
@@ -62,6 +65,7 @@ describe("ServerInfo.fromProto", () => {
       audit_log_enabled: true,
       react_max_turns: 0,
       react_max_tool_calls: 0,
+      embed_model_id: "embeddinggemma",
     });
   });
 

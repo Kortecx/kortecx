@@ -30,6 +30,8 @@ export class ModelSummary {
     readonly chatHandle: string = "",
     /** The serving engine: `"kx-llamacpp" | "kx-ollama"` (empty on an old host). */
     readonly engine: string = "",
+    /** PR-B: `true` iff this model is the server's configured datasets/RAG embedder. */
+    readonly canEmbed: boolean = false,
   ) {}
 
   static fromProto(m: PbModelSummary): ModelSummary {
@@ -42,6 +44,7 @@ export class ModelSummary {
       m.loaded,
       m.chatHandle,
       m.engine,
+      m.canEmbed,
     );
   }
 
@@ -56,6 +59,7 @@ export class ModelSummary {
       loaded: this.loaded,
       chat_handle: this.chatHandle,
       engine: this.engine,
+      can_embed: this.canEmbed,
     };
   }
 }

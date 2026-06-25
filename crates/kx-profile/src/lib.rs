@@ -25,6 +25,7 @@
 
 pub mod chat_spikes;
 pub mod content_spikes;
+pub mod embed_spikes;
 pub mod env;
 pub mod error;
 pub mod mote_detail_spikes;
@@ -34,6 +35,7 @@ pub mod spikes;
 
 pub use chat_spikes::{ChatOpts, ChatSamples};
 pub use content_spikes::ContentSamples;
+pub use embed_spikes::{EmbedOpts, EmbedSamples};
 pub use env::{capture_git_sha, Environment};
 pub use error::ProfileError;
 pub use mote_detail_spikes::MoteDetailSamples;

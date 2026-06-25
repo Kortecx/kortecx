@@ -574,6 +574,7 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
                     "loaded": m.loaded,
                     "chat_handle": m.chat_handle,
                     "engine": m.engine,
+                    "can_embed": m.can_embed,
                 })
             })
             .collect();
@@ -592,14 +593,16 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
                     format!(" · {}", m.engine.strip_prefix("kx-").unwrap_or(&m.engine))
                 };
                 format!(
-                    "{}  [{}{}]  ctx={}  {}{}{}",
+                    "{}  [{}{}]  ctx={}  {}{}{}{}",
                     m.model_id,
                     m.modalities.join("+"),
                     engine,
                     m.context_len,
                     m.description,
                     if m.serving { "  (serving)" } else { "" },
-                    if m.loaded { "  (loaded)" } else { "" }
+                    if m.loaded { "  (loaded)" } else { "" },
+                    // PR-B: mark the configured datasets/RAG embedder.
+                    if m.can_embed { "  (embed)" } else { "" }
                 )
             })
             .collect::<Vec<_>>()
