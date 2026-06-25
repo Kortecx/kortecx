@@ -46,6 +46,39 @@ The **attach** button (next to send) opens a menu:
   release**: attaching these as message *context* rides the context-bundle work.
   They are shown (not hidden) so the surface is honest about what is coming.
 
+## Vision & OCR (attach an image)
+
+Attaching an **image** to a chat binds the `kx/recipes/vision` recipe — the same
+single-entry `chat` call, now image-bearing. It serves **image→text** (describe /
+answer about an image) and prompted **OCR** ("transcribe the text"), on a
+vision-capable model on **either** engine (a vision tag on Ollama, or a model + mmproj
+on llama.cpp — see [Local inference engines](./local-inference-engines.md#vision--ocr-image--text)).
+A serve with no image-capable model **honest-degrades** (CLI/SDK say so; the console
+keeps the attachment display-only) — never a faked answer about an unseen image.
+
+```sh
+# CLI — a bare positional is the message; --image attaches the picture.
+kx chat --image ./receipt.png "Transcribe all the text in this image."
+kx chat --image ./cat.png "What is in this picture?"
+```
+
+```python
+# Python — pass bytes (uploaded) or {"ref": "<64-hex>"} (an existing PutContent ref).
+import kortecx as kx
+client = kx.KxClient("http://127.0.0.1:50151")
+with open("cat.png", "rb") as f:
+    print(client.chat("What is in this picture?", image=f.read()))
+```
+
+```typescript
+// TypeScript — image: Uint8Array (uploaded) | { ref } | { bytes, mediaType }.
+const bytes = new Uint8Array(await (await fetch("/cat.png")).arrayBuffer());
+console.log(await kx.chat("What is in this picture?", { image: bytes }));
+```
+
+`dataset` + `image` together (vision-RAG) is not yet supported — it is a clear usage
+error, never a silent drop. This is model-quality VLM-OCR, not a dedicated OCR engine.
+
 ## Grounding with datasets (RAG)
 
 When a chat turn **names a dataset**, the runtime answers grounded on **your own

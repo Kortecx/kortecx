@@ -55,11 +55,12 @@ gap (a visible "unavailable on this engine"), never a silent one:
 | Context window surfaced (`kx models list` `ctx=`) | ✅ (`/api/show`) | ✅ (GGUF `n_ctx`) |
 | Tool-call parsing (multi-format) | ✅ | ✅ |
 | Embeddings / RAG (Datasets) | ✅ (`/api/embed`) | ✅ |
-| Vision / multi-modal input | ⏳ planned | ✅ (mmproj) |
+| Vision / multi-modal input (image→text, OCR) | ✅ (vision tags) | ✅ (mmproj) |
 | Constrained decode (grammar) | reserved | reserved |
 
-⏳ *planned* capabilities land in a follow-up release; until then the gateway
-honest-degrades (e.g. a vision turn on an Ollama-only serve is refused, not faked).
+A vision turn on a **text-only model** (either engine) is refused, not faked — the
+gateway never answers about an image a non-vision model cannot see. ⏳ *planned*
+capabilities land in a follow-up release.
 
 ## Option A — Ollama (zero-friction)
 
@@ -147,6 +148,52 @@ Two parity notes:
   insert. Embedding models of different dimensions are **not** interchangeable within
   one dataset — changing `KX_SERVE_EMBED_MODEL` for an existing corpus requires a fresh
   dataset (a dimension mismatch is refused loudly, never silently corrupting results).
+
+## Vision & OCR (image → text)
+
+Both engines serve **image→text** (describe an image, answer a question about it, or
+**OCR** — "transcribe the text in this image") over a **vision-capable model**:
+
+- **Ollama** — pull a vision model (e.g. `ollama pull gemma3`); the gateway auto-detects
+  it via `/api/show` and serves the `kx/recipes/vision` recipe. The image rides the
+  `/api/generate` `images` array.
+- **llama.cpp** — point `KX_SERVE_MMPROJ_GGUF` at the model's mmproj projector GGUF
+  (alongside the model GGUF). The image is spliced by the mmproj projector.
+
+The image is uploaded to the content store (`PutContent`, ≤16 MiB) and attached by ref;
+the raw bytes never enter the prompt text. A vision turn on a **text-only model** is
+refused, not faked.
+
+```sh
+# Ollama
+ollama pull gemma3
+kx serve --dev-allow-local
+kx chat --image ./receipt.png "Transcribe all the text in this image."   # OCR
+kx chat --image ./cat.png     "What is in this picture?"                  # describe
+
+# llama.cpp
+KX_SERVE_MMPROJ_GGUF=./gemma-4-mmproj.gguf kx serve --features inference --dev-allow-local
+kx chat --image ./cat.png "What is in this picture?"
+```
+
+```python
+import kortecx as kx
+client = kx.KxClient("http://127.0.0.1:50151")
+with open("receipt.png", "rb") as f:
+    print(client.chat("Transcribe all the text.", image=f.read()))  # bytes → upload
+```
+
+```typescript
+import { KxClient } from "@kortecx/sdk";
+const kx = new KxClient("http://127.0.0.1:50151");
+const bytes = new Uint8Array(await (await fetch("/cat.png")).arrayBuffer());
+console.log(await kx.chat("What is in this picture?", { image: bytes }));
+```
+
+> **Scope.** This is **model-quality VLM-OCR** (a vision model reads the text), not a
+> dedicated OCR engine — no bounding boxes or structured table extraction, and quality
+> scales with the model and image resolution. `dataset` + `image` together (vision-RAG)
+> and image-in-the-agentic-loop are follow-ups.
 
 ## Running both
 

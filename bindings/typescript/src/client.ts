@@ -118,10 +118,7 @@ export const VISION_RECIPE_HANDLE = "kx/recipes/vision";
  * is shorthand for `{ bytes }`). Used for image→text vision AND prompted OCR
  * ("transcribe the text in this image") — both are the same vision dispatch.
  */
-export type ImageInput =
-  | Uint8Array
-  | { ref: string }
-  | { bytes: Uint8Array; mediaType?: string };
+export type ImageInput = Uint8Array | { ref: string } | { bytes: Uint8Array; mediaType?: string };
 
 /** An id argument: hex string OR raw server-derived bytes. */
 export type Id = string | Uint8Array;
