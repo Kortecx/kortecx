@@ -27,8 +27,8 @@ use kx_coordinator::{CoordinatorService, InMemoryWorkerRegistry, MoteState, Work
 use kx_journal::{Journal, JournalEntry, ReactBranch, SqliteJournal};
 use kx_mote::{
     ConfigKey, ConfigVal, EdgeMeta, EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId,
-    Mote, MoteDef, NdClass, ParentRef, PromptTemplateHash, MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY,
-    REACT_TURN_KEY,
+    Mote, MoteDef, NdClass, ParentRef, PromptTemplateHash, CONTEXT_ITEMS_KEY, IMAGE_REF_KEY,
+    MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY, REACT_TURN_KEY,
 };
 use kx_warrant::{
     warrant_ref_of, ExecutorClass, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling,
@@ -95,6 +95,44 @@ fn seed_mote_with(instruction: &str) -> Mote {
         inference_params: kx_mote::InferenceParams::default(),
         schema_version: MOTE_DEF_SCHEMA_VERSION,
     };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([7u8; 32]),
+        GraphPosition(vec![7u8]),
+        SmallVec::new(),
+    )
+}
+
+/// AGENTIC-VISION: a SEED Mote carrying `instruction` PLUS an inline grounding image
+/// under `IMAGE_REF_KEY` — the react-vision launch shape (the recipe binder binds the
+/// client's uploaded image ref here). Stored raw-hex (`ContentRef::from_arg` accepts it,
+/// agreeing with the binder's JSON-string form by construction). The image folds into
+/// the seed's def hash, so its MoteId (hence the PR-R1 chain salt) differs from the
+/// text-only seed — a distinct goal ⇒ a distinct chain.
+fn seed_mote_with_image(instruction: &str, image: &ContentRef) -> Mote {
+    let mut def = seed_mote_with(instruction).def;
+    def.config_subset.insert(
+        ConfigKey(IMAGE_REF_KEY.to_string()),
+        ConfigVal(image.to_hex().into_bytes()),
+    );
+    Mote::new(
+        def,
+        InputDataId::from_bytes([7u8; 32]),
+        GraphPosition(vec![7u8]),
+        SmallVec::new(),
+    )
+}
+
+/// PR-9d / BUG-35 context sibling: a SEED Mote carrying `instruction` PLUS an inline
+/// grounding-context bundle under `CONTEXT_ITEMS_KEY` — the RAG/context-in-react launch
+/// shape (the `bind` `inject_entry_config` precedent). The bundle BYTES (not a ref) ride
+/// the seed; `write_react_anchor` stages them into the content store and records the ref.
+fn seed_mote_with_context(instruction: &str, bundle: &[u8]) -> Mote {
+    let mut def = seed_mote_with(instruction).def;
+    def.config_subset.insert(
+        ConfigKey(CONTEXT_ITEMS_KEY.to_string()),
+        ConfigVal(bundle.to_vec()),
+    );
     Mote::new(
         def,
         InputDataId::from_bytes([7u8; 32]),
@@ -405,6 +443,103 @@ async fn react_seed_swaps_in_a_salted_turn0_and_anchors() {
             .map(|v| v.0.clone()),
         Some(INSTRUCTION.as_bytes().to_vec())
     );
+}
+
+/// AGENTIC-VISION regression guard (BUG-35, caught by the live dual-engine Gemma pass).
+/// A react seed carrying an inline grounding image (`config_subset[IMAGE_REF_KEY]` — a
+/// react-vision launch) MUST record that image on the turn-0 anchor. The seed-swap
+/// DISCARDS the seed (the swapped turn 0 is rebuilt from the instruction alone), so the
+/// coordinator must capture the image BEFORE the swap and re-inject it onto the anchor —
+/// every successor turn then re-derives the image EDGE-FREE from this anchor. The bug:
+/// the anchor-clone was taken from the POST-swap mote (no image) ⇒ the agentic-vision
+/// loop ran BLIND (the model never saw the image; it answered "please provide the image").
+#[tokio::test]
+async fn react_vision_seed_records_the_grounding_image_on_the_anchor() {
+    let dir = TempDir::new().unwrap();
+    let (svc, _store) = coordinator(&dir);
+    let w = warrant(false);
+    // The image ref the client `PutContent`'d, carried inline on the react-vision seed.
+    let image = ContentRef::from_bytes([0xab; 32]);
+    let seed = seed_mote_with_image(INSTRUCTION, &image);
+
+    let (turn0_id, instance_id) = submit_react(&svc, &seed, &w).await;
+
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(facts.len(), 1, "exactly the turn-0 anchor");
+    match &facts[0] {
+        JournalEntry::ReactRound {
+            turn,
+            turn_mote_id,
+            instance_id: fact_instance,
+            image_ref,
+            ..
+        } => {
+            assert_eq!(*turn, 0);
+            assert_eq!(turn_mote_id.as_bytes().to_vec(), turn0_id);
+            assert_eq!(fact_instance.to_vec(), instance_id);
+            assert_eq!(
+                *image_ref,
+                Some(image),
+                "BUG-35: the seed's grounding image MUST survive the seed-swap onto the \
+                 turn-0 anchor (else every successor turn re-derives None and the loop runs blind)"
+            );
+        }
+        other => panic!("expected a ReactRound anchor, got {other:?}"),
+    }
+}
+
+/// AGENTIC-VISION regression guard (BUG-35 CONTEXT SIBLING — caught by the pre-merge audit).
+/// The SAME seed-swap that dropped the image ALSO drops `CONTEXT_ITEMS_KEY` (PR-9d's
+/// RAG/context-in-react grounding bundle): `build_chain_turn` rebuilds turn-0 from the
+/// instruction alone, so a react seed launched WITH a context bundle must have that bundle
+/// captured before the swap and re-injected onto the anchor — else `write_react_anchor`
+/// records `context_items_ref=None` and every successor turn re-derives None ⇒ the chain
+/// runs blind (RAG-in-react ungrounded). PR-9d's intent ("close the grounding-context drop
+/// where build_react_turn omits CONTEXT_ITEMS_KEY") was never realized on the submit path —
+/// `turn0_for_anchor` was the POST-swap clone since PR-2d-1; the image fix made it symmetric.
+#[tokio::test]
+async fn react_seed_with_context_bundle_records_context_items_on_the_anchor() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(false);
+    let bundle = b"ctx-bundle-payload-for-grounding".to_vec();
+    let seed = seed_mote_with_context(INSTRUCTION, &bundle);
+
+    let _ = submit_react(&svc, &seed, &w).await;
+
+    let facts = react_facts(&svc, &dir).await;
+    assert_eq!(facts.len(), 1, "exactly the turn-0 anchor");
+    match &facts[0] {
+        JournalEntry::ReactRound {
+            context_items_ref, ..
+        } => {
+            assert_eq!(
+                *context_items_ref,
+                Some(store.put(&bundle).unwrap()),
+                "BUG-35 context sibling: the seed's grounding-context bundle MUST survive the \
+                 seed-swap onto the turn-0 anchor (else RAG-in-react runs blind)"
+            );
+        }
+        other => panic!("expected a ReactRound anchor, got {other:?}"),
+    }
+}
+
+/// The text control for the guard above: a PLAIN react seed (no `IMAGE_REF_KEY`)
+/// anchors with `image_ref == None`, proving the carry is conditional on an attached
+/// image, not a blanket default — byte-identical to pre-AGENTIC-VISION for the text path.
+#[tokio::test]
+async fn plain_react_seed_anchors_without_an_image() {
+    let dir = TempDir::new().unwrap();
+    let (svc, _store) = coordinator(&dir);
+    let w = warrant(false);
+    let _ = submit_react(&svc, &seed_mote(), &w).await;
+    let facts = react_facts(&svc, &dir).await;
+    match &facts[0] {
+        JournalEntry::ReactRound { image_ref, .. } => {
+            assert_eq!(*image_ref, None, "a text react chain anchors with no image");
+        }
+        other => panic!("expected a ReactRound anchor, got {other:?}"),
+    }
 }
 
 /// `react_seed = false` keeps today's behavior byte-identical: the admitted
