@@ -397,7 +397,9 @@ use kx_content::ContentRef;
 use kx_inference::ContentFetcher;
 
 /// The 8-byte PNG signature + a little filler — enough for `sniff_image_format`.
-const PNG_BYTES: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02];
+const PNG_BYTES: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02,
+];
 
 /// A minimal in-test content fetcher (the backend only needs `ContentFetcher`).
 struct MapStore(std::collections::HashMap<ContentRef, Vec<u8>>);
@@ -421,7 +423,8 @@ fn vision_warrant(model: &str, max_out: u32) -> WarrantSpec {
 fn vision_routes(
     sink: Arc<Mutex<Vec<String>>>,
 ) -> impl Fn(&str, &str, &str) -> (u16, String) + Send + Sync + 'static {
-    move |method: &str, path: &str, body: &str| match (method, path) {
+    move |method: &str, path: &str, body: &str| {
+        match (method, path) {
         ("GET", "/api/version") => (200, r#"{"version":"0.1.42"}"#.to_string()),
         ("GET", "/api/tags") => (200, r#"{"models":[{"name":"gemma3:12b"}]}"#.to_string()),
         ("POST", "/api/show") => (
@@ -437,6 +440,7 @@ fn vision_routes(
             )
         }
         _ => (404, r#"{"error":"not found"}"#.to_string()),
+    }
     }
 }
 

@@ -14,7 +14,7 @@
 
 use kx_content::{ContentRef, ContentStore, NotFound};
 
-/// Object-safe byte fetcher that erases [`ContentStore`]'s associated `Payload`
+/// Object-safe byte fetcher that erases `ContentStore`'s associated `Payload`
 /// type so a backend can hold a single trait object regardless of the store
 /// implementation. Blanket-implemented for every `Send + Sync` `ContentStore`,
 /// so callers pass an `Arc<ConcreteStore>` and it coerces to

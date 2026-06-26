@@ -169,10 +169,13 @@ impl OllamaBackend {
                 "tag {tag} is not present in the daemon after the pull"
             )));
         }
-        let meta = self.client.show_meta(tag).unwrap_or(crate::client::ShowMeta {
-            context_length: 0,
-            vision: false,
-        });
+        let meta = self
+            .client
+            .show_meta(tag)
+            .unwrap_or(crate::client::ShowMeta {
+                context_length: 0,
+                vision: false,
+            });
         self.models
             .write()
             .unwrap_or_else(PoisonError::into_inner)

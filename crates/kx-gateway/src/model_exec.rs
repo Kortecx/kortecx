@@ -248,7 +248,8 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
     // vision-capable Ollama tag can fetch image `content_ref`s (PR-B2); a text-only
     // Ollama serve leaves it unbound.
     let have_gguf = primary.is_some();
-    if let Some((ollama, mut ollama_entries, ollama_primary)) = build_ollama_engine(have_gguf, store)
+    if let Some((ollama, mut ollama_entries, ollama_primary)) =
+        build_ollama_engine(have_gguf, store)
     {
         if primary.is_none() {
             primary = Some(ollama_primary);

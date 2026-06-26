@@ -158,7 +158,16 @@ pub async fn measure(channel: &Channel, opts: &VisionOpts) -> Result<VisionSampl
     let mut total_ms = Vec::with_capacity(opts.iterations);
     for i in 0..opts.iterations {
         let prompt = format!("{} (variant {i})", opts.prompt);
-        total_ms.push(one_vision(channel, &image_ref, &chosen_model, &prompt, opts.token.as_deref()).await?);
+        total_ms.push(
+            one_vision(
+                channel,
+                &image_ref,
+                &chosen_model,
+                &prompt,
+                opts.token.as_deref(),
+            )
+            .await?,
+        );
     }
 
     Ok(VisionSamples {

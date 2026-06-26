@@ -324,7 +324,10 @@ mod tests {
     fn parses_image_path() {
         let a = parse_v(&["what is in this?", "--image", "/tmp/cat.png"]).unwrap();
         assert_eq!(a.message, "what is in this?");
-        assert_eq!(a.image.as_deref(), Some(std::path::Path::new("/tmp/cat.png")));
+        assert_eq!(
+            a.image.as_deref(),
+            Some(std::path::Path::new("/tmp/cat.png"))
+        );
         assert!(a.dataset.is_none());
     }
 

@@ -569,9 +569,7 @@ fn vision_of(value: &serde_json::Value) -> bool {
                 .filter_map(serde_json::Value::as_str)
                 .any(|c| c.eq_ignore_ascii_case("vision"))
         });
-    let has_projector = value
-        .get("projector_info")
-        .is_some_and(|p| !p.is_null());
+    let has_projector = value.get("projector_info").is_some_and(|p| !p.is_null());
     has_capability || has_projector
 }
 

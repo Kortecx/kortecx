@@ -2,18 +2,21 @@
 //! DUAL-ENGINE parity proof (GR24). Drives whichever engine the serve provisioned a
 //! vision recipe for — restart between engines and run once each:
 //!
-//!   # llama.cpp (mmproj):
-//!   KX_SERVE_MODEL_GGUF=.../gemma-4-12b-it-q4_k_m.gguf \
-//!   KX_SERVE_MMPROJ_GGUF=.../gemma-4-mmproj.gguf \
-//!     cargo test -p kx-gateway --features inference --test vision_capability_live_serve \
-//!       -- --ignored --nocapture
+//! ```sh
+//! # llama.cpp (mmproj):
+//! KX_SERVE_MODEL_GGUF=.../gemma-4-12b-it-q4_k_m.gguf \
+//! KX_SERVE_MMPROJ_GGUF=.../gemma-4-mmproj.gguf \
+//!   cargo test -p kx-gateway --features inference --test vision_capability_live_serve \
+//!     -- --ignored --nocapture
 //!
-//!   # Ollama (vision tag): `ollama pull gemma3` first, then
-//!   KX_SERVE_OLLAMA=1 cargo test -p kx-gateway --features inference \
-//!     --test vision_capability_live_serve -- --ignored --nocapture
+//! # Ollama (vision tag): `ollama pull gemma3` first, then
+//! KX_SERVE_OLLAMA=1 cargo test -p kx-gateway --features inference \
+//!   --test vision_capability_live_serve -- --ignored --nocapture
+//! ```
 //!
-//! The test PutContent's a committed 96×96 red-square PNG, binds `kx/recipes/vision`
-//! exactly as the SDK/CLI do (form-gated `{prompt, image_ref, model}`), and asserts a
+//! The test uploads (`PutContent`) a committed 96×96 red-square PNG, binds
+//! `kx/recipes/vision` exactly as the SDK/CLI do (form-gated `{prompt, image_ref,
+//! model}`), and asserts a
 //! NON-EMPTY committed answer (the non-flaky invariant). Whether the model says "red"
 //! is a SOFT signal (model quality is not what this gates — GR15 log-don't-assert), as
 //! is the OCR shape (the same dispatch with a text image + a "transcribe" prompt).
@@ -52,7 +55,11 @@ async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
 }
 
 /// Poll `GetProjection` until `mote` commits; return its decoded UTF-8 answer.
-async fn await_answer(c: &mut KxGatewayClient<Channel>, instance_id: Vec<u8>, mote: Vec<u8>) -> String {
+async fn await_answer(
+    c: &mut KxGatewayClient<Channel>,
+    instance_id: Vec<u8>,
+    mote: Vec<u8>,
+) -> String {
     for _ in 0..600 {
         let proj = c
             .get_projection(proto::GetProjectionRequest {
@@ -67,7 +74,10 @@ async fn await_answer(c: &mut KxGatewayClient<Channel>, instance_id: Vec<u8>, mo
             .iter()
             .find(|m| m.mote_id == mote && m.state == proto::MoteSnapshotState::Committed as i32)
         {
-            let result_ref = m.result_ref.clone().expect("committed mote carries a result_ref");
+            let result_ref = m
+                .result_ref
+                .clone()
+                .expect("committed mote carries a result_ref");
             let blob = c
                 .get_content(proto::GetContentRequest {
                     content_ref: result_ref,
@@ -125,7 +135,10 @@ async fn vision_image_to_text_on_the_served_engine() {
         }
     };
     let has = |n: &str| form.fields.iter().find(|f| f.name == n);
-    assert!(has("image_ref").is_some(), "the vision form declares image_ref");
+    assert!(
+        has("image_ref").is_some(),
+        "the vision form declares image_ref"
+    );
 
     // Upload the test image and bind {prompt, image_ref, model} (the SDK/CLI shape).
     let put = c
@@ -170,7 +183,10 @@ async fn vision_image_to_text_on_the_served_engine() {
     eprintln!("vision answer ({}): {answer:?}", vm.engine);
 
     // The non-flaky invariant: a real, non-empty answer (the image reached the model).
-    assert!(!answer.trim().is_empty(), "vision produced a non-empty answer");
+    assert!(
+        !answer.trim().is_empty(),
+        "vision produced a non-empty answer"
+    );
     // Soft signal (model quality is not what this gates): a correct VLM says "red".
     if answer.to_lowercase().contains("red") {
         eprintln!("(model correctly identified the red square)");

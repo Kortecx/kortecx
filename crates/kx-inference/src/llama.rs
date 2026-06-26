@@ -98,7 +98,7 @@ impl LlamaInferenceBackend {
     /// Bind a content store the multi-modal path fetches image bytes from.
     ///
     /// Additive: text-only dispatch ignores it. Any `Send + Sync`
-    /// [`ContentStore`] (e.g. an `Arc<LocalFsContentStore>`) coerces in via the
+    /// `ContentStore` (e.g. an `Arc<LocalFsContentStore>`) coerces in via the
     /// [`ContentFetcher`] blanket impl. Without it, an image dispatch fails
     /// closed (`Unsupported`).
     #[must_use]
