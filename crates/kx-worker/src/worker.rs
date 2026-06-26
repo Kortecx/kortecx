@@ -328,7 +328,9 @@ impl Worker {
         sink.set_context_items(mote_id, context_items_ref);
         // AGENTIC-VISION: the run's grounding-image ref for a SUCCESSOR ReAct turn (the
         // executor feeds it into the per-turn multimodal call on the next `run`).
-        let image = <[u8; 32]>::try_from(image_ref).ok().map(ContentRef::from_bytes);
+        let image = <[u8; 32]>::try_from(image_ref)
+            .ok()
+            .map(ContentRef::from_bytes);
         sink.set_image_ref(mote_id, image);
     }
 

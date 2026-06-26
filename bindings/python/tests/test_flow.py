@@ -53,7 +53,13 @@ def test_flow_image_grounds_the_next_agent_step_per_step() -> None:
     ref_a = "a" * 64
     ref_b = "b" * 64
     lowered = (
-        flow().image(ref_a).agent("inspect the chart").then("now this one").image(ref_b).then("summarise").lowering()
+        flow()
+        .image(ref_a)
+        .agent("inspect the chart")
+        .then("now this one")
+        .image(ref_b)
+        .then("summarise")
+        .lowering()
     )
     steps = lowered["steps"]
     assert steps[0]["params"].get("image_ref") == ref_a, "first step grounded by ref_a"
