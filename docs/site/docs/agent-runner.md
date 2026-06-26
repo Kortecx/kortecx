@@ -74,6 +74,65 @@ kx agent run --goal "Use the echo tool to repeat 'pong'." --max-tool-calls 20 --
 > the granted tool set is fixed and part of the step's identity. There is no separate
 > chains `agent()` node by design (it would be a second, divergent wire shape).
 
+## Vision in agents (agentic vision)
+
+Attach an **image** and the agent reasons over it on **every turn** of the loop — not
+just a one-shot caption. The image is carried **durably** through the chain (anchored on
+the run's first ReAct turn and re-derived for every successor turn), so it survives
+re-plan and a crash-and-recover exactly like the rest of the run. Single entry point, one
+extra option — `image=` mirrors `client.chat(image=…)`:
+
+**Python** — `run_agent(goal, image=…)` / `Agent.run(task, image=…)`:
+
+```python
+import kortecx as kx
+
+img = open("chart.png", "rb").read()
+result = kx.run_agent("Inspect this chart and use the echo tool to report the peak.", image=img)
+print(result.answer)
+# Agent class: kx.Agent("You are a data analyst.").run("What's the trend?", image=img)
+```
+
+**TypeScript** — `runAgent({ goal, image })` / `agent.run(task, { image })`:
+
+```ts
+import { runAgent } from "@kortecx/sdk";
+
+const result = await runAgent({ goal: "Inspect this chart and report the peak.", image: bytes });
+```
+
+**CLI** — `kx agent run --image <path>`:
+
+```bash
+kx agent run --goal "Inspect this chart and use the echo tool to report the peak." --image ./chart.png
+```
+
+**In a chain** — the first-class `flow().image(ref)` node grounds the **next** agent step
+(per-step: a later `.image()` before another `.agent()` grounds that step with a different
+image). Upload the bytes once for a content ref, then chain:
+
+```python
+import kortecx as kx
+
+kx_ = kx.default_client()
+ref = kx_.put_content(open("invoice.png", "rb").read()).content_ref
+out = (kx.flow()
+       .image(ref).agent("Extract the line items from this invoice.", tools=["echo"])
+       .then("Total them and flag any anomaly.")
+       .run())
+```
+```ts
+const ref = (await kx.putContent(bytes)).contentRef;
+const out = await flow().image(ref).agent("Extract the line items.").then("Total them.").run({ client: kx });
+```
+
+Works on **both inference engines** (Ollama vision tags · llama.cpp + mmproj). When no
+vision model is served the SDKs/CLI **fail closed** with a clear error (the image is never
+silently dropped); in the console, agent mode **honest-degrades** to the text-only loop and
+the attachment stays display-only. `dataset` + `image` together (vision-RAG) is a
+follow-up. See [local inference engines](./local-inference-engines.md) to serve a vision
+model and [chat](./chat.md#vision--ocr) for single-shot image→text / OCR.
+
 ## Chains of agents
 
 Wire one agent's output into the next with a **data edge** — the upstream result

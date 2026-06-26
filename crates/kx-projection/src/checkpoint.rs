@@ -110,7 +110,17 @@ use crate::state::{
 /// `7d22d4bd` is invariant. A stale v6 sidecar is rejected; recovery full-folds from
 /// the v12 journal (a byte-absent v11 `ReactRound` up-converts `context_items_ref` to
 /// `None`) and re-seals.
-pub const CURRENT_FORMAT_VERSION: u16 = 7;
+///
+/// `8` (AGENTIC-VISION, image-in-the-ReAct-loop): `ReactRoundRecordDto` gained
+/// `image_ref` (the run's grounding image ref, recorded on the turn-0 anchor). SAME
+/// deliberate-break contract: the per-record payload grows by an `Option<ContentRef>`
+/// tag, shifting the bincoded bytes + `state_digest()` of any state THAT HAS react
+/// records; a state with NO react rounds (the demo / a non-react run) encodes a length-0
+/// `react_rounds` Vec either way, so its `encode_state` / `state_content_digest` are
+/// BYTE-UNCHANGED and the canonical PRODUCT digest `7d22d4bd` is invariant. A stale v7
+/// sidecar is rejected; recovery full-folds from the v14 journal (a byte-absent v13
+/// `ReactRound` up-converts `image_ref` to `None`) and re-seals.
+pub const CURRENT_FORMAT_VERSION: u16 = 8;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -567,6 +577,10 @@ struct ReactRoundRecordDto {
     /// retrieved context). The format-version bump (v6→v7) covers this added field;
     /// absent in v6 sidecars (rejected → full-fold from the v12 journal).
     context_items_ref: Option<ContentRef>,
+    /// AGENTIC-VISION — the run's grounding image ref (`None` ⇒ a text-only chain). The
+    /// format-version bump (v7→v8) covers this added field; absent in v7 sidecars
+    /// (rejected → full-fold from the v14 journal).
+    image_ref: Option<ContentRef>,
     seq: u64,
 }
 
@@ -759,6 +773,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             step_salt,
             is_agentic_launch,
             context_items_ref,
+            image_ref,
             seq,
         } = r;
         Self {
@@ -774,6 +789,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             step_salt: *step_salt,
             is_agentic_launch: *is_agentic_launch,
             context_items_ref: *context_items_ref,
+            image_ref: *image_ref,
             seq: *seq,
         }
     }
@@ -1022,6 +1038,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             step_salt,
             is_agentic_launch,
             context_items_ref,
+            image_ref,
             seq,
         } = dto;
         ReactRoundRecord {
@@ -1037,6 +1054,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             step_salt,
             is_agentic_launch,
             context_items_ref,
+            image_ref,
             seq,
         }
     }
@@ -1148,10 +1166,13 @@ mod tests {
         s
     }
 
-    /// PR-2d-1 (v4) + PR-9b-2b (v5) + PR-R1 (v6): the fixture's react-turn records — a
-    /// RUN-LEVEL anchor (`step_salt None`, `is_agentic_launch false`) + an AGENTIC `Tool`
-    /// settle (`step_salt Some`, `is_agentic_launch true`) — so the round-trip proves the
-    /// v4 payload branch AND the v5 `step_salt` Option AND the v6 launch flag survive.
+    /// PR-2d-1 (v4) + PR-9b-2b (v5) + PR-R1 (v6) + PR-9d (v7) + AGENTIC-VISION (v8): the
+    /// fixture's react-turn records — a RUN-LEVEL anchor (`step_salt None`,
+    /// `is_agentic_launch false`, no context/image) + an AGENTIC `Tool` settle
+    /// (`step_salt Some`, `is_agentic_launch true`, present `context_items_ref` +
+    /// `image_ref`) — so the round-trip proves the v4 payload branch AND the v5
+    /// `step_salt` Option AND the v6 launch flag AND the v7 context ref AND the v8 image
+    /// ref all survive.
     fn push_sample_react_rounds(s: &mut State) {
         s.react_rounds.push(ReactRoundRecord {
             turn: 0,
@@ -1166,6 +1187,7 @@ mod tests {
             step_salt: None,
             is_agentic_launch: false,
             context_items_ref: None,
+            image_ref: None,
             seq: 4,
         });
         s.react_rounds.push(ReactRoundRecord {
@@ -1184,26 +1206,27 @@ mod tests {
             step_salt: Some([0x77; 32]),
             is_agentic_launch: true,
             context_items_ref: Some(ContentRef::from_bytes([0xf3; 32])),
+            image_ref: Some(ContentRef::from_bytes([0xf4; 32])),
             seq: 4,
         });
     }
 
-    /// PR-9d: pin the checkpoint format version so the v6→v7 bump (the additive
-    /// `ReactRoundRecordDto.context_items_ref` field) is an intentional, reviewable
-    /// change — and so a v6 sidecar written by the previous binary is REFUSED
-    /// (decode error → full-fold self-heal), never misread.
+    /// AGENTIC-VISION: pin the checkpoint format version so the v7→v8 bump (the additive
+    /// `ReactRoundRecordDto.image_ref` field) is an intentional, reviewable change — and
+    /// so a v7 sidecar written by the previous binary is REFUSED (decode error →
+    /// full-fold self-heal), never misread.
     #[test]
-    fn format_version_is_v7_and_v6_blobs_are_refused() {
-        assert_eq!(CURRENT_FORMAT_VERSION, 7);
+    fn format_version_is_v8_and_v7_blobs_are_refused() {
+        assert_eq!(CURRENT_FORMAT_VERSION, 8);
         let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
-        // Stamp the envelope version back to v6 (bytes 0..2, LE u16).
-        bytes[0..2].copy_from_slice(&6u16.to_le_bytes());
+        // Stamp the envelope version back to v7 (bytes 0..2, LE u16).
+        bytes[0..2].copy_from_slice(&7u16.to_le_bytes());
         assert!(matches!(
             FoldCheckpoint::from_bytes(&bytes),
-            // The version is part of the digest preimage, so a re-stamped v6
+            // The version is part of the digest preimage, so a re-stamped v7
             // envelope fails as UnsupportedVersion or DigestMismatch — both are
             // fail-safe discards (full fold).
-            Err(CheckpointError::UnsupportedVersion { got: 6 } | CheckpointError::DigestMismatch)
+            Err(CheckpointError::UnsupportedVersion { got: 7 } | CheckpointError::DigestMismatch)
         ));
     }
 

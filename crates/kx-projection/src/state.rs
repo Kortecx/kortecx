@@ -217,6 +217,11 @@ pub struct ReactRoundRecord {
     /// context EDGE-FREE for turns ≥1. `None` ⇒ no attached/retrieved context (every
     /// chain ≤v11 up-converts to `None`). Off-DAG metadata — never an identity input.
     pub context_items_ref: Option<ContentRef>,
+    /// AGENTIC-VISION: `ContentRef` of the run's grounding IMAGE, recorded on the turn-0
+    /// anchor so a recovered coordinator re-derives the per-turn image EDGE-FREE for turns
+    /// ≥1. `None` ⇒ a text-only chain (every chain ≤v13 up-converts to `None`). Off-DAG
+    /// metadata — never an identity input.
+    pub image_ref: Option<ContentRef>,
     /// The entry's journal seq (audit/order).
     pub seq: u64,
 }

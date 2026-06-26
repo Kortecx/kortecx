@@ -404,6 +404,14 @@ message WorkItem {
   // context ⇒ byte-identical to pre-PR-9d. A successor ReAct turn (no inline bundle)
   // carries it so the served model stays grounded across the whole chain.
   bytes context_items = 5;
+  // AGENTIC-VISION (image-in-the-ReAct-loop): the 32-byte content-store ref of the
+  // run's grounding IMAGE, re-derived on the sole-writer thread at lease time from the
+  // chain's turn-0 ReactRound anchor (edge-free, the context_items precedent). EMPTY for
+  // every Mote that already carries its image inline in config_subset[IMAGE_REF_KEY]
+  // (turn 0) or bound no image ⇒ byte-identical to pre-AGENTIC-VISION. A successor ReAct
+  // turn (no inline image) carries it so the served VLM keeps the SAME visual grounding
+  // across every turn of the chain.
+  bytes image_ref = 6;
 }
 
 message LeaseWorkResponse {

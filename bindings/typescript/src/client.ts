@@ -112,6 +112,11 @@ export const REACT_RECIPE_HANDLE = "kx/recipes/react";
  * on either engine (Ollama vision tags / llama.cpp mmproj). */
 export const VISION_RECIPE_HANDLE = "kx/recipes/vision";
 
+/** AGENTIC-VISION: the image-grounded ReAct recipe — the live agent loop PLUS a bound
+ * image the served VLM reasons over on EVERY turn. Shares the `kx/recipes/react` prefix,
+ * so it settles as a react CHAIN (the `isReactHandle` prefix check). */
+export const REACT_VISION_RECIPE_HANDLE = "kx/recipes/react-vision";
+
 /**
  * An image to attach to a {@link KxClientBase.chat} call (PR-B2). Either an existing
  * `{ ref }` (a 64-hex `PutContent` ref) or raw `bytes` to upload (a bare `Uint8Array`
@@ -373,6 +378,32 @@ export abstract class KxClientBase {
           : model.allowed[0];
     }
     return { handle: VISION_RECIPE_HANDLE, args };
+  }
+
+  /**
+   * AGENTIC-VISION: resolve `image` to a content ref and bind `kx/recipes/react-vision`
+   * (the image-grounded agent loop), injecting `image_ref` into the react `args` so the
+   * served VLM reasons over the image on every turn. Honest-degrades with a clear error
+   * when no vision model is served — never silently drops the image (GR15). Public so the
+   * standalone `runAgent` / `Agent` entrypoints can bind it.
+   */
+  async bindReactVision(
+    args: Record<string, unknown>,
+    image: ImageInput,
+  ): Promise<{ handle: string; args: Record<string, unknown> }> {
+    const imageRef = await this.resolveImageRef(image);
+    let form: RecipeForm;
+    try {
+      form = await this.getRecipeForm(REACT_VISION_RECIPE_HANDLE);
+    } catch {
+      throw new KxUsage(
+        "agentic vision is not available on this serve (no image-capable model). Serve a vision model (e.g. gemma3 via Ollama, or Gemma-4 + mmproj via llama.cpp).",
+      );
+    }
+    if (!form.fields.find((f) => f.name === "image_ref")) {
+      throw new KxUsage("the kx/recipes/react-vision form does not declare an image_ref slot");
+    }
+    return { handle: REACT_VISION_RECIPE_HANDLE, args: { ...args, image_ref: imageRef } };
   }
 
   /**

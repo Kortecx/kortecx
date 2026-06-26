@@ -147,6 +147,17 @@ pub const TOOL_ARGS_KEY: &str = "kx.tool.args";
 /// label the items for the model.
 pub const CONTEXT_ITEMS_KEY: &str = "kx.context.items";
 
+/// AGENTIC-VISION: the `config_subset` key under which the bind layer injects a run's
+/// grounding IMAGE as a content-store ref (a JSON string of 64 hex chars — the uploaded
+/// blob's `PutContent` ref). It is the SAME public recipe slot name the vision + react
+/// recipes publish, so the SDK/CLI/UI bind it through the form-gate. Read by BOTH the
+/// gateway executor (turn-0 + the carried successor turns) and the coordinator anchor
+/// (which records its `ContentRef` on the turn-0 `ReactRound` so a recovered chain
+/// re-derives the image edge-free). Present ONLY on a Mote that bound an image, so every
+/// Mote without it is byte-identical to pre-AGENTIC-VISION (no prior Mote carries this
+/// key, so adding the constant moves no existing digest).
+pub const IMAGE_REF_KEY: &str = "image_ref";
+
 /// The stable position of a Mote in its DAG.
 ///
 /// Assigned at DAG-compile time (workflow SDK) or derived from a topology

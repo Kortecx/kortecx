@@ -956,6 +956,13 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// `dispatch_model`). `None`/non-matching ⇒ no carried context (byte-identical to
     /// pre-PR-9d). Same set-then-consume single-thread discipline as `parent_ctx`.
     context_items_ctx: Mutex<Option<(MoteId, Option<ContentRef>)>>,
+    /// AGENTIC-VISION (image-in-the-ReAct-loop): the worker → executor side-channel for a
+    /// SUCCESSOR ReAct turn's grounding-image ref (set by
+    /// [`kx_worker::ContextSink::set_image_ref`] BEFORE each `run`, consumed inside
+    /// `dispatch_model` when the Mote carries no inline `config_subset[IMAGE_REF_KEY]`).
+    /// `None`/non-matching ⇒ no carried image (byte-identical to pre-AGENTIC-VISION). Same
+    /// set-then-consume single-thread discipline as `context_items_ctx`.
+    image_ref_ctx: Mutex<Option<(MoteId, Option<ContentRef>)>>,
     /// Batch C: the optional telemetry usage hook — records `(mote, model that
     /// ACTUALLY ran, output_tokens)` at the ONE place `InferenceOutput` exists
     /// (every model arm funnels through `dispatch_model`). Non-blocking +
@@ -989,6 +996,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             recipes,
             parent_ctx: Mutex::new(None),
             context_items_ctx: Mutex::new(None),
+            image_ref_ctx: Mutex::new(None),
             usage: None,
             token_publisher: None,
         }
@@ -1032,6 +1040,20 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     /// lock degrades to "no carried context" rather than aborting the dispatch.
     fn take_context_items(&self, mote_id: MoteId) -> Option<ContentRef> {
         let mut slot = self.context_items_ctx.lock().ok()?;
+        match slot.as_ref() {
+            Some((id, _)) if *id == mote_id => slot.take().and_then(|(_, r)| r),
+            _ => None,
+        }
+    }
+
+    /// AGENTIC-VISION: take this Mote's carried grounding-image ref (and clear the slot).
+    /// Returns the ref iff the slot matches `mote_id` AND is `Some` — a non-matching /
+    /// empty / `None` slot yields `None` (so a turn-0 Mote, which carries its image inline
+    /// in `config_subset[IMAGE_REF_KEY]`, takes the inline path — byte-identical to
+    /// pre-AGENTIC-VISION). A poisoned lock degrades to "no carried image" rather than
+    /// aborting the dispatch.
+    fn take_image_ref(&self, mote_id: MoteId) -> Option<ContentRef> {
+        let mut slot = self.image_ref_ctx.lock().ok()?;
         match slot.as_ref() {
             Some((id, _)) if *id == mote_id => slot.take().and_then(|(_, r)| r),
             _ => None,
@@ -1206,7 +1228,17 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
                 .render_chat(&mote.def.model_id, SERVE_SYSTEM, user)
                 .unwrap_or_else(|| chatml(user))
         };
-        let input = match image_ref_from_config(mote).map_err(|e| internal(&e))? {
+        // AGENTIC-VISION: turn 0 (and single-shot vision) carries the image INLINE in
+        // `config_subset[IMAGE_REF_KEY]`; a SUCCESSOR ReAct turn carries NO inline image,
+        // so we fall back to the ref the worker stashed via `set_image_ref` (re-derived
+        // edge-free from the chain's turn-0 anchor). Either path feeds the SAME multimodal
+        // dispatch, so the served VLM keeps its visual grounding on every turn of the
+        // chain. A present-but-malformed inline ref still fails CLOSED.
+        let image = match image_ref_from_config(mote).map_err(|e| internal(&e))? {
+            Some(inline) => Some(inline),
+            None => self.take_image_ref(mote.id),
+        };
+        let input = match image {
             Some(image) => InferenceInput::Multimodal {
                 text: format(&format!("{MEDIA_MARKER}{instruction}")),
                 content_refs: std::iter::once(image).collect(),
@@ -1631,6 +1663,12 @@ impl<B: InferenceBackend> kx_worker::ContextSink for ModelRouterExecutor<B> {
             *slot = Some((mote_id, context_items_ref));
         }
     }
+
+    fn set_image_ref(&self, mote_id: MoteId, image_ref: Option<ContentRef>) {
+        if let Ok(mut slot) = self.image_ref_ctx.lock() {
+            *slot = Some((mote_id, image_ref));
+        }
+    }
 }
 
 /// Extract the model Mote's prompt from `config_subset[PROMPT_KEY]`.
@@ -1752,10 +1790,12 @@ fn strip_leading_think(text: &str) -> &str {
 use crate::provision::IMAGE_REF_KEY;
 
 /// Extract + decode the OPTIONAL image content-ref from
-/// `config_subset[`[`IMAGE_REF_KEY`]`]`. The binder stores the bound `Bytes`
-/// arg as a JSON string of 64 hex chars (the uploaded blob's `PutContent` ref).
-/// `Ok(None)` ⇒ a plain text Mote; a PRESENT but malformed value is an error
-/// (fail-closed — the attached image must never be silently dropped).
+/// `config_subset[`[`IMAGE_REF_KEY`]`]`. The recipe binder stores the bound arg as a JSON
+/// string of 64 hex chars (the uploaded blob's `PutContent` ref); the chains-DSL
+/// `flow().image(ref)` path may store the raw 64-hex bytes — so this accepts EITHER (the
+/// `reasoning_mode_from_config` tolerance precedent), then validates strictly via the
+/// shared `ContentRef::from_hex`. `Ok(None)` ⇒ a plain text Mote; a PRESENT but malformed
+/// value is an error (fail-closed — the attached image must never be silently dropped).
 fn image_ref_from_config(mote: &Mote) -> Result<Option<ContentRef>, String> {
     let Some(raw) = mote
         .def
@@ -1764,25 +1804,12 @@ fn image_ref_from_config(mote: &Mote) -> Result<Option<ContentRef>, String> {
     else {
         return Ok(None);
     };
-    let hex = serde_json::from_slice::<String>(&raw.0)
-        .map_err(|_| "image_ref is not a JSON string".to_string())?;
-    let bytes = decode_hex_32(&hex).ok_or_else(|| "image_ref must be 64 hex chars".to_string())?;
-    Ok(Some(ContentRef::from_bytes(bytes)))
-}
-
-/// Decode a 64-char lowercase/uppercase hex string into 32 bytes.
-fn decode_hex_32(s: &str) -> Option<[u8; 32]> {
-    let b = s.as_bytes();
-    if b.len() != 64 {
-        return None;
-    }
-    let mut out = [0u8; 32];
-    for (i, pair) in b.chunks_exact(2).enumerate() {
-        let hi = (pair[0] as char).to_digit(16)?;
-        let lo = (pair[1] as char).to_digit(16)?;
-        out[i] = u8::try_from(hi * 16 + lo).ok()?;
-    }
-    Some(out)
+    // The SHARED tolerant decode (`ContentRef::from_arg`) — the SAME one the coordinator
+    // anchor uses to record this ref, so the executor and coordinator agree by construction
+    // (no drift). A present-but-malformed ref is fail-closed.
+    let r = ContentRef::from_arg(&raw.0)
+        .ok_or_else(|| "image_ref must be a (JSON or raw) string of 64 hex chars".to_string())?;
+    Ok(Some(r))
 }
 
 /// A fail-closed [`MoteExecutorError::Internal`] from a `&str` diagnostic.
@@ -1820,15 +1847,6 @@ mod tests {
         // A missing GGUF → default, clamped within [min, max].
         let n = resolve_n_ctx(Path::new("/nonexistent.gguf"));
         assert!((AGENT_MIN_CTX_TOKENS..=MAX_SERVE_N_CTX).contains(&n));
-    }
-
-    #[test]
-    fn decode_hex_32_round_trips_and_refuses_garbage() {
-        let r = ContentRef::of(b"image bytes");
-        let hex = r.to_hex();
-        assert_eq!(decode_hex_32(&hex), Some(r.0), "hex round-trips the ref");
-        assert_eq!(decode_hex_32("zz"), None, "wrong length");
-        assert_eq!(decode_hex_32(&"g".repeat(64)), None, "non-hex chars");
     }
 
     #[test]

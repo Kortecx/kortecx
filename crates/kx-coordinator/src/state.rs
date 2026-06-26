@@ -26,8 +26,8 @@ use kx_journal::{
 };
 use kx_mote::{
     ConfigKey, EdgeKind, EffectPattern, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName,
-    ToolVersion, CONTEXT_ITEMS_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY,
-    REACT_MAX_TURNS_KEY, REACT_TURN_KEY, TOOL_ARGS_KEY,
+    ToolVersion, CONTEXT_ITEMS_KEY, IMAGE_REF_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY,
+    REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY, REACT_TURN_KEY, TOOL_ARGS_KEY,
 };
 use kx_projection::{
     ContentStoreVerdicts, MoteState, Projection, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
@@ -108,6 +108,14 @@ pub(crate) struct LeasedItem {
     /// attached context — the legacy path is byte-unchanged. Delivered out-of-band
     /// via `WorkItem.context_items` (edge-free, the F-7 / tool_args precedent).
     pub(crate) context_items: Option<ContentRef>,
+    /// AGENTIC-VISION (image-in-the-ReAct-loop): the content-store ref of the run's
+    /// grounding image, re-derived at every (re-)lease as a PURE function of committed
+    /// facts (the chain's turn-0 `ReactRound` anchor `image_ref`). `None` for every Mote
+    /// that already carries its image inline in `config_subset[IMAGE_REF_KEY]` (turn 0)
+    /// or has no attached image — the legacy path is byte-unchanged. Delivered out-of-band
+    /// via `WorkItem.image_ref` (edge-free, the `context_items` precedent), so a SUCCESSOR
+    /// react turn sees the SAME image turn 0 saw.
+    pub(crate) image_ref: Option<ContentRef>,
 }
 
 /// Leased work plus the run's `instance_id` (if registered) — the `LeaseWork`
@@ -704,12 +712,18 @@ fn lease_ready(
                 // edge-free). `None` for turn 0 / a non-react leaf (which carries its
                 // bundle inline) ⇒ the wire payload is byte-identical to pre-PR-9d.
                 let context_items = resolve_react_context_items(mote, projection);
+                // AGENTIC-VISION: re-derive the run's grounding-image ref for a SUCCESSOR
+                // ReAct turn from the chain's turn-0 anchor (pure over committed facts,
+                // edge-free). `None` for turn 0 / a non-vision leaf (which carries its
+                // image inline) ⇒ the wire payload is byte-identical to pre-AGENTIC-VISION.
+                let image_ref = resolve_react_image_ref(mote, projection);
                 Some(LeasedItem {
                     mote: mote.clone(),
                     warrant: warrant.clone(),
                     parent_results,
                     tool_args,
                     context_items,
+                    image_ref,
                 })
             })
         })
@@ -1096,6 +1110,34 @@ fn resolve_react_context_items(mote: &Mote, projection: &Projection) -> Option<C
         .react_rounds_of(&instance_id, &step_salt)
         .find(|r| r.turn == 0)
         .and_then(|anchor| anchor.context_items_ref)
+}
+
+/// AGENTIC-VISION: the run's grounding-image ref for a SUCCESSOR ReAct turn — the
+/// chain's turn-0 `ReactRound` anchor `image_ref`, looked up EDGE-FREE from committed
+/// facts (the `context_items` precedent — a pure projection read, never a fact append).
+/// Returns `None` when the Mote already carries the image INLINE in
+/// `config_subset[IMAGE_REF_KEY]` (turn 0 / the seed — `model_exec` reads that directly,
+/// so delivering it again out-of-band would double-attach), or is not a ReAct turn, or
+/// the run bound no image. So a successor turn (no inline image) reasons over the SAME
+/// image turn 0 saw — fixing the drop where `build_react_turn` omits `IMAGE_REF_KEY` from
+/// a turn's config_subset (the image must survive EVERY turn for agentic vision).
+fn resolve_react_image_ref(mote: &Mote, projection: &Projection) -> Option<ContentRef> {
+    if mote
+        .def
+        .config_subset
+        .contains_key(&ConfigKey(IMAGE_REF_KEY.to_string()))
+    {
+        return None; // an inline image (turn 0) — the config_subset path serves it
+    }
+    let marker = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(REACT_TURN_KEY.to_string()))?;
+    let (instance_id, step_salt) = decode_react_marker(marker.0.as_slice())?;
+    projection
+        .react_rounds_of(&instance_id, &step_salt)
+        .find(|r| r.turn == 0)
+        .and_then(|anchor| anchor.image_ref)
 }
 
 /// F-7 (assemble-into-serve): resolve, on the sole-writer thread, the committed
@@ -2615,6 +2657,34 @@ fn write_react_anchor<J: Journal>(
         },
         None => None,
     };
+    // AGENTIC-VISION: record the run's grounding-image ref on the turn-0 anchor (the
+    // seed's `config_subset[IMAGE_REF_KEY]`, a JSON string of the uploaded blob's
+    // PutContent ref) so a recovered coordinator re-derives the per-turn image EDGE-FREE
+    // for every successor turn — the seed's config_subset is GONE after recovery (only its
+    // `mote_def_hash` survives), exactly the reason base_prompt_ref / context_items_ref
+    // are anchored here. The image BYTES are already content-addressed (a client
+    // `PutContent`), so the anchor records the EXISTING ref directly (no fresh `store.put`,
+    // unlike context_items). A malformed value fail-closes the seed (the attached image
+    // must never be silently dropped — the `model_exec` contract). Absent ⇒ `None`,
+    // byte-identical to pre-AGENTIC-VISION.
+    let image_ref = match turn0
+        .def
+        .config_subset
+        .get(&ConfigKey(IMAGE_REF_KEY.to_string()))
+    {
+        // The SHARED tolerant decode (`ContentRef::from_arg`) — accepts the recipe
+        // binder's JSON-string OR the chains-DSL params raw hex, and agrees with the
+        // executor's read by construction (no drift). Fail-closed on a malformed value.
+        Some(v) => match ContentRef::from_arg(&v.0) {
+            Some(r) => Some(r),
+            None => {
+                return Err(CoordinatorError::ReactSeedRefused(
+                    "image_ref must be a (JSON or raw) string of 64 hex chars",
+                ))
+            }
+        },
+        None => None,
+    };
     let entry = JournalEntry::ReactRound {
         turn: 0,
         turn_mote_id: turn0.id,
@@ -2633,6 +2703,7 @@ fn write_react_anchor<J: Journal>(
         step_salt,
         is_agentic_launch,
         context_items_ref,
+        image_ref,
         seq: 0,
     };
     let durable = journal.append(entry)?;
@@ -3413,6 +3484,9 @@ fn append_react_branch<J: Journal>(
         // PR-9d: every round inherits the anchor's grounding-context ref too, so the
         // resolver finds it on ANY turn-0 record (robust to fold/find order).
         context_items_ref: anchor.context_items_ref,
+        // AGENTIC-VISION: every round inherits the anchor's grounding-image ref the same
+        // way, so the resolver finds the image on ANY turn-0 record.
+        image_ref: anchor.image_ref,
         seq: 0,
     };
     match journal.append(entry) {
@@ -4658,6 +4732,7 @@ mod context_carry_tests {
     const INSTANCE: [u8; INSTANCE_ID_LEN] = [7u8; INSTANCE_ID_LEN];
     const SALT: [u8; 32] = [9u8; 32];
     const CTX_REF: ContentRef = ContentRef([0x44; 32]);
+    const IMG_REF: ContentRef = ContentRef([0x55; 32]);
 
     #[test]
     fn decode_react_marker_handles_both_lengths_and_rejects_others() {
@@ -4703,8 +4778,11 @@ mod context_carry_tests {
         ConfigVal(m)
     }
 
+    // Covers BOTH edge-free resolvers (context-items + AGENTIC-VISION image) over the same
+    // folded turn-0 anchor — one fixture, the two parallel slot ladders.
     #[test]
-    fn resolves_anchor_context_for_a_successor_turn_but_not_an_inline_mote() {
+    #[allow(clippy::too_many_lines)]
+    fn resolves_anchor_context_and_image_for_a_successor_turn_but_not_an_inline_mote() {
         // Fold a turn-0 anchor carrying a context-bundle ref into a fresh projection.
         let mut projection = Projection::new();
         let journal = InMemoryJournal::new();
@@ -4721,6 +4799,7 @@ mod context_carry_tests {
             step_salt: Some(SALT),
             is_agentic_launch: false,
             context_items_ref: Some(CTX_REF),
+            image_ref: Some(IMG_REF),
             seq: 0,
         };
         let durable = journal.append(anchor).unwrap();
@@ -4774,6 +4853,55 @@ mod context_carry_tests {
         );
         assert_eq!(
             resolve_react_context_items(&turn_mote(other), &projection),
+            None
+        );
+
+        // AGENTIC-VISION: the SAME edge-free resolution for the run's grounding image.
+        // A successor turn (chain marker, NO inline image) gets the anchor's image_ref.
+        let mut img_successor = BTreeMap::new();
+        img_successor.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker(INSTANCE, SALT),
+        );
+        img_successor.insert(
+            ConfigKey(PROMPT_KEY.to_string()),
+            ConfigVal(b"turn 1".to_vec()),
+        );
+        assert_eq!(
+            resolve_react_image_ref(&turn_mote(img_successor), &projection),
+            Some(IMG_REF),
+            "a successor turn reasons over the chain's turn-0 grounding image",
+        );
+        // A Mote carrying its image INLINE (turn 0) ⇒ `None` (config_subset serves it;
+        // delivering it again out-of-band would double-attach the image).
+        let mut img_inline = BTreeMap::new();
+        img_inline.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker(INSTANCE, SALT),
+        );
+        img_inline.insert(
+            ConfigKey(IMAGE_REF_KEY.to_string()),
+            ConfigVal(b"\"deadbeef\"".to_vec()),
+        );
+        assert_eq!(
+            resolve_react_image_ref(&turn_mote(img_inline), &projection),
+            None,
+            "an inline-image Mote is never double-attached",
+        );
+        // A non-ReAct Mote (no marker) ⇒ `None`.
+        assert_eq!(
+            resolve_react_image_ref(&turn_mote(BTreeMap::new()), &projection),
+            None,
+        );
+        // A successor turn of a DIFFERENT chain (no matching anchor) ⇒ `None`
+        // (fail-closed — never another run's image).
+        let mut img_other = BTreeMap::new();
+        img_other.insert(
+            ConfigKey(REACT_TURN_KEY.to_string()),
+            marker([8u8; INSTANCE_ID_LEN], SALT),
+        );
+        assert_eq!(
+            resolve_react_image_ref(&turn_mote(img_other), &projection),
             None
         );
     }

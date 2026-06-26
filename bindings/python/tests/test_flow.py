@@ -47,6 +47,20 @@ def test_flow_step_and_tool() -> None:
     assert lowered["steps"][1]["params"] == {"kx.tool.args": '{"n":3}'}
 
 
+def test_flow_image_grounds_the_next_agent_step_per_step() -> None:
+    # AGENTIC-VISION: .image(ref) binds image_ref into ONLY the immediately-following
+    # agent step's config (per-step); a step without a preceding .image() carries none.
+    ref_a = "a" * 64
+    ref_b = "b" * 64
+    lowered = (
+        flow().image(ref_a).agent("inspect the chart").then("now this one").image(ref_b).then("summarise").lowering()
+    )
+    steps = lowered["steps"]
+    assert steps[0]["params"].get("image_ref") == ref_a, "first step grounded by ref_a"
+    assert "image_ref" not in steps[1]["params"], "the middle step has no image"
+    assert steps[2]["params"].get("image_ref") == ref_b, "third step grounded by ref_b"
+
+
 def test_flow_then_accepts_a_task_and_subflow() -> None:
     sub = flow().agent("inner")
     chained = flow().agent("outer").then(pure(label="x")).then(sub).lowering()

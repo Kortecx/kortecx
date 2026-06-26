@@ -257,6 +257,29 @@ chain("plan > write", { tasks, context: ["team/ctx/spec"] });
 kx chain run "plan > write" --tasks tasks.json --context team/ctx/spec
 ```
 
+### Attaching an image (agentic vision)
+
+The fluent `.image(ref)` node grounds the **next** agent step with an image the served
+vision model reasons over on **every turn** of that step's loop (carried durably across
+the chain). It is **per-step**: a later `.image()` before another `.agent()` grounds that
+step with a different image. `ref` is a 64-hex content ref — upload the bytes once
+(`client.put_content(data).content_ref`), then chain (the chain lowers client-free, so the
+ref is the portable handle):
+
+```python
+out = (kx.flow()
+       .image(ref).agent("Read the line items from this invoice.", tools=["echo"])
+       .then("Total them and flag anomalies.")
+       .run())
+```
+
+```ts
+await flow().image(ref).agent("Read the line items.").then("Total them.").run({ client: kx });
+```
+
+See [Agents & reasoning → Vision in agents](../agent-runner.md#vision-in-agents-agentic-vision)
+for `run_agent(image=…)` / `Agent.run(task, image=…)` / `kx agent run --image`.
+
 The handles lower **verbatim** into the request's `context_bundles` (no DSL-side
 sort or dedup — the server canonicalizes the sorted ref-set at bind, SN-8). A
 chain with no attached context lowers byte-identically to pre-context-bundle, and

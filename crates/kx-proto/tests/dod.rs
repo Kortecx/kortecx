@@ -123,6 +123,7 @@ fn obligation_1_lease_work_response_round_trips() {
             }],
             tool_args: None,
             context_items: vec![],
+            image_ref: vec![],
         }],
         instance_id: vec![0xEF; 16],
     };
@@ -278,6 +279,7 @@ fn obligation_3_work_item_preserves_identity() {
             parent_results: vec![],
             tool_args: None,
             context_items: vec![],
+            image_ref: vec![],
         }],
         instance_id: vec![0x01; 16],
     };

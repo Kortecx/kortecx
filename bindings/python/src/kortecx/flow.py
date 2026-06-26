@@ -43,6 +43,10 @@ if TYPE_CHECKING:
 #: :class:`~kortecx.chains.Task`, another :class:`Flow`, or a raw operator node.
 FlowItem = Union[str, Task, "Flow", _Seq, _Par]
 
+#: AGENTIC-VISION: the step-config key a :meth:`Flow.image` ref binds into (the SAME key
+#: the vision/react-vision recipes publish + the gateway executor / coordinator read).
+IMAGE_REF_KEY = "image_ref"
+
 
 def _to_node(item: "FlowItem") -> "_Node":
     """Resolve a flow item to an operator AST node. A bare ``str`` is an agent
@@ -65,6 +69,10 @@ class Flow:
         self._node: Optional[_Node] = None
         self._seed = seed
         self._context: List[str] = []
+        #: AGENTIC-VISION: an image ref pending for the NEXT agent step (set by
+        #: :meth:`image`, consumed + cleared by :meth:`agent`). Per-step, so a multi-step
+        #: flow can ground each step with a different image.
+        self._pending_image: Optional[str] = None
 
     # -- builders (each appends SEQUENTIALLY after the current tail) --
 
@@ -85,7 +93,14 @@ class Flow:
         """Append an agent (MODEL) step. ``model`` defaults to the served model (the
         client's ``default_model`` fills a blank one at submit, SN-8); pass ``tools``
         to make it a deterministic-agentic step — a bounded reason→tool→observe loop
-        over the granted SET (PR-9b; the execution lane is LIVE as of PR-9b-2)."""
+        over the granted SET (PR-9b; the execution lane is LIVE as of PR-9b-2).
+
+        AGENTIC-VISION: a preceding :meth:`image` grounds this step — the served VLM reasons
+        over that image on every turn of the step's loop (the ref binds into the step's
+        ``config_subset[image_ref]``)."""
+        image = self._pending_image
+        self._pending_image = None
+        extra = {IMAGE_REF_KEY: image} if image is not None else {}
         return self._seq_append(
             _model(
                 model,
@@ -94,8 +109,19 @@ class Flow:
                 max_turns=max_turns,
                 max_tool_calls=max_tool_calls,
                 reasoning=reasoning,
+                **extra,
             )
         )
+
+    def image(self, ref: str) -> "Flow":
+        """AGENTIC-VISION: attach an image to the NEXT agent step. ``ref`` is a 64-hex
+        content ref — upload the bytes once via ``client.put_content(data).content_ref``,
+        then ground one or more agent steps with it. The served VLM reasons over the image
+        on EVERY turn of that step's loop (durably carried across the chain). Per-step: a
+        later ``.image()`` before another ``.agent()`` grounds that step with a different
+        image. Lowers client-free + deterministically (the golden tri-surface contract)."""
+        self._pending_image = ref
+        return self
 
     def step(self, **params: Union[bytes, str]) -> "Flow":
         """Append a PURE step (deterministic, no model/egress)."""

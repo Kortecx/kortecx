@@ -16,6 +16,7 @@
  */
 
 import type { ReasoningMode } from "./chains.js";
+import type { ImageInput } from "./client.js";
 import { getDefaultClient } from "./default-client.js";
 import { KxNotFound, KxUsage } from "./errors.js";
 import { type FlowClient, flow } from "./flow.js";
@@ -55,6 +56,11 @@ export interface AgentClient extends FlowClient {
     args: string[];
   }): Promise<unknown>;
   discoverServerTools(name: string): Promise<{ tools: ReadonlyArray<{ toolName: string }> }>;
+  /** AGENTIC-VISION: resolve `image` + bind `kx/recipes/react-vision` (form-gated). */
+  bindReactVision(
+    args: Record<string, unknown>,
+    image: ImageInput,
+  ): Promise<{ handle: string; args: Record<string, unknown> }>;
 }
 
 /** Resolve the client for an Agent terminal: the explicit one, else the zero-config
@@ -115,10 +121,26 @@ export class Agent {
    */
   async run(
     task: string,
-    opts: { wait?: boolean; timeoutMs?: number; client?: AgentClient } = {},
+    opts: { image?: ImageInput; wait?: boolean; timeoutMs?: number; client?: AgentClient } = {},
   ): Promise<Run | Result> {
     const client = resolveAgentClient(opts.client);
     const tools = this.opts.tools;
+    if (opts.image) {
+      // AGENTIC-VISION: an attached image routes to the image-grounded ReAct loop
+      // (`kx/recipes/react-vision`, form-gated) so the served VLM reasons over the image
+      // on every turn. The bounded-loop budget mirrors the dynamic lane; local custom
+      // tools + an image is a future combo. Fail-closed when no vision model (GR15).
+      const baseArgs = {
+        instruction: this.prompt(task),
+        max_turns: this.opts.maxTurns ?? 8,
+        max_tool_calls: this.opts.maxToolCalls ?? 6,
+      };
+      const { handle, args } = await client.bindReactVision(baseArgs, opts.image);
+      return client.invoke(handle, args, {
+        wait: opts.wait ?? true,
+        timeoutMs: opts.timeoutMs,
+      }) as Promise<Run | Result>;
+    }
     if (this.opts.dynamic) {
       // The react / react-auto recipes REQUIRE the bounded-loop budget (the
       // `react_contract` slots; the UI's planReactArgs mirrors this) — default to

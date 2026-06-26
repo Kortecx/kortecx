@@ -213,6 +213,7 @@ mod tests {
             step_salt,
             is_agentic_launch: false,
             context_items_ref: None,
+            image_ref: None,
             seq: 0,
         }
     }

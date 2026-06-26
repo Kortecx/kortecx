@@ -20,6 +20,9 @@ use crate::wait::{self, WaitState};
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// The steered ReAct recipe the runner invokes (Invoke-only, server-warranted).
 const REACT_RECIPE_HANDLE: &str = "kx/recipes/react";
+/// AGENTIC-VISION: the image-grounded ReAct recipe — bound (form-gated) when `--image`
+/// is supplied so the served VLM reasons over the attached image on every turn.
+const REACT_VISION_RECIPE_HANDLE: &str = "kx/recipes/react-vision";
 /// The recipe's anchored bounded-loop budget (mirrors the SDK + the UI's planReactArgs).
 const DEFAULT_MAX_TURNS: u32 = 8;
 // T-MULTI-ELEMENT-TOOLCALLS: the default tool-call cap rose 6 → 20 (decoupled from
@@ -44,6 +47,10 @@ pub struct AgentArgs {
     /// Max total tool calls (`--max-tool-calls`; default 20, ceiling 20). A turn may
     /// fire N tools at once (T-MULTI-ELEMENT-TOOLCALLS), so this is independent of turns.
     pub max_tool_calls: u32,
+    /// AGENTIC-VISION: an image to ground the agentic run (`--image <path>`). When set,
+    /// the run binds `kx/recipes/react-vision` (form-gated) so the served VLM reasons over
+    /// the image on EVERY turn; fail-closed (a usage error) when no vision model is served.
+    pub image: Option<String>,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -66,6 +73,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
     let mut max_turns = DEFAULT_MAX_TURNS;
     let mut max_tool_calls = DEFAULT_MAX_TOOL_CALLS;
+    let mut image: Option<String> = None;
     let mut common = ClientCommon::default();
     while let Some(flag) = args.next() {
         if common.try_consume(&flag, &mut args)? {
@@ -100,6 +108,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
                     CliError::Usage(format!("--max-tool-calls expects an integer, got {v:?}"))
                 })?;
             }
+            "--image" => image = Some(next_value(&mut args, "--image")?),
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
         }
     }
@@ -112,6 +121,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
         timeout_secs,
         max_turns,
         max_tool_calls,
+        image,
         common,
     })
 }
@@ -125,23 +135,81 @@ fn fold_inputs(goal: &str, inputs: &[(String, String)]) -> String {
     format!("{goal}\n\nInputs:\n{}", lines.join("\n"))
 }
 
+/// AGENTIC-VISION: upload an image file to the content store, returning its 64-hex ref
+/// (the SAME `PutContent` path `kx chat --image` uses — one upload mechanism, no drift).
+async fn upload_image(
+    client: &mut proto::kx_gateway_client::KxGatewayClient<tonic::transport::Channel>,
+    resolved: &crate::client::Resolved,
+    path: &std::path::Path,
+) -> Result<String, CliError> {
+    let payload =
+        std::fs::read(path).map_err(|e| CliError::Io(format!("read {}: {e}", path.display())))?;
+    let filename = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let put = client
+        .put_content(resolved.request(proto::PutContentRequest {
+            payload,
+            media_type: String::new(),
+            filename,
+        })?)
+        .await
+        .map_err(CliError::from_status)?
+        .into_inner();
+    Ok(crate::hex::encode(&put.content_ref))
+}
+
 /// Execute `agent run`.
 pub async fn execute(args: AgentArgs) -> Result<(), CliError> {
     let resolved = args.common.resolve()?;
     let mut client = resolved.connect().await?;
 
     let instruction = fold_inputs(&args.goal, &args.inputs);
-    let req_args = serde_json::json!({
-        "instruction": instruction,
-        "max_turns": args.max_turns,
-        "max_tool_calls": args.max_tool_calls,
-    })
-    .to_string()
-    .into_bytes();
+    let mut obj = serde_json::Map::new();
+    obj.insert("instruction".to_string(), serde_json::json!(instruction));
+    obj.insert("max_turns".to_string(), serde_json::json!(args.max_turns));
+    obj.insert(
+        "max_tool_calls".to_string(),
+        serde_json::json!(args.max_tool_calls),
+    );
+
+    // AGENTIC-VISION: `--image` binds the image-grounded ReAct recipe (form-gated) so the
+    // served VLM reasons over the attached image on EVERY turn of the chain. Fail-closed
+    // (a usage error) when no vision model is served — never silently run text-only and
+    // drop the image (that would be a lie; GR15).
+    let handle = if let Some(path) = &args.image {
+        let image_ref = upload_image(&mut client, &resolved, std::path::Path::new(path)).await?;
+        let form = client
+            .get_recipe_form(resolved.request(proto::GetRecipeFormRequest {
+                handle: REACT_VISION_RECIPE_HANDLE.to_string(),
+            })?)
+            .await
+            .ok()
+            .map(tonic::Response::into_inner);
+        let has_image_slot = form
+            .as_ref()
+            .is_some_and(|f| f.fields.iter().any(|x| x.name == "image_ref"));
+        if !has_image_slot {
+            return Err(CliError::Usage(
+                "no vision model is served — `kx agent run --image` needs an image-capable \
+                 model (set KX_SERVE_MMPROJ_GGUF for llama.cpp, or serve a vision model via Ollama)"
+                    .into(),
+            ));
+        }
+        obj.insert("image_ref".to_string(), serde_json::json!(image_ref));
+        eprintln!(
+            "· image attached — binding the vision agent (reasons over the image every turn)"
+        );
+        REACT_VISION_RECIPE_HANDLE
+    } else {
+        REACT_RECIPE_HANDLE
+    };
+    let req_args = serde_json::Value::Object(obj).to_string().into_bytes();
 
     let resp = client
         .invoke(resolved.request(proto::InvokeRequest {
-            handle: REACT_RECIPE_HANDLE.to_string(),
+            handle: handle.to_string(),
             args: req_args,
             context_bundles: args.context_bundles,
             context_refs: args.context_refs,

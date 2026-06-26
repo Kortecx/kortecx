@@ -158,6 +158,12 @@ CHAT_RAG_RECIPE_HANDLE = "kx/recipes/chat-rag"
 #: ("transcribe the text in this image") — the same vision dispatch.
 VISION_RECIPE_HANDLE = "kx/recipes/vision"
 
+#: AGENTIC-VISION: the image-grounded ReAct recipe — the live agent loop PLUS a bound
+#: image the served VLM reasons over on EVERY turn (the coordinator anchors it on the
+#: turn-0 ReactRound + re-derives it edge-free for successor turns). Shares the
+#: ``kx/recipes/react`` prefix, so :func:`_is_react_handle` settles it as a chain.
+REACT_VISION_RECIPE_HANDLE = "kx/recipes/react-vision"
+
 ArgsType = Union[dict, bytes, bytearray, str]
 IdType = Union[str, bytes]
 #: PR-B2: an image to attach to :meth:`chat`. Raw ``bytes`` (uploaded), or a dict
@@ -404,6 +410,22 @@ class KxClient:
                 else model.allowed[0]
             )
         return VISION_RECIPE_HANDLE, args
+
+    def _bind_react_vision(self, args: dict, image_ref: str) -> Tuple[str, dict]:
+        """AGENTIC-VISION: bind ``kx/recipes/react-vision`` (the image-grounded agent loop),
+        injecting ``image_ref`` into the react args so the served VLM reasons over the image
+        on every turn. Honest-degrades with a clear error when no vision model is served —
+        never silently drops the image (GR15)."""
+        try:
+            form = self.get_recipe_form(REACT_VISION_RECIPE_HANDLE)
+        except Exception as e:  # recipe not provisioned (text-only serve / old gateway)
+            raise KxUsage(
+                "agentic vision is not available on this serve (no image-capable model). "
+                "Serve a vision model (e.g. gemma3 via Ollama, or Gemma-4 + mmproj via llama.cpp)."
+            ) from e
+        if "image_ref" not in {f.name for f in form.fields}:
+            raise KxUsage("the kx/recipes/react-vision form does not declare an image_ref slot")
+        return REACT_VISION_RECIPE_HANDLE, {**args, "image_ref": image_ref}
 
     def chat(
         self,
@@ -1898,6 +1920,19 @@ class AsyncKxClient:
                 else model.allowed[0]
             )
         return VISION_RECIPE_HANDLE, args
+
+    async def _bind_react_vision(self, args: dict, image_ref: str) -> Tuple[str, dict]:
+        """Async mirror of :meth:`KxClient._bind_react_vision` (AGENTIC-VISION)."""
+        try:
+            form = await self.get_recipe_form(REACT_VISION_RECIPE_HANDLE)
+        except Exception as e:
+            raise KxUsage(
+                "agentic vision is not available on this serve (no image-capable model). "
+                "Serve a vision model (e.g. gemma3 via Ollama, or Gemma-4 + mmproj via llama.cpp)."
+            ) from e
+        if "image_ref" not in {f.name for f in form.fields}:
+            raise KxUsage("the kx/recipes/react-vision form does not declare an image_ref slot")
+        return REACT_VISION_RECIPE_HANDLE, {**args, "image_ref": image_ref}
 
     async def chat(
         self,

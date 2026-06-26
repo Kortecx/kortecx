@@ -653,6 +653,14 @@ impl Coordinator for CoordinatorService {
                     .context_items
                     .map(|r| r.as_bytes().to_vec())
                     .unwrap_or_default(),
+                // AGENTIC-VISION: the run's grounding-image ref for a SUCCESSOR ReAct
+                // turn (re-derived edge-free at lease). EMPTY for every other Mote ⇒
+                // byte-identical to pre-AGENTIC-VISION (the turn-0 inline image path is
+                // unchanged); an older worker that ignores it serves no carried image.
+                image_ref: item
+                    .image_ref
+                    .map(|r| r.as_bytes().to_vec())
+                    .unwrap_or_default(),
             })
             .collect();
         Ok(Response::new(proto::LeaseWorkResponse {

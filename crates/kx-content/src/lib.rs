@@ -143,6 +143,44 @@ impl ContentRef {
     pub fn to_hex(&self) -> String {
         blake3::Hash::from_bytes(self.0).to_hex().to_string()
     }
+
+    /// Parse a `ContentRef` from a 64-character hex string — the inverse of
+    /// [`to_hex`](Self::to_hex). Returns `None` unless the input is EXACTLY 64 hex
+    /// digits (upper- or lower-case), so a malformed/short ref is fail-closed, never
+    /// silently coerced into a valid-looking one. The shared decoder for every caller
+    /// that resolves a content ref carried as a hex string (e.g. a bound `image_ref`
+    /// recipe arg read by both the gateway executor and the coordinator anchor).
+    #[must_use]
+    pub fn from_hex(s: &str) -> Option<Self> {
+        let b = s.as_bytes();
+        if b.len() != 64 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        for (i, pair) in b.chunks_exact(2).enumerate() {
+            let hi = (pair[0] as char).to_digit(16)?;
+            let lo = (pair[1] as char).to_digit(16)?;
+            out[i] = u8::try_from(hi * 16 + lo).ok()?;
+        }
+        Some(Self(out))
+    }
+
+    /// Parse a `ContentRef` from a config/recipe ARG byte value that carries a 64-hex ref
+    /// EITHER as a JSON string (`"<hex>"`, what the recipe binder writes) OR as the raw
+    /// hex bytes (what the chains-DSL `flow().image(ref)` params path may write). Strips a
+    /// single pair of surrounding double-quotes if present, trims whitespace, then
+    /// validates strictly via [`from_hex`](Self::from_hex) — so a malformed value is
+    /// fail-closed, never coerced. The std-only tolerance precedent is
+    /// `reasoning_mode_from_config` (this crate carries no `serde_json` dependency).
+    #[must_use]
+    pub fn from_arg(raw: &[u8]) -> Option<Self> {
+        let s = std::str::from_utf8(raw).ok()?.trim();
+        let inner = s
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(s);
+        Self::from_hex(inner)
+    }
 }
 
 impl std::fmt::Debug for ContentRef {
@@ -286,5 +324,46 @@ impl<S: ContentStore + ?Sized> ContentStore for std::sync::Arc<S> {
 
     fn contains(&self, r: &ContentRef) -> bool {
         (**self).contains(r)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContentRef;
+
+    #[test]
+    fn from_hex_roundtrips_and_is_fail_closed() {
+        let r = ContentRef::from_bytes([0xab; 32]);
+        // Round-trips through to_hex (lower-case) and accepts upper-case input too.
+        assert_eq!(ContentRef::from_hex(&r.to_hex()), Some(r));
+        assert_eq!(ContentRef::from_hex(&r.to_hex().to_uppercase()), Some(r));
+        // Fail-closed on wrong length and non-hex digits — never coerced.
+        assert_eq!(ContentRef::from_hex(""), None);
+        assert_eq!(ContentRef::from_hex(&"a".repeat(63)), None);
+        assert_eq!(ContentRef::from_hex(&"a".repeat(65)), None);
+        assert_eq!(ContentRef::from_hex(&"z".repeat(64)), None);
+    }
+
+    #[test]
+    fn from_arg_accepts_json_string_or_raw_hex_and_is_fail_closed() {
+        let r = ContentRef::from_bytes([0xcd; 32]);
+        let hex = r.to_hex();
+        // Raw hex bytes (the chains-DSL params path).
+        assert_eq!(ContentRef::from_arg(hex.as_bytes()), Some(r));
+        // A JSON string of the hex (what the recipe binder writes) — quotes stripped.
+        assert_eq!(
+            ContentRef::from_arg(format!("\"{hex}\"").as_bytes()),
+            Some(r)
+        );
+        // Surrounding whitespace is trimmed.
+        assert_eq!(
+            ContentRef::from_arg(format!("  {hex}\n").as_bytes()),
+            Some(r)
+        );
+        // Fail-closed: a half-quoted / wrong-length / non-hex value is never coerced.
+        assert_eq!(ContentRef::from_arg(format!("\"{hex}").as_bytes()), None);
+        assert_eq!(ContentRef::from_arg(b"\"\""), None);
+        assert_eq!(ContentRef::from_arg(b"not-hex"), None);
+        assert_eq!(ContentRef::from_arg(&[0xff, 0xfe]), None); // invalid UTF-8
     }
 }
