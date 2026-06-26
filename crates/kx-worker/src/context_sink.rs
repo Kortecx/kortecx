@@ -36,4 +36,13 @@ pub trait ContextSink: Send + Sync {
     /// grounded across the whole chain. Default no-op: an executor that doesn't
     /// assemble context ignores it (byte-identical to pre-PR-9d).
     fn set_context_items(&self, _mote_id: MoteId, _context_items_ref: Option<ContentRef>) {}
+
+    /// AGENTIC-VISION (image-in-the-ReAct-loop): stash the run's grounding-image ref for
+    /// a SUCCESSOR ReAct turn (`WorkItem.image_ref`). `None` ⇒ no carried image — the
+    /// common case (turn 0 carries its image inline in `config_subset[IMAGE_REF_KEY]`, a
+    /// non-vision/non-react Mote has none). Consumed on the next `run` of `mote_id` and
+    /// fed into the per-turn multimodal model call, so the served VLM keeps the SAME
+    /// visual grounding across every turn of the chain. Default no-op: an executor that
+    /// doesn't dispatch images ignores it (byte-identical to pre-AGENTIC-VISION).
+    fn set_image_ref(&self, _mote_id: MoteId, _image_ref: Option<ContentRef>) {}
 }

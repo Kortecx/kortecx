@@ -116,6 +116,13 @@ class FakeClient {
     return "INVOKED";
   }
 
+  async bindReactVision(
+    args: Record<string, unknown>,
+    _image: unknown,
+  ): Promise<{ handle: string; args: Record<string, unknown> }> {
+    return { handle: "kx/recipes/react-vision", args: { ...args, image_ref: "ab".repeat(32) } };
+  }
+
   // Mirror KxClientBase.runChain: resolve any local tools (register + build the
   // namespaced map) and record it. The frozen `Agent(tools=[fn])` lane reaches here.
   async runChain(chain: Chain, _opts?: { wait?: boolean; timeoutMs?: number }): Promise<unknown> {

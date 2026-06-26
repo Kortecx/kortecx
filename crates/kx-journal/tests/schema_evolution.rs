@@ -419,6 +419,7 @@ fn build_v8_journal(dir: &Path) -> PathBuf {
             step_salt: None,
             is_agentic_launch: false,
             context_items_ref: None,
+            image_ref: None,
             seq: 0,
         });
         entries.push(JournalEntry::ReactRound {
@@ -434,6 +435,7 @@ fn build_v8_journal(dir: &Path) -> PathBuf {
             step_salt: None,
             is_agentic_launch: false,
             context_items_ref: None,
+            image_ref: None,
             seq: 0,
         });
         j.append_batch(entries).unwrap();
@@ -460,15 +462,15 @@ fn downgrade_to_v8(path: &Path) {
     let txn = conn.transaction().unwrap();
     for (seq, bytes) in kind9 {
         // The fixture only writes step_salt: None + is_agentic_launch: false +
-        // context_items_ref: None, so the three current tail bytes are
-        // `[step_salt_present=0, is_agentic_launch=0, context_items_present=0]`;
-        // dropping all three yields the exact v8 shape.
+        // context_items_ref: None + image_ref: None, so the FOUR current tail bytes are
+        // `[step_salt_present=0, is_agentic_launch=0, context_items_present=0, image_present=0]`;
+        // dropping all four yields the exact v8 shape.
         assert_eq!(
-            bytes[bytes.len() - 3..],
-            [0u8, 0u8, 0u8],
-            "fixture ReactRound must be step_salt None + is_agentic_launch false + context None"
+            bytes[bytes.len() - 4..],
+            [0u8, 0u8, 0u8, 0u8],
+            "fixture ReactRound must be step_salt None + is_agentic_launch false + context None + image None"
         );
-        let v8 = &bytes[..bytes.len() - 3];
+        let v8 = &bytes[..bytes.len() - 4];
         txn.execute(
             "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
             params![v8, seq],
@@ -548,7 +550,8 @@ fn migrate_v8_to_v9_upconverts_react_and_preserves_committed_facts() {
     assert_eq!(report.entries_upconverted, 2); // exactly the two ReactRound facts
 
     // Strict open accepts the result; committed facts are byte-identical (product
-    // identity invariant — the durability law; only kind-9 bodies grow by 1 byte).
+    // identity invariant — the durability law; only kind-9 bodies grow, by the
+    // appended trailing bytes: step_salt + is_agentic_launch + context_items + image).
     let j = SqliteJournal::open(&dst).unwrap();
     assert_eq!(j.count_entries().unwrap(), 10);
     let committed_bytes = |p: &Path| -> Vec<Vec<u8>> {
@@ -597,6 +600,7 @@ fn v9_react_round_persists_and_resumes() {
         step_salt: None,
         is_agentic_launch: false,
         context_items_ref: None,
+        image_ref: None,
         seq: 0,
     };
     let settle = JournalEntry::ReactRound {
@@ -612,6 +616,7 @@ fn v9_react_round_persists_and_resumes() {
         step_salt: Some([0x5a; 32]),
         is_agentic_launch: true,
         context_items_ref: None,
+        image_ref: None,
         seq: 0,
     };
     {
@@ -669,6 +674,7 @@ fn v13_tool_batch_round_persists_and_resumes() {
         step_salt: None,
         is_agentic_launch: false,
         context_items_ref: None,
+        image_ref: None,
         seq: 0,
     };
     {
@@ -746,6 +752,7 @@ fn build_v9_journal(dir: &Path) -> PathBuf {
             step_salt: None,
             is_agentic_launch: false,
             context_items_ref: None,
+            image_ref: None,
             seq: 0,
         });
         entries.push(JournalEntry::ReactRound {
@@ -761,6 +768,7 @@ fn build_v9_journal(dir: &Path) -> PathBuf {
             step_salt: None,
             is_agentic_launch: false,
             context_items_ref: None,
+            image_ref: None,
             seq: 0,
         });
         j.append_batch(entries).unwrap();
@@ -786,15 +794,16 @@ fn downgrade_to_v9(path: &Path) {
     };
     let txn = conn.transaction().unwrap();
     for (seq, bytes) in kind9 {
-        // The fixture only writes is_agentic_launch: false + context_items_ref: None
-        // (the run-level chain), so the two current tail bytes are `[is_agentic=0,
-        // context_present=0]`; dropping both (leaving step_salt) yields the v9 shape.
+        // The fixture only writes is_agentic_launch: false + context_items_ref: None +
+        // image_ref: None (the run-level chain), so the three current tail bytes are
+        // `[is_agentic=0, context_present=0, image_present=0]`; dropping all three
+        // (leaving step_salt) yields the v9 shape.
         assert_eq!(
-            bytes[bytes.len() - 2..],
-            [0u8, 0u8],
-            "fixture ReactRound must be is_agentic_launch false + context None"
+            bytes[bytes.len() - 3..],
+            [0u8, 0u8, 0u8],
+            "fixture ReactRound must be is_agentic_launch false + context None + image None"
         );
-        let v9 = &bytes[..bytes.len() - 2];
+        let v9 = &bytes[..bytes.len() - 3];
         txn.execute(
             "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
             params![v9, seq],
@@ -842,8 +851,9 @@ fn migrate_v9_to_current_upconverts_react_launch_flag_and_preserves_committed_fa
 
     // Strict open accepts the result; committed facts are byte-identical (product
     // identity invariant — the durability law). The kind-9 ReactRound bodies grow
-    // by exactly one trailing `0` byte: the up-converted run-level launch flag
-    // (is_agentic_launch == step_salt.is_some() == false).
+    // by three trailing `0` bytes: the up-converted run-level launch flag
+    // (is_agentic_launch == step_salt.is_some() == false) + the absent context_items_ref
+    // (None) + the absent image_ref (None).
     let j = SqliteJournal::open(&dst).unwrap();
     assert_eq!(j.count_entries().unwrap(), 10);
     let kind_bytes = |p: &Path, kind: i64| -> Vec<Vec<u8>> {
@@ -861,10 +871,10 @@ fn migrate_v9_to_current_upconverts_react_launch_flag_and_preserves_committed_fa
     let dst9 = kind_bytes(&dst, 9);
     assert_eq!(src9.len(), dst9.len());
     for (src_body, dst_body) in src9.iter().zip(dst9.iter()) {
-        // Each dst body = the src v9 body + two trailing `0` bytes: the up-converted
+        // Each dst body = the src v9 body + three trailing `0` bytes: the up-converted
         // run-level is_agentic_launch flag (step_salt.is_some() == false) + the absent
-        // context_items_ref (None).
-        assert_eq!(*dst_body, [src_body.clone(), vec![0u8, 0u8]].concat());
+        // context_items_ref (None) + the absent image_ref (None).
+        assert_eq!(*dst_body, [src_body.clone(), vec![0u8, 0u8, 0u8]].concat());
     }
 
     // The migrated ReactRound facts decode with the run-level launch flag.
@@ -909,12 +919,13 @@ fn downgrade_to_v10(path: &Path) {
     };
     let txn = conn.transaction().unwrap();
     for (seq, bytes) in kind9 {
-        // Drop the final TWO bytes unconditionally — the v12 context_items_ref
-        // present byte (`0`, the fixture attaches no context) and the v11
-        // is_agentic_launch byte (which may be `1` for the agentic-step settle).
-        // v9 and v10 ReactRound bodies are byte-identical (the v9→v10 delta is the
-        // Rejected branch tag, not a trailing byte), so this strips to the v10 shape.
-        let v10 = &bytes[..bytes.len() - 2];
+        // Drop the final THREE bytes unconditionally — the v14 image_ref present byte
+        // (`0`, the fixture attaches no image), the v12 context_items_ref present byte
+        // (`0`, no context) and the v11 is_agentic_launch byte (which may be `1` for the
+        // agentic-step settle). v9 and v10 ReactRound bodies are byte-identical (the
+        // v9→v10 delta is the Rejected branch tag, not a trailing byte), so this strips
+        // to the v10 shape.
+        let v10 = &bytes[..bytes.len() - 3];
         txn.execute(
             "UPDATE entries SET entry_bytes = ?1 WHERE seq = ?2",
             params![v10, seq],
@@ -968,6 +979,7 @@ fn build_v10_journal(dir: &Path) -> PathBuf {
             step_salt: None,
             is_agentic_launch: false,
             context_items_ref: None,
+            image_ref: None,
             seq: 0,
         });
         entries.push(JournalEntry::ReactRound {
@@ -983,6 +995,7 @@ fn build_v10_journal(dir: &Path) -> PathBuf {
             step_salt: Some([0x77; 32]),
             is_agentic_launch: true,
             context_items_ref: None,
+            image_ref: None,
             seq: 0,
         });
         j.append_batch(entries).unwrap();

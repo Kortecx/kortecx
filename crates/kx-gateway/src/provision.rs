@@ -252,6 +252,23 @@ pub const REACT_EDIT_RECIPE_HANDLE: &str = "kx/recipes/react-edit";
 /// `0x55` is the next free sentinel after react-fs (`0x54`).
 const REACT_EDIT_LOGIC_REF: [u8; 32] = [0x55; 32];
 
+/// AGENTIC-VISION: the wire handle of the `react-vision` recipe — a live ReAct loop
+/// like [`REACT_RECIPE_HANDLE`] (same bundled tool grant + budget caps) PLUS a REQUIRED
+/// `image_ref` slot, so the served VLM reasons over an attached image on EVERY turn of
+/// the agentic chain (the coordinator anchors the image on the turn-0 `ReactRound` and
+/// re-derives it edge-free for successor turns). A SEPARATE recipe BY DESIGN (the
+/// vision / react-fs / react-auto precedent — every variable slot is REQUIRED at bind,
+/// so an OPTIONAL image cannot ride the canonical `react` recipe without breaking
+/// text-only runs), so the canonical recipes + the projection digest stay byte-unchanged.
+/// Seeded only when a fit serve model resolved that is IMAGE-capable AND the bundled tool
+/// is registered. The SDK's prefix detector (`startswith("kx/recipes/react")`) already
+/// settles it as a react CHAIN; carries its OWN logic ref (BUG-25).
+pub const REACT_VISION_RECIPE_HANDLE: &str = "kx/recipes/react-vision";
+
+/// A DISTINCT placeholder `logic_ref` for the `react-vision` seed step (the BUG-25
+/// class). `0x57` is the next free sentinel after judge-producer (`0x56`).
+const REACT_VISION_LOGIC_REF: [u8; 32] = [0x57; 32];
+
 /// POC-5a: a DISTINCT placeholder `logic_ref` for the `app-scaffold-write` seed step
 /// (the BUG-25 class — own ref so the scaffold recipe's fingerprint never collides
 /// with `react-edit`). `0x59` is the next free sentinel after chat-rag (`0x58`).
@@ -325,11 +342,12 @@ const VISION_MODEL_KEY: &str = "model";
 /// a high-resolution still while bounding the untrusted blob the projector decodes.
 const VISION_MAX_IMAGE_BYTES: u64 = 16 << 20;
 
-/// The vision recipe's image slot name — the binder writes the bound arg into
-/// `config_subset["image_ref"]`, the key the model executor's multimodal arm
-/// reads (exactly the [`PROMPT_KEY`] pattern). Lives here (not in the
-/// inference-gated `model_exec`) so the recipe seeds feature-free.
-pub(crate) const IMAGE_REF_KEY: &str = "image_ref";
+/// The vision/react recipes' image slot name — the binder writes the bound arg into
+/// `config_subset["image_ref"]`, the key the model executor's multimodal arm reads
+/// (exactly the [`PROMPT_KEY`] pattern). Re-exported from the shared `kx-mote` home
+/// (AGENTIC-VISION) so the gateway executor AND the coordinator anchor read the SAME
+/// key with no drift, while the recipe seeds stay feature-free.
+pub(crate) use kx_mote::IMAGE_REF_KEY;
 
 /// The blueprint-authoring asset (`SubmitWorkflow` / the Blueprint builder). Each
 /// party is granted `Use` on it at provision time, so [`HostWorkflowAuthor`]
@@ -744,6 +762,47 @@ impl DemoLibrary {
                 RecipeMeta {
                     owner_root: react_w,
                     free_params: react_contract(),
+                },
+            ));
+        }
+
+        // (react-vision) AGENTIC-VISION: a SEPARATE live ReAct recipe = the bundled-tool
+        // react loop PLUS a REQUIRED `image_ref` slot, so the served VLM reasons over an
+        // attached image on EVERY turn of the chain (the coordinator anchors the image on
+        // the turn-0 ReactRound + re-derives it edge-free for successor turns). Seeded
+        // only when a fit serve model resolved that is IMAGE-capable (`vision`) AND the
+        // bundled tool is registered (the react + vision conditions combined). The warrant
+        // raises `mem_bytes` to the vision image ceiling (else every image fails `scope
+        // violation on image_bytes`, the BUG-26 class). Carries its OWN logic ref
+        // (BUG-25) so the canonical react recipe + the projection digest stay byte-unchanged.
+        if let (Some(model_id), Some(tool)) = (serve_model.filter(|_| vision), react_tool) {
+            let mut react_vision_w = react_warrant(exec_class, model_id, tool);
+            react_vision_w.resource_ceiling.mem_bytes = VISION_MAX_IMAGE_BYTES;
+            let react_vision_h = react_vision_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &react_vision_h,
+                recipe_body(
+                    LogicRef::from_bytes(REACT_VISION_LOGIC_REF),
+                    &react_vision_w,
+                    &[
+                        kx_mote::REACT_INSTRUCTION_KEY,
+                        kx_mote::REACT_MAX_TURNS_KEY,
+                        kx_mote::REACT_MAX_TOOL_CALLS_KEY,
+                        IMAGE_REF_KEY,
+                    ],
+                ),
+                &react_vision_w,
+            )?;
+            recipes.push((
+                react_vision_h,
+                RecipeMeta {
+                    owner_root: react_vision_w,
+                    free_params: react_vision_contract(),
                 },
             ));
         }
@@ -1259,6 +1318,10 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
         VISION_RECIPE_HANDLE => (
             "Vision — a multimodal completion over an attached image.",
             &["model", "vision", "image", "multimodal", "agent"],
+        ),
+        REACT_VISION_RECIPE_HANDLE => (
+            "ReAct-Vision — a live tool-using agent loop that reasons over an attached image on every turn (plan → act → observe → answer, with visual grounding).",
+            &["agent", "react", "vision", "image", "multimodal", "tools", "loop"],
         ),
         JUDGE_RECIPE_HANDLE => (
             "Judge — a self-checking completion: the served model answers the prompt, then an LLM-judge grades the answer against a rubric (VALID / INVALID). Opt-in model-graded verification (T-AGENT2).",
@@ -2595,6 +2658,24 @@ fn react_contract() -> FreeParamContract {
 fn react_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(REACT_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid react recipe handle".into()))
+}
+
+/// AGENTIC-VISION: the `react-vision` free-param contract — the react slots
+/// (`instruction` / `max_turns` / `max_tool_calls`) PLUS a REQUIRED `image_ref` slot
+/// (a 64-hex `PutContent` ref, the SAME `VISION_IMAGE_SCHEMA_REF` type the single-shot
+/// vision recipe publishes). The binder writes the bound image ref into
+/// `config_subset[IMAGE_REF_KEY]`, which the coordinator anchors on the turn-0
+/// `ReactRound` and the executor reads for the turn-0 multimodal dispatch.
+fn react_vision_contract() -> FreeParamContract {
+    react_contract().with_slot(
+        IMAGE_REF_KEY,
+        FreeParamSlot::variable(Some(VISION_IMAGE_SCHEMA_REF)),
+    )
+}
+
+fn react_vision_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(REACT_VISION_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid react-vision recipe handle".into()))
 }
 
 /// The ReAct ceilings the recipe-form schema + the react-param validation bound
@@ -4842,6 +4923,64 @@ mod tests {
             vec!["kx-serve:vlm".to_string()],
             "allowed = exactly the served id (server-validated selection)"
         );
+    }
+
+    #[test]
+    fn react_vision_recipe_seeds_only_with_vision_and_a_tool_and_forms_four_fields() {
+        // AGENTIC-VISION: react-vision is a SEPARATE recipe, seeded only when a model is
+        // served AND it is image-capable (vision) AND the bundled tool is registered.
+        let echo = (ToolName("mcp-echo".into()), ToolVersion("1".into()));
+        // A served VLM + the bundled tool but NO vision flag ⇒ react-vision is NOT seeded
+        // (no fake agentic-vision recipe on a text-only serve).
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&ModelId("kx-serve:vlm".to_string())),
+            Some(&echo),
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!lib
+            .recipe_handles()
+            .contains(&REACT_VISION_RECIPE_HANDLE.to_string()));
+
+        // A served VLM + the bundled tool + the vision flag ⇒ react-vision IS seeded; its
+        // form is the react caps PLUS a typed image_ref slot (4 fields total).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&ModelId("kx-serve:vlm".to_string())),
+            Some(&echo),
+            true,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(lib
+            .recipe_handles()
+            .contains(&REACT_VISION_RECIPE_HANDLE.to_string()));
+        let form = lib
+            .recipe_form(REACT_VISION_RECIPE_HANDLE)
+            .expect("react-vision is provisioned");
+        assert_eq!(
+            form.len(),
+            4,
+            "instruction + max_turns + max_tool_calls + image_ref"
+        );
+        let field = |n: &str| form.iter().find(|f| f.name == n).expect("field present");
+        // The react caps carry over unchanged; the NEW slot is a typed 64-hex image ref.
+        field(kx_mote::REACT_INSTRUCTION_KEY);
+        field(kx_mote::REACT_MAX_TURNS_KEY);
+        field(kx_mote::REACT_MAX_TOOL_CALLS_KEY);
+        let image = field(IMAGE_REF_KEY);
+        assert_eq!(image.kind, RecipeParamKind::Bytes);
+        assert_eq!(image.max_len, Some(64), "a 32-byte ref as 64 hex chars");
     }
 
     #[test]

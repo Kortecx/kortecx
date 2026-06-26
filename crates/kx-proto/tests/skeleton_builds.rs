@@ -96,6 +96,7 @@ impl Coordinator for NoopCoordinator {
                 parent_results: vec![],
                 tool_args: None,
                 context_items: vec![],
+                image_ref: vec![],
             }],
             instance_id: vec![0u8; 16],
         }))

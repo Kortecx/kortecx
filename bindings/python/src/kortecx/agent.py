@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Mapping, Optional, Sequence, Union
 from .flow import flow as _flow
 
 if TYPE_CHECKING:
-    from .client import KxClient
+    from .client import ImageInput, KxClient
     from .flow import Flow
     from .run import Result, Run
 
@@ -86,6 +86,7 @@ class Agent:
         self,
         task: str,
         *,
+        image: "Optional[ImageInput]" = None,
         wait: bool = True,
         timeout: float = 120.0,
         client: "Optional[KxClient]" = None,
@@ -106,6 +107,19 @@ class Agent:
 
         kx = client if client is not None else default_client()
         has_tools = bool(self.tools)
+        if image is not None:
+            # AGENTIC-VISION: an attached image routes to the image-grounded ReAct loop
+            # (`kx/recipes/react-vision`, form-gated) so the served VLM reasons over the
+            # image on every turn. The bounded-loop budget mirrors the dynamic lane;
+            # local custom tools + an image is a future combo (react-vision grants the
+            # bundled tool set). Fail-closed when no vision model is served (GR15).
+            args = {
+                "instruction": self._prompt(task),
+                "max_turns": self.max_turns if self.max_turns is not None else 8,
+                "max_tool_calls": self.max_tool_calls if self.max_tool_calls is not None else 6,
+            }
+            handle, args = kx._bind_react_vision(args, kx._resolve_image_ref(image))
+            return kx.invoke(handle, args, wait=wait, timeout=timeout)
         if self.dynamic:
             # The react / react-auto recipes REQUIRE the bounded-loop budget (the
             # `react_contract` slots; the UI's planReactArgs mirrors this) — default

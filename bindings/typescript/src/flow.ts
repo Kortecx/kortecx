@@ -47,6 +47,10 @@ export interface AgentStepOptions {
   reasoning?: ReasoningMode;
 }
 
+/** AGENTIC-VISION: the step-config key a {@link Flow.image} ref binds into (the SAME key
+ * the vision/react-vision recipes publish + the gateway executor / coordinator read). */
+const IMAGE_REF_KEY = "image_ref";
+
 function toFrag(item: FlowItem): Frag {
   // A bare string is an agent (MODEL) step with all-default config (the common case).
   return typeof item === "string" ? task.model("", item) : item;
@@ -86,6 +90,10 @@ export class Flow {
   private node: Frag | undefined;
   private readonly seed: number;
   private readonly ctx: string[] = [];
+  /** AGENTIC-VISION: an image ref pending for the NEXT agent step (set by {@link image},
+   * consumed + cleared by {@link agent}). Per-step, so a multi-step flow can ground each
+   * step with a different image. */
+  private pendingImage: string | undefined;
 
   constructor(opts: { seed?: number } = {}) {
     this.seed = opts.seed ?? 0;
@@ -98,21 +106,33 @@ export class Flow {
 
   /** Append an agent (MODEL) step. `model` defaults to the served model (the client's
    * `defaultModel` fills a blank one at submit, SN-8); `tools` makes it a
-   * deterministic-agentic step (PR-9b; execution is LIVE as of PR-9b-2). */
+   * deterministic-agentic step (PR-9b; execution is LIVE as of PR-9b-2).
+   *
+   * AGENTIC-VISION: a preceding {@link image} grounds this step — the served VLM reasons
+   * over that image on every turn (the ref binds into the step's `config_subset[image_ref]`). */
   agent(prompt: string, opts: AgentStepOptions = {}): this {
+    const image = this.pendingImage;
+    this.pendingImage = undefined;
+    const params: Record<string, string> = image !== undefined ? { [IMAGE_REF_KEY]: image } : {};
     return this.append(
-      task.model(
-        opts.model ?? "",
-        prompt,
-        {},
-        {
-          tools: opts.tools,
-          maxTurns: opts.maxTurns,
-          maxToolCalls: opts.maxToolCalls,
-          reasoning: opts.reasoning,
-        },
-      ),
+      task.model(opts.model ?? "", prompt, params, {
+        tools: opts.tools,
+        maxTurns: opts.maxTurns,
+        maxToolCalls: opts.maxToolCalls,
+        reasoning: opts.reasoning,
+      }),
     );
+  }
+
+  /** AGENTIC-VISION: attach an image to the NEXT agent step. `ref` is a 64-hex content
+   * ref — upload the bytes once via `client.putContent(data).contentRef`, then ground one
+   * or more agent steps with it. The served VLM reasons over the image on EVERY turn of
+   * that step's loop (durably carried across the chain). Per-step: a later `.image()`
+   * before another `.agent()` grounds that step with a different image. Lowers client-free
+   * + deterministically (the golden tri-surface contract). */
+  image(ref: string): this {
+    this.pendingImage = ref;
+    return this;
   }
 
   /** Append a PURE step. */

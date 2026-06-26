@@ -47,6 +47,12 @@ class FakeClient {
   ): Promise<{ tools: ReadonlyArray<{ toolName: string }> }> {
     return { tools: [] };
   }
+  async bindReactVision(
+    args: Record<string, unknown>,
+    _image: unknown,
+  ): Promise<{ handle: string; args: Record<string, unknown> }> {
+    return { handle: "kx/recipes/react-vision", args: { ...args, image_ref: "ab".repeat(32) } };
+  }
 }
 
 describe("Flow — fluent builder", () => {
@@ -86,6 +92,23 @@ describe("Flow — fluent builder", () => {
     expect(lowered.steps[1]?.kind).toBe("tool");
     expect(lowered.steps[1]?.tool_contract).toEqual({ echo: "1" });
     expect(lowered.steps[1]?.params).toEqual({ "kx.tool.args": '{"n":3}' });
+  });
+
+  it("image() grounds the next agent step per-step (AGENTIC-VISION)", () => {
+    // .image(ref) binds image_ref into ONLY the immediately-following agent step's config;
+    // a step without a preceding .image() carries none (mirrors the Python test).
+    const refA = "a".repeat(64);
+    const refB = "b".repeat(64);
+    const lowered = flow()
+      .image(refA)
+      .agent("inspect the chart")
+      .then("now this one")
+      .image(refB)
+      .then("summarise")
+      .lower();
+    expect(lowered.steps[0]?.params).toEqual({ image_ref: refA });
+    expect(lowered.steps[1]?.params).toEqual({});
+    expect(lowered.steps[2]?.params).toEqual({ image_ref: refB });
   });
 
   it("matches the string DSL for the same topology", () => {

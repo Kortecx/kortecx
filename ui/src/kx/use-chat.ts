@@ -59,6 +59,13 @@ export const REACT_RECIPE_HANDLE = "kx/recipes/react";
  *  OSS exposes no toggle — enabling it is an operator/Cloud concern). */
 export const REACT_AUTO_RECIPE_HANDLE = "kx/recipes/react-auto";
 
+/** AGENTIC-VISION: the image-grounded ReAct loop — agent mode + an attached image route
+ *  here so the served VLM reasons over the image on EVERY turn. Provisioned only on a
+ *  vision-capable serve with the bundled tool; absent ⇒ agent mode honest-degrades to the
+ *  text-only react loop (the image stays display-only). Shares the `kx/recipes/react`
+ *  prefix, so it settles as a react CHAIN. */
+export const REACT_VISION_RECIPE_HANDLE = "kx/recipes/react-vision";
+
 interface ActiveTurn {
   readonly assistantId: string;
   readonly instanceId: string;
@@ -189,6 +196,25 @@ export function planVisionArgs(
   return args;
 }
 
+/**
+ * AGENTIC-VISION: build the form-gated arg set for an image-grounded AGENT turn — the
+ * react args (`instruction` + budget caps) PLUS the `image_ref` slot — or `null` when the
+ * react-vision form lacks either slot (then agent mode honest-degrades to text-only
+ * react, the image stays display-only). Pure over the fetched form — unit-testable.
+ */
+export function planReactVisionArgs(
+  form: Pick<RecipeForm, "fields">,
+  text: string,
+  imageRef: string,
+): Record<string, unknown> | null {
+  const args = planReactArgs(form, text);
+  if (args === null || !form.fields.find((f) => f.name === "image_ref")) {
+    return null;
+  }
+  args.image_ref = imageRef;
+  return args;
+}
+
 export function useChat({
   handle,
   promptKey,
@@ -208,6 +234,9 @@ export function useChat({
   const visionFormRef = useRef<RecipeForm | null | undefined>(undefined);
   // The react form likewise (agent mode probes the declared slots).
   const reactFormRef = useRef<RecipeForm | null | undefined>(undefined);
+  // AGENTIC-VISION: the react-vision form (agent mode + an image probes it; `null` = the
+  // serve has no vision model ⇒ agent mode runs text-only, the image stays display-only).
+  const reactVisionFormRef = useRef<RecipeForm | null | undefined>(undefined);
 
   const projection = useProjection(
     active?.instanceId,
@@ -374,10 +403,38 @@ export function useChat({
     return reactFormRef.current;
   }, [client]);
 
-  /** Plan the turn: agent task → react loop; image → vision; else plain chat. */
+  /** The react-vision recipe's form, probed once (absent ⇒ agent mode runs text-only). */
+  const reactVisionForm = useCallback(async (): Promise<RecipeForm | null> => {
+    if (reactVisionFormRef.current !== undefined) {
+      return reactVisionFormRef.current;
+    }
+    try {
+      reactVisionFormRef.current = client
+        ? await client.getRecipeForm(REACT_VISION_RECIPE_HANDLE)
+        : null;
+    } catch {
+      reactVisionFormRef.current = null; // no vision model — image stays display-only
+    }
+    return reactVisionFormRef.current;
+  }, [client]);
+
+  /** Plan the turn: agent task (+ image → vision agent) → react loop; image → vision; else chat. */
   const planTurn = useCallback(
     async (text: string, attachments: readonly MessageAttachment[]): Promise<TurnPlan> => {
       if (agentMode) {
+        const image = attachments.find((a) => a.mediaType.startsWith("image/"));
+        // AGENTIC-VISION: agent mode + an attached image → the image-grounded react loop,
+        // so the served VLM reasons over the image on EVERY turn. Form-gated; absent ⇒
+        // fall through to the text-only react loop (the image stays display-only).
+        if (image) {
+          const vform = await reactVisionForm();
+          if (vform) {
+            const args = planReactVisionArgs(vform, text, image.ref);
+            if (args !== null) {
+              return { handle: REACT_VISION_RECIPE_HANDLE, args };
+            }
+          }
+        }
         const form = await reactForm();
         if (form) {
           const args = planReactArgs(form, text);
@@ -407,7 +464,7 @@ export function useChat({
       }
       return { handle, args: { [promptKey]: text } };
     },
-    [handle, promptKey, modelId, agentMode, dataset, reactForm, visionForm],
+    [handle, promptKey, modelId, agentMode, dataset, reactForm, reactVisionForm, visionForm],
   );
 
   const startTurn = useCallback(
@@ -440,7 +497,8 @@ export function useChat({
           assistantId,
           instanceId,
           terminalMoteId,
-          react: plan.handle === REACT_RECIPE_HANDLE,
+          // AGENTIC-VISION: react + react-vision both settle as react CHAINS (prefix).
+          react: plan.handle.startsWith(REACT_RECIPE_HANDLE),
           reactChainSalt,
         });
       } catch (e) {

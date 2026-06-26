@@ -191,31 +191,14 @@ impl Worker {
                 .ok_or(WorkerError::MissingField("warrant"))?
                 .try_into()?;
 
-            // F-7 (assemble-into-serve): hand the executor this Mote's resolved Data
-            // context BEFORE dispatch (the frozen `MoteExecutor::run` carries no
-            // snapshot). Always set — including an empty list — so a prior Mote's
-            // context can never leak into this one. Malformed wire entries are dropped;
-            // a missing parent the model needs surfaces fail-closed in the assembler.
-            if let Some(sink) = &self.context_sink {
-                let parents: Vec<(MoteId, ContentRef)> = item
-                    .parent_results
-                    .iter()
-                    .filter_map(|pr| {
-                        let id: [u8; 32] = pr.parent_mote_id.as_slice().try_into().ok()?;
-                        let r: [u8; 32] = pr.result_ref.as_slice().try_into().ok()?;
-                        Some((MoteId::from_bytes(id), ContentRef::from_bytes(r)))
-                    })
-                    .collect();
-                sink.set_parent_results(mote.id, parents);
-                // PR-9d: stash the run's grounding-context ref (empty ⇒ None — the
-                // common case) for a SUCCESSOR ReAct turn; the executor prepends it
-                // ahead of the F-7 trajectory on the next `run`. A 32-byte ref decodes;
-                // anything else (incl. empty) is None ⇒ byte-identical to pre-PR-9d.
-                let context_items_ref = <[u8; 32]>::try_from(item.context_items.as_slice())
-                    .ok()
-                    .map(ContentRef::from_bytes);
-                sink.set_context_items(mote.id, context_items_ref);
-            }
+            // F-7 (assemble-into-serve): hand the executor this Mote's out-of-band
+            // context BEFORE dispatch (the frozen `MoteExecutor::run` carries no snapshot).
+            self.deliver_executor_context(
+                mote.id,
+                &item.parent_results,
+                &item.context_items,
+                &item.image_ref,
+            );
 
             // PURE recomputes locally through the hosted executor (verbatim, D40 — a
             // throwaway journal). Non-PURE (WORLD-MUTATING / READ-ONLY-NONDET) drives
@@ -310,6 +293,45 @@ impl Worker {
             let _ = self.client.heartbeat(self.id, now_ms(), 0).await;
         }
         Ok(committed)
+    }
+
+    /// Hand a leased Mote's out-of-band executor context to the [`ContextSink`] BEFORE
+    /// dispatch (the frozen `MoteExecutor::run` carries no snapshot): its F-7 Data
+    /// trajectory (`parent_results`), the PR-9d grounding-context ref, and the
+    /// AGENTIC-VISION grounding-image ref. ALWAYS set — including empties — so a prior
+    /// Mote's context can never leak into this one; malformed/empty refs decode to `None`
+    /// (byte-identical to the pre-feature path). A no-op when the executor holds no sink.
+    fn deliver_executor_context(
+        &self,
+        mote_id: MoteId,
+        parent_results: &[proto::ParentResult],
+        context_items: &[u8],
+        image_ref: &[u8],
+    ) {
+        let Some(sink) = &self.context_sink else {
+            return;
+        };
+        let parents: Vec<(MoteId, ContentRef)> = parent_results
+            .iter()
+            .filter_map(|pr| {
+                let id: [u8; 32] = pr.parent_mote_id.as_slice().try_into().ok()?;
+                let r: [u8; 32] = pr.result_ref.as_slice().try_into().ok()?;
+                Some((MoteId::from_bytes(id), ContentRef::from_bytes(r)))
+            })
+            .collect();
+        sink.set_parent_results(mote_id, parents);
+        // PR-9d: the run's grounding-context ref for a SUCCESSOR ReAct turn (the executor
+        // prepends it ahead of the F-7 trajectory on the next `run`).
+        let context_items_ref = <[u8; 32]>::try_from(context_items)
+            .ok()
+            .map(ContentRef::from_bytes);
+        sink.set_context_items(mote_id, context_items_ref);
+        // AGENTIC-VISION: the run's grounding-image ref for a SUCCESSOR ReAct turn (the
+        // executor feeds it into the per-turn multimodal call on the next `run`).
+        let image = <[u8; 32]>::try_from(image_ref)
+            .ok()
+            .map(ContentRef::from_bytes);
+        sink.set_image_ref(mote_id, image);
     }
 
     /// Handle a per-Mote execution failure (F4): classify it, and either dead-letter the

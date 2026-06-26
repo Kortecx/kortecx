@@ -14,7 +14,7 @@
  */
 
 import { AgentResult, assembleActions } from "./agent-result.js";
-import { REACT_RECIPE_HANDLE } from "./client.js";
+import { type ImageInput, REACT_RECIPE_HANDLE } from "./client.js";
 import { defaultClient } from "./defaults.js";
 import type { KxClient } from "./node.js";
 import type { Result, Run } from "./run.js";
@@ -34,6 +34,10 @@ export interface RunAgentOptions {
   inputs?: Readonly<Record<string, string>>;
   /** Max total tool calls (default 20, ceiling 20; a turn may fire several at once). */
   maxToolCalls?: number;
+  /** AGENTIC-VISION: an image to ground the agentic run. When set, binds
+   * `kx/recipes/react-vision` (form-gated) so the served VLM reasons over the image on
+   * EVERY turn; fail-closed (a usage error) when no vision model is served. */
+  image?: ImageInput;
   /** `true` (default) returns an {@link AgentResult}; `false` returns the started {@link Run}. */
   wait?: boolean;
   timeoutMs?: number;
@@ -55,18 +59,23 @@ function foldInputs(goal: string, inputs?: Readonly<Record<string, string>>): st
  */
 export async function runAgent(opts: RunAgentOptions): Promise<AgentResult | Run> {
   const kx = opts.client ?? defaultClient();
-  const args = {
+  const baseArgs = {
     instruction: foldInputs(opts.goal, opts.inputs),
     max_turns: DEFAULT_MAX_TURNS,
     max_tool_calls: opts.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
   };
+  // AGENTIC-VISION: an attached image binds the image-grounded react recipe (form-gated)
+  // so the served VLM reasons over it on every turn; fail-closed when no vision model.
+  const { handle, args } = opts.image
+    ? await kx.bindReactVision(baseArgs, opts.image)
+    : { handle: REACT_RECIPE_HANDLE, args: baseArgs };
   if (opts.wait === false) {
-    return (await kx.invoke(REACT_RECIPE_HANDLE, args, {
+    return (await kx.invoke(handle, args, {
       context: opts.context,
       wait: false,
     })) as Run;
   }
-  const result = (await kx.invoke(REACT_RECIPE_HANDLE, args, {
+  const result = (await kx.invoke(handle, args, {
     context: opts.context,
     wait: true,
     timeoutMs: opts.timeoutMs,

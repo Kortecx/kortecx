@@ -19,7 +19,7 @@ from .agent_result import AgentResult, assemble_actions
 from .client import REACT_RECIPE_HANDLE
 
 if TYPE_CHECKING:
-    from .client import AsyncKxClient, KxClient
+    from .client import AsyncKxClient, ImageInput, KxClient
     from .run import AsyncRun, Result, Run
 
 #: The recipe's anchored bounded-loop budget (mirrors Agent + the UI's planReactArgs).
@@ -55,6 +55,7 @@ def run_agent(
     context: Optional[Sequence[str]] = None,
     inputs: Optional[Mapping[str, str]] = None,
     max_tool_calls: int = _DEFAULT_MAX_TOOL_CALLS,
+    image: "Optional[ImageInput]" = None,
     wait: bool = True,
     timeout: float = 120.0,
     client: "Optional[KxClient]" = None,
@@ -74,12 +75,15 @@ def run_agent(
 
     kx = client if client is not None else default_client()
     args = _args(goal, inputs, max_tool_calls)
+    handle = REACT_RECIPE_HANDLE
+    # AGENTIC-VISION: an attached image binds the image-grounded react recipe (form-gated)
+    # so the served VLM reasons over it on every turn; fail-closed when no vision model.
+    if image is not None:
+        handle, args = kx._bind_react_vision(args, kx._resolve_image_ref(image))
     if not wait:
-        return cast("Run", kx.invoke(REACT_RECIPE_HANDLE, args, context=context, wait=False))
+        return cast("Run", kx.invoke(handle, args, context=context, wait=False))
     # invoke(wait=True) on a react handle always settles to a Result (never a Run).
-    result = cast(
-        "Result", kx.invoke(REACT_RECIPE_HANDLE, args, context=context, wait=True, timeout=timeout)
-    )
+    result = cast("Result", kx.invoke(handle, args, context=context, wait=True, timeout=timeout))
     # PR-R1: scope the action fetch to THIS invocation's chain (serve's shared journal).
     turns = kx.list_react_turns(
         instance_id=result.instance_id, step_salt=result.react_chain_salt or None
@@ -100,20 +104,24 @@ async def run_agent_async(
     context: Optional[Sequence[str]] = None,
     inputs: Optional[Mapping[str, str]] = None,
     max_tool_calls: int = _DEFAULT_MAX_TOOL_CALLS,
+    image: "Optional[ImageInput]" = None,
     wait: bool = True,
     timeout: float = 120.0,
 ) -> "Union[AgentResult, AsyncRun]":
     """Async mirror of :func:`run_agent`. Requires an explicit
     :class:`~kortecx.client.AsyncKxClient` (there is no async default singleton)."""
     args = _args(goal, inputs, max_tool_calls)
+    handle = REACT_RECIPE_HANDLE
+    if image is not None:
+        handle, args = await client._bind_react_vision(args, await client._resolve_image_ref(image))
     if not wait:
         return cast(
             "AsyncRun",
-            await client.invoke(REACT_RECIPE_HANDLE, args, context=context, wait=False),
+            await client.invoke(handle, args, context=context, wait=False),
         )
     result = cast(
         "Result",
-        await client.invoke(REACT_RECIPE_HANDLE, args, context=context, wait=True, timeout=timeout),
+        await client.invoke(handle, args, context=context, wait=True, timeout=timeout),
     )
     page = await client.list_react_turns(
         instance_id=result.instance_id, step_salt=result.react_chain_salt or None

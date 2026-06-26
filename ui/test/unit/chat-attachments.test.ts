@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { UiError } from "../../src/kx/errors";
-import { planReactArgs, planVisionArgs } from "../../src/kx/use-chat";
+import { planReactArgs, planReactVisionArgs, planVisionArgs } from "../../src/kx/use-chat";
 import { type ChatThread, EMPTY_THREAD, chatReducer, retrySource } from "../../src/lib/chat-thread";
 
 const ERR: UiError = {
@@ -155,5 +155,41 @@ describe("planReactArgs", () => {
 
   it("a form without the instruction slot yields null (fall back to chat)", () => {
     expect(planReactArgs({ fields: [field("prompt")] }, "task")).toBeNull();
+  });
+});
+
+describe("planReactVisionArgs (AGENTIC-VISION — agent mode + image)", () => {
+  const field = (name: string) => ({
+    name,
+    type: "str" as const,
+    required: true,
+    maxLen: null,
+    allowed: [] as string[],
+  });
+
+  it("binds the react args PLUS image_ref when the form declares both", () => {
+    const form = {
+      fields: [
+        field("instruction"),
+        field("max_turns"),
+        field("max_tool_calls"),
+        field("image_ref"),
+      ],
+    };
+    expect(planReactVisionArgs(form, "inspect the chart", ATT.ref)).toEqual({
+      instruction: "inspect the chart",
+      max_turns: 8,
+      max_tool_calls: 6,
+      image_ref: ATT.ref,
+    });
+  });
+
+  it("yields null without the image_ref slot (agent mode honest-degrades to text-only)", () => {
+    const form = { fields: [field("instruction"), field("max_turns"), field("max_tool_calls")] };
+    expect(planReactVisionArgs(form, "task", ATT.ref)).toBeNull();
+  });
+
+  it("yields null without the instruction slot (fall back)", () => {
+    expect(planReactVisionArgs({ fields: [field("image_ref")] }, "task", ATT.ref)).toBeNull();
   });
 });

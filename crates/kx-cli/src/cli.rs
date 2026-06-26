@@ -46,7 +46,7 @@ usage: kx <command> [args]
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
     kx chat --message <text> [--dataset <name>] [--k N] [--timeout-secs N]
                                                  (POC-1 chat: plain, or AUTO-RAG grounded over a dataset; see `kx help chat`)
-    kx agent run --goal <text> [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N]
+    kx agent run --goal <text> [--image <path>] [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N]
                                                  (the embeddable agent-runner: goal → answer + audited actions; see `kx help agent`)
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [--context <handle>]...
     kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--out <file>] [--emit-blueprint <file>] [--dry-run]
@@ -500,7 +500,7 @@ kx chat --message <text> [--dataset <name>] [--k N] [--timeout-secs N] [--json] 
   ingest a corpus first with `kx datasets ingest <name> ...`."
             .into(),
         "agent" => "\
-kx agent run --goal <text> [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N] [client flags]
+kx agent run --goal <text> [--image <path>] [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N] [client flags]
   The embeddable agent-runner (PR-9c-1): give a GOAL and the runtime completes it
   AGENTICALLY — reasoning, calling permission-gated tools in a bounded loop, and
   returning a reasoned answer PLUS the AUDITED action set (the tools it fired).

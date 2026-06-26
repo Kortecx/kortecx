@@ -56,6 +56,7 @@ gap (a visible "unavailable on this engine"), never a silent one:
 | Tool-call parsing (multi-format) | ✅ | ✅ |
 | Embeddings / RAG (Datasets) | ✅ (`/api/embed`) | ✅ |
 | Vision / multi-modal input (image→text, OCR) | ✅ (vision tags) | ✅ (mmproj) |
+| Agentic vision (image carried across the ReAct loop) | ✅ | ✅ |
 | Constrained decode (grammar) | reserved | reserved |
 
 A vision turn on a **text-only model** (either engine) is refused, not faked — the
