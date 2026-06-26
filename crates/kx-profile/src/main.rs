@@ -19,7 +19,8 @@ use std::path::PathBuf;
 
 use kx_profile::{
     capture_git_sha, chat_spikes, content_spikes, embed_spikes, mote_detail_spikes, percentile,
-    react_spikes, spikes, ChatOpts, EmbedOpts, Environment, Metric, ProfileError, Report,
+    react_spikes, spikes, vision_spikes, ChatOpts, EmbedOpts, Environment, Metric, ProfileError,
+    Report, VisionOpts,
 };
 
 #[tokio::main]
@@ -63,6 +64,7 @@ async fn run() -> Result<(), ProfileError> {
         match args.mode {
             AttachMode::Chat => attach_chat_metrics(&endpoint, &args).await?,
             AttachMode::Embed => attach_embed_metrics(&endpoint, &args).await?,
+            AttachMode::Vision => attach_vision_metrics(&endpoint, &args).await?,
         }
     } else {
         inproc_metrics(args.iterations).await?
@@ -227,6 +229,47 @@ async fn attach_chat_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric>,
     Ok(metrics)
 }
 
+/// Profile a real vision (image→text) turn against an EXTERNAL `kx serve` at `endpoint`
+/// (GR10 + GR24 dual-engine baseline). Each metric id is prefixed with the engine that
+/// answered (`vision__kx-ollama__…` / `vision__kx-llamacpp__…`) so an Ollama capture and
+/// a llama.cpp capture never collide in the private trend record.
+async fn attach_vision_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric>, ProfileError> {
+    let channel = chat_spikes::connect(endpoint).await?;
+    let token = match (&args.token, &args.token_file) {
+        (Some(t), _) => Some(t.clone()),
+        (None, Some(path)) => Some(read_token_file(path)?),
+        (None, None) => None,
+    };
+    let opts = VisionOpts {
+        iterations: args.iterations,
+        prompt: args
+            .prompt
+            .clone()
+            .unwrap_or_else(|| vision_spikes::DEFAULT_PROMPT.to_string()),
+        model: args.model.clone(),
+        token,
+    };
+    let vision = vision_spikes::measure(&channel, &opts).await?;
+    eprintln!(
+        "kx-profile: vision baseline | engine={engine} | model={model} | {n} timed iter(s)",
+        engine = vision.engine,
+        model = vision.model_id,
+        n = vision.total_ms.len(),
+    );
+    let p = |m: &str| format!("vision__{}__{m}", vision.engine);
+    let mut metrics = Vec::new();
+    push_spikes(
+        &mut metrics,
+        &[
+            (p("warmup_first_ms").as_str(), vision.warmup_first_ms),
+            (p("total_p50").as_str(), percentile(&vision.total_ms, 50)),
+            (p("total_p95").as_str(), percentile(&vision.total_ms, 95)),
+            (p("total_p99").as_str(), percentile(&vision.total_ms, 99)),
+        ],
+    );
+    Ok(metrics)
+}
+
 /// Profile real datasets server-embed (ingest + query) against an EXTERNAL `kx serve`
 /// at `endpoint` (GR10 + GR24 dual-engine baseline). Each metric id is prefixed with
 /// the engine that embeds (`embed__kx-ollama__…` / `embed__kx-llamacpp__…`) so an
@@ -287,6 +330,7 @@ fn push_spikes(metrics: &mut Vec<Metric>, spikes: &[(&str, f64)]) {
 enum AttachMode {
     Chat,
     Embed,
+    Vision,
 }
 
 /// Parsed CLI arguments (hand-rolled, no clap — the FFI-free `kx` convention).
@@ -347,9 +391,10 @@ impl Args {
                 "--token-file" => {
                     token_file = argv.next();
                 }
-                // The attach subverb: selects the baseline (`chat` default | `embed`).
+                // The attach subverb: selects the baseline (`chat` default | `embed` | `vision`).
                 "chat" => mode = AttachMode::Chat,
                 "embed" => mode = AttachMode::Embed,
+                "vision" => mode = AttachMode::Vision,
                 other => {
                     eprintln!("kx-profile: ignoring unrecognized argument {other:?}");
                 }

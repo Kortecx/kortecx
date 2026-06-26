@@ -11,9 +11,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Instant;
 
+use base64::Engine as _;
+use kx_content::{sniff_image_format, ContentRef};
 use kx_inference::{
-    EmbeddingBackend, EmbeddingOutput, EmbeddingPooling, InferenceBackend, InferenceError,
-    InferenceInput, InferenceOutput, InferenceParams, TokenSink,
+    ContentFetcher, EmbeddingBackend, EmbeddingOutput, EmbeddingPooling, InferenceBackend,
+    InferenceError, InferenceInput, InferenceOutput, InferenceParams, TokenSink, MEDIA_MARKER,
 };
 use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
@@ -29,7 +31,6 @@ pub const BACKEND_NAME: &str = "kx-ollama";
 /// HTTP. The served set is interior-mutable so a runtime `kx models pull` can add a
 /// freshly-downloaded tag WITHOUT restarting `kx serve` (Model Control v2); the
 /// `RwLock`s are read-mostly (a `supports()`/dispatch read vs. a rare pull write).
-#[derive(Debug)]
 pub struct OllamaBackend {
     client: Arc<OllamaClient>,
     /// The tags this backend serves (the `/api/tags` set, optionally narrowed by an
@@ -40,6 +41,28 @@ pub struct OllamaBackend {
     /// discovery; `0` when the daemon doesn't report one). Display/discovery only
     /// (SN-8) — it never authorizes a route, and it is never journaled.
     context_len: RwLock<BTreeMap<String, u32>>,
+    /// PR-B2: the tags that declare vision (`/api/show` capability / `projector_info`),
+    /// populated best-effort at discovery. Membership is the vision-modality gate the
+    /// Multimodal arm checks BEFORE any egress (honest-degrade a non-vision tag).
+    /// Display/discovery only (SN-8) — never journaled.
+    vision: RwLock<BTreeSet<String>>,
+    /// PR-B2: the content store the Multimodal arm fetches an image `content_ref`'s
+    /// bytes from (bound by the host via [`Self::with_content_store`] when any served
+    /// tag is vision-capable). `None` on a text-only serve ⇒ a Multimodal dispatch
+    /// fails closed ("no content store bound").
+    content_store: Option<Arc<dyn ContentFetcher>>,
+}
+
+impl std::fmt::Debug for OllamaBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OllamaBackend")
+            .field("client", &self.client)
+            .field("models", &self.models)
+            .field("context_len", &self.context_len)
+            .field("vision", &self.vision)
+            .field("content_store", &self.content_store.is_some())
+            .finish()
+    }
 }
 
 impl OllamaBackend {
@@ -52,7 +75,19 @@ impl OllamaBackend {
             client,
             models: RwLock::new(models),
             context_len: RwLock::new(BTreeMap::new()),
+            vision: RwLock::new(BTreeSet::new()),
+            content_store: None,
         }
+    }
+
+    /// Bind the content store the Multimodal (vision) arm fetches image bytes from
+    /// (PR-B2). The host calls this once at startup when any served tag is
+    /// vision-capable; a text-only serve leaves it unbound and a Multimodal dispatch
+    /// fails closed. Mirrors the in-process llama backend's `with_content_store`.
+    #[must_use]
+    pub fn with_content_store(mut self, store: Arc<dyn ContentFetcher>) -> Self {
+        self.content_store = Some(store);
+        self
     }
 
     /// Discover the served set from the daemon's `/api/tags`, optionally narrowed to
@@ -77,16 +112,27 @@ impl OllamaBackend {
             }
             _ => tags.into_iter().collect(),
         };
-        // One `/api/show` per served tag, best-effort. `unwrap_or(0)` so a daemon
-        // that errors / omits the window never blocks startup (honest-degrade).
-        let context_len = models
-            .iter()
-            .map(|tag| (tag.clone(), client.show_context_length(tag).unwrap_or(0)))
-            .collect();
+        // One `/api/show` per served tag, best-effort: it carries BOTH the context
+        // window AND the vision capability (PR-B2). A daemon that errors / omits a
+        // field honest-degrades (ctx `0`, vision `false`) and never blocks startup.
+        let mut context_len = BTreeMap::new();
+        let mut vision = BTreeSet::new();
+        for tag in &models {
+            let meta = client.show_meta(tag).unwrap_or(crate::client::ShowMeta {
+                context_length: 0,
+                vision: false,
+            });
+            context_len.insert(tag.clone(), meta.context_length);
+            if meta.vision {
+                vision.insert(tag.clone());
+            }
+        }
         Ok(Self {
             client,
             models: RwLock::new(models),
             context_len: RwLock::new(context_len),
+            vision: RwLock::new(vision),
+            content_store: None,
         })
     }
 
@@ -123,7 +169,13 @@ impl OllamaBackend {
                 "tag {tag} is not present in the daemon after the pull"
             )));
         }
-        let ctx = self.client.show_context_length(tag).unwrap_or(0);
+        let meta = self
+            .client
+            .show_meta(tag)
+            .unwrap_or(crate::client::ShowMeta {
+                context_length: 0,
+                vision: false,
+            });
         self.models
             .write()
             .unwrap_or_else(PoisonError::into_inner)
@@ -131,7 +183,13 @@ impl OllamaBackend {
         self.context_len
             .write()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(tag.to_string(), ctx);
+            .insert(tag.to_string(), meta.context_length);
+        if meta.vision {
+            self.vision
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(tag.to_string());
+        }
         Ok(())
     }
 
@@ -141,6 +199,22 @@ impl OllamaBackend {
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .contains(tag)
+    }
+
+    /// Whether `tag` declared vision at discovery (PR-B2). The catalog uses this to
+    /// mark the `"image"` modality; the Multimodal arm gates on it before egress.
+    fn is_vision_tag(&self, tag: &str) -> bool {
+        self.vision
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(tag)
+    }
+
+    /// Whether `model_id` is a vision-capable served tag (PR-B2). For the host
+    /// catalog (`ollama_catalog_entry`) to declare the image modality.
+    #[must_use]
+    pub fn is_vision(&self, model_id: &ModelId) -> bool {
+        self.is_vision_tag(&model_id.0)
     }
 
     /// The model ids this backend serves (for the host's model catalog).
@@ -225,6 +299,58 @@ impl OllamaBackend {
         }
     }
 
+    /// Resolve a Multimodal dispatch's `content_refs` to base64-encoded image
+    /// payloads, enforcing the SAME fail-closed gate ladder as the in-process llama
+    /// backend's `resolve_image_refs` (PR-B2), in the SAME order, all BEFORE egress:
+    /// 1. the served tag must declare vision (`/api/show`) — else a non-vision model
+    ///    would silently answer without the image (a lie);
+    /// 2. a content store must be bound;
+    /// 3. each ref must resolve in the store;
+    /// 4. each payload must be within the warrant's `mem_bytes` ceiling (the 16 MiB
+    ///    vision-recipe ceiling) — checked BEFORE the base64 alloc;
+    /// 5. each payload must sniff as a recognized image (audio/other reserved).
+    fn resolve_images(
+        &self,
+        model_id: &ModelId,
+        content_refs: &[ContentRef],
+        warrant: &WarrantSpec,
+    ) -> Result<Vec<String>, InferenceError> {
+        if !self.is_vision_tag(&model_id.0) {
+            return Err(InferenceError::Unsupported {
+                reason: "model does not declare vision; cannot serve a multimodal request",
+            });
+        }
+        let store = self
+            .content_store
+            .as_ref()
+            .ok_or(InferenceError::Unsupported {
+                reason: "no content store bound; cannot fetch multimodal content_refs",
+            })?;
+        let cap = warrant.resource_ceiling.mem_bytes;
+        let mut images = Vec::with_capacity(content_refs.len());
+        for r in content_refs {
+            let bytes = store
+                .fetch(r)
+                .ok_or(InferenceError::ContentStoreMiss { content_ref: *r })?;
+            let len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+            if len > cap {
+                return Err(InferenceError::ScopeViolation {
+                    field: "image_bytes",
+                    requested: len,
+                    ceiling: cap,
+                });
+            }
+            if sniff_image_format(&bytes).is_none() {
+                return Err(InferenceError::Unsupported {
+                    reason: "content_ref is not a recognized image; audio and other \
+                             modalities are reserved for later PRs",
+                });
+            }
+            images.push(base64::engine::general_purpose::STANDARD.encode(&bytes));
+        }
+        Ok(images)
+    }
+
     /// Shared body for [`InferenceBackend::dispatch`] (`sink` `None`) and
     /// [`InferenceBackend::dispatch_streaming`] (`Some`) — every warrant gate is
     /// byte-identical, so the committed bytes are unchanged whether or not a sink
@@ -260,12 +386,15 @@ impl OllamaBackend {
         self.ensure_served(model_id)?;
 
         // ---- Dispatch by input modality --------------------------------------
-        let prompt = match input {
-            InferenceInput::Text(prompt) => prompt.clone(),
-            InferenceInput::Multimodal { .. } => {
-                return Err(InferenceError::Unsupported {
-                    reason: "multimodal input not yet supported by the Ollama backend (PR-B)",
-                });
+        // `images` are base64-encoded payloads passed out-of-band in the `/api/generate`
+        // `images` array (PR-B2 vision); the text path leaves it empty (byte-identical
+        // body). For a `Multimodal` dispatch the marker is stripped from the prompt —
+        // Ollama splices the image(s) per the model's projector, NOT by marker position.
+        let (prompt, images) = match input {
+            InferenceInput::Text(prompt) => (prompt.clone(), Vec::new()),
+            InferenceInput::Multimodal { text, content_refs } => {
+                let images = self.resolve_images(model_id, content_refs, warrant)?;
+                (text.replace(MEDIA_MARKER, ""), images)
             }
             InferenceInput::TextForEmbedding { .. } => {
                 return Err(InferenceError::Unsupported {
@@ -284,6 +413,7 @@ impl OllamaBackend {
                 &prompt,
                 &options,
                 warrant.resource_ceiling.wall_clock_ms,
+                &images,
                 sink,
             )
             .map_err(map_dispatch_err)?;

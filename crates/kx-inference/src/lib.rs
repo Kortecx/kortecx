@@ -39,6 +39,12 @@
 )]
 
 mod backend;
+// The object-safe `ContentFetcher` content-fetch seam is UNGATED — both the
+// llama.cpp backend (`llama.rs`) and the FFI-free Ollama backend (`kx-ollama`)
+// fetch image bytes for a `Multimodal` dispatch through it, and the Ollama path
+// must build under `--features serve-engine` WITHOUT `llamacpp`. Deps: only
+// `kx_content` (FFI-free leaf).
+mod content;
 mod dispatcher;
 // The llama.cpp-backed `LlamaInferenceBackend` + its loaded-model cache live
 // behind the `llamacpp` feature (default-on). Gating the modules — not just the
@@ -56,9 +62,10 @@ mod templates;
 mod types;
 
 pub use backend::{BatchItem, EmbeddingBackend, InferenceBackend, TokenSink};
+pub use content::ContentFetcher;
 pub use dispatcher::{DispatchOutcome, Dispatcher, DispatcherConfig};
 #[cfg(feature = "llamacpp")]
-pub use llama::{ContentFetcher, LlamaInferenceBackend};
+pub use llama::LlamaInferenceBackend;
 pub use types::{
     inference_params_from_mote, EmbeddingOutput, EmbeddingPooling, Grammar, InferenceError,
     InferenceInput, InferenceOutput, InferenceParams, MEDIA_MARKER,

@@ -28,7 +28,13 @@ from .branch import (
 )
 from .capture import CaptureRecord, CaptureRecordPage
 from .chains import Chain, Task, chain, model, pure
-from .client import DEFAULT_ENDPOINT, AsyncKxClient, KxClient
+from .client import (
+    DEFAULT_ENDPOINT,
+    VISION_RECIPE_HANDLE,
+    AsyncKxClient,
+    ImageInput,
+    KxClient,
+)
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
 from .critic import decode_critic_verdict
@@ -119,6 +125,9 @@ __all__ = [
     # clients
     "KxClient",
     "AsyncKxClient",
+    # PR-B2 vision
+    "VISION_RECIPE_HANDLE",
+    "ImageInput",
     # POC-4 Apps (kortecx.app/v1 envelopes)
     "app",
     "App",

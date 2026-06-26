@@ -320,11 +320,14 @@ fn dispatch_refuses_unserved_model() {
 }
 
 #[test]
-fn dispatch_refuses_grammar_and_multimodal() {
+fn dispatch_multimodal_on_non_vision_tag_fails_closed() {
+    // PR-B2: a Multimodal dispatch against a tag that does NOT declare vision is
+    // refused BEFORE egress (honest-degrade — answering without the image is a lie).
+    // `served()` builds via `OllamaBackend::new` (no `/api/show` vision discovery), so
+    // gemma3:12b is non-vision here.
     let base = spawn_mock(ollama_routes);
     let client = Arc::new(OllamaClient::new(&base, false).unwrap());
     let backend = served(client);
-    // Multimodal is reserved (PR-B).
     let err = backend
         .dispatch(
             &ModelId("gemma3:12b".to_string()),
@@ -385,6 +388,221 @@ fn connection_refused_is_unreachable() {
         "a closed port must classify as absent/unreachable: {err:?}"
     );
     assert!(matches!(err, OllamaError::Unreachable(_)));
+}
+
+// --- PR-B2 vision (multimodal) ------------------------------------------------
+
+use base64::Engine as _;
+use kx_content::ContentRef;
+use kx_inference::ContentFetcher;
+
+/// The 8-byte PNG signature + a little filler — enough for `sniff_image_format`.
+const PNG_BYTES: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x01, 0x02,
+];
+
+/// A minimal in-test content fetcher (the backend only needs `ContentFetcher`).
+struct MapStore(std::collections::HashMap<ContentRef, Vec<u8>>);
+impl ContentFetcher for MapStore {
+    fn fetch(&self, r: &ContentRef) -> Option<Vec<u8>> {
+        self.0.get(r).cloned()
+    }
+}
+
+/// A warrant whose `mem_bytes` ceiling matches the vision recipe's 16 MiB (so the
+/// image-byte gate passes for a small fixture and the sniff/encode path is reached).
+fn vision_warrant(model: &str, max_out: u32) -> WarrantSpec {
+    let mut w = warrant_for(model, max_out);
+    w.resource_ceiling.mem_bytes = 16 << 20;
+    w
+}
+
+/// A vision-aware route handler whose `/api/show` declares the vision capability for
+/// gemma3:12b, and which RECORDS every `/api/generate` raw body into `sink` so a test
+/// can assert the `images` array + the marker-stripped prompt.
+fn vision_routes(
+    sink: Arc<Mutex<Vec<String>>>,
+) -> impl Fn(&str, &str, &str) -> (u16, String) + Send + Sync + 'static {
+    move |method: &str, path: &str, body: &str| {
+        match (method, path) {
+        ("GET", "/api/version") => (200, r#"{"version":"0.1.42"}"#.to_string()),
+        ("GET", "/api/tags") => (200, r#"{"models":[{"name":"gemma3:12b"}]}"#.to_string()),
+        ("POST", "/api/show") => (
+            200,
+            r#"{"capabilities":["completion","vision"],"model_info":{"gemma3.context_length":131072}}"#
+                .to_string(),
+        ),
+        ("POST", "/api/generate") => {
+            sink.lock().unwrap().push(body.to_string());
+            (
+                200,
+                r#"{"response":"a cat","done":true,"eval_count":3}"#.to_string(),
+            )
+        }
+        _ => (404, r#"{"error":"not found"}"#.to_string()),
+    }
+    }
+}
+
+/// Build a vision-capable backend (discover populates the vision set from `/api/show`)
+/// with `store` bound, against the recording `vision_routes` mock.
+fn served_vision(store: Arc<dyn ContentFetcher>) -> (OllamaBackend, Arc<Mutex<Vec<String>>>) {
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let base = spawn_mock(vision_routes(sink.clone()));
+    let client = Arc::new(OllamaClient::new(&base, false).unwrap());
+    let backend = OllamaBackend::discover(client, None)
+        .unwrap()
+        .with_content_store(store);
+    (backend, sink)
+}
+
+#[test]
+fn discover_marks_vision_capable_tag() {
+    let store = Arc::new(MapStore(std::collections::HashMap::new())) as Arc<dyn ContentFetcher>;
+    let (backend, _sink) = served_vision(store);
+    assert!(
+        backend.is_vision(&ModelId("gemma3:12b".to_string())),
+        "discovery must mark a tag whose /api/show declares the vision capability"
+    );
+}
+
+#[test]
+fn dispatch_multimodal_sends_base64_images_and_strips_marker() {
+    use kx_inference::MEDIA_MARKER;
+    let png_ref = ContentRef::of(PNG_BYTES);
+    let mut map = std::collections::HashMap::new();
+    map.insert(png_ref, PNG_BYTES.to_vec());
+    let store = Arc::new(MapStore(map)) as Arc<dyn ContentFetcher>;
+    let (backend, sink) = served_vision(store);
+
+    let out = backend
+        .dispatch(
+            &ModelId("gemma3:12b".to_string()),
+            &InferenceInput::Multimodal {
+                text: format!("{MEDIA_MARKER}what is in this image?"),
+                content_refs: std::iter::once(png_ref).collect(),
+            },
+            &params(64),
+            &vision_warrant("gemma3:12b", 64),
+        )
+        .unwrap();
+    assert_eq!(out.bytes, b"a cat");
+
+    let bodies = sink.lock().unwrap();
+    let body = bodies.last().expect("a /api/generate body was recorded");
+    let json: serde_json::Value = serde_json::from_str(body).unwrap();
+    // The image rides the `images` array as base64 of the raw bytes.
+    let expected_b64 = base64::engine::general_purpose::STANDARD.encode(PNG_BYTES);
+    assert_eq!(json["images"][0].as_str().unwrap(), expected_b64);
+    // A multimodal request MUST run in TEMPLATE mode (`raw: false`) so the daemon
+    // places the image token — `raw: true` + images is an HTTP 400 (live-found bug).
+    assert_eq!(
+        json["raw"].as_bool(),
+        Some(false),
+        "a vision request must use raw:false so Ollama templates the image in"
+    );
+    // The media marker is stripped from the prompt (Ollama splices the image itself).
+    let prompt = json["prompt"].as_str().unwrap();
+    assert!(
+        !prompt.contains(MEDIA_MARKER),
+        "the <__media__> marker must not reach the Ollama prompt: {prompt}"
+    );
+    assert!(prompt.contains("what is in this image?"));
+    // Raw image bytes must never enter the text.
+    assert!(!prompt.contains("\u{89}PNG"));
+}
+
+#[test]
+fn dispatch_multimodal_no_store_bound_fails_closed() {
+    // A vision tag but no content store ⇒ Unsupported (cannot fetch the ref).
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let base = spawn_mock(vision_routes(sink));
+    let client = Arc::new(OllamaClient::new(&base, false).unwrap());
+    let backend = OllamaBackend::discover(client, None).unwrap(); // no with_content_store
+    let err = backend
+        .dispatch(
+            &ModelId("gemma3:12b".to_string()),
+            &InferenceInput::Multimodal {
+                text: "hi".to_string(),
+                content_refs: std::iter::once(ContentRef::of(PNG_BYTES)).collect(),
+            },
+            &params(64),
+            &warrant_for("gemma3:12b", 64),
+        )
+        .unwrap_err();
+    assert!(matches!(err, InferenceError::Unsupported { .. }));
+}
+
+#[test]
+fn dispatch_multimodal_missing_ref_is_content_store_miss() {
+    let store = Arc::new(MapStore(std::collections::HashMap::new())) as Arc<dyn ContentFetcher>;
+    let (backend, _sink) = served_vision(store);
+    let err = backend
+        .dispatch(
+            &ModelId("gemma3:12b".to_string()),
+            &InferenceInput::Multimodal {
+                text: "hi".to_string(),
+                content_refs: std::iter::once(ContentRef::of(PNG_BYTES)).collect(),
+            },
+            &params(64),
+            &warrant_for("gemma3:12b", 64),
+        )
+        .unwrap_err();
+    assert!(matches!(err, InferenceError::ContentStoreMiss { .. }));
+}
+
+#[test]
+fn dispatch_multimodal_oversize_is_scope_violation() {
+    let big = vec![0u8; 32]; // > the tiny ceiling we set below; bytes are a valid PNG head
+    let mut big_png = PNG_BYTES.to_vec();
+    big_png.extend_from_slice(&big);
+    let r = ContentRef::of(&big_png);
+    let mut map = std::collections::HashMap::new();
+    map.insert(r, big_png.clone());
+    let store = Arc::new(MapStore(map)) as Arc<dyn ContentFetcher>;
+    let (backend, _sink) = served_vision(store);
+    let mut warrant = warrant_for("gemma3:12b", 64);
+    warrant.resource_ceiling.mem_bytes = 4; // below the payload length
+    let err = backend
+        .dispatch(
+            &ModelId("gemma3:12b".to_string()),
+            &InferenceInput::Multimodal {
+                text: "hi".to_string(),
+                content_refs: std::iter::once(r).collect(),
+            },
+            &params(64),
+            &warrant,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        InferenceError::ScopeViolation {
+            field: "image_bytes",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn dispatch_multimodal_non_image_is_unsupported() {
+    let not_image = b"this is plain text, not an image".to_vec();
+    let r = ContentRef::of(&not_image);
+    let mut map = std::collections::HashMap::new();
+    map.insert(r, not_image);
+    let store = Arc::new(MapStore(map)) as Arc<dyn ContentFetcher>;
+    let (backend, _sink) = served_vision(store);
+    let err = backend
+        .dispatch(
+            &ModelId("gemma3:12b".to_string()),
+            &InferenceInput::Multimodal {
+                text: "hi".to_string(),
+                content_refs: std::iter::once(r).collect(),
+            },
+            &params(64),
+            &vision_warrant("gemma3:12b", 64),
+        )
+        .unwrap_err();
+    assert!(matches!(err, InferenceError::Unsupported { .. }));
 }
 
 #[test]

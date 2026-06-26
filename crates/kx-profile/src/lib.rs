@@ -32,6 +32,7 @@ pub mod mote_detail_spikes;
 pub mod react_spikes;
 pub mod report;
 pub mod spikes;
+pub mod vision_spikes;
 
 pub use chat_spikes::{ChatOpts, ChatSamples};
 pub use content_spikes::ContentSamples;
@@ -42,3 +43,4 @@ pub use mote_detail_spikes::MoteDetailSamples;
 pub use react_spikes::ReactSamples;
 pub use report::{Metric, MetricKind, Report, SCHEMA_VERSION};
 pub use spikes::{percentile, LatencySamples};
+pub use vision_spikes::{VisionOpts, VisionSamples};

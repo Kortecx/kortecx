@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
-use kx_content::{sniff_image_format, ContentRef, ContentStore, NotFound};
+use kx_content::{sniff_image_format, ContentRef};
 use kx_model_store::{Modality, ModelDescriptor, ModelRegistry, ModelResolver};
 use kx_mote::ModelId;
 use kx_warrant::WarrantSpec;
@@ -31,36 +31,11 @@ use smallvec::SmallVec;
 
 use crate::backend::{EmbeddingBackend, InferenceBackend};
 use crate::cache::{ModelCache, DEFAULT_CACHE_CAPACITY};
+use crate::content::ContentFetcher;
 use crate::types::{
     check_within, EmbeddingOutput, EmbeddingPooling, InferenceError, InferenceInput,
     InferenceOutput, InferenceParams,
 };
-
-/// Object-safe byte fetcher that erases [`ContentStore`]'s associated `Payload`
-/// type so the backend can hold a single trait object regardless of the store
-/// implementation. Blanket-implemented for every `Send + Sync` `ContentStore`,
-/// so callers pass an `Arc<ConcreteStore>` and it coerces to
-/// `Arc<dyn ContentFetcher>` directly.
-///
-/// Lives here (not in `kx-content`) because it exists solely to let the
-/// multi-modal backend fetch a `content_ref`'s bytes; the store trait stays
-/// generic for its hot-path callers (assembler, executor) that use `&S`.
-pub trait ContentFetcher: Send + Sync {
-    /// Fetch the bytes at `r`, or `None` if the store has no such object.
-    fn fetch(&self, r: &ContentRef) -> Option<Vec<u8>>;
-}
-
-impl<S> ContentFetcher for S
-where
-    S: ContentStore + Send + Sync + ?Sized,
-{
-    fn fetch(&self, r: &ContentRef) -> Option<Vec<u8>> {
-        match self.get(r) {
-            Ok(payload) => Some(payload.to_vec()),
-            Err(NotFound) => None,
-        }
-    }
-}
 
 /// Backend name reported in `InferenceOutput.backend_name`.
 pub(crate) const BACKEND_NAME: &str = "kx-llamacpp";
@@ -123,7 +98,7 @@ impl LlamaInferenceBackend {
     /// Bind a content store the multi-modal path fetches image bytes from.
     ///
     /// Additive: text-only dispatch ignores it. Any `Send + Sync`
-    /// [`ContentStore`] (e.g. an `Arc<LocalFsContentStore>`) coerces in via the
+    /// `ContentStore` (e.g. an `Arc<LocalFsContentStore>`) coerces in via the
     /// [`ContentFetcher`] blanket impl. Without it, an image dispatch fails
     /// closed (`Unsupported`).
     #[must_use]

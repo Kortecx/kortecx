@@ -77,6 +77,7 @@ repository   = "https://github.com/Kortecx/kortecx"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 thiserror          = "1"
+base64             = "0.22"
 bincode            = { version = "2", features = ["serde"] }
 blake3             = "1"
 bytes              = { version = "1", features = ["serde"] }

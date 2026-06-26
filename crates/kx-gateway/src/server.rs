@@ -1112,19 +1112,26 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             .first()
             .map(|e| e.model_id.clone())
             .unwrap_or_default();
+        // `model_path` is the llama GGUF path (meaningful only on the in-process FFI
+        // build); empty on the FFI-free serve-engine build (Ollama owns its own files).
         #[cfg(feature = "inference")]
-        let (model_path, feature_vision) = if model_id.is_empty() {
-            (String::new(), false)
+        let model_path = if model_id.is_empty() {
+            String::new()
         } else {
-            (
-                crate::model_exec::resolve_serve_model()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                crate::model_exec::resolve_serve_mmproj().is_some(),
-            )
+            crate::model_exec::resolve_serve_model()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default()
         };
         #[cfg(not(feature = "inference"))]
-        let (model_path, feature_vision) = (String::new(), false);
+        let model_path = String::new();
+        // PR-B2: `feature_vision` is the ENGINE-AGNOSTIC serve fact — any served model
+        // declares the `image` input modality (llama.cpp mmproj OR an Ollama vision tag).
+        // Derived from the catalog (the SAME signal as `vision_supported` that seeds the
+        // vision recipe), so `kx info` is honest on both engines (was llama-mmproj-only
+        // ⇒ falsely `off` for a working Ollama vision serve).
+        let feature_vision = model_catalog_entries
+            .iter()
+            .any(|e| e.modalities.iter().any(|m| m == "image"));
         let auth_mode = if cfg.dev_allow_local {
             "dev-local"
         } else if cfg.auth_tokens.is_empty() {
