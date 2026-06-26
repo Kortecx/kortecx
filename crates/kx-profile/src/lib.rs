@@ -32,10 +32,12 @@ pub mod mote_detail_spikes;
 pub mod react_spikes;
 pub mod report;
 pub mod spikes;
+pub mod vision_spikes;
 
 pub use chat_spikes::{ChatOpts, ChatSamples};
 pub use content_spikes::ContentSamples;
 pub use embed_spikes::{EmbedOpts, EmbedSamples};
+pub use vision_spikes::{VisionOpts, VisionSamples};
 pub use env::{capture_git_sha, Environment};
 pub use error::ProfileError;
 pub use mote_detail_spikes::MoteDetailSamples;
