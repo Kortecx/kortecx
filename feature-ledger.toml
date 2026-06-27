@@ -1,0 +1,49 @@
+# feature-ledger.toml — the OSS-lane feature registry (Golden Rule 25).
+#
+# One source of truth for what is in-flight / merged on the OSS shared surface +
+# the cross-lane SEAMS, so concurrent sessions can SEE state and INHERIT/EXTEND
+# prior work instead of re-building or colliding. Read this BEFORE starting a
+# feature; update the entry's `state` as it progresses; declare `inherits` so the
+# dependency graph is explicit.
+#
+# This file carries only OSS-public + seam entries (no cloud internals). The cloud
+# lane has its own ledger in the cloud repo; the PRIVATE master ledger
+# (docs/feature-ledger.md, corpus) reconciles BOTH lanes.
+#
+# Fields:
+#   id        stable kebab-case identifier
+#   lane      "oss" (public shared surface) | "seam" (cloud→OSS push-the-seam)
+#   state     "planned" | "in-progress" | "in-review" | "merged"
+#   pr        OSS PR number, once opened
+#   branch    working branch
+#   covers    capabilities this feature provides (what a later feature can reuse)
+#   inherits  feature ids this builds on
+schema = 1
+
+[[feature]]
+id       = "oss-cloud-sync-infra"
+lane     = "oss"
+state    = "in-review"
+pr       = "262"
+branch   = "feat/oss-cloud-sync-infra"
+covers   = [
+  "shared-paths.toml boundary manifest (shared/private_only/divergent)",
+  "scripts/shared-paths.sh reader",
+  "just port / cmp-shared / leak-check / shared-lane-status",
+  "crates/kx-cli/tests/shared_boundary.rs guard",
+  "scripts/lane-guard.sh no-cross-merge gate",
+  "feature-ledger.toml registry",
+]
+inherits = []
+
+[[feature]]
+id       = "serve-engine-public-seam"
+lane     = "seam"
+state    = "planned"
+covers   = [
+  "pub trait ServeEngine",
+  "EngineRegistration + ServeEngineFactory",
+  "extra_engine_factories hook in build_serve_runtime / GatewayConfig",
+]
+inherits = ["oss-cloud-sync-infra"]
+notes    = "Lets an external/cloud crate register a serve engine without editing OSS gateway per-engine. Digest-invariant; frozen trio untouched. The canonical cloud→OSS push-the-seam instance."

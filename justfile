@@ -881,6 +881,109 @@ doctor:
     fi
 
 # ============================================================================
+# Cross-repo sync (OSS ↔ private) — the boundary is codified in shared-paths.toml
+# ============================================================================
+
+# Port [shared]-path commits between two checkouts (the OSS↔private mirror, both
+# directions). Pathspec-limited format-patch → am: the patch PHYSICALLY contains
+# only shared hunks (private paths are excluded at the source), so nothing private
+# can ride along; a header grep refuses any leak as belt-and-suspenders. On an `am`
+# conflict the operator ABORTS + re-baselines — never `--skip` (silent divergence).
+#   just port src=/path/to/oss dst=/path/to/private range=origin/main..HEAD
+port src dst range:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PD="$(mktemp -d)"
+    trap 'rm -rf "$PD"' EXIT
+    git -C "{{src}}" format-patch "{{range}}" --no-stat --keep-subject -o "$PD" -- \
+        $(scripts/shared-paths.sh pathspec-shared) \
+        $(scripts/shared-paths.sh pathspec-exclude-private)
+    if ! ls "$PD"/*.patch >/dev/null 2>&1; then
+        echo "no [shared]-path commits in {{range}} — nothing to port"
+        exit 0
+    fi
+    REGEX="$(scripts/shared-paths.sh grep-regex-private)"
+    PATHS="$( { grep -hE '^\+\+\+ b/' "$PD"/*.patch | sed 's#^+++ b/##'; \
+                grep -hE '^--- a/'   "$PD"/*.patch | sed 's#^--- a/##'; } | sort -u )"
+    if echo "$PATHS" | grep -E "$REGEX" >/dev/null 2>&1; then
+        echo "REFUSE: patch touches a private-only path:"
+        echo "$PATHS" | grep -E "$REGEX" | sed 's/^/    /'
+        exit 3
+    fi
+    echo "applying $(ls "$PD"/*.patch | wc -l | tr -d ' ') shared-path patch(es) to {{dst}} ..."
+    git -C "{{dst}}" am --3way "$PD"/*.patch
+    echo "ported. Run \`just cmp-shared\` in {{dst}} to prove byte-equivalence."
+
+# Prove [shared] paths are byte-equivalent to the OTHER repo at REF. Run in either
+# checkout; defaults to the configured `oss`/`private` remote main. Empty diff =
+# byte-equivalent. This is the INTER-repo equality gate (distinct from the
+# INTRA-repo `check-reproducible` rlib-shasum gate — do not conflate them).
+#   just cmp-shared                 # vs oss/main or private/main
+#   just cmp-shared ref=oss/abc123  # vs a pinned OSS base sha
+cmp-shared ref="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REF="{{ref}}"
+    if [ -z "$REF" ]; then
+        if git remote | grep -qx oss; then git fetch -q oss; REF="oss/main";
+        elif git remote | grep -qx private; then git fetch -q private; REF="private/main";
+        else echo "no 'oss'/'private' remote — pass ref=<remote>/<branch>"; exit 2; fi
+    fi
+    DRIFT="$(git diff --name-only "$REF" -- $(scripts/shared-paths.sh pathspec-shared))"
+    if [ -n "$DRIFT" ]; then
+        echo "SHARED-PATH DRIFT vs $REF:"; echo "$DRIFT" | sed 's/^/    /'; exit 1
+    fi
+    echo "shared paths byte-equivalent vs $REF"
+
+# Local mirror of the SN-2 private-content leak guard (the CI half is the
+# divergent .github/workflows/leak-check.yml). Scans the diff vs BASE for
+# private-only PATHS and private-architecture TERMS. Run before pushing an OSS PR.
+leak-check base="origin/main":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REGEX="$(scripts/shared-paths.sh grep-regex-private)"
+    CHANGED="$(git diff --name-only {{base}}...HEAD)"
+    HITS="$(echo "$CHANGED" | grep -E "$REGEX" || true)"
+    if [ -n "$HITS" ]; then
+        echo "LEAK (path): private-only path(s) in this diff:"; echo "$HITS" | sed 's/^/    /'; exit 1
+    fi
+    ADDS="$(git diff {{base}}...HEAD --unified=0 \
+        -- ':(exclude)shared-paths.toml' ':(exclude)scripts/shared-paths.sh' \
+           ':(exclude).github/workflows/leak-check.yml' ':(exclude).github/pull_request_template.md' \
+        | grep -E '^\+' | grep -v -E '^\+\+\+' || true)"
+    FAIL=0
+    while IFS= read -r term; do
+        [ -z "$term" ] && continue
+        if echo "$ADDS" | grep -F "$term" >/dev/null 2>&1; then
+            echo "LEAK (term): added line(s) reference private term '$term'"; FAIL=1
+        fi
+    done < <(scripts/shared-paths.sh deny-terms)
+    [ "$FAIL" -eq 0 ] || exit 1
+    echo "leak-check clean vs {{base}}"
+
+# Guard the SHARED lane: only ONE shared-path change should be in flight at a time
+# (digest-chain + corpus coherence — mechanizes GR21 / one-PR-at-a-time). Fails if
+# a private mirror round-trip (mirror/oss-*) is still open. Cloud-lane work is NOT
+# gated (it touches no shared path). Reads the private slug from the `private`
+# remote so the shared justfile never hardcodes it.
+shared-lane-status:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "gh not installed — cannot check open mirror PRs (manual check required)"; exit 0
+    fi
+    PRIV="$(git remote get-url private 2>/dev/null | sed -E 's#.*github\.com[:/]##; s#\.git$##' || true)"
+    if [ -z "$PRIV" ]; then echo "no 'private' remote — run from the OSS checkout"; exit 0; fi
+    OPEN="$(gh pr list --repo "$PRIV" --state open --search 'head:mirror/oss-' \
+        --json headRefName --jq '.[].headRefName' 2>/dev/null || true)"
+    if [ -n "$OPEN" ]; then
+        echo "SHARED LANE BUSY — open private mirror branch(es):"; echo "$OPEN" | sed 's/^/    /'
+        echo "Finish the mirror round-trip before opening another shared-path PR."
+        exit 1
+    fi
+    echo "shared lane clear"
+
+# ============================================================================
 # Cleanup
 # ============================================================================
 
