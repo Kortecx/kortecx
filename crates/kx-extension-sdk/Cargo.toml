@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-extension-sdk"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx Connector/Extension SDK (D167 E0) — the curated, semver-pinned authoring surface for external MCP connectors: a `prelude` re-exporting the dial / tool-registry / warrant / secret seams + a per-connector conformance harness that mechanizes a subset of the Extension Acceptance Gate (out-of-process kind · warrant/SN-8 · secret-by-ref · on/off). An FFI-FREE leaf (the dep_wall pins it): never the journal, the gateway service, the frozen trio, or kx-llamacpp. The optional `gateway-admin` feature additionally surfaces the host McpGatewayAdmin/ToolRegistryAdmin seams (it pulls kx-gateway-core → proto/tonic; still FFI-free)."
+
+[lib]
+path = "src/lib.rs"
+
+# The canonical reference connector: a minimal, COMPLETE MCP stdio server (full
+# initialize → tools/list → tools/call lifecycle). Doubles as the docs example and
+# the deterministic positive control for the conformance harness.
+[[bin]]
+name = "kx-connector-example"
+path = "src/bin/reference_connector.rs"
+
+[features]
+default = []
+# OPT-IN: re-export the HOST admin seams (McpGatewayAdmin / ToolRegistryAdmin) for the
+# rare author wiring a custom gateway host. Adds the kx-gateway-core edge (proto + tonic);
+# still FFI-free, but heavier — off by default so the leaf stays light + single-tier.
+gateway-admin = ["dep:kx-gateway-core"]
+
+[dependencies]
+# The connector dial path + its seams (FFI-free; carries no proto/tonic).
+kx-mcp-gateway   = { workspace = true }
+# MCP transports (stdio/HTTP) + secret-by-ref + egress vetting + the capability body.
+kx-mcp           = { workspace = true }
+# The durable tool registry + the ToolDef / ToolKind / schema vocabulary.
+kx-tool-registry = { workspace = true }
+# The warrant boundary a connector's tools run under (scopes, ceilings, requirement).
+kx-warrant       = { workspace = true }
+# ToolName / ToolVersion (the tool identity referenced by a warrant grant).
+kx-mote          = { workspace = true }
+# The broker the conformance harness dispatches a dialed tool through (warrant gate).
+kx-capability    = { workspace = true }
+# The content store the broker stages a tool's result into (conformance dispatch).
+kx-content       = { workspace = true }
+# Empty parent set for the conformance probe Mote (Mote::new takes a SmallVec).
+smallvec         = { workspace = true }
+# ConformanceReport JSON (the `just test-connector` machine-readable output).
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+thiserror        = { workspace = true }
+# OPT-IN host admin seams (gateway-admin feature only).
+kx-gateway-core  = { workspace = true, optional = true }
+
+[lints]
+workspace = true

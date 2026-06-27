@@ -23,7 +23,7 @@ schema = 1
 [[feature]]
 id       = "oss-cloud-sync-infra"
 lane     = "oss"
-state    = "in-review"
+state    = "merged"
 pr       = "262"
 branch   = "feat/oss-cloud-sync-infra"
 covers   = [
@@ -47,3 +47,22 @@ covers   = [
 ]
 inherits = ["oss-cloud-sync-infra"]
 notes    = "Lets an external/cloud crate register a serve engine without editing OSS gateway per-engine. Digest-invariant; frozen trio untouched. The canonical cloud→OSS push-the-seam instance."
+
+[[feature]]
+id       = "connector-extension-sdk"
+lane     = "seam"
+state    = "in-progress"
+branch   = "feat/seam-extension-sdk"
+covers   = [
+  "crates/kx-extension-sdk: FFI-free leaf crate (D167 E0)",
+  "prelude: curated + api_surface-pinned re-export of the connector seams",
+  "conformance: run_conformance + the 10-pt-gate subset (items 3/5/7/10)",
+  "kx-connector-example reference connector ([[bin]]) — author template + positive control",
+  "flow().with_mcp() / flow().withMcp() — connectors reachable from the chaining entry point",
+  "kx.connections.{add,list,test,remove,discover} sub-client (Py + TS)",
+  "just test-connector / test-connector-real / test-connector-live",
+  "connector-conformance CI gate (pinned real external MCP, offline)",
+  "gateway-admin feature: opt-in McpGatewayAdmin/ToolRegistryAdmin (host authoring)",
+]
+inherits = ["oss-cloud-sync-infra"]
+notes    = "D167 E0 / D170 foundation seam #1. Curates the (already-pub, scattered) connector seams as a semver'd contract so parallel sidecars build against a stable surface. Digest 7d22d4bd invariant (leaf crate, re-exports + with_mcp add no journal facts); frozen trio untouched; no proto/journal change; additive-only."

@@ -259,6 +259,56 @@ def _encode_args(args: ArgsType) -> bytes:
 # --- sync client -------------------------------------------------------------
 
 
+class _Connections:
+    """The ``kx.connections`` namespace — connector (external MCP server) admin, with
+    a verb vocabulary matching the ``kx connections`` CLI (``add`` / ``list`` /
+    ``test`` / ``remove`` / ``discover``). Each method delegates 1:1 to the flat
+    ``register_mcp_server`` / ``list_mcp_servers`` / ``test_mcp_server`` /
+    ``deregister_mcp_server`` / ``discover_server_tools`` methods (which remain for
+    back-compat). A connector = an external MCP tool server (see ``kx-extension-sdk``)."""
+
+    def __init__(self, client: "KxClient") -> None:
+        self._c = client
+
+    def add(
+        self,
+        name: str,
+        *,
+        transport: str = "stdio",
+        endpoint: str,
+        args: Optional[Sequence[str]] = None,
+        tls_required: bool = False,
+        credential_ref: str = "",
+        session_mode: str = "stateless",
+    ) -> "RegisterServerResult":
+        """Register (dial + discover) a connector. See ``register_mcp_server``."""
+        return self._c.register_mcp_server(
+            name=name,
+            transport=transport,
+            endpoint=endpoint,
+            args=args,
+            tls_required=tls_required,
+            credential_ref=credential_ref,
+            session_mode=session_mode,
+        )
+
+    def list(self, *, limit: int = 0, after_name: str = "") -> "McpServersPage":
+        """List registered connectors + health. See ``list_mcp_servers``."""
+        return self._c.list_mcp_servers(limit=limit, after_name=after_name)
+
+    def test(self, name: str) -> bool:
+        """Test a connector's reachability. See ``test_mcp_server``."""
+        return self._c.test_mcp_server(name=name)
+
+    def remove(self, name: str) -> bool:
+        """Remove a connector + its tools. See ``deregister_mcp_server``."""
+        return self._c.deregister_mcp_server(name=name)
+
+    def discover(self, name: str) -> "RegisteredToolsPage":
+        """Re-dial + re-discover a connector's tools. See ``discover_server_tools``."""
+        return self._c.discover_server_tools(name=name)
+
+
 class KxClient:
     """A synchronous client for a running ``kx serve`` gateway."""
 
@@ -1538,6 +1588,16 @@ class KxClient:
         req = _g.DeregisterMcpServerRequest(server_name=name)
         resp = self._call(lambda: self._stub.DeregisterMcpServer(req, metadata=self._md))
         return resp.removed
+
+    @property
+    def connections(self) -> _Connections:
+        """The connector (external MCP server) admin namespace —
+        ``kx.connections.add / list / test / remove / discover`` (the verb vocabulary
+        of the ``kx connections`` CLI). The flat ``register_mcp_server`` etc. remain
+        for back-compat. A connector is an external MCP tool server (see
+        ``kx-extension-sdk``); chain one straight into a flow with
+        ``kx.flow().with_mcp(...)``."""
+        return _Connections(self)
 
     def submit_feedback(
         self,

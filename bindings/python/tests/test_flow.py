@@ -161,6 +161,12 @@ class _FakeClient:
     def __init__(self) -> None:
         self.any_calls = 0
         self.term_calls = 0
+        self.mcp_calls: list = []
+
+    def register_mcp_server(self, **kw: object) -> object:
+        # Records the .with_mcp() pre-submit registrations (in order).
+        self.mcp_calls.append(kw)
+        return object()
 
     def run_chain(self, chain: object, *, wait: bool = False, timeout: float = 120.0) -> object:
         from kortecx.run import Run
@@ -220,3 +226,65 @@ def test_agent_stream_returns_a_run() -> None:
 
     run = Agent("hi").stream("task", client=_FakeClient())
     assert isinstance(run, Run)
+
+
+# -- .with_mcp() — connectors reachable from the single chaining entry point --
+
+
+def test_with_mcp_registers_connectors_before_submit_in_order() -> None:
+    fc = _FakeClient()
+    (
+        flow()
+        .with_mcp("a", endpoint="x", args=["--a"])
+        .agent("hi", tools=["a/echo"])
+        .with_mcp("b", transport="http", endpoint="https://h/rpc")
+        .run(wait=False, client=fc)
+    )
+    assert [c["name"] for c in fc.mcp_calls] == ["a", "b"], "registered in declaration order"
+    assert fc.mcp_calls[0]["endpoint"] == "x"
+    assert fc.mcp_calls[1]["transport"] == "http"
+
+
+def test_with_mcp_is_digest_invariant() -> None:
+    # .with_mcp() is a pre-submit side effect — it must NOT change the lowered request,
+    # so the golden tri-surface digest holds.
+    with_conn = flow().agent("hi").with_mcp("a", endpoint="x").build()
+    plain = flow().agent("hi").build()
+    assert with_conn == plain
+
+
+def test_connections_facade_delegates_to_flat_methods() -> None:
+    from kortecx.client import _Connections
+
+    class _Stub:
+        def __init__(self) -> None:
+            self.calls: list = []
+
+        def register_mcp_server(self, **kw: object) -> str:
+            self.calls.append(("add", kw["name"]))
+            return "R"
+
+        def list_mcp_servers(self, **kw: object) -> str:
+            self.calls.append(("list", None))
+            return "L"
+
+        def test_mcp_server(self, *, name: str) -> bool:
+            self.calls.append(("test", name))
+            return True
+
+        def deregister_mcp_server(self, *, name: str) -> bool:
+            self.calls.append(("remove", name))
+            return True
+
+        def discover_server_tools(self, *, name: str) -> str:
+            self.calls.append(("discover", name))
+            return "D"
+
+    stub = _Stub()
+    conn = _Connections(stub)
+    assert conn.add("x", endpoint="e") == "R"
+    assert conn.list() == "L"
+    assert conn.test("x") is True
+    assert conn.remove("x") is True
+    assert conn.discover("x") == "D"
+    assert [k for k, _ in stub.calls] == ["add", "list", "test", "remove", "discover"]

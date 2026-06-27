@@ -1043,3 +1043,47 @@ jobs:
 
       - name: just scale-smoke
         run: just scale-smoke
+
+  # ---------------------------------------------------------------------------
+  # connector-conformance — the D167 Connector/Extension SDK gate (E0). Dials a
+  # PINNED REAL third-party MCP server (the official filesystem server) through the
+  # real gateway path and runs the Extension Acceptance Gate subset (items 3/5/7/10:
+  # out-of-process · warrant/SN-8 · secret-by-ref · on/off). `npm ci` restores the
+  # EXACT committed lockfile (the only network op — cached); the dial + every
+  # assertion run OFFLINE over a stdio subprocess, so no network flakiness enters the
+  # gate (GR12). REQUIRED: promote to a branch-protection check once green.
+  # ---------------------------------------------------------------------------
+  connector-conformance:
+    name: connector-conformance (D167 — real external MCP through the gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — the SDK is FFI-free)
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: cargo --version
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Set up Node (cache the pinned MCP-server lockfile)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/kx-extension-sdk/tests/fixtures/real-connector/package-lock.json
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-connconf-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-connconf-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: Dial a pinned REAL external MCP server through the conformance gate
+        run: just test-connector-real

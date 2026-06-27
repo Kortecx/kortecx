@@ -1524,6 +1524,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-extension-sdk"
+version = "0.1.0"
+dependencies = [
+ "kx-capability",
+ "kx-content",
+ "kx-gateway-core",
+ "kx-mcp",
+ "kx-mcp-gateway",
+ "kx-mote",
+ "kx-tool-registry",
+ "kx-warrant",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "kx-fleet"
 version = "0.1.1"
 dependencies = [
