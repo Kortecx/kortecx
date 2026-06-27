@@ -54,6 +54,7 @@ members = [
     "crates/kx-cli",
     "crates/kx-profile",
     "crates/kx-otel",
+    "crates/kx-extension-sdk",
 ]
 exclude = [
     "kx-cloud",

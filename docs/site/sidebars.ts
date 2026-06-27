@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         "agent-runner",
         "security",
         "tools",
+        "authoring-a-connector",
         "context",
         "models",
         "local-inference-engines",

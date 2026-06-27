@@ -69,6 +69,10 @@ class Flow:
         self._node: Optional[_Node] = None
         self._seed = seed
         self._context: List[str] = []
+        #: Connectors to register (each a ``register_mcp_server`` kwargs dict) BEFORE
+        #: this flow submits — see :meth:`with_mcp`. Stored OFF the lowered graph so
+        #: ``to_chain`` / ``build`` stay byte-identical (the golden digest holds).
+        self._mcp: List[dict] = []
         #: AGENTIC-VISION: an image ref pending for the NEXT agent step (set by
         #: :meth:`image`, consumed + cleared by :meth:`agent`). Per-step, so a multi-step
         #: flow can ground each step with a different image.
@@ -165,6 +169,54 @@ class Flow:
         self._context.extend(handles)
         return self
 
+    def with_mcp(
+        self,
+        name: str,
+        *,
+        transport: str = "stdio",
+        endpoint: str,
+        args: Optional[List[str]] = None,
+        tls_required: bool = False,
+        credential_ref: str = "",
+        session_mode: str = "stateless",
+    ) -> "Flow":
+        """Register an external MCP **connector** at run time, BEFORE this flow
+        submits, so its namespaced ``<name>/<tool>`` tools resolve for a downstream
+        ``.agent(tools=[...])`` / ``.tool(...)`` — connectors are thus reachable from
+        the SAME single chaining entry point as everything else::
+
+            (kx.flow()
+               .with_mcp("fs", endpoint="npx",
+                         args=["-y", "@modelcontextprotocol/server-filesystem", "/data"])
+               .agent("list /data", tools=["fs/list_directory"])
+               .run())
+
+        Pure pre-submit sugar over :meth:`KxClient.register_mcp_server` (same args; a
+        connector = an external MCP server, see ``kx-extension-sdk``). It does NOT
+        change the lowered workflow — :meth:`to_chain` / :meth:`build` are
+        byte-identical with or without it, so the golden tri-surface digest holds;
+        registration is an imperative side effect, never a DAG node. Idempotent
+        (server-derived id + upsert), so re-running the flow is safe. ``credential_ref``
+        names an env var / vault key — the secret VALUE never travels (D81)."""
+        self._mcp.append(
+            {
+                "name": name,
+                "transport": transport,
+                "endpoint": endpoint,
+                "args": list(args or []),
+                "tls_required": tls_required,
+                "credential_ref": credential_ref,
+                "session_mode": session_mode,
+            }
+        )
+        return self
+
+    def _register_mcp(self, kx) -> None:
+        """Register each :meth:`with_mcp` connector (in declaration order) before the
+        flow submits, so referenced ``<name>/<tool>`` tools resolve at compile."""
+        for spec in self._mcp:
+            kx.register_mcp_server(**spec)
+
     # -- terminals --
 
     def _require_node(self) -> "_Node":
@@ -201,6 +253,7 @@ class Flow:
         from .defaults import default_client
 
         kx = client if client is not None else default_client()
+        self._register_mcp(kx)
         return kx.run_chain(self.to_chain(), wait=wait, timeout=timeout)
 
     def submit(self, *, client=None) -> "Run":
@@ -209,6 +262,7 @@ class Flow:
         from .defaults import default_client
 
         kx = client if client is not None else default_client()
+        self._register_mcp(kx)
         run = kx.run_chain(self.to_chain(), wait=False)
         return run  # type: ignore[return-value]
 

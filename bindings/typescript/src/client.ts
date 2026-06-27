@@ -1443,6 +1443,26 @@ export abstract class KxClientBase {
   }
 
   /**
+   * The connector (external MCP server) admin namespace — `kx.connections.add /
+   * list / test / remove / discover` (the verb vocabulary of the `kx connections`
+   * CLI). Each method delegates 1:1 to the flat `registerMcpServer` etc. (which
+   * remain for back-compat). A connector is an external MCP tool server (see
+   * `kx-extension-sdk`); chain one straight into a flow with
+   * `flow().withMcp(...)`.
+   */
+  get connections() {
+    return {
+      add: (input: RegisterMcpServerInput): Promise<RegisterServerResult> =>
+        this.registerMcpServer(input),
+      list: (opts: { limit?: number; afterName?: string } = {}): Promise<McpServersPage> =>
+        this.listMcpServers(opts),
+      test: (name: string): Promise<boolean> => this.testMcpServer(name),
+      remove: (name: string): Promise<boolean> => this.deregisterMcpServer(name),
+      discover: (name: string): Promise<RegisteredToolsPage> => this.discoverServerTools(name),
+    };
+  }
+
+  /**
    * Record 👍/👎 feedback on an answer (PR-4.1) — a client-origin write into the
    * gateway's rebuildable-to-empty `feedback.db` sidecar (advisory product
    * signal, never truth/identity/a digest input). The caller principal + the

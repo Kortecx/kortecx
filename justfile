@@ -21,7 +21,7 @@ check: fmt-check clippy test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke
+ci: fmt-check clippy test deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke test-connector-real
 
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
@@ -46,6 +46,43 @@ test:
 # Build documentation; deny warnings (catches broken intra-doc links).
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+# ============================================================================
+# Connector / Extension SDK (D167 E0) conformance
+# ============================================================================
+
+# Dial a connector through the real gateway path + run the D167 Extension
+# Acceptance Gate subset (items 3/5/7/10). No endpoint → the bundled reference
+# connector (kx-connector-example).
+#   just test-connector                            # the reference connector
+#   just test-connector ./my-mcp-server --flag     # a stdio server + args
+#   just test-connector https://mcp.example/rpc    # a Streamable-HTTP server
+test-connector *endpoint:
+    cargo build -q -p kx-extension-sdk
+    cargo run -q -p kx-extension-sdk --example conformance -- {{endpoint}}
+
+# The connector-conformance HARD GATE: dial a pinned REAL third-party MCP server
+# (the official filesystem server) and run the gate. `npm ci` restores the EXACT
+# committed lockfile (the only network op — cached in CI); the dial + every
+# assertion then run OFFLINE over a stdio subprocess, so no network flakiness
+# enters the gate (GR12). Run as a required CI check + part of `ci`.
+test-connector-real:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FIX="crates/kx-extension-sdk/tests/fixtures/real-connector"
+    echo "Installing the pinned real MCP server (npm ci, deterministic)…"
+    npm ci --prefix "$FIX"
+    BIN="$FIX/node_modules/.bin/mcp-server-filesystem"
+    ROOT="$(mktemp -d)"
+    echo "hello from kortecx" > "$ROOT/note.txt"
+    echo "Dialing $BIN (offline) through the conformance harness…"
+    cargo run -q -p kx-extension-sdk --example conformance -- "$BIN" "$ROOT"
+
+# The LIVE agentic tool-calling drive over a freshly-registered connector. Locally
+# validate on BOTH engines (Ollama + llama.cpp) with Gemma-4 (GR24); in CI it rides
+# the real-model-e2e job (Qwen3-0.6B). #[ignore]'d; needs a GGUF.
+test-connector-live: fetch-gemma-model
+    cargo test -p kx-gateway --features inference react_serve_connector -- --ignored --nocapture
 
 # ============================================================================
 # Onboarding / install automation (sudo-free, opt-in)

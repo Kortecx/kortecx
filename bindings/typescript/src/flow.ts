@@ -33,6 +33,7 @@ import { KxUsage } from "./errors.js";
 import type { SubmitWorkflowRequestSchema } from "./gen/kortecx/v1/gateway_pb.js";
 import type { Result, Run } from "./run.js";
 import { type LocalToolDef, isLocalTool, localToolNode } from "./tools.js";
+import type { RegisterMcpServerInput } from "./toolscout.js";
 
 /** A thing a builder method can fold in: a prompt (⇒ an agent step) or a `Frag`. */
 export type FlowItem = string | Frag;
@@ -62,6 +63,10 @@ function toFrag(item: FlowItem): Frag {
  * return). */
 export interface FlowClient {
   runChain(chain: Chain, opts?: { wait?: boolean; timeoutMs?: number }): Promise<unknown>;
+  /** OPTIONAL — present on the real {@link import("./client.js").KxClient}. Used by
+   * {@link Flow.withMcp} to register a connector before the flow submits. A test double
+   * without it is fine UNLESS the flow uses `.withMcp(...)` (then `run()` throws). */
+  registerMcpServer?(input: RegisterMcpServerInput): Promise<unknown>;
 }
 
 /** Resolve the client for a terminal: the explicit one, else the zero-config Node
@@ -90,6 +95,10 @@ export class Flow {
   private node: Frag | undefined;
   private readonly seed: number;
   private readonly ctx: string[] = [];
+  /** Connectors to register (external MCP servers) BEFORE this flow submits — see
+   * {@link withMcp}. Stored OFF the lowered graph so `toChain`/`build` stay
+   * byte-identical (the golden digest holds). */
+  private readonly mcp: RegisterMcpServerInput[] = [];
   /** AGENTIC-VISION: an image ref pending for the NEXT agent step (set by {@link image},
    * consumed + cleared by {@link agent}). Per-step, so a multi-step flow can ground each
    * step with a different image. */
@@ -182,6 +191,41 @@ export class Flow {
     return this;
   }
 
+  /** Register an external MCP **connector** at run time, BEFORE this flow submits, so
+   * its namespaced `<name>/<tool>` tools resolve for a downstream
+   * `.agent({ tools: [...] })` / `.tool(...)` — connectors are thus reachable from the
+   * SAME single chaining entry point as everything else:
+   *
+   * ```ts
+   * await flow()
+   *   .withMcp({ name: "fs", endpoint: "npx",
+   *              args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"] })
+   *   .agent("list /data", { tools: ["fs/list_directory"] })
+   *   .run({ client: kx });
+   * ```
+   *
+   * Pure pre-submit sugar over {@link import("./client.js").KxClient.registerMcpServer}
+   * (a connector = an external MCP server, see `kx-extension-sdk`). It does NOT change
+   * the lowered workflow — {@link toChain} / {@link build} are byte-identical with or
+   * without it, so the golden tri-surface digest holds; registration is an imperative
+   * side effect, never a DAG node. Idempotent (server-derived id + upsert).
+   * `credentialRef` names an env var / vault key — the secret VALUE never travels (D81). */
+  withMcp(spec: RegisterMcpServerInput): this {
+    this.mcp.push(spec);
+    return this;
+  }
+
+  /** Register each {@link withMcp} connector (declaration order) before submit. */
+  private async registerMcp(client: FlowClient): Promise<void> {
+    if (this.mcp.length === 0) return;
+    if (typeof client.registerMcpServer !== "function") {
+      throw new KxUsage(
+        "withMcp() needs a client that can register connectors — pass { client: new KxClient(...) }",
+      );
+    }
+    for (const spec of this.mcp) await client.registerMcpServer(spec);
+  }
+
   /** Lower this flow to a {@link Chain}. */
   toChain(): Chain {
     if (this.node === undefined) {
@@ -215,7 +259,9 @@ export class Flow {
   async run(
     opts: { wait?: boolean; timeoutMs?: number; client?: FlowClient } = {},
   ): Promise<Run | Result> {
-    return resolveClient(opts.client).runChain(this.toChain(), {
+    const client = resolveClient(opts.client);
+    await this.registerMcp(client);
+    return client.runChain(this.toChain(), {
       wait: opts.wait ?? true,
       timeoutMs: opts.timeoutMs,
     }) as Promise<Run | Result>;

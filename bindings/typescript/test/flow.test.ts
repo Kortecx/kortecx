@@ -192,4 +192,40 @@ describe("V2a g1/g2 — Run-from-handle, await-any wait, zero-config, Agent.stre
     const run = await new Agent("hi").stream("task", { client: new FakeClient() });
     expect(run).toBeInstanceOf(Run);
   });
+
+  // -- .withMcp() — connectors reachable from the single chaining entry point --
+
+  it("withMcp registers connectors before submit, in declaration order", async () => {
+    const fc = new FakeClient();
+    const names: string[] = [];
+    (
+      fc as unknown as {
+        registerMcpServer: (i: { name: string }) => Promise<unknown>;
+      }
+    ).registerMcpServer = async (i) => {
+      names.push(i.name);
+      return {};
+    };
+    await flow()
+      .withMcp({ name: "a", endpoint: "x", args: ["--a"] })
+      .agent("hi", { tools: ["a/echo"] })
+      .withMcp({ name: "b", transport: "http", endpoint: "https://h/rpc" })
+      .run({ client: fc, wait: false });
+    expect(names).toEqual(["a", "b"]);
+  });
+
+  it("withMcp is digest-invariant (does not change the lowered request)", () => {
+    const withConn = JSON.stringify(
+      flow().agent("hi").withMcp({ name: "a", endpoint: "x" }).build(),
+    );
+    const plain = JSON.stringify(flow().agent("hi").build());
+    expect(withConn).toBe(plain);
+  });
+
+  it("withMcp throws a clear error when the client cannot register connectors", async () => {
+    const noMcp = { runChain: async () => "X" };
+    await expect(
+      flow().withMcp({ name: "a", endpoint: "x" }).agent("hi").run({ client: noMcp, wait: false }),
+    ).rejects.toThrow(/register connectors/);
+  });
 });

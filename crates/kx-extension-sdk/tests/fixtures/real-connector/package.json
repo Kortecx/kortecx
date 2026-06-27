@@ -1,0 +1,9 @@
+{
+  "name": "kx-connector-conformance-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A pinned REAL third-party MCP server (the official filesystem server) dialed by the connector-conformance CI gate (D167 Extension Acceptance Gate). Installed deterministically via `npm ci` (the cached setup step); the conformance assertions then run fully OFFLINE over a stdio subprocess, so no network flakiness enters the gate.",
+  "dependencies": {
+    "@modelcontextprotocol/server-filesystem": "2026.1.14"
+  }
+}
