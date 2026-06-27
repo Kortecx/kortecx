@@ -293,6 +293,17 @@ export interface RegisterServerResult {
   readonly health: string;
 }
 
+/** The outcome of an operator DIAGNOSTIC tool fire (`callMcpTool`) — a model-free
+ *  "exercise this tool" check through the broker (SN-8 re-enforced; no journal fact).
+ *  `ok` is `false` with a non-empty `error` on a refusal / connector failure. */
+export interface CallToolResult {
+  readonly ok: boolean;
+  /** The tool's JSON response (empty on error). */
+  readonly resultJson: string;
+  /** A short non-sensitive diagnostic (empty on success). */
+  readonly error: string;
+}
+
 /** A `RegisterMcpServer` request shape (PR-6b-1). The runtime DIALS the server;
  *  the host is SSRF-vetted (admission + dial). A credential is referenced by NAME
  *  only (never the secret, D81). The server derives the connection/tool ids (SN-8). */

@@ -8,6 +8,21 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Live tool-calling for runtime-dialed MCP connectors.** An external connector
+  registered at runtime (`kx connections add` / `flow().with_mcp(...)` /
+  `RegisterMcpServer`) is now reliably callable by the autonomous loop: the tool-call
+  parser also accepts a bare paren call (`server/tool(arg="…")`) some local models
+  emit, and a model that names a tool ambiguously (a bare leaf shared by two connected
+  servers, e.g. two `echo` tools) gets a precise, disambiguating re-prompt naming the
+  full `server/tool` ids instead of the chain silently stalling. A dead-lettered
+  agentic turn now always reports a reason (the last refusal, a spent budget, or a
+  dispatch failure) instead of a blank terminal. **`kx connections fire --name <server>
+  --tool <remote> --args '<json>'`** (and `kx.connections.fire(...)` / `connections.fire(...)`
+  in the Python/TypeScript SDKs, plus a per-connector **Fire a tool** panel in the
+  console) exercises one registered tool live through the broker — a model-free "does
+  this connector work" check (it validates args against the tool's schema and enforces
+  the same grant gate; it is a diagnostic, not a recorded run). (serve/tools/SDK/CLI/UI/docs)
+
 - **Gemma-4-12B omni support + model-agnostic prompt templating.** A model-serving
   gateway now formats every model with its OWN chat template — applying the GGUF's
   embedded template through llama.cpp where it renders, with a built-in

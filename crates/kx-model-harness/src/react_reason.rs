@@ -38,12 +38,13 @@ pub(crate) fn bounded_reason(reason: String) -> String {
 }
 
 /// Render the closed `DecodeError` refusal vocabulary into the SAME reason text the
-/// coordinator freezes onto a `ReactBranch::Rejected` fact (the three accept-side
-/// variants `parse_tool_call` can return). The harness's registry-lookup +
-/// schema-validate failures happen later (at dispatch, not decode), so — exactly
-/// like the coordinator's decode site — only these three variants reach the A2
-/// re-prompt; a tool that resolves but whose dispatch fails keeps the harness's
-/// existing fail-closed stop.
+/// coordinator freezes onto a `ReactBranch::Rejected` fact (the accept-side variants
+/// `parse_tool_call` can return). The harness's registry-lookup + schema-validate
+/// failures happen later (at dispatch, not decode), so — exactly like the
+/// coordinator's decode site — only these variants reach the A2 re-prompt; a tool that
+/// resolves but whose dispatch fails keeps the harness's existing fail-closed stop.
+/// The `Ambiguous` arm names the candidate full-ids so the re-prompt STEERS the model
+/// to a unique `<server>/<remote>` id (T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER).
 #[must_use]
 pub(crate) fn decode_error_reason(error: &DecodeError) -> String {
     match error {
@@ -53,6 +54,15 @@ pub(crate) fn decode_error_reason(error: &DecodeError) -> String {
         DecodeError::UngrantedTool { name, version } => format!(
             "the proposed tool `{}@{}` is not granted to this run",
             name.0, version.0
+        ),
+        DecodeError::Ambiguous { name, candidates } => format!(
+            "the tool name `{}` is ambiguous — use the full id: {}",
+            name.0,
+            candidates
+                .iter()
+                .map(|c| c.0.as_str())
+                .collect::<Vec<_>>()
+                .join(" OR ")
         ),
         DecodeError::Oversize { got, max } => {
             format!("the proposed tool arguments are too large ({got} bytes > {max} max)")
@@ -93,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn decode_error_reason_covers_the_three_variants() {
+    fn decode_error_reason_covers_every_variant() {
         assert_eq!(
             decode_error_reason(&DecodeError::Malformed {
                 diagnostic: "trailing garbage".into()
@@ -106,6 +116,18 @@ mod tests {
                 version: ToolVersion("1".into()),
             }),
             "the proposed tool `mcp-danger@1` is not granted to this run"
+        );
+        // T-CONNECTOR-AUTOGRANT: the disambiguating reason names the candidate full-ids
+        // (the EXACT bytes the coordinator's settle site freezes — twin-pinned).
+        assert_eq!(
+            decode_error_reason(&DecodeError::Ambiguous {
+                name: ToolName("echo".into()),
+                candidates: vec![
+                    ToolName("mcp-echo/echo".into()),
+                    ToolName("refconn/echo".into()),
+                ],
+            }),
+            "the tool name `echo` is ambiguous — use the full id: mcp-echo/echo OR refconn/echo"
         );
         assert_eq!(
             decode_error_reason(&DecodeError::Oversize { got: 99, max: 10 }),

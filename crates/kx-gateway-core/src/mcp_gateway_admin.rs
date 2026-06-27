@@ -75,6 +75,13 @@ pub struct RegisterServerOutcome {
     pub health: String,
 }
 
+/// The outcome of an operator DIAGNOSTIC tool fire ([`McpGatewayAdmin::call_tool`]).
+#[derive(Clone, Debug)]
+pub struct CallToolOutcome {
+    /// The tool's response payload bytes (the broker-staged result). Opaque JSON.
+    pub result: Vec<u8>,
+}
+
 /// Why an [`McpGatewayAdmin`] operation was refused.
 #[derive(Debug, thiserror::Error)]
 pub enum McpAdminError {
@@ -145,4 +152,29 @@ pub trait McpGatewayAdmin: Send + Sync {
     /// # Errors
     /// [`McpAdminError::Storage`] on a durable-store failure.
     fn deregister_server(&self, server_name: &str) -> Result<bool, McpAdminError>;
+
+    /// Operator DIAGNOSTIC: fire ONE registered tool (`<server_name>/<remote_name>`)
+    /// through the broker and return its response payload. This is the model-free
+    /// "exercise this tool" affordance (the UI live-fire panel / `kx connections
+    /// fire`). It is NOT a durable agentic effect — no journal fact, no replay, like
+    /// [`Self::test_server`] / [`Self::discover_server`] — and SN-8 is re-enforced
+    /// server-side: the tool must be registered, `args_json` is validated against the
+    /// tool's `inputSchema`, and a single-grant warrant is synthesized from the tool's
+    /// own declared scopes (the client never supplies grants). Default ⇒ unsupported.
+    ///
+    /// # Errors
+    /// [`McpAdminError::NotFound`] if the tool is unregistered;
+    /// [`McpAdminError::InvalidArgument`] on malformed args / schema mismatch;
+    /// [`McpAdminError::Dial`] if the capability fire fails.
+    fn call_tool(
+        &self,
+        server_name: &str,
+        remote_name: &str,
+        args_json: &str,
+    ) -> Result<CallToolOutcome, McpAdminError> {
+        let _ = (server_name, remote_name, args_json);
+        Err(McpAdminError::InvalidArgument(
+            "live tool-fire is not supported by this gateway".to_string(),
+        ))
+    }
 }

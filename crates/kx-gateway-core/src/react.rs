@@ -86,6 +86,54 @@ fn branch_wire(branch: &ReactBranch) -> Vec<BranchRow> {
     }
 }
 
+/// Fix C (T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER): the journal's
+/// `ReactBranch::DeadLettered` carries NO durable reason field, so a dead-letter would
+/// surface blank on the wire — opaque to an operator (the exact gap behind the silent
+/// turn-0 dead-letter). Synthesize a DISPLAY reason from the chain's folded context: a
+/// PURE projection read (never a journal write, never an identity/digest input), so it
+/// changes no committed bytes. `chain` is every wire row sharing the dead-letter's
+/// `(instance_id, step_salt)`. Precedence: (a) the most recent in-chain refusal (the
+/// dead-letter usually follows a proposal the model could not correct), else (b/c) a
+/// budget-exhaustion summary, else (d) a generic terminal flavor (a tool dispatch
+/// failed / no admissible next turn) — never blank, never fabricated.
+fn synthesize_dead_letter_reason(
+    chain: &[&proto::ReactTurnSummary],
+    dead: &proto::ReactTurnSummary,
+) -> String {
+    if let Some(reason) = chain
+        .iter()
+        .filter(|t| t.branch == "rejected" && !t.rejection_reason.is_empty())
+        .max_by_key(|t| t.turn)
+        .map(|t| t.rejection_reason.clone())
+    {
+        return format!(
+            "dead-lettered: the model could not correct a refused proposal under its \
+             budget — last refusal: {reason}"
+        );
+    }
+    let tool_calls = chain.iter().filter(|t| t.branch == "tool").count();
+    let tool_cap = usize::try_from(dead.max_tool_calls).unwrap_or(usize::MAX);
+    if tool_cap > 0 && tool_calls >= tool_cap {
+        return format!(
+            "dead-lettered: tool-call budget exhausted ({tool_calls}/{tool_cap} tool \
+             calls without a final answer)"
+        );
+    }
+    let turns_used = usize::try_from(dead.turn)
+        .unwrap_or(usize::MAX)
+        .saturating_add(1);
+    let turn_cap = usize::try_from(dead.max_turns).unwrap_or(usize::MAX);
+    if turn_cap > 0 && turns_used >= turn_cap {
+        return format!(
+            "dead-lettered: turn budget exhausted ({turns_used}/{turn_cap} turns \
+             without a final answer)"
+        );
+    }
+    "dead-lettered: the chain could not progress (a tool dispatch failed or no further \
+     turn was admissible)"
+        .to_string()
+}
+
 /// Fold the journal's `ReactRound` facts and return one newest-first page of
 /// turn summaries, optionally scoped to one run's `instance_id`. `limit` is
 /// clamped to `[1, MAX_PAGE]` (or [`DEFAULT_PAGE`] when absent). A present-but-
@@ -167,6 +215,25 @@ pub(crate) fn list_react_turns(
             _ => Vec::new(),
         })
         .collect();
+    // Fix C: fill any dead-letter row's blank reason from the chain's folded context
+    // (the `DeadLettered` branch carries none). Done over the FULL fold (before paging)
+    // so the chain context is complete even when the dead-letter lands on the page but
+    // its earlier turns do not. Digest-neutral — a display-only projection read.
+    let synthesized: Vec<(usize, String)> = all
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.branch == "dead_lettered" && t.rejection_reason.is_empty())
+        .map(|(i, dead)| {
+            let chain: Vec<&proto::ReactTurnSummary> = all
+                .iter()
+                .filter(|t| t.instance_id == dead.instance_id && t.step_salt == dead.step_salt)
+                .collect();
+            (i, synthesize_dead_letter_reason(&chain, dead))
+        })
+        .collect();
+    for (i, reason) in synthesized {
+        all[i].rejection_reason = reason;
+    }
     // Newest-first (descending seq); within one turn's fanned ToolBatch (the rows
     // share one seq), ascending call_index so the trajectory reads left-to-right.
     all.sort_by(|a, b| b.seq.cmp(&a.seq).then(a.call_index.cmp(&b.call_index)));
@@ -249,6 +316,117 @@ mod tests {
         // A non-rejected branch carries an empty reason (forward-compat default).
         let answer = resp.turns.iter().find(|t| t.branch == "answer").unwrap();
         assert!(answer.rejection_reason.is_empty());
+    }
+
+    /// Patch the durable caps onto a `turn_fact` (the helper hardcodes 8/8).
+    fn turn_fact_caps(
+        turn: u32,
+        instance: u8,
+        branch: ReactBranch,
+        max_turns: u32,
+        max_tool_calls: u32,
+    ) -> JournalEntry {
+        let mut e = turn_fact(turn, instance, branch);
+        if let JournalEntry::ReactRound {
+            max_turns: mt,
+            max_tool_calls: mtc,
+            ..
+        } = &mut e
+        {
+            *mt = max_turns;
+            *mtc = max_tool_calls;
+        }
+        e
+    }
+
+    #[test]
+    fn dead_letter_after_refusal_surfaces_the_last_refusal_reason() {
+        // Fix C: the DeadLettered branch carries no reason; the view synthesizes one
+        // from the chain — here, the most recent in-chain refusal (the disambiguating
+        // reason from Fix A) so an operator sees WHY the chain died.
+        let j = InMemoryJournal::new();
+        j.append(turn_fact(0, 0xe0, ReactBranch::Pending)).unwrap();
+        j.append(turn_fact(
+            0,
+            0xe0,
+            ReactBranch::Rejected {
+                reason: "the tool name `echo` is ambiguous — use the full id: \
+                         mcp-echo/echo OR refconn/echo"
+                    .to_string(),
+            },
+        ))
+        .unwrap();
+        j.append(turn_fact(0, 0xe0, ReactBranch::DeadLettered))
+            .unwrap();
+        let r = ReadOnly::new(j);
+
+        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let dead = resp
+            .turns
+            .iter()
+            .find(|t| t.branch == "dead_lettered")
+            .expect("a dead-letter row");
+        assert!(
+            dead.rejection_reason.contains("last refusal:")
+                && dead.rejection_reason.contains("ambiguous")
+                && dead.rejection_reason.contains("refconn/echo"),
+            "the dead-letter surfaces the last refusal: {}",
+            dead.rejection_reason
+        );
+    }
+
+    #[test]
+    fn dead_letter_on_a_tool_tail_reports_budget_exhaustion() {
+        // A TOOL tail that never answered: no refusal in the chain ⇒ the synthesis
+        // reports the spent tool-call budget (1/1 here), never a blank reason.
+        let j = InMemoryJournal::new();
+        j.append(turn_fact_caps(
+            0,
+            0xe1,
+            ReactBranch::Tool {
+                tool_id: "refconn/reverse".to_string(),
+                tool_version: "1".to_string(),
+            },
+            8,
+            1,
+        ))
+        .unwrap();
+        j.append(turn_fact_caps(0, 0xe1, ReactBranch::DeadLettered, 8, 1))
+            .unwrap();
+        let r = ReadOnly::new(j);
+
+        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let dead = resp
+            .turns
+            .iter()
+            .find(|t| t.branch == "dead_lettered")
+            .expect("a dead-letter row");
+        assert!(
+            dead.rejection_reason.contains("tool-call budget exhausted")
+                && dead.rejection_reason.contains("1/1"),
+            "tool-tail dead-letter reports budget: {}",
+            dead.rejection_reason
+        );
+    }
+
+    #[test]
+    fn dead_letter_with_no_context_gets_a_generic_terminal_reason() {
+        // A dead-letter with no refusal and budget to spare (a dispatch failure) ⇒ the
+        // generic terminal flavor — still informative, never blank.
+        let j = InMemoryJournal::new();
+        j.append(turn_fact_caps(0, 0xe2, ReactBranch::DeadLettered, 8, 8))
+            .unwrap();
+        let r = ReadOnly::new(j);
+
+        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let dead = &resp.turns[0];
+        assert_eq!(dead.branch, "dead_lettered");
+        assert!(
+            dead.rejection_reason.contains("could not progress")
+                && dead.rejection_reason.contains("tool dispatch failed"),
+            "generic terminal reason: {}",
+            dead.rejection_reason
+        );
     }
 
     #[test]

@@ -263,6 +263,17 @@ class RegisterServerResult:
 
 
 @dataclass(frozen=True)
+class CallToolResult:
+    """The outcome of an operator DIAGNOSTIC tool fire (``CallMcpTool``) — a model-free
+    "exercise this tool" check through the broker (SN-8 re-enforced; no journal fact).
+    ``ok`` is ``False`` with a non-empty ``error`` on a refusal/connector failure."""
+
+    ok: bool
+    result_json: str  # the tool's JSON response (empty on error)
+    error: str  # a short non-sensitive diagnostic (empty on success)
+
+
+@dataclass(frozen=True)
 class ToolParam:
     """A declared, typed tool input parameter (the MCP inputSchema analogue —
     CLOSED set, no float, SN-8). ``ty`` in ``str|bytes|int|bool|enum``."""

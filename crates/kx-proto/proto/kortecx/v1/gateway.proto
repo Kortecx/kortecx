@@ -1496,6 +1496,24 @@ message DeregisterMcpServerResponse {
   bool removed = 1;                       // false iff absent
 }
 
+// T-CONNECTOR-AUTOGRANT: an OPERATOR DIAGNOSTIC fire of ONE registered tool on a
+// dialed connector — the deterministic, model-free "exercise this tool" affordance
+// behind the UI Connections live-fire panel / `kx connections fire`. It routes
+// through the SAME broker the agentic loop uses, so SN-8 is re-enforced (the tool
+// must be registered + a single-grant warrant is synthesized server-side). NOT a
+// durable agentic effect: no journal fact, no replay — like `TestMcpServer`/
+// `DiscoverServerTools`, it is a live operator action, not a recorded run.
+message CallMcpToolRequest {
+  string server_name = 1;                 // the registered connector handle
+  string remote_name = 2;                 // the tool's remote method (resolved to <server>/<remote>)
+  string args_json   = 3;                 // JSON args object (validated against the tool's inputSchema)
+}
+message CallMcpToolResponse {
+  bool   ok          = 1;                 // true iff the tool fired and returned
+  string result_json = 2;                 // the tool's response payload (empty on error)
+  string error       = 3;                 // a short non-sensitive diagnostic (empty on success)
+}
+
 // ---------------------------------------------------------------------------
 // PR-7 (D120.6) — Context bundles. A named, content-addressed COLLECTION the
 // caller assembles for a model to reason over (the "context" the model is GIVEN,
@@ -1817,6 +1835,9 @@ service KxGateway {
   rpc DiscoverServerTools(DiscoverServerToolsRequest) returns (DiscoverServerToolsResponse);
   rpc TestMcpServer(TestMcpServerRequest) returns (TestMcpServerResponse);
   rpc DeregisterMcpServer(DeregisterMcpServerRequest) returns (DeregisterMcpServerResponse);
+  // T-CONNECTOR-AUTOGRANT additive: an operator DIAGNOSTIC fire of one registered
+  // tool through the broker (SN-8 re-enforced; no journal fact — see CallMcpToolRequest).
+  rpc CallMcpTool(CallMcpToolRequest) returns (CallMcpToolResponse);
 
   // PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
   rpc PutContextBundle(PutContextBundleRequest) returns (PutContextBundleResponse);

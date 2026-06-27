@@ -51,7 +51,8 @@ notes    = "Lets an external/cloud crate register a serve engine without editing
 [[feature]]
 id       = "connector-extension-sdk"
 lane     = "seam"
-state    = "in-progress"
+state    = "merged"
+pr       = "264"
 branch   = "feat/seam-extension-sdk"
 covers   = [
   "crates/kx-extension-sdk: FFI-free leaf crate (D167 E0)",
@@ -66,3 +67,18 @@ covers   = [
 ]
 inherits = ["oss-cloud-sync-infra"]
 notes    = "D167 E0 / D170 foundation seam #1. Curates the (already-pub, scattered) connector seams as a semver'd contract so parallel sidecars build against a stable surface. Digest 7d22d4bd invariant (leaf crate, re-exports + with_mcp add no journal facts); frozen trio untouched; no proto/journal change; additive-only."
+
+[[feature]]
+id       = "connector-live-toolcalling"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/connector-live-toolcalling"
+covers   = [
+  "T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER fix: ambiguity is a precise DecodeError::Ambiguous (candidate full-ids) → disambiguating A2 re-prompt, not a silent dead-letter",
+  "kx-toolcall markerless-paren format slice (T-GEMMA-PAREN): NAME(kwargs) for dialed <server>/<remote> tools",
+  "view-layer dead-letter reason synthesis (kx-gateway-core react.rs) — every dead-letter carries a reason",
+  "CallMcpTool RPC: operator diagnostic live-fire of one dialed tool through the broker (SN-8 re-enforced; no journal fact)",
+  "cross-surface: kx connections fire | kx.connections.fire (Py) | connections.fire (TS) | UI ConnectionsPanel live-fire",
+]
+inherits = ["connector-extension-sdk"]
+notes    = "Makes a runtime-dialed external connector actually FIRE in the live react-auto loop (was a turn-0 dead-letter), plus a model-free CallMcpTool diagnostic. Digest 7d22d4bd invariant (react turns edge-free; advisory reason bytes off-digest); frozen trio untouched; additive-only proto + codegen-fresh."

@@ -1282,7 +1282,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         None
     };
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
-    let mut gateway = GatewayService::new(reader.clone(), submitter, content)
+    // `content` is cloned (cheap Arc) so it stays available for the MCP gateway's
+    // diagnostic live-fire wiring below (reads the broker-staged tool result).
+    let mut gateway = GatewayService::new(reader.clone(), submitter, content.clone())
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
         .with_workflow_author(author)
@@ -1371,6 +1373,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             &catalog_dir,
             tool_registry.clone(),
             local_broker.clone(),
+            content.clone(),
         ) {
             Ok(admin) => {
                 gateway = gateway.with_mcp_admin(admin);

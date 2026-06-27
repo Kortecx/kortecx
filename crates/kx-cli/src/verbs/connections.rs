@@ -1,7 +1,11 @@
-//! `kx connections add | list | test | remove | discover` — govern the EXTERNAL
-//! MCP gateway (PR-6b-1) over the gateway RPCs (`RegisterMcpServer` /
+//! `kx connections add | list | test | remove | discover | fire` — govern the
+//! EXTERNAL MCP gateway (PR-6b-1) over the gateway RPCs (`RegisterMcpServer` /
 //! `ListMcpServers` / `TestMcpServer` / `DeregisterMcpServer` /
-//! `DiscoverServerTools`). Tri-surface parity with the UI + SDK.
+//! `DiscoverServerTools` / `CallMcpTool`). Tri-surface parity with the UI + SDK.
+//!
+//! `fire` is the operator DIAGNOSTIC — exercise ONE registered tool live through the
+//! broker (SN-8 re-enforced server-side; no journal fact). The agentic loop fires the
+//! same tools durably; `fire` is the "does this connector actually work" check.
 //!
 //! The runtime is a SECURE GATEWAY (D132/D159/GR19): registering a server DIALS
 //! it (the live untrusted-egress surface — admission + dial-time SSRF vetting +
@@ -35,6 +39,15 @@ pub enum ConnectionsSub {
     Discover {
         /// The server name.
         name: String,
+    },
+    /// Operator diagnostic: fire ONE registered tool live through the broker.
+    Fire {
+        /// The server name.
+        name: String,
+        /// The tool's remote method name (resolved to `<server>/<tool>`).
+        tool: String,
+        /// JSON args object (validated against the tool's inputSchema; default `{}`).
+        args_json: String,
     },
 }
 
@@ -82,7 +95,8 @@ fn resolve_session_mode(stateful_flag: bool, mode: Option<&str>) -> Result<Strin
 }
 
 /// Parse `connections` args (the verb already consumed). The first token selects
-/// the subcommand (`add` / `list` / `test` / `remove` / `discover`).
+/// the subcommand (`add` / `list` / `test` / `remove` / `discover` / `fire`).
+#[allow(clippy::too_many_lines)] // a flat flag-parsing dispatcher (the verbs' convention)
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
         CliError::Usage(
@@ -105,6 +119,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
     // `--session-mode stateful`; default (neither) is stateless.
     let mut session_mode: Option<String> = None;
     let mut stateful_flag = false;
+    // `fire` selectors: the tool's remote name + the JSON args body.
+    let mut tool: Option<String> = None;
+    let mut args_json: Option<String> = None;
     let mut common = ClientCommon::default();
 
     while let Some(flag) = args.next() {
@@ -121,6 +138,8 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
             "--credential-ref" => credential_ref = next_value(&mut args, "--credential-ref")?,
             "--session-mode" => session_mode = Some(next_value(&mut args, "--session-mode")?),
             "--stateful" => stateful_flag = true,
+            "--tool" => tool = Some(next_value(&mut args, "--tool")?),
+            "--args" => args_json = Some(next_value(&mut args, "--args")?),
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
         }
     }
@@ -140,6 +159,14 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
         },
         "discover" => ConnectionsSub::Discover {
             name: require_name(name, "discover")?,
+        },
+        "fire" => ConnectionsSub::Fire {
+            name: require_name(name, "fire")?,
+            tool: tool.filter(|s| !s.is_empty()).ok_or_else(|| {
+                CliError::Usage("connections fire requires --tool <remote-name>".into())
+            })?,
+            // Default to the empty object (a no-arg tool); never null/garbage.
+            args_json: args_json.filter(|s| !s.is_empty()).unwrap_or_else(|| "{}".to_string()),
         },
         "add" => {
             let name = require_name(name, "add")?;
@@ -183,7 +210,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
         }
         other => {
             return Err(CliError::Usage(format!(
-                "unknown connections subcommand {other:?} (expected add | list | test | remove | discover)"
+                "unknown connections subcommand {other:?} (expected add | list | test | remove | discover | fire)"
             )))
         }
     };
@@ -252,6 +279,23 @@ pub async fn execute(args: ConnectionsArgs) -> Result<(), CliError> {
                 .map_err(CliError::from_status)?
                 .into_inner();
             println!("{}", format::render_discover_server(&resp, json));
+        }
+        ConnectionsSub::Fire {
+            name,
+            tool,
+            args_json,
+        } => {
+            let req = proto::CallMcpToolRequest {
+                server_name: name,
+                remote_name: tool,
+                args_json,
+            };
+            let resp = client
+                .call_mcp_tool(resolved.request(req)?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            println!("{}", format::render_call_tool(&resp, json));
         }
     }
     Ok(())
@@ -349,6 +393,47 @@ mod tests {
         assert_eq!(spec.endpoint, "my-server");
         assert_eq!(spec.args, vec!["--stdio".to_string(), "-v".to_string()]);
         assert!(!spec.tls_required);
+    }
+
+    #[test]
+    fn parses_fire_with_tool_and_args() {
+        let a = p(&[
+            "fire",
+            "--name",
+            "refconn",
+            "--tool",
+            "reverse",
+            "--args",
+            r#"{"text":"pong"}"#,
+        ])
+        .unwrap();
+        let ConnectionsSub::Fire {
+            name,
+            tool,
+            args_json,
+        } = a.sub
+        else {
+            panic!("expected Fire");
+        };
+        assert_eq!(name, "refconn");
+        assert_eq!(tool, "reverse");
+        assert_eq!(args_json, r#"{"text":"pong"}"#);
+    }
+
+    #[test]
+    fn fire_defaults_args_to_empty_object_and_requires_tool() {
+        // No `--args` ⇒ the empty object (a no-arg tool).
+        let a = p(&["fire", "--name", "refconn", "--tool", "ping"]).unwrap();
+        let ConnectionsSub::Fire { args_json, .. } = a.sub else {
+            panic!("expected Fire");
+        };
+        assert_eq!(args_json, "{}");
+        // `--tool` is required.
+        assert!(
+            p(&["fire", "--name", "refconn"]).is_err(),
+            "fire needs --tool"
+        );
+        assert!(p(&["fire", "--tool", "x"]).is_err(), "fire needs --name");
     }
 
     #[test]

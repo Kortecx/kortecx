@@ -1079,6 +1079,18 @@ pub fn render_test_server(resp: &proto::TestMcpServerResponse, json: bool) -> St
     }
 }
 
+/// Render `connections fire` — the diagnostic tool-fire result or the refusal.
+#[must_use]
+pub fn render_call_tool(resp: &proto::CallMcpToolResponse, json: bool) -> String {
+    if json {
+        json!({ "ok": resp.ok, "result": resp.result_json, "error": resp.error }).to_string()
+    } else if resp.ok {
+        format!("ok\n{}", resp.result_json)
+    } else {
+        format!("error: {}", resp.error)
+    }
+}
+
 /// Render `connections remove` — whether the server was removed.
 #[must_use]
 pub fn render_deregister_server(resp: &proto::DeregisterMcpServerResponse, json: bool) -> String {

@@ -3109,6 +3109,42 @@ impl KxGateway for GatewayService {
         }))
     }
 
+    async fn call_mcp_tool(
+        &self,
+        request: Request<proto::CallMcpToolRequest>,
+    ) -> Result<Response<proto::CallMcpToolResponse>, Status> {
+        let admin = self.mcp_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("CallMcpTool: no MCP gateway wired (connections.db absent)")
+        })?;
+        let req = request.into_inner();
+        if req.server_name.trim().is_empty() || req.remote_name.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "server_name and remote_name are required",
+            ));
+        }
+        // An empty args body is the empty object (a no-arg tool); never null/garbage.
+        let args_json = if req.args_json.trim().is_empty() {
+            "{}".to_string()
+        } else {
+            req.args_json
+        };
+        // A diagnostic fire NEVER 500s on a tool/connector failure — it returns a
+        // structured `{ok:false, error}` so the UI/CLI can surface it inline. Only a
+        // truly internal fault (no seam) is a gRPC error.
+        match admin.call_tool(&req.server_name, &req.remote_name, &args_json) {
+            Ok(outcome) => Ok(Response::new(proto::CallMcpToolResponse {
+                ok: true,
+                result_json: String::from_utf8_lossy(&outcome.result).into_owned(),
+                error: String::new(),
+            })),
+            Err(e) => Ok(Response::new(proto::CallMcpToolResponse {
+                ok: false,
+                result_json: String::new(),
+                error: e.to_string(),
+            })),
+        }
+    }
+
     async fn put_context_bundle(
         &self,
         request: Request<proto::PutContextBundleRequest>,

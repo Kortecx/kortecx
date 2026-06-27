@@ -10,19 +10,25 @@
 //! admission host vetting + dial-time SSRF/rebind vetting + per-server
 //! rate-limit + warrant-gated egress + secret-less `CredentialRef` (D81).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use kx_capability::{Capability, LocalCapabilityBroker};
+use kx_capability::{Capability, CapabilityBroker, EffectRequest, LocalCapabilityBroker};
 use kx_content::ContentStore;
 use kx_gateway_core::{
-    McpAdminError, McpGatewayAdmin, McpServerRegistration, McpServerView, RegisterServerOutcome,
-    RegisteredToolEntry,
+    CallToolOutcome, McpAdminError, McpGatewayAdmin, McpServerRegistration, McpServerView,
+    RegisterServerOutcome, RegisteredToolEntry,
 };
 use kx_mcp_gateway::{
     CapabilitySink, GatewayError, McpGateway, SessionMode, SqliteConnectionStore, TransportSpec,
 };
+use kx_mote::{
+    EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId, Mote, MoteDef,
+    NdClass, PromptTemplateHash, ToolName, ToolVersion, MOTE_DEF_SCHEMA_VERSION,
+};
 use kx_tool_registry::{RegistrationStatus, SqliteToolRegistry, ToolKind, ToolProvenance};
+use kx_warrant::{MoteClass, SecretRef, SecretScope, ToolGrant, ToolRequirement, WarrantSpec};
 
 /// Build + wire the external MCP gateway: open the off-journal `connections.db`
 /// beside the catalog ledgers, register the dialed-tool firing capability on the
@@ -36,9 +42,12 @@ pub(crate) fn wire_mcp_gateway<S: ContentStore + Send + Sync + 'static>(
     catalog_dir: &Path,
     registry: Arc<SqliteToolRegistry>,
     broker: Arc<LocalCapabilityBroker<S>>,
+    content: Arc<S>,
 ) -> Result<Arc<dyn McpGatewayAdmin>, GatewayError> {
     let store = SqliteConnectionStore::open(catalog_dir.join("connections.db"))?;
-    let sink: Arc<dyn CapabilitySink> = Arc::new(BrokerCapabilitySink::new(broker));
+    // The SAME broker backs both the dialed-tool capability sink AND the operator
+    // diagnostic live-fire (`CallMcpTool`) — one fire path, SN-8 re-enforced there.
+    let sink: Arc<dyn CapabilitySink> = Arc::new(BrokerCapabilitySink::new(broker.clone()));
     let allowlist = crate::tools::tool_host_allowlist();
     let gateway = Arc::new(McpGateway::new(store, registry.clone(), sink, allowlist));
     // Re-dial persisted servers so a restart re-registers their tools +
@@ -55,7 +64,9 @@ pub(crate) fn wire_mcp_gateway<S: ContentStore + Send + Sync + 'static>(
             tracing::warn!(%error, "MCP gateway: persisted-connection re-dial failed");
         }
     });
-    Ok(Arc::new(HostMcpGateway::new(gateway, registry)))
+    Ok(Arc::new(HostMcpGateway::new(
+        gateway, registry, broker, content,
+    )))
 }
 
 /// Register a dialed tool's [`Capability`] on the serve broker at runtime. Wraps
@@ -79,15 +90,29 @@ impl<S: ContentStore + Send + Sync + 'static> CapabilitySink for BrokerCapabilit
 }
 
 /// The [`McpGatewayAdmin`] host impl over the [`McpGateway`] + the durable
-/// `tools.db` (for the `DiscoverServerTools` inventory projection).
-pub(crate) struct HostMcpGateway {
+/// `tools.db` (for the `DiscoverServerTools` inventory projection) + the serve
+/// broker & content store (for the `CallMcpTool` operator diagnostic fire). Generic
+/// over the content store `S` so the concrete broker/content types stay local.
+pub(crate) struct HostMcpGateway<S: ContentStore + Send + Sync + 'static> {
     gateway: Arc<McpGateway>,
     registry: Arc<SqliteToolRegistry>,
+    broker: Arc<LocalCapabilityBroker<S>>,
+    content: Arc<S>,
 }
 
-impl HostMcpGateway {
-    pub(crate) fn new(gateway: Arc<McpGateway>, registry: Arc<SqliteToolRegistry>) -> Self {
-        Self { gateway, registry }
+impl<S: ContentStore + Send + Sync + 'static> HostMcpGateway<S> {
+    pub(crate) fn new(
+        gateway: Arc<McpGateway>,
+        registry: Arc<SqliteToolRegistry>,
+        broker: Arc<LocalCapabilityBroker<S>>,
+        content: Arc<S>,
+    ) -> Self {
+        Self {
+            gateway,
+            registry,
+            broker,
+            content,
+        }
     }
 
     /// Project the registry's rows for one server (the `<name>/…` namespace) into
@@ -109,7 +134,7 @@ impl HostMcpGateway {
     }
 }
 
-impl McpGatewayAdmin for HostMcpGateway {
+impl<S: ContentStore + Send + Sync + 'static> McpGatewayAdmin for HostMcpGateway<S> {
     fn register_server(
         &self,
         reg: McpServerRegistration,
@@ -173,6 +198,123 @@ impl McpGatewayAdmin for HostMcpGateway {
 
     fn deregister_server(&self, server_name: &str) -> Result<bool, McpAdminError> {
         self.gateway.deregister_server(server_name).map_err(map_err)
+    }
+
+    fn call_tool(
+        &self,
+        server_name: &str,
+        remote_name: &str,
+        args_json: &str,
+    ) -> Result<CallToolOutcome, McpAdminError> {
+        let tool_id = ToolName(format!("{server_name}/{remote_name}"));
+        // Resolve the REGISTERED def — its version, declared scopes, and typed schema
+        // are the source of truth (the client supplies none of them; SN-8).
+        let def = self
+            .registry
+            .defs()
+            .into_iter()
+            .find(|d| d.tool_id == tool_id)
+            .ok_or_else(|| {
+                McpAdminError::NotFound(format!(
+                    "no registered tool `{server_name}/{remote_name}` (dial the server first)"
+                ))
+            })?;
+        // Validate the args against the tool's typed inputSchema FAIL-CLOSED (the same
+        // gate the agentic settle applies) so a bad fire never reaches the connector.
+        if let Some(schema) = def.input_schema.as_ref() {
+            kx_tool_registry::validate_args(schema, args_json.as_bytes()).map_err(|e| {
+                McpAdminError::InvalidArgument(format!(
+                    "args do not match the tool inputSchema: {e}"
+                ))
+            })?;
+        }
+        // The connection's credential ref NAME (never the value, D81) → the warrant's
+        // secret scope, so the broker admits the transport's out-of-band resolution.
+        let secret_scope = self
+            .gateway
+            .list_servers()
+            .ok()
+            .and_then(|servers| servers.into_iter().find(|c| c.name == server_name))
+            .and_then(|c| c.credential_ref)
+            .map_or(SecretScope::None, |cred| {
+                SecretScope::AllowList(BTreeSet::from([SecretRef(cred)]))
+            });
+        let cap = def.required_capability.clone();
+        let mote = diagnostic_fire_mote(&tool_id, &def.tool_version);
+        // The single-grant warrant is built from the tool's OWN declared scopes — the
+        // broker re-verifies tool ∈ grants + request scopes ⊆ warrant (SN-8 at the gate).
+        let warrant =
+            diagnostic_fire_warrant(&tool_id, &def.tool_version, &cap, secret_scope.clone());
+        let request = EffectRequest {
+            payload: args_json.as_bytes().to_vec(),
+            pattern: EffectPattern::StageThenCommit,
+            idempotency_key: None,
+            net_scope: cap.net_scope_required.clone(),
+            fs_scope: cap.fs_scope_required.clone(),
+            secret_scope,
+        };
+        let handle = self
+            .broker
+            .dispatch(&mote, &warrant, &tool_id, request)
+            .map_err(|e| McpAdminError::Dial(format!("tool fire failed: {e}")))?;
+        let payload = self.content.get(&handle.staged_ref).map_err(|e| {
+            McpAdminError::Storage(format!("the staged tool result was unreadable: {e}"))
+        })?;
+        Ok(CallToolOutcome {
+            result: (*payload).to_vec(),
+        })
+    }
+}
+
+/// A one-off `WorldMutating` / `StageThenCommit` Mote declaring `(tool, version)` in
+/// its `tool_contract` so the broker admits the diagnostic fire (it never journals —
+/// the Mote is discarded after dispatch). Mirrors the conformance harness `probe_mote`.
+fn diagnostic_fire_mote(tool_id: &ToolName, version: &ToolVersion) -> Mote {
+    let mut tool_contract = BTreeMap::new();
+    tool_contract.insert(tool_id.clone(), version.clone());
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes([0; 32]),
+        model_id: ModelId("kx-connector-diagnostic".into()),
+        prompt_template_hash: PromptTemplateHash::from_bytes([0; 32]),
+        tool_contract,
+        nd_class: NdClass::WorldMutating,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::StageThenCommit,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([0; 32]),
+        GraphPosition(vec![0]),
+        smallvec::SmallVec::new(),
+    )
+}
+
+/// A single-grant warrant carrying EXACTLY the fired tool + the tool's OWN declared
+/// net/fs/secret scopes — the broker re-verifies the request scopes are a subset
+/// (SN-8). The client never supplies grants; this is server-built from the registry.
+fn diagnostic_fire_warrant(
+    tool_id: &ToolName,
+    version: &ToolVersion,
+    cap: &ToolRequirement,
+    secret_scope: SecretScope,
+) -> WarrantSpec {
+    WarrantSpec {
+        mote_class: MoteClass::WorldMutating,
+        nd_class: MoteClass::WorldMutating,
+        fs_scope: cap.fs_scope_required.clone(),
+        net_scope: cap.net_scope_required.clone(),
+        syscall_profile_ref: cap.syscall_profile_ref,
+        tool_grants: BTreeSet::from([ToolGrant {
+            tool_id: tool_id.clone(),
+            tool_version: version.clone(),
+        }]),
+        secret_scope,
+        ..Default::default()
     }
 }
 

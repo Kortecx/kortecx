@@ -3202,6 +3202,9 @@ fn drive_react_chain<J: Journal>(
                 // `Rejected` round (the committed turn fact remains; the model
                 // gets a chance to re-propose under the budget).
                 Err(error) => ReactBranch::Rejected {
+                    // Twin of `kx_model_harness::react_reason::decode_error_reason`
+                    // (byte-identical — pinned across the dep wall so the re-prompted
+                    // turn's MoteId matches on a cold re-fold).
                     reason: crate::react_shape::bounded_reason(match error {
                         kx_toolcall::DecodeError::Malformed { diagnostic } => {
                             format!("the tool proposal was malformed: {diagnostic}")
@@ -3209,6 +3212,15 @@ fn drive_react_chain<J: Journal>(
                         kx_toolcall::DecodeError::UngrantedTool { name, version } => format!(
                             "the proposed tool `{}@{}` is not granted to this run",
                             name.0, version.0
+                        ),
+                        kx_toolcall::DecodeError::Ambiguous { name, candidates } => format!(
+                            "the tool name `{}` is ambiguous — use the full id: {}",
+                            name.0,
+                            candidates
+                                .iter()
+                                .map(|c| c.0.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" OR ")
                         ),
                         kx_toolcall::DecodeError::Oversize { got, max } => format!(
                             "the proposed tool arguments are too large \
