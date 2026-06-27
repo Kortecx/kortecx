@@ -95,3 +95,12 @@ An **off-the-truth-path** JSONL record of the run lifecycle (join-keys only, nev
 payloads or secrets) is available with `kx run --audit-log <path>`. Time lives
 only on the wire DTO, never in the digest — so the audit trail never changes the
 projection digest.
+
+## Known limitations (single-node OSS)
+
+- **Bearer-token comparison is not constant-time.** The single-node OSS gateway
+  compares the auth token with an ordinary equality check; a timing side-channel is
+  possible in principle. This is an **accepted RC limitation** (loopback / trusted
+  single-node deployment), documented rather than fixed here — the constant-time
+  compare + rotation lands in the managed cloud auth layer (D129). It is not an open
+  defect at the release gate.
