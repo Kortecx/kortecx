@@ -105,7 +105,7 @@
 //! seams — `McpGatewayAdmin` / `ToolRegistryAdmin`, which the runtime
 //! (`kx-gateway`) implements, not a connector — live behind the opt-in
 //! `gateway-admin` feature (it adds the `kx-gateway-core` edge → proto/tonic).
-//! Enable it only when wiring a custom gateway host; see [`kx_gateway_core`].
+//! Enable it only when wiring a custom gateway host; see the `kx-gateway-core` crate.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
