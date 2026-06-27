@@ -65,6 +65,20 @@ class FeedbackRating(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     FEEDBACK_RATING_UNSPECIFIED: _ClassVar[FeedbackRating]
     FEEDBACK_RATING_UP: _ClassVar[FeedbackRating]
     FEEDBACK_RATING_DOWN: _ClassVar[FeedbackRating]
+
+class TriggerKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    TRIGGER_KIND_UNSPECIFIED: _ClassVar[TriggerKind]
+    WEBHOOK: _ClassVar[TriggerKind]
+    CRON: _ClassVar[TriggerKind]
+    GRPC: _ClassVar[TriggerKind]
+
+class TriggerAuth(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    TRIGGER_AUTH_UNSPECIFIED: _ClassVar[TriggerAuth]
+    NONE: _ClassVar[TriggerAuth]
+    HMAC_SHA256: _ClassVar[TriggerAuth]
+    BEARER: _ClassVar[TriggerAuth]
 MOTE_SNAPSHOT_STATE_UNSPECIFIED: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_PENDING: MoteSnapshotState
 MOTE_SNAPSHOT_STATE_SCHEDULED: MoteSnapshotState
@@ -100,6 +114,14 @@ WORKFLOW_EXECUTION_MODE_DYNAMIC: WorkflowExecutionMode
 FEEDBACK_RATING_UNSPECIFIED: FeedbackRating
 FEEDBACK_RATING_UP: FeedbackRating
 FEEDBACK_RATING_DOWN: FeedbackRating
+TRIGGER_KIND_UNSPECIFIED: TriggerKind
+WEBHOOK: TriggerKind
+CRON: TriggerKind
+GRPC: TriggerKind
+TRIGGER_AUTH_UNSPECIFIED: TriggerAuth
+NONE: TriggerAuth
+HMAC_SHA256: TriggerAuth
+BEARER: TriggerAuth
 
 class SubmitRunRequest(_message.Message):
     __slots__ = ("recipe_fingerprint", "motes")
@@ -2066,3 +2088,163 @@ class GetServerInfoResponse(_message.Message):
     active_model_id: str
     allow_model_pull: bool
     def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ..., embed_model_id: _Optional[str] = ..., active_model_id: _Optional[str] = ..., allow_model_pull: bool = ...) -> None: ...
+
+class PutSecretRequest(_message.Message):
+    __slots__ = ("name", "value")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    value: str
+    def __init__(self, name: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+
+class PutSecretResponse(_message.Message):
+    __slots__ = ("stored",)
+    STORED_FIELD_NUMBER: _ClassVar[int]
+    stored: bool
+    def __init__(self, stored: bool = ...) -> None: ...
+
+class ListSecretNamesRequest(_message.Message):
+    __slots__ = ("limit", "after_name")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_NAME_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_name: str
+    def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ...) -> None: ...
+
+class SecretName(_message.Message):
+    __slots__ = ("name", "created_unix_ms", "updated_unix_ms")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    CREATED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    UPDATED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    created_unix_ms: int
+    updated_unix_ms: int
+    def __init__(self, name: _Optional[str] = ..., created_unix_ms: _Optional[int] = ..., updated_unix_ms: _Optional[int] = ...) -> None: ...
+
+class ListSecretNamesResponse(_message.Message):
+    __slots__ = ("names", "has_more")
+    NAMES_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    names: _containers.RepeatedCompositeFieldContainer[SecretName]
+    has_more: bool
+    def __init__(self, names: _Optional[_Iterable[_Union[SecretName, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class DeleteSecretRequest(_message.Message):
+    __slots__ = ("name",)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
+
+class DeleteSecretResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...
+
+class RegisterTriggerRequest(_message.Message):
+    __slots__ = ("name", "kind", "recipe_handle", "auth", "auth_secret_ref", "schedule_spec", "enabled")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    RECIPE_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    AUTH_FIELD_NUMBER: _ClassVar[int]
+    AUTH_SECRET_REF_FIELD_NUMBER: _ClassVar[int]
+    SCHEDULE_SPEC_FIELD_NUMBER: _ClassVar[int]
+    ENABLED_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    kind: TriggerKind
+    recipe_handle: str
+    auth: TriggerAuth
+    auth_secret_ref: str
+    schedule_spec: str
+    enabled: bool
+    def __init__(self, name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_ref: _Optional[str] = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ...) -> None: ...
+
+class RegisterTriggerResponse(_message.Message):
+    __slots__ = ("trigger_id",)
+    TRIGGER_ID_FIELD_NUMBER: _ClassVar[int]
+    trigger_id: bytes
+    def __init__(self, trigger_id: _Optional[bytes] = ...) -> None: ...
+
+class ListTriggersRequest(_message.Message):
+    __slots__ = ("limit", "after_name")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_NAME_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_name: str
+    def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ...) -> None: ...
+
+class TriggerView(_message.Message):
+    __slots__ = ("trigger_id", "name", "kind", "recipe_handle", "auth", "auth_secret_present", "schedule_spec", "enabled", "last_fire_unix_ms")
+    TRIGGER_ID_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    RECIPE_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    AUTH_FIELD_NUMBER: _ClassVar[int]
+    AUTH_SECRET_PRESENT_FIELD_NUMBER: _ClassVar[int]
+    SCHEDULE_SPEC_FIELD_NUMBER: _ClassVar[int]
+    ENABLED_FIELD_NUMBER: _ClassVar[int]
+    LAST_FIRE_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    trigger_id: bytes
+    name: str
+    kind: TriggerKind
+    recipe_handle: str
+    auth: TriggerAuth
+    auth_secret_present: bool
+    schedule_spec: str
+    enabled: bool
+    last_fire_unix_ms: int
+    def __init__(self, trigger_id: _Optional[bytes] = ..., name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_present: bool = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ..., last_fire_unix_ms: _Optional[int] = ...) -> None: ...
+
+class ListTriggersResponse(_message.Message):
+    __slots__ = ("triggers", "has_more")
+    TRIGGERS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    triggers: _containers.RepeatedCompositeFieldContainer[TriggerView]
+    has_more: bool
+    def __init__(self, triggers: _Optional[_Iterable[_Union[TriggerView, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class DeregisterTriggerRequest(_message.Message):
+    __slots__ = ("name",)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
+
+class DeregisterTriggerResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...
+
+class SubmitTriggerRequest(_message.Message):
+    __slots__ = ("name", "idempotency_key", "payload_json")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_JSON_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    idempotency_key: str
+    payload_json: str
+    def __init__(self, name: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., payload_json: _Optional[str] = ...) -> None: ...
+
+class SubmitTriggerResponse(_message.Message):
+    __slots__ = ("instance_id", "deduped")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    DEDUPED_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    deduped: bool
+    def __init__(self, instance_id: _Optional[bytes] = ..., deduped: bool = ...) -> None: ...
+
+class TestTriggerRequest(_message.Message):
+    __slots__ = ("name", "payload_json")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_JSON_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    payload_json: str
+    def __init__(self, name: _Optional[str] = ..., payload_json: _Optional[str] = ...) -> None: ...
+
+class TestTriggerResponse(_message.Message):
+    __slots__ = ("ok", "detail")
+    OK_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    ok: bool
+    detail: str
+    def __init__(self, ok: bool = ..., detail: _Optional[str] = ...) -> None: ...

@@ -15,7 +15,7 @@ const SECTIONS: Array<[string, string, string]> = [
   ["nav-apps", "apps-section", "Apps"],
   ["nav-runs", "runs-section", "Workflows"],
   ["nav-context", "context-section", "Context"],
-  ["nav-tools", "tools-section", "Tools"],
+  ["nav-tools", "tools-section", "Integrations"],
   ["nav-models", "models-section", "Models"],
   ["nav-monitor", "monitoring-section", "Monitoring"],
   ["nav-systems", "systems-section", "Security"],

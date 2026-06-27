@@ -113,6 +113,13 @@ pub struct GatewayConfig {
     /// network; a non-loopback bind is allowed but warns at startup (Cloud adds the
     /// auth/party-scope). A `0` port is ephemeral (used by tests).
     pub metrics_listen: Option<SocketAddr>,
+    /// D113 (trigger seam): the LOCAL webhook ingress listener address, or `None` (the
+    /// default) to NOT serve webhooks. Opt-in via `--webhook-listen <addr:port>`
+    /// (deny-by-default). The untrusted-INBOUND surface: every registered webhook
+    /// trigger is per-trigger authenticated (HMAC/bearer; `NONE` only on a loopback
+    /// bind), payload-capped, idempotency-deduped, and rate-limited. A non-loopback bind
+    /// is allowed but warns at startup. A `0` port is ephemeral (used by tests).
+    pub webhook_listen: Option<SocketAddr>,
     /// W1a (T-OBS1): a JSONL operator audit log path for the long-running serve, or
     /// `None` (the default) to NOT write one. Opt-in via `--audit-log <path>`; opened
     /// in APPEND mode so the trail accumulates across restarts. Off the truth path
@@ -154,7 +161,8 @@ pub const USAGE: &str =
 [--max-lease <N>] [--dev-allow-local | --allow-local-dev] \
 [--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>] \
 [--tls-cert <path> --tls-key <path>] [--cors-origin <scheme://host[:port]>]... \
-[--content-max-bytes <BYTES>] [--metrics-listen <addr:port>] [--audit-log <path>]\n       \
+[--content-max-bytes <BYTES>] [--metrics-listen <addr:port>] \
+[--webhook-listen <addr:port>] [--audit-log <path>]\n       \
 kx-gateway --help | --version";
 
 impl Cli {
@@ -199,6 +207,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let mut console_flag_seen = false;
     let mut content_max_bytes: u64 = DEFAULT_CONTENT_MAX_BYTES;
     let mut metrics_listen: Option<SocketAddr> = None;
+    let mut webhook_listen: Option<SocketAddr> = None;
     let mut audit_log: Option<PathBuf> = None;
 
     while let Some(flag) = args.next() {
@@ -262,6 +271,13 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                     &take_value("--metrics-listen")?,
                 )?);
             }
+            // D113: opt-in local webhook ingress listener (default OFF).
+            "--webhook-listen" => {
+                webhook_listen = Some(parse_addr(
+                    "--webhook-listen",
+                    &take_value("--webhook-listen")?,
+                )?);
+            }
             // W1a (T-OBS1): opt-in serve-path JSONL audit log (default OFF).
             "--audit-log" => audit_log = Some(PathBuf::from(take_value("--audit-log")?)),
             other => return Err(GatewayError::Config(format!("unknown flag {other:?}"))),
@@ -300,6 +316,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         console_listen,
         content_max_bytes,
         metrics_listen,
+        webhook_listen,
         audit_log,
     })
 }

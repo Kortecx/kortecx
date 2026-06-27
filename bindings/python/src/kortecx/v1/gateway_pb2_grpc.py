@@ -264,6 +264,46 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.CallMcpToolRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.CallMcpToolResponse.FromString,
                 _registered_method=True)
+        self.PutSecret = channel.unary_unary(
+                '/kortecx.v1.KxGateway/PutSecret',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.PutSecretRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.PutSecretResponse.FromString,
+                _registered_method=True)
+        self.ListSecretNames = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListSecretNames',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListSecretNamesRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListSecretNamesResponse.FromString,
+                _registered_method=True)
+        self.DeleteSecret = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeleteSecret',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteSecretRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteSecretResponse.FromString,
+                _registered_method=True)
+        self.RegisterTrigger = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RegisterTrigger',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterTriggerRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterTriggerResponse.FromString,
+                _registered_method=True)
+        self.ListTriggers = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListTriggers',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListTriggersRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListTriggersResponse.FromString,
+                _registered_method=True)
+        self.DeregisterTrigger = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeregisterTrigger',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterTriggerRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterTriggerResponse.FromString,
+                _registered_method=True)
+        self.SubmitTrigger = channel.unary_unary(
+                '/kortecx.v1.KxGateway/SubmitTrigger',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.SubmitTriggerRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.SubmitTriggerResponse.FromString,
+                _registered_method=True)
+        self.TestTrigger = channel.unary_unary(
+                '/kortecx.v1.KxGateway/TestTrigger',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.TestTriggerRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.TestTriggerResponse.FromString,
+                _registered_method=True)
         self.PutContextBundle = channel.unary_unary(
                 '/kortecx.v1.KxGateway/PutContextBundle',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.PutContextBundleRequest.SerializeToString,
@@ -725,6 +765,66 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PutSecret(self, request, context):
+        """MM-3 (D110) additive — the LOCAL OS-keychain secret store. PutSecret/DeleteSecret
+        write host credential material (loopback-only + authed party); ListSecretNames
+        returns NAMES + timestamps only (never a value). Off-journal (the OS keychain +
+        an off-digest secret_index.db NAME index); the value is resolved transiently at
+        transport setup and never journaled (D81). UNIMPLEMENTED when no secret admin is
+        wired (e.g. a no-mcp-gateway build). The hardened KMS/HSM vault is CLOUD (D94).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListSecretNames(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteSecret(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RegisterTrigger(self, request, context):
+        """D113 (trigger seam) additive — event ingress. Register/List/Deregister govern
+        triggers; SubmitTrigger is the inbound EVENT verb (also called internally by the
+        host webhook/cron listeners); TestTrigger dry-runs the binding without firing.
+        Each event starts a fresh registered run via the existing Invoke path (no journal
+        writer dep added; frozen trio untouched). UNIMPLEMENTED when no trigger admin is
+        wired. The hosted multi-tenant trigger gateway is CLOUD (D113/D170.b/GR19).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListTriggers(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeregisterTrigger(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SubmitTrigger(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TestTrigger(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def PutContextBundle(self, request, context):
         """PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
         """
@@ -1148,6 +1248,46 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.CallMcpTool,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.CallMcpToolRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.CallMcpToolResponse.SerializeToString,
+            ),
+            'PutSecret': grpc.unary_unary_rpc_method_handler(
+                    servicer.PutSecret,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.PutSecretRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.PutSecretResponse.SerializeToString,
+            ),
+            'ListSecretNames': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListSecretNames,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListSecretNamesRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListSecretNamesResponse.SerializeToString,
+            ),
+            'DeleteSecret': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteSecret,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteSecretRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteSecretResponse.SerializeToString,
+            ),
+            'RegisterTrigger': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterTrigger,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterTriggerRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterTriggerResponse.SerializeToString,
+            ),
+            'ListTriggers': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListTriggers,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListTriggersRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListTriggersResponse.SerializeToString,
+            ),
+            'DeregisterTrigger': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeregisterTrigger,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterTriggerRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterTriggerResponse.SerializeToString,
+            ),
+            'SubmitTrigger': grpc.unary_unary_rpc_method_handler(
+                    servicer.SubmitTrigger,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.SubmitTriggerRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.SubmitTriggerResponse.SerializeToString,
+            ),
+            'TestTrigger': grpc.unary_unary_rpc_method_handler(
+                    servicer.TestTrigger,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.TestTriggerRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.TestTriggerResponse.SerializeToString,
             ),
             'PutContextBundle': grpc.unary_unary_rpc_method_handler(
                     servicer.PutContextBundle,
@@ -2512,6 +2652,222 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/CallMcpTool',
             kortecx_dot_v1_dot_gateway__pb2.CallMcpToolRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.CallMcpToolResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PutSecret(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/PutSecret',
+            kortecx_dot_v1_dot_gateway__pb2.PutSecretRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.PutSecretResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListSecretNames(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListSecretNames',
+            kortecx_dot_v1_dot_gateway__pb2.ListSecretNamesRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListSecretNamesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteSecret(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeleteSecret',
+            kortecx_dot_v1_dot_gateway__pb2.DeleteSecretRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeleteSecretResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterTrigger(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RegisterTrigger',
+            kortecx_dot_v1_dot_gateway__pb2.RegisterTriggerRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RegisterTriggerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListTriggers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListTriggers',
+            kortecx_dot_v1_dot_gateway__pb2.ListTriggersRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListTriggersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeregisterTrigger(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeregisterTrigger',
+            kortecx_dot_v1_dot_gateway__pb2.DeregisterTriggerRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeregisterTriggerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubmitTrigger(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/SubmitTrigger',
+            kortecx_dot_v1_dot_gateway__pb2.SubmitTriggerRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.SubmitTriggerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TestTrigger(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/TestTrigger',
+            kortecx_dot_v1_dot_gateway__pb2.TestTriggerRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.TestTriggerResponse.FromString,
             options,
             channel_credentials,
             insecure,

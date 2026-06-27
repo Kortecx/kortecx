@@ -113,11 +113,14 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     hint: "Reusable bundles & RAG datasets",
   },
   {
+    // Display says "Integrations" (the Tools/Connections/Triggers/Secrets hub); the
+    // id/path/icon stay on the frozen `tools` wire-legacy handle (test-ids, route,
+    // telemetry never rename — the D136 Blueprints precedent).
     id: "tools",
-    label: "Tools",
+    label: "Integrations",
     path: "/tools",
     icon: "tools",
-    hint: "MCP tool discovery & bundle preview",
+    hint: "Tools, MCP connections, triggers & secrets",
   },
   {
     // A read-only view over the models serving this gateway (`ListModels`) plus the

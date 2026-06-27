@@ -101,6 +101,7 @@ pub(crate) fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
         console_listen: ConsoleMode::Disabled,
         content_max_bytes: kx_gateway::DEFAULT_CONTENT_MAX_BYTES,
         metrics_listen: None,
+        webhook_listen: None,
         audit_log: None,
     })
 }

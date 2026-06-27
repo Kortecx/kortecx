@@ -2384,6 +2384,193 @@ pub fn render_capture_records(resp: &proto::ListCaptureRecordsResponse, json: bo
     }
 }
 
+// ----- MM-3 (D110) secrets + D113 triggers -----
+
+/// Map a [`proto::TriggerKind`] discriminant to a stable display name. An
+/// out-of-range value renders `unspecified` (forward-compatible).
+#[must_use]
+pub fn trigger_kind_name(kind: i32) -> &'static str {
+    match proto::TriggerKind::try_from(kind) {
+        Ok(proto::TriggerKind::Webhook) => "webhook",
+        Ok(proto::TriggerKind::Cron) => "cron",
+        Ok(proto::TriggerKind::Grpc) => "grpc",
+        _ => "unspecified",
+    }
+}
+
+/// Map a [`proto::TriggerAuth`] discriminant to a stable display name. An
+/// out-of-range value renders `unspecified` (forward-compatible).
+#[must_use]
+pub fn trigger_auth_name(auth: i32) -> &'static str {
+    match proto::TriggerAuth::try_from(auth) {
+        Ok(proto::TriggerAuth::None) => "none",
+        Ok(proto::TriggerAuth::HmacSha256) => "hmac_sha256",
+        Ok(proto::TriggerAuth::Bearer) => "bearer",
+        _ => "unspecified",
+    }
+}
+
+/// Render `secrets set` — whether the secret was stored. SN-8/D110: the VALUE is
+/// write-only — it never round-trips back in any response.
+#[must_use]
+pub fn render_put_secret(resp: &proto::PutSecretResponse, json: bool) -> String {
+    if json {
+        json!({ "stored": resp.stored }).to_string()
+    } else if resp.stored {
+        "stored".to_string()
+    } else {
+        "not stored".to_string()
+    }
+}
+
+/// Render `secrets list` — the stored secret NAMES + timestamps (never the value).
+#[must_use]
+pub fn render_secret_names(resp: &proto::ListSecretNamesResponse, json: bool) -> String {
+    if json {
+        let names: Vec<Value> = resp
+            .names
+            .iter()
+            .map(|n| {
+                json!({
+                    "name": n.name,
+                    "created_unix_ms": n.created_unix_ms,
+                    "updated_unix_ms": n.updated_unix_ms,
+                })
+            })
+            .collect();
+        json!({ "names": names, "has_more": resp.has_more }).to_string()
+    } else if resp.names.is_empty() {
+        "(no secrets stored)".to_string()
+    } else {
+        resp.names
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `secrets rm` — whether a secret was removed.
+#[must_use]
+pub fn render_delete_secret(resp: &proto::DeleteSecretResponse, json: bool) -> String {
+    if json {
+        json!({ "removed": resp.removed }).to_string()
+    } else if resp.removed {
+        "removed".to_string()
+    } else {
+        "not removed (no such secret)".to_string()
+    }
+}
+
+/// Render `triggers add` — the server-derived trigger id (SN-8).
+#[must_use]
+pub fn render_register_trigger(resp: &proto::RegisterTriggerResponse, json: bool) -> String {
+    if json {
+        json!({ "trigger_id": hex::encode(&resp.trigger_id) }).to_string()
+    } else {
+        format!("registered trigger_id={}", hex::encode(&resp.trigger_id))
+    }
+}
+
+/// Render `triggers list` — the registered triggers + their binding. A credential
+/// is shown as a presence flag only (never the secret value, D81).
+#[must_use]
+pub fn render_triggers_list(resp: &proto::ListTriggersResponse, json: bool) -> String {
+    if json {
+        let triggers: Vec<Value> = resp
+            .triggers
+            .iter()
+            .map(|t| {
+                json!({
+                    "trigger_id": hex::encode(&t.trigger_id),
+                    "name": t.name,
+                    "kind": trigger_kind_name(t.kind),
+                    "recipe_handle": t.recipe_handle,
+                    "auth": trigger_auth_name(t.auth),
+                    "auth_secret_present": t.auth_secret_present,
+                    "schedule_spec": t.schedule_spec,
+                    "enabled": t.enabled,
+                    "last_fire_unix_ms": t.last_fire_unix_ms,
+                })
+            })
+            .collect();
+        json!({ "triggers": triggers, "has_more": resp.has_more }).to_string()
+    } else if resp.triggers.is_empty() {
+        "(no triggers registered)".to_string()
+    } else {
+        resp.triggers
+            .iter()
+            .map(|t| {
+                let state = if t.enabled { "enabled" } else { "disabled" };
+                let secret = if t.auth_secret_present {
+                    "  secret"
+                } else {
+                    ""
+                };
+                let sched = if t.schedule_spec.is_empty() {
+                    String::new()
+                } else {
+                    format!("  schedule={}", t.schedule_spec)
+                };
+                format!(
+                    "{}  [{}]  -> {}  auth={}  ({}){}{}",
+                    t.name,
+                    trigger_kind_name(t.kind),
+                    t.recipe_handle,
+                    trigger_auth_name(t.auth),
+                    state,
+                    secret,
+                    sched,
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `triggers rm` — whether a trigger was removed.
+#[must_use]
+pub fn render_deregister_trigger(resp: &proto::DeregisterTriggerResponse, json: bool) -> String {
+    if json {
+        json!({ "removed": resp.removed }).to_string()
+    } else if resp.removed {
+        "removed".to_string()
+    } else {
+        "not removed (no such trigger)".to_string()
+    }
+}
+
+/// Render `triggers fire` (`SubmitTrigger`) — the started run + dedup signal. A
+/// deduped event returns the PRIOR run's instance id (idempotent).
+#[must_use]
+pub fn render_submit_trigger(resp: &proto::SubmitTriggerResponse, json: bool) -> String {
+    if json {
+        json!({
+            "instance_id": hex::encode(&resp.instance_id),
+            "deduped": resp.deduped,
+        })
+        .to_string()
+    } else {
+        format!(
+            "instance_id {}  deduped={}",
+            hex::encode(&resp.instance_id),
+            resp.deduped
+        )
+    }
+}
+
+/// Render `triggers test` — the dry-run validation outcome (no run is fired).
+#[must_use]
+pub fn render_test_trigger(resp: &proto::TestTriggerResponse, json: bool) -> String {
+    if json {
+        json!({ "ok": resp.ok, "detail": resp.detail }).to_string()
+    } else if resp.ok {
+        format!("ok ({})", resp.detail)
+    } else {
+        format!("invalid ({})", resp.detail)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

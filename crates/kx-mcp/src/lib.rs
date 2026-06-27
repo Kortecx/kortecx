@@ -75,7 +75,7 @@ pub use decode::{
 pub use egress::{classify_ip, vet_resolved_addr, EgressDenied, EgressPolicy, IpClass};
 pub use errors::{DecodeError, TransportError};
 pub use http_transport::HttpTransport;
-pub use secret_store::{EnvSecretStore, SecretStore};
+pub use secret_store::{ChainedSecretStore, EnvSecretStore, SecretStore};
 pub use session::{McpSession, McpSessionCapability, SessionError};
 pub use transport::{McpTransport, StdioTransport};
 // Re-export the warrant's `SecretRef` (the scope identifier) so callers can build

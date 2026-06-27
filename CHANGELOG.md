@@ -8,6 +8,46 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Integrations foundation: a local secret store, an event-trigger seam, and an
+  Integrations hub.** Three additions let local agents authenticate real services and
+  be driven by inbound events — the foundation for app/connector integrations.
+  - **Local secret store (`kx secrets`).** A connector credential can now be stored in
+    the OS keychain (macOS Keychain / Windows Credential Manager / Linux kernel
+    keyutils) instead of only a host environment variable. `kx secrets set/list/rm`
+    (and `kx.secrets.*` / `client.secrets.*` / the console Secrets panel) manage them;
+    a connection's `credential_ref` resolves from the keychain first, then the
+    environment (existing env-var credentials keep working). Secrets are referenced
+    **by name** — the value is read transiently when the connector dials and is never
+    journaled, never in a run's identity, never in the model's context, and never on
+    any list/response (only names + timestamps surface). Secret writes require a
+    loopback-bound gateway. The hardened multi-tenant KMS/HSM vault remains a Cloud
+    capability.
+  - **Event triggers (`kx triggers`).** A trigger binds an inbound source — a webhook,
+    a local cron interval, or a direct `SubmitTrigger` call — to a recipe handle; when
+    the event fires, the runtime starts a fresh durable run through the existing Invoke
+    path (the trigger is the run's origin; a replayed event with the same idempotency
+    key fires nothing and returns the prior run). A new opt-in **`--webhook-listen
+    <addr:port>`** serves the untrusted-inbound surface with per-trigger HMAC-SHA256
+    (`X-Kx-Signature-256` over the raw body, constant-time) or bearer auth, a payload
+    cap, a per-trigger rate limit, and idempotency dedup; `none`-auth is permitted only
+    on a loopback bind. `kx triggers add/list/test/fire/rm` (and `kx.triggers.*` /
+    `client.triggers.*` / the console Triggers panel) manage them. The hosted
+    multi-tenant trigger gateway at scale remains a Cloud capability.
+  - **Integrations hub** in the console (the Tools section) surfaces Connections +
+    Triggers + Secrets together. Docs: *Managing secrets* and *Setting up a trigger*.
+  - Built with **no edit to the frozen trio**, the canonical projection digest
+    unchanged (all new state is off-journal: the OS keychain + off-digest
+    `triggers.db` / `secret_index.db` sidecars), and additive-only proto.
+
+### Fixed
+
+- **Stale per-model recipe after a model/engine switch.** Reusing a `--catalog-dir`
+  across a model or engine switch no longer leaves a per-model chat recipe
+  (`kx/recipes/m-<id>`) bound to a model the server no longer serves (which previously
+  made every run of it fail closed). On startup the server now retires the grant for
+  any such recipe, so it disappears from `Invoke` / `ListRecipes` / `ListModels` and
+  only currently-served models are offered.
+
 - **Live tool-calling for runtime-dialed MCP connectors.** An external connector
   registered at runtime (`kx connections add` / `flow().with_mcp(...)` /
   `RegisterMcpServer`) is now reliably callable by the autonomous loop: the tool-call

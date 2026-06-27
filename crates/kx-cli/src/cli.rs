@@ -71,6 +71,8 @@ usage: kx <command> [args]
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
     kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
+    kx secrets set --name <N> --value <V> | list | rm --name <N>   (MM-3/D110 local keychain; values write-only)
+    kx triggers add --name <N> --kind <webhook|cron|grpc> --recipe <h> [--auth <a>] [--secret-ref <N>] [--schedule <secs>] [--enabled] | list | test | fire | rm   (D113 event ingress)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
     kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | run <handle> [--wait] [--out <file>] | export <handle> --output <file>   (Apps — kortecx.app/v1 envelopes)
     kx branch create <handle> [--parent <handle>] [--description <s>] | snapshot <handle> --path <p>... [--parent <handle>] | list | get <handle> | remove <handle>   (D155 file branches)
@@ -154,6 +156,10 @@ pub enum Cli {
     Health(verbs::health::HealthArgs),
     /// POC-1 Settings "Workspace": the non-secret server configuration (`GetServerInfo`).
     Info(verbs::info::InfoArgs),
+    /// The LOCAL OS-keychain secret store (MM-3/D110 — set/list/rm; values write-only).
+    Secrets(verbs::secrets::SecretsArgs),
+    /// Event-ingress triggers (D113 — add/list/test/fire/rm; webhook/cron/grpc → recipe).
+    Triggers(verbs::triggers::TriggersArgs),
 }
 
 impl Cli {
@@ -213,6 +219,8 @@ impl Cli {
             Some("datasets") => Ok(Cli::Datasets(verbs::datasets::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
             Some("info") => Ok(Cli::Info(verbs::info::parse(args)?)),
+            Some("secrets") => Ok(Cli::Secrets(verbs::secrets::parse(args)?)),
+            Some("triggers") => Ok(Cli::Triggers(verbs::triggers::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
             ))),
@@ -290,6 +298,8 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Datasets(a) => verbs::datasets::execute(a).await,
         Cli::Info(a) => verbs::info::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,
+        Cli::Secrets(a) => verbs::secrets::execute(a).await,
+        Cli::Triggers(a) => verbs::triggers::execute(a).await,
     }
 }
 
@@ -749,6 +759,33 @@ kx datasets query <name> --text <query> [--k N] [client flags]
   `query` returns top-k hits; each `score` is DISPLAY-ONLY (SN-8), a ranking aid
   never an identity input. The store is APPEND-ONLY + content-dedup (no delete).
   A pre-T3.7 / `hnsw`-less gateway answers Unimplemented (run `kx serve --features hnsw`)."
+            .into(),
+        "secrets" => "\
+kx secrets set --name <NAME> --value <VALUE> [client flags]
+kx secrets list [client flags]
+kx secrets rm --name <NAME> [client flags]
+  Manage the LOCAL OS-keychain secret store (MM-3/D110). A secret is host credential
+  material referenced elsewhere by NAME only — a connection's --credential-ref or a
+  trigger's --secret-ref. WRITE-ONLY values (SN-8/D110): `set` sends the value once and
+  it is NEVER returned by any RPC; `list` yields the NAMES + timestamps only. `set`/`rm`
+  are gated loopback-only + an authenticated party server-side; an unconfigured store
+  answers Unimplemented (run a serve with a secret store wired)."
+            .into(),
+        "triggers" => "\
+kx triggers add --name <N> --kind <webhook|cron|grpc> --recipe <handle> [--auth <none|hmac_sha256|bearer>]
+                [--secret-ref <NAME>] [--schedule <secs>] [--enabled] [client flags]
+kx triggers list [client flags]
+kx triggers test --name <N> [--payload <json>] [client flags]
+kx triggers fire --name <N> [--idempotency-key <K>] [--payload <json>] [client flags]
+kx triggers rm   --name <N> [client flags]
+  Govern the D113 event-ingress triggers. A trigger binds an inbound source (webhook |
+  cron | grpc) to a recipe handle; on an event the gateway starts a FRESH registered run
+  via the Invoke path. `add` registers the binding (--kind + --recipe required; --auth
+  defaults to none; --schedule is the cron interval seconds; --secret-ref names the
+  HMAC/bearer secret by NAME only, never the value). `test` dry-runs the binding (handle
+  resolves, payload binds) WITHOUT firing; `fire` is the inbound grpc event verb
+  (--idempotency-key dedups a replayed event to a no-op). SN-8: trigger_id is
+  server-derived; the run binds under the REGISTRANT's party."
             .into(),
         other => format!("no help for {other:?}; try `kx --help`"),
     }

@@ -14,6 +14,8 @@
 //! `kx-cloud/*` impl behind this same trait — the deployment boundary is the
 //! trait seam (D28/D94). OSS makes no "best-cryptography vault" claim.
 
+use std::sync::Arc;
+
 use kx_warrant::SecretRef;
 
 /// Resolves a [`SecretRef`] to its secret value, transiently, at the transport.
@@ -36,5 +38,81 @@ pub struct EnvSecretStore;
 impl SecretStore for EnvSecretStore {
     fn resolve(&self, secret_ref: &SecretRef) -> Option<String> {
         std::env::var(&secret_ref.0).ok()
+    }
+}
+
+/// A two-arm resolver: try `primary`, then fall back to `secondary`.
+///
+/// This is the seam that lets a host-side OS-keychain store (MM-3) take
+/// precedence while the pre-MM-3 [`EnvSecretStore`] stays a permanent fallback —
+/// so every connection whose `credential_ref` names a host env var keeps
+/// resolving unchanged (back-compat), and a name present in BOTH wins from the
+/// `primary` (the keychain). It is a pure combinator with no dependency of its
+/// own; the concrete keychain impl lives in the host crate (which already
+/// carries the platform-native deps), keeping this adapter dependency-clean.
+pub struct ChainedSecretStore {
+    primary: Arc<dyn SecretStore>,
+    secondary: Arc<dyn SecretStore>,
+}
+
+impl ChainedSecretStore {
+    /// Resolve through `primary` first, then `secondary`.
+    #[must_use]
+    pub fn new(primary: Arc<dyn SecretStore>, secondary: Arc<dyn SecretStore>) -> Self {
+        Self { primary, secondary }
+    }
+}
+
+impl SecretStore for ChainedSecretStore {
+    fn resolve(&self, secret_ref: &SecretRef) -> Option<String> {
+        self.primary
+            .resolve(secret_ref)
+            .or_else(|| self.secondary.resolve(secret_ref))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fixed in-memory store, standing in for the host keychain in unit tests.
+    struct MapStore(std::collections::BTreeMap<String, String>);
+    impl SecretStore for MapStore {
+        fn resolve(&self, secret_ref: &SecretRef) -> Option<String> {
+            self.0.get(&secret_ref.0).cloned()
+        }
+    }
+
+    #[test]
+    fn chained_prefers_primary_then_falls_back() {
+        let primary = Arc::new(MapStore(
+            [("SHARED".to_string(), "from-primary".to_string())]
+                .into_iter()
+                .collect(),
+        ));
+        let secondary = Arc::new(MapStore(
+            [
+                ("SHARED".to_string(), "from-secondary".to_string()),
+                ("ONLY_SECONDARY".to_string(), "fallback-value".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        ));
+        let chained = ChainedSecretStore::new(primary, secondary);
+
+        // present in both ⇒ primary wins
+        assert_eq!(
+            chained.resolve(&SecretRef("SHARED".into())).as_deref(),
+            Some("from-primary")
+        );
+        // absent in primary ⇒ falls back to secondary (the env back-compat path)
+        assert_eq!(
+            chained
+                .resolve(&SecretRef("ONLY_SECONDARY".into()))
+                .as_deref(),
+            Some("fallback-value")
+        );
+        // absent in both ⇒ None (the runtime never fabricates a credential)
+        assert_eq!(chained.resolve(&SecretRef("MISSING".into())), None);
     }
 }

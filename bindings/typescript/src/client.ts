@@ -72,6 +72,7 @@ import { RecipeForm, RecipeInfo, ScoredRecipe } from "./recipes.js";
 import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { Result, Run } from "./run.js";
 import { RunInputs, type RunPage, RunSummary } from "./runs.js";
+import { SecretNameRow, type SecretNamesPage } from "./secrets.js";
 import { ServerInfo } from "./serverinfo.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
 import { type MoteTelemetryPage, MoteTelemetryRow, TelemetrySummary } from "./telemetry.js";
@@ -91,6 +92,16 @@ import {
   bundleSpecToProto,
 } from "./toolscout.js";
 import { type Args, encodeArgs } from "./transport.js";
+import {
+  type RegisterTriggerInput,
+  type RegisterTriggerResult,
+  type SubmitTriggerResult,
+  type TestTriggerResult,
+  TriggerRow,
+  type TriggersPage,
+  triggerAuthToProto,
+  triggerKindToProto,
+} from "./triggers.js";
 import { type Delta, type GlobalDelta, Projection, SignatureSummary } from "./types.js";
 import {
   type WaitMode,
@@ -1480,6 +1491,155 @@ export abstract class KxClientBase {
       discover: (name: string): Promise<RegisteredToolsPage> => this.discoverServerTools(name),
       fire: (name: string, tool: string, args?: string): Promise<CallToolResult> =>
         this.callMcpTool(name, tool, args),
+    };
+  }
+
+  /**
+   * Store a host SECRET in the local OS keychain (MM-3 / D110 `PutSecret`) under a
+   * `SecretRef` NAME that a connection's / trigger's `credential_ref` points at.
+   * The `value` is WRITE-ONLY — the handler stores it + drops it; it is never on a
+   * read wire (D81). Gated loopback-only + an authenticated party server-side.
+   * Returns `true` iff it was stored.
+   */
+  async putSecret(name: string, value: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.putSecret({ name, value }));
+    return resp.stored;
+  }
+
+  /**
+   * List the stored secret NAMES + audit timestamps (MM-3 `ListSecretNames`), in
+   * `(name)` order. The secret VALUE is never returned (write-only).
+   */
+  async listSecretNames(
+    opts: { limit?: number; afterName?: string } = {},
+  ): Promise<SecretNamesPage> {
+    const resp = await rpc(
+      this.grpc.listSecretNames({ limit: opts.limit ?? 0, afterName: opts.afterName ?? "" }),
+    );
+    return { names: resp.names.map((s) => SecretNameRow.fromProto(s)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Remove a stored secret (MM-3 `DeleteSecret`). Returns `true` iff one was removed.
+   */
+  async deleteSecret(name: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.deleteSecret({ name }));
+    return resp.removed;
+  }
+
+  /**
+   * The host secret store admin namespace — `kx.secrets.set / list / remove` (the
+   * verb vocabulary of the `kx secrets` CLI). A `SecretRef` NAME is what a
+   * connection's / trigger's `credential_ref` points at; the VALUE is write-only.
+   */
+  get secrets() {
+    return {
+      set: (name: string, value: string): Promise<boolean> => this.putSecret(name, value),
+      list: (opts: { limit?: number; afterName?: string } = {}): Promise<SecretNamesPage> =>
+        this.listSecretNames(opts),
+      remove: (name: string): Promise<boolean> => this.deleteSecret(name),
+    };
+  }
+
+  /**
+   * Register a TRIGGER (D113 / D170.b `RegisterTrigger`) — bind an inbound EVENT (a
+   * webhook POST, a cron interval, or a bare `SubmitTrigger` RPC) to a recipe handle
+   * the event Invokes. The auth secret is referenced by NAME only (never the value,
+   * D81); the server derives the trigger id (SN-8). Returns the trigger id (hex).
+   */
+  async registerTrigger(input: RegisterTriggerInput): Promise<RegisterTriggerResult> {
+    const resp = await rpc(
+      this.grpc.registerTrigger({
+        name: input.name,
+        kind: triggerKindToProto(input.kind),
+        recipeHandle: input.recipeHandle,
+        auth: triggerAuthToProto(input.auth ?? "none"),
+        authSecretRef: input.authSecretRef ?? "",
+        scheduleSpec: input.scheduleSpec ?? "",
+        enabled: input.enabled ?? true,
+      }),
+    );
+    return { triggerId: encode(resp.triggerId) };
+  }
+
+  /**
+   * List the registered triggers (D113 `ListTriggers`), in `(name)` order. A row is
+   * a governance VIEW — never a secret value (`authSecretPresent` reports only
+   * whether a ref NAME is attached).
+   */
+  async listTriggers(opts: { limit?: number; afterName?: string } = {}): Promise<TriggersPage> {
+    const resp = await rpc(
+      this.grpc.listTriggers({ limit: opts.limit ?? 0, afterName: opts.afterName ?? "" }),
+    );
+    return { triggers: resp.triggers.map((t) => TriggerRow.fromProto(t)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Remove a registered trigger (D113 `DeregisterTrigger`). Returns `true` iff one
+   * was removed.
+   */
+  async deregisterTrigger(name: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.deregisterTrigger({ name }));
+    return resp.removed;
+  }
+
+  /**
+   * Fire a trigger (D113 `SubmitTrigger`) — the inbound EVENT verb. `payloadJson` is
+   * the event body, passed as the recipe args (passthrough; empty ⇒ `{}`).
+   * `idempotencyKey` dedups at the event level (empty ⇒ server-derived from the
+   * payload). Returns the registered run instance id (hex) + whether a prior
+   * identical event already started it.
+   */
+  async submitTrigger(
+    name: string,
+    payloadJson?: string,
+    idempotencyKey?: string,
+  ): Promise<SubmitTriggerResult> {
+    const resp = await rpc(
+      this.grpc.submitTrigger({
+        name,
+        idempotencyKey: idempotencyKey ?? "",
+        payloadJson: payloadJson && payloadJson.trim() !== "" ? payloadJson : "{}",
+      }),
+    );
+    return { instanceId: encode(resp.instanceId), deduped: resp.deduped };
+  }
+
+  /**
+   * Dry-run a trigger (D113 `TestTrigger`) — validate the binding (the handle
+   * resolves, the payload binds) WITHOUT firing. `ok` is `false` with a non-empty
+   * `detail` on a binding failure.
+   */
+  async testTrigger(name: string, payloadJson?: string): Promise<TestTriggerResult> {
+    const resp = await rpc(
+      this.grpc.testTrigger({
+        name,
+        payloadJson: payloadJson && payloadJson.trim() !== "" ? payloadJson : "{}",
+      }),
+    );
+    return { ok: resp.ok, detail: resp.detail };
+  }
+
+  /**
+   * The trigger admin namespace — `kx.triggers.add / list / test / fire / remove`
+   * (the verb vocabulary of the `kx triggers` CLI). Each method delegates 1:1 to
+   * the flat `registerTrigger` etc. `kind`/`auth` are friendly string unions mapped
+   * to the proto enums; ids come back hex-encoded.
+   */
+  get triggers() {
+    return {
+      add: (input: RegisterTriggerInput): Promise<RegisterTriggerResult> =>
+        this.registerTrigger(input),
+      list: (opts: { limit?: number; afterName?: string } = {}): Promise<TriggersPage> =>
+        this.listTriggers(opts),
+      test: (name: string, payload?: string): Promise<TestTriggerResult> =>
+        this.testTrigger(name, payload),
+      fire: (
+        name: string,
+        payload?: string,
+        idempotencyKey?: string,
+      ): Promise<SubmitTriggerResult> => this.submitTrigger(name, payload, idempotencyKey),
+      remove: (name: string): Promise<boolean> => this.deregisterTrigger(name),
     };
   }
 

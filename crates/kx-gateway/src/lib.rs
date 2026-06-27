@@ -177,7 +177,25 @@ mod real_exec;
 // form and be re-invoked with edits ("Re-run with changes"). Rebuildable-to-
 // EMPTY, off-journal, off-digest, off-identity.
 mod run_inputs;
+// MM-3 (D110): the LOCAL OS-keychain secret store (the kx-mcp SecretStore arm) +
+// the SecretAdmin write surface over an off-journal `secret_index.db` NAME index.
+// Always wired (keyring is non-optional); the resolve impl is mcp-gateway-gated
+// (that is where the kx-mcp SecretStore seam lives). Off-journal, off-digest.
+mod secrets;
+// D113 (trigger seam): the triggers.db off-journal sidecar (registered triggers +
+// the idempotency-key fire-dedup/run-origin record). Used by the trigger gateway +
+// the webhook/cron listeners. Off-journal, off-digest, rebuildable-to-empty.
+mod triggers_store;
+// D113 (trigger seam): the HostTriggerAdmin — the TriggerAdmin seam impl over the
+// triggers.db sidecar + the SAME binder + submitter the Invoke path uses. An inbound
+// event starts a fresh run through the existing propose-proxy (frozen trio untouched).
+mod trigger_gateway;
+// D113: the host-owned inbound listeners — the webhook ingress (untrusted; own
+// fail-closed threat model) + the local cron ticker. Both fire registered triggers
+// via the SAME TriggerAdmin::submit path. Tokio lives here in the host, never the lib.
+mod cron;
 mod server;
+mod webhook;
 // Batch C: the telemetry.db sidecar (the TelemetryView seam) — host-measured
 // execution exhaust (wall-clock / model usage / fired tool), joined to the
 // journal's Committed facts by a background tick. Rebuildable-to-EMPTY,

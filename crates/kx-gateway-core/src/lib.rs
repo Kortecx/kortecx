@@ -59,6 +59,13 @@ mod fuzzy_discovery;
 mod identity;
 mod locks_view;
 mod mcp_gateway_admin;
+// MM-3 (D110): the LOCAL secret-store admin seam (PutSecret/ListSecretNames/
+// DeleteSecret). Pure vocabulary trait; the host impl is keychain-backed. The
+// value is write-only (put arg) — never on a return type, the wire, or the journal.
+mod secret_admin;
+// D113 (trigger seam): the trigger admin seam (Register/List/Deregister/Submit/Test).
+// Async (binds + submits a run via the Invoke propose-proxy); the host impl owns the
+// triggers.db store + the binder + submitter. No journal-writer dep added here.
 mod model_lifecycle;
 mod model_pull;
 mod models_view;
@@ -76,6 +83,7 @@ mod submit;
 mod telemetry_view;
 mod tool_registry_admin;
 mod toolscout_view;
+mod trigger_admin;
 mod uploads;
 mod view;
 mod writer;
@@ -124,6 +132,7 @@ pub use mote_def_view::MoteDefView;
 pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYTES};
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use run_inputs_view::{RunInputsEntry, RunInputsRecord, RunInputsStore};
+pub use secret_admin::{SecretAdmin, SecretAdminError, SecretNameView};
 pub use server_info::ServerInfoFacts;
 pub use service::{
     AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
@@ -147,6 +156,9 @@ pub use tool_registry_admin::{
 pub use toolscout_view::{
     BundleScoreView, BundleSpecEntry, BundleToolSpecEntry, KeywordSetEntry, LowerVerdictEntry,
     ManifestScoreEntry, ToolManifestEntry, ToolScoutView,
+};
+pub use trigger_admin::{
+    TriggerAdmin, TriggerAdminError, TriggerFireOutcome, TriggerRegistration, TriggerView,
 };
 pub use uploads::{UploadRecord, UploadsLedger};
 pub use writer::ContentWriter;

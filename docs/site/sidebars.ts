@@ -34,6 +34,8 @@ const sidebars: SidebarsConfig = {
         "security",
         "tools",
         "authoring-a-connector",
+        "managing-secrets",
+        "authoring-a-trigger",
         "context",
         "models",
         "local-inference-engines",

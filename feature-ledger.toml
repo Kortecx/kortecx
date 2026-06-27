@@ -71,7 +71,8 @@ notes    = "D167 E0 / D170 foundation seam #1. Curates the (already-pub, scatter
 [[feature]]
 id       = "connector-live-toolcalling"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "265"
 branch   = "feat/connector-live-toolcalling"
 covers   = [
   "T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER fix: ambiguity is a precise DecodeError::Ambiguous (candidate full-ids) → disambiguating A2 re-prompt, not a silent dead-letter",
@@ -82,3 +83,20 @@ covers   = [
 ]
 inherits = ["connector-extension-sdk"]
 notes    = "Makes a runtime-dialed external connector actually FIRE in the live react-auto loop (was a turn-0 dead-letter), plus a model-free CallMcpTool diagnostic. Digest 7d22d4bd invariant (react turns edge-free; advisory reason bytes off-digest); frozen trio untouched; additive-only proto + codegen-fresh."
+
+[[feature]]
+id       = "integrations-foundation"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/d170-integrations-foundation"
+covers   = [
+  "MM-3 local secret store: OS-keychain SecretStore (keyring native backends; keyutils headless) behind the kx-mcp SecretStore seam + ChainedSecretStore{keychain→env} back-compat",
+  "PutSecret/ListSecretNames/DeleteSecret RPCs (value write-only; names+timestamps only on the wire; loopback-only writes) + secret_index.db NAME index",
+  "D113 trigger seam: RegisterTrigger/ListTriggers/DeregisterTrigger/SubmitTrigger/TestTrigger + off-journal triggers.db (idempotency-key dedup, run-origin)",
+  "HostTriggerAdmin: inbound event → fresh run via the Invoke propose-proxy (frozen trio untouched; binds under the registrant party D102.2)",
+  "--webhook-listen: untrusted-inbound HTTP listener (HMAC-SHA256 X-Kx-Signature-256 / bearer auth, payload cap, per-trigger rate-limit, idempotency dedup; NONE only on loopback) + cron interval ticker",
+  "cross-surface: kx secrets | kx triggers (CLI) · kx.secrets/kx.triggers (Py) · client.secrets/client.triggers (TS) · Integrations hub UI · docs",
+  "fix: stale per-model recipe grant retired on a model/engine switch with a reused --catalog-dir (T-STALE-RECIPE-MODEL-ROUTE)",
+]
+inherits = ["connector-extension-sdk", "connector-live-toolcalling"]
+notes    = "D170 foundation seams (after the connector SDK): the local secret store + the trigger seam + the Integrations hub, so app sidecars can authenticate real services and be event-driven. Digest 7d22d4bd invariant (all new state off-journal: OS keychain + triggers.db/secret_index.db sidecars); frozen trio untouched; additive-only proto + codegen-fresh; keyring/hmac/sha2 deps cargo-deny clean."

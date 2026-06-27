@@ -49,7 +49,17 @@ pub(crate) fn wire_mcp_gateway<S: ContentStore + Send + Sync + 'static>(
     // diagnostic live-fire (`CallMcpTool`) — one fire path, SN-8 re-enforced there.
     let sink: Arc<dyn CapabilitySink> = Arc::new(BrokerCapabilitySink::new(broker.clone()));
     let allowlist = crate::tools::tool_host_allowlist();
-    let gateway = Arc::new(McpGateway::new(store, registry.clone(), sink, allowlist));
+    // MM-3: resolve a connection's `credential_ref` NAME from the OS keychain
+    // first, then fall back to the host environment (so existing env-var
+    // credentials keep working — back-compat). The value is read transiently
+    // inside the transport at dispatch and dropped (D81); never journaled.
+    let secret_store: Arc<dyn kx_mcp::SecretStore> = Arc::new(kx_mcp::ChainedSecretStore::new(
+        Arc::new(crate::secrets::KeyringSecretStore::os()),
+        Arc::new(kx_mcp::EnvSecretStore),
+    ));
+    let gateway = Arc::new(
+        McpGateway::new(store, registry.clone(), sink, allowlist).with_secret_store(secret_store),
+    );
     // Re-dial persisted servers so a restart re-registers their tools +
     // capabilities — but OFF the serve-bind path: a hung/dead persisted server
     // must NOT delay the listeners coming up (review #2). The dials are synchronous

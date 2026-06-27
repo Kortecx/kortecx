@@ -765,6 +765,24 @@ pub struct GatewayService {
     /// return `unimplemented`. The live untrusted-egress surface (GR8). OAuth/
     /// device-flow + a credential marketplace are CLOUD (D159/GR19).
     mcp_admin: Option<Arc<dyn crate::mcp_gateway_admin::McpGatewayAdmin>>,
+    /// The optional LOCAL secret-store admin seam (MM-3 — the host injects a
+    /// keychain-backed impl). `None` ⇒ `PutSecret`/`ListSecretNames`/`DeleteSecret`
+    /// return `unimplemented`. Off-journal (OS keychain + an off-digest NAME index);
+    /// the secret VALUE never crosses any return type, the wire, or the journal (D81).
+    secret_admin: Option<Arc<dyn crate::secret_admin::SecretAdmin>>,
+    /// Whether secret WRITES (`PutSecret`/`DeleteSecret`) are permitted — set true by
+    /// the host ONLY when the gateway is bound to a loopback address (the local-first
+    /// default). A network-exposed bind ⇒ `false` ⇒ writes are refused (`permission_denied`)
+    /// since a remote peer cannot be distinguished from the local operator behind the
+    /// gRPC-web/CORS layers; the operator manages secrets over a loopback bind or via the
+    /// environment. Reads (`ListSecretNames`) need only an authenticated caller. Default
+    /// false (fail-closed).
+    secret_writes_loopback_ok: bool,
+    /// The optional trigger admin seam (D113 — the host injects a `triggers.db`-backed
+    /// impl over the SAME binder + submitter the Invoke path uses). `None` ⇒ the 5
+    /// trigger RPCs return `unimplemented`. An inbound event starts a run through the
+    /// existing propose-proxy (no journal-writer dep added; frozen trio untouched).
+    trigger_admin: Option<Arc<dyn crate::trigger_admin::TriggerAdmin>>,
     /// The optional context-bundle store seam (PR-7 — the host injects a
     /// `bundles.db`-backed sidecar). `None` ⇒ the 4 context-bundle RPCs return
     /// `unimplemented` and `context_bundles` cannot be resolved at bind. Caller-
@@ -873,6 +891,9 @@ impl GatewayService {
             alerts: None,
             tool_admin: None,
             mcp_admin: None,
+            secret_admin: None,
+            secret_writes_loopback_ok: false,
+            trigger_admin: None,
             bundles: None,
             branches: None,
             apps: None,
@@ -1233,6 +1254,33 @@ impl GatewayService {
         self
     }
 
+    /// Inject the LOCAL secret-store admin seam (MM-3). `None` (the default) ⇒ the 3
+    /// secret RPCs return `unimplemented`. `writes_loopback_ok` gates secret WRITES
+    /// (`PutSecret`/`DeleteSecret`): pass `true` ONLY when the gateway is loopback-bound
+    /// (so no remote peer can plant/remove credential material); reads need only an
+    /// authenticated caller regardless.
+    #[must_use]
+    pub fn with_secret_admin(
+        mut self,
+        secret_admin: Arc<dyn crate::secret_admin::SecretAdmin>,
+        writes_loopback_ok: bool,
+    ) -> Self {
+        self.secret_admin = Some(secret_admin);
+        self.secret_writes_loopback_ok = writes_loopback_ok;
+        self
+    }
+
+    /// Inject the trigger admin seam (D113). `None` (the default) ⇒ the 5 trigger
+    /// RPCs return `unimplemented`.
+    #[must_use]
+    pub fn with_trigger_admin(
+        mut self,
+        trigger_admin: Arc<dyn crate::trigger_admin::TriggerAdmin>,
+    ) -> Self {
+        self.trigger_admin = Some(trigger_admin);
+        self
+    }
+
     /// Inject the context-bundle store seam (PR-7). `None` (the default) ⇒ the 4
     /// context-bundle RPCs return `unimplemented` and `context_bundles` resolves
     /// empty (a clear bind error).
@@ -1380,6 +1428,79 @@ fn mcp_admin_status(err: crate::McpAdminError) -> Status {
         crate::McpAdminError::NotFound(detail) => Status::not_found(detail),
         crate::McpAdminError::Storage(detail) => Status::internal(detail),
     }
+}
+
+/// Map a [`crate::SecretAdminError`] (MM-3) to a tonic `Status`.
+fn secret_admin_status(err: crate::SecretAdminError) -> Status {
+    match err {
+        crate::SecretAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
+        crate::SecretAdminError::Unavailable(detail) => Status::failed_precondition(detail),
+        crate::SecretAdminError::Storage(detail) => Status::internal(detail),
+    }
+}
+
+/// Map a [`crate::TriggerAdminError`] (D113) to a tonic `Status`.
+fn trigger_admin_status(err: crate::TriggerAdminError) -> Status {
+    match err {
+        crate::TriggerAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
+        crate::TriggerAdminError::NotFound(detail) => Status::not_found(detail),
+        crate::TriggerAdminError::NotAuthorized => Status::permission_denied("not authorized"),
+        crate::TriggerAdminError::Unsupported(detail) => Status::failed_precondition(detail),
+        crate::TriggerAdminError::Storage(detail) => Status::internal(detail),
+    }
+}
+
+/// Proto `TriggerKind` (i32) → the seam's string vocabulary.
+fn trigger_kind_str(kind: i32) -> &'static str {
+    match proto::TriggerKind::try_from(kind) {
+        Ok(proto::TriggerKind::Webhook) => "webhook",
+        Ok(proto::TriggerKind::Cron) => "cron",
+        Ok(proto::TriggerKind::Grpc) => "grpc",
+        _ => "",
+    }
+}
+
+/// The seam's string vocabulary → proto `TriggerKind` (i32).
+fn trigger_kind_proto(kind: &str) -> i32 {
+    match kind {
+        "webhook" => proto::TriggerKind::Webhook as i32,
+        "cron" => proto::TriggerKind::Cron as i32,
+        "grpc" => proto::TriggerKind::Grpc as i32,
+        _ => proto::TriggerKind::Unspecified as i32,
+    }
+}
+
+/// Proto `TriggerAuth` (i32) → the seam's string vocabulary.
+fn trigger_auth_str(auth: i32) -> &'static str {
+    match proto::TriggerAuth::try_from(auth) {
+        Ok(proto::TriggerAuth::None) => "none",
+        Ok(proto::TriggerAuth::HmacSha256) => "hmac_sha256",
+        Ok(proto::TriggerAuth::Bearer) => "bearer",
+        _ => "",
+    }
+}
+
+/// The seam's string vocabulary → proto `TriggerAuth` (i32).
+fn trigger_auth_proto(auth: &str) -> i32 {
+    match auth {
+        "none" => proto::TriggerAuth::None as i32,
+        "hmac_sha256" => proto::TriggerAuth::HmacSha256 as i32,
+        "bearer" => proto::TriggerAuth::Bearer as i32,
+        _ => proto::TriggerAuth::Unspecified as i32,
+    }
+}
+
+/// MM-3 secret-name validation. A secret NAME is referenced as a connection's
+/// `credential_ref` AND used as an OS-keychain entry key AND as the chained-env
+/// fallback var name, so it must be a portable identifier: non-empty, ≤255 bytes,
+/// and `[A-Za-z0-9_.-]` only (env-var-name-ish + dots/dashes). Rejecting anything
+/// else keeps the keychain key + the env fallback unambiguous and log-safe.
+fn valid_secret_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
 }
 
 /// PR-7: lightweight `namespace/collection/name` handle validation for context
@@ -3143,6 +3264,240 @@ impl KxGateway for GatewayService {
                 error: e.to_string(),
             })),
         }
+    }
+
+    // ── MM-3 (D110): the LOCAL OS-keychain secret store. The VALUE is write-only
+    // (PutSecret arg); it is never returned, listed, journaled, or in model context.
+    async fn put_secret(
+        &self,
+        request: Request<proto::PutSecretRequest>,
+    ) -> Result<Response<proto::PutSecretResponse>, Status> {
+        // Authenticated caller required (server-derived identity); never wire-trusted.
+        let _party = caller_principal(&request)?;
+        // Loopback-only gate: secret writes plant host credential material, so they
+        // are refused unless the gateway is loopback-bound (no remote peer can reach it).
+        if !self.secret_writes_loopback_ok {
+            return Err(Status::permission_denied(
+                "PutSecret requires a loopback-bound gateway (set secrets locally, or via the environment)",
+            ));
+        }
+        let admin = self
+            .secret_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("PutSecret: no secret store wired"))?;
+        let req = request.into_inner();
+        if !valid_secret_name(&req.name) {
+            return Err(Status::invalid_argument(
+                "name must be 1..=255 chars of [A-Za-z0-9_.-]",
+            ));
+        }
+        if req.value.is_empty() {
+            return Err(Status::invalid_argument("value is required"));
+        }
+        admin
+            .put(&req.name, &req.value)
+            .map_err(secret_admin_status)?;
+        // The request (and its `value`) is dropped here; nothing echoes it.
+        Ok(Response::new(proto::PutSecretResponse { stored: true }))
+    }
+
+    async fn list_secret_names(
+        &self,
+        request: Request<proto::ListSecretNamesRequest>,
+    ) -> Result<Response<proto::ListSecretNamesResponse>, Status> {
+        // A read (NAMES only) needs only an authenticated caller — no loopback gate.
+        let _party = caller_principal(&request)?;
+        let admin = self
+            .secret_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListSecretNames: no secret store wired"))?;
+        let req = request.into_inner();
+        let (rows, has_more) = admin
+            .list_names(req.limit, &req.after_name)
+            .map_err(secret_admin_status)?;
+        Ok(Response::new(proto::ListSecretNamesResponse {
+            names: rows
+                .into_iter()
+                .map(|r| proto::SecretName {
+                    name: r.name,
+                    created_unix_ms: r.created_unix_ms,
+                    updated_unix_ms: r.updated_unix_ms,
+                })
+                .collect(),
+            has_more,
+        }))
+    }
+
+    async fn delete_secret(
+        &self,
+        request: Request<proto::DeleteSecretRequest>,
+    ) -> Result<Response<proto::DeleteSecretResponse>, Status> {
+        let _party = caller_principal(&request)?;
+        if !self.secret_writes_loopback_ok {
+            return Err(Status::permission_denied(
+                "DeleteSecret requires a loopback-bound gateway",
+            ));
+        }
+        let admin = self
+            .secret_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("DeleteSecret: no secret store wired"))?;
+        let req = request.into_inner();
+        if !valid_secret_name(&req.name) {
+            return Err(Status::invalid_argument(
+                "name must be 1..=255 chars of [A-Za-z0-9_.-]",
+            ));
+        }
+        let removed = admin.delete(&req.name).map_err(secret_admin_status)?;
+        Ok(Response::new(proto::DeleteSecretResponse { removed }))
+    }
+
+    // ── D113 (trigger seam): event ingress. Each inbound event starts a fresh run
+    // via the SAME Invoke propose-proxy the host trigger admin owns (coordinator stays
+    // the sole journal writer; frozen trio untouched). SN-8: server-derived id + owner.
+    async fn register_trigger(
+        &self,
+        request: Request<proto::RegisterTriggerRequest>,
+    ) -> Result<Response<proto::RegisterTriggerResponse>, Status> {
+        // The trigger fires under the REGISTRANT's party (D102.2; server-derived).
+        let owner_party = caller_principal(&request)?;
+        let admin = self
+            .trigger_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("RegisterTrigger: no trigger admin wired"))?;
+        let req = request.into_inner();
+        if req.name.trim().is_empty() {
+            return Err(Status::invalid_argument("name is required"));
+        }
+        if req.recipe_handle.trim().is_empty() {
+            return Err(Status::invalid_argument("recipe_handle is required"));
+        }
+        let kind = trigger_kind_str(req.kind);
+        if kind.is_empty() {
+            return Err(Status::invalid_argument(
+                "kind must be WEBHOOK, CRON, or GRPC",
+            ));
+        }
+        let auth = trigger_auth_str(req.auth);
+        if auth.is_empty() {
+            return Err(Status::invalid_argument(
+                "auth must be NONE, HMAC_SHA256, or BEARER",
+            ));
+        }
+        let trigger_id = admin
+            .register(crate::TriggerRegistration {
+                name: req.name,
+                kind: kind.to_string(),
+                recipe_handle: req.recipe_handle,
+                auth: auth.to_string(),
+                auth_secret_ref: req.auth_secret_ref,
+                schedule_spec: req.schedule_spec,
+                enabled: req.enabled,
+                owner_party,
+            })
+            .await
+            .map_err(trigger_admin_status)?;
+        Ok(Response::new(proto::RegisterTriggerResponse {
+            trigger_id: trigger_id.to_vec(),
+        }))
+    }
+
+    async fn list_triggers(
+        &self,
+        request: Request<proto::ListTriggersRequest>,
+    ) -> Result<Response<proto::ListTriggersResponse>, Status> {
+        let _party = caller_principal(&request)?;
+        let admin = self
+            .trigger_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListTriggers: no trigger admin wired"))?;
+        let req = request.into_inner();
+        let (rows, has_more) = admin
+            .list(req.limit, &req.after_name)
+            .await
+            .map_err(trigger_admin_status)?;
+        Ok(Response::new(proto::ListTriggersResponse {
+            triggers: rows
+                .into_iter()
+                .map(|t| proto::TriggerView {
+                    trigger_id: t.trigger_id.to_vec(),
+                    name: t.name,
+                    kind: trigger_kind_proto(&t.kind),
+                    recipe_handle: t.recipe_handle,
+                    auth: trigger_auth_proto(&t.auth),
+                    auth_secret_present: t.auth_secret_present,
+                    schedule_spec: t.schedule_spec,
+                    enabled: t.enabled,
+                    last_fire_unix_ms: t.last_fire_unix_ms,
+                })
+                .collect(),
+            has_more,
+        }))
+    }
+
+    async fn deregister_trigger(
+        &self,
+        request: Request<proto::DeregisterTriggerRequest>,
+    ) -> Result<Response<proto::DeregisterTriggerResponse>, Status> {
+        let _party = caller_principal(&request)?;
+        let admin = self
+            .trigger_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("DeregisterTrigger: no trigger admin wired"))?;
+        let req = request.into_inner();
+        if req.name.trim().is_empty() {
+            return Err(Status::invalid_argument("name is required"));
+        }
+        let removed = admin
+            .deregister(&req.name)
+            .await
+            .map_err(trigger_admin_status)?;
+        Ok(Response::new(proto::DeregisterTriggerResponse { removed }))
+    }
+
+    async fn submit_trigger(
+        &self,
+        request: Request<proto::SubmitTriggerRequest>,
+    ) -> Result<Response<proto::SubmitTriggerResponse>, Status> {
+        // An authenticated caller may fire a registered trigger; the run still binds
+        // under the trigger's OWN owner party (the caller cannot escalate via the trigger).
+        let _party = caller_principal(&request)?;
+        let admin = self
+            .trigger_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("SubmitTrigger: no trigger admin wired"))?;
+        let req = request.into_inner();
+        if req.name.trim().is_empty() {
+            return Err(Status::invalid_argument("name is required"));
+        }
+        let outcome = admin
+            .submit(&req.name, &req.idempotency_key, &req.payload_json)
+            .await
+            .map_err(trigger_admin_status)?;
+        Ok(Response::new(proto::SubmitTriggerResponse {
+            instance_id: outcome.instance_id.to_vec(),
+            deduped: outcome.deduped,
+        }))
+    }
+
+    async fn test_trigger(
+        &self,
+        request: Request<proto::TestTriggerRequest>,
+    ) -> Result<Response<proto::TestTriggerResponse>, Status> {
+        let _party = caller_principal(&request)?;
+        let admin = self
+            .trigger_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("TestTrigger: no trigger admin wired"))?;
+        let req = request.into_inner();
+        if req.name.trim().is_empty() {
+            return Err(Status::invalid_argument("name is required"));
+        }
+        let (ok, detail) = admin
+            .test(&req.name, &req.payload_json)
+            .await
+            .map_err(trigger_admin_status)?;
+        Ok(Response::new(proto::TestTriggerResponse { ok, detail }))
     }
 
     async fn put_context_bundle(
