@@ -58,6 +58,7 @@ fits (the flow sugar above just calls the SDK method for you):
 ```bash title="CLI (operator)"
 kx connections add --name fs --command "npx -y @modelcontextprotocol/server-filesystem /data"
 kx connections list
+kx connections fire --name fs --tool list_directory --args '{"path":"/data"}'  # exercise it live
 kx agent run --goal "list /data" --tools fs/list_directory
 ```
 
@@ -67,6 +68,7 @@ kx.connections.add("fs", endpoint="npx",
 kx.connections.list()
 kx.connections.discover("fs")      # re-dial + list the tools it exposes
 kx.connections.test("fs")          # reachability probe
+kx.connections.fire("fs", "list_directory", '{"path":"/data"}')  # diagnostic live-fire
 kx.connections.remove("fs")
 ```
 
@@ -75,10 +77,28 @@ await kx.connections.add({ name: "fs", endpoint: "npx",
   args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"] });
 await kx.connections.list();
 await kx.connections.discover("fs");
+await kx.connections.fire("fs", "list_directory", '{"path":"/data"}');
 ```
 
 Every discovered tool is namespaced `<server>/<remote>` (server-derived, SN-8), so tools
 from different connectors never collide.
+
+## Exercise a tool before the agent does
+
+`connections fire` (CLI / SDK / the console's per-connector **Fire a tool** panel) calls
+ONE registered tool live through the same broker the agentic loop uses, and shows the real
+result — a model-free "does this connector actually work" check. It validates your args
+against the tool's declared `inputSchema` and enforces the same warrant gate (a single grant
+built from the tool's own scopes; the client never supplies grants — SN-8). It is a
+**diagnostic, not a recorded run**: like `test` / `discover`, it leaves no journal fact and
+is not replayable. Durable, audited tool-firing happens inside an agentic run.
+
+When the agent itself calls a tool, the runtime accepts the shapes real local models emit —
+the full `server/tool` id, a bare leaf, a bare server prefix, a JSON / marked call, **and** a
+bare paren call like `reverse(text="hi")`. If a bare name is **ambiguous** (two connected
+servers each expose a tool with that leaf), the runtime never guesses: it re-prompts the model
+with the disambiguating full ids (e.g. *use the full id: `mcp-echo/echo` OR `fs/echo`*) so it
+self-corrects — pointing the model at the full `server/tool` id in your goal avoids the round-trip.
 
 ## What a connector must implement
 

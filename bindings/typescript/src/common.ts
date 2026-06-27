@@ -185,6 +185,7 @@ export type {
   LowerVerdictName,
   BundleSpec,
   BundleToolInput,
+  CallToolResult,
   KeywordSetInput,
   McpServersPage,
   RegisterMcpServerInput,

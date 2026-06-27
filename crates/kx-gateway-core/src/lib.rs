@@ -114,7 +114,8 @@ pub use events::{
 };
 pub use identity::CallerParty;
 pub use mcp_gateway_admin::{
-    McpAdminError, McpGatewayAdmin, McpServerRegistration, McpServerView, RegisterServerOutcome,
+    CallToolOutcome, McpAdminError, McpGatewayAdmin, McpServerRegistration, McpServerView,
+    RegisterServerOutcome,
 };
 pub use model_lifecycle::{ModelLifecycleControl, ModelLifecycleOutcome};
 pub use model_pull::{ModelPuller, PullAdmission, PullPhase, PullProgress, PullSource};

@@ -177,6 +177,21 @@ fn warrant(granted: bool) -> WarrantSpec {
     }
 }
 
+/// T-CONNECTOR-AUTOGRANT: a warrant granting TWO tools that collide on the leaf
+/// `echo` — the bundled `mcp-echo/echo` and a dialed `refconn/echo` — reproducing the
+/// react-auto auto-grant union when an external connector exposing an `echo` is dialed.
+/// A bare `echo` proposal is then ambiguous (the turn-0 dead-letter root cause).
+fn collision_warrant() -> WarrantSpec {
+    let mut w = warrant(false);
+    for id in ["mcp-echo/echo", "refconn/echo"] {
+        w.tool_grants.insert(ToolGrant {
+            tool_id: kx_mote::ToolName(id.into()),
+            tool_version: kx_mote::ToolVersion("1".into()),
+        });
+    }
+    w
+}
+
 /// The `mcp-echo@1` ToolDef (typed schema: one required `q: Str`) the live tests
 /// register — the settle's validate-at-freeze (PR-2d-2) resolves a proposed tool
 /// against the registry BEFORE freezing a `Tool` fact, so the tool the tests
@@ -1893,6 +1908,62 @@ async fn malformed_committed_proposal_rejects_and_re_prompts() {
     assert!(
         prompt.contains("REJECTED"),
         "the re-prompted turn's instruction carries the rejection steer: {prompt}"
+    );
+}
+
+/// T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER: when the bundled `mcp-echo/echo` and a
+/// dialed `refconn/echo` are both auto-granted, a COMMITTED bare `echo` is ambiguous —
+/// the turn-0 dead-letter root cause. The settle must freeze a `Rejected` round whose
+/// reason NAMES both full ids (Fix A), and the re-prompt must carry them, so the model
+/// self-corrects to a unique `<server>/<remote>` id instead of the chain silently dying.
+#[tokio::test]
+async fn ambiguous_dialed_collision_rejects_then_reprompts_with_full_ids() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = collision_warrant(); // grants mcp-echo/echo AND refconn/echo
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+
+    // The live Gemma shape that triggers the bug: a committed bare `echo` (no server
+    // prefix) — addresses BOTH grants ⇒ ambiguous ⇒ fail-closed (SN-8), never fires.
+    commit_raw(
+        &svc,
+        &store,
+        &turn0,
+        &w,
+        br#"<|tool_call>call:echo{"q":"pong"}<tool_call|>"#,
+        worker,
+    )
+    .await;
+    let facts = react_facts(&svc, &dir).await;
+    // turn-0 froze REJECTED (not a silent DeadLettered) with the disambiguating reason.
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound { turn: 0, branch: ReactBranch::Rejected { reason }, .. }
+                if reason.contains("ambiguous")
+                    && reason.contains("mcp-echo/echo")
+                    && reason.contains("refconn/echo")
+        )),
+        "the ambiguous bare leaf freezes a Rejected round naming BOTH candidate full-ids"
+    );
+    // The chain re-prompts (never silently dead-letters turn-0) and the next turn's
+    // instruction steers the model to a unique full id.
+    let next = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(next.len(), 1, "the re-prompted turn is leasable");
+    let turn1: Mote = next[0].mote.clone().unwrap().try_into().unwrap();
+    let prompt = turn1
+        .def
+        .config_subset
+        .get(&ConfigKey(PROMPT_KEY.to_string()))
+        .map(|v| String::from_utf8_lossy(&v.0).into_owned())
+        .unwrap_or_default();
+    assert!(
+        prompt.contains("REJECTED") && prompt.contains("refconn/echo"),
+        "the re-prompted turn names the disambiguating full id: {prompt}"
     );
 }
 

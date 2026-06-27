@@ -79,6 +79,7 @@ import type { TokenChunk } from "./tokens.js";
 import {
   BundleScore,
   type BundleSpec,
+  type CallToolResult,
   McpServer,
   type McpServersPage,
   type RegisterMcpServerInput,
@@ -1443,6 +1444,24 @@ export abstract class KxClientBase {
   }
 
   /**
+   * Operator DIAGNOSTIC: fire ONE registered tool on a dialed connector live through
+   * the broker (`CallMcpTool`). `args` is a JSON object string (validated against the
+   * tool's inputSchema; empty ⇒ `{}`). NOT a durable agentic effect (no journal fact)
+   * — the "does this connector work" check; the agentic loop fires the same tools
+   * durably. SN-8 re-enforced server-side (single-grant warrant from the tool's scopes).
+   */
+  async callMcpTool(name: string, tool: string, args?: string): Promise<CallToolResult> {
+    const resp = await rpc(
+      this.grpc.callMcpTool({
+        serverName: name,
+        remoteName: tool,
+        argsJson: args && args.trim() !== "" ? args : "{}",
+      }),
+    );
+    return { ok: resp.ok, resultJson: resp.resultJson, error: resp.error };
+  }
+
+  /**
    * The connector (external MCP server) admin namespace — `kx.connections.add /
    * list / test / remove / discover` (the verb vocabulary of the `kx connections`
    * CLI). Each method delegates 1:1 to the flat `registerMcpServer` etc. (which
@@ -1459,6 +1478,8 @@ export abstract class KxClientBase {
       test: (name: string): Promise<boolean> => this.testMcpServer(name),
       remove: (name: string): Promise<boolean> => this.deregisterMcpServer(name),
       discover: (name: string): Promise<RegisteredToolsPage> => this.discoverServerTools(name),
+      fire: (name: string, tool: string, args?: string): Promise<CallToolResult> =>
+        this.callMcpTool(name, tool, args),
     };
   }
 

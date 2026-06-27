@@ -27,6 +27,7 @@ const registerM = mut(vi.fn());
 const testM = mut(vi.fn());
 const discoverM = mut(vi.fn());
 const removeM = mut(vi.fn());
+const fireM = mut(vi.fn());
 
 vi.mock("../../src/kx/use-connections", () => ({
   useListMcpServers: () => listState,
@@ -34,6 +35,7 @@ vi.mock("../../src/kx/use-connections", () => ({
   useTestMcpServer: () => testM,
   useDiscoverServerTools: () => discoverM,
   useDeregisterMcpServer: () => removeM,
+  useCallMcpTool: () => fireM,
 }));
 
 import { ConnectionsPanel } from "../../src/components/tools/ConnectionsPanel";
@@ -50,8 +52,22 @@ function resetMut(m: ReturnType<typeof mut>) {
 afterEach(() => {
   listState.servers = [];
   listState.notWired = false;
-  [registerM, testM, discoverM, removeM].forEach(resetMut);
+  [registerM, testM, discoverM, removeM, fireM].forEach(resetMut);
 });
+
+const oneServer = () => {
+  listState.servers = [
+    {
+      connectionId: "cd".repeat(8),
+      serverName: "refconn",
+      transport: "stdio",
+      endpoint: "kx-connector-example",
+      health: "connected",
+      toolCount: 2,
+      credentialRefPresent: false,
+    },
+  ];
+};
 
 describe("ConnectionsPanel", () => {
   it("shows the honest not-wired empty state", () => {
@@ -128,5 +144,43 @@ describe("ConnectionsPanel", () => {
     render(<ConnectionsPanel />);
     fireEvent.click(screen.getByTestId("connection-transport-http"));
     expect(screen.getByTestId("connection-tls")).toBeInTheDocument();
+  });
+
+  it("fires a tool from the per-row live-fire panel and shows the result", () => {
+    oneServer();
+    fireM.isSuccess = true;
+    fireM.data = { ok: true, resultJson: '{"reversed":"gnop"}', error: "" };
+    render(<ConnectionsPanel />);
+    // The fire panel is collapsed until toggled (no clutter on the row).
+    expect(screen.queryByTestId("connection-fire-form-refconn")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("connection-fire-toggle-refconn"));
+    fireEvent.change(screen.getByTestId("connection-fire-tool-refconn"), {
+      target: { value: "reverse" },
+    });
+    fireEvent.change(screen.getByTestId("connection-fire-args-refconn"), {
+      target: { value: '{"text":"pong"}' },
+    });
+    fireEvent.click(screen.getByTestId("connection-fire-run-refconn"));
+    expect(fireM.mutate).toHaveBeenCalledWith({
+      name: "refconn",
+      tool: "reverse",
+      args: '{"text":"pong"}',
+    });
+    expect(screen.getByTestId("connection-fire-result-refconn")).toHaveTextContent("gnop");
+  });
+
+  it("surfaces a live-fire failure ({ ok:false, error }) inline, never silent", () => {
+    oneServer();
+    fireM.isSuccess = true;
+    fireM.data = { ok: false, resultJson: "", error: "no registered tool `refconn/nope`" };
+    render(<ConnectionsPanel />);
+    fireEvent.click(screen.getByTestId("connection-fire-toggle-refconn"));
+    fireEvent.change(screen.getByTestId("connection-fire-tool-refconn"), {
+      target: { value: "nope" },
+    });
+    fireEvent.click(screen.getByTestId("connection-fire-run-refconn"));
+    expect(screen.getByTestId("connection-fire-error-refconn")).toHaveTextContent(
+      "no registered tool",
+    );
   });
 });

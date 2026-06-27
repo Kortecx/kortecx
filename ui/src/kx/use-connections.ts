@@ -12,6 +12,7 @@
  */
 
 import type {
+  CallToolResult,
   McpServersPage,
   RegisterMcpServerInput,
   RegisterServerResult,
@@ -107,6 +108,34 @@ export function useDeregisterMcpServer() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.mcpServers(endpoint) });
       void qc.invalidateQueries({ queryKey: queryKeys.discoverTools(endpoint) });
+    },
+  });
+}
+
+/** Arguments for the operator DIAGNOSTIC tool fire (`CallMcpTool`). */
+export interface CallMcpToolArgs {
+  /** The registered connector handle. */
+  readonly name: string;
+  /** The tool's remote method name (resolved to `<server>/<tool>`). */
+  readonly tool: string;
+  /** JSON args object string (validated against the tool's inputSchema; empty ⇒ `{}`). */
+  readonly args?: string;
+}
+
+/**
+ * Fire ONE registered tool live through the broker (`CallMcpTool`) — the operator
+ * "exercise this tool" diagnostic. NOT a durable agentic effect (no journal fact);
+ * SN-8 is re-enforced server-side. A connector / tool failure resolves to
+ * `{ ok: false, error }` (never a thrown rejection) so the panel surfaces it inline.
+ */
+export function useCallMcpTool() {
+  const { client } = useConnection();
+  return useMutation<CallToolResult, unknown, CallMcpToolArgs>({
+    mutationFn: async ({ name, tool, args }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      return client.callMcpTool(name, tool, args);
     },
   });
 }

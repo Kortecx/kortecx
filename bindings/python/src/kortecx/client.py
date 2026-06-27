@@ -72,6 +72,7 @@ from .telemetry import MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from .toolscout import (
     BundleScore,
     BundleSpec,
+    CallToolResult,
     McpServer,
     McpServersPage,
     RegisteredTool,
@@ -307,6 +308,10 @@ class _Connections:
     def discover(self, name: str) -> "RegisteredToolsPage":
         """Re-dial + re-discover a connector's tools. See ``discover_server_tools``."""
         return self._c.discover_server_tools(name=name)
+
+    def fire(self, name: str, tool: str, args: Optional[str] = None) -> "CallToolResult":
+        """Operator diagnostic: fire ONE registered tool live. See ``call_mcp_tool``."""
+        return self._c.call_mcp_tool(name=name, tool=tool, args=args)
 
 
 class KxClient:
@@ -1588,6 +1593,21 @@ class KxClient:
         req = _g.DeregisterMcpServerRequest(server_name=name)
         resp = self._call(lambda: self._stub.DeregisterMcpServer(req, metadata=self._md))
         return resp.removed
+
+    def call_mcp_tool(self, *, name: str, tool: str, args: Optional[str] = None) -> CallToolResult:
+        """Operator DIAGNOSTIC: fire ONE registered tool on a dialed connector live
+        through the broker (``CallMcpTool``). ``args`` is a JSON object string
+        (validated against the tool's inputSchema; ``None``/empty ⇒ ``{}``). NOT a
+        durable agentic effect (no journal fact) — the "does this connector work"
+        check; the agentic loop fires the same tools durably. SN-8 is re-enforced
+        server-side (single-grant warrant from the tool's own scopes)."""
+        req = _g.CallMcpToolRequest(
+            server_name=name,
+            remote_name=tool,
+            args_json=args or "{}",
+        )
+        resp = self._call(lambda: self._stub.CallMcpTool(req, metadata=self._md))
+        return CallToolResult(ok=resp.ok, result_json=resp.result_json, error=resp.error)
 
     @property
     def connections(self) -> _Connections:

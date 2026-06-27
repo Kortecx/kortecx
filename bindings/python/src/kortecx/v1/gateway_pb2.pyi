@@ -1755,6 +1755,26 @@ class DeregisterMcpServerResponse(_message.Message):
     removed: bool
     def __init__(self, removed: bool = ...) -> None: ...
 
+class CallMcpToolRequest(_message.Message):
+    __slots__ = ("server_name", "remote_name", "args_json")
+    SERVER_NAME_FIELD_NUMBER: _ClassVar[int]
+    REMOTE_NAME_FIELD_NUMBER: _ClassVar[int]
+    ARGS_JSON_FIELD_NUMBER: _ClassVar[int]
+    server_name: str
+    remote_name: str
+    args_json: str
+    def __init__(self, server_name: _Optional[str] = ..., remote_name: _Optional[str] = ..., args_json: _Optional[str] = ...) -> None: ...
+
+class CallMcpToolResponse(_message.Message):
+    __slots__ = ("ok", "result_json", "error")
+    OK_FIELD_NUMBER: _ClassVar[int]
+    RESULT_JSON_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    ok: bool
+    result_json: str
+    error: str
+    def __init__(self, ok: bool = ..., result_json: _Optional[str] = ..., error: _Optional[str] = ...) -> None: ...
+
 class ContextItem(_message.Message):
     __slots__ = ("name", "content_ref", "media_type")
     NAME_FIELD_NUMBER: _ClassVar[int]

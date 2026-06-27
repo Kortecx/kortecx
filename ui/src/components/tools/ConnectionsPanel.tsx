@@ -19,6 +19,7 @@ import { type FormEvent, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import {
+  useCallMcpTool,
   useDeregisterMcpServer,
   useDiscoverServerTools,
   useListMcpServers,
@@ -34,6 +35,87 @@ type Transport = (typeof TRANSPORTS)[number];
 
 const SESSION_MODES = ["stateless", "stateful"] as const;
 type SessionMode = (typeof SESSION_MODES)[number];
+
+/**
+ * Per-server operator DIAGNOSTIC: fire ONE registered tool live through the broker
+ * (`CallMcpTool`) and show the real result. NOT a durable agentic effect (the agentic
+ * loop fires the same tools durably) — the "does this connector actually work" check.
+ * Every state designed (D142): idle / firing / ok / error; encapsulates its own state
+ * so each row is independent.
+ */
+function ConnectionFireRow({ server }: { server: string }) {
+  const fire = useCallMcpTool();
+  const [open, setOpen] = useState(false);
+  const [tool, setTool] = useState("");
+  const [args, setArgs] = useState("{}");
+  const canFire = tool.trim().length > 0 && !fire.isPending;
+  const result = fire.data;
+  const err = fire.error ? toUiError(fire.error) : null;
+
+  return (
+    <div className="connection-fire">
+      <button
+        type="button"
+        className="chip"
+        data-testid={`connection-fire-toggle-${server}`}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="chip__label">{open ? "Hide fire" : "Fire a tool"}</span>
+      </button>
+      {open ? (
+        <div className="connection-fire__form" data-testid={`connection-fire-form-${server}`}>
+          <input
+            type="text"
+            data-testid={`connection-fire-tool-${server}`}
+            placeholder="tool remote name (e.g. reverse)"
+            value={tool}
+            onChange={(e) => setTool(e.target.value)}
+            aria-label="Tool remote name"
+          />
+          <textarea
+            data-testid={`connection-fire-args-${server}`}
+            placeholder={'args JSON (e.g. {"text":"hi"})'}
+            value={args}
+            onChange={(e) => setArgs(e.target.value)}
+            aria-label="Tool arguments JSON"
+            rows={2}
+          />
+          <button
+            type="button"
+            data-testid={`connection-fire-run-${server}`}
+            disabled={!canFire}
+            onClick={() => fire.mutate({ name: server, tool: tool.trim(), args })}
+          >
+            {fire.isPending ? "Firing…" : "Fire"}
+          </button>
+          {err ? (
+            <p className="field-error" data-testid={`connection-fire-error-${server}`} role="alert">
+              {err.message}
+            </p>
+          ) : result ? (
+            result.ok ? (
+              <pre
+                className="register-tool__result mono"
+                data-testid={`connection-fire-result-${server}`}
+              >
+                {result.resultJson}
+              </pre>
+            ) : (
+              <p
+                className="field-error"
+                data-testid={`connection-fire-error-${server}`}
+                role="alert"
+              >
+                {result.error}
+              </p>
+            )
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /** Map a folded health tag to an existing status-dot modifier + an a11y label. */
 function healthDot(health: string): { cls: string; label: string } {
@@ -215,6 +297,7 @@ export function ConnectionsPanel() {
                     <span className="chip__label">Remove</span>
                   </button>
                 </div>
+                <ConnectionFireRow server={s.serverName} />
               </li>
             );
           })}

@@ -92,6 +92,7 @@ from .toolscout import (
     BundleScore,
     BundleSpec,
     BundleTool,
+    CallToolResult,
     KeywordSet,
     ManifestScore,
     McpServer,
@@ -264,6 +265,7 @@ __all__ = [
     "McpServer",
     "McpServersPage",
     "RegisterServerResult",
+    "CallToolResult",
     # PR-6a declarative tools registry (DiscoverTools / RegisterTool)
     "RegisteredTool",
     "RegisteredToolsPage",

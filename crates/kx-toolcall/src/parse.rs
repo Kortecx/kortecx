@@ -464,29 +464,77 @@ fn id_matches(target: &str, tool_id: &str) -> bool {
     full.split('/').any(|seg| !seg.is_empty() && seg == target)
 }
 
+/// The outcome of resolving a model-emitted tool name against the grant set — the
+/// SN-8-safe three-way distinction the callers need: a UNIQUE grant, NO grant, or an
+/// AMBIGUOUS alias addressing ≥2 grants. Splitting ambiguity out (it used to collapse
+/// into `None`) lets a COMMITTED arm raise [`DecodeError::Ambiguous`] with the
+/// candidate full-ids so the react loop can re-prompt with a disambiguation, while a
+/// markerless arm still degrades to a normal completion (T-CONNECTOR-AUTOGRANT).
+enum NameResolution {
+    /// Exactly one granted tool is addressed by the model's name core.
+    Unique(ToolGrant),
+    /// The name core addresses no grant (canon-empty, or no `id_matches` hit).
+    Unresolved,
+    /// The name core addresses ≥2 distinct grants — fail-closed (SN-8, no guessing).
+    /// Carries the addressed full-ids in deterministic `tool_grants` order.
+    Ambiguous(Vec<ToolName>),
+}
+
 /// Resolve a model-emitted (often separator-variant, version-less, or
-/// namespace-stripped) tool name to a GRANTED `(ToolName, ToolVersion)`, SN-8-safe.
-/// Resolution = the UNIQUE granted tool addressed by the model's name core (its
-/// full id OR the leaf after the last `/`, both `canon`-normalized). ANY ambiguity
-/// (two distinct grants addressed by the same core) ⇒ `None` (fail-closed — no
-/// guessing). The returned version is whatever the grant pins, so the downstream
-/// `tool_grants` membership is exact by construction. NEVER widens the grant set:
-/// the result is always an element of `warrant.tool_grants` (cloned) or `None`.
-fn resolve_granted_name(raw_name: &str, warrant: &WarrantSpec) -> Option<ToolGrant> {
+/// namespace-stripped) tool name against the grant set, SN-8-safe. The match key is
+/// the model's name core (its full id OR ANY `/`-segment, `canon`-normalized) via
+/// [`id_matches`]. EXACT membership only — never a prefix/substring/fuzzy match. A
+/// UNIQUE addressed grant ⇒ [`NameResolution::Unique`] (an element of
+/// `warrant.tool_grants`, never widening the set); ≥2 ⇒ [`NameResolution::Ambiguous`]
+/// (the candidate ids, in `BTreeSet` order); none ⇒ [`NameResolution::Unresolved`].
+fn resolve_name(raw_name: &str, warrant: &WarrantSpec) -> NameResolution {
     let target = model_name_core(raw_name);
     if target.is_empty() {
-        return None; // a name that canonicalizes to nothing addresses no grant
+        return NameResolution::Unresolved; // canonicalizes to nothing ⇒ addresses no grant
     }
-    let mut hit: Option<&ToolGrant> = None;
-    for g in &warrant.tool_grants {
-        if id_matches(&target, &g.tool_id.0) {
-            if hit.is_some() {
-                return None; // ambiguous ⇒ fail-closed (SN-8)
-            }
-            hit = Some(g);
-        }
+    // `tool_grants` is a `BTreeSet`, so iteration (and thus the candidate vec) is in
+    // deterministic `(tool_id, tool_version)` order — the refusal reason is reproducible.
+    let hits: Vec<&ToolGrant> = warrant
+        .tool_grants
+        .iter()
+        .filter(|g| id_matches(&target, &g.tool_id.0))
+        .collect();
+    match hits.as_slice() {
+        [] => NameResolution::Unresolved,
+        [g] => NameResolution::Unique((*g).clone()),
+        many => NameResolution::Ambiguous(many.iter().map(|g| g.tool_id.clone()).collect()),
     }
-    hit.cloned()
+}
+
+/// The UNIQUE granted tool addressed by `raw_name`, or `None` for BOTH "no grant" and
+/// "ambiguous" — the markerless caller's view, where neither is a refusal (a name that
+/// does not resolve to exactly one grant is prose, not a committed call). COMMITTED
+/// callers use [`resolve_name`] / [`committed_grant`] to distinguish the two.
+fn resolve_granted_name(raw_name: &str, warrant: &WarrantSpec) -> Option<ToolGrant> {
+    match resolve_name(raw_name, warrant) {
+        NameResolution::Unique(grant) => Some(grant),
+        NameResolution::Unresolved | NameResolution::Ambiguous(_) => None,
+    }
+}
+
+/// Resolve a COMMITTED (marked/native/envelope) tool name to its unique grant, mapping
+/// the two non-unique outcomes to the matching LOUD refusal: `Ambiguous` ⇒
+/// [`DecodeError::Ambiguous`] (with the candidate full-ids for the disambiguating
+/// re-prompt), no grant ⇒ [`DecodeError::UngrantedTool`] (version-less — the model
+/// pinned no version on these arms). A marker IS the model's commitment, so a
+/// non-unique name is never silent prose (unlike the markerless path).
+fn committed_grant(raw_name: &str, warrant: &WarrantSpec) -> Result<ToolGrant, DecodeError> {
+    match resolve_name(raw_name, warrant) {
+        NameResolution::Unique(grant) => Ok(grant),
+        NameResolution::Ambiguous(candidates) => Err(DecodeError::Ambiguous {
+            name: ToolName(raw_name.to_string()),
+            candidates,
+        }),
+        NameResolution::Unresolved => Err(DecodeError::UngrantedTool {
+            name: ToolName(raw_name.to_string()),
+            version: ToolVersion(String::new()),
+        }),
+    }
 }
 
 /// Resolve a MARKERLESS named call to a granted `ToolCall`, fail-closed. Unlike the
@@ -518,21 +566,17 @@ fn markerless_call(
 }
 
 /// Resolve a MARKED/NATIVE (COMMITTED) call — a Gemma-native `NativeCall` — to a
-/// granted `ToolCall`, fail-closed. A marker IS the model's commitment, so an
-/// ungranted/ambiguous name is a LOUD refusal (`UngrantedTool`), never silent prose
-/// (unlike [`markerless_call`]). Shared by the single Gemma arm of [`parse_tool_call`]
-/// and the batch scan of [`parse_tool_calls`], so single + multi resolve identically.
+/// granted `ToolCall`, fail-closed. A marker IS the model's commitment, so a name that
+/// resolves to no grant is a LOUD `UngrantedTool` and a name that is ambiguous is a
+/// LOUD `Ambiguous` (with candidate ids), never silent prose (unlike
+/// [`markerless_call`]). Shared by the single Gemma arm of [`parse_tool_call`] and the
+/// batch scan of [`parse_tool_calls`], so single + multi resolve identically.
 fn resolve_native_call(
     native: &NativeCall<'_>,
     warrant: &WarrantSpec,
     max_args_bytes: usize,
 ) -> Result<ToolCall, DecodeError> {
-    let Some(grant) = resolve_granted_name(native.raw_name, warrant) else {
-        return Err(DecodeError::UngrantedTool {
-            name: ToolName(native.raw_name.to_string()),
-            version: ToolVersion(String::new()),
-        });
-    };
+    let grant = committed_grant(native.raw_name, warrant)?;
     let args_bytes = native.args.as_bytes().to_vec();
     if args_bytes.len() > max_args_bytes {
         return Err(DecodeError::Oversize {
@@ -549,20 +593,16 @@ fn resolve_native_call(
 
 /// Resolve a MARKED (COMMITTED) named call — the `(raw_name, args_bytes)` decoded
 /// from a `<|python_tag|>` / `<tool_call>` object — to a granted `ToolCall`,
-/// fail-closed (a bad name is a LOUD refusal). Shared by the single marked arm of
-/// [`parse_tool_call`] and the batch scan of [`parse_tool_calls`].
+/// fail-closed (a no-grant name is a LOUD `UngrantedTool`, an ambiguous one a LOUD
+/// `Ambiguous`). Shared by the single marked arm of [`parse_tool_call`] and the batch
+/// scan of [`parse_tool_calls`].
 fn resolve_marked_call(
-    raw_name: String,
+    raw_name: &str,
     args_bytes: Vec<u8>,
     warrant: &WarrantSpec,
     max_args_bytes: usize,
 ) -> Result<ToolCall, DecodeError> {
-    let Some(grant) = resolve_granted_name(&raw_name, warrant) else {
-        return Err(DecodeError::UngrantedTool {
-            name: ToolName(raw_name),
-            version: ToolVersion(String::new()),
-        });
-    };
+    let grant = committed_grant(raw_name, warrant)?;
     if args_bytes.len() > max_args_bytes {
         return Err(DecodeError::Oversize {
             got: args_bytes.len(),
@@ -671,6 +711,49 @@ fn decode_markerless(
     Ok(None)
 }
 
+/// T-GEMMA-PAREN (markerless): the COMMITMENT-AWARE bare paren call — the WHOLE output
+/// is `NAME(ARGS)` with NO marker and NO JSON wrapper (e.g. `refconn/echo(text="hi")`
+/// or `reverse(text="pong")`), a shape some local models emit for a dialed
+/// `<server>/<remote>` tool. The commitment signal (absent a marker) is that the ENTIRE
+/// trimmed body IS the call — `NAME` + a single paren-balanced group spanning to the
+/// end — so prose that merely mentions `foo(x)` is never mistaken for a call. Fires
+/// ONLY when the name resolves to a UNIQUE grant AND `(…)` yields an explicit args bag
+/// (via [`parse_paren_args`]); otherwise it degrades to a normal completion (`Ok(None)`
+/// — never a false-positive refusal, matching [`markerless_call`]). The produced args
+/// still flow through `resolve_granted_name` (exact grant) + the typed `validate_args`
+/// downstream (SN-8 unchanged). Total + panic-free.
+fn decode_markerless_paren(
+    trimmed: &str,
+    warrant: &WarrantSpec,
+    max_args_bytes: usize,
+) -> Result<Option<ToolCall>, DecodeError> {
+    let Some(open) = trimmed.find('(') else {
+        return Ok(None); // no paren ⇒ not this shape
+    };
+    let name = trimmed[..open].trim();
+    // A real tool name is a single whitespace-free token (`refconn/echo`, `reverse`);
+    // multi-word prose ("call the tool (now)") is not a markerless call.
+    if name.is_empty() || name.split_whitespace().count() != 1 {
+        return Ok(None);
+    }
+    let Some(paren) = balanced_parens(&trimmed[open..]) else {
+        return Ok(None); // unbalanced ⇒ not a well-formed call
+    };
+    // The call must span the WHOLE trimmed body (nothing trailing) — the commitment
+    // signal that distinguishes a bare call from prose containing `foo(x)`.
+    if open + paren.len() != trimmed.len() {
+        return Ok(None);
+    }
+    // The args are the bytes INSIDE the outer parens (`paren` includes both delimiters).
+    let inner = &paren[1..paren.len() - 1];
+    let Some(args_json) = parse_paren_args(inner) else {
+        return Ok(None); // positional/ambiguous args ⇒ degrade to a normal completion
+    };
+    // Markerless posture: a name resolving to no grant OR an ambiguous one is prose,
+    // not a refusal (`markerless_call` returns `Ok(None)` for both).
+    markerless_call(name, args_json.into_bytes(), warrant, max_args_bytes)
+}
+
 /// Decode a model-proposed tool call from raw model output, fail-closed.
 ///
 /// Returns `Ok(None)` for a normal completion (prose, non-envelope JSON, or — the
@@ -740,15 +823,19 @@ pub fn parse_tool_call(
         // The model COMMITTED to a named marked call ⇒ resolve or fail-closed (a bad
         // name is a refusal, never silent prose — mirrors the Gemma-native arm).
         return Ok(Some(resolve_marked_call(
-            raw_name,
+            &raw_name,
             args_bytes,
             warrant,
             max_args_bytes,
         )?));
     }
 
+    // (1c) T-GEMMA-PAREN markerless: a non-JSON-object body that is the WHOLE call
+    //      `NAME(ARGS)` (no marker, no wrapper). Fires only on a unique grant + explicit
+    //      args; any other non-`{` body degrades to a normal completion (byte-identical
+    //      to the prior bare early-return for every existing prose/non-call row).
     if !trimmed.starts_with('{') {
-        return Ok(None);
+        return decode_markerless_paren(trimmed, warrant, max_args_bytes);
     }
 
     // (2) It looks like JSON. Parse strictly — trailing garbage / truncation /
@@ -783,9 +870,15 @@ pub fn parse_tool_call(
     let grant = if warrant.tool_grants.contains(&exact) {
         exact
     } else if version.0.trim().is_empty() {
-        match resolve_granted_name(&name.0, warrant) {
-            Some(g) => g,
-            None => return Err(DecodeError::UngrantedTool { name, version }),
+        // A committed `tool_call` envelope ⇒ a non-unique name is a LOUD refusal:
+        // ambiguity carries the candidate full-ids for the disambiguating re-prompt;
+        // no grant stays `UngrantedTool` (preserving the model's pinned name+version).
+        match resolve_name(&name.0, warrant) {
+            NameResolution::Unique(g) => g,
+            NameResolution::Ambiguous(candidates) => {
+                return Err(DecodeError::Ambiguous { name, candidates })
+            }
+            NameResolution::Unresolved => return Err(DecodeError::UngrantedTool { name, version }),
         }
     } else {
         return Err(DecodeError::UngrantedTool { name, version });
@@ -898,7 +991,7 @@ fn try_decode_multi(
                     break; // a marked-but-not-named object ends the batch
                 };
                 out.push(resolve_marked_call(
-                    raw_name,
+                    &raw_name,
                     args_bytes,
                     warrant,
                     max_args_bytes,
@@ -1110,10 +1203,19 @@ mod tests {
         // AMBIGUOUS ⇒ fail-closed (no guessing). The DISTINCT leaves still resolve.
         let w = warrant_granting_many(&[("mcp-echo/echo", "1"), ("mcp-echo/reverse", "2")]);
         let ambiguous = br#"{"tool_call":{"name":"mcp-echo","version":"","args":{"q":"x"}}}"#;
-        assert!(matches!(
-            parse_tool_call(ambiguous, &w, 4096),
-            Err(DecodeError::UngrantedTool { .. })
-        ));
+        let err =
+            parse_tool_call(ambiguous, &w, 4096).expect_err("shared server segment ⇒ refused");
+        let DecodeError::Ambiguous { name, candidates } = err else {
+            panic!("expected DecodeError::Ambiguous, got {err:?}");
+        };
+        assert_eq!(name, ToolName("mcp-echo".into()));
+        assert_eq!(
+            candidates,
+            vec![
+                ToolName("mcp-echo/echo".into()),
+                ToolName("mcp-echo/reverse".into())
+            ]
+        );
         let leaf = br#"{"tool_call":{"name":"reverse","version":"","args":{"q":"x"}}}"#;
         let call = parse_tool_call(leaf, &w, 4096)
             .unwrap()
@@ -1519,13 +1621,21 @@ mod tests {
     #[test]
     fn bug32_ambiguous_leaf_is_fail_closed() {
         // Two distinct grants sharing the leaf `run` ⇒ the bare `run` is ambiguous ⇒
-        // refused (SN-8: never guess which tool the model meant).
+        // refused (SN-8: never guess which tool the model meant). The COMMITTED arm now
+        // raises the precise `Ambiguous` variant carrying the candidate full-ids (in
+        // BTreeSet order) so the react loop can re-prompt with a disambiguation
+        // (T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER) — still fail-closed, never fires.
         let w = warrant_granting_many(&[("svc-a/run", "1"), ("svc-b/run", "1")]);
         let env = b"<|tool_call>call:run{}<tool_call|>";
-        assert!(matches!(
-            parse_tool_call(env, &w, 4096),
-            Err(DecodeError::UngrantedTool { .. })
-        ));
+        let err = parse_tool_call(env, &w, 4096).expect_err("ambiguous ⇒ refused");
+        let DecodeError::Ambiguous { name, candidates } = err else {
+            panic!("expected DecodeError::Ambiguous, got {err:?}");
+        };
+        assert_eq!(name, ToolName("run".into()));
+        assert_eq!(
+            candidates,
+            vec![ToolName("svc-a/run".into()), ToolName("svc-b/run".into())]
+        );
     }
 
     #[test]
@@ -1973,5 +2083,133 @@ mod tests {
         let wf = warrant_granting(Some(("fs-list", "1")));
         let b = b"<|tool_call>call:fs_list{}<tool_call|>";
         assert!(parse_tool_call(b, &wf, 4096).unwrap().is_some());
+    }
+
+    // ---- T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER: dialed-connector collision +
+    //      multi-format (the shapes a live model emits for a `<server>/<remote>` tool).
+
+    /// The dialed-vs-bundled collision: the bundled `mcp-echo/echo` and a dialed
+    /// `refconn/echo` are BOTH auto-granted, so a COMMITTED bare `echo` is ambiguous ⇒
+    /// the precise `Ambiguous` refusal carrying both candidate full-ids (`BTreeSet` order)
+    /// for the disambiguating re-prompt. This is the turn-0 dead-letter root cause.
+    #[test]
+    fn dialed_collision_bare_leaf_is_ambiguous_with_candidates() {
+        let w = warrant_granting_many(&[
+            ("mcp-echo/echo", "1"),
+            ("refconn/echo", "1"),
+            ("refconn/reverse", "1"),
+        ]);
+        let env = br#"<|tool_call>call:echo{"q":"pong"}<tool_call|>"#;
+        let err = parse_tool_call(env, &w, 4096).expect_err("bare echo is ambiguous");
+        let DecodeError::Ambiguous { name, candidates } = err else {
+            panic!("expected Ambiguous, got {err:?}");
+        };
+        assert_eq!(name, ToolName("echo".into()));
+        assert_eq!(
+            candidates,
+            vec![
+                ToolName("mcp-echo/echo".into()),
+                ToolName("refconn/echo".into())
+            ],
+            "only the two `echo` grants collide; `refconn/reverse` is unaddressed"
+        );
+    }
+
+    /// The disambiguation the re-prompt steers toward: the FULL `<server>/<remote>` id
+    /// resolves uniquely even when a colliding leaf exists.
+    #[test]
+    fn full_id_disambiguates_dialed_collision() {
+        let w = warrant_granting_many(&[("mcp-echo/echo", "1"), ("refconn/echo", "1")]);
+        let env = br#"<|tool_call>call:refconn/echo{"q":"pong"}<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("the full id resolves uniquely");
+        assert_eq!(call.name, ToolName("refconn/echo".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+    }
+
+    /// A server-prefix segment resolves when that server exposes exactly one granted
+    /// tool (Gemma-4 sometimes emits the bare `<server>`).
+    #[test]
+    fn dialed_server_prefix_unique_resolves() {
+        let w = warrant_granting_many(&[("mcp-echo/echo", "1"), ("solo/run", "1")]);
+        let env = br#"<|tool_call>call:solo{"x":1}<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("the unique server prefix resolves");
+        assert_eq!(call.name, ToolName("solo/run".into()));
+    }
+
+    /// T-GEMMA-PAREN markerless: the WHOLE body is `NAME(kwargs)` for a dialed tool ⇒
+    /// fires, with the kwargs lowered to a JSON args object.
+    #[test]
+    fn markerless_paren_dialed_full_id_fires() {
+        let w = warrant_granting_many(&[("refconn/reverse", "1")]);
+        let b = br#"refconn/reverse(text="hi")"#;
+        let call = parse_tool_call(b, &w, 4096)
+            .unwrap()
+            .expect("markerless paren call fires");
+        assert_eq!(call.name, ToolName("refconn/reverse".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+        assert_eq!(call.args_bytes, br#"{"text":"hi"}"#.to_vec());
+    }
+
+    /// Markerless paren with a unique bare leaf resolves to its namespaced grant.
+    #[test]
+    fn markerless_paren_bare_leaf_fires() {
+        let w = warrant_granting_many(&[("refconn/reverse", "1")]);
+        let b = br#"reverse(text="hi")"#;
+        let call = parse_tool_call(b, &w, 4096)
+            .unwrap()
+            .expect("bare-leaf paren resolves");
+        assert_eq!(call.name, ToolName("refconn/reverse".into()));
+    }
+
+    /// A markerless paren naming no grant is a NORMAL completion (prose), never a
+    /// false-positive refusal (the markerless posture).
+    #[test]
+    fn markerless_paren_ungranted_is_prose() {
+        let w = warrant_granting_many(&[("refconn/reverse", "1")]);
+        assert_eq!(parse_tool_call(br#"notatool(x="1")"#, &w, 4096), Ok(None));
+    }
+
+    /// A markerless paren whose name is AMBIGUOUS degrades to prose (markerless never
+    /// refuses — only the COMMITTED arms raise `Ambiguous`).
+    #[test]
+    fn markerless_paren_ambiguous_is_prose() {
+        let w = warrant_granting_many(&[("mcp-echo/echo", "1"), ("refconn/echo", "1")]);
+        assert_eq!(parse_tool_call(br#"echo(q="pong")"#, &w, 4096), Ok(None));
+    }
+
+    /// Prose that merely MENTIONS a call (`reverse(...)` not spanning the whole body)
+    /// is not a markerless call — the commitment signal is the whole body being it.
+    #[test]
+    fn markerless_paren_embedded_in_prose_is_not_a_call() {
+        let w = warrant_granting_many(&[("refconn/reverse", "1")]);
+        let b = br#"I will call reverse(text="hi") now."#;
+        assert_eq!(parse_tool_call(b, &w, 4096), Ok(None));
+    }
+
+    /// A markerless paren whose lowered args overshoot the cap is a LOUD refusal (the
+    /// resolved-then-oversize path, like every other arm).
+    #[test]
+    fn markerless_paren_oversize_refused() {
+        let w = warrant_granting_many(&[("refconn/reverse", "1")]);
+        let big = format!(r#"reverse(text="{}")"#, "x".repeat(100));
+        assert!(matches!(
+            parse_tool_call(big.as_bytes(), &w, 10),
+            Err(DecodeError::Oversize { .. })
+        ));
+    }
+
+    /// Multi-element parallel calls over a dialed connector fire ALL in order.
+    #[test]
+    fn multi_element_dialed_connector_fires_all() {
+        let w = warrant_granting_many(&[("refconn/echo", "1"), ("refconn/reverse", "1")]);
+        let b = br#"<|tool_call>call:refconn/echo{"q":"a"}<tool_call|><|tool_call>call:refconn/reverse{"text":"b"}<tool_call|>"#;
+        let calls = parse_tool_calls(b, &w, 4096).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, ToolName("refconn/echo".into()));
+        assert_eq!(calls[1].name, ToolName("refconn/reverse".into()));
     }
 }

@@ -259,6 +259,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.FromString,
                 _registered_method=True)
+        self.CallMcpTool = channel.unary_unary(
+                '/kortecx.v1.KxGateway/CallMcpTool',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.CallMcpToolRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.CallMcpToolResponse.FromString,
+                _registered_method=True)
         self.PutContextBundle = channel.unary_unary(
                 '/kortecx.v1.KxGateway/PutContextBundle',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.PutContextBundleRequest.SerializeToString,
@@ -712,6 +717,14 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CallMcpTool(self, request, context):
+        """T-CONNECTOR-AUTOGRANT additive: an operator DIAGNOSTIC fire of one registered
+        tool through the broker (SN-8 re-enforced; no journal fact — see CallMcpToolRequest).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def PutContextBundle(self, request, context):
         """PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
         """
@@ -1130,6 +1143,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.DeregisterMcpServer,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.SerializeToString,
+            ),
+            'CallMcpTool': grpc.unary_unary_rpc_method_handler(
+                    servicer.CallMcpTool,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.CallMcpToolRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.CallMcpToolResponse.SerializeToString,
             ),
             'PutContextBundle': grpc.unary_unary_rpc_method_handler(
                     servicer.PutContextBundle,
@@ -2467,6 +2485,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/DeregisterMcpServer',
             kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.DeregisterMcpServerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CallMcpTool(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/CallMcpTool',
+            kortecx_dot_v1_dot_gateway__pb2.CallMcpToolRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.CallMcpToolResponse.FromString,
             options,
             channel_credentials,
             insecure,

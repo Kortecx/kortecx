@@ -34,6 +34,21 @@ pub enum DecodeError {
         /// The proposed version.
         version: ToolVersion,
     },
+    /// The model named a tool by a NON-UNIQUE alias — a bare leaf (`echo`) or a
+    /// `/`-segment (`mcp-echo`) shared by two granted `<server>/<remote>` tools (e.g.
+    /// the bundled `mcp-echo/echo` and a dialed `refconn/echo`). Fail-closed (SN-8:
+    /// the runtime NEVER guesses which grant the model meant); the `candidates` carry
+    /// the addressed full-ids so the react loop can re-prompt with an unambiguous
+    /// disambiguation (T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER). A COMMITTED arm
+    /// (marked/native/envelope) raises this; a markerless object degrades to a normal
+    /// completion (no false-positive refusal) — same posture as [`Self::UngrantedTool`].
+    Ambiguous {
+        /// The proposed (ambiguous) name the model emitted, verbatim.
+        name: ToolName,
+        /// The granted full-ids the name addresses (≥2), in deterministic
+        /// `tool_grants` (`BTreeSet`) order.
+        candidates: Vec<ToolName>,
+    },
     /// The proposed arguments exceed the per-call size cap (IMP-16).
     Oversize {
         /// Observed args size in bytes.
