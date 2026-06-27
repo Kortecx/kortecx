@@ -102,6 +102,12 @@ rcgen              = { version = "0.13", default-features = false, features = ["
 criterion          = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 rkyv               = "0.8"
 rusqlite           = { version = "0.32", features = ["bundled"] }
+# MM-3 (D110): a LOCAL OS-keychain secret store behind the kx-mcp SecretStore seam.
+# default-features OFF so we never pull the D-Bus `sync-secret-service` stack; each
+# crate selects a NATIVE backend per target (apple/windows/linux-keyutils) — keyutils
+# is headless-OK so Linux CI stays green + FFI-free (no libdbus). `mock` is always
+# available for tests. Permissive (MIT/Apache) — cargo-deny clean.
+keyring            = { version = "3", default-features = false }
 # DP3 (T2.3): pure-Rust HNSW (Malkov-Yashunin) ANN for the opt-in kx-dataset-hnsw
 # scale backend. Apache-2.0/MIT; `default-features = false` keeps the SIMD
 # (`simdeez_f`, x86) + nightly (`stdsimd`) features OFF in the default build — the
@@ -264,6 +270,10 @@ ureq               = { version = "2", default-features = false, features = ["tls
 # a direct workspace dep adds no new crate.
 url                = "2"
 sha2               = "0.10"
+# D113: HMAC-SHA256 webhook-signature verification (the GitHub/Grafana-style
+# `X-Kx-Signature-256` over the raw body). RustCrypto, pure-Rust + FFI-free, MIT/Apache
+# (cargo-deny clean); `Mac::verify_slice` is constant-time. Pairs with the in-tree sha2.
+hmac               = "0.12"
 # Unix-only deps used by kx-executor's hardened spawn paths (fork+execvp +
 # sandbox_init via libc + setrlimit). Both crates are well-audited pure-Rust
 # shims; no extra C deps land.

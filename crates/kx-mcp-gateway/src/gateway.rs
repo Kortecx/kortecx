@@ -20,7 +20,10 @@
 
 use std::sync::Arc;
 
-use kx_mcp::{HttpTransport, McpSessionCapability, McpTransport, RemoteToolDecl, StdioTransport};
+use kx_mcp::{
+    EnvSecretStore, HttpTransport, McpSessionCapability, McpTransport, RemoteToolDecl, SecretStore,
+    StdioTransport,
+};
 use kx_mote::{ToolName, ToolVersion};
 use kx_tool_registry::{
     IdempotencyClass, InputSchema, McpEndpointId, ParamSpec, ParamType, SqliteToolRegistry,
@@ -86,6 +89,12 @@ pub struct McpGateway {
     /// when non-empty; empty ⇒ any non-internal host (the SSRF classifier still
     /// refuses internal/metadata literals).
     allowlist: Vec<String>,
+    /// The resolver that turns an authorized `credential_ref` NAME into its secret
+    /// value, transiently, at transport setup (D110.2). Defaults to the env-var
+    /// passthrough ([`EnvSecretStore`]); the host injects a keychain-backed
+    /// [`kx_mcp::ChainedSecretStore`] (MM-3) so a connection credential resolves
+    /// from the OS keychain first, then the host environment (back-compat).
+    secret_store: Arc<dyn SecretStore>,
 }
 
 impl std::fmt::Debug for McpGateway {
@@ -113,7 +122,18 @@ impl McpGateway {
             sink,
             rate_limiter: RateLimiter::new(20, 10),
             allowlist,
+            secret_store: Arc::new(EnvSecretStore),
         }
+    }
+
+    /// Inject the resolver used to turn a connection's `credential_ref` NAME into
+    /// its secret value at transport setup. The host wires a keychain-backed
+    /// [`kx_mcp::ChainedSecretStore`] here (MM-3); the default is the env-var
+    /// passthrough, so existing env-var credentials keep resolving unchanged.
+    #[must_use]
+    pub fn with_secret_store(mut self, secret_store: Arc<dyn SecretStore>) -> Self {
+        self.secret_store = secret_store;
+        self
     }
 
     /// Register an external MCP server: vet its host (HTTP), dial + discover +
@@ -251,7 +271,7 @@ impl McpGateway {
         // `register`/`dial_and_register` uses, so `test` and `add` can never
         // disagree. Discards the decls (test only checks reachability + folds
         // health; it never registers tools, so `conn.tool_count` is preserved).
-        let reachable = Self::probe(&conn, DIAL_WALL_CLOCK_MS).is_ok();
+        let reachable = Self::probe(&conn, DIAL_WALL_CLOCK_MS, &self.secret_store).is_ok();
         let health = if reachable {
             ConnectionHealth::Connected
         } else {
@@ -332,8 +352,12 @@ impl McpGateway {
     /// `test` yet unreachable via `add` (register). Does NOT rate-limit — each
     /// caller keeps its own single `try_acquire` (no double-acquire); a pure dial
     /// helper (no `self`), so the rate-limit + store fold stay with the callers.
-    fn probe(conn: &Connection, wall_clock_ms: u64) -> Result<Vec<RemoteToolDecl>, GatewayError> {
-        let transport = build_transport(conn)?;
+    fn probe(
+        conn: &Connection,
+        wall_clock_ms: u64,
+        secret_store: &Arc<dyn SecretStore>,
+    ) -> Result<Vec<RemoteToolDecl>, GatewayError> {
+        let transport = build_transport(conn, secret_store)?;
         // T-CONN: open is a TRANSPORT round-trip (connect / spawn / I/O) ⇒ TRANSIENT —
         // the server may simply be down; a retry can recover.
         let mut session = transport.open_session().map_err(|e| GatewayError::Dial {
@@ -370,7 +394,7 @@ impl McpGateway {
         if !self.rate_limiter.try_acquire(&conn.name) {
             return Err(GatewayError::RateLimited(conn.name.clone()));
         }
-        let decls = Self::probe(conn, wall_clock_ms)?;
+        let decls = Self::probe(conn, wall_clock_ms, &self.secret_store)?;
 
         let mut count = 0u32;
         for decl in decls {
@@ -428,7 +452,7 @@ impl McpGateway {
 
             // Register the firing capability on the broker (per-invoke session) —
             // only after the durable write succeeded.
-            let cap_transport = build_transport(conn)?;
+            let cap_transport = build_transport(conn, &self.secret_store)?;
             self.sink.register_capability(Box::new(
                 McpSessionCapability::new(
                         tool_id,
@@ -461,7 +485,16 @@ fn dial_error_of_session(e: &kx_mcp::SessionError) -> GatewayError {
 }
 
 /// Build a `kx-mcp` transport from a connection's spec + optional credential.
-fn build_transport(conn: &Connection) -> Result<Box<dyn McpTransport>, GatewayError> {
+///
+/// `secret_store` is the host-injected resolver (MM-3 keychain-then-env chain by
+/// default the bare env passthrough) that the transport uses to turn the
+/// connection's `credential_ref` NAME into the secret value transiently at dispatch
+/// — the value is read inside the transport, injected into the child env / the
+/// `Authorization` header, and dropped (D81; never journaled or stored).
+fn build_transport(
+    conn: &Connection,
+    secret_store: &Arc<dyn SecretStore>,
+) -> Result<Box<dyn McpTransport>, GatewayError> {
     match &conn.transport {
         TransportSpec::Stdio { command, args } => {
             let mut t = StdioTransport::new(command.as_str());
@@ -469,7 +502,9 @@ fn build_transport(conn: &Connection) -> Result<Box<dyn McpTransport>, GatewayEr
                 t = t.arg(a.as_str());
             }
             if let Some(secret_ref) = &conn.credential_ref {
-                t = t.credential(kx_mcp::CredentialRef::from_env_var(secret_ref.clone()));
+                t = t
+                    .credential(kx_mcp::CredentialRef::from_env_var(secret_ref.clone()))
+                    .with_secret_store(secret_store.clone());
             }
             Ok(Box::new(t))
         }
@@ -478,11 +513,13 @@ fn build_transport(conn: &Connection) -> Result<Box<dyn McpTransport>, GatewayEr
             let mut t = HttpTransport::new(url, &net_scope, *tls_required)
                 .map_err(|e| GatewayError::InvalidSpec(e.to_string()))?;
             if let Some(secret_ref) = &conn.credential_ref {
-                // The env var holds the FULL header value convention (e.g. "Bearer x").
-                t = t.header_credential(
-                    "Authorization",
-                    kx_mcp::CredentialRef::from_env_var(secret_ref.clone()),
-                );
+                // The credential holds the FULL header value convention (e.g. "Bearer x").
+                t = t
+                    .header_credential(
+                        "Authorization",
+                        kx_mcp::CredentialRef::from_env_var(secret_ref.clone()),
+                    )
+                    .with_secret_store(secret_store.clone());
             }
             Ok(Box::new(t))
         }

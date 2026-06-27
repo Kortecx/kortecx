@@ -38,6 +38,16 @@ export interface MockClientImpl {
   getContextBundle?: (...args: unknown[]) => Promise<unknown>;
   editContextItem?: (...args: unknown[]) => Promise<unknown>;
   removeContextItem?: (...args: unknown[]) => Promise<unknown>;
+  // MM-3 / D110: the host secret store (`client.secrets.*`). The value is write-only.
+  secretsList?: (...args: unknown[]) => Promise<unknown>;
+  secretsSet?: (...args: unknown[]) => Promise<unknown>;
+  secretsRemove?: (...args: unknown[]) => Promise<unknown>;
+  // D113 / D170.b: the trigger registry (`client.triggers.*`).
+  triggersAdd?: (...args: unknown[]) => Promise<unknown>;
+  triggersList?: (...args: unknown[]) => Promise<unknown>;
+  triggersTest?: (...args: unknown[]) => Promise<unknown>;
+  triggersFire?: (...args: unknown[]) => Promise<unknown>;
+  triggersRemove?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -134,6 +144,18 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   const putResult = { bundleRef: "ef".repeat(8), handle: "", deduplicated: false };
   const editContextItem = vi.fn(impl.editContextItem ?? (async () => putResult));
   const removeContextItem = vi.fn(impl.removeContextItem ?? (async () => putResult));
+  // MM-3 / D110: the host secret store namespace (`client.secrets.*`).
+  const secretsList = vi.fn(impl.secretsList ?? (async () => ({ names: [], hasMore: false })));
+  const secretsSet = vi.fn(impl.secretsSet ?? (async () => true));
+  const secretsRemove = vi.fn(impl.secretsRemove ?? (async () => true));
+  // D113 / D170.b: the trigger registry namespace (`client.triggers.*`).
+  const triggersAdd = vi.fn(impl.triggersAdd ?? (async () => ({ triggerId: "ab".repeat(8) })));
+  const triggersList = vi.fn(impl.triggersList ?? (async () => ({ triggers: [], hasMore: false })));
+  const triggersTest = vi.fn(impl.triggersTest ?? (async () => ({ ok: true, detail: "" })));
+  const triggersFire = vi.fn(
+    impl.triggersFire ?? (async () => ({ instanceId: "cd".repeat(8), deduped: false })),
+  );
+  const triggersRemove = vi.fn(impl.triggersRemove ?? (async () => true));
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -168,6 +190,14 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getContextBundle,
     editContextItem,
     removeContextItem,
+    secrets: { list: secretsList, set: secretsSet, remove: secretsRemove },
+    triggers: {
+      add: triggersAdd,
+      list: triggersList,
+      test: triggersTest,
+      fire: triggersFire,
+      remove: triggersRemove,
+    },
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -206,6 +236,14 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getContextBundle,
     editContextItem,
     removeContextItem,
+    secretsList,
+    secretsSet,
+    secretsRemove,
+    triggersAdd,
+    triggersList,
+    triggersTest,
+    triggersFire,
+    triggersRemove,
     close,
   };
 }

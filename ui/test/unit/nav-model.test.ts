@@ -31,6 +31,11 @@ describe("NAV_SECTIONS (POC-5c / D168 flat IA)", () => {
     expect(byId.get("runs")?.icon).toBe("runs");
     expect(byId.get("systems")?.label).toBe("Security");
     expect(byId.get("systems")?.path).toBe("/systems");
+    // The Tools section is the Integrations hub (Tools/Connections/Triggers/Secrets);
+    // the id/path/icon stay on the frozen `tools` wire-legacy handle.
+    expect(byId.get("tools")?.label).toBe("Integrations");
+    expect(byId.get("tools")?.path).toBe("/tools");
+    expect(byId.get("tools")?.icon).toBe("tools");
     // The Context section is the data umbrella (Bundles + the Datasets tab).
     expect(byId.get("context")?.label).toBe("Context");
     expect(byId.get("models")?.path).toBe("/models");

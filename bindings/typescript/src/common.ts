@@ -195,6 +195,30 @@ export type {
   ToolParam,
 } from "./toolscout.js";
 
+// MM-3 / D110: the local OS-keychain secret store (write-only value; names-only read).
+export { SecretNameRow } from "./secrets.js";
+export type { SecretNamesPage } from "./secrets.js";
+
+// D113 / D170.b: the local trigger admin (webhook/cron/grpc → recipe handle).
+export {
+  TriggerRow,
+  triggerKindToProto,
+  triggerKindName,
+  triggerAuthToProto,
+  triggerAuthName,
+} from "./triggers.js";
+export type {
+  TriggerKindInput,
+  TriggerKindName,
+  TriggerAuthInput,
+  TriggerAuthName,
+  RegisterTriggerInput,
+  RegisterTriggerResult,
+  TriggersPage,
+  SubmitTriggerResult,
+  TestTriggerResult,
+} from "./triggers.js";
+
 export { WaitState } from "./wait.js";
 export type { WaitOutcome, WaitMode } from "./wait.js";
 

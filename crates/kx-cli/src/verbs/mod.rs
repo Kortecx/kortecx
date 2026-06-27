@@ -26,9 +26,11 @@ pub mod react;
 pub mod recipe;
 pub mod replan;
 pub mod runs;
+pub mod secrets;
 pub mod signatures;
 pub mod telemetry;
 pub mod tools;
+pub mod triggers;
 
 use std::io::Write;
 use std::path::Path;

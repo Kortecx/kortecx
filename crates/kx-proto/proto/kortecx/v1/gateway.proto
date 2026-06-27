@@ -1731,6 +1731,111 @@ message GetServerInfoResponse {
   bool   allow_model_pull     = 24;
 }
 
+// ===========================================================================
+// MM-3 (D110) — the LOCAL OS-keychain secret store. Secrets are stored by NAME
+// (a kx-warrant SecretRef) and resolved transiently at transport setup; the VALUE
+// is NEVER journaled, in a MoteId/StepRecord, the model's context, or any RPC
+// RESPONSE. `value` appears ONLY as a PutSecret request argument (write-only).
+// PutSecret/DeleteSecret are gated loopback-only + an authenticated party (host
+// credential material); ListSecretNames returns NAMES + timestamps only. SN-8: the
+// broker secret_scope precheck remains the sole resolve-authorization gate.
+// ===========================================================================
+message PutSecretRequest {
+  string name  = 1;  // the SecretRef NAME a connection's credential_ref points at
+  string value = 2;  // write-only: the handler stores it in the keychain + drops it
+}
+message PutSecretResponse { bool stored = 1; }  // no value field, by construction
+
+message ListSecretNamesRequest {
+  uint32 limit      = 1;  // 0 ⇒ server default page
+  string after_name = 2;  // keyset page cursor (exclusive)
+}
+message SecretName {
+  string name            = 1;  // NAME only — never the value
+  uint64 created_unix_ms = 2;
+  uint64 updated_unix_ms = 3;
+}
+message ListSecretNamesResponse {
+  repeated SecretName names = 1;
+  bool has_more             = 2;
+}
+
+message DeleteSecretRequest  { string name = 1; }
+message DeleteSecretResponse { bool removed = 1; }  // false iff absent
+
+// ===========================================================================
+// D113 (trigger seam) — event ingress. A trigger binds an inbound source
+// (webhook | cron | grpc) to a recipe handle; on an event the gateway starts a
+// FRESH registered run via the existing Invoke path (the coordinator stays the
+// sole journal writer; the frozen trio is untouched). The trigger is the run's
+// origin (an off-journal triggers.db record). Idempotency-key dedup makes a
+// replayed event a no-op. SN-8: trigger_id is server-derived; the run binds under
+// the REGISTRANT's party (D102.2); the auth secret is referenced by NAME only.
+// The minimal-local trigger (single-user webhook/cron); the hosted multi-tenant
+// trigger gateway at scale is CLOUD (D113/D170.b/GR19).
+// ===========================================================================
+enum TriggerKind {
+  TRIGGER_KIND_UNSPECIFIED = 0;
+  WEBHOOK = 1;  // an authenticated local HTTP POST (the --webhook-listen port)
+  CRON    = 2;  // a local interval schedule (schedule_spec = interval seconds)
+  GRPC    = 3;  // fired only via the SubmitTrigger RPC (no listener)
+}
+enum TriggerAuth {
+  TRIGGER_AUTH_UNSPECIFIED = 0;
+  NONE        = 1;  // permitted only on a loopback webhook bind
+  HMAC_SHA256 = 2;  // X-Kx-Signature-256 over the raw body, key = auth_secret_ref
+  BEARER      = 3;  // Authorization: Bearer <secret resolved from auth_secret_ref>
+}
+
+message RegisterTriggerRequest {
+  string      name               = 1;  // unique operator handle (derives trigger_id)
+  TriggerKind kind               = 2;
+  string      recipe_handle      = 3;  // the kx/recipes/... handle the event Invokes
+  TriggerAuth auth               = 4;  // webhook auth posture
+  string      auth_secret_ref    = 5;  // SecretRef NAME of the HMAC/bearer secret (never the value)
+  string      schedule_spec      = 6;  // cron: interval seconds (e.g. "300"); empty otherwise
+  bool        enabled            = 7;
+}
+message RegisterTriggerResponse { bytes trigger_id = 1; }  // 16B server-derived
+
+message ListTriggersRequest {
+  uint32 limit      = 1;
+  string after_name = 2;
+}
+message TriggerView {                  // governance row — never a secret value
+  bytes       trigger_id          = 1;
+  string      name                = 2;
+  TriggerKind kind                = 3;
+  string      recipe_handle       = 4;
+  TriggerAuth auth                = 5;
+  bool        auth_secret_present = 6;  // a ref NAME is attached (never the value)
+  string      schedule_spec       = 7;
+  bool        enabled             = 8;
+  uint64      last_fire_unix_ms   = 9;  // 0 ⇒ never fired
+}
+message ListTriggersResponse {
+  repeated TriggerView triggers = 1;
+  bool has_more                 = 2;
+}
+
+message DeregisterTriggerRequest  { string name = 1; }
+message DeregisterTriggerResponse { bool removed = 1; }
+
+// The inbound EVENT verb (also the host webhook/cron adapter's internal call).
+message SubmitTriggerRequest {
+  string name            = 1;  // the registered trigger
+  string idempotency_key = 2;  // event-level dedup; empty ⇒ server-derived from the payload
+  string payload_json    = 3;  // the event body, passed as the recipe args (passthrough)
+}
+message SubmitTriggerResponse {
+  bytes instance_id = 1;  // the registered run (the PRIOR run when deduped)
+  bool  deduped     = 2;  // true ⇒ a prior identical event already started this run
+}
+
+// Dry-run: validate the binding (handle resolves, payload binds) WITHOUT firing.
+message TestTriggerRequest  { string name = 1; string payload_json = 2; }
+message TestTriggerResponse { bool ok = 1; string detail = 2; }
+
 service KxGateway {
   rpc SubmitRun(SubmitRunRequest) returns (RunHandle);
   rpc Invoke(InvokeRequest) returns (InvokeResponse);
@@ -1838,6 +1943,28 @@ service KxGateway {
   // T-CONNECTOR-AUTOGRANT additive: an operator DIAGNOSTIC fire of one registered
   // tool through the broker (SN-8 re-enforced; no journal fact — see CallMcpToolRequest).
   rpc CallMcpTool(CallMcpToolRequest) returns (CallMcpToolResponse);
+
+  // MM-3 (D110) additive — the LOCAL OS-keychain secret store. PutSecret/DeleteSecret
+  // write host credential material (loopback-only + authed party); ListSecretNames
+  // returns NAMES + timestamps only (never a value). Off-journal (the OS keychain +
+  // an off-digest secret_index.db NAME index); the value is resolved transiently at
+  // transport setup and never journaled (D81). UNIMPLEMENTED when no secret admin is
+  // wired (e.g. a no-mcp-gateway build). The hardened KMS/HSM vault is CLOUD (D94).
+  rpc PutSecret(PutSecretRequest) returns (PutSecretResponse);
+  rpc ListSecretNames(ListSecretNamesRequest) returns (ListSecretNamesResponse);
+  rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse);
+
+  // D113 (trigger seam) additive — event ingress. Register/List/Deregister govern
+  // triggers; SubmitTrigger is the inbound EVENT verb (also called internally by the
+  // host webhook/cron listeners); TestTrigger dry-runs the binding without firing.
+  // Each event starts a fresh registered run via the existing Invoke path (no journal
+  // writer dep added; frozen trio untouched). UNIMPLEMENTED when no trigger admin is
+  // wired. The hosted multi-tenant trigger gateway is CLOUD (D113/D170.b/GR19).
+  rpc RegisterTrigger(RegisterTriggerRequest) returns (RegisterTriggerResponse);
+  rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
+  rpc DeregisterTrigger(DeregisterTriggerRequest) returns (DeregisterTriggerResponse);
+  rpc SubmitTrigger(SubmitTriggerRequest) returns (SubmitTriggerResponse);
+  rpc TestTrigger(TestTriggerRequest) returns (TestTriggerResponse);
 
   // PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
   rpc PutContextBundle(PutContextBundleRequest) returns (PutContextBundleResponse);

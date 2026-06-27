@@ -66,6 +66,7 @@ from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
+from .secrets import SecretName, SecretNamesPage
 from .server_info import ServerInfo
 from .teams import TeamMembers, TeamSummary
 from .telemetry import MoteTelemetryRow, TelemetryPage, TelemetrySummary
@@ -80,6 +81,12 @@ from .toolscout import (
     RegisterServerResult,
     ToolManifest,
     ToolParam,
+)
+from .triggers import (
+    TriggersPage,
+    TriggerView,
+    trigger_auth_to_proto,
+    trigger_kind_to_proto,
 )
 from .v1 import gateway_pb2 as _g
 from .v1 import gateway_pb2_grpc as _gg
@@ -312,6 +319,96 @@ class _Connections:
     def fire(self, name: str, tool: str, args: Optional[str] = None) -> "CallToolResult":
         """Operator diagnostic: fire ONE registered tool live. See ``call_mcp_tool``."""
         return self._c.call_mcp_tool(name=name, tool=tool, args=args)
+
+
+class _Secrets:
+    """The ``kx.secrets`` namespace — operator secret-store admin (D170 / MM-3),
+    with a verb vocabulary mirroring ``kx.connections`` (``set`` / ``list`` /
+    ``remove``). Each method delegates 1:1 to the flat ``put_secret`` /
+    ``list_secret_names`` / ``delete_secret`` methods (which remain for
+    back-compat). A secret holds a connector credential / trigger auth VALUE
+    server-side; the value never returns over the wire (D81) — a
+    ``credential_ref`` / ``auth_secret_ref`` NAMES one of these rows."""
+
+    def __init__(self, client: "KxClient") -> None:
+        self._c = client
+
+    def set(self, name: str, value: str) -> bool:
+        """Store (create or overwrite) a named secret. See ``put_secret``."""
+        return self._c.put_secret(name=name, value=value)
+
+    def list(self, *, limit: int = 0, after_name: str = "") -> "SecretNamesPage":
+        """List the stored secret names + audit timestamps. See
+        ``list_secret_names``."""
+        return self._c.list_secret_names(limit=limit, after_name=after_name)
+
+    def remove(self, name: str) -> bool:
+        """Remove a named secret. See ``delete_secret``."""
+        return self._c.delete_secret(name=name)
+
+    def delete(self, name: str) -> bool:
+        """Alias for :meth:`remove`."""
+        return self.remove(name)
+
+
+class _Triggers:
+    """The ``kx.triggers`` namespace — durable webhook / cron / gRPC trigger admin
+    (D170 / D113), with a verb vocabulary mirroring ``kx.connections`` (``add`` /
+    ``list`` / ``test`` / ``fire`` / ``remove``). Each method delegates 1:1 to the
+    flat ``register_trigger`` / ``list_triggers`` / ``test_trigger`` /
+    ``submit_trigger`` / ``deregister_trigger`` methods (which remain for
+    back-compat). ``kind`` / ``auth`` are friendly strings (an unknown one raises
+    ``ValueError``). A trigger binds an inbound event to a published recipe."""
+
+    def __init__(self, client: "KxClient") -> None:
+        self._c = client
+
+    def add(
+        self,
+        name: str,
+        *,
+        kind: str = "webhook",
+        recipe: str = "",
+        auth: str = "none",
+        secret_ref: str = "",
+        schedule: str = "",
+        enabled: bool = True,
+    ) -> str:
+        """Register a trigger; returns the hex ``trigger_id``. See
+        ``register_trigger``."""
+        return self._c.register_trigger(
+            name=name,
+            kind=kind,
+            recipe_handle=recipe,
+            auth=auth,
+            auth_secret_ref=secret_ref,
+            schedule_spec=schedule,
+            enabled=enabled,
+        )
+
+    def list(self, *, limit: int = 0, after_name: str = "") -> "TriggersPage":
+        """List the registered triggers. See ``list_triggers``."""
+        return self._c.list_triggers(limit=limit, after_name=after_name)
+
+    def test(self, name: str, payload: str = "") -> "tuple[bool, str]":
+        """Dry-run a trigger's binding without submitting a run — returns
+        ``(ok, detail)``. See ``test_trigger``."""
+        return self._c.test_trigger(name=name, payload_json=payload)
+
+    def fire(self, name: str, payload: str = "", idempotency_key: str = "") -> "tuple[str, bool]":
+        """Fire a trigger by name — returns ``(instance_id_hex, deduped)``. See
+        ``submit_trigger``."""
+        return self._c.submit_trigger(
+            name=name, idempotency_key=idempotency_key, payload_json=payload
+        )
+
+    def remove(self, name: str) -> bool:
+        """Remove a registered trigger. See ``deregister_trigger``."""
+        return self._c.deregister_trigger(name=name)
+
+    def delete(self, name: str) -> bool:
+        """Alias for :meth:`remove`."""
+        return self.remove(name)
 
 
 class KxClient:
@@ -1618,6 +1715,121 @@ class KxClient:
         ``kx-extension-sdk``); chain one straight into a flow with
         ``kx.flow().with_mcp(...)``."""
         return _Connections(self)
+
+    # --- D170 / MM-3: operator secret store (PutSecret / List / Delete) ---
+
+    def put_secret(self, *, name: str, value: str) -> bool:
+        """Store (create or overwrite) a named secret VALUE in the runtime's secret
+        store (``PutSecret``). The value is held server-side (keychain / vault) and
+        NEVER returned over the wire (D81); a connector ``credential_ref`` / a
+        trigger ``auth_secret_ref`` later NAMES this row. Returns ``True`` iff the
+        row was stored."""
+        req = _g.PutSecretRequest(name=name, value=value)
+        resp = self._call(lambda: self._stub.PutSecret(req, metadata=self._md))
+        return resp.stored
+
+    def list_secret_names(self, *, limit: int = 0, after_name: str = "") -> SecretNamesPage:
+        """List the stored secret NAMES + audit timestamps (``ListSecretNames``),
+        in ``(name)`` order. The secret VALUE is never on this wire (D81)."""
+        req = _g.ListSecretNamesRequest(limit=limit, after_name=after_name)
+        resp = self._call(lambda: self._stub.ListSecretNames(req, metadata=self._md))
+        return SecretNamesPage(
+            names=[SecretName.from_proto(s) for s in resp.names], has_more=resp.has_more
+        )
+
+    def delete_secret(self, *, name: str) -> bool:
+        """Remove a named secret (``DeleteSecret``). Returns ``True`` iff a row was
+        removed."""
+        req = _g.DeleteSecretRequest(name=name)
+        resp = self._call(lambda: self._stub.DeleteSecret(req, metadata=self._md))
+        return resp.removed
+
+    @property
+    def secrets(self) -> _Secrets:
+        """The operator secret-store admin namespace — ``kx.secrets.set / list /
+        remove`` (D170 / MM-3). The flat ``put_secret`` etc. remain for
+        back-compat. Secrets hold connector credentials / trigger auth VALUES
+        server-side; the value never returns over the wire (D81) — a
+        ``credential_ref`` / ``auth_secret_ref`` NAMES one of these rows."""
+        return _Secrets(self)
+
+    # --- D170 / D113: trigger admin (Register / List / Deregister / Submit / Test) ---
+
+    def register_trigger(
+        self,
+        *,
+        name: str,
+        kind: str = "webhook",
+        recipe_handle: str = "",
+        auth: str = "none",
+        auth_secret_ref: str = "",
+        schedule_spec: str = "",
+        enabled: bool = True,
+    ) -> str:
+        """Register a durable trigger that binds an inbound event to a published
+        recipe (``RegisterTrigger``). ``kind`` is ``"webhook"`` | ``"cron"`` |
+        ``"grpc"`` and ``auth`` is ``"none"`` | ``"hmac_sha256"`` | ``"bearer"``
+        (mapped to the proto enums; an unknown string raises ``ValueError``).
+        ``auth_secret_ref`` NAMES a stored secret (the HMAC key / bearer token
+        resolves server-side, never in the client). Returns the server-derived
+        ``trigger_id`` as hex."""
+        req = _g.RegisterTriggerRequest(
+            name=name,
+            kind=trigger_kind_to_proto(kind),
+            recipe_handle=recipe_handle,
+            auth=trigger_auth_to_proto(auth),
+            auth_secret_ref=auth_secret_ref,
+            schedule_spec=schedule_spec,
+            enabled=enabled,
+        )
+        resp = self._call(lambda: self._stub.RegisterTrigger(req, metadata=self._md))
+        return hexids.encode(resp.trigger_id)
+
+    def list_triggers(self, *, limit: int = 0, after_name: str = "") -> TriggersPage:
+        """List the registered triggers (``ListTriggers``), in ``(name)`` order.
+        The auth secret value is never on the wire — only ``auth_secret_present``
+        (D81)."""
+        req = _g.ListTriggersRequest(limit=limit, after_name=after_name)
+        resp = self._call(lambda: self._stub.ListTriggers(req, metadata=self._md))
+        return TriggersPage(
+            triggers=[TriggerView.from_proto(t) for t in resp.triggers],
+            has_more=resp.has_more,
+        )
+
+    def deregister_trigger(self, *, name: str) -> bool:
+        """Remove a registered trigger (``DeregisterTrigger``). Returns ``True``
+        iff a row was removed."""
+        req = _g.DeregisterTriggerRequest(name=name)
+        resp = self._call(lambda: self._stub.DeregisterTrigger(req, metadata=self._md))
+        return resp.removed
+
+    def submit_trigger(
+        self, *, name: str, idempotency_key: str = "", payload_json: str = ""
+    ) -> "tuple[str, bool]":
+        """Fire a registered trigger by name (``SubmitTrigger``) — binds its recipe
+        + submits a run with the (optional) ``payload_json``. A non-empty
+        ``idempotency_key`` dedupes a retried fire (mapping to an existing run
+        returns it with ``deduped=True``). Returns ``(instance_id_hex, deduped)``."""
+        req = _g.SubmitTriggerRequest(
+            name=name, idempotency_key=idempotency_key, payload_json=payload_json
+        )
+        resp = self._call(lambda: self._stub.SubmitTrigger(req, metadata=self._md))
+        return hexids.encode(resp.instance_id), resp.deduped
+
+    def test_trigger(self, *, name: str, payload_json: str = "") -> "tuple[bool, str]":
+        """Dry-run a trigger's binding without submitting a run (``TestTrigger``) —
+        validates the recipe handle + payload shape. Returns ``(ok, detail)``."""
+        req = _g.TestTriggerRequest(name=name, payload_json=payload_json)
+        resp = self._call(lambda: self._stub.TestTrigger(req, metadata=self._md))
+        return resp.ok, resp.detail
+
+    @property
+    def triggers(self) -> _Triggers:
+        """The trigger admin namespace — ``kx.triggers.add / list / test / fire /
+        remove`` (D170 / D113). The flat ``register_trigger`` etc. remain for
+        back-compat. A trigger binds an inbound webhook / cron / gRPC event to a
+        published recipe."""
+        return _Triggers(self)
 
     def submit_feedback(
         self,

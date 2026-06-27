@@ -41,6 +41,13 @@ export const queryKeys = {
   /** The registered external MCP servers (`ListMcpServers`, PR-6b-1) — the live
    *  Connections govern surface. Server-derived ids; credentials by NAME only. */
   mcpServers: (endpoint: string) => ["kx", endpoint, "mcp-servers"] as const,
+  /** The host secret-store NAMES (`ListSecretNames`, MM-3 / D110) — names + audit
+   *  timestamps only; the secret VALUE is write-only (never on this key, D81). */
+  secretNames: (endpoint: string, limit: number) =>
+    ["kx", endpoint, "secret-names", limit] as const,
+  /** The registered triggers (`ListTriggers`, D113 / D170.b) — the govern view.
+   *  `authSecretPresent` reports only whether a ref NAME is attached (never a value). */
+  triggers: (endpoint: string, limit: number) => ["kx", endpoint, "triggers", limit] as const,
   /** This party's context bundles (`ListContextBundles`, PR-7) — named,
    *  content-addressed grounding. Caller-scoped; `bundleRef` is server-derived (SN-8). */
   contextBundles: (endpoint: string) => ["kx", endpoint, "context-bundles"] as const,

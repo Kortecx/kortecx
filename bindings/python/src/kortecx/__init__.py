@@ -84,6 +84,7 @@ from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .run_agent import run_agent, run_agent_async
 from .runs import RunInputs, RunPage, RunSummary
+from .secrets import SecretName, SecretNamesPage
 from .server_info import ServerInfo
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
 from .telemetry import ModelTokenRollup, MoteTelemetryRow, TelemetryPage, TelemetrySummary
@@ -103,6 +104,14 @@ from .toolscout import (
     ToolManifest,
     ToolParam,
     lower_verdict_name,
+)
+from .triggers import (
+    TriggersPage,
+    TriggerView,
+    trigger_auth_name,
+    trigger_auth_to_proto,
+    trigger_kind_name,
+    trigger_kind_to_proto,
 )
 from .types import (
     Delta,
@@ -266,6 +275,16 @@ __all__ = [
     "McpServersPage",
     "RegisterServerResult",
     "CallToolResult",
+    # D170 / MM-3 operator secret store (PutSecret / ListSecretNames / DeleteSecret)
+    "SecretName",
+    "SecretNamesPage",
+    # D170 / D113 trigger admin (Register / List / Deregister / Submit / Test)
+    "TriggerView",
+    "TriggersPage",
+    "trigger_kind_to_proto",
+    "trigger_auth_to_proto",
+    "trigger_kind_name",
+    "trigger_auth_name",
     # PR-6a declarative tools registry (DiscoverTools / RegisterTool)
     "RegisteredTool",
     "RegisteredToolsPage",

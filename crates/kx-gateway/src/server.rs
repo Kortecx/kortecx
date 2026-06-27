@@ -1284,6 +1284,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
     // `content` is cloned (cheap Arc) so it stays available for the MCP gateway's
     // diagnostic live-fire wiring below (reads the broker-staged tool result).
+    // D113: clone the binder + submitter for the trigger seam BEFORE they move into
+    // the gateway service — the trigger admin starts runs through the SAME propose-proxy
+    // (coordinator stays the sole journal writer; frozen trio untouched).
+    let trigger_binder: Arc<dyn kx_gateway_core::RecipeBinder> = binder.clone();
+    let trigger_submitter: Arc<dyn kx_gateway_core::RunSubmitter> = submitter.clone();
     let mut gateway = GatewayService::new(reader.clone(), submitter, content.clone())
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
@@ -1323,6 +1328,52 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_global_event_tailer(Arc::new(crate::live_tail::GlobalLiveTailer::new(
             live_shutdown_rx.clone(),
         )));
+    // MM-3 (D110): wire the LOCAL secret store admin (PutSecret/ListSecretNames/
+    // DeleteSecret) over the OS keychain + the off-journal secret_index.db NAME index.
+    // Secret WRITES are gated loopback-only (the local-first default): a network-exposed
+    // bind leaves writes refused (permission_denied) since a remote peer can't be told
+    // from the local operator behind the gRPC-web/CORS layers. A secret_index.db open
+    // failure leaves the 3 RPCs `unimplemented` — never aborts serve. Off-journal,
+    // off-digest (the value lives in the OS keychain, never the journal — D81).
+    match crate::secrets::KeychainSecretAdmin::open(&catalog_dir) {
+        Ok(secret_admin) => {
+            let writes_loopback_ok = cfg.listen.ip().is_loopback();
+            gateway = gateway.with_secret_admin(Arc::new(secret_admin), writes_loopback_ok);
+            tracing::info!(
+                loopback = writes_loopback_ok,
+                "MM-3: local secret store wired (secret_index.db)"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(%error, "MM-3: secret store unavailable; secret RPCs return unimplemented");
+        }
+    }
+    // D113: wire the trigger seam (Register/List/Deregister/Submit/Test). Opens the
+    // off-journal triggers.db; the HostTriggerAdmin starts runs via the SAME propose-
+    // proxy the Invoke path uses (coordinator = sole journal writer; frozen trio
+    // untouched). The webhook/cron listeners spawned later share the same admin + store.
+    // A triggers.db open failure leaves the 5 RPCs `unimplemented` (never aborts serve).
+    let trigger_runtime: Option<(
+        Arc<crate::triggers_store::TriggersDb>,
+        Arc<crate::trigger_gateway::HostTriggerAdmin>,
+    )> = match crate::triggers_store::TriggersDb::open(&catalog_dir) {
+        Ok(db) => {
+            let db = Arc::new(db);
+            let admin = Arc::new(crate::trigger_gateway::HostTriggerAdmin::new(
+                db.clone(),
+                trigger_binder,
+                trigger_submitter,
+                react_supported,
+            ));
+            gateway = gateway.with_trigger_admin(admin.clone());
+            tracing::info!("D113: trigger seam wired (triggers.db)");
+            Some((db, admin))
+        }
+        Err(error) => {
+            tracing::warn!(%error, "D113: triggers.db unavailable; trigger RPCs return unimplemented");
+            None
+        }
+    };
     #[cfg(feature = "hnsw")]
     {
         gateway = gateway
@@ -1517,6 +1568,32 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         }
         None => (None, None),
     };
+    // D113: bind the webhook ingress EARLY (fail-closed on a port conflict), spawn it
+    // LATE (below, with the trigger admin). Per-trigger authenticated; a non-loopback
+    // bind is allowed but warned (the NONE-auth posture is then refused at fire time).
+    let (webhook_local_addr, webhook_tcp) = match cfg.webhook_listen {
+        Some(addr) => {
+            let tcp = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+                GatewayError::Bind(format!(
+                    "webhook listener {addr}: {e} (another process on this port? \
+                     pick one with --webhook-listen <addr:port>)"
+                ))
+            })?;
+            let local = tcp
+                .local_addr()
+                .map_err(|e| GatewayError::Bind(e.to_string()))?;
+            if !local.ip().is_loopback() {
+                tracing::warn!(
+                    webhook = %local,
+                    "the webhook ingress is bound to a non-loopback address — it is \
+                     per-trigger authenticated (HMAC/bearer), but NONE-auth triggers are \
+                     refused there; restrict it to a trusted network"
+                );
+            }
+            (Some(local), Some(tcp))
+        }
+        None => (None, None),
+    };
 
     // Cloned for the ws accept loop, which spawns LAST (after every fallible
     // start step) so a failed start never orphans it.
@@ -1659,6 +1736,31 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         )));
         if let Some(local) = metrics_local_addr {
             tracing::info!(url = %format!("http://{local}/metrics"), "metrics endpoint ready");
+        }
+    }
+    // D113: spawn the trigger listeners over the SAME trigger admin the gRPC
+    // SubmitTrigger uses. The cron ticker runs whenever the trigger seam is wired; the
+    // webhook ingress only when --webhook-listen is set. Both are aborted on shutdown.
+    if let Some((triggers_db, trigger_admin)) = trigger_runtime {
+        let admin_dyn: Arc<dyn kx_gateway_core::TriggerAdmin> = trigger_admin;
+        aux.push(tokio::spawn(crate::cron::serve_cron(
+            triggers_db.clone(),
+            admin_dyn.clone(),
+        )));
+        if let Some(tcp) = webhook_tcp {
+            let bind_is_loopback = webhook_local_addr.is_none_or(|a| a.ip().is_loopback());
+            let state = Arc::new(crate::webhook::WebhookState::new(
+                triggers_db,
+                admin_dyn,
+                bind_is_loopback,
+            ));
+            aux.push(tokio::spawn(crate::webhook::serve_webhook(tcp, state)));
+            if let Some(local) = webhook_local_addr {
+                tracing::info!(
+                    url = %format!("http://{local}/trigger/<name>"),
+                    "webhook ingress ready"
+                );
+            }
         }
     }
 

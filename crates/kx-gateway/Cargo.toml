@@ -115,7 +115,9 @@ kx-mcp             = { workspace = true, optional = true }
 # (the URL pull registers an in-process llama model), so the FFI-free floor is
 # byte-unchanged. The Ollama `pull <tag>` path needs NEITHER (it uses kx-ollama).
 ureq               = { workspace = true, optional = true }
-sha2               = { workspace = true, optional = true }
+# sha2 is NON-optional (always-on): the D113 webhook HMAC-SHA256 verify needs it in
+# the default build, and the inference GGUF SHA-256 verify reuses it. Pure-Rust/FFI-free.
+sha2               = { workspace = true }
 # PR-6b-1 (D159): the EXTERNAL MCP gateway — dials external MCP servers (stdio +
 # Streamable-HTTP) over kx-mcp's session seam, discovers their tools into the
 # durable tools.db, and governs them via an off-journal connections.db sidecar.
@@ -217,6 +219,28 @@ serde_json         = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror          = { workspace = true }
+# MM-3 (D110): the local OS-keychain SecretStore + write admin. Base entry (no
+# backend) keeps `secrets.rs` compiling on every target; the per-target blocks below
+# select the NATIVE backend. `mock` is always available (used by the secrets tests),
+# so this stays FFI-free + headless on Linux CI (keyutils, no D-Bus).
+keyring            = { workspace = true }
+# D113: HMAC-SHA256 webhook-signature verification (always-on; the trigger webhook
+# listener is in the default build). RustCrypto, pure-Rust, FFI-free — the dep-wall +
+# build-no-inference + serve-engine FFI-free gates stay green. Pairs with sha2 (promoted
+# to always-on below for both this + the inference GGUF SHA-256 verify).
+hmac               = { workspace = true }
+
+# MM-3: per-target native keychain backend. macOS Keychain / Windows Credential
+# Manager / Linux kernel keyutils (headless-OK; NOT the D-Bus secret-service, which
+# would need a desktop session + pull zbus). An unlisted target degrades to keyring's
+# mock-only build ⇒ `KeyringSecretStore` resolves None and the write admin reports
+# Unavailable (honest-degrade; resolution still works via the env fallback).
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["linux-native"] }
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -269,9 +293,8 @@ inference = [
     "kx-inference/llamacpp",
     "dep:kx-model-store",
     "dep:kx-model-validator",
-    # Model Control v2: the direct-GGUF `--url` download + SHA-256 verify path.
+    # Model Control v2: the direct-GGUF `--url` download path (sha2 is now always-on).
     "dep:ureq",
-    "dep:sha2",
 ]
 # T3.7: the Datasets data-plane (RAG) read/write surface. The client-provided-vector
 # path is FFI-FREE + deterministic (CI-exercisable on Linux with no model). Pulls only

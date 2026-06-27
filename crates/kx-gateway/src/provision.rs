@@ -15,9 +15,9 @@ use std::path::Path;
 use kx_catalog::{
     canonical_config, encode_param_schema, AssetBinding, AssetPath, AssetRef, AssetVersion,
     BodyLedger, CatalogAction, CatalogActionSet, CatalogError, CatalogRegistry, FreeParamContract,
-    FreeParamSlot, Grant, GrantLedger, ParamType, PartyId, Provenance, SchemaResolver,
-    SignatureEntry, SlotBinding, SqliteBodyLedger, SqliteGrantLedger, SqliteVersionLedger,
-    TaskSignatureHash, VersionLedger, VersionedContent,
+    FreeParamSlot, Grant, GrantLedger, LedgerFact, ParamType, PartyId, Provenance, Revocation,
+    SchemaResolver, SignatureEntry, SlotBinding, SqliteBodyLedger, SqliteGrantLedger,
+    SqliteVersionLedger, TaskSignatureHash, VersionLedger, VersionedContent,
 };
 use kx_content::ContentRef;
 use kx_gateway_core::{
@@ -656,6 +656,62 @@ impl DemoLibrary {
                     free_params: prompt_contract(),
                 },
             ));
+        }
+
+        // (stale per-model recipe retirement — T-STALE-RECIPE-MODEL-ROUTE) After
+        // seeding the LIVE per-model recipes, revoke any DURABLE `kx/recipes/m-*` grant
+        // whose model is NO LONGER served. Without this, reusing a `--catalog-dir`
+        // across a model/engine switch leaves an `m-<gone>` recipe that binds + dispatches
+        // to a model the live engine does not serve, so the run dead-letters
+        // (`InferenceError::ModelNotFound`) — opaque + unrecoverable. Revoking the grant
+        // makes the binder resolve a UNIFORM `NotAuthorized`, so the stale recipe vanishes
+        // from Invoke + `ListRecipes` + `ListModels` at once and the operator sees only the
+        // currently-served models. Off-journal (grants.db), digest-INVARIANT (the projection
+        // digest folds journal facts, never the recipe ledger). Idempotent: a grant already
+        // revoked is skipped, so a steady-state restart neither re-revokes nor re-warns.
+        {
+            let live_m: BTreeSet<String> = secondary_models
+                .iter()
+                .filter_map(|m| per_model_chat_handle(m).ok())
+                .map(|h| h.to_string())
+                .collect();
+            let revoked_bytes: BTreeSet<[u8; 32]> = grants
+                .list_facts()
+                .filter_map(|f| match f {
+                    LedgerFact::Revoke(r) => Some(*r.grant_id().as_bytes()),
+                    _ => None,
+                })
+                .collect();
+            let stale_ids: Vec<_> = grants
+                .list_facts()
+                .filter_map(|f| match f {
+                    LedgerFact::Grant(g) => {
+                        if let AssetRef::Path(p) = g.asset() {
+                            let ps = p.to_string();
+                            (ps.starts_with("kx/recipes/m-")
+                                && !live_m.contains(&ps)
+                                && !revoked_bytes.contains(g.grant_id().as_bytes()))
+                            .then(|| g.grant_id())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })
+                .collect();
+            let count = stale_ids.len();
+            for gid in stale_ids {
+                grants
+                    .append_revocation(Revocation::new(gid, owner.clone()))
+                    .map_err(|e| cat(e.to_string()))?;
+            }
+            if count > 0 {
+                tracing::warn!(
+                    count,
+                    "retired stale per-model recipe grant(s) for models this serve no \
+                     longer serves (a reused --catalog-dir after a model/engine switch)"
+                );
+            }
         }
 
         // (chat-rag) POC-1: the AUTO-RAG chat recipe — the SAME single greedy model
@@ -5194,6 +5250,74 @@ mod tests {
         assert!(!lib2
             .recipe_handles()
             .contains(&REACT_EDIT_RECIPE_HANDLE.to_string()));
+    }
+
+    #[test]
+    fn stale_per_model_recipe_grant_revoked_after_model_set_shrinks() {
+        // T-STALE-RECIPE-MODEL-ROUTE: reusing a --catalog-dir across a model/engine
+        // switch must NOT leave a per-model recipe (`kx/recipes/m-<id>`) bound to a model
+        // the serve no longer serves — it would dead-letter every run with
+        // `InferenceError::ModelNotFound` (opaque + unrecoverable). The seed retires the
+        // stale grant ⇒ the binder resolves NotAuthorized ⇒ the recipe is gone from every
+        // surface. Deterministic (no live model engine).
+        let primary = ModelId("kx-serve:primary".to_string());
+        let a = ModelId("kx-serve:alpha".to_string());
+        let b = ModelId("kx-serve:beta".to_string());
+        let parties = ["alice@acme".to_string()];
+        let party = PartyId::new("local-dev");
+        let dir = tempfile::tempdir().unwrap();
+        let asset_a = AssetRef::Path(per_model_chat_handle(&a).unwrap());
+        let asset_b = AssetRef::Path(per_model_chat_handle(&b).unwrap());
+
+        // First serve: BOTH A and B are registered secondary models ⇒ both m-recipes granted.
+        {
+            let lib = DemoLibrary::open_serve(
+                dir.path(),
+                ExecutorClass::Bwrap,
+                &parties,
+                Some(&primary),
+                None,
+                false,
+                None,
+                false,
+                &[a.clone(), b.clone()],
+            )
+            .unwrap();
+            assert!(lib.recipe_handles().contains(&chat_handle_for(&a, false)));
+            assert!(
+                !lib.grant_ledger()
+                    .effective_grants(&party, &asset_a)
+                    .is_empty(),
+                "m-A is granted while model A is served"
+            );
+        }
+        // Reopen the SAME dir with ONLY B served (A dropped — the engine/model switch).
+        {
+            let lib = DemoLibrary::open_serve(
+                dir.path(),
+                ExecutorClass::Bwrap,
+                &parties,
+                Some(&primary),
+                None,
+                false,
+                None,
+                false,
+                std::slice::from_ref(&b),
+            )
+            .unwrap();
+            assert!(
+                lib.grant_ledger()
+                    .effective_grants(&party, &asset_a)
+                    .is_empty(),
+                "the stale m-A grant is revoked (model A is no longer served)"
+            );
+            assert!(
+                !lib.grant_ledger()
+                    .effective_grants(&party, &asset_b)
+                    .is_empty(),
+                "the served m-B recipe still binds"
+            );
+        }
     }
 
     #[test]

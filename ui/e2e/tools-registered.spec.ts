@@ -43,9 +43,11 @@ test("Tools registry: built-in inventory, disabled built-in deregister, SSRF-ref
   });
 
   // PR-6b-1: the live Connections panel (replaces the old honest-disabled stub) —
-  // the govern surface over the external MCP gateway. Its add form + the
+  // the govern surface over the external MCP gateway. It now lives under the
+  // Connections TAB of the Integrations hub; switch to it. Its add form + the
   // honest-disabled Cloud (OAuth/marketplace) affordance are always present
   // regardless of whether this FFI-free serve wired the mcp-gateway feature.
+  await page.getByTestId("tools-tab-connections").click();
   await expect(page.getByTestId("connections-panel")).toBeVisible();
   await expect(page.getByTestId("connections-add-form")).toBeVisible();
   await expect(page.getByTestId("connections-cloud-disabled")).toBeVisible();

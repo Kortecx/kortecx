@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toUiError } from "../../kx/errors";
 import { useScoreBundle, useToolManifests } from "../../kx/use-toolscout";
+import type { ToolsTab } from "../../router/routes/tools";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AutoGrantStatus } from "../tools/AutoGrantStatus";
@@ -10,23 +11,97 @@ import { ManifestGrid } from "../tools/ManifestGrid";
 import { RegisterToolForm } from "../tools/RegisterToolForm";
 import { RegisteredToolsPanel } from "../tools/RegisteredToolsPanel";
 import { ScoreLadder } from "../tools/ScoreLadder";
+import { SecretsPanel } from "../tools/SecretsPanel";
+import { TriggersPanel } from "../tools/TriggersPanel";
+
+const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
+  { id: "tools", label: "Tools" },
+  { id: "connections", label: "Connections" },
+  { id: "triggers", label: "Triggers" },
+  { id: "secrets", label: "Secrets" },
+];
 
 /**
- * Tools — two surfaces over the gateway's tool plane:
+ * Integrations — the hub over the gateway's tool + integration plane. FOUR
+ * URL-addressable tabs (the ContextSection/SystemsSection view-toggle precedent —
+ * tab state rides the route's validated search so this stays a pure renderer):
  *
- * 1. **Registry (governance)** — the DURABLE inventory (`DiscoverTools`): every
- *    registered tool with its authority/provenance/status + register & deregister
- *    controls (`RegisterTool` / `DeregisterTool`). Registration grants NO authority
- *    (SN-8); built-ins are re-seeded + not deregisterable. Live external-MCP dialing
- *    + Connections is the PR-6b card (honest-disabled — GR19/GR15).
- * 2. **Discovery & preview (advisory)** — the W1.A5 toolscout: tool manifests + an
- *    interactive TaskBundle dry-run scorer. ADVISORY-ONLY BY CONSTRUCTION (SN-8):
- *    every score/verdict is display-only and never authorizes anything — the sole
- *    grant gate stays the exact (toolId, toolVersion) check in lowering + the broker.
+ * 1. **Tools** — the durable tool inventory (`DiscoverTools`) + register/deregister
+ *    controls, the autonomous-access posture, and the advisory toolscout (manifests
+ *    + a dry-run TaskBundle scorer). Registration grants NO authority (SN-8); every
+ *    score/verdict is display-only and never authorizes anything.
+ * 2. **Connections** — dial external MCP servers (the live untrusted-egress surface).
+ * 3. **Triggers** — bind an inbound event (webhook / cron / RPC) to a recipe handle.
+ * 4. **Secrets** — the local OS-keychain store; a `SecretRef` NAME is what a
+ *    Connection's / Trigger's `credential_ref` points at (the value is write-only, D81).
  *
- * Both degrade to a not-wired empty state on older gateways (UNIMPLEMENTED).
+ * Each surface degrades to an honest not-wired empty state on older gateways
+ * (UNIMPLEMENTED — GR15 don't-fake-gaps).
  */
-export function ToolsSection() {
+export function ToolsSection({
+  tab = "tools",
+  onTab,
+}: {
+  tab?: ToolsTab;
+  onTab?: (tab: ToolsTab) => void;
+} = {}) {
+  return (
+    <section className="screen" data-testid="tools-section">
+      <div className="section-head">
+        <div>
+          <h1>Integrations</h1>
+          <p className="muted">
+            Register, govern, and connect the tools, external servers, event triggers, and secrets
+            your agents use. Registration grants no authority (SN-8): a tool fires only under a
+            server-issued warrant, re-verified by the broker at every call.
+          </p>
+        </div>
+      </div>
+
+      <fieldset className="view-toggle" aria-label="Integrations view" data-testid="tools-tabs">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            data-testid={`tools-tab-${t.id}`}
+            aria-pressed={tab === t.id}
+            onClick={() => onTab?.(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </fieldset>
+
+      {tab === "connections" ? (
+        <ConnectionsTab />
+      ) : tab === "triggers" ? (
+        <TriggersPanel />
+      ) : tab === "secrets" ? (
+        <SecretsPanel />
+      ) : (
+        <ToolsTabBody />
+      )}
+    </section>
+  );
+}
+
+/** The Connections tab — the live external-MCP-gateway govern surface. */
+function ConnectionsTab() {
+  return (
+    <>
+      <p className="muted">
+        Dial external MCP servers (stdio · HTTP, including Py/TS-SDK-exposed gateways) to give your
+        agents external knowledge + actions. Registering DIALS the server and registers its tools;
+        secret-less credential references only (OAuth + a credential marketplace are a Cloud
+        capability).
+      </p>
+      <ConnectionsPanel />
+    </>
+  );
+}
+
+/** The Tools tab — registry, autonomous-access posture, and the advisory toolscout. */
+function ToolsTabBody() {
   const manifests = useToolManifests();
   const score = useScoreBundle();
   const [selected, setSelected] = useState<readonly string[]>([]);
@@ -51,14 +126,7 @@ export function ToolsSection() {
   const scoreError = score.error ? toUiError(score.error) : null;
 
   return (
-    <section className="screen" data-testid="tools-section">
-      <h1>Tools</h1>
-      <p className="muted">
-        Register, govern, and discover the tools your agents can call. Registration grants no
-        authority (SN-8): a tool fires only under a server-issued warrant, re-verified by the broker
-        at every call.
-      </p>
-
+    <>
       <h2>Registry</h2>
       <p className="muted">
         The durable tool inventory — what is registered, with what provenance, status, and egress
@@ -68,15 +136,6 @@ export function ToolsSection() {
       <div className="tools-registry-actions">
         <RegisterToolForm />
       </div>
-
-      <h2>Connections</h2>
-      <p className="muted">
-        Dial external MCP servers (stdio · HTTP, including Py/TS-SDK-exposed gateways) to give your
-        agents external knowledge + actions. Registering DIALS the server and registers its tools;
-        secret-less credential references only (OAuth + a credential marketplace are a Cloud
-        capability).
-      </p>
-      <ConnectionsPanel />
 
       <h2>Autonomous tool access</h2>
       <p className="muted">
@@ -123,6 +182,6 @@ export function ToolsSection() {
           {score.data ? <ScoreLadder score={score.data} /> : null}
         </>
       ) : null}
-    </section>
+    </>
   );
 }
