@@ -1,0 +1,106 @@
+# shared-paths.toml — the single source of truth for the OSS ↔ private boundary.
+#
+# kortecx is developed across separate git repos that share a code surface:
+#   • OSS public        Kortecx/kortecx        (Apache-2.0)
+#   • private corpus    (design corpus + a byte-equivalent mirror of the OSS code)
+#   • cloud             (private; nested at kx-cloud/, its own repo)
+# This file classifies every path so tooling can move code between repos WITHOUT
+# leaking private content and WITHOUT drifting the shared surface.
+#
+# Three classes:
+#   [shared]        byte-equivalent in BOTH the OSS repo and the private mirror.
+#                   Moved by `just port` (pathspec-limited format-patch → am),
+#                   proven byte-equal by `just cmp-shared`.
+#   [private_only]  MUST NOT be tracked in the OSS public repo. Refused by the
+#                   SN-2 leak guard (.github/workflows/leak-check.yml + `just
+#                   leak-check`) and asserted by crates/kx-cli/tests/shared_boundary.rs.
+#   [divergent]     intentionally DIFFERENT per repo (CI configs, ignore files).
+#                   NEVER ported in either direction.
+#
+# Consumers: scripts/shared-paths.sh, justfile {port,cmp-shared,leak-check,
+# shared-lane-status}, .github/workflows/leak-check.yml, the boundary guard test.
+#
+# This file is ITSELF a [shared] path (byte-identical in both repos; it lists
+# itself). All patterns are git pathspec globs (`**` = recursive). Keep ONE
+# element per line — the shell + Rust parsers extract them with a simple line
+# scan, not a full TOML parse.
+schema = 1
+
+[shared]
+# The public code surface + shared config. Everything here is Apache-2.0 OSS.
+include = [
+  "crates/**",
+  "bindings/**",
+  "ui/**",
+  "scripts/**",
+  "deploy/**",
+  "docs/site/**",
+  "README.md",
+  "CONTRIBUTING.md",
+  "GLOSSARY.md",
+  "CHANGELOG.md",
+  "LICENSE",
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "rustfmt.toml",
+  "deny.toml",
+  "justfile",
+  "docker-compose.yml",
+  "shared-paths.toml",
+]
+
+[private_only]
+# Paths that must never be tracked in the OSS public repo. Mirrors the OSS
+# .gitignore private block; the boundary guard asserts the manifest covers it.
+paths = [
+  "kx-cloud/**",
+  "docs/design/**",
+  "docs/suggestions/**",
+  "docs/plans/**",
+  "docs/analysis/**",
+  "docs/benchmarks/**",
+  "docs/code-docs/**",
+  "docs/training-corpus/**",
+  "docs/HANDOFF.md",
+  "docs/HISTORY.md",
+  "docs/bug-ledger.md",
+  "docs/VISION.md",
+  "CLAUDE.md",
+  "MEMORY.md",
+  "WARNINGS.md",
+  "00-*.md",
+  "01-*.md",
+  "02-*.md",
+  "03-*.md",
+  "04-*.md",
+  "05-*.md",
+  "06-*.md",
+  "07-*.md",
+]
+# Content sentinels: private architecture NAMES that must not appear in added
+# OSS lines. These are crate/remote identifiers, not vendor names — "vLLM" /
+# "SGLang" / "Triton" are public and may appear in vendor-agnostic prose; the
+# specific private crate names below may not. (Already public in this repo's
+# leak-check history — centralized here, identical exposure.)
+deny_terms = [
+  "kx-cloud-inference-vllm",
+  "kx-cloud-inference-sglang",
+  "kx-cloud-inference-triton",
+  "kx-cloud-coordinator",
+  "kx-cloud-journal-replicated",
+  "kx-cloud-content-s3",
+  "kx-cloud-broker-hardened",
+  "kx-cloud-resource-multitenant",
+  "kx-cloud-observability",
+  "kx-cloud-serve",
+  "Kortecx/kortecx-core",
+  "private-main",
+]
+
+[divergent]
+# Intentionally different per repo. The port tool never carries these.
+paths = [
+  ".github/workflows/**",
+  ".gitignore",
+]

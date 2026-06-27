@@ -5,24 +5,26 @@ name: Private-content leak check (SN-2)
 # (Kortecx/kortecx-core) but should NEVER reach the OSS public repo.
 #
 # This is the automation half of SN-2 (mandatory pre-merge leak audit).
-# The PR template's checklist is the manual half.
+# The PR template's checklist is the manual half. `just leak-check` is the
+# local mirror of this workflow.
+#
+# Single source of truth: shared-paths.toml at the repo root (the [private_only]
+# class). scripts/shared-paths.sh reads it and emits the path regex + the content
+# deny-terms, so this workflow, `just leak-check`, `just port`, and the
+# crates/kx-cli/tests/shared_boundary.rs guard can never drift apart.
 #
 # What's checked (all blocking — exit 1 on hit):
+#   1. File paths matching [private_only].paths (design corpus, kx-cloud/, the
+#      00-*..07-*.md specs, CLAUDE.md, WARNINGS.md, ...).
+#   2. Added content lines referencing [private_only].deny_terms (specific
+#      private crate/remote names). Vendor names (vLLM/SGLang/Triton) are public
+#      and may appear in vendor-agnostic prose; the private crate names may not.
 #
-#   1. File paths matching private-only patterns. The OSS public repo
-#      should never contain any of: design corpus markdown
-#      (docs/design/*, docs/suggestions/*, docs/plans/*), root-level
-#      sequenced spec files (00-vision-and-principles.md through
-#      06-language-and-sdk-strategy.md), CLAUDE.md, MEMORY.md,
-#      05-progress-tracker.md, or anything under kx-cloud/.
+# Both checks scan the PR diff against origin/main, NOT the full checkout —
+# additions only, not the history that already passed audit.
 #
-#   2. Newly-added content lines referencing private architecture
-#      names (kx-cloud-inference-*, kx-cloud/*, Kortecx/kortecx-core,
-#      etc.). Forward references to "cloud backends" in vendor-agnostic
-#      language are fine; specific private crate names are not.
-#
-# Both checks scan the PR diff against origin/main, NOT the full
-# checkout — additions only, not the history that already passed audit.
+# This file is [divergent] (per-repo): on the private repo the sentinel paths
+# legitimately exist, so the `if: github.repository == ...` gate skips it there.
 
 on:
   pull_request:
@@ -37,6 +39,8 @@ jobs:
   leak-check:
     name: private-content-leak-check
     runs-on: ubuntu-latest
+    # SN-2 enforcement is meaningful only on the OSS public repo.
+    if: github.repository == 'Kortecx/kortecx'
     steps:
       - name: Checkout PR with full history for diff
         uses: actions/checkout@v6
@@ -48,30 +52,10 @@ jobs:
       - name: Path-based sentinel scan
         run: |
           set -euo pipefail
-          # Patterns of files that MUST NOT exist in the OSS public repo.
-          # Each is anchored to the start of the path.
-          read -r -d '' SENTINEL_PATHS <<'EOF' || true
-          ^docs/design/
-          ^docs/suggestions/
-          ^docs/plans/
-          ^CLAUDE\.md$
-          ^MEMORY\.md$
-          ^00-vision-and-principles\.md$
-          ^01-build-sequence\.md$
-          ^02-crate-specs\.md$
-          ^03-ffi-and-inference\.md$
-          ^04-testing-and-gates\.md$
-          ^05-progress-tracker\.md$
-          ^06-language-and-sdk-strategy\.md$
-          ^kx-cloud/
-          EOF
+          # The private-path regex comes from shared-paths.toml [private_only].paths.
+          REGEX="$(bash scripts/shared-paths.sh grep-regex-private)"
 
-          # Build a single alternation regex for grep.
-          REGEX=$(echo "$SENTINEL_PATHS" | grep -v '^$' | paste -sd'|' -)
-
-          # List of files added/modified in this PR against main.
           CHANGED=$(git diff --name-only origin/main...HEAD)
-
           echo "=== Files changed in this PR ==="
           echo "$CHANGED" | sed 's/^/  /'
           echo "==============================="
@@ -83,10 +67,10 @@ jobs:
             echo "$HITS" | sed 's/^/    /'
             echo ""
             echo "These files MUST live only in Kortecx/kortecx-core (private repo)."
-            echo "Refer to SN-2 in 05-progress-tracker.md (private). Fix:"
+            echo "They are classified [private_only] in shared-paths.toml. Fix:"
             echo "  1. Remove the file(s) from this branch."
-            echo "  2. If you intended to update them privately, do so via the"
-            echo "     private-main branch + force-push to Kortecx/kortecx-core."
+            echo "  2. If you intended to update them privately, do so in the"
+            echo "     private kortecx-core checkout."
             exit 1
           fi
           echo "✅ Path-based sentinel scan clean."
@@ -94,43 +78,18 @@ jobs:
       - name: Content-based private-architecture-reference scan
         run: |
           set -euo pipefail
-          # Terms that should NEVER appear in OSS-public source/docs.
-          # Each line is a literal substring (case-sensitive).
+          # The deny-terms come from shared-paths.toml [private_only].deny_terms.
           #
-          # NOT included on purpose:
-          #   - "vLLM" / "SGLang" / "Triton" — these are public project
-          #     names that may legitimately appear in vendor-agnostic
-          #     forward references. Specific PRIVATE crate names are
-          #     listed instead.
-          #   - "SN-1" .. "SN-7" / "D1" .. "D29" — standing-note + D-number
-          #     refs. They're noise for the OSS reader but not leaks per
-          #     se; if you want them out of OSS docs, fix the docs.
-          read -r -d '' SENTINEL_TERMS <<'EOF' || true
-          kx-cloud-inference-vllm
-          kx-cloud-inference-sglang
-          kx-cloud-inference-triton
-          kx-cloud-coordinator
-          kx-cloud-journal-replicated
-          kx-cloud-content-s3
-          kx-cloud-broker-hardened
-          kx-cloud-resource-multitenant
-          kx-cloud-observability
-          Kortecx/kortecx-core
-          private-main
-          EOF
-
-          # Pull only the ADDED-line content (lines starting with "+" but
-          # not "+++") from the PR's diff.
-          #
-          # IMPORTANT exclusions: the leak-check workflow itself and the PR
-          # template both legitimately mention the sentinel terms — the
-          # workflow because they ARE the sentinels, the template because it
-          # references SN-2. Excluding those files prevents this workflow
-          # from flagging itself when first introduced or when updated.
+          # IMPORTANT exclusions: the manifest + its reader legitimately CONTAIN
+          # the deny-terms (they are the source of truth), and the workflow + PR
+          # template reference SN-2 — excluding these four prevents the guard
+          # from flagging itself.
           DIFF_ADDS=$(git diff origin/main...HEAD --unified=0 \
-            -- ':(exclude).github/workflows/leak-check.yml' \
+            -- ':(exclude)shared-paths.toml' \
+               ':(exclude)scripts/shared-paths.sh' \
+               ':(exclude).github/workflows/leak-check.yml' \
                ':(exclude).github/pull_request_template.md' \
-            | grep -E '^\+' | grep -v -E '^\+\+\+')
+            | grep -E '^\+' | grep -v -E '^\+\+\+' || true)
 
           FAIL=0
           while IFS= read -r term; do
@@ -140,17 +99,14 @@ jobs:
               echo "$DIFF_ADDS" | grep -F "$term" | head -5 | sed 's/^/    /'
               FAIL=1
             fi
-          done <<< "$SENTINEL_TERMS"
+          done < <(bash scripts/shared-paths.sh deny-terms)
 
           if [ "$FAIL" -eq 1 ]; then
             echo ""
             echo "These terms are private-architecture names that should not"
             echo "appear in OSS source / docs. Sanitize the diff:"
             echo "  - Replace specific names with vendor-agnostic language"
-            echo "    (e.g. 'future cloud inference backends' instead of"
-            echo "    naming the planned crates)."
-            echo "  - The cross-backend symmetry property can be communicated"
-            echo "    without leaking specific private crate names."
+            echo "    (e.g. 'future cloud inference backends')."
             exit 1
           fi
           echo "✅ Content-based sentinel scan clean."
