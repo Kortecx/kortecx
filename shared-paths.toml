@@ -48,6 +48,7 @@ include = [
   "justfile",
   "docker-compose.yml",
   "shared-paths.toml",
+  "feature-ledger.toml",
 ]
 
 [private_only]

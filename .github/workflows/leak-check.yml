@@ -111,7 +111,17 @@ jobs:
           fi
           echo "✅ Content-based sentinel scan clean."
 
+      - name: Lane-guard (no cross-merge — GR25)
+        run: |
+          set -euo pipefail
+          # GR25: OSS and cloud are isolated lanes; a change must not cross the
+          # boundary unless an explicit `Cross-Lane:` trailer requests it. On the
+          # OSS repo every PR is the oss/seam lane, so this fails any PR that
+          # reaches into [private_only]/cloud paths. The same shared script gates
+          # the cloud repo (cloud lane → only kx-cloud/**).
+          bash scripts/lane-guard.sh origin/main
+
       - name: Final SN-2 summary
         run: |
           echo "✅ SN-2 (pre-merge leak audit) PASS — no private paths,"
-          echo "   no private architecture references in this PR's diff."
+          echo "   no private architecture references, lane-clean."
