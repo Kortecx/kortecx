@@ -6,8 +6,16 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 600 KiB raw (override with KX_UI_EAGER_BUDGET_BYTES for emergencies —
+ * Budget: 624 KiB raw (override with KX_UI_EAGER_BUDGET_BYTES for emergencies —
  * a deliberate, reviewed override, never a silent default bump).
+ *
+ * History (deliberate, reviewed default bumps — each tied to a real RPC surface that
+ * the eager SDK client + its generated proto stub must carry; lazy-loading proto types
+ * per-RPC is not possible since the client is loaded by connection-context up front):
+ *   - 600 KiB → 624 KiB (D170 Integrations Foundation): +13 proto messages / +2 enums
+ *     for the secrets (PutSecret/ListSecretNames/DeleteSecret) + triggers
+ *     (Register/List/Deregister/Submit/TestTrigger) RPC surface, plus the
+ *     `client.secrets`/`client.triggers` methods + result types (~6 KiB eager).
  *
  * Exit 1 over budget. The printed table doubles as the GR10 evidence blob.
  */
@@ -18,7 +26,7 @@ import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(UI_ROOT, "dist");
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 614_400);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 638_976);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

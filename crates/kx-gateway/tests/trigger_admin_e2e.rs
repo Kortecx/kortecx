@@ -5,6 +5,7 @@
 //! is covered by the live dual-engine validation; here we prove the admin RPC wiring,
 //! the governance view (secret referenced by NAME only), idempotent re-register, and
 //! the not-found / dry-run paths.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
