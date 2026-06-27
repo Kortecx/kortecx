@@ -2002,6 +2002,13 @@ fn submit_and_capture<J: Journal>(
     // never crash-recover (the durability law).
     let mut react_caps: Option<(u32, u32)> = None;
     let mut react_chain_salt: Option<[u8; 32]> = None;
+    // BUG-35 (+ PR-9d context sibling): the ORIGINAL seed's ANCHOR-BOUND config (the
+    // grounding image + grounding-context bundle), captured BEFORE the swap discards the
+    // seed (the swapped turn-0 carries only the clean instruction). Both keys are dropped
+    // by `build_chain_turn` and re-derived by every successor turn from the anchor, so both
+    // MUST be re-injected onto the anchor clone — enumerated in ONE place (`seed_anchor_cfg`)
+    // so a future anchor-bound key can never be silently half-carried again.
+    let mut react_anchor_cfg: Vec<(ConfigKey, kx_mote::ConfigVal)> = Vec::new();
     let mote = if react_seed {
         if store.is_none() {
             return Err(CoordinatorError::ReactSeedRefused(
@@ -2014,6 +2021,10 @@ fn submit_and_capture<J: Journal>(
         // the clean instruction; the caps go to the durable anchor.
         let (instruction, caps) = react_seed_params(&mote)?;
         react_caps = Some(caps);
+        // BUG-35 (+ context sibling): capture the seed's anchor-bound config HERE (`mote`
+        // is still the original seed) so the anchor records it — `build_chain_turn` below
+        // rebuilds turn-0 from the instruction ONLY, dropping the image AND context bundle.
+        react_anchor_cfg = seed_anchor_cfg(&mote);
         // PR-R1 — per-invocation run identity (FINDING-REACT-SHARED-INSTANCE). `kx
         // serve` shares ONE journal / `instance_id` across every Invoke, so a run-
         // level react chain salted by `instance_id` alone collides at turn-0 and the
@@ -2043,7 +2054,14 @@ fn submit_and_capture<J: Journal>(
     // so a re-submitted-but-already-committed shaper (recovery: the in-memory dispatch.defs
     // + materialized children are gone on restart, but the journal still has the committed
     // shaper fact) can re-materialize its children below.
-    let turn0_for_anchor = react_seed.then(|| mote.clone());
+    // BUG-35 (+ context sibling): carry the original seed's anchor-bound config (image +
+    // context bundle) onto the anchor-clone so `write_react_anchor` records both on the
+    // turn-0 ReactRound. Every turn (incl. turn 0 — the DISPATCHED swapped mote has neither
+    // inline) then re-derives them EDGE-FREE from the anchor via the carried `ContextSink`
+    // path. Without this the loop runs BLIND (the model never sees the image / grounding
+    // context). A config-only mutation ⇒ the clone's `id` is unchanged (it stays the
+    // dispatched turn-0's anchor id).
+    let turn0_for_anchor = react_seed.then(|| react_anchor_clone(&mote, &react_anchor_cfg));
     let shaper_def = mote.def.is_topology_shaper.then(|| mote.def.clone());
     let shaper_mote_id = mote.id;
     let shaper_warrant = warrant.clone();
@@ -2585,6 +2603,43 @@ fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32)), CoordinatorErr
         ));
     }
     Ok((instruction, (max_turns, max_tool_calls)))
+}
+
+/// The react seed's ANCHOR-BOUND config keys — the grounding image ([`IMAGE_REF_KEY`],
+/// AGENTIC-VISION) and the grounding-context bundle ([`CONTEXT_ITEMS_KEY`], PR-9d). BOTH
+/// are dropped by the seed-swap (`build_chain_turn` rebuilds turn 0 from the instruction
+/// alone) yet are re-derived by every successor turn from the turn-0 anchor — so both MUST
+/// ride the anchor clone. Enumerated in ONE place so a future anchor-bound key cannot be
+/// silently half-carried again (the BUG-35 class).
+const REACT_ANCHOR_BOUND_KEYS: [&str; 2] = [IMAGE_REF_KEY, CONTEXT_ITEMS_KEY];
+
+/// BUG-35 (+ PR-9d context sibling): the ORIGINAL seed's anchor-bound config (image +
+/// context bundle), captured from the seed BEFORE the seed-swap discards it (the swapped
+/// turn 0 is rebuilt from the instruction alone). Empty for a plain text-only react seed.
+fn seed_anchor_cfg(seed: &Mote) -> Vec<(ConfigKey, kx_mote::ConfigVal)> {
+    REACT_ANCHOR_BOUND_KEYS
+        .iter()
+        .filter_map(|k| {
+            let key = ConfigKey((*k).to_string());
+            seed.def.config_subset.get(&key).map(|v| (key, v.clone()))
+        })
+        .collect()
+}
+
+/// BUG-35 (+ context sibling): build the turn-0 anchor clone for a react seed — the
+/// DISPATCHED swapped mote PLUS the ORIGINAL seed's anchor-bound config (image + context
+/// bundle) re-injected. The seed-swap rebuilds turn 0 from the instruction alone (dropping
+/// both inline keys), so the coordinator captures them BEFORE the swap and re-attaches them
+/// here, on the clone `write_react_anchor` records — every successor turn then re-derives
+/// them EDGE-FREE from that anchor. A config-only mutation ⇒ the clone's `id` is unchanged
+/// (it stays the dispatched turn-0's anchor id). Empty `anchor_cfg` ⇒ a plain clone
+/// (byte-identical to the pre-AGENTIC-VISION / pre-PR-9d text path).
+fn react_anchor_clone(dispatched: &Mote, anchor_cfg: &[(ConfigKey, kx_mote::ConfigVal)]) -> Mote {
+    let mut m = dispatched.clone();
+    for (key, val) in anchor_cfg {
+        m.def.config_subset.insert(key.clone(), val.clone());
+    }
+    m
 }
 
 /// Write the run's turn-0 ReAct ANCHOR (PR-2d-1): content-store the run-fixed base

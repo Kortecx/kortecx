@@ -1842,12 +1842,17 @@ impl RecipeBinder for HostRecipeBinder {
             // PR-6a/D155: react-fs is ALSO a live ReAct chain (same machinery,
             // fs-list grant) ⇒ it MUST set react_seed too, else the loop never runs.
             // PR-6b-4: react-auto is the same machinery (union tool grant).
+            // AGENTIC-VISION: react-vision is the SAME live ReAct chain (react warrant +
+            // an image_ref) ⇒ it MUST set react_seed too, else the loop never runs as a
+            // chain AND the empty react_chain_salt makes the client retrieve the wrong
+            // chain on serve's shared journal (BUG-34, caught by the live dual-engine pass).
             // (D155 Phase-3 `react-edit` is a SINGLE model step, NOT a react chain
             // — it is deliberately absent here; it settles on its terminal mote.)
             react_seed: [
                 REACT_RECIPE_HANDLE,
                 REACT_FS_RECIPE_HANDLE,
                 REACT_AUTO_RECIPE_HANDLE,
+                REACT_VISION_RECIPE_HANDLE,
             ]
             .iter()
             .any(|h| parse_handle(h).is_some_and(|p| p == asset_path)),
@@ -4981,6 +4986,79 @@ mod tests {
         let image = field(IMAGE_REF_KEY);
         assert_eq!(image.kind, RecipeParamKind::Bytes);
         assert_eq!(image.max_len, Some(64), "a 32-byte ref as 64 hex chars");
+    }
+
+    /// AGENTIC-VISION regression guard (BUG-34, caught by the live dual-engine Gemma pass).
+    /// Binding `react-vision` MUST set `react_seed = true` — it is a live ReAct chain (the
+    /// same machinery as plain `react`, just with an attached image). The bug: react-vision
+    /// was MISSING from the binder's `react_seed` handle list, so it bound with
+    /// `react_seed = false` ⇒ the coordinator never seed-swapped it ⇒ the empty
+    /// `react_chain_salt` made the CLI retrieve the WRONG (prior) chain on serve's SHARED
+    /// journal (a different goal's answer came back). The guard also pins that the bound
+    /// seed carries the image inline under `IMAGE_REF_KEY` (the coordinator's BUG-35 input).
+    #[tokio::test]
+    async fn react_vision_binds_with_react_seed_true_and_carries_the_image() {
+        let echo = (ToolName("mcp-echo".into()), ToolVersion("1".into()));
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&ModelId("kx-serve:vlm".to_string())),
+            Some(&echo),
+            true, // vision ⇒ react-vision IS provisioned
+            None,
+            false,
+        )
+        .unwrap();
+        let binder = HostRecipeBinder::new(lib);
+
+        // react-vision: instruction + the two caps + a 64-hex image ref (the four-field form).
+        let img = "ab".repeat(32);
+        let vision_args = format!(
+            r#"{{"instruction":"inspect the image","max_turns":4,"max_tool_calls":2,"image_ref":"{img}"}}"#
+        );
+        let vision = binder
+            .bind(
+                "alice@acme",
+                REACT_VISION_RECIPE_HANDLE,
+                vision_args.as_bytes(),
+                &[],
+                &[],
+            )
+            .await
+            .expect("react-vision binds for a granted party");
+        assert!(
+            vision.react_seed,
+            "BUG-34: react-vision is a live ReAct chain — it MUST seed (else empty \
+             chain_salt → wrong-chain retrieval on serve's shared journal)"
+        );
+        assert!(
+            vision
+                .motes
+                .first()
+                .unwrap()
+                .0
+                .def
+                .config_subset
+                .contains_key(&ConfigKey(IMAGE_REF_KEY.to_string())),
+            "the bound react-vision seed carries the image ref inline (the anchor's input)"
+        );
+
+        // The plain-react control: the SAME machinery also seeds (the pre-existing
+        // invariant the missing-list-entry bug did NOT break — proving the gap was
+        // react-vision-specific, a new variant absent from the seed list).
+        let react = binder
+            .bind(
+                "alice@acme",
+                REACT_RECIPE_HANDLE,
+                br#"{"instruction":"do the thing","max_turns":4,"max_tool_calls":2}"#,
+                &[],
+                &[],
+            )
+            .await
+            .expect("react binds for a granted party");
+        assert!(react.react_seed, "plain react seeds a ReAct chain");
     }
 
     #[test]
