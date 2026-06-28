@@ -56,6 +56,7 @@ members = [
     "crates/kx-otel",
     "crates/kx-extension-sdk",
     "crates/kx-pricing",
+    "crates/kx-eval",
 ]
 exclude = [
     "kx-cloud",
@@ -255,6 +256,14 @@ kx-otel              = { path = "crates/kx-otel",              version = "0.1.1"
 # kill-switch, NOT Cloud billing). Pure types + a total fold; off the journal/
 # identity path. Cloud swaps a rich per-token price-book behind the same shape.
 kx-pricing           = { path = "crates/kx-pricing",           version = "0.1.0" }
+# RC1 (D172) the agentic-evaluation harness: a thin, FFI-free leaf that scores a
+# run's TRANSCRIPT (task success / tool-call correctness / RAG groundedness / loop
+# efficiency / latency) — the measure-first yardstick (`just eval >= baseline`).
+# Every scorer is a PURE total fn of a Transcript; the gating baseline is a COMMITTED
+# corpus, not the gitignored docs/benchmarks (SN-2). Off the journal + identity path
+# + frozen trio (a measurement leaf, never a committed fact). Composes kx-profile's
+# Gate/Spike report + kx-toolcall's parser + kx-critic's deterministic checks.
+kx-eval              = { path = "crates/kx-eval",              version = "0.1.0" }
 # R1 (D130) gateway dev BINARY: hosts the FROZEN KxGateway proto over kx-gateway-core
 # with an embedded single-system coordinator + local worker; the first network server
 # that binds a port outside tests. Deny-all auth stub (R2 fills it). FFI-free by default.

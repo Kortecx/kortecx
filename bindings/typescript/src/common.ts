@@ -203,6 +203,8 @@ export type { SecretNamesPage } from "./secrets.js";
 export { PendingApprovalRow } from "./approvals.js";
 export type { PendingApprovalsPage } from "./approvals.js";
 export { RunCost } from "./cost.js";
+// RC1 (D172): the per-run quality readout (ScoreRun).
+export { RunScore } from "./eval.js";
 
 // D113 / D170.b: the local trigger admin (webhook/cron/grpc → recipe handle).
 export {

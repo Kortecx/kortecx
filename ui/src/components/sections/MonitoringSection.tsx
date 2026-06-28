@@ -14,11 +14,12 @@
 
 import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { fadeUp, stagger } from "../../app/motion";
 import { useAlerts } from "../../kx/use-alerts";
 import { useCaptureRecords } from "../../kx/use-capture-records";
 import { type RunScopedRef, useResultMapMulti } from "../../kx/use-content-batch";
+import { useEvalScore } from "../../kx/use-eval-score";
 import { useReactTurns } from "../../kx/use-react-turns";
 import { useReplanRounds } from "../../kx/use-replan-rounds";
 import { useRuns } from "../../kx/use-runs";
@@ -47,13 +48,14 @@ import { HealthIndicator } from "../metrics/HealthIndicator";
 import { MetricCard } from "../metrics/MetricCard";
 import { RunsTable } from "./RunsTable";
 
-const MONITOR_VIEWS = [undefined, "runs", "feed", "telemetry", "alerts"] as const;
+const MONITOR_VIEWS = [undefined, "runs", "feed", "telemetry", "alerts", "quality"] as const;
 const VIEW_LABEL: Record<string, string> = {
   overview: "Overview",
   runs: "Runs",
   feed: "Live feed",
   telemetry: "Telemetry",
   alerts: "Alerts",
+  quality: "Quality",
 };
 
 function TallyList({ tally, empty }: { tally: Tally; empty: string }) {
@@ -139,10 +141,90 @@ export function MonitoringSection({
         <TelemetryView />
       ) : tab === "alerts" ? (
         <AlertsView />
+      ) : tab === "quality" ? (
+        <QualityView />
       ) : (
         <OverviewView />
       )}
     </section>
+  );
+}
+
+/** RC1 (D172): the per-run agent-quality readout (`ScoreRun`) — an expectation-free
+ *  summary of one run's trajectory (terminal reached, turns / tool-calls vs budget,
+ *  rejection count). The golden-suite GATE runs offline (`kx eval run` / `just eval`). */
+function QualityView() {
+  const [runId, setRunId] = useState("");
+  const [submitted, setSubmitted] = useState<string | undefined>(undefined);
+  const { score, notWired, error, isLoading } = useEvalScore(submitted);
+  return (
+    <Panel
+      title="Run quality"
+      hint="expectation-free per-run scoring (ScoreRun) — terminal, budget burn, rejections"
+      notWired={notWired}
+    >
+      <form
+        className="quality-form"
+        data-testid="quality-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setSubmitted(runId.trim() || undefined);
+        }}
+      >
+        <input
+          className="mono"
+          aria-label="Run instance id"
+          data-testid="quality-run-input"
+          placeholder="run instance_id (32 hex chars)"
+          value={runId}
+          onChange={(e) => setRunId(e.target.value)}
+        />
+        <button type="submit" data-testid="quality-score-btn" disabled={runId.trim() === ""}>
+          Score
+        </button>
+      </form>
+      {error ? (
+        <p className="muted" data-testid="quality-error">
+          {error.message}
+        </p>
+      ) : null}
+      {isLoading ? <p className="muted">scoring…</p> : null}
+      {score ? (
+        <ul className="tally" data-testid="quality-result">
+          <li className="tally__row">
+            <span className="tally__label">terminal</span>
+            <span className="tally__count mono">
+              {score.terminal}
+              {score.reachedAnswer ? " ✓" : ""}
+            </span>
+          </li>
+          <li className="tally__row">
+            <span className="tally__label">turns</span>
+            <span className="tally__count">
+              {score.turnsUsed} / {score.maxTurns}
+            </span>
+          </li>
+          <li className="tally__row">
+            <span className="tally__label">tool calls</span>
+            <span className="tally__count">
+              {score.toolCallsUsed} / {score.maxToolCalls}
+            </span>
+          </li>
+          <li className="tally__row">
+            <span className="tally__label">rejections</span>
+            <span className="tally__count">{score.rejections}</span>
+          </li>
+          <li className="tally__row">
+            <span className="tally__label">budget (turns)</span>
+            <span className="tally__count">{score.turnBudgetUsedPerMille}‰</span>
+          </li>
+          <li className="tally__row">
+            <span className="tally__label">budget (tools)</span>
+            <span className="tally__count">{score.toolBudgetUsedPerMille}‰</span>
+          </li>
+        </ul>
+      ) : null}
+    </Panel>
   );
 }
 

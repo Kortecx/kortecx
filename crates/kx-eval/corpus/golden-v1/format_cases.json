@@ -1,0 +1,74 @@
+{
+  "grants": [
+    { "tool_id": "mcp-echo/echo", "tool_version": "1" },
+    { "tool_id": "kv/get", "tool_version": "1" },
+    { "tool_id": "calc/add", "tool_version": "1" }
+  ],
+  "cases": [
+    {
+      "format": "json_envelope",
+      "raw": "{\"tool_call\":{\"name\":\"mcp-echo/echo\",\"version\":\"1\",\"args\":{\"text\":\"hi\"}}}",
+      "expect": { "type": "call", "tool_id": "mcp-echo/echo", "tool_version": "1" }
+    },
+    {
+      "format": "gemma_native_brace",
+      "raw": "<|tool_call>call:echo{\"text\":\"hi\"}<tool_call|>",
+      "expect": { "type": "call", "tool_id": "mcp-echo/echo", "tool_version": "1" }
+    },
+    {
+      "format": "gemma_paren",
+      "raw": "<|tool_call>call:echo(text=\"hi\")<tool_call|>",
+      "expect": { "type": "call", "tool_id": "mcp-echo/echo", "tool_version": "1" }
+    },
+    {
+      "format": "llama_python_tag",
+      "raw": "<|python_tag|>{\"name\":\"kv/get\",\"arguments\":{\"key\":\"x\"}}",
+      "expect": { "type": "call", "tool_id": "kv/get", "tool_version": "1" }
+    },
+    {
+      "format": "qwen_xml",
+      "raw": "<tool_call>{\"name\":\"calc/add\",\"arguments\":{\"a\":2,\"b\":3}}</tool_call>",
+      "expect": { "type": "call", "tool_id": "calc/add", "tool_version": "1" }
+    },
+    {
+      "format": "markerless_object",
+      "raw": "{\"name\":\"kv/get\",\"arguments\":{\"key\":\"y\"}}",
+      "expect": { "type": "call", "tool_id": "kv/get", "tool_version": "1" }
+    },
+    {
+      "format": "prose_no_call",
+      "raw": "The answer to your question is 42. No tool is needed here.",
+      "expect": { "type": "no_call" }
+    },
+    {
+      "format": "markerless_ungranted_paren",
+      "raw": "deletewidget(id=7)",
+      "expect": { "type": "no_call" }
+    },
+    {
+      "format": "committed_ungranted",
+      "raw": "{\"tool_call\":{\"name\":\"danger/rm\",\"version\":\"1\",\"args\":{\"path\":\"/\"}}}",
+      "expect": { "type": "refused" }
+    },
+    {
+      "format": "qwen_think_preamble",
+      "raw": "<think>I should echo the text first.</think>{\"tool_call\":{\"name\":\"mcp-echo/echo\",\"version\":\"1\",\"args\":{\"text\":\"hi\"}}}",
+      "expect": { "type": "call", "tool_id": "mcp-echo/echo", "tool_version": "1" }
+    },
+    {
+      "format": "markdown_fenced",
+      "raw": "```json\n{\"tool_call\":{\"name\":\"calc/add\",\"version\":\"1\",\"args\":{\"a\":1,\"b\":2}}}\n```",
+      "expect": { "type": "call", "tool_id": "calc/add", "tool_version": "1" }
+    },
+    {
+      "format": "openai_tool_calls_array",
+      "raw": "{\"tool_calls\":[{\"name\":\"kv/get\",\"arguments\":{\"key\":\"z\"}}]}",
+      "expect": { "type": "call", "tool_id": "kv/get", "tool_version": "1" }
+    },
+    {
+      "format": "empty_output",
+      "raw": "",
+      "expect": { "type": "no_call" }
+    }
+  ]
+}

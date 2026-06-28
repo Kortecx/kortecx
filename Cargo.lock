@@ -1398,6 +1398,7 @@ version = "0.1.1"
 dependencies = [
  "kx-app",
  "kx-critic-types",
+ "kx-eval",
  "kx-gateway",
  "kx-proto",
  "kx-runtime",
@@ -1524,6 +1525,19 @@ dependencies = [
  "kx-content",
  "kx-dataset",
  "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "kx-eval"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "kx-mote",
+ "kx-toolcall",
+ "kx-warrant",
+ "serde",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 
@@ -1670,6 +1684,7 @@ version = "0.1.1"
 dependencies = [
  "kx-content",
  "kx-critic-types",
+ "kx-eval",
  "kx-journal",
  "kx-mote",
  "kx-projection",

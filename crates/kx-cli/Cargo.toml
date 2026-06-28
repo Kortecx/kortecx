@@ -30,6 +30,9 @@ kx-app     = { workspace = true }
 # T-AGENT2: decode a committed `CriticVerdict` (the judge recipe's terminal) to a
 # readable VALID/INVALID summary for `kx invoke`/`kx mote show` (tiny FFI-free leaf).
 kx-critic-types = { workspace = true }
+# RC1 (D172): the FFI-free eval harness — `kx eval run` scores the embedded golden
+# corpus against the committed baseline LOCALLY (no gateway). A pure leaf.
+kx-eval    = { workspace = true }
 # gRPC transport + Request/Status/Code for the client verbs. `tls` lets the client
 # dial an `https://` gateway (A1); `tls-native-roots` trusts the OS trust store for
 # a public CA (Apache/MIT — `tls-webpki-roots` is MPL-2.0, which deny.toml forbids).

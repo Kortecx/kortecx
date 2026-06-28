@@ -16,6 +16,7 @@ pub mod content;
 pub mod context;
 pub mod cost;
 pub mod datasets;
+pub mod eval;
 pub mod events;
 pub mod feedback;
 pub mod health;

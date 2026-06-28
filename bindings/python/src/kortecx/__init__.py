@@ -66,6 +66,7 @@ from .errors import (
     KxUsage,
     KxWaitTimeout,
 )
+from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
 from .flow import Flow, flow
 from .grants import AssetGrants, GrantView
@@ -281,6 +282,8 @@ __all__ = [
     "PendingApproval",
     "PendingApprovalsPage",
     "RunCost",
+    # RC1 (D172) agentic-evaluation per-run quality readout (ScoreRun)
+    "RunScore",
     # D170 / MM-3 operator secret store (PutSecret / ListSecretNames / DeleteSecret)
     "SecretName",
     "SecretNamesPage",

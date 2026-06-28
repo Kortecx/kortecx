@@ -46,6 +46,7 @@ import {
   KxWaitTimeout,
   rpc,
 } from "./errors.js";
+import { RunScore } from "./eval.js";
 import {
   streamAllDeltas,
   streamDeltas,
@@ -1673,6 +1674,16 @@ export abstract class KxClientBase {
   }
 
   /**
+   * A live run's EXPECTATION-FREE quality summary (RC1/D172, `ScoreRun`) — terminal
+   * reached, turns / tool-calls spent, budget burn, rejection count. The golden-suite
+   * gate (vs an expectation) runs offline via `kx eval run`.
+   */
+  async scoreRun(instanceId: string): Promise<RunScore> {
+    const resp = await rpc(this.grpc.scoreRun({ instanceId: asBytes(instanceId, INSTANCE_LEN) }));
+    return RunScore.fromProto(resp);
+  }
+
+  /**
    * The HITL approval namespace — `kx.approvals.listPending / grant / deny` (D114).
    * Grant/deny release/reject a staged world-mutating action over a server-derived
    * `requestId` (SN-8).
@@ -1694,6 +1705,16 @@ export abstract class KxClientBase {
   get cost() {
     return {
       getRunCost: (instanceId: string): Promise<RunCost> => this.getRunCost(instanceId),
+    };
+  }
+
+  /**
+   * The agentic-evaluation namespace — `client.eval.scoreRun` (RC1/D172). An
+   * expectation-free per-run quality summary; the golden gate runs offline.
+   */
+  get eval() {
+    return {
+      scoreRun: (instanceId: string): Promise<RunScore> => this.scoreRun(instanceId),
     };
   }
 

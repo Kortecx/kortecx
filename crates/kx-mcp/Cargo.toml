@@ -55,5 +55,17 @@ path = "tests/support/mock_stdio_server.rs"
 name = "kx-mcp-echo"
 path = "src/bin/kx_mcp_echo.rs"
 
+# RC1 (D172): two more BUNDLED deterministic stdio tools the kx-eval golden suite drives
+# for genuine multi-tool / sequential / grounded tasks — `mcp-calc@1` (integer arithmetic,
+# the answer oracle) + `mcp-kv@1` (a fixed-seed lookup, the retrieval oracle). Same
+# minimal surface as echo: no egress, no modes, deterministic in the request args.
+[[bin]]
+name = "kx-mcp-calc"
+path = "src/bin/kx_mcp_calc.rs"
+
+[[bin]]
+name = "kx-mcp-kv"
+path = "src/bin/kx_mcp_kv.rs"
+
 [lints]
 workspace = true

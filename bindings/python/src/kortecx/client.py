@@ -59,6 +59,7 @@ from .datasets import (
     _to_documents,
 )
 from .errors import KxError, KxFailedPrecondition, KxUsage, from_rpc_error
+from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
@@ -450,6 +451,23 @@ class _Cost:
     def get(self, instance_id: str) -> "RunCost":
         """Alias for :meth:`get_run_cost`."""
         return self.get_run_cost(instance_id)
+
+
+class _Eval:
+    """The ``kx.eval`` namespace — the per-run quality readout (RC1/D172):
+    ``score_run``. An expectation-free trajectory summary; the golden-suite gate runs
+    offline via the ``kx eval run`` CLI."""
+
+    def __init__(self, client: "KxClient") -> None:
+        self._c = client
+
+    def score_run(self, instance_id: str) -> "RunScore":
+        """A live run's expectation-free quality summary."""
+        return self._c.score_run(instance_id=instance_id)
+
+    def score(self, instance_id: str) -> "RunScore":
+        """Alias for :meth:`score_run`."""
+        return self.score_run(instance_id)
 
 
 class KxClient:
@@ -1904,6 +1922,14 @@ class KxClient:
         resp = self._call(lambda: self._stub.GetRunCost(req, metadata=self._md))
         return RunCost.from_proto(resp)
 
+    def score_run(self, *, instance_id: str) -> RunScore:
+        """A live run's EXPECTATION-FREE quality summary (``ScoreRun``) — terminal
+        reached, turns / tool-calls spent, budget burn, rejection count. The golden-suite
+        gate (vs an expectation) runs offline via ``kx eval run``."""
+        req = _g.ScoreRunRequest(instance_id=hexids.as_bytes(instance_id, hexids.INSTANCE_LEN))
+        resp = self._call(lambda: self._stub.ScoreRun(req, metadata=self._md))
+        return RunScore.from_proto(resp)
+
     @property
     def approvals(self) -> _Approvals:
         """The HITL approval namespace — ``kx.approvals.list_pending / grant / deny``
@@ -1915,6 +1941,12 @@ class KxClient:
         """The cost-spend guardrail namespace — ``kx.cost.get_run_cost`` (M11). A
         display-only local spend estimate, not Cloud billing."""
         return _Cost(self)
+
+    @property
+    def eval(self) -> _Eval:
+        """The agentic-evaluation namespace — ``kx.eval.score_run`` (RC1/D172). An
+        expectation-free per-run quality summary; the golden gate runs offline."""
+        return _Eval(self)
 
     def submit_feedback(
         self,

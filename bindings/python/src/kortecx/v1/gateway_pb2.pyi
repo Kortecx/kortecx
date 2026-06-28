@@ -2334,3 +2334,33 @@ class GetRunCostResponse(_message.Message):
     per_tool_call_micro_usd: int
     over_ceiling: bool
     def __init__(self, instance_id: _Optional[bytes] = ..., turns: _Optional[int] = ..., tool_calls: _Optional[int] = ..., estimated_micro_usd: _Optional[int] = ..., ceiling_micro_usd: _Optional[int] = ..., per_turn_micro_usd: _Optional[int] = ..., per_tool_call_micro_usd: _Optional[int] = ..., over_ceiling: bool = ...) -> None: ...
+
+class ScoreRunRequest(_message.Message):
+    __slots__ = ("instance_id",)
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    def __init__(self, instance_id: _Optional[bytes] = ...) -> None: ...
+
+class RunScore(_message.Message):
+    __slots__ = ("instance_id", "terminal", "reached_answer", "turns_used", "tool_calls_used", "max_turns", "max_tool_calls", "rejections", "turn_budget_used_per_mille", "tool_budget_used_per_mille")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    TERMINAL_FIELD_NUMBER: _ClassVar[int]
+    REACHED_ANSWER_FIELD_NUMBER: _ClassVar[int]
+    TURNS_USED_FIELD_NUMBER: _ClassVar[int]
+    TOOL_CALLS_USED_FIELD_NUMBER: _ClassVar[int]
+    MAX_TURNS_FIELD_NUMBER: _ClassVar[int]
+    MAX_TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
+    REJECTIONS_FIELD_NUMBER: _ClassVar[int]
+    TURN_BUDGET_USED_PER_MILLE_FIELD_NUMBER: _ClassVar[int]
+    TOOL_BUDGET_USED_PER_MILLE_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    terminal: str
+    reached_answer: bool
+    turns_used: int
+    tool_calls_used: int
+    max_turns: int
+    max_tool_calls: int
+    rejections: int
+    turn_budget_used_per_mille: int
+    tool_budget_used_per_mille: int
+    def __init__(self, instance_id: _Optional[bytes] = ..., terminal: _Optional[str] = ..., reached_answer: bool = ..., turns_used: _Optional[int] = ..., tool_calls_used: _Optional[int] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., rejections: _Optional[int] = ..., turn_budget_used_per_mille: _Optional[int] = ..., tool_budget_used_per_mille: _Optional[int] = ...) -> None: ...
