@@ -222,6 +222,29 @@ pub struct ReactRoundRecord {
     /// ≥1. `None` ⇒ a text-only chain (every chain ≤v13 up-converts to `None`). Off-DAG
     /// metadata — never an identity input.
     pub image_ref: Option<ContentRef>,
+    /// D114 (HITL): `true` iff this chain requires operator approval before a
+    /// world-mutating tool call fires. Recorded on the turn-0 anchor (the coordinator
+    /// gate reads it from the folded chain so the posture survives recovery). `false`
+    /// for every chain ≤v14 (the up-convert default). Off-DAG — never an identity input.
+    pub require_approval: bool,
+    /// The entry's journal seq (audit/order).
+    pub seq: u64,
+}
+
+/// One pre-action approval handshake's LATEST folded state (D114). The fold appends
+/// one [`ApprovalRecord`] per handshake step (`Requested → Granted / Denied /
+/// Expired`); the derived `approval_index` keeps the latest per `request_id`. Off-DAG
+/// — recovery + the operator inbox read it; never an identity/scheduling/digest input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalRecord {
+    /// The registered run identity (run-salt) the gated action belongs to.
+    pub instance_id: [u8; kx_journal::INSTANCE_ID_LEN],
+    /// The deterministic, recovery-stable handshake handle (keys grant/deny).
+    pub request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+    /// The world-mutating observation Mote awaiting approval.
+    pub awaiting_mote_id: MoteId,
+    /// This step's frozen handshake state.
+    pub state: kx_journal::ApprovalState,
     /// The entry's journal seq (audit/order).
     pub seq: u64,
 }
@@ -292,6 +315,20 @@ pub(crate) struct State {
     /// branch; last-write-wins lands the settled branch. Same derived/never-serialized
     /// contract as [`Self::react_turn_motes`] (re-derived on checkpoint load).
     pub(crate) react_tool_round_of_turn: BTreeMap<MoteId, usize>,
+    /// D114 (HITL approval) — append-many handshake facts, one record per
+    /// `Requested / Granted / Denied / Expired` step, as each `Approval` entry
+    /// folds. Off-DAG; O(1) per append. Recovery + the operator inbox read it;
+    /// never an identity/scheduling/digest input. Emptiness is the zero-cost
+    /// sentinel for approval-free runs (and the demo).
+    pub(crate) approvals: Vec<ApprovalRecord>,
+    /// DERIVED latest-state index over `approvals`: `request_id → the index of its
+    /// LATEST (max-seq) record`. The fold appends Requested then a decision sharing
+    /// the same `request_id`; last-write-wins lands the decision. Bounds the gate's
+    /// per-request lookup to O(log n) in serve's shared journal (the same O(runs²)
+    /// finding `react_index` solved). Maintained by the fold; RE-DERIVED on
+    /// checkpoint load — NEVER serialized (not in `CheckpointState`), so
+    /// `encode_state` + the `state_content_digest` carry only the `approvals` Vec.
+    pub(crate) approval_index: BTreeMap<[u8; kx_journal::APPROVAL_REQUEST_ID_LEN], usize>,
 }
 
 impl State {
@@ -326,6 +363,36 @@ impl State {
             self.react_tool_round_of_turn
                 .insert(record.turn_mote_id, idx);
         }
+    }
+
+    /// Index the LAST-pushed `approvals` record (D114 — called by the fold right
+    /// after the push, and by the checkpoint-load re-derivation, so both paths
+    /// produce identical derived state). Last-write-wins by append (= seq) order:
+    /// a later decision for the same `request_id` overwrites the earlier index.
+    pub(crate) fn index_last_approval(&mut self) {
+        let Some(idx) = self.approvals.len().checked_sub(1) else {
+            return;
+        };
+        let request_id = self.approvals[idx].request_id;
+        self.approval_index.insert(request_id, idx);
+    }
+
+    /// `true` iff any `Approval` fact has folded — the run is (or was) gated. Gates
+    /// the coordinator's approval barrier so approval-free runs (and the demo) pay
+    /// ZERO cost. O(1) — a Vec emptiness read.
+    pub(crate) fn has_approval(&self) -> bool {
+        !self.approvals.is_empty()
+    }
+
+    /// The LATEST folded [`ApprovalRecord`] for `request_id`, or `None` if no such
+    /// handshake has folded. O(log n) via the derived index.
+    pub(crate) fn approval_latest_for(
+        &self,
+        request_id: &[u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+    ) -> Option<&ApprovalRecord> {
+        self.approval_index
+            .get(request_id)
+            .and_then(|&idx| self.approvals.get(idx))
     }
 
     /// `true` iff any declared Mote is a deterministic critic (`critic_for =

@@ -87,7 +87,8 @@ notes    = "Makes a runtime-dialed external connector actually FIRE in the live 
 [[feature]]
 id       = "integrations-foundation"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "266"
 branch   = "feat/d170-integrations-foundation"
 covers   = [
   "MM-3 local secret store: OS-keychain SecretStore (keyring native backends; keyutils headless) behind the kx-mcp SecretStore seam + ChainedSecretStore{keychain→env} back-compat",
@@ -100,3 +101,20 @@ covers   = [
 ]
 inherits = ["connector-extension-sdk", "connector-live-toolcalling"]
 notes    = "D170 foundation seams (after the connector SDK): the local secret store + the trigger seam + the Integrations hub, so app sidecars can authenticate real services and be event-driven. Digest 7d22d4bd invariant (all new state off-journal: OS keychain + triggers.db/secret_index.db sidecars); frozen trio untouched; additive-only proto + codegen-fresh; keyring/hmac/sha2 deps cargo-deny clean."
+
+[[feature]]
+id       = "autonomy-safety-gates"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/autonomy-safety-gates"
+covers   = [
+  "D114 HITL pre-action approval: off-DAG journal Approval fact (kind 10, Requested→Granted/Denied/Expired; journal v14→v15) + ReactRound.require_approval posture; deterministic recovery-stable request_id",
+  "coordinator gate barrier: auto-proceed read-only/self-closing (Token/Readback), withhold irreversible world-mutating (AtLeastOnce/Staged) until operator grant (fires once via StageThenCommit) / deny dead-letters; grant survives crash-recovery, never re-asks",
+  "M11 cost-spend guardrail: kx-pricing leaf crate (integer micro_usd price-book) + coordinator pre-stage cost-ceiling fold over the durable turn/tool counters (D115.2; a runaway kill-switch + FinOps ceiling, NOT Cloud billing)",
+  "posture toggle: KX_SERVE_REQUIRE_APPROVAL serve default (per-run require_approval override) resolved off the seed-identity path",
+  "proto: ListPendingApprovals/GrantApproval/DenyApproval + GetRunCost (additive, SN-8 server-derived request_id) + codegen-fresh (Py+TS)",
+  "gateway: ApprovalAdmin seam + 4 handlers (unimplemented-degrade) + HostApprovalAdmin over the embedded coordinator",
+  "cross-surface: kx approvals | kx cost (CLI) · kx.approvals/kx.cost (Py) · client.approvals/client.cost (TS)",
+]
+inherits = ["integrations-foundation"]
+notes    = "The autonomy safety gates (D114 + M11): the last safety prerequisite before POC-GATE. Digest 7d22d4bd invariant (Approval facts + require_approval off-DAG; checkpoint v8→v9 zero-record byte-identical; cost is a pure off-journal fold); frozen trio src diff EMPTY (executor forwards the additive EffectRequest field); I1.c byte-determinism held; additive-only proto + codegen-fresh; full just ci green. DEFERRED follow-ups: UI (Security approvals inbox + Monitoring cost panel) · docs pages · flow()/agent() authoring-chain + per-run cost_ceiling request field · broker step-7 backstop · live-Gemma/MCP block→grant→fire witness."

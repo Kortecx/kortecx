@@ -783,6 +783,9 @@ pub struct GatewayService {
     /// trigger RPCs return `unimplemented`. An inbound event starts a run through the
     /// existing propose-proxy (no journal-writer dep added; frozen trio untouched).
     trigger_admin: Option<Arc<dyn crate::trigger_admin::TriggerAdmin>>,
+    /// D114/M11: the optional autonomy-safety admin seam (the host wires a coordinator-
+    /// backed impl). `None` ⇒ the four approval/cost RPCs return `unimplemented`.
+    approval_admin: Option<Arc<dyn crate::approval_admin::ApprovalAdmin>>,
     /// The optional context-bundle store seam (PR-7 — the host injects a
     /// `bundles.db`-backed sidecar). `None` ⇒ the 4 context-bundle RPCs return
     /// `unimplemented` and `context_bundles` cannot be resolved at bind. Caller-
@@ -894,6 +897,7 @@ impl GatewayService {
             secret_admin: None,
             secret_writes_loopback_ok: false,
             trigger_admin: None,
+            approval_admin: None,
             bundles: None,
             branches: None,
             apps: None,
@@ -1281,6 +1285,17 @@ impl GatewayService {
         self
     }
 
+    /// Inject the autonomy-safety admin seam (D114/M11). `None` (the default) ⇒ the
+    /// four approval/cost RPCs return `unimplemented`.
+    #[must_use]
+    pub fn with_approval_admin(
+        mut self,
+        approval_admin: Arc<dyn crate::approval_admin::ApprovalAdmin>,
+    ) -> Self {
+        self.approval_admin = Some(approval_admin);
+        self
+    }
+
     /// Inject the context-bundle store seam (PR-7). `None` (the default) ⇒ the 4
     /// context-bundle RPCs return `unimplemented` and `context_bundles` resolves
     /// empty (a clear bind error).
@@ -1448,6 +1463,22 @@ fn trigger_admin_status(err: crate::TriggerAdminError) -> Status {
         crate::TriggerAdminError::Unsupported(detail) => Status::failed_precondition(detail),
         crate::TriggerAdminError::Storage(detail) => Status::internal(detail),
     }
+}
+
+/// D114/M11: map an [`crate::ApprovalAdminError`] to a gRPC status.
+fn approval_admin_status(err: crate::ApprovalAdminError) -> Status {
+    match err {
+        crate::ApprovalAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
+        crate::ApprovalAdminError::Internal(detail) => Status::internal(detail),
+    }
+}
+
+/// D114: validate a 16-byte approval `request_id` argument (SN-8 — the server-derived
+/// handshake handle; a client never computes it, only echoes the bytes it was shown).
+#[allow(clippy::result_large_err)] // a `Status` Err mirrors the handler convention.
+fn approval_request_id_arg(raw: &[u8]) -> Result<[u8; 16], Status> {
+    raw.try_into()
+        .map_err(|_| Status::invalid_argument("request_id must be 16 bytes"))
 }
 
 /// Proto `TriggerKind` (i32) → the seam's string vocabulary.
@@ -3498,6 +3529,105 @@ impl KxGateway for GatewayService {
             .await
             .map_err(trigger_admin_status)?;
         Ok(Response::new(proto::TestTriggerResponse { ok, detail }))
+    }
+
+    // ----- D114 (HITL approval) + M11 (cost readout) -----
+
+    async fn list_pending_approvals(
+        &self,
+        request: Request<proto::ListPendingApprovalsRequest>,
+    ) -> Result<Response<proto::ListPendingApprovalsResponse>, Status> {
+        let _party = caller_principal(&request)?;
+        let admin = self.approval_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListPendingApprovals: no approval admin wired")
+        })?;
+        let rows = admin
+            .list_pending(request.into_inner().limit)
+            .await
+            .map_err(approval_admin_status)?;
+        let approvals = rows
+            .into_iter()
+            .map(|r| proto::PendingApproval {
+                request_id: r.request_id.to_vec(),
+                instance_id: r.instance_id.to_vec(),
+                mote_id: r.mote_id.to_vec(),
+                tool_id: r.tool_id,
+                tool_version: r.tool_version,
+                intent: r.intent,
+                deadline_unix_ms: r.deadline_unix_ms,
+                created_unix_ms: r.created_unix_ms,
+            })
+            .collect();
+        Ok(Response::new(proto::ListPendingApprovalsResponse {
+            approvals,
+        }))
+    }
+
+    async fn grant_approval(
+        &self,
+        request: Request<proto::GrantApprovalRequest>,
+    ) -> Result<Response<proto::GrantApprovalResponse>, Status> {
+        let _party = caller_principal(&request)?;
+        let admin = self
+            .approval_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("GrantApproval: no approval admin wired"))?;
+        let req = request.into_inner();
+        let request_id = approval_request_id_arg(&req.request_id)?;
+        let granted = admin
+            .grant(request_id, &req.reason)
+            .await
+            .map_err(approval_admin_status)?;
+        Ok(Response::new(proto::GrantApprovalResponse { granted }))
+    }
+
+    async fn deny_approval(
+        &self,
+        request: Request<proto::DenyApprovalRequest>,
+    ) -> Result<Response<proto::DenyApprovalResponse>, Status> {
+        let _party = caller_principal(&request)?;
+        let admin = self
+            .approval_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("DenyApproval: no approval admin wired"))?;
+        let req = request.into_inner();
+        let request_id = approval_request_id_arg(&req.request_id)?;
+        let denied = admin
+            .deny(request_id, &req.reason)
+            .await
+            .map_err(approval_admin_status)?;
+        Ok(Response::new(proto::DenyApprovalResponse { denied }))
+    }
+
+    async fn get_run_cost(
+        &self,
+        request: Request<proto::GetRunCostRequest>,
+    ) -> Result<Response<proto::GetRunCostResponse>, Status> {
+        let _party = caller_principal(&request)?;
+        let admin = self
+            .approval_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("GetRunCost: no approval admin wired"))?;
+        let req = request.into_inner();
+        let instance_id: [u8; 16] = req
+            .instance_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| Status::invalid_argument("instance_id must be 16 bytes"))?;
+        let c = admin
+            .run_cost(instance_id)
+            .await
+            .map_err(approval_admin_status)?;
+        Ok(Response::new(proto::GetRunCostResponse {
+            instance_id: c.instance_id.to_vec(),
+            turns: c.turns,
+            tool_calls: c.tool_calls,
+            estimated_micro_usd: c.estimated_micro_usd,
+            ceiling_micro_usd: c.ceiling_micro_usd,
+            per_turn_micro_usd: c.per_turn_micro_usd,
+            per_tool_call_micro_usd: c.per_tool_call_micro_usd,
+            over_ceiling: c.over_ceiling,
+        }))
     }
 
     async fn put_context_bundle(

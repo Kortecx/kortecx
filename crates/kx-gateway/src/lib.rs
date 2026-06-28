@@ -190,6 +190,11 @@ mod triggers_store;
 // triggers.db sidecar + the SAME binder + submitter the Invoke path uses. An inbound
 // event starts a fresh run through the existing propose-proxy (frozen trio untouched).
 mod trigger_gateway;
+// D114/M11 (autonomy safety): the HostApprovalAdmin — the ApprovalAdmin seam impl
+// over the embedded coordinator (grant/deny dispatch durable decision facts; cost is
+// the env-priced fold). Needs the embedded coordinator.
+#[cfg(feature = "embedded-worker")]
+mod approval_gateway;
 // D113: the host-owned inbound listeners — the webhook ingress (untrusted; own
 // fail-closed threat model) + the local cron ticker. Both fire registered triggers
 // via the SAME TriggerAdmin::submit path. Tokio lives here in the host, never the lib.

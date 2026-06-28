@@ -483,7 +483,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::RunVersionsResolved { seq, .. }
         | JournalEntry::DigestSealed { seq, .. }
         | JournalEntry::ReplanRound { seq, .. }
-        | JournalEntry::ReactRound { seq, .. } => *seq = new_seq,
+        | JournalEntry::ReactRound { seq, .. }
+        | JournalEntry::Approval { seq, .. } => *seq = new_seq,
     }
 }
 

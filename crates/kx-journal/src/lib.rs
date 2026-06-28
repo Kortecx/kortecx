@@ -88,14 +88,15 @@
 //! - gRPC and the coordinator/worker split — P2.
 
 pub use crate::entry::{
-    decode_entry, decode_entry_with_def_hash, encode_entry, is_pre_commit_crash,
-    repudiation_idempotency_key, run_root_id, seal_root_id, DecodeError, EncodeError,
-    FailureReason, IdempotencyClassTag, JournalEntry, ParentEntry, ReactBranch, RepudiationReason,
-    ResolvedCapabilityRecord, ResolvedKindTag, HEADER_LEN, INSTANCE_ID_LEN, JOURNAL_SCHEMA_VERSION,
+    approval_request_id, decode_entry, decode_entry_with_def_hash, encode_entry,
+    is_pre_commit_crash, repudiation_idempotency_key, run_root_id, seal_root_id, ApprovalState,
+    DecodeError, EncodeError, FailureReason, IdempotencyClassTag, JournalEntry, ParentEntry,
+    ReactBranch, RepudiationReason, ResolvedCapabilityRecord, ResolvedKindTag,
+    APPROVAL_REQUEST_ID_LEN, HEADER_LEN, INSTANCE_ID_LEN, JOURNAL_SCHEMA_VERSION, KIND_APPROVAL,
     KIND_COMMITTED, KIND_DIGEST_SEALED, KIND_EFFECT_STAGED, KIND_FAILED, KIND_PROPOSED,
     KIND_REACT_ROUND, KIND_REPLAN_ROUND, KIND_REPUDIATED, KIND_RUN_REGISTERED,
-    KIND_RUN_VERSIONS_RESOLVED, MAX_ENTRY_LEN, MAX_PARENTS, MAX_REJECTED_REASON_LEN,
-    MAX_REPLAN_FAILED_STEPS, MAX_TOOL_BATCH_CALLS,
+    KIND_RUN_VERSIONS_RESOLVED, MAX_APPROVAL_TEXT_LEN, MAX_ENTRY_LEN, MAX_PARENTS,
+    MAX_REJECTED_REASON_LEN, MAX_REPLAN_FAILED_STEPS, MAX_TOOL_BATCH_CALLS,
 };
 pub use crate::in_memory::InMemoryJournal;
 pub use crate::migration::{

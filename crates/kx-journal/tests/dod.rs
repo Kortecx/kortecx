@@ -261,7 +261,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::RunVersionsResolved { seq, .. }
         | JournalEntry::DigestSealed { seq, .. }
         | JournalEntry::ReplanRound { seq, .. }
-        | JournalEntry::ReactRound { seq, .. } => *seq = new_seq,
+        | JournalEntry::ReactRound { seq, .. }
+        | JournalEntry::Approval { seq, .. } => *seq = new_seq,
     }
 }
 
@@ -314,10 +315,11 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
 /// `ReactRound.is_agentic_launch` flag, PR-R1; v11→v12 added the trailing
 /// `ReactRound.context_items_ref`, PR-9d; v12→v13 added the `ReactBranch::ToolBatch`
 /// variant (branch tag 5), T-MULTI-ELEMENT-TOOLCALLS; v13→v14 added the trailing
-/// `ReactRound.image_ref`, AGENTIC-VISION.)
+/// `ReactRound.image_ref`, AGENTIC-VISION; v14→v15 added the `Approval` kind (10) +
+/// the trailing `ReactRound.require_approval`, D114 HITL pre-action approval.)
 #[test]
-fn schema_version_is_v14() {
-    assert_eq!(JOURNAL_SCHEMA_VERSION, 14);
+fn schema_version_is_v15() {
+    assert_eq!(JOURNAL_SCHEMA_VERSION, 15);
 }
 
 /// IMP-2 (M2.x-E): pin the migration floor. The schema-migration ladder

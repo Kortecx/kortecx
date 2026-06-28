@@ -93,7 +93,7 @@ pub use ndclass::NdClass;
 pub use strings::{
     ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion, CONTEXT_ITEMS_KEY,
     IMAGE_REF_KEY, JUDGE_RUBRIC_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY,
-    REACT_MAX_TURNS_KEY, REACT_TURN_KEY, TOOL_ARGS_KEY,
+    REACT_MAX_TURNS_KEY, REACT_REQUIRE_APPROVAL_KEY, REACT_TURN_KEY, TOOL_ARGS_KEY,
 };
 pub use topology::{ChildDescriptor, RoleId, TopologyDecision};
 

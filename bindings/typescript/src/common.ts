@@ -199,6 +199,11 @@ export type {
 export { SecretNameRow } from "./secrets.js";
 export type { SecretNamesPage } from "./secrets.js";
 
+// D114 HITL approval gate + M11 cost-spend (operator control plane).
+export { PendingApprovalRow } from "./approvals.js";
+export type { PendingApprovalsPage } from "./approvals.js";
+export { RunCost } from "./cost.js";
+
 // D113 / D170.b: the local trigger admin (webhook/cron/grpc → recipe handle).
 export {
   TriggerRow,

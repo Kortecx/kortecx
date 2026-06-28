@@ -2248,3 +2248,89 @@ class TestTriggerResponse(_message.Message):
     ok: bool
     detail: str
     def __init__(self, ok: bool = ..., detail: _Optional[str] = ...) -> None: ...
+
+class ListPendingApprovalsRequest(_message.Message):
+    __slots__ = ("limit",)
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    def __init__(self, limit: _Optional[int] = ...) -> None: ...
+
+class PendingApproval(_message.Message):
+    __slots__ = ("request_id", "instance_id", "mote_id", "tool_id", "tool_version", "intent", "deadline_unix_ms", "created_unix_ms")
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    INTENT_FIELD_NUMBER: _ClassVar[int]
+    DEADLINE_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    CREATED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    request_id: bytes
+    instance_id: bytes
+    mote_id: bytes
+    tool_id: str
+    tool_version: str
+    intent: str
+    deadline_unix_ms: int
+    created_unix_ms: int
+    def __init__(self, request_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., mote_id: _Optional[bytes] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., intent: _Optional[str] = ..., deadline_unix_ms: _Optional[int] = ..., created_unix_ms: _Optional[int] = ...) -> None: ...
+
+class ListPendingApprovalsResponse(_message.Message):
+    __slots__ = ("approvals",)
+    APPROVALS_FIELD_NUMBER: _ClassVar[int]
+    approvals: _containers.RepeatedCompositeFieldContainer[PendingApproval]
+    def __init__(self, approvals: _Optional[_Iterable[_Union[PendingApproval, _Mapping]]] = ...) -> None: ...
+
+class GrantApprovalRequest(_message.Message):
+    __slots__ = ("request_id", "reason")
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    request_id: bytes
+    reason: str
+    def __init__(self, request_id: _Optional[bytes] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class GrantApprovalResponse(_message.Message):
+    __slots__ = ("granted",)
+    GRANTED_FIELD_NUMBER: _ClassVar[int]
+    granted: bool
+    def __init__(self, granted: bool = ...) -> None: ...
+
+class DenyApprovalRequest(_message.Message):
+    __slots__ = ("request_id", "reason")
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    request_id: bytes
+    reason: str
+    def __init__(self, request_id: _Optional[bytes] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class DenyApprovalResponse(_message.Message):
+    __slots__ = ("denied",)
+    DENIED_FIELD_NUMBER: _ClassVar[int]
+    denied: bool
+    def __init__(self, denied: bool = ...) -> None: ...
+
+class GetRunCostRequest(_message.Message):
+    __slots__ = ("instance_id",)
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    def __init__(self, instance_id: _Optional[bytes] = ...) -> None: ...
+
+class GetRunCostResponse(_message.Message):
+    __slots__ = ("instance_id", "turns", "tool_calls", "estimated_micro_usd", "ceiling_micro_usd", "per_turn_micro_usd", "per_tool_call_micro_usd", "over_ceiling")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    TURNS_FIELD_NUMBER: _ClassVar[int]
+    TOOL_CALLS_FIELD_NUMBER: _ClassVar[int]
+    ESTIMATED_MICRO_USD_FIELD_NUMBER: _ClassVar[int]
+    CEILING_MICRO_USD_FIELD_NUMBER: _ClassVar[int]
+    PER_TURN_MICRO_USD_FIELD_NUMBER: _ClassVar[int]
+    PER_TOOL_CALL_MICRO_USD_FIELD_NUMBER: _ClassVar[int]
+    OVER_CEILING_FIELD_NUMBER: _ClassVar[int]
+    instance_id: bytes
+    turns: int
+    tool_calls: int
+    estimated_micro_usd: int
+    ceiling_micro_usd: int
+    per_turn_micro_usd: int
+    per_tool_call_micro_usd: int
+    over_ceiling: bool
+    def __init__(self, instance_id: _Optional[bytes] = ..., turns: _Optional[int] = ..., tool_calls: _Optional[int] = ..., estimated_micro_usd: _Optional[int] = ..., ceiling_micro_usd: _Optional[int] = ..., per_turn_micro_usd: _Optional[int] = ..., per_tool_call_micro_usd: _Optional[int] = ..., over_ceiling: bool = ...) -> None: ...

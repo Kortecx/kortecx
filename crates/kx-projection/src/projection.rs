@@ -546,7 +546,10 @@ impl Projection {
             | JournalEntry::RunVersionsResolved { .. }
             | JournalEntry::DigestSealed { .. }
             | JournalEntry::ReplanRound { .. }
-            | JournalEntry::ReactRound { .. } => {
+            | JournalEntry::ReactRound { .. }
+            // D114: the HITL approval handshake is the ReAct chain's off-DAG sibling
+            // — same never-a-digest-input law (folds into `approvals`, names no Mote).
+            | JournalEntry::Approval { .. } => {
                 self.fold_run_metadata(entry);
             }
         }
@@ -636,6 +639,23 @@ impl Projection {
                     });
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
+            // PR-2d-1 (ReactRound) + D114 (Approval) — the live ReAct chain's off-DAG
+            // facts; extracted to keep this fold under the line budget.
+            JournalEntry::ReactRound { .. } | JournalEntry::Approval { .. } => {
+                self.fold_react_metadata(entry);
+            }
+            _ => unreachable!("fold_run_metadata called with a non-run-metadata kind"),
+        }
+    }
+
+    /// Fold the live ReAct chain's off-DAG facts: a `ReactRound` turn record (PR-2d-1)
+    /// or an `Approval` handshake step (D114). Both append to a Vec + maintain a
+    /// DERIVED index (never serialized — checkpoint/digest byte-unchanged); neither
+    /// names a `MoteInfo` or touches the children index — pure recovery/audit metadata,
+    /// never an identity/scheduling/digest input. Vec non-emptiness is the
+    /// `has_react_turn` / `has_approval` sentinel.
+    fn fold_react_metadata(&mut self, entry: &JournalEntry) {
+        match entry {
             JournalEntry::ReactRound {
                 turn,
                 turn_mote_id,
@@ -650,14 +670,9 @@ impl Projection {
                 is_agentic_launch,
                 context_items_ref,
                 image_ref,
+                require_approval,
                 seq,
             } => {
-                // v8 (PR-2d-1). Append-many: a run accrues one record per turn
-                // anchor/settle/advance. Replay rebuilds the same Vec from scratch
-                // (each journaled entry folds exactly once). Off-DAG: names a turn
-                // Mote but registers NO `MoteInfo` and touches NO children index —
-                // pure recovery/audit metadata, never an identity/scheduling/digest
-                // input. Vec non-emptiness IS the `has_react_turn` sentinel.
                 self.state
                     .react_rounds
                     .push(crate::state::ReactRoundRecord {
@@ -674,14 +689,30 @@ impl Projection {
                         is_agentic_launch: *is_agentic_launch,
                         context_items_ref: *context_items_ref,
                         image_ref: *image_ref,
+                        require_approval: *require_approval,
                         seq: *seq,
                     });
-                // PR-2d-2: maintain the DERIVED per-instance index + turn-Mote
-                // set (never serialized — checkpoint/digest byte-unchanged).
                 self.state.index_last_react_round();
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
-            _ => unreachable!("fold_run_metadata called with a non-run-metadata kind"),
+            JournalEntry::Approval {
+                instance_id,
+                request_id,
+                awaiting_mote_id,
+                state,
+                seq,
+            } => {
+                self.state.approvals.push(crate::state::ApprovalRecord {
+                    instance_id: *instance_id,
+                    request_id: *request_id,
+                    awaiting_mote_id: *awaiting_mote_id,
+                    state: state.clone(),
+                    seq: *seq,
+                });
+                self.state.index_last_approval();
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            _ => unreachable!("fold_react_metadata called with a non-react-metadata kind"),
         }
     }
 
@@ -1190,6 +1221,45 @@ impl Projection {
     #[must_use]
     pub fn has_react_turn(&self) -> bool {
         self.state.has_react_turn()
+    }
+
+    /// The HITL approval handshake records (D114) folded so far — one record per
+    /// `Approval` entry, in journal (seq) order. **Recovery + audit metadata, never
+    /// identity.** Off the Mote-DAG; never moves the projection digest.
+    #[must_use]
+    pub fn approvals(&self) -> &[crate::state::ApprovalRecord] {
+        &self.state.approvals
+    }
+
+    /// The LATEST folded approval state for `request_id` (D114), or `None` if no
+    /// such handshake has folded. O(log n) via the derived index — the coordinator
+    /// gate reads it to decide proceed / wait / dead-letter for a gated Mote.
+    #[must_use]
+    pub fn approval_latest_for(
+        &self,
+        request_id: &[u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+    ) -> Option<&crate::state::ApprovalRecord> {
+        self.state.approval_latest_for(request_id)
+    }
+
+    /// Every handshake whose LATEST state is still `Requested` (awaiting a decision)
+    /// — the operator's pending-approvals inbox (D114), in journal (seq) order. A
+    /// decided/expired request is excluded. O(distinct requests).
+    #[must_use]
+    pub fn pending_approvals(&self) -> Vec<&crate::state::ApprovalRecord> {
+        self.state
+            .approval_index
+            .values()
+            .filter_map(|&idx| self.state.approvals.get(idx))
+            .filter(|r| matches!(r.state, kx_journal::ApprovalState::Requested { .. }))
+            .collect()
+    }
+
+    /// `true` iff any `Approval` fact has folded (D114) — gates the coordinator's
+    /// approval barrier so an approval-free run pays zero cost. O(1).
+    #[must_use]
+    pub fn has_approval(&self) -> bool {
+        self.state.has_approval()
     }
 
     /// The durable resolved [`kx_journal::IdempotencyClassTag`] for a tool, folded

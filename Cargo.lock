@@ -1460,6 +1460,7 @@ dependencies = [
  "kx-content",
  "kx-journal",
  "kx-mote",
+ "kx-pricing",
  "kx-projection",
  "kx-proto",
  "kx-refusal",
@@ -1632,6 +1633,7 @@ dependencies = [
  "kx-ollama",
  "kx-otel",
  "kx-planner",
+ "kx-pricing",
  "kx-proto",
  "kx-refusal",
  "kx-tool-registry",
@@ -1960,6 +1962,10 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
 ]
+
+[[package]]
+name = "kx-pricing"
+version = "0.1.0"
 
 [[package]]
 name = "kx-profile"

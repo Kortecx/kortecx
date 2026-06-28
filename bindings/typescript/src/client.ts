@@ -13,6 +13,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
 import { AlertSummary, type AlertsPage } from "./alerts.js";
+import { PendingApprovalRow, type PendingApprovalsPage } from "./approvals.js";
 import {
   AppSummary,
   SaveAppResult,
@@ -33,6 +34,7 @@ import {
   type ContextItemInput,
   PutContextBundleResult,
 } from "./context.js";
+import { RunCost } from "./cost.js";
 import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
 import {
   KxConnectError,
@@ -1640,6 +1642,58 @@ export abstract class KxClientBase {
         idempotencyKey?: string,
       ): Promise<SubmitTriggerResult> => this.submitTrigger(name, payload, idempotencyKey),
       remove: (name: string): Promise<boolean> => this.deregisterTrigger(name),
+    };
+  }
+
+  // --- D114 (HITL approval) + M11 (cost readout) -----------------------------
+
+  /** List the world-mutating actions withheld awaiting operator approval (D114). */
+  async listPendingApprovals(limit = 0): Promise<PendingApprovalsPage> {
+    const resp = await rpc(this.grpc.listPendingApprovals({ limit }));
+    return { approvals: resp.approvals.map((a) => PendingApprovalRow.fromProto(a)) };
+  }
+
+  /** Grant a pending approval (D114) — releases the staged action to fire exactly
+   *  once. Resolves `true` iff a decision was recorded. */
+  async grantApproval(requestId: string, reason = ""): Promise<boolean> {
+    const resp = await rpc(this.grpc.grantApproval({ requestId: asBytes(requestId, 16), reason }));
+    return resp.granted;
+  }
+
+  /** Deny a pending approval (D114) — the gated chain dead-letters fail-closed. */
+  async denyApproval(requestId: string, reason = ""): Promise<boolean> {
+    const resp = await rpc(this.grpc.denyApproval({ requestId: asBytes(requestId, 16), reason }));
+    return resp.denied;
+  }
+
+  /** The run's DISPLAY-ONLY local spend estimate (M11) — priced turn/tool counters. */
+  async getRunCost(instanceId: string): Promise<RunCost> {
+    const resp = await rpc(this.grpc.getRunCost({ instanceId: asBytes(instanceId, INSTANCE_LEN) }));
+    return RunCost.fromProto(resp);
+  }
+
+  /**
+   * The HITL approval namespace — `kx.approvals.listPending / grant / deny` (D114).
+   * Grant/deny release/reject a staged world-mutating action over a server-derived
+   * `requestId` (SN-8).
+   */
+  get approvals() {
+    return {
+      listPending: (limit = 0): Promise<PendingApprovalsPage> => this.listPendingApprovals(limit),
+      grant: (requestId: string, reason?: string): Promise<boolean> =>
+        this.grantApproval(requestId, reason),
+      deny: (requestId: string, reason?: string): Promise<boolean> =>
+        this.denyApproval(requestId, reason),
+    };
+  }
+
+  /**
+   * The cost-spend guardrail namespace — `kx.cost.getRunCost` (M11). A display-only
+   * local spend estimate, not Cloud billing.
+   */
+  get cost() {
+    return {
+      getRunCost: (instanceId: string): Promise<RunCost> => this.getRunCost(instanceId),
     };
   }
 

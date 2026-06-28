@@ -16,6 +16,7 @@ from .agent import Agent
 from .agent_result import AgentResult, AuditedAction
 from .alerts import AlertsPage, AlertSummary
 from .app import App, app, minimal_app_envelope
+from .approvals import PendingApproval, PendingApprovalsPage
 from .apps import AppSummary, SaveAppResult, ScaffoldLaunch, ScaffoldStatus, Skill, StoredApp
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .branch import (
@@ -37,6 +38,7 @@ from .client import (
 )
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
+from .cost import RunCost
 from .critic import decode_critic_verdict
 from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
 from .defaults import (
@@ -275,6 +277,10 @@ __all__ = [
     "McpServersPage",
     "RegisterServerResult",
     "CallToolResult",
+    # D114 HITL approval gate + M11 cost-spend (ListPendingApprovals / Grant / Deny / GetRunCost)
+    "PendingApproval",
+    "PendingApprovalsPage",
+    "RunCost",
     # D170 / MM-3 operator secret store (PutSecret / ListSecretNames / DeleteSecret)
     "SecretName",
     "SecretNamesPage",

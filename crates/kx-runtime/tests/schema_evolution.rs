@@ -149,10 +149,11 @@ fn migrate_and_verify_preserves_product_identity() {
     // PR-2d-1's `ReactRound`; v7 was PR-2c-2's `ReplanRound`); the v5→current
     // up-conversion still appends exactly the lone `idempotency_class` byte (this v5
     // fixture has no kind-9 ReactRound, so none of the step_salt / is_agentic_launch /
-    // context_items_ref / image_ref trailing bytes is added, and the v9→v10..v13→v14
-    // deltas only touch kind-9 bodies no v5 entry can carry). Pinned as a reviewable
-    // change — the PRODUCT identity digest below is the real invariant (unchanged).
-    assert_eq!(report.to_version, 14);
+    // context_items_ref / image_ref / require_approval trailing bytes is added, and the
+    // v9→v10..v14→v15 deltas only touch kind-9 bodies (+ the new kind-10 Approval) no v5
+    // entry can carry). Pinned as a reviewable change — the PRODUCT identity digest below
+    // is the real invariant (unchanged).
+    assert_eq!(report.to_version, 15);
     assert_eq!(report.entries_upconverted, 1);
 
     // The up-converted source and the migrated destination fold to the same

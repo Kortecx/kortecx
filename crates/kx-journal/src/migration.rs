@@ -97,8 +97,15 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v14 (current): no transform, the single source of truth for decode.
+        // v15 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v14 → v15: a PURE pass-through. The v14→v15 deltas are (a) the trailing
+        // `require_approval` byte on a `ReactRound` (kind 9) body — a v14 body lacks
+        // it and the canonical decoder up-converts a byte-absent body to
+        // `require_approval == false` — and (b) the brand-new `Approval` kind (10),
+        // which no v14 journal can contain. So v14 bytes decode correctly under v15
+        // unchanged.
+        14 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
         // v13 → v14: a PURE pass-through. The lone v13→v14 delta is the trailing
         // `image_ref` presence byte on a `ReactRound` (kind 9) body, stacked directly
         // after the v12 `context_items_ref` byte; a v13 body lacks it, and the canonical
