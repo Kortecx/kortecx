@@ -184,3 +184,144 @@ async fn score_run_over_a_live_react_chain() {
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
 }
+
+/// RC2 grammar witness (Tier-B, observe-not-gate per GR16): FORCE a tool the model
+/// cannot answer without (a kv lookup of an arbitrary key), then PRINT each
+/// committed turn's RAW output so the emitted tool-call FORMAT is visible, and
+/// OBSERVE whether a tool fired. The lazy GBNF triggers on the `{"tool_call"`
+/// opener, so this reveals whether the model emits that JSON envelope (the grammar
+/// bites + structurally constrains) or a native format (the robust parser recovers
+/// it). Soft assertion: the chain SETTLES with no crash (the firing path itself is
+/// gated deterministically in kx-coordinator/kx-toolcall).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real LLM; forces a tool to witness the grammar-constrained fire + emitted format"]
+async fn grammar_forces_and_witnesses_a_tool_fire() {
+    if let Some(gguf) = serve_gguf() {
+        std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    } else if !ollama_opted_in() {
+        eprintln!("skipping: no model");
+        return;
+    }
+    std::env::set_var("KX_SERVE_AUTOGRANT", "1");
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let recipes = c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    if !recipes
+        .recipes
+        .iter()
+        .any(|r| r.handle == REACT_RECIPE_HANDLE)
+    {
+        eprintln!("skipping: react not provisioned (bundled bins missing)");
+        running.shutdown().await.unwrap();
+        std::env::remove_var("KX_SERVE_AUTOGRANT");
+        return;
+    }
+
+    // A kv lookup of an ARBITRARY key the model cannot know without the tool.
+    let resp = c
+        .invoke(proto::InvokeRequest {
+            handle: REACT_AUTO_RECIPE_HANDLE.to_string(),
+            args: {
+                // The live serve react prompt presents NO tool menu/schema (SERVE_SYSTEM
+                // is generic) — so a real model can only fire a tool when the instruction
+                // itself describes the call format. Override via KX_WITNESS_INSTRUCTION.
+                let instruction = std::env::var("KX_WITNESS_INSTRUCTION").unwrap_or_else(|_| {
+                    "To use a tool, output ONLY a JSON object exactly like \
+                     {\\\"tool_call\\\":{\\\"name\\\":\\\"<tool>\\\",\\\"version\\\":\\\"1\\\",\\\"args\\\":{...}}}. \
+                     The value for key 'x' lives in a key-value store you cannot see; call the tool \
+                     \\\"mcp-kv/get\\\" with args {\\\"key\\\":\\\"x\\\"} to retrieve it, then tell me ONLY that value."
+                        .to_string()
+                });
+                format!(
+                    r#"{{"instruction":"{instruction}","max_turns":4,"max_tool_calls":3}}"#
+                )
+                .into_bytes()
+            },
+            context_bundles: vec![],
+            context_refs: vec![],
+        })
+        .await
+        .expect("invoke react-auto")
+        .into_inner();
+
+    let mut settled = None;
+    for _ in 0..1500 {
+        let t = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(resp.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        if t.turns
+            .iter()
+            .any(|x| x.branch == "answer" || x.branch == "dead_lettered")
+        {
+            settled = Some(t);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let turns = settled.expect("the chain settled a terminal branch").turns;
+
+    // Map each committed turn mote -> its result_ref to fetch the RAW emitted output.
+    let view = c
+        .get_projection(proto::GetProjectionRequest {
+            instance_id: resp.instance_id.clone(),
+            at_seq: None,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    let mut fired: Vec<String> = Vec::new();
+    for t in &turns {
+        let raw = view
+            .motes
+            .iter()
+            .find(|m| m.mote_id == t.turn_mote_id)
+            .and_then(|m| m.result_ref.clone());
+        let text = match raw {
+            Some(rref) => c
+                .get_content(proto::GetContentRequest {
+                    content_ref: rref,
+                    instance_id: resp.instance_id.clone(),
+                })
+                .await
+                .ok()
+                .map(|r| String::from_utf8_lossy(&r.into_inner().payload).into_owned())
+                .unwrap_or_default(),
+            None => String::new(),
+        };
+        eprintln!(
+            "GRAMMAR-WITNESS turn={} branch={} tool_id={} raw={:?}",
+            t.turn, t.branch, t.tool_id, text
+        );
+        if t.branch == "tool" {
+            fired.push(t.tool_id.clone());
+        }
+    }
+    eprintln!("GRAMMAR-WITNESS: fired tools = {fired:?}");
+
+    running.shutdown().await.unwrap();
+    std::env::remove_var("KX_SERVE_AUTOGRANT");
+
+    // Observe-not-gate: a terminal branch with no crash is the bounded invariant.
+    assert!(
+        turns
+            .iter()
+            .any(|t| t.branch == "answer" || t.branch == "dead_lettered"),
+        "the forcing chain settled a terminal branch"
+    );
+}

@@ -65,10 +65,20 @@ pub enum LlamaError {
     /// A constructor for a particular sampler returned NULL.
     ///
     /// **Reachability (SN-4 #4):** like [`Self::SamplerChainFailed`], NULL
-    /// from `llama_sampler_init_*` only occurs under host-OOM. Kept for API
-    /// completeness; not testable without a fault-injection harness.
+    /// from `llama_sampler_init_*` only occurs under host-OOM **except** for
+    /// the grammar samplers, where NULL ALSO signals a GBNF parse failure
+    /// (`llama_sampler_init_grammar{,_lazy_patterns}` returns NULL when
+    /// `grammar_str` does not parse). So a `SamplerInitFailed("grammar")` is
+    /// the fail-closed boundary for a malformed grammar — reachable and tested.
     #[error("failed to construct sampler: {0}")]
     SamplerInitFailed(&'static str),
+
+    /// A grammar / grammar-root / trigger-pattern string could not be converted
+    /// to a C string (interior NUL byte). The fail-closed boundary for an
+    /// untrusted grammar payload before it reaches llama.cpp — surfaced rather
+    /// than panicking on `CString::new`.
+    #[error("grammar string is not representable as a C string (interior nul)")]
+    GrammarStringInvalid,
 
     /// Embedding readout requested but the context was not configured with
     /// `with_embeddings(true)` — or the requested seq_id has no pooled vector.

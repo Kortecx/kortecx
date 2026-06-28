@@ -133,6 +133,40 @@ shows why each turn was refused:
 | `could not be decoded` / `malformed` | The model emitted a non-tool or broken proposal — usually self-corrects on the next turn. |
 | chain `dead_lettered` after several `rejected` turns | The budget (`max_turns` / `max_tool_calls`) was exhausted without a usable answer — raise the caps or simplify the task/schema. |
 
+### Grammar-constrained tool calls
+
+On a tool-eligible turn the runtime **constrains decoding to the canonical
+tool-call envelope**, derived automatically from the tools granted to that run —
+so a model *cannot* emit a malformed or ungranted tool call. It is **on by
+default**; you do not configure it.
+
+`{"tool_call":{"name":"<granted-tool>","version":"<v>","args":{ … }}}`
+
+- **Auto-derived.** The grammar enumerates exactly the granted `(name, version)`
+  pairs from the run's warrant — nothing else can be named. It is a *generation*
+  constraint, layered **on top of** (never replacing) the fail-closed authority
+  gate: the warrant grant-check and `inputSchema` validation still run on every
+  call.
+- **Answers stay free.** Constraint is *lazy/triggered* — prose flows
+  unconstrained until the model commits to the tool-call opener, so a turn can
+  still answer directly in natural language instead of calling a tool.
+- **Dual-engine (honest-degrade).** Full grammar (GBNF, lazy-triggered) runs on
+  **llama.cpp**. **Ollama** has no lazy mode, so it relies on the same robust
+  parser + schema validation rather than a whole-response constraint — the
+  *authority* gate is identical on both engines, only the generation-time
+  constraint differs.
+- **Off-digest.** The grammar is derived at dispatch and never journaled, never
+  part of a run's identity (the digest is invariant).
+
+**Opt out** (rarely needed) by setting the serve flag when you start `kx serve`:
+
+```bash
+KX_SERVE_REACT_GRAMMAR=0 kx serve     # disable grammar-constrained tool-calling
+```
+
+(A per-run `.unconstrained()` override on the SDK chain is forward-declared; the
+serve flag is the reliable global switch today.)
+
 ## Authoring a `tool()` step
 
 Beyond the ReAct loop (where the *model* picks tools), you can author a **`tool()`

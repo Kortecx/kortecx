@@ -2,10 +2,22 @@
 //! [`OllamaClient`].
 //!
 //! It enforces the SAME warrant gates as the in-process llama backend, in the SAME
-//! order (SN-8 / D35): the grammar reservation, the model-route authorization, the
-//! `max_output_tokens` ceiling, then the served-set membership — all BEFORE any
-//! HTTP egress. The inherent `warm`/`evict`/`resident` mirror the llama backend's
-//! lifecycle surface so the host can drive both engines through one trait.
+//! order (SN-8 / D35): the model-route authorization, the `max_output_tokens`
+//! ceiling, then the served-set membership — all BEFORE any HTTP egress. The
+//! inherent `warm`/`evict`/`resident` mirror the llama backend's lifecycle surface
+//! so the host can drive both engines through one trait.
+//!
+//! **Grammar (RC2) — honest-degrade (GR24).** Constrained tool-call decoding is
+//! genuinely engine-specific: llama.cpp has a LAZY/triggered grammar sampler
+//! (prose flows free until the model commits to a tool call); Ollama's
+//! structured-output `format` constrains the WHOLE response and has no lazy mode,
+//! so forcing it on the react loop's answer-OR-tool turn would break the free-form
+//! answer path. So a `params.grammar` carrier is intentionally NOT applied as an
+//! Ollama `format`; Ollama tool-calling reliability rides the robust `kx_toolcall`
+//! parser + the post-call arg-schema critic + loop hardening (the accept-side
+//! AUTHORITY gate is identical on both engines). Tracked: `T-OLLAMA-GRAMMAR-FORMAT`
+//! (a future opt-in strict / tool-required `format` mode + the cloud
+//! structured-output path use `kx_grammar::ToolEnvelopeSpec::to_ollama_format`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -363,11 +375,17 @@ impl OllamaBackend {
         warrant: &WarrantSpec,
         sink: Option<TokenSink>,
     ) -> Result<InferenceOutput, InferenceError> {
-        // ---- Grammar reservation gate (fires before any model work) ----------
+        // ---- Grammar (RC2): HONEST-DEGRADE — see the module doc (GR24). -------
+        // A grammar carrier is NOT applied as an Ollama whole-response `format`
+        // (no lazy/triggered mode; forcing JSON would break the answer path). We
+        // must NOT fail closed: the live serve loop sets a grammar on EVERY
+        // tool-eligible turn, so erroring here would dead-letter every Ollama tool
+        // turn. So we let it fall through to parser-based tool-calling.
         if params.grammar.is_some() {
-            return Err(InferenceError::Unsupported {
-                reason: "constrained generation (grammar) reserved; see HANDOFF",
-            });
+            tracing::debug!(
+                "ollama: grammar carrier present; honest-degrading to parser-based \
+                 tool-calling (no whole-response format on an answer-eligible turn)"
+            );
         }
         // ---- Warrant gates (D30 + D35) — authorize BEFORE any egress ---------
         if model_id != &warrant.model_route.model_id {
@@ -590,6 +608,24 @@ mod tests {
         // num_predict + seed are always present (mapped from the params).
         assert!(opts.get("num_predict").is_some());
         assert!(opts.get("seed").is_some());
+    }
+
+    /// RC2 honest-degrade: a grammar carrier does NOT leak into the Ollama request
+    /// (no whole-response `format` smuggled into the options), so the body is
+    /// byte-identical to the no-grammar path and Ollama falls through to
+    /// parser-based tool-calling. (That a grammar no longer fails closed /
+    /// dead-letters is validated on the live dual-engine lane.)
+    #[test]
+    fn grammar_carrier_does_not_change_the_request_options() {
+        let without = options_from_params(&InferenceParams::default());
+        let with = options_from_params(&InferenceParams {
+            grammar: Some(kx_mote::Grammar::new(r#"{"tools":[]}"#)),
+            ..InferenceParams::default()
+        });
+        assert_eq!(
+            without, with,
+            "grammar must not leak into the Ollama request options (honest-degrade)"
+        );
     }
 
     #[test]

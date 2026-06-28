@@ -6,9 +6,11 @@
 //! generate) is exercised by the `model-smoke-test-multimodal` gate against a
 //! real VLM.
 //!
-//! Gate order under test (`LlamaInferenceBackend::dispatch`): grammar → warrant
-//! route → scope → resolve descriptor → [image] capability → content store
-//! bound → ref resolves → size cap → image sniff → mmproj present → cache.
+//! Gate order under test (`LlamaInferenceBackend::dispatch`): warrant route →
+//! scope → resolve descriptor → [image] capability → content store bound → ref
+//! resolves → size cap → image sniff → mmproj present → cache. (RC2 removed the
+//! former leading grammar-reservation gate — grammar is now honored at
+//! sampler-build time, never rejected here.)
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 

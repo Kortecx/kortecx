@@ -21,8 +21,10 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+mod dedup;
 mod parse;
 mod types;
 
+pub use dedup::{duplicate_call_reason, is_duplicate_call};
 pub use parse::{max_args_bytes, parse_tool_call, parse_tool_calls};
 pub use types::{DecodeError, ToolCall};

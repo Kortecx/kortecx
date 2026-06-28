@@ -3334,6 +3334,54 @@ fn chain_is_agentic_launch(
         .is_some_and(|r| r.is_agentic_launch)
 }
 
+/// RC2 loop hardening: the tool calls fired by PRIOR turns of this chain — the
+/// settled `Tool`/`ToolBatch` turns with `turn < this_turn`, re-decoded from their
+/// committed output through the ONE authority gate ([`kx_toolcall::parse_tool_calls`]).
+/// Pure over committed facts ⇒ recovery-stable; bounded by the per-run turn budget,
+/// so the re-decode is cheap. Used to fail-closed a redundant re-proposal (the
+/// minimal dedup slice).
+fn collect_prior_fired_calls(
+    store: &LocalFsContentStore,
+    projection: &Projection,
+    rounds: &[ReactRoundRecord],
+    this_turn: u32,
+    warrant: &WarrantSpec,
+    max_args: usize,
+) -> Vec<kx_toolcall::ToolCall> {
+    // The latest fact per prior turn (a turn is `Pending` then a frozen branch;
+    // highest seq wins) — the same selection `resolve_parent_context` uses.
+    let mut latest: BTreeMap<u32, &ReactRoundRecord> = BTreeMap::new();
+    for r in rounds.iter().filter(|r| r.turn < this_turn) {
+        latest
+            .entry(r.turn)
+            .and_modify(|slot| {
+                if r.seq > slot.seq {
+                    *slot = r;
+                }
+            })
+            .or_insert(r);
+    }
+    let mut out: Vec<kx_toolcall::ToolCall> = Vec::new();
+    for r in latest.values() {
+        if !matches!(
+            r.branch,
+            ReactBranch::Tool { .. } | ReactBranch::ToolBatch { .. }
+        ) {
+            continue;
+        }
+        let Some(result_ref) = projection.result_ref_of(&r.turn_mote_id) else {
+            continue;
+        };
+        let Ok(raw) = store.get(&result_ref) else {
+            continue;
+        };
+        if let Ok(calls) = kx_toolcall::parse_tool_calls(raw.as_ref(), warrant, max_args) {
+            out.extend(calls);
+        }
+    }
+    out
+}
+
 /// Drive ONE chain's reason→tool→observe loop one pass (the PR-2d-1/2d-2 logic,
 /// now chain-keyed by `(instance_id, step_salt)`). Bounded: at most one branch fact
 /// plus one advance per pass (the next pass continues). Returns whether the chain can
@@ -3495,12 +3543,35 @@ fn drive_react_chain<J: Journal>(
             // any call that fails validation (or a malformed/oversize/ungranted
             // envelope) freezes a `Rejected` round (the next turn self-corrects under
             // the budget). The SINGLE path is byte-identical to PR-2d-2's `Tool` arm.
-            let branch = match kx_toolcall::parse_tool_calls(raw.as_ref(), &warrant, max_args) {
-                Ok(calls) => settle_calls_to_branch(&calls, tool_registry),
+            let decoded = kx_toolcall::parse_tool_calls(raw.as_ref(), &warrant, max_args);
+            // RC2 loop hardening (minimal dedup slice): a SINGLE `Tool` proposal that
+            // EXACTLY repeats a call already fired this run is frozen `Rejected` — the
+            // re-prompt steers the model to use the result it already has (bounded loop
+            // progress) instead of re-firing the identical effect. Pure over committed
+            // facts (a re-decode of prior `Tool`/`ToolBatch` turns) ⇒ recovery-stable;
+            // the reason is the SHARED `kx_toolcall` twin string. Only the lone-`Tool`
+            // case is deduped (the dominant loop-waste); a `ToolBatch` rides the budget.
+            let dup_reason: Option<String> = match &decoded {
+                Ok(calls) if calls.len() == 1 => {
+                    let prior = collect_prior_fired_calls(
+                        store, projection, &rounds, turn, &warrant, max_args,
+                    );
+                    kx_toolcall::is_duplicate_call(&calls[0], &prior).then(|| {
+                        crate::react_shape::bounded_reason(kx_toolcall::duplicate_call_reason(
+                            &calls[0],
+                        ))
+                    })
+                }
+                _ => None,
+            };
+            let branch = match (decoded, dup_reason) {
+                // A duplicate single call overrides the would-be `Tool` with `Rejected`.
+                (Ok(_), Some(reason)) => ReactBranch::Rejected { reason },
+                (Ok(calls), None) => settle_calls_to_branch(&calls, tool_registry),
                 // Malformed / oversize / a name that decoded to no grant ⇒ a
                 // `Rejected` round (the committed turn fact remains; the model
                 // gets a chance to re-propose under the budget).
-                Err(error) => ReactBranch::Rejected {
+                (Err(error), _) => ReactBranch::Rejected {
                     // Twin of `kx_model_harness::react_reason::decode_error_reason`
                     // (byte-identical — pinned across the dep wall so the re-prompted
                     // turn's MoteId matches on a cold re-fold).

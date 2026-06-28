@@ -42,6 +42,15 @@ const MAC: ProtoExecutorClass = ProtoExecutorClass::MacosSandbox;
 const INSTRUCTION: &str = "List the files, then answer.";
 const MODEL: &str = "react-v1";
 const TOOL_ENVELOPE: &[u8] = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"q":"x"}}}"#;
+/// A tool-proposing envelope whose args VARY per turn — a NON-redundant tool loop
+/// (the model calls a tool every turn but never answers, with DIFFERENT args each
+/// time). The budget / settle-nudge tests use this so they exercise the budget bound
+/// WITHOUT tripping the RC2 identical-call dedup (a separate loop-breaker; the
+/// identical-repeat path has its own test `identical_repeat_call_is_deduped`).
+fn varied_tool_envelope(n: u32) -> Vec<u8> {
+    format!(r#"{{"tool_call":{{"name":"mcp-echo","version":"1","args":{{"q":"x{n}"}}}}}}"#)
+        .into_bytes()
+}
 /// PR-9a (the BUG-28 regression pin): Gemma-4's NATIVE tool-call shape
 /// (`<|tool_call>call:NAME{ARGS}<tool_call|>`) — `mcp_echo` (underscore) exercises
 /// the parser's separator-only `_`→`-` name normalization. BUG-28 was a real-model
@@ -1507,9 +1516,19 @@ async fn chain_is_bounded_by_the_durable_budget() {
         };
         let mote: Mote = item.mote.unwrap().try_into().unwrap();
         if mote.def.tool_contract.is_empty() {
-            // A TURN: commit the tool-proposing envelope.
+            // A TURN: propose a tool again — with per-turn-varied args so the loop
+            // is bounded by the budget (not short-circuited by the identical-call
+            // dedup; that path has its own test).
+            commit_raw(
+                &svc,
+                &store,
+                &mote,
+                &w,
+                &varied_tool_envelope(turns_leased),
+                worker,
+            )
+            .await;
             turns_leased += 1;
-            commit_raw(&svc, &store, &mote, &w, TOOL_ENVELOPE, worker).await;
         } else {
             // The OBSERVATION: leases with args, commits the staged result.
             assert!(item.tool_args.is_some(), "observations lease WITH args");
@@ -1555,6 +1574,56 @@ async fn chain_is_bounded_by_the_durable_budget() {
     }
 }
 
+/// RC2 loop hardening (the dedup slice): a turn that proposes a tool call IDENTICAL
+/// to one already fired this run is frozen `Rejected` with the shared `kx_toolcall`
+/// dedup reason (the re-prompt steers the model off the redundant loop) — NOT
+/// re-fired. So the world-mutating effect fires EXACTLY ONCE even though the model
+/// keeps re-proposing it. Model-free + deterministic; recovery-stable (pure over the
+/// committed facts).
+#[tokio::test]
+async fn identical_repeat_call_is_deduped() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+
+    // Every turn proposes the IDENTICAL call. Turn 0 fires; turn 1+ are deduped.
+    let mut fired_observations = 0u32;
+    for _ in 0..24 {
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        let Some(item) = leased.into_iter().next() else {
+            break;
+        };
+        let mote: Mote = item.mote.unwrap().try_into().unwrap();
+        if mote.def.tool_contract.is_empty() {
+            commit_raw(&svc, &store, &mote, &w, TOOL_ENVELOPE, worker).await;
+        } else {
+            fired_observations += 1;
+            commit_raw(&svc, &store, &mote, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+        }
+    }
+
+    // The world-mutating effect fired EXACTLY ONCE (turn 0); every identical repeat
+    // was deduped to a `Rejected` round instead of re-firing.
+    assert_eq!(
+        fired_observations, 1,
+        "the identical repeat never re-fires the effect"
+    );
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::Rejected { reason },
+                ..
+            } if reason.contains("already called")
+        )),
+        "an identical repeat freezes a Rejected round with the shared dedup reason"
+    );
+}
+
 /// Read a turn Mote's instruction (the bytes that ride `config_subset[PROMPT_KEY]`).
 fn turn_prompt(mote: &Mote) -> String {
     mote.def
@@ -1587,9 +1656,11 @@ async fn last_useful_turn_is_settle_nudged() {
         };
         let mote: Mote = item.mote.unwrap().try_into().unwrap();
         if mote.def.tool_contract.is_empty() {
-            // A TURN — record its instruction, then propose a tool again.
+            // A TURN — record its instruction, then propose a tool again (varied
+            // per-turn args ⇒ a budget-bounded loop, not a dedup short-circuit).
+            let n = u32::try_from(turn_prompts.len()).unwrap_or(u32::MAX);
             turn_prompts.push(turn_prompt(&mote));
-            commit_raw(&svc, &store, &mote, &w, TOOL_ENVELOPE, worker).await;
+            commit_raw(&svc, &store, &mote, &w, &varied_tool_envelope(n), worker).await;
         } else {
             // The OBSERVATION fires its staged result.
             commit_raw(&svc, &store, &mote, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
@@ -1641,6 +1712,7 @@ async fn settle_nudge_lets_a_looping_model_answer() {
     let worker = common::register(&svc, "w").await;
 
     let mut answered_on_nudge = false;
+    let mut turn_n = 0u32;
     for _ in 0..24 {
         let leased = common::lease_work(&svc, worker, MAC, 16).await;
         let Some(item) = leased.into_iter().next() else {
@@ -1653,7 +1725,18 @@ async fn settle_nudge_lets_a_looping_model_answer() {
                 answered_on_nudge = true;
                 commit_raw(&svc, &store, &mote, &w, b"the final answer", worker).await;
             } else {
-                commit_raw(&svc, &store, &mote, &w, TOOL_ENVELOPE, worker).await;
+                // Varied per-turn args ⇒ a budget-bounded loop reaches the nudge
+                // (not a dedup short-circuit on identical repeats).
+                commit_raw(
+                    &svc,
+                    &store,
+                    &mote,
+                    &w,
+                    &varied_tool_envelope(turn_n),
+                    worker,
+                )
+                .await;
+                turn_n += 1;
             }
         } else {
             commit_raw(&svc, &store, &mote, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;

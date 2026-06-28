@@ -683,6 +683,18 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let autogrant = serve_model.is_some() && crate::mcp_tool::autogrant_enabled();
     #[cfg(not(feature = "serve-engine"))]
     let autogrant = false;
+    // RC2 (S6 / T-EVAL-LIVE-MULTITOOL): when auto-grant is on, register the bundled
+    // calc + kv ORACLE capabilities so the autonomous `react-auto` loop can FIRE a
+    // real multi-tool chain (a kv lookup feeding a calc). Fail-soft per binary;
+    // auto-grant OFF ⇒ not registered ⇒ byte-identical serve.
+    #[cfg(feature = "serve-engine")]
+    let react_oracle_tools: Vec<(kx_mote::ToolName, kx_mote::ToolVersion)> = if autogrant {
+        crate::mcp_tool::register_oracle_capabilities(&local_broker)
+    } else {
+        Vec::new()
+    };
+    #[cfg(not(feature = "serve-engine"))]
+    let react_oracle_tools: Vec<(kx_mote::ToolName, kx_mote::ToolVersion)> = Vec::new();
     let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
     let worker = Worker::register(
         client,
@@ -752,6 +764,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let react_supported = serve_model.is_some();
     let registered_tools: std::collections::BTreeSet<(String, String)> = react_tool
         .iter()
+        .chain(react_oracle_tools.iter())
         .map(|(id, ver)| (id.0.clone(), ver.0.clone()))
         .collect();
     // PR-6a: seed the bundled tools into the durable registry so `DiscoverTools`
@@ -769,6 +782,30 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             None,
         ) {
             tracing::warn!(%error, "PR-6a: failed to seed mcp-echo@1 into tools.db");
+        }
+    }
+    // RC2 (S6): seed the calc + kv oracle tools into the durable registry (so
+    // DiscoverTools shows the real runnable set + the react-auto union grants them)
+    // exactly when their capabilities registered.
+    #[cfg(feature = "serve-engine")]
+    {
+        let oracle_set: std::collections::BTreeSet<_> =
+            react_oracle_tools.iter().cloned().collect();
+        for def in [
+            crate::mcp_tool::calc_tool_def(),
+            crate::mcp_tool::kv_tool_def(),
+        ] {
+            if oracle_set.contains(&(def.tool_id.clone(), def.tool_version.clone())) {
+                if let Err(error) = tool_registry.register_server_tool(
+                    def,
+                    kx_tool_registry::ToolProvenance::HumanAuthored {
+                        author: "kx-gateway".to_string(),
+                    },
+                    None,
+                ) {
+                    tracing::warn!(%error, "RC2: failed to seed an oracle tool into tools.db");
+                }
+            }
         }
     }
     // PR-6a/D155 (fs-list): seed fs-list@1 into the durable registry (so

@@ -355,14 +355,14 @@ impl LlamaInferenceBackend {
         warrant: &WarrantSpec,
         token_sink: Option<crate::TokenSink>,
     ) -> Result<InferenceOutput, InferenceError> {
-        // ---- Grammar reservation gate (fires before any model work) -------
-        // Constrained generation is a distinct, still-reserved seam; it gates
-        // every input variant.
-        if params.grammar.is_some() {
-            return Err(InferenceError::Unsupported {
-                reason: "constrained generation (grammar) reserved; see HANDOFF",
-            });
-        }
+        // ---- Grammar (RC2): IMPLEMENTED. A `params.grammar` carrier (a
+        // serialized `kx_grammar::ToolEnvelopeSpec`) is honored by `build_sampler`
+        // in the owner thread — it renders GBNF and prepends a lazy/triggered
+        // grammar stage so a tool turn can only emit the canonical grant-pinned
+        // envelope. No reservation gate here any more; a malformed carrier fails
+        // CLOSED at sampler-build time (never silently unconstrains). Grammar is
+        // derived at dispatch + carried off-digest (D108.2) — `dispatcher.rs` is
+        // untouched.
 
         // ---- Warrant gates (D30 + D35) — authorize BEFORE touching content -
         if model_id != &warrant.model_route.model_id {

@@ -16,6 +16,7 @@ members = [
     "crates/kx-warrant",
     "crates/kx-toolcall",
     "crates/kx-tool-registry",
+    "crates/kx-grammar",
     "crates/kx-context-assembler",
     "crates/kx-memoizer",
     "crates/kx-normalizer",
@@ -137,6 +138,11 @@ kx-warrant           = { path = "crates/kx-warrant",           version = "0.1.1"
 # drifted would silently admit an ungranted tool (SN-8).
 kx-toolcall          = { path = "crates/kx-toolcall",          version = "0.1.1" }
 kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.1.1" }
+# RC2: the engine-agnostic grammar/constraint spec — renders a granted tool set
+# to GBNF (llama.cpp) OR a JSON Schema (Ollama) for constrained tool-calling.
+# FFI-free pure leaf (kx-tool-registry for InputSchema only); never journaled —
+# the rendered constraint is derived at dispatch + carried off-digest (D108.2).
+kx-grammar           = { path = "crates/kx-grammar",           version = "0.1.1" }
 kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.1.1" }
 kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.1.1" }
 kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.1.1" }

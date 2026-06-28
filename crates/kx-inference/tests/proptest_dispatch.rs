@@ -5,8 +5,9 @@
 //!   1. `Unsupported`-on-Multimodal is deterministic — for any prompt,
 //!      seed, and content-ref set, the backend returns the SAME error
 //!      string. (Reservation semantics are invariant across inputs.)
-//!   2. `Unsupported`-on-grammar=Some is deterministic — for any
-//!      `Grammar` payload, the backend returns the same error.
+//!   2. grammar=Some takes the SAME gate path as grammar=None (RC2: grammar is
+//!      honored at sampler-build, not gated as Unsupported) — for any `Grammar`
+//!      payload, the gate outcome is identical to no grammar.
 //!   3. `WarrantDeniesModel` fires whenever `requested_model_id !=
 //!      warrant.model_route.model_id`, regardless of any other field.
 //!      (Prefix-monotonic on the model-route axis: changing other
@@ -97,11 +98,15 @@ proptest! {
         prop_assert!(is_unsupported);
     }
 
-    /// Property 2: `Unsupported` on grammar=Some is deterministic
-    /// across any payload string. Same invariance argument as
-    /// Property 1 but on the grammar field.
+    /// Property 2 (RC2): grammar is no longer a reserved-`Unsupported` gate — it
+    /// is HONORED in `build_sampler` once a real model loads. So at the dispatch
+    /// gate level, a `grammar=Some` request takes the SAME path as `grammar=None`:
+    /// against an unloadable model BOTH fail identically at the load stage, and
+    /// NEITHER returns the old "constrained generation (grammar) reserved"
+    /// `Unsupported`. (The honored-grammar path is covered live by kx-llamacpp's
+    /// `smoke_grammar_from_kx_grammar` + the kx-gateway real-model tests.)
     #[test]
-    fn prop_grammar_some_always_unsupported(
+    fn prop_grammar_some_takes_same_path_as_none(
         raw in ".{0,256}",
     ) {
         let id = ModelId("any-model".into());
@@ -111,14 +116,20 @@ proptest! {
         );
         let warrant = warrant_with_route(id.clone(), 512);
         let input = InferenceInput::Text("hi".into());
-        let params = InferenceParams {
+        let with_grammar = InferenceParams {
             grammar: Some(Grammar::new(raw)),
             ..InferenceParams::default()
         };
-        let err = backend.dispatch(&id, &input, &params, &warrant)
-            .expect_err("grammar=Some must be Unsupported");
-        let is_unsupported_grammar = matches!(err, InferenceError::Unsupported { .. });
-        prop_assert!(is_unsupported_grammar);
+        let without = InferenceParams::default();
+        let e1 = backend.dispatch(&id, &input, &with_grammar, &warrant)
+            .expect_err("unloadable model must error");
+        let e2 = backend.dispatch(&id, &input, &without, &warrant)
+            .expect_err("unloadable model must error");
+        // The reservation is gone: grammar=Some never short-circuits to the old
+        // grammar-reserved Unsupported, and the gate outcome is identical to None.
+        let reserved = matches!(&e1, InferenceError::Unsupported { reason } if reason.contains("grammar"));
+        prop_assert!(!reserved, "grammar reservation must be gone");
+        prop_assert_eq!(format!("{e1}"), format!("{e2}"), "grammar must not alter the gate outcome");
     }
 
     /// Property 3: `WarrantDeniesModel` is invariant on every other

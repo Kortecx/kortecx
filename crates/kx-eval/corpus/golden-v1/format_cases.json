@@ -2,7 +2,9 @@
   "grants": [
     { "tool_id": "mcp-echo/echo", "tool_version": "1" },
     { "tool_id": "kv/get", "tool_version": "1" },
-    { "tool_id": "calc/add", "tool_version": "1" }
+    { "tool_id": "calc/add", "tool_version": "1" },
+    { "tool_id": "mcp-calc/calc", "tool_version": "1" },
+    { "tool_id": "mcp-kv/get", "tool_version": "1" }
   ],
   "cases": [
     {
@@ -69,6 +71,16 @@
       "format": "empty_output",
       "raw": "",
       "expect": { "type": "no_call" }
+    },
+    {
+      "format": "grammar_envelope_calc",
+      "raw": "{\"tool_call\":{\"name\":\"mcp-calc/calc\",\"version\":\"1\",\"args\":{\"op\":\"add\",\"a\":2,\"b\":3}}}",
+      "expect": { "type": "call", "tool_id": "mcp-calc/calc", "tool_version": "1" }
+    },
+    {
+      "format": "grammar_envelope_kv",
+      "raw": "{\"tool_call\":{\"name\":\"mcp-kv/get\",\"version\":\"1\",\"args\":{\"key\":\"alpha\"}}}",
+      "expect": { "type": "call", "tool_id": "mcp-kv/get", "tool_version": "1" }
     }
   ]
 }
