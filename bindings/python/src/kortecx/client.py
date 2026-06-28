@@ -35,6 +35,7 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .alerts import AlertsPage, AlertSummary
+from .approvals import PendingApproval, PendingApprovalsPage
 from .apps import (
     AppSummary,
     SaveAppResult,
@@ -48,6 +49,7 @@ from .branch import AdvanceResult, Branch, CreateBranchResult, EditProposal, Sna
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
+from .cost import RunCost
 from .datasets import (
     DatasetHit,
     DatasetSummary,
@@ -66,8 +68,6 @@ from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
-from .approvals import PendingApproval, PendingApprovalsPage
-from .cost import RunCost
 from .secrets import SecretName, SecretNamesPage
 from .server_info import ServerInfo
 from .teams import TeamMembers, TeamSummary
@@ -1886,18 +1886,14 @@ class KxClient:
     def grant_approval(self, *, request_id: str, reason: str = "") -> bool:
         """Grant a pending approval (``GrantApproval``) — releases the staged action
         to fire exactly once. Returns ``True`` iff a decision was recorded."""
-        req = _g.GrantApprovalRequest(
-            request_id=hexids.as_bytes(request_id, 16), reason=reason
-        )
+        req = _g.GrantApprovalRequest(request_id=hexids.as_bytes(request_id, 16), reason=reason)
         resp = self._call(lambda: self._stub.GrantApproval(req, metadata=self._md))
         return resp.granted
 
     def deny_approval(self, *, request_id: str, reason: str = "") -> bool:
         """Deny a pending approval (``DenyApproval``) — the gated chain dead-letters
         fail-closed. Returns ``True`` iff a decision was recorded."""
-        req = _g.DenyApprovalRequest(
-            request_id=hexids.as_bytes(request_id, 16), reason=reason
-        )
+        req = _g.DenyApprovalRequest(request_id=hexids.as_bytes(request_id, 16), reason=reason)
         resp = self._call(lambda: self._stub.DenyApproval(req, metadata=self._md))
         return resp.denied
 
