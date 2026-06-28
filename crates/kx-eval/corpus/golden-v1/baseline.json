@@ -1,0 +1,26 @@
+{
+  "suite_id": "golden-v1",
+  "suite_digest": "f05cb658ee50469bba21ffd0c5f9c5da90dd0b4c4db45e7d9f9810fcc3427f98",
+  "gates": [
+    {
+      "id": "task_success",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_call_f1",
+      "per_mille": 1000
+    },
+    {
+      "id": "groundedness",
+      "per_mille": 1000
+    },
+    {
+      "id": "loop_efficiency",
+      "per_mille": 964
+    },
+    {
+      "id": "format_coverage",
+      "per_mille": 1000
+    }
+  ]
+}

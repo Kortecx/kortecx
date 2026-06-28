@@ -1,0 +1,173 @@
+{
+  "id": "golden-v1",
+  "tasks": [
+    {
+      "id": "single_tool",
+      "description": "One tool call, then answer from the observation.",
+      "instruction": "Echo the word 'ping' using the echo tool, then tell me exactly what it echoed.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["ping"],
+        "expected_tools": [{ "tool_id": "mcp-echo/echo", "tool_version": "1" }],
+        "grounded_in": [],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      },
+      "scripted_transcript": {
+        "task_id": "single_tool",
+        "turns": [
+          { "turn": 0, "branch": "tool", "tool_id": "mcp-echo/echo", "tool_version": "1" },
+          { "turn": 1, "branch": "answer" }
+        ],
+        "final_answer": "The tool echoed: ping",
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    },
+    {
+      "id": "multi_tool_sequential",
+      "description": "Two distinct tools in sequence: a kv lookup feeding a calc.",
+      "instruction": "Look up the value for key 'x' with the kv tool, add 10 to it with the calc tool, and report the sum.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["52"],
+        "expected_tools": [
+          { "tool_id": "kv/get", "tool_version": "1" },
+          { "tool_id": "calc/add", "tool_version": "1" }
+        ],
+        "grounded_in": [],
+        "ideal_turns": 3,
+        "ideal_tool_calls": 2
+      },
+      "scripted_transcript": {
+        "task_id": "multi_tool_sequential",
+        "turns": [
+          { "turn": 0, "branch": "tool", "tool_id": "kv/get", "tool_version": "1" },
+          { "turn": 1, "branch": "tool", "tool_id": "calc/add", "tool_version": "1" },
+          { "turn": 2, "branch": "answer" }
+        ],
+        "final_answer": "Key x was 42; 42 + 10 = 52. The sum is 52.",
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    },
+    {
+      "id": "multi_element_toolbatch",
+      "description": "Two tool calls emitted in ONE turn (a ToolBatch).",
+      "instruction": "In one step, look up keys 'a' and 'b' with the kv tool, then report both values.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["alpha", "beta"],
+        "expected_tools": [
+          { "tool_id": "kv/get", "tool_version": "1" },
+          { "tool_id": "kv/get", "tool_version": "1" }
+        ],
+        "grounded_in": [],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 2
+      },
+      "scripted_transcript": {
+        "task_id": "multi_element_toolbatch",
+        "turns": [
+          { "turn": 0, "branch": "tool", "tool_id": "kv/get", "tool_version": "1", "call_index": 0 },
+          { "turn": 0, "branch": "tool", "tool_id": "kv/get", "tool_version": "1", "call_index": 1 },
+          { "turn": 1, "branch": "answer" }
+        ],
+        "final_answer": "a = alpha, b = beta",
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    },
+    {
+      "id": "tool_rejection_recovery",
+      "description": "A rejected proposal, then a re-prompted correct call, then answer.",
+      "instruction": "Use the echo tool to echo the word 'recover'.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["recover"],
+        "expected_tools": [{ "tool_id": "mcp-echo/echo", "tool_version": "1" }],
+        "grounded_in": [],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      },
+      "scripted_transcript": {
+        "task_id": "tool_rejection_recovery",
+        "turns": [
+          { "turn": 0, "branch": "rejected", "rejection_reason": "proposed an ungranted tool" },
+          { "turn": 1, "branch": "tool", "tool_id": "mcp-echo/echo", "tool_version": "1" },
+          { "turn": 2, "branch": "answer" }
+        ],
+        "final_answer": "Echoed: recover",
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    },
+    {
+      "id": "budget_exhaustion_deadletter",
+      "description": "An adversarial task that cleanly dead-letters (the loud terminal).",
+      "instruction": "Keep calling a tool with arguments that never satisfy the request.",
+      "expect": {
+        "terminal": "dead_letter",
+        "answer_must_contain": [],
+        "expected_tools": [],
+        "grounded_in": [],
+        "ideal_turns": 3,
+        "ideal_tool_calls": 0
+      },
+      "scripted_transcript": {
+        "task_id": "budget_exhaustion_deadletter",
+        "turns": [
+          { "turn": 0, "branch": "rejected", "rejection_reason": "malformed tool arguments" },
+          { "turn": 1, "branch": "rejected", "rejection_reason": "malformed tool arguments" },
+          { "turn": 2, "branch": "dead_lettered", "rejection_reason": "tool-call budget exhausted" }
+        ],
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    },
+    {
+      "id": "rag_grounded",
+      "description": "A retrieval-grounded answer; the claim must trace to a retrieved doc.",
+      "instruction": "Using the knowledge base, what is the capital of France?",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["Paris"],
+        "expected_tools": [],
+        "grounded_in": ["Paris"],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      },
+      "scripted_transcript": {
+        "task_id": "rag_grounded",
+        "turns": [{ "turn": 0, "branch": "answer" }],
+        "final_answer": "According to the knowledge base, the capital of France is Paris.",
+        "retrieved_docs": [
+          "France is a country in Western Europe. Its capital and largest city is Paris.",
+          "Paris sits on the river Seine and is the political centre of France."
+        ],
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    },
+    {
+      "id": "answer_only",
+      "description": "A direct answer with no tool (negative control: a spurious call would score lower).",
+      "instruction": "What is 2 + 2? Answer directly without using any tools.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["4"],
+        "expected_tools": [],
+        "grounded_in": [],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      },
+      "scripted_transcript": {
+        "task_id": "answer_only",
+        "turns": [{ "turn": 0, "branch": "answer" }],
+        "final_answer": "2 + 2 = 4.",
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    }
+  ]
+}

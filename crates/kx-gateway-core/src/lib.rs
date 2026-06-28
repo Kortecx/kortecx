@@ -53,6 +53,7 @@ mod bundles_view;
 mod capture_view;
 mod datasets;
 mod error;
+mod eval;
 mod events;
 mod feedback_view;
 mod fuzzy_discovery;

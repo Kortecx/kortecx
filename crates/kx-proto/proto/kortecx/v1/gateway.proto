@@ -1878,6 +1878,30 @@ message GetRunCostResponse {
   bool   over_ceiling            = 8;  // estimated >= ceiling (display flag)
 }
 
+// ===========================================================================
+// RC1 (D172) — kx-eval per-run QUALITY readout. An EXPECTATION-FREE fold over the
+// run's off-DAG ReactRound trajectory: did it reach an answer, how many turns /
+// tool-calls it spent, how much of its budget it burned, how many proposals were
+// rejected. The measure-first runtime's per-run lens (Monitoring "Quality"); the
+// golden-suite GATE (task success / tool-call correctness / groundedness vs a known
+// expectation) lives OFFLINE in `kx eval run` / `just eval`, never on this wire.
+// Read-only, off-digest, operator-global — the same posture as ListReactTurns. The
+// ReactRound facts are the source, so this is always available (no seam).
+// ===========================================================================
+message ScoreRunRequest { bytes instance_id = 1; }  // 16B run id
+message RunScore {
+  bytes  instance_id                = 1;
+  string terminal                   = 2;   // answer | tool | rejected | dead_lettered | pending
+  bool   reached_answer             = 3;
+  uint32 turns_used                 = 4;
+  uint32 tool_calls_used            = 5;
+  uint32 max_turns                  = 6;
+  uint32 max_tool_calls             = 7;
+  uint32 rejections                 = 8;
+  uint32 turn_budget_used_per_mille = 9;
+  uint32 tool_budget_used_per_mille = 10;
+}
+
 service KxGateway {
   rpc SubmitRun(SubmitRunRequest) returns (RunHandle);
   rpc Invoke(InvokeRequest) returns (InvokeResponse);
@@ -2014,6 +2038,8 @@ service KxGateway {
   rpc DenyApproval(DenyApprovalRequest) returns (DenyApprovalResponse);
   // M11 — cost-spend guardrail readout (display-only local estimate).
   rpc GetRunCost(GetRunCostRequest) returns (GetRunCostResponse);
+  // RC1 (D172) — kx-eval per-run quality readout (expectation-free trajectory fold).
+  rpc ScoreRun(ScoreRunRequest) returns (RunScore);
 
   // PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
   rpc PutContextBundle(PutContextBundleRequest) returns (PutContextBundleResponse);

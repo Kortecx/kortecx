@@ -35,6 +35,11 @@ kx-journal    = { workspace = true }
 # per-Mote live path cannot — a `critic_for` must reference an existing WORLD-MUTATING
 # producer, no producer may carry two critics, etc. (B3). FFI-free; pure validation.
 kx-refusal    = { workspace = true }
+# RC1 (D172): the FFI-free eval harness — `analyze_run` folds a run's trajectory into an
+# expectation-free quality summary for the ScoreRun RPC. A pure leaf (no journal-writer
+# link); the proto<->Transcript mapping lives here in gateway-core, keeping kx-eval
+# proto-free.
+kx-eval       = { workspace = true }
 # Async gRPC service (Request/Response/Status/Streaming) + the re-exported async_trait.
 tonic         = { workspace = true }
 # Backs the resumable StreamEvents cursor (tokio_stream::iter over precomputed frames).

@@ -21,7 +21,7 @@ check: fmt-check clippy test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke test-connector-real
+ci: fmt-check clippy test eval deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke test-connector-real
 
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
@@ -671,6 +671,19 @@ real-model-e2e: fetch-agent-model
     # CPU-only CI runner starves each inference (neither commits in time). Serial =
     # one inference at a time = full CPU each.
     cargo test -p kx-gateway --features inference --test al1_serve -- --ignored --nocapture --test-threads=1
+    # RC1 (D172): the real-model eval witness — score a live ReAct chain via ScoreRun
+    # (advisory Tier-B floors over the Qwen3 stand-in; the flake-proof gate is `just eval`).
+    cargo test -p kx-gateway --features inference --test eval_real_model -- --ignored --nocapture --test-threads=1
+
+# RC1 (D172) — the real-model eval witness, LOCAL Gemma deep-test (Tier-B, ADVISORY).
+# Drives a live ReAct chain on a real OSS model and scores it through ScoreRun (the
+# per-run quality readout proven over genuine model output, GR15/GR24). The flake-proof
+# regression GATE is the deterministic `just eval`; these numbers are advisory Spikes.
+#   KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-real   # local Gemma (Ollama)
+#   just fetch-agent-model && just eval-real                              # GGUF stand-in
+eval-real:
+    cargo build -p kx-mcp  # the bundled stdio tool bins (echo / calc / kv)
+    cargo test -p kx-gateway --features inference --test eval_real_model -- --ignored --nocapture --test-threads=1
 
 # LOCAL / manual witness (NOT a CI job): drive a LIVE ReAct chain that FIRES a real
 # tool on a capable model. The DETERMINISTIC, CI-runnable regression guard for this
@@ -773,6 +786,16 @@ bench-ceiling:
 # M3 fold curve + M4 commit ceiling + M5 catalog discovery come from the spikes;
 # M7a react answer-settle + M7b react tool-round (PR-2d-2) need the bundled
 # stdio tool bin, built first so M7b is never silently skipped.
+# RC1 (D172) — the measure-first eval gate (the regression ratchet every later RC PR
+# must hold). Scores the embedded `golden-v1` corpus (Tier A: scripted transcripts —
+# FFI-free, no model / network / clock, so it cannot flake) and fails CLOSED on any
+# regression vs the COMMITTED `crates/kx-eval/corpus/golden-v1/baseline.json` or on
+# corpus drift. `cargo run -p kx-eval -- run --update-baseline` (manual) re-captures the
+# baseline — RC2 (grammar) raises it in-PR. The same scorers also run under `test` (the
+# kx-eval integration test); the real-model Tier-B numbers are advisory Spikes (`eval-real`).
+eval:
+    cargo run -q -p kx-eval -- run
+
 profile iterations="8":
     cargo build --release -p kx-mcp
     cargo run --release -p kx-profile -- --iterations {{iterations}}

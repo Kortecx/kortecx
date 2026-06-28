@@ -81,6 +81,7 @@ usage: kx <command> [args]
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
     kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
+    kx eval run [--tolerance <per_mille>] | score <INSTANCE_ID>   (RC1/D172 — golden gate + per-run quality)
 
     --endpoint defaults to http://127.0.0.1:50151
 
@@ -164,6 +165,8 @@ pub enum Cli {
     Approvals(verbs::approvals::ApprovalsArgs),
     /// A run's local spend estimate (M11 — `kx cost <INSTANCE_ID>`).
     Cost(verbs::cost::CostArgs),
+    /// Agentic evaluation (RC1/D172 — `kx eval run` golden gate · `kx eval score <ID>`).
+    Eval(verbs::eval::EvalArgs),
 }
 
 impl Cli {
@@ -227,6 +230,7 @@ impl Cli {
             Some("triggers") => Ok(Cli::Triggers(verbs::triggers::parse(args)?)),
             Some("approvals") => Ok(Cli::Approvals(verbs::approvals::parse(args)?)),
             Some("cost") => Ok(Cli::Cost(verbs::cost::parse(args)?)),
+            Some("eval") => Ok(Cli::Eval(verbs::eval::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
             ))),
@@ -308,6 +312,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Triggers(a) => verbs::triggers::execute(a).await,
         Cli::Approvals(a) => verbs::approvals::execute(a).await,
         Cli::Cost(a) => verbs::cost::execute(a).await,
+        Cli::Eval(a) => verbs::eval::execute(a).await,
     }
 }
 

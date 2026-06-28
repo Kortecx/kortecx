@@ -100,6 +100,9 @@ export const queryKeys = {
   /** The capture-record stream (`ListCaptureRecords`); `instanceId` scopes to one run. */
   captureRecords: (endpoint: string, instanceId: string | undefined, limit: number) =>
     ["kx", endpoint, "capture-records", instanceId ?? "all", limit] as const,
+  /** The per-run quality readout (`ScoreRun`, RC1/D172); scoped to one run. */
+  evalScore: (endpoint: string, instanceId: string) =>
+    ["kx", endpoint, "eval-score", instanceId] as const,
   /** The discoverable models (`ListModels`) — display-only (SN-8). */
   models: (endpoint: string) => ["kx", endpoint, "models"] as const,
   /** A batched content fetch (`GetContentBatch`), scoped by run + a stable refs key.

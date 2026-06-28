@@ -2729,6 +2729,18 @@ impl KxGateway for GatewayService {
         Ok(Response::new(resp))
     }
 
+    async fn score_run(
+        &self,
+        request: Request<proto::ScoreRunRequest>,
+    ) -> Result<Response<proto::RunScore>, Status> {
+        // RC1 (D172): an expectation-free per-run quality fold over the off-DAG
+        // ReactRound trajectory (kx-eval `analyze_run`). Read-only, off-digest, always
+        // available — the same posture as ListReactTurns (no seam).
+        let req = request.into_inner();
+        let resp = crate::eval::score_run(self.reader.as_ref(), &req.instance_id)?;
+        Ok(Response::new(resp))
+    }
+
     async fn list_capture_records(
         &self,
         request: Request<proto::ListCaptureRecordsRequest>,
