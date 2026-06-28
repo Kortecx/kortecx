@@ -21,13 +21,14 @@ use std::sync::Arc;
 
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_journal::{
-    FailureReason, IdempotencyClassTag, Journal, JournalEntry, ReactBranch, RepudiationReason,
-    ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
+    approval_request_id, ApprovalState, FailureReason, IdempotencyClassTag, Journal, JournalEntry,
+    ReactBranch, RepudiationReason, ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
 };
 use kx_mote::{
     ConfigKey, EdgeKind, EffectPattern, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName,
     ToolVersion, CONTEXT_ITEMS_KEY, IMAGE_REF_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY,
-    REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY, REACT_TURN_KEY, TOOL_ARGS_KEY,
+    REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY, REACT_REQUIRE_APPROVAL_KEY, REACT_TURN_KEY,
+    TOOL_ARGS_KEY,
 };
 use kx_projection::{
     ContentStoreVerdicts, MoteState, Projection, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
@@ -203,6 +204,53 @@ pub(crate) enum Command {
     RunResolvedVersions {
         reply: oneshot::Sender<Vec<kx_projection::RunResolvedVersions>>,
     },
+    // D114: the operator control plane over pending world-mutating approvals. Grant/
+    // Deny are OPERATOR decisions over a SERVER-derived request_id (SN-8) — they
+    // release/reject a STAGED action, never mint a client warrant.
+    ListPendingApprovals {
+        reply: oneshot::Sender<Vec<PendingApprovalView>>,
+    },
+    GrantApproval {
+        request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+        approver_id: u64,
+        reason: String,
+        reply: oneshot::Sender<bool>,
+    },
+    DenyApproval {
+        request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+        denier_id: u64,
+        reason: String,
+        reply: oneshot::Sender<bool>,
+    },
+    // M11: the run's committed (turns, tool_calls) counts, summed over its react
+    // chains — the host prices them into a display-only spend estimate.
+    RunCostCounts {
+        instance_id: [u8; INSTANCE_ID_LEN],
+        reply: oneshot::Sender<(u64, u64)>,
+    },
+}
+
+/// A pending HITL approval, flattened for the operator inbox (D114). Display-only —
+/// it carries NO authority; the grant/deny decision is keyed by the server-derived
+/// `request_id`, never by any client-supplied identity (SN-8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingApprovalView {
+    /// The server-derived handshake handle (grant/deny key).
+    pub request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+    /// The run awaiting approval.
+    pub instance_id: [u8; INSTANCE_ID_LEN],
+    /// The world-mutating observation Mote awaiting approval.
+    pub mote_id: MoteId,
+    /// The proposed tool's name (display).
+    pub tool_id: String,
+    /// The proposed tool's pinned version (display).
+    pub tool_version: String,
+    /// A short prose summary of the proposed action (display).
+    pub intent: String,
+    /// Approval deadline in unix-ms (`0` ⇒ operator-driven, no auto-expiry).
+    pub deadline_unix_ms: u64,
+    /// Request creation time in unix-ms (audit wall-clock).
+    pub created_unix_ms: u64,
 }
 
 /// Handle to the orchestration core. Cloneable + `Send + Sync` (it is just the
@@ -467,6 +515,76 @@ impl CoreHandle {
     ) -> Result<Vec<kx_projection::RunResolvedVersions>, CoordinatorError> {
         let (reply, response) = oneshot::channel();
         self.dispatch(Command::RunResolvedVersions { reply })
+            .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)
+    }
+
+    /// D114: the operator's pending-approvals inbox — every world-mutating action
+    /// withheld awaiting a decision. Read from the folded handshake facts; off the
+    /// truth path (never gates anything itself).
+    pub(crate) async fn list_pending_approvals(
+        &self,
+    ) -> Result<Vec<PendingApprovalView>, CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::ListPendingApprovals { reply })
+            .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)
+    }
+
+    /// D114: GRANT a pending approval (an operator decision over a server-derived
+    /// `request_id`, SN-8). Returns `true` iff a decision was recorded — `false` for
+    /// an unknown or already-resolved request (idempotent).
+    pub(crate) async fn grant_approval(
+        &self,
+        request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+        approver_id: u64,
+        reason: String,
+    ) -> Result<bool, CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::GrantApproval {
+            request_id,
+            approver_id,
+            reason,
+            reply,
+        })
+        .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)
+    }
+
+    /// D114: DENY a pending approval (the chain dead-letters fail-closed). See
+    /// [`Self::grant_approval`].
+    pub(crate) async fn deny_approval(
+        &self,
+        request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+        denier_id: u64,
+        reason: String,
+    ) -> Result<bool, CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::DenyApproval {
+            request_id,
+            denier_id,
+            reason,
+            reply,
+        })
+        .await?;
+        response
+            .await
+            .map_err(|_| CoordinatorError::CoreUnavailable)
+    }
+
+    /// M11: the run's committed `(turns, tool_calls)` counts (the host prices them).
+    pub(crate) async fn run_cost_counts(
+        &self,
+        instance_id: [u8; INSTANCE_ID_LEN],
+    ) -> Result<(u64, u64), CoordinatorError> {
+        let (reply, response) = oneshot::channel();
+        self.dispatch(Command::RunCostCounts { instance_id, reply })
             .await?;
         response
             .await
@@ -1877,7 +1995,143 @@ fn handle_command<J: Journal>(
         Command::RunResolvedVersions { reply } => {
             let _ = reply.send(projection.run_resolved_versions().to_vec());
         }
+        Command::ListPendingApprovals { reply } => {
+            let views = projection
+                .pending_approvals()
+                .iter()
+                .filter_map(|r| match &r.state {
+                    ApprovalState::Requested {
+                        tool_id,
+                        tool_version,
+                        intent,
+                        deadline_unix_ms,
+                        created_unix_ms,
+                    } => Some(PendingApprovalView {
+                        request_id: r.request_id,
+                        instance_id: r.instance_id,
+                        mote_id: r.awaiting_mote_id,
+                        tool_id: tool_id.clone(),
+                        tool_version: tool_version.clone(),
+                        intent: intent.clone(),
+                        deadline_unix_ms: *deadline_unix_ms,
+                        created_unix_ms: *created_unix_ms,
+                    }),
+                    _ => None,
+                })
+                .collect();
+            let _ = reply.send(views);
+        }
+        Command::GrantApproval {
+            request_id,
+            approver_id,
+            reason,
+            reply,
+        } => {
+            let decided = decide_approval(
+                journal,
+                projection,
+                folded_through,
+                &request_id,
+                true,
+                approver_id,
+                &reason,
+            );
+            let _ = reply.send(decided);
+        }
+        Command::DenyApproval {
+            request_id,
+            denier_id,
+            reason,
+            reply,
+        } => {
+            let decided = decide_approval(
+                journal,
+                projection,
+                folded_through,
+                &request_id,
+                false,
+                denier_id,
+                &reason,
+            );
+            let _ = reply.send(decided);
+        }
+        Command::RunCostCounts { instance_id, reply } => {
+            let _ = reply.send(run_cost_counts(projection, &instance_id));
+        }
     }
+}
+
+/// M11: the run's committed `(turns, tool_calls)`, summed over its react chains. A
+/// pure fold over the off-DAG `ReactRound` facts — `turns` per chain = its latest
+/// turn + 1; `tool_calls` = the tool-firing branches (the same count the budget gate
+/// + the spend gate price). Display-only; never gates anything.
+fn run_cost_counts(projection: &Projection, instance_id: &[u8; INSTANCE_ID_LEN]) -> (u64, u64) {
+    let mut turns = 0u64;
+    let mut tool_calls = 0u64;
+    for (inst, salt) in projection.react_chains() {
+        if &inst != instance_id {
+            continue;
+        }
+        if let Some(latest) = projection.latest_react_round(&inst, &salt) {
+            turns = turns.saturating_add(u64::from(latest.turn).saturating_add(1));
+        }
+        for r in projection.react_rounds_of(&inst, &salt) {
+            tool_calls = tool_calls.saturating_add(match &r.branch {
+                ReactBranch::Tool { .. } | ReactBranch::Rejected { .. } => 1,
+                ReactBranch::ToolBatch { calls } => calls.len() as u64,
+                _ => 0,
+            });
+        }
+    }
+    (turns, tool_calls)
+}
+
+/// D114: record an operator's GRANT/DENY decision for a pending handshake. Only a
+/// STILL-PENDING (`Requested`) request can be decided — a re-grant/deny of a resolved
+/// or unknown `request_id` is a no-op (`false`), so the operator action is idempotent.
+/// The decision is a durable, server-attributed (SN-8) journal fact the gated react
+/// chain reads on its next settle pass (Granted ⇒ the action fires exactly once;
+/// Denied ⇒ the chain dead-letters). Returns `true` iff a decision was recorded.
+fn decide_approval<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    request_id: &[u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+    grant: bool,
+    operator_id: u64,
+    reason: &str,
+) -> bool {
+    let (instance_id, awaiting_mote_id) = match projection.approval_latest_for(request_id) {
+        Some(r) if matches!(r.state, ApprovalState::Requested { .. }) => {
+            (r.instance_id, r.awaiting_mote_id)
+        }
+        _ => return false, // unknown or already decided — idempotent no-op
+    };
+    let now = approval_now_ms();
+    let reason = truncate_for_approval(reason);
+    let state = if grant {
+        ApprovalState::Granted {
+            approver_id: operator_id,
+            reason,
+            decided_unix_ms: now,
+        }
+    } else {
+        ApprovalState::Denied {
+            approver_id: operator_id,
+            reason,
+            decided_unix_ms: now,
+        }
+    };
+    append_approval(
+        journal,
+        projection,
+        folded_through,
+        instance_id,
+        *request_id,
+        awaiting_mote_id,
+        state,
+    );
+    true
 }
 
 /// Append a WORLD-MUTATING Mote's `EffectStaged` entry through the sole writer (D58 —
@@ -2001,6 +2255,8 @@ fn submit_and_capture<J: Journal>(
     // storeless coordinator cannot write the durable anchor, so the chain could
     // never crash-recover (the durability law).
     let mut react_caps: Option<(u32, u32)> = None;
+    // D114: the run's HITL approval posture (parsed from the seed alongside the caps).
+    let mut react_require_approval = false;
     let mut react_chain_salt: Option<[u8; 32]> = None;
     // BUG-35 (+ PR-9d context sibling): the ORIGINAL seed's ANCHOR-BOUND config (the
     // grounding image + grounding-context bundle), captured BEFORE the swap discards the
@@ -2019,8 +2275,9 @@ fn submit_and_capture<J: Journal>(
         // Decode + validate the seed's free params (instruction + budget caps)
         // BEFORE the swap discards the seed — the swapped turn 0 carries only
         // the clean instruction; the caps go to the durable anchor.
-        let (instruction, caps) = react_seed_params(&mote)?;
+        let (instruction, caps, require_approval) = react_seed_params(&mote)?;
         react_caps = Some(caps);
+        react_require_approval = require_approval;
         // BUG-35 (+ context sibling): capture the seed's anchor-bound config HERE (`mote`
         // is still the original seed) so the anchor records it — `build_chain_turn` below
         // rebuilds turn-0 from the instruction ONLY, dropping the image AND context bundle.
@@ -2135,6 +2392,7 @@ fn submit_and_capture<J: Journal>(
                 &shaper_warrant,
                 max_turns,
                 max_tool_calls,
+                react_require_approval,
             )?;
         }
     }
@@ -2558,7 +2816,24 @@ fn recover_replan_chain<J: Journal>(
 /// `ReactSeedRefused` (the flag/recipe is explicit intent; a malformed budget
 /// must never silently anchor). Everything is read off the SEED, which is then
 /// SWAPPED — none of these keys reach an admitted identity.
-fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32)), CoordinatorError> {
+/// D114: the serve-wide HITL approval default — `KX_SERVE_REQUIRE_APPROVAL` truthy
+/// (`1`/`true`/`yes`/`on`, case-insensitive) ⇒ every NEW react chain gates its
+/// irreversible world-mutating tool calls unless the seed explicitly overrides. A
+/// host-config read OFF the identity/digest path (the resolved value is frozen on the
+/// off-DAG turn-0 anchor; recovery reads the recorded value, never re-reads the env).
+/// Default-off ⇒ byte-identical to today.
+fn serve_require_approval_default() -> bool {
+    std::env::var("KX_SERVE_REQUIRE_APPROVAL")
+        .ok()
+        .is_some_and(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32), bool), CoordinatorError> {
     let text_param = |key: &str| -> Option<String> {
         let raw = &seed.def.config_subset.get(&ConfigKey(key.to_string()))?.0;
         serde_json::from_slice::<String>(raw)
@@ -2602,7 +2877,27 @@ fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32)), CoordinatorErr
              0 < max_tool_calls <= 20",
         ));
     }
-    Ok((instruction, (max_turns, max_tool_calls)))
+    // D114: the HITL approval posture. An EXPLICIT per-run override (the seed's
+    // `REACT_REQUIRE_APPROVAL_KEY`, a canonical-JSON bool — set by an authoring binder)
+    // wins; ABSENT ⇒ the serve-wide default `KX_SERVE_REQUIRE_APPROVAL` (off ⇒ `false`,
+    // byte-identical to today). Resolving the env default HERE (not by injecting a key
+    // into the seed config) keeps the seed MoteId — hence the chain identity — stable;
+    // the resolved posture is recorded on the OFF-DAG turn-0 anchor (the digest + the
+    // recovery-stable contract are unaffected). A present-but-non-bool override is
+    // refused LOUDLY (never silently un-gated).
+    let require_approval = match seed
+        .def
+        .config_subset
+        .get(&ConfigKey(REACT_REQUIRE_APPROVAL_KEY.to_string()))
+    {
+        None => serve_require_approval_default(),
+        Some(v) => serde_json::from_slice::<bool>(&v.0).map_err(|_| {
+            CoordinatorError::ReactSeedRefused(
+                "the react require_approval posture is not a canonical-JSON boolean",
+            )
+        })?,
+    };
+    Ok((instruction, (max_turns, max_tool_calls), require_approval))
 }
 
 /// The react seed's ANCHOR-BOUND config keys — the grounding image ([`IMAGE_REF_KEY`],
@@ -2665,6 +2960,7 @@ fn write_react_anchor<J: Journal>(
     warrant: &WarrantSpec,
     max_turns: u32,
     max_tool_calls: u32,
+    require_approval: bool,
 ) -> Result<(), CoordinatorError> {
     if projection
         .react_rounds_of(&instance_id, &step_salt)
@@ -2759,6 +3055,9 @@ fn write_react_anchor<J: Journal>(
         is_agentic_launch,
         context_items_ref,
         image_ref,
+        // D114: record the run's approval posture on the turn-0 anchor so the gate
+        // survives recovery (the seed config is dropped — only mote_def_hash survives).
+        require_approval,
         seq: 0,
     };
     let durable = journal.append(entry)?;
@@ -3369,25 +3668,173 @@ fn settle_calls_to_branch(
     }
 }
 
+/// D114: the gate's decision for ONE world-mutating tool call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApprovalGate {
+    /// An operator `Granted` is folded (or no gate applies) — materialize + fire.
+    Proceed,
+    /// `Requested` (just appended, or already pending) — withhold; re-check next pass.
+    Wait,
+    /// `Denied`/`Expired` — the chain dead-letters loudly (fail-closed).
+    DeadLetter,
+}
+
+/// D114: does an idempotency class denote an IRREVERSIBLE world-mutating action that
+/// the HITL gate must hold for operator approval? `Staged`/`AtLeastOnce` have no
+/// self-closing dedup mechanism (a double-fire is a real-world side effect), so they
+/// are gated; `Token`/`Readback` self-close (and read-only/Pure tools never reach
+/// here), so they auto-proceed — matching the corpus posture "auto for read/diagnose,
+/// human-OK for email/call/DB-write/prod-change".
+fn tool_needs_approval(class: Option<IdempotencyClass>) -> bool {
+    matches!(
+        class,
+        Some(IdempotencyClass::Staged | IdempotencyClass::AtLeastOnce)
+    )
+}
+
+/// Wall-clock millis since the Unix epoch for an approval fact's AUDIT timestamps
+/// (off-DAG — never hashed, never an identity input; SN-8). A pre-epoch/overflow
+/// reading collapses to `0` (panic-free), exactly like [`crate::clock::SystemClock`].
+fn approval_now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
+        .unwrap_or(0)
+}
+
+/// Append one off-DAG [`JournalEntry::Approval`] handshake step + fold it. Idempotent
+/// by the caller (the gate only requests once per `request_id`); a fold/append fault
+/// is LOUD (the chain re-checks next pass). Returns whether the entry folded.
+fn append_approval<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+    awaiting_mote_id: MoteId,
+    state: ApprovalState,
+) {
+    let entry = JournalEntry::Approval {
+        instance_id,
+        request_id,
+        awaiting_mote_id,
+        state,
+        seq: 0,
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                *folded_through = seq;
+            }
+        }
+        Err(error) => tracing::error!(%error, "failed to append Approval handshake fact"),
+    }
+}
+
+/// D114: the gate decision for a gated world-mutating observation `obs`. On the FIRST
+/// encounter (no folded handshake) it appends `Requested` and WAITs (the action is
+/// withheld staged-not-committed). A folded `Granted` PROCEEDS (the authorized action
+/// fires exactly once via the existing StageThenCommit fence + idempotent
+/// `materialize_react_tool`); `Denied`/`Expired` DEAD-LETTERS. The `request_id` is
+/// deterministic (`instance_id ‖ obs.id`), so a cold recovery re-derives the SAME id
+/// and reads the committed decision — never re-asks, never double-fires.
+fn approval_gate_decision<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    anchor: &ReactRoundRecord,
+    obs_id: MoteId,
+    tool_id: &str,
+    tool_version: &str,
+) -> ApprovalGate {
+    let request_id = approval_request_id(&anchor.instance_id, &obs_id);
+    match projection
+        .approval_latest_for(&request_id)
+        .map(|r| &r.state)
+    {
+        Some(ApprovalState::Granted { .. }) => ApprovalGate::Proceed,
+        Some(ApprovalState::Denied { .. } | ApprovalState::Expired { .. }) => {
+            ApprovalGate::DeadLetter
+        }
+        Some(ApprovalState::Requested { .. }) => ApprovalGate::Wait, // already pending
+        None => {
+            // First encounter: request operator approval, then withhold the action.
+            let now = approval_now_ms();
+            let intent = format!("world-mutating tool call: {tool_id}@{tool_version}");
+            append_approval(
+                journal,
+                projection,
+                folded_through,
+                anchor.instance_id,
+                request_id,
+                obs_id,
+                ApprovalState::Requested {
+                    tool_id: tool_id.to_string(),
+                    tool_version: tool_version.to_string(),
+                    intent: truncate_for_approval(&intent),
+                    deadline_unix_ms: 0, // 0 = operator-driven (no auto-expiry this increment)
+                    created_unix_ms: now,
+                },
+            );
+            tracing::info!(
+                observation = ?obs_id,
+                tool = %tool_id,
+                "world-mutating action withheld — awaiting operator approval (D114)"
+            );
+            ApprovalGate::Wait
+        }
+    }
+}
+
+/// Truncate an approval display string at a char boundary to the journal cap.
+fn truncate_for_approval(s: &str) -> String {
+    let cap = kx_journal::MAX_APPROVAL_TEXT_LEN;
+    if s.chars().count() <= cap {
+        return s.to_string();
+    }
+    s.chars().take(cap).collect()
+}
+
+/// M11/D115: the deterministic spend ESTIMATE (micro-USD) of a react chain that has
+/// run `turns_used` model turns + `committed_tool_calls` tool calls, at the host's
+/// operator-priced rates. A pure fold mirror of the budget counters (state.rs ~3605);
+/// re-derived per pass, never a live counter (D115.2). `pending_calls` lets the
+/// pre-stage gate price the calls ABOUT to fire so the ceiling is enforced BEFORE the
+/// world-mutating dispatch (fail-closed), not after.
+fn react_projected_spend_micro_usd(
+    rounds: &[ReactRoundRecord],
+    turn: u32,
+    pending_calls: u32,
+) -> u64 {
+    let committed_tool_calls: u32 = u32::try_from(
+        rounds
+            .iter()
+            .map(|r| match &r.branch {
+                ReactBranch::Tool { .. } | ReactBranch::Rejected { .. } => 1,
+                ReactBranch::ToolBatch { calls } => calls.len(),
+                _ => 0,
+            })
+            .sum::<usize>(),
+    )
+    .unwrap_or(u32::MAX);
+    let turns_used = turn.saturating_add(1);
+    let tool_calls = committed_tool_calls.saturating_add(pending_calls);
+    kx_pricing::PriceBook::default()
+        .with_env_overrides()
+        .estimate_spend(u64::from(turns_used), u64::from(tool_calls))
+}
+
 /// T-MULTI-ELEMENT-TOOLCALLS — drive a frozen tool decision past its OBSERVATION
 /// lifecycle: ONE observation for a `Tool` branch, N CALL-INDEXED observations for a
-/// `ToolBatch`. Generalizes PR-2d-2's single-observation drain with BACK-PRESSURE —
-/// the chain advances to the next (re-prompted) turn ONLY once EVERY observation has
-/// committed, so the model is re-prompted ONCE with all N results in its trajectory.
-///
-/// Each observation Mote is a PURE function of the durable facts
-/// (`react_shape::build_chain_tool` over the anchor's model + the call's tool + the
-/// turn ids + its `call_index`), so this is idempotent across passes, crashes, and
-/// recovery — the frozen branch fact + the call-indexed id IS the durable cursor (no
-/// separate cursor field). Within a batch the observations are independent WM Motes
-/// that the ready-set releases together (their parent turn is committed by
-/// construction) and that workers may execute concurrently; the back-pressure gate is
-/// purely the "all committed" read. Per observation, the state handling is the
-/// PR-2d-2 single-call logic, looped: Committed ⇒ count it; Failed (crash flavor) ⇒
-/// stay `Active`; Failed (terminal) / anomaly ⇒ freeze same-turn `DeadLettered` (one
-/// hard-failed call kills the chain — the harness fail-closed stop); not-yet-committed
-/// ⇒ (re-)materialize idempotently (the BUG-27 permanent-arg guard first).
-#[allow(clippy::too_many_arguments)]
+/// `ToolBatch`. The chain advances to the next (re-prompted) turn ONLY once EVERY
+/// observation has committed (BACK-PRESSURE). Each observation Mote is a PURE function
+/// of the durable facts, so this is idempotent across passes, crashes, and recovery.
+/// D114/M11: the per-call HITL approval barrier + the per-batch cost-ceiling pre-stage
+/// check interpose before each world-mutating dispatch (the helpers above).
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn progress_tool_batch<J: Journal>(
     journal: &J,
     store: &LocalFsContentStore,
@@ -3408,6 +3855,34 @@ fn progress_tool_batch<J: Journal>(
     let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
         return ReactChainStatus::Active;
     };
+    // M11/D115: cost-ceiling pre-stage enforcement (the runaway-agent kill-switch +
+    // FinOps ceiling). When the run warrant set a POSITIVE ceiling (0 = unset/OFF),
+    // price the chain's committed turns/tool-calls (this batch already folded into
+    // `rounds`) and dead-letter BEFORE the batch's observations dispatch when the
+    // estimate exceeds the ceiling. A pure fold over committed facts (D115.2); the
+    // broker precheck is the SN-8 backstop for non-react WM dispatch.
+    let ceiling = warrant.cost_ceiling.micro_usd;
+    if ceiling > 0 {
+        let projected = react_projected_spend_micro_usd(rounds, turn, 0);
+        if projected > ceiling {
+            tracing::warn!(
+                turn,
+                projected_micro_usd = projected,
+                ceiling_micro_usd = ceiling,
+                "react chain spend exceeds cost_ceiling — dead-lettering (M11/D115)"
+            );
+            append_react_branch(
+                journal,
+                projection,
+                folded_through,
+                anchor,
+                turn_mote_id,
+                turn,
+                ReactBranch::DeadLettered,
+            );
+            return ReactChainStatus::Settled;
+        }
+    }
     let mut all_committed = true;
     for (i, (tool_id, tool_version)) in calls.iter().enumerate() {
         let call_index = u32::try_from(i).unwrap_or(u32::MAX);
@@ -3479,6 +3954,49 @@ fn progress_tool_batch<J: Journal>(
                 dispatch.defs.remove(&obs.id);
                 dispatch.tracker.resolve_committed(obs.id);
                 return ReactChainStatus::Settled;
+            }
+        }
+        // D114: HITL approval barrier. If the chain requires approval AND this tool is
+        // an irreversible world-mutating action (idempotency class Staged/AtLeastOnce),
+        // hold the observation staged-not-committed until an operator decision folds.
+        // The gate is a PURE function of the deterministic obs id + folded handshake
+        // facts, so recovery re-derives it identically (a committed `Granted` proceeds
+        // exactly once; a crash before any decision simply re-requests idempotently).
+        if anchor.require_approval {
+            let class = tool_registry
+                .lookup(
+                    &ToolName(tool_id.clone()),
+                    &ToolVersion(tool_version.clone()),
+                )
+                .map(|d| d.idempotency_class);
+            if tool_needs_approval(class) {
+                match approval_gate_decision(
+                    journal,
+                    projection,
+                    folded_through,
+                    anchor,
+                    obs.id,
+                    tool_id,
+                    tool_version,
+                ) {
+                    ApprovalGate::Proceed => {} // granted — fall through to dispatch
+                    ApprovalGate::Wait => {
+                        all_committed = false; // withheld — chain stays Active, re-check next pass
+                        continue;
+                    }
+                    ApprovalGate::DeadLetter => {
+                        append_react_branch(
+                            journal,
+                            projection,
+                            folded_through,
+                            anchor,
+                            turn_mote_id,
+                            turn,
+                            ReactBranch::DeadLettered,
+                        );
+                        return ReactChainStatus::Settled;
+                    }
+                }
             }
         }
         materialize_react_tool(
@@ -3554,6 +4072,9 @@ fn append_react_branch<J: Journal>(
         // AGENTIC-VISION: every round inherits the anchor's grounding-image ref the same
         // way, so the resolver finds the image on ANY turn-0 record.
         image_ref: anchor.image_ref,
+        // D114: every round inherits the anchor's approval posture so the gate finds it
+        // on ANY record of the chain (robust to fold/find order).
+        require_approval: anchor.require_approval,
         seq: 0,
     };
     match journal.append(entry) {
@@ -3933,6 +4454,7 @@ fn dead_letter_agentic_launch<J: Journal>(
 /// prompt — the headline use is the agentic step as a generator/root, which is correct.
 /// Wiring upstream context into the agentic loop is the PR-9d context-carry follow-up
 /// (it re-baselines the salt-2 golden + must keep recovery's rebuild byte-identical).
+#[allow(clippy::too_many_lines)] // D114: + the require_approval threading.
 fn settle_agentic_launches<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
@@ -4003,7 +4525,9 @@ fn settle_agentic_launches<J: Journal>(
         }
         // Validate the declared budget + prompt (server-vetted at authoring; a
         // defensive failure here dead-letters rather than wedge).
-        let (instruction, (max_turns, max_tool_calls)) = match react_seed_params(&launch_mote) {
+        let (instruction, (max_turns, max_tool_calls), require_approval) = match react_seed_params(
+            &launch_mote,
+        ) {
             Ok(decoded) => decoded,
             Err(reason) => {
                 tracing::error!(launch = ?launch_id, %reason, "agentic launch budget/prompt invalid — dead-lettering");
@@ -4038,6 +4562,7 @@ fn settle_agentic_launches<J: Journal>(
             &launch_warrant,
             max_turns,
             max_tool_calls,
+            require_approval,
         ) {
             tracing::error!(launch = ?launch_id, %error, "failed to anchor agentic launch chain");
             continue; // transient — retry next drain (still parked)
@@ -4867,6 +5392,7 @@ mod context_carry_tests {
             is_agentic_launch: false,
             context_items_ref: Some(CTX_REF),
             image_ref: Some(IMG_REF),
+            require_approval: false,
             seq: 0,
         };
         let durable = journal.append(anchor).unwrap();
@@ -4971,5 +5497,196 @@ mod context_carry_tests {
             resolve_react_image_ref(&turn_mote(img_other), &projection),
             None
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // D114 (HITL approval gate) + M11/D115 (cost-spend) — deterministic engine tests
+    // ---------------------------------------------------------------------------
+
+    /// Fold a turn-0 anchor (`require_approval` posture) into a fresh projection +
+    /// journal, returning the record the gate reads.
+    fn fold_gate_anchor(
+        journal: &InMemoryJournal,
+        projection: &mut Projection,
+        require_approval: bool,
+    ) -> ReactRoundRecord {
+        let anchor = JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([2u8; 32]),
+            instance_id: INSTANCE,
+            base_prompt_ref: ContentRef::from_bytes([1u8; 32]),
+            warrant_ref: ContentRef::from_bytes([2u8; 32]),
+            model_id: "served".into(),
+            branch: ReactBranch::Pending,
+            max_turns: 8,
+            max_tool_calls: 20,
+            step_salt: Some(SALT),
+            is_agentic_launch: false,
+            context_items_ref: None,
+            image_ref: None,
+            require_approval,
+            seq: 0,
+        };
+        let durable = journal.append(anchor).unwrap();
+        projection.fold(&durable).unwrap();
+        projection
+            .latest_react_round(&INSTANCE, &Some(SALT))
+            .cloned()
+            .expect("anchor folded")
+    }
+
+    #[test]
+    fn tool_needs_approval_gates_only_irreversible_world_mutating_classes() {
+        assert!(tool_needs_approval(Some(IdempotencyClass::Staged)));
+        assert!(tool_needs_approval(Some(IdempotencyClass::AtLeastOnce)));
+        // Self-closing (Token/Readback) + read-only/unknown auto-proceed.
+        assert!(!tool_needs_approval(Some(IdempotencyClass::Token)));
+        assert!(!tool_needs_approval(Some(IdempotencyClass::Readback)));
+        assert!(!tool_needs_approval(None));
+    }
+
+    #[test]
+    fn projected_spend_is_turns_and_toolcalls_priced() {
+        // Default rates: 1000 µ$/turn + 500 µ$/tool-call.
+        let pb = kx_pricing::PriceBook::default();
+        // turn 2 (turns_used=3) with no folded tool calls + 1 pending = 3*1000 + 1*500.
+        let rounds: Vec<ReactRoundRecord> = Vec::new();
+        let spend = react_projected_spend_micro_usd(&rounds, 2, 1);
+        assert_eq!(spend, pb.estimate_spend(3, 1));
+    }
+
+    #[test]
+    fn approval_gate_requests_then_grants_then_proceeds_recovery_stable() {
+        let journal = InMemoryJournal::new();
+        let mut projection = Projection::new();
+        let anchor = fold_gate_anchor(&journal, &mut projection, true);
+        let obs_id = MoteId::from_bytes([0xab; 32]);
+        let mut folded = projection.current_seq();
+
+        // First encounter: a Requested fact is appended + the action WAITS.
+        let d1 = approval_gate_decision(
+            &journal,
+            &mut projection,
+            &mut folded,
+            &anchor,
+            obs_id,
+            "fs-write",
+            "1",
+        );
+        assert_eq!(d1, ApprovalGate::Wait);
+        let request_id = approval_request_id(&anchor.instance_id, &obs_id);
+        assert!(matches!(
+            projection
+                .approval_latest_for(&request_id)
+                .map(|r| &r.state),
+            Some(ApprovalState::Requested { .. })
+        ));
+        // Re-evaluating while still pending stays WAIT and does NOT double-request.
+        let pending_before = projection.pending_approvals().len();
+        let d2 = approval_gate_decision(
+            &journal,
+            &mut projection,
+            &mut folded,
+            &anchor,
+            obs_id,
+            "fs-write",
+            "1",
+        );
+        assert_eq!(d2, ApprovalGate::Wait);
+        assert_eq!(projection.pending_approvals().len(), pending_before);
+
+        // Operator GRANTS → the gate PROCEEDS (the authorized action may fire).
+        assert!(decide_approval(
+            &journal,
+            &mut projection,
+            &mut folded,
+            &request_id,
+            true,
+            42,
+            "ok",
+        ));
+        assert_eq!(
+            approval_gate_decision(
+                &journal,
+                &mut projection,
+                &mut folded,
+                &anchor,
+                obs_id,
+                "fs-write",
+                "1",
+            ),
+            ApprovalGate::Proceed
+        );
+        // Recovery: a cold re-fold of the journal re-derives the SAME decision.
+        let mut recovered = Projection::new();
+        for e in journal.read_entries_by_seq(0..u64::MAX).unwrap() {
+            recovered.fold(&e).unwrap();
+        }
+        assert_eq!(
+            recovered
+                .approval_latest_for(&request_id)
+                .map(|r| r.state.as_u8()),
+            Some(
+                ApprovalState::Granted {
+                    approver_id: 0,
+                    reason: String::new(),
+                    decided_unix_ms: 0
+                }
+                .as_u8()
+            )
+        );
+        // A re-grant of a resolved request is an idempotent no-op.
+        assert!(!decide_approval(
+            &journal,
+            &mut projection,
+            &mut folded,
+            &request_id,
+            true,
+            42,
+            "again",
+        ));
+    }
+
+    #[test]
+    fn approval_gate_deny_dead_letters() {
+        let journal = InMemoryJournal::new();
+        let mut projection = Projection::new();
+        let anchor = fold_gate_anchor(&journal, &mut projection, true);
+        let obs_id = MoteId::from_bytes([0xcd; 32]);
+        let mut folded = projection.current_seq();
+        // Request, then DENY → the gate dead-letters (fail-closed).
+        approval_gate_decision(
+            &journal,
+            &mut projection,
+            &mut folded,
+            &anchor,
+            obs_id,
+            "send-email",
+            "1",
+        );
+        let request_id = approval_request_id(&anchor.instance_id, &obs_id);
+        assert!(decide_approval(
+            &journal,
+            &mut projection,
+            &mut folded,
+            &request_id,
+            false,
+            7,
+            "unsafe",
+        ));
+        assert_eq!(
+            approval_gate_decision(
+                &journal,
+                &mut projection,
+                &mut folded,
+                &anchor,
+                obs_id,
+                "send-email",
+                "1",
+            ),
+            ApprovalGate::DeadLetter
+        );
+        // The denied request leaves the pending inbox (latest state is not Requested).
+        assert!(projection.pending_approvals().is_empty());
     }
 }

@@ -25,6 +25,9 @@ kx-projection = { workspace = true }
 kx-mote = { workspace = true }
 kx-content = { workspace = true }
 kx-warrant = { workspace = true }
+# M11/D115 cost-spend: the integer micro-USD price-book + the pure spend fold the
+# coordinator uses to enforce the `cost_ceiling` warrant axis pre-stage (a leaf, no deps).
+kx-pricing = { workspace = true }
 # W1a (T-OBS1): the OFF-TRUTH-PATH audit sink. The serve coordinator emits the
 # operator lifecycle (admitted / committed / failed) to an optional sink so the
 # long-running `kx serve` has the durable operator audit trail the CLI already

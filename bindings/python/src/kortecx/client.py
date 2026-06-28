@@ -66,6 +66,8 @@ from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
+from .approvals import PendingApproval, PendingApprovalsPage
+from .cost import RunCost
 from .secrets import SecretName, SecretNamesPage
 from .server_info import ServerInfo
 from .teams import TeamMembers, TeamSummary
@@ -409,6 +411,45 @@ class _Triggers:
     def delete(self, name: str) -> bool:
         """Alias for :meth:`remove`."""
         return self.remove(name)
+
+
+class _Approvals:
+    """The ``kx.approvals`` namespace — the HITL pre-action approval gate's operator
+    control plane (D114): ``list_pending`` / ``grant`` / ``deny``. Grant/deny are
+    OPERATOR decisions over a server-derived ``request_id`` — they release/reject a
+    STAGED world-mutating action, never mint a client warrant (SN-8)."""
+
+    def __init__(self, client: "KxClient") -> None:
+        self._c = client
+
+    def list_pending(self, *, limit: int = 0) -> "PendingApprovalsPage":
+        """List the world-mutating actions withheld awaiting approval."""
+        return self._c.list_pending_approvals(limit=limit)
+
+    def grant(self, request_id: str, *, reason: str = "") -> bool:
+        """Grant a pending approval (releases the staged action to fire exactly once).
+        Returns ``True`` iff a decision was recorded (``False`` ⇒ unknown/resolved)."""
+        return self._c.grant_approval(request_id=request_id, reason=reason)
+
+    def deny(self, request_id: str, *, reason: str = "") -> bool:
+        """Deny a pending approval (the gated chain dead-letters fail-closed)."""
+        return self._c.deny_approval(request_id=request_id, reason=reason)
+
+
+class _Cost:
+    """The ``kx.cost`` namespace — the cost-spend guardrail readout (M11):
+    ``get_run_cost``. A DISPLAY-ONLY local spend estimate, not Cloud billing."""
+
+    def __init__(self, client: "KxClient") -> None:
+        self._c = client
+
+    def get_run_cost(self, instance_id: str) -> "RunCost":
+        """The run's local spend estimate (priced turn/tool counters)."""
+        return self._c.get_run_cost(instance_id=instance_id)
+
+    def get(self, instance_id: str) -> "RunCost":
+        """Alias for :meth:`get_run_cost`."""
+        return self.get_run_cost(instance_id)
 
 
 class KxClient:
@@ -1830,6 +1871,54 @@ class KxClient:
         back-compat. A trigger binds an inbound webhook / cron / gRPC event to a
         published recipe."""
         return _Triggers(self)
+
+    # --- D114 (HITL approval) + M11 (cost readout) -----------------------------
+
+    def list_pending_approvals(self, *, limit: int = 0) -> PendingApprovalsPage:
+        """List the world-mutating actions withheld awaiting operator approval
+        (``ListPendingApprovals``). Display-only — no authority."""
+        req = _g.ListPendingApprovalsRequest(limit=limit)
+        resp = self._call(lambda: self._stub.ListPendingApprovals(req, metadata=self._md))
+        return PendingApprovalsPage(
+            approvals=[PendingApproval.from_proto(a) for a in resp.approvals]
+        )
+
+    def grant_approval(self, *, request_id: str, reason: str = "") -> bool:
+        """Grant a pending approval (``GrantApproval``) — releases the staged action
+        to fire exactly once. Returns ``True`` iff a decision was recorded."""
+        req = _g.GrantApprovalRequest(
+            request_id=hexids.as_bytes(request_id, 16), reason=reason
+        )
+        resp = self._call(lambda: self._stub.GrantApproval(req, metadata=self._md))
+        return resp.granted
+
+    def deny_approval(self, *, request_id: str, reason: str = "") -> bool:
+        """Deny a pending approval (``DenyApproval``) — the gated chain dead-letters
+        fail-closed. Returns ``True`` iff a decision was recorded."""
+        req = _g.DenyApprovalRequest(
+            request_id=hexids.as_bytes(request_id, 16), reason=reason
+        )
+        resp = self._call(lambda: self._stub.DenyApproval(req, metadata=self._md))
+        return resp.denied
+
+    def get_run_cost(self, *, instance_id: str) -> RunCost:
+        """The run's DISPLAY-ONLY local spend estimate (``GetRunCost``) — priced
+        turn/tool counters at the operator's micro-USD rates (not Cloud billing)."""
+        req = _g.GetRunCostRequest(instance_id=hexids.as_bytes(instance_id, hexids.INSTANCE_LEN))
+        resp = self._call(lambda: self._stub.GetRunCost(req, metadata=self._md))
+        return RunCost.from_proto(resp)
+
+    @property
+    def approvals(self) -> _Approvals:
+        """The HITL approval namespace — ``kx.approvals.list_pending / grant / deny``
+        (D114). Grant/deny release/reject a staged world-mutating action (SN-8)."""
+        return _Approvals(self)
+
+    @property
+    def cost(self) -> _Cost:
+        """The cost-spend guardrail namespace — ``kx.cost.get_run_cost`` (M11). A
+        display-only local spend estimate, not Cloud billing."""
+        return _Cost(self)
 
     def submit_feedback(
         self,

@@ -63,6 +63,10 @@ mod mcp_gateway_admin;
 // DeleteSecret). Pure vocabulary trait; the host impl is keychain-backed. The
 // value is write-only (put arg) — never on a return type, the wire, or the journal.
 mod secret_admin;
+// D114/M11 (autonomy safety): the approval + cost-readout admin seam
+// (ListPendingApprovals/Grant/Deny/GetRunCost). Async; the host impl dispatches
+// coordinator commands (grant/deny append durable decision facts). No writer dep.
+mod approval_admin;
 // D113 (trigger seam): the trigger admin seam (Register/List/Deregister/Submit/Test).
 // Async (binds + submits a run via the Invoke propose-proxy); the host impl owns the
 // triggers.db store + the binder + submitter. No journal-writer dep added here.
@@ -116,6 +120,7 @@ pub use scaffold::{
 // GLOBAL twin's pieces (cursor seed + per-range builder) for the live global
 // tailer.
 pub use active_model::ActiveModelControl;
+pub use approval_admin::{ApprovalAdmin, ApprovalAdminError, PendingApprovalRow, RunCostRow};
 pub use events::{
     check_run_ownership, frames_for_range, global_frames_for_range, seed_global_cursor,
     GlobalCursor,

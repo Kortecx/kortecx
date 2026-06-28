@@ -116,6 +116,15 @@ pub const REACT_MAX_TURNS_KEY: &str = "max_turns";
 /// `max_tool_calls` slot). See [`REACT_MAX_TURNS_KEY`].
 pub const REACT_MAX_TOOL_CALLS_KEY: &str = "max_tool_calls";
 
+/// The [`ConfigKey`] *name* under which a ReAct SEED Mote may carry its per-run
+/// HITL approval posture (D114, the `kx/recipes/react` `require_approval` slot; a
+/// canonical-JSON boolean). Seed-only; the gateway resolves it from the recipe
+/// param OR the serve default and bakes it here, and the coordinator records it
+/// DURABLY on the turn-0 `ReactRound` anchor — so the approval gate survives
+/// recovery (the seed config is dropped after recovery, exactly the reason the
+/// budget caps are anchored). Absent ⇒ `false` (no gate; byte-identical to today).
+pub const REACT_REQUIRE_APPROVAL_KEY: &str = "require_approval";
+
 /// The single canonical [`ConfigKey`] *name* under which a STANDALONE authored
 /// `tool()` Mote (PR-6b-2) carries its tool-call argument object — ONE
 /// canonical-JSON object (e.g. `{"q":"…"}`; `{}` when the call has no args),

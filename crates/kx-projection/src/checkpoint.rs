@@ -53,8 +53,8 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::state::{
-    CommittedInfo, DeclaredInfo, MoteInfo, ReactRoundRecord, ReplanRoundRecord, RunRegistration,
-    RunResolvedVersions, State,
+    ApprovalRecord, CommittedInfo, DeclaredInfo, MoteInfo, ReactRoundRecord, ReplanRoundRecord,
+    RunRegistration, RunResolvedVersions, State,
 };
 
 /// The on-disk format version. Bump on **any** change to the envelope layout or
@@ -120,7 +120,19 @@ use crate::state::{
 /// BYTE-UNCHANGED and the canonical PRODUCT digest `7d22d4bd` is invariant. A stale v7
 /// sidecar is rejected; recovery full-folds from the v14 journal (a byte-absent v13
 /// `ReactRound` up-converts `image_ref` to `None`) and re-seals.
-pub const CURRENT_FORMAT_VERSION: u16 = 8;
+///
+/// `9` (D114, HITL pre-action approval): `ReactRoundRecordDto` gained `require_approval`
+/// (the run's approval posture, recorded on the turn-0 anchor) AND `CheckpointState`
+/// gained a top-level `approvals` Vec (the `Requested / Granted / Denied / Expired`
+/// handshake facts). Unlike the v6/v7/v8 per-record additions, the new top-level Vec
+/// shifts the bincoded bytes + `state_content_digest()` of EVERY state (an empty state
+/// now serialises a length-0 `approvals` Vec). This is a deliberate, VERSION-LOCAL
+/// checkpoint-format change (a stale v8 sidecar is rejected → full re-fold); it does
+/// NOT touch the canonical PRODUCT digest `7d22d4bd`, which folds only `Committed`
+/// Motes (`digest_projection`), never the checkpoint. A byte-absent v14 `ReactRound`
+/// up-converts `require_approval` to `false`; an approval-free run carries an empty
+/// `approvals` Vec.
+pub const CURRENT_FORMAT_VERSION: u16 = 9;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -485,6 +497,9 @@ struct CheckpointState {
     run_resolved_versions: Vec<RunResolvedVersionsDto>,
     replan_rounds: Vec<ReplanRoundRecordDto>,
     react_rounds: Vec<ReactRoundRecordDto>,
+    /// D114 — the HITL approval handshake facts. A top-level Vec (v8→v9): an
+    /// approval-free state serialises a length-0 Vec.
+    approvals: Vec<ApprovalRecordDto>,
 }
 
 // Mirrors `MoteInfo`'s flags 1:1 — same `struct_excessive_bools` allow.
@@ -581,6 +596,23 @@ struct ReactRoundRecordDto {
     /// format-version bump (v7→v8) covers this added field; absent in v7 sidecars
     /// (rejected → full-fold from the v14 journal).
     image_ref: Option<ContentRef>,
+    /// D114 — the run's approval posture (`true` ⇒ gate world-mutating tool calls). The
+    /// format-version bump (v8→v9) covers this added field; absent in v8 sidecars
+    /// (rejected → full-fold from the v15 journal, which up-converts a byte-absent v14
+    /// `ReactRound` to `require_approval == false`).
+    require_approval: bool,
+    seq: u64,
+}
+
+/// Serializable mirror of [`ApprovalRecord`] (D114). `kx_journal::ApprovalState` is
+/// serde-derived for exactly this DTO (the `ReactBranch` precedent); the journal's
+/// canonical on-disk encoding stays the hand-rolled tag.
+#[derive(Serialize, Deserialize)]
+struct ApprovalRecordDto {
+    instance_id: [u8; INSTANCE_ID_LEN],
+    request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+    awaiting_mote_id: MoteId,
+    state: kx_journal::ApprovalState,
     seq: u64,
 }
 
@@ -605,6 +637,10 @@ impl From<&State> for CheckpointState {
             react_index: _,
             react_turn_motes: _,
             react_tool_round_of_turn: _,
+            approvals,
+            // DERIVED over `approvals` (D114); NOT serialized — the load path
+            // re-derives it, so the format change is the `approvals` Vec only.
+            approval_index: _,
         } = state;
         Self {
             motes: motes
@@ -623,6 +659,7 @@ impl From<&State> for CheckpointState {
                 .map(ReplanRoundRecordDto::from)
                 .collect(),
             react_rounds: react_rounds.iter().map(ReactRoundRecordDto::from).collect(),
+            approvals: approvals.iter().map(ApprovalRecordDto::from).collect(),
         }
     }
 }
@@ -774,6 +811,7 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             is_agentic_launch,
             context_items_ref,
             image_ref,
+            require_approval,
             seq,
         } = r;
         Self {
@@ -790,6 +828,26 @@ impl From<&ReactRoundRecord> for ReactRoundRecordDto {
             is_agentic_launch: *is_agentic_launch,
             context_items_ref: *context_items_ref,
             image_ref: *image_ref,
+            require_approval: *require_approval,
+            seq: *seq,
+        }
+    }
+}
+
+impl From<&ApprovalRecord> for ApprovalRecordDto {
+    fn from(r: &ApprovalRecord) -> Self {
+        let ApprovalRecord {
+            instance_id,
+            request_id,
+            awaiting_mote_id,
+            state,
+            seq,
+        } = r;
+        Self {
+            instance_id: *instance_id,
+            request_id: *request_id,
+            awaiting_mote_id: *awaiting_mote_id,
+            state: state.clone(),
             seq: *seq,
         }
     }
@@ -810,6 +868,7 @@ impl TryFrom<CheckpointState> for State {
             run_resolved_versions,
             replan_rounds,
             react_rounds,
+            approvals,
         } = dto;
         let mut decoded_motes = BTreeMap::new();
         for (id, mi) in motes {
@@ -835,6 +894,8 @@ impl TryFrom<CheckpointState> for State {
             react_index: BTreeMap::new(),
             react_turn_motes: BTreeSet::new(),
             react_tool_round_of_turn: BTreeMap::new(),
+            approvals: approvals.into_iter().map(ApprovalRecord::from).collect(),
+            approval_index: BTreeMap::new(),
         };
         // PR-2d-2: RE-DERIVE the react index/turn-set from the deserialized
         // facts — the same shape the fold maintains incrementally, so both
@@ -842,6 +903,9 @@ impl TryFrom<CheckpointState> for State {
         // `State: PartialEq` holds between a folded and a checkpoint-loaded
         // projection.
         derive_react_index(&mut state);
+        // D114: RE-DERIVE the approval latest-per-request index (same lock-step
+        // contract as the react index).
+        derive_approval_index(&mut state);
         Ok(state)
     }
 }
@@ -871,6 +935,17 @@ fn derive_react_index(state: &mut State) {
                 .react_tool_round_of_turn
                 .insert(record.turn_mote_id, idx);
         }
+    }
+}
+
+/// Re-derive the D114 approval latest-per-request index over an already-populated
+/// `approvals` (the checkpoint-load path; the fold path maintains it incrementally
+/// via `State::index_last_approval` — keep the two in lock-step). Last-write-wins by
+/// append (= seq) order: a later decision for a `request_id` overwrites the earlier.
+fn derive_approval_index(state: &mut State) {
+    state.approval_index.clear();
+    for (idx, record) in state.approvals.iter().enumerate() {
+        state.approval_index.insert(record.request_id, idx);
     }
 }
 
@@ -1039,6 +1114,7 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             is_agentic_launch,
             context_items_ref,
             image_ref,
+            require_approval,
             seq,
         } = dto;
         ReactRoundRecord {
@@ -1055,6 +1131,26 @@ impl From<ReactRoundRecordDto> for ReactRoundRecord {
             is_agentic_launch,
             context_items_ref,
             image_ref,
+            require_approval,
+            seq,
+        }
+    }
+}
+
+impl From<ApprovalRecordDto> for ApprovalRecord {
+    fn from(dto: ApprovalRecordDto) -> Self {
+        let ApprovalRecordDto {
+            instance_id,
+            request_id,
+            awaiting_mote_id,
+            state,
+            seq,
+        } = dto;
+        ApprovalRecord {
+            instance_id,
+            request_id,
+            awaiting_mote_id,
+            state,
             seq,
         }
     }
@@ -1188,6 +1284,7 @@ mod tests {
             is_agentic_launch: false,
             context_items_ref: None,
             image_ref: None,
+            require_approval: false,
             seq: 4,
         });
         s.react_rounds.push(ReactRoundRecord {
@@ -1207,26 +1304,27 @@ mod tests {
             is_agentic_launch: true,
             context_items_ref: Some(ContentRef::from_bytes([0xf3; 32])),
             image_ref: Some(ContentRef::from_bytes([0xf4; 32])),
+            require_approval: true,
             seq: 4,
         });
     }
 
-    /// AGENTIC-VISION: pin the checkpoint format version so the v7→v8 bump (the additive
-    /// `ReactRoundRecordDto.image_ref` field) is an intentional, reviewable change — and
-    /// so a v7 sidecar written by the previous binary is REFUSED (decode error →
-    /// full-fold self-heal), never misread.
+    /// D114: pin the checkpoint format version so the v8→v9 bump (the additive
+    /// `ReactRoundRecordDto.require_approval` field + the top-level `approvals` Vec) is
+    /// an intentional, reviewable change — and so a v8 sidecar written by the previous
+    /// binary is REFUSED (decode error → full-fold self-heal), never misread.
     #[test]
-    fn format_version_is_v8_and_v7_blobs_are_refused() {
-        assert_eq!(CURRENT_FORMAT_VERSION, 8);
+    fn format_version_is_v9_and_v8_blobs_are_refused() {
+        assert_eq!(CURRENT_FORMAT_VERSION, 9);
         let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
-        // Stamp the envelope version back to v7 (bytes 0..2, LE u16).
-        bytes[0..2].copy_from_slice(&7u16.to_le_bytes());
+        // Stamp the envelope version back to v8 (bytes 0..2, LE u16).
+        bytes[0..2].copy_from_slice(&8u16.to_le_bytes());
         assert!(matches!(
             FoldCheckpoint::from_bytes(&bytes),
-            // The version is part of the digest preimage, so a re-stamped v7
+            // The version is part of the digest preimage, so a re-stamped v8
             // envelope fails as UnsupportedVersion or DigestMismatch — both are
             // fail-safe discards (full fold).
-            Err(CheckpointError::UnsupportedVersion { got: 7 } | CheckpointError::DigestMismatch)
+            Err(CheckpointError::UnsupportedVersion { got: 8 } | CheckpointError::DigestMismatch)
         ));
     }
 

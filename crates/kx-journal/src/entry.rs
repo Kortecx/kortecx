@@ -250,7 +250,7 @@ use smallvec::SmallVec;
 /// `None`; kinds 0..=8 are byte-identical). An OLD binary still refuses a v14 journal
 /// loudly. The product identity digest is invariant (the PURE-8-mote demo never writes a
 /// `ReactRound`; `image_ref` is off-DAG metadata, never an identity input).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 14;
+pub const JOURNAL_SCHEMA_VERSION: u16 = 15;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -365,6 +365,55 @@ pub const KIND_REPLAN_ROUND: u8 = 8;
 /// Does NOT participate in dedup-by-key (the dedup index stays `{1, 2, 4}`);
 /// off-DAG metadata, never an identity input, never folded into any digest.
 pub const KIND_REACT_ROUND: u8 = 9;
+
+/// `Approval` entry-kind byte (NEW in v15; D114, HITL pre-action approval gate).
+///
+/// The durable record of one step in a pre-action approval handshake over a
+/// world-mutating tool call: `Requested → Granted / Denied / Expired`. The
+/// coordinator appends `Requested` BEFORE materializing the world-mutating
+/// observation Mote (so the action waits staged-not-committed); an operator's
+/// `GrantApproval`/`DenyApproval` appends `Granted`/`Denied`; a deadline lapse
+/// appends `Expired` (fail-closed). All facts for one request share a
+/// deterministic, recovery-stable `request_id`
+/// (`blake3("kx-approval-req" ‖ instance_id ‖ awaiting_mote_id)[..16]`), so a
+/// cold recovery re-derives the SAME id and the fold collapses the request to its
+/// latest state. The header `mote_id` slot carries the awaiting observation Mote's
+/// id directly (a real Mote id, like `ReactRound`); the `idempotency_key` slot is
+/// the all-zero sentinel. Does NOT participate in dedup-by-key (the dedup index
+/// stays `{1, 2, 4}`); off-DAG metadata, never an identity input, never folded
+/// into any digest. The human decision is a journaled fact the run certificate
+/// (F15) can replay (D114.1).
+pub const KIND_APPROVAL: u8 = 10;
+
+/// Length in bytes of an approval `request_id` (a server-derived, deterministic
+/// 16-byte handle that keys the `Requested → Granted/Denied/Expired` handshake).
+pub const APPROVAL_REQUEST_ID_LEN: usize = 16;
+
+/// Hard cap on an [`ApprovalState`] string field (the `Requested` intent + the
+/// `Granted`/`Denied` reason) — a `DoS`/context-window bound (mirrors
+/// [`MAX_REJECTED_REASON_LEN`]). The coordinator truncates at a char boundary
+/// before building the entry; [`MAX_ENTRY_LEN`] still fences the total body.
+pub const MAX_APPROVAL_TEXT_LEN: usize = 512;
+
+/// Derive the deterministic, recovery-stable `request_id` for the approval
+/// handshake gating `awaiting_mote_id` in run `instance_id`. Domain-separated
+/// (`"kx-approval-req"`); the first 16 bytes of the blake3 digest. Pure +
+/// total, so the coordinator re-derives the SAME id on every pass and across a
+/// cold recovery (no randomness on the identity path — SN-8).
+#[must_use]
+pub fn approval_request_id(
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    awaiting_mote_id: &MoteId,
+) -> [u8; APPROVAL_REQUEST_ID_LEN] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"kx-approval-req");
+    hasher.update(instance_id);
+    hasher.update(awaiting_mote_id.as_bytes());
+    let full = hasher.finalize();
+    let mut out = [0u8; APPROVAL_REQUEST_ID_LEN];
+    out.copy_from_slice(&full.as_bytes()[..APPROVAL_REQUEST_ID_LEN]);
+    out
+}
 
 /// Length in bytes of a run's `instance_id` (the registered run nonce).
 pub const INSTANCE_ID_LEN: usize = 16;
@@ -576,6 +625,87 @@ impl IdempotencyClassTag {
             3 => Self::AtLeastOnce,
             _ => return None,
         })
+    }
+}
+
+/// One step of a HITL pre-action approval handshake, FROZEN into the durable
+/// [`JournalEntry::Approval`] fact at append time (v15, D114). Recovery re-reads
+/// the committed decision and never re-asks; the world-mutating action waits
+/// staged-not-committed until a `Granted` is folded (composing with
+/// `StageThenCommit`, D66 — the `Granted` fact is the durable authorization, the
+/// stage-fence is the durable exactly-once).
+///
+/// Serde derives serve the checkpoint DTO only (the `ReactBranch` precedent); the
+/// journal's canonical on-disk encoding is the hand-rolled [`Self::as_u8`] tag +
+/// the per-variant body, never serde.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApprovalState {
+    /// The coordinator requested operator approval for a world-mutating tool call
+    /// (appended BEFORE the observation Mote materializes). Carries display-only
+    /// context for the operator's decision; never an authority grant.
+    Requested {
+        /// The proposed tool's name (display).
+        tool_id: String,
+        /// The proposed tool's pinned version (display).
+        tool_version: String,
+        /// A short prose summary of the proposed action (display; bounded to
+        /// [`MAX_APPROVAL_TEXT_LEN`] chars at construction).
+        intent: String,
+        /// Approval deadline in unix-ms; `0` ⇒ no deadline. A lapsed deadline
+        /// drives an `Expired` fact (fail-closed). Audit wall-clock — off every
+        /// hash, never an identity input.
+        deadline_unix_ms: u64,
+        /// Request creation time in unix-ms (audit wall-clock — off every hash).
+        created_unix_ms: u64,
+    },
+    /// An operator GRANTED the request — the staged action may now fire (exactly
+    /// once, via the StageThenCommit fence). Server-attributed (SN-8): the model
+    /// never mints this; it is an operator decision over a server-derived
+    /// `request_id`.
+    Granted {
+        /// The granting operator's configured id (OSS single-node; multi-tenant
+        /// principal attribution is deferred to Cloud).
+        approver_id: u64,
+        /// Optional operator note (display; bounded to [`MAX_APPROVAL_TEXT_LEN`]).
+        reason: String,
+        /// Decision time in unix-ms (audit wall-clock — off every hash).
+        decided_unix_ms: u64,
+    },
+    /// An operator DENIED the request — the staged action never fires; the chain
+    /// dead-letters loudly (terminal). Server-attributed (SN-8).
+    Denied {
+        /// The denying operator's configured id.
+        approver_id: u64,
+        /// Optional operator note (display; bounded to [`MAX_APPROVAL_TEXT_LEN`]).
+        reason: String,
+        /// Decision time in unix-ms (audit wall-clock — off every hash).
+        decided_unix_ms: u64,
+    },
+    /// The approval deadline lapsed with no decision — fail-closed terminal (the
+    /// chain dead-letters; never an implicit grant).
+    Expired {
+        /// Expiry time in unix-ms (audit wall-clock — off every hash).
+        expired_unix_ms: u64,
+    },
+}
+
+impl ApprovalState {
+    /// The state's closed `u8` tag (the on-disk discriminant).
+    #[must_use]
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            Self::Requested { .. } => 0,
+            Self::Granted { .. } => 1,
+            Self::Denied { .. } => 2,
+            Self::Expired { .. } => 3,
+        }
+    }
+
+    /// `true` iff this is a terminal decision (`Denied`/`Expired`) — the gate
+    /// stops waiting and the chain dead-letters.
+    #[must_use]
+    pub fn is_terminal_refusal(&self) -> bool {
+        matches!(self, Self::Denied { .. } | Self::Expired { .. })
     }
 }
 
@@ -1207,6 +1337,39 @@ pub enum JournalEntry {
         /// ⇒ a text-only chain (every chain ≤v13 up-converts to `None`). Off-DAG metadata
         /// — never an identity input, never a run-identity-digest input.
         image_ref: Option<ContentRef>,
+        /// v15 (D114): does this chain require HITL operator approval before a
+        /// world-mutating tool call (idempotency class `Staged`/`AtLeastOnce`)
+        /// fires? Recorded on the turn-0 anchor (false on every other fact + every
+        /// chain ≤v14) so a recovered coordinator enforces the SAME posture the run
+        /// was admitted under — the per-run/recipe opt-in is GONE after recovery
+        /// (the seed Mote's config is dropped), exactly the reason
+        /// `base_prompt_ref`/`warrant_ref`/`image_ref` are anchored here too. The
+        /// run's spend ceiling rides the warrant (`warrant_ref`), so no separate
+        /// cost field is anchored. Off-DAG metadata — never an identity input,
+        /// never a run-identity-digest input.
+        require_approval: bool,
+        /// Journal-assigned sequence (0 until appended).
+        seq: u64,
+    },
+    /// v15 (D114): one step of a HITL pre-action approval handshake over a
+    /// world-mutating tool call (`Requested → Granted / Denied / Expired`). Off-DAG
+    /// metadata (kind 10): the header `mote_id` slot carries the awaiting
+    /// observation Mote's id; the `idempotency_key` slot is the all-zero sentinel;
+    /// it does NOT dedup-by-key and is NEVER folded into any digest. See
+    /// [`KIND_APPROVAL`] + [`ApprovalState`].
+    Approval {
+        /// The registered run identity (the run-salt). Keys every request/decision
+        /// query in the shared serve journal.
+        instance_id: [u8; INSTANCE_ID_LEN],
+        /// The deterministic, recovery-stable handshake handle
+        /// ([`approval_request_id`]); every fact for one request shares it.
+        request_id: [u8; APPROVAL_REQUEST_ID_LEN],
+        /// The world-mutating observation Mote awaiting approval (also the header
+        /// `mote_id` slot). Recovery looks up its `state_of` + the folded latest
+        /// [`ApprovalState`] to decide whether to materialize, wait, or dead-letter.
+        awaiting_mote_id: MoteId,
+        /// This step's frozen handshake state.
+        state: ApprovalState,
         /// Journal-assigned sequence (0 until appended).
         seq: u64,
     },
@@ -1262,7 +1425,8 @@ impl JournalEntry {
             | Self::RunVersionsResolved { seq, .. }
             | Self::DigestSealed { seq, .. }
             | Self::ReplanRound { seq, .. }
-            | Self::ReactRound { seq, .. } => *seq,
+            | Self::ReactRound { seq, .. }
+            | Self::Approval { seq, .. } => *seq,
         }
     }
 
@@ -1292,7 +1456,8 @@ impl JournalEntry {
             | Self::RunVersionsResolved { .. }
             | Self::DigestSealed { .. }
             | Self::ReplanRound { .. }
-            | Self::ReactRound { .. } => &ZERO_IDEMPOTENCY_KEY,
+            | Self::ReactRound { .. }
+            | Self::Approval { .. } => &ZERO_IDEMPOTENCY_KEY,
         }
     }
 
@@ -1318,6 +1483,9 @@ impl JournalEntry {
             // Same anchoring for a ReAct turn: the header slot IS the turn's
             // (run-salted) Mote id.
             Self::ReactRound { turn_mote_id, .. } => *turn_mote_id,
+            Self::Approval {
+                awaiting_mote_id, ..
+            } => *awaiting_mote_id,
         }
     }
 
@@ -1335,6 +1503,7 @@ impl JournalEntry {
             Self::DigestSealed { .. } => KIND_DIGEST_SEALED,
             Self::ReplanRound { .. } => KIND_REPLAN_ROUND,
             Self::ReactRound { .. } => KIND_REACT_ROUND,
+            Self::Approval { .. } => KIND_APPROVAL,
         }
     }
 }
@@ -1467,6 +1636,14 @@ pub enum DecodeError {
     /// (absent) or `1` (present) (v9, PR-9b-2a).
     #[error("unknown ReactRound step_salt presence tag: {0}")]
     UnknownReactStepSaltTag(u8),
+    /// A `ReactRound` entry's trailing `require_approval` tag byte is not `0`
+    /// (false) or `1` (true) (v15, D114).
+    #[error("unknown ReactRound require_approval tag: {0}")]
+    UnknownReactRequireApprovalTag(u8),
+    /// An `Approval` entry's state tag byte is not one of `0` (Requested),
+    /// `1` (Granted), `2` (Denied), `3` (Expired) (v15, D114).
+    #[error("unknown Approval state tag: {0}")]
+    UnknownApprovalStateTag(u8),
     /// Trailing bytes after a complete entry (§2 no-trailing-data rule).
     #[error("trailing bytes after entry: {0} extra")]
     TrailingBytes(usize),
@@ -1627,6 +1804,14 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
         JournalEntry::ReactRound {
             turn_mote_id, seq, ..
         } => (*turn_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
+        // v15 (D114): the header `mote_id` slot carries the awaiting observation
+        // Mote's id directly; all-zero idempotency key (kind 10 does not dedup),
+        // 0 nd (an approval fact is not a Mote).
+        JournalEntry::Approval {
+            awaiting_mote_id,
+            seq,
+            ..
+        } => (*awaiting_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
     };
     out.extend_from_slice(mote_id_for_header.as_bytes());
     out.extend_from_slice(&idempotency_key);
@@ -1802,6 +1987,7 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             is_agentic_launch,
             context_items_ref,
             image_ref,
+            require_approval,
             ..
         } => {
             // v9 (PR-9b-2a): body = turn(u32 LE) ‖ instance_id(16) ‖
@@ -1885,8 +2071,66 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
                     out.extend_from_slice(r.as_bytes());
                 }
             }
+            // v15 (D114): the trailing require_approval byte — a single additive
+            // trailing byte stacked directly after the v14 image_ref block (the
+            // same shape as the v8→v9 step_salt / v11 is_agentic_launch deltas). A
+            // v14 body has no such byte and up-converts on decode to `false`.
+            // Recorded on the turn-0 anchor (false on every other fact).
+            out.push(u8::from(*require_approval));
             // Pathological-id guard (mirrors ReplanRound) — refuse rather than
             // over-cap a single oversize entry.
+            if out.len() > MAX_ENTRY_LEN {
+                return Err(EncodeError::ReactRoundTooLarge { got: out.len() });
+            }
+        }
+        JournalEntry::Approval {
+            instance_id,
+            request_id,
+            state,
+            ..
+        } => {
+            // v15 (D114): body = instance_id(16) ‖ request_id(16) ‖ state_tag(u8) ‖
+            // [Requested: u16-pfx tool_id ‖ u16-pfx tool_version ‖ u16-pfx intent ‖
+            //  deadline(u64 LE) ‖ created(u64 LE)]
+            // [Granted/Denied: approver_id(u64 LE) ‖ u16-pfx reason ‖ decided(u64 LE)]
+            // [Expired: expired(u64 LE)]. The header `mote_id` slot already carries
+            // the awaiting Mote's id (read directly, like ReactRound).
+            out.extend_from_slice(instance_id);
+            out.extend_from_slice(request_id);
+            out.push(state.as_u8());
+            match state {
+                ApprovalState::Requested {
+                    tool_id,
+                    tool_version,
+                    intent,
+                    deadline_unix_ms,
+                    created_unix_ms,
+                } => {
+                    push_len_prefixed_str(&mut out, tool_id)?;
+                    push_len_prefixed_str(&mut out, tool_version)?;
+                    push_len_prefixed_str(&mut out, intent)?;
+                    out.extend_from_slice(&deadline_unix_ms.to_le_bytes());
+                    out.extend_from_slice(&created_unix_ms.to_le_bytes());
+                }
+                ApprovalState::Granted {
+                    approver_id,
+                    reason,
+                    decided_unix_ms,
+                }
+                | ApprovalState::Denied {
+                    approver_id,
+                    reason,
+                    decided_unix_ms,
+                } => {
+                    out.extend_from_slice(&approver_id.to_le_bytes());
+                    push_len_prefixed_str(&mut out, reason)?;
+                    out.extend_from_slice(&decided_unix_ms.to_le_bytes());
+                }
+                ApprovalState::Expired { expired_unix_ms } => {
+                    out.extend_from_slice(&expired_unix_ms.to_le_bytes());
+                }
+            }
+            // Pathological guard (mirrors ReplanRound) — refuse rather than over-cap.
             if out.len() > MAX_ENTRY_LEN {
                 return Err(EncodeError::ReactRoundTooLarge { got: out.len() });
             }
@@ -2380,6 +2624,18 @@ pub fn decode_entry_with_def_hash(
             } else {
                 None
             };
+            // v15 (D114): the trailing require_approval byte. A v14 (or older) body
+            // has no such byte (cursor is at the end after image_ref) ⇒ up-convert
+            // to `false`. The trailing-bytes check below still fences a malformed tail.
+            let require_approval = if cursor < body.len() {
+                match read_u8(body, &mut cursor, kind)? {
+                    0 => false,
+                    1 => true,
+                    other => return Err(DecodeError::UnknownReactRequireApprovalTag(other)),
+                }
+            } else {
+                false
+            };
             if cursor != body.len() {
                 return Err(DecodeError::TrailingBytes(body.len() - cursor));
             }
@@ -2397,6 +2653,78 @@ pub fn decode_entry_with_def_hash(
                 is_agentic_launch,
                 context_items_ref,
                 image_ref,
+                require_approval,
+                seq,
+            })
+        }
+        KIND_APPROVAL => {
+            // v15 (D114): variable-length body. Cursor-based parse with strict
+            // bounds at every read; reject trailing bytes at the end. The header
+            // `mote_id` slot IS the awaiting observation Mote's id (read directly,
+            // like ReactRound — no synthetic root to re-derive).
+            const APPROVAL_PREFIX_LEN: usize = INSTANCE_ID_LEN + APPROVAL_REQUEST_ID_LEN + 1;
+            if body.len() < APPROVAL_PREFIX_LEN {
+                return Err(DecodeError::BodyTooShort {
+                    kind,
+                    got: body.len(),
+                    expected: APPROVAL_PREFIX_LEN,
+                });
+            }
+            let awaiting_mote_id = mote_id;
+            let mut cursor = 0usize;
+            let mut instance_id = [0u8; INSTANCE_ID_LEN];
+            instance_id.copy_from_slice(&body[cursor..cursor + INSTANCE_ID_LEN]);
+            cursor += INSTANCE_ID_LEN;
+            let mut request_id = [0u8; APPROVAL_REQUEST_ID_LEN];
+            request_id.copy_from_slice(&body[cursor..cursor + APPROVAL_REQUEST_ID_LEN]);
+            cursor += APPROVAL_REQUEST_ID_LEN;
+            let state = match read_u8(body, &mut cursor, kind)? {
+                0 => {
+                    let tool_id = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    let tool_version = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    let intent = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    let deadline_unix_ms = read_u64(body, &mut cursor, kind)?;
+                    let created_unix_ms = read_u64(body, &mut cursor, kind)?;
+                    ApprovalState::Requested {
+                        tool_id,
+                        tool_version,
+                        intent,
+                        deadline_unix_ms,
+                        created_unix_ms,
+                    }
+                }
+                tag @ (1 | 2) => {
+                    let approver_id = read_u64(body, &mut cursor, kind)?;
+                    let reason = read_len_prefixed_str(body, &mut cursor, kind)?;
+                    let decided_unix_ms = read_u64(body, &mut cursor, kind)?;
+                    if tag == 1 {
+                        ApprovalState::Granted {
+                            approver_id,
+                            reason,
+                            decided_unix_ms,
+                        }
+                    } else {
+                        ApprovalState::Denied {
+                            approver_id,
+                            reason,
+                            decided_unix_ms,
+                        }
+                    }
+                }
+                3 => {
+                    let expired_unix_ms = read_u64(body, &mut cursor, kind)?;
+                    ApprovalState::Expired { expired_unix_ms }
+                }
+                other => return Err(DecodeError::UnknownApprovalStateTag(other)),
+            };
+            if cursor != body.len() {
+                return Err(DecodeError::TrailingBytes(body.len() - cursor));
+            }
+            Ok(JournalEntry::Approval {
+                instance_id,
+                request_id,
+                awaiting_mote_id,
+                state,
                 seq,
             })
         }
@@ -2478,6 +2806,20 @@ fn read_u32(body: &[u8], cursor: &mut usize, kind: u8) -> Result<u32, DecodeErro
     }
     let v = u32::from_le_bytes(body[*cursor..*cursor + 4].try_into().expect("4 bytes"));
     *cursor += 4;
+    Ok(v)
+}
+
+/// Read a little-endian `u64` at `*cursor`, advancing it (v15 `Approval` bodies).
+fn read_u64(body: &[u8], cursor: &mut usize, kind: u8) -> Result<u64, DecodeError> {
+    if body.len() < *cursor + 8 {
+        return Err(DecodeError::BodyTooShort {
+            kind,
+            got: body.len(),
+            expected: *cursor + 8,
+        });
+    }
+    let v = u64::from_le_bytes(body[*cursor..*cursor + 8].try_into().expect("8 bytes"));
+    *cursor += 8;
     Ok(v)
 }
 
@@ -2913,23 +3255,27 @@ mod tests {
                     // v14 (AGENTIC-VISION): stacked with every image_ref (absent + present).
                     for context_items_ref in [None, Some(ContentRef::from_bytes([0x77; 32]))] {
                         for image_ref in [None, Some(ContentRef::from_bytes([0x99; 32]))] {
-                            let rt = JournalEntry::ReactRound {
-                                turn: 2,
-                                turn_mote_id: MoteId::from_bytes([0x8e; 32]),
-                                instance_id: [0x4d; INSTANCE_ID_LEN],
-                                base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
-                                warrant_ref: ContentRef::from_bytes([0x34; 32]),
-                                model_id: "kx-serve:qwen3-4b".to_string(),
-                                branch: branch.clone(),
-                                max_turns: 8,
-                                max_tool_calls: 8,
-                                step_salt,
-                                is_agentic_launch,
-                                context_items_ref,
-                                image_ref,
-                                seq,
-                            };
-                            assert_eq!(decode_entry(&encode_entry(&rt).unwrap()).unwrap(), rt);
+                            // v15 (D114): every require_approval (false + true) round-trips.
+                            for require_approval in [false, true] {
+                                let rt = JournalEntry::ReactRound {
+                                    turn: 2,
+                                    turn_mote_id: MoteId::from_bytes([0x8e; 32]),
+                                    instance_id: [0x4d; INSTANCE_ID_LEN],
+                                    base_prompt_ref: ContentRef::from_bytes([0x12; 32]),
+                                    warrant_ref: ContentRef::from_bytes([0x34; 32]),
+                                    model_id: "kx-serve:qwen3-4b".to_string(),
+                                    branch: branch.clone(),
+                                    max_turns: 8,
+                                    max_tool_calls: 8,
+                                    step_salt,
+                                    is_agentic_launch,
+                                    context_items_ref,
+                                    image_ref,
+                                    require_approval,
+                                    seq,
+                                };
+                                assert_eq!(decode_entry(&encode_entry(&rt).unwrap()).unwrap(), rt);
+                            }
                         }
                     }
                 }
@@ -2946,7 +3292,7 @@ mod tests {
     /// image up-convert); dropping the final THREE yields a v10 body. Pin every
     /// relationship so a drift in the encode tail or the migration up-converters fails CI.
     #[test]
-    fn react_round_older_bodies_are_v14_minus_trailing_bytes() {
+    fn react_round_older_bodies_are_v15_minus_trailing_bytes() {
         let run_level = JournalEntry::ReactRound {
             turn: 3,
             turn_mote_id: MoteId::from_bytes([0x8e; 32]),
@@ -2961,33 +3307,39 @@ mod tests {
             is_agentic_launch: false,
             context_items_ref: None,
             image_ref: None,
+            require_approval: false,
             seq: 600,
         };
-        let v14 = encode_entry(&run_level).unwrap();
-        // Final body byte = image_ref present tag (`0`); dropping it yields a valid v13
-        // body whose byte-absent image up-converts to None.
-        assert_eq!(*v14.last().unwrap(), 0u8);
-        let v13_shape = v14[..v14.len() - 1].to_vec();
+        let v15 = encode_entry(&run_level).unwrap();
+        // Final body byte = require_approval tag (`0`); dropping it yields a valid v14
+        // body whose byte-absent require_approval up-converts to false.
+        assert_eq!(*v15.last().unwrap(), 0u8);
+        let v14_shape = v15[..v15.len() - 1].to_vec();
+        assert_eq!(decode_entry(&v14_shape).unwrap(), run_level);
+        // Dropping the final TWO bytes (require_approval + image) yields a v13 body whose
+        // byte-absent image + require_approval up-convert to None/false.
+        let v13_shape = v15[..v15.len() - 2].to_vec();
         assert_eq!(decode_entry(&v13_shape).unwrap(), run_level);
-        // Dropping the final TWO bytes (image + context) yields a v11 body whose
-        // byte-absent context + image up-convert to None.
-        let v11_shape = v14[..v14.len() - 2].to_vec();
+        // Dropping the final THREE bytes (require_approval + image + context) yields a v11
+        // body whose byte-absent context + image + require_approval up-convert.
+        let v11_shape = v15[..v15.len() - 3].to_vec();
         assert_eq!(decode_entry(&v11_shape).unwrap(), run_level);
-        // Dropping the final THREE bytes (image + context + is_agentic) yields a v10 body
-        // whose byte-absent is_agentic up-converts to step_salt.is_some() == false.
-        let v10_shape = v14[..v14.len() - 3].to_vec();
+        // Dropping the final FOUR bytes (require_approval + image + context + is_agentic)
+        // yields a v10 body whose byte-absent is_agentic up-converts to
+        // step_salt.is_some() == false.
+        let v10_shape = v15[..v15.len() - 4].to_vec();
         assert_eq!(decode_entry(&v10_shape).unwrap(), run_level);
-        // Re-appending the three safe-default `0` bytes recovers the v14 encoding exactly.
+        // Re-appending the four safe-default `0` bytes recovers the v15 encoding exactly.
         let mut reappended = v10_shape;
         reappended.push(0u8); // is_agentic_launch
         reappended.push(0u8); // context_items_ref present
         reappended.push(0u8); // image_ref present
-        assert_eq!(reappended, v14);
-        // A present image_ref appends `present(1) ‖ ref(32)`; the entry round-trips, and
-        // its v13-shape (those 33 bytes dropped) up-converts to None — an old binary
-        // simply can't see the image (the deliberate one-way forward break). A present
-        // context_items_ref stacks the same way (covered exhaustively by the round-trip
-        // loop above).
+        reappended.push(0u8); // require_approval
+        assert_eq!(reappended, v15);
+        // A present image_ref appends `present(1) ‖ ref(32)` BEFORE the require_approval
+        // byte; the entry round-trips, and dropping the trailing require_approval + the
+        // 33 image bytes recovers a v13 body that up-converts to None/false — an old
+        // binary simply can't see the image (the deliberate one-way forward break).
         let with_img = JournalEntry::ReactRound {
             turn: 3,
             turn_mote_id: MoteId::from_bytes([0x8e; 32]),
@@ -3002,15 +3354,20 @@ mod tests {
             is_agentic_launch: false,
             context_items_ref: None,
             image_ref: Some(ContentRef::from_bytes([0x99; 32])),
+            require_approval: false,
             seq: 600,
         };
-        let v14_img = encode_entry(&with_img).unwrap();
-        assert_eq!(v14_img.len(), v14.len() + 32); // present byte same; +32 for the ref
-        assert_eq!(decode_entry(&v14_img).unwrap(), with_img);
+        let v15_img = encode_entry(&with_img).unwrap();
+        assert_eq!(v15_img.len(), v15.len() + 32); // present byte same; +32 for the ref
+        assert_eq!(decode_entry(&v15_img).unwrap(), with_img);
+        // Drop require_approval(1) + image present(1) + ref(32) = 34 bytes → a v13 body
+        // whose byte-absent image + require_approval up-convert to None/false == run_level.
         assert_eq!(
-            decode_entry(&v14_img[..v14_img.len() - 33]).unwrap(),
+            decode_entry(&v15_img[..v15_img.len() - 34]).unwrap(),
             run_level
         );
+        // (require_approval=true round-trips — covered exhaustively by the round-trip
+        // loop above, which iterates [false, true].)
     }
 
     #[test]
@@ -3032,12 +3389,91 @@ mod tests {
             is_agentic_launch: false,
             context_items_ref: None,
             image_ref: None,
+            require_approval: false,
             seq: 11,
         };
         assert_eq!(e.kind(), KIND_REACT_ROUND);
         assert_eq!(e.idempotency_key(), &[0u8; 32]);
         assert_eq!(e.mote_id(), turn_id);
         assert_eq!(e.seq(), 11);
+    }
+
+    /// v15 (D114): every `Approval` handshake state round-trips through the canonical
+    /// codec, AND the off-DAG invariants hold (kind 10, zero idempotency key, the
+    /// header `mote_id` slot carries the awaiting Mote id, NOT a dedup input).
+    #[test]
+    fn approval_states_round_trip_and_are_off_dag() {
+        let awaiting = MoteId::from_bytes([0xc7; 32]);
+        let instance_id = [0x4d; INSTANCE_ID_LEN];
+        let request_id = approval_request_id(&instance_id, &awaiting);
+        // The request_id is deterministic (re-derives identically — recovery-stable).
+        assert_eq!(request_id, approval_request_id(&instance_id, &awaiting));
+        for state in [
+            ApprovalState::Requested {
+                tool_id: "fs-write".to_string(),
+                tool_version: "1".to_string(),
+                intent: "overwrite /etc/app.conf".to_string(),
+                deadline_unix_ms: 1_700_000_000_000,
+                created_unix_ms: 1_699_999_999_000,
+            },
+            ApprovalState::Granted {
+                approver_id: 42,
+                reason: "reviewed".to_string(),
+                decided_unix_ms: 1_700_000_001_000,
+            },
+            ApprovalState::Denied {
+                approver_id: 7,
+                reason: "unsafe path".to_string(),
+                decided_unix_ms: 1_700_000_002_000,
+            },
+            ApprovalState::Expired {
+                expired_unix_ms: 1_700_000_003_000,
+            },
+        ] {
+            let e = JournalEntry::Approval {
+                instance_id,
+                request_id,
+                awaiting_mote_id: awaiting,
+                state: state.clone(),
+                seq: 9,
+            };
+            // off-DAG invariants
+            assert_eq!(e.kind(), KIND_APPROVAL);
+            assert_eq!(e.idempotency_key(), &[0u8; 32]);
+            assert_eq!(e.mote_id(), awaiting);
+            // codec round-trip (the header mote_id slot rebuilds awaiting_mote_id)
+            assert_eq!(decode_entry(&encode_entry(&e).unwrap()).unwrap(), e);
+        }
+    }
+
+    /// v15 (D114): an `Approval` body with an unknown state tag is fail-closed; a
+    /// trailing garbage byte is fail-closed (§2 no-trailing-data).
+    #[test]
+    fn approval_rejects_unknown_state_tag_and_trailing_bytes() {
+        let awaiting = MoteId::from_bytes([0xc7; 32]);
+        let instance_id = [0x4d; INSTANCE_ID_LEN];
+        let e = JournalEntry::Approval {
+            instance_id,
+            request_id: approval_request_id(&instance_id, &awaiting),
+            awaiting_mote_id: awaiting,
+            state: ApprovalState::Expired { expired_unix_ms: 1 },
+            seq: 3,
+        };
+        let bytes = encode_entry(&e).unwrap();
+        // The state tag sits right after instance_id(16) + request_id(16).
+        let tag_at = HEADER_LEN + INSTANCE_ID_LEN + APPROVAL_REQUEST_ID_LEN;
+        let mut corrupt = bytes.clone();
+        corrupt[tag_at] = 0xee;
+        assert!(matches!(
+            decode_entry(&corrupt),
+            Err(DecodeError::UnknownApprovalStateTag(0xee))
+        ));
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(matches!(
+            decode_entry(&trailing),
+            Err(DecodeError::TrailingBytes(1))
+        ));
     }
 
     #[test]
@@ -3056,6 +3492,7 @@ mod tests {
             is_agentic_launch: false,
             context_items_ref: None,
             image_ref: None,
+            require_approval: false,
             seq: 12,
         };
         let bytes = encode_entry(&e).unwrap();
@@ -3068,36 +3505,45 @@ mod tests {
             decode_entry(&corrupt),
             Err(DecodeError::UnknownReactBranch(0xee))
         ));
-        // v14 (AGENTIC-VISION): the FINAL body byte is now the image_ref present tag
-        // (0|1 for a None-image entry); an unknown tag is fail-closed.
+        // v15 (D114): the FINAL body byte is now the require_approval tag (0|1); an
+        // unknown tag is fail-closed.
+        let mut bad_require_tag = bytes.clone();
+        *bad_require_tag.last_mut().unwrap() = 0xee;
+        assert!(matches!(
+            decode_entry(&bad_require_tag),
+            Err(DecodeError::UnknownReactRequireApprovalTag(0xee))
+        ));
+        // v14 (AGENTIC-VISION): the image_ref present tag now sits SECOND-to-last
+        // (before the v15 require_approval byte) for a None-image entry; fail-closed.
         let mut bad_image_tag = bytes.clone();
-        *bad_image_tag.last_mut().unwrap() = 0xee;
+        let image_pos = bad_image_tag.len() - 2;
+        bad_image_tag[image_pos] = 0xee;
         assert!(matches!(
             decode_entry(&bad_image_tag),
             Err(DecodeError::UnknownReactImageRefTag(0xee))
         ));
-        // v12 (PR-9d): the context_items_ref present tag now sits SECOND-to-last (before
-        // the v14 image byte) for a None entry; an unknown tag is fail-closed.
+        // v12 (PR-9d): the context_items_ref present tag now sits THIRD-to-last (before
+        // the v14 image + v15 require_approval bytes) for a None entry; fail-closed.
         let mut bad_context_tag = bytes.clone();
-        let context_pos = bad_context_tag.len() - 2;
+        let context_pos = bad_context_tag.len() - 3;
         bad_context_tag[context_pos] = 0xee;
         assert!(matches!(
             decode_entry(&bad_context_tag),
             Err(DecodeError::UnknownReactContextItemsTag(0xee))
         ));
-        // v11 (PR-R1): the is_agentic_launch tag now sits THIRD-to-last (before the
-        // v12 context + v14 image bytes) for a None entry; an unknown tag is fail-closed.
+        // v11 (PR-R1): the is_agentic_launch tag now sits FOURTH-to-last (before the
+        // v12 context + v14 image + v15 require_approval bytes); fail-closed.
         let mut bad_launch_tag = bytes.clone();
-        let launch_pos = bad_launch_tag.len() - 3;
+        let launch_pos = bad_launch_tag.len() - 4;
         bad_launch_tag[launch_pos] = 0xee;
         assert!(matches!(
             decode_entry(&bad_launch_tag),
             Err(DecodeError::UnknownReactAgenticLaunchTag(0xee))
         ));
-        // v9 (PR-9b-2a): the step_salt presence byte now sits FOURTH-to-last (before
-        // the is_agentic_launch + context + image bytes) for a None entry; fail-closed.
+        // v9 (PR-9b-2a): the step_salt presence byte now sits FIFTH-to-last (before the
+        // is_agentic_launch + context + image + require_approval bytes); fail-closed.
         let mut bad_salt_tag = bytes.clone();
-        let salt_pos = bad_salt_tag.len() - 4;
+        let salt_pos = bad_salt_tag.len() - 5;
         bad_salt_tag[salt_pos] = 0xee;
         assert!(matches!(
             decode_entry(&bad_salt_tag),
@@ -3135,6 +3581,7 @@ mod tests {
             is_agentic_launch: false,
             context_items_ref: None,
             image_ref: None,
+            require_approval: false,
             seq: 13,
         };
         let bytes = encode_entry(&e).unwrap();

@@ -281,6 +281,7 @@ mod tests {
             is_agentic_launch: false,
             context_items_ref: None,
             image_ref: None,
+            require_approval: false,
             seq: 0,
         }
     }

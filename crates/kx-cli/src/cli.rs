@@ -160,6 +160,10 @@ pub enum Cli {
     Secrets(verbs::secrets::SecretsArgs),
     /// Event-ingress triggers (D113 — add/list/test/fire/rm; webhook/cron/grpc → recipe).
     Triggers(verbs::triggers::TriggersArgs),
+    /// HITL pre-action approvals (D114 — list/grant/deny world-mutating actions).
+    Approvals(verbs::approvals::ApprovalsArgs),
+    /// A run's local spend estimate (M11 — `kx cost <INSTANCE_ID>`).
+    Cost(verbs::cost::CostArgs),
 }
 
 impl Cli {
@@ -221,6 +225,8 @@ impl Cli {
             Some("info") => Ok(Cli::Info(verbs::info::parse(args)?)),
             Some("secrets") => Ok(Cli::Secrets(verbs::secrets::parse(args)?)),
             Some("triggers") => Ok(Cli::Triggers(verbs::triggers::parse(args)?)),
+            Some("approvals") => Ok(Cli::Approvals(verbs::approvals::parse(args)?)),
+            Some("cost") => Ok(Cli::Cost(verbs::cost::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
             ))),
@@ -300,6 +306,8 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Health(a) => verbs::health::execute(a).await,
         Cli::Secrets(a) => verbs::secrets::execute(a).await,
         Cli::Triggers(a) => verbs::triggers::execute(a).await,
+        Cli::Approvals(a) => verbs::approvals::execute(a).await,
+        Cli::Cost(a) => verbs::cost::execute(a).await,
     }
 }
 

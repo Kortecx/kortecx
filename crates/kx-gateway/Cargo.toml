@@ -21,6 +21,9 @@ path = "src/main.rs"
 # tonic server/client stubs. Always required (the gateway is always hosted).
 kx-gateway-core = { workspace = true }
 kx-proto        = { workspace = true }
+# M11 cost-spend: the integer micro-USD price-book the HostApprovalAdmin prices the
+# durable turn/tool counts with (a leaf, no deps; FFI-free).
+kx-pricing      = { workspace = true }
 # Read-only seams the gateway folds over (a SECOND journal handle + the content store).
 kx-journal      = { workspace = true }
 kx-content      = { workspace = true }

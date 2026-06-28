@@ -318,6 +318,48 @@ impl CoordinatorService {
         self.core.run_resolved_versions().await
     }
 
+    /// D114: the operator's pending HITL-approvals inbox — every world-mutating action
+    /// withheld awaiting a decision (display-only; no authority). Off the truth path.
+    pub async fn list_pending_approvals(
+        &self,
+    ) -> Result<Vec<crate::state::PendingApprovalView>, CoordinatorError> {
+        self.core.list_pending_approvals().await
+    }
+
+    /// D114: GRANT a pending approval (an operator decision over a server-derived
+    /// `request_id`, SN-8 — releases a STAGED world-mutating action to fire exactly
+    /// once). `Ok(false)` for an unknown/already-resolved request (idempotent).
+    pub async fn grant_approval(
+        &self,
+        request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+        approver_id: u64,
+        reason: String,
+    ) -> Result<bool, CoordinatorError> {
+        self.core
+            .grant_approval(request_id, approver_id, reason)
+            .await
+    }
+
+    /// D114: DENY a pending approval (the gated chain dead-letters fail-closed). See
+    /// [`Self::grant_approval`].
+    pub async fn deny_approval(
+        &self,
+        request_id: [u8; kx_journal::APPROVAL_REQUEST_ID_LEN],
+        denier_id: u64,
+        reason: String,
+    ) -> Result<bool, CoordinatorError> {
+        self.core.deny_approval(request_id, denier_id, reason).await
+    }
+
+    /// M11: the run's committed `(turns, tool_calls)` counts (the host prices them
+    /// into a display-only spend estimate).
+    pub async fn run_cost_counts(
+        &self,
+        instance_id: [u8; 16],
+    ) -> Result<(u64, u64), CoordinatorError> {
+        self.core.run_cost_counts(instance_id).await
+    }
+
     /// Repudiate `target` and cascade the poison-invalidation to its committed downstream
     /// consumers (D22 / P0.7): one `Repudiated` entry per Mote (the target with `reason`,
     /// the cascade with `UpstreamCascade`), written atomically through the sole writer, so

@@ -304,6 +304,26 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.TestTriggerRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.TestTriggerResponse.FromString,
                 _registered_method=True)
+        self.ListPendingApprovals = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListPendingApprovals',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListPendingApprovalsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListPendingApprovalsResponse.FromString,
+                _registered_method=True)
+        self.GrantApproval = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GrantApproval',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GrantApprovalRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GrantApprovalResponse.FromString,
+                _registered_method=True)
+        self.DenyApproval = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DenyApproval',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DenyApprovalRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DenyApprovalResponse.FromString,
+                _registered_method=True)
+        self.GetRunCost = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetRunCost',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetRunCostRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetRunCostResponse.FromString,
+                _registered_method=True)
         self.PutContextBundle = channel.unary_unary(
                 '/kortecx.v1.KxGateway/PutContextBundle',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.PutContextBundleRequest.SerializeToString,
@@ -825,6 +845,32 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListPendingApprovals(self, request, context):
+        """D114 — HITL pre-action approval gate (operator control plane).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GrantApproval(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DenyApproval(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetRunCost(self, request, context):
+        """M11 — cost-spend guardrail readout (display-only local estimate).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def PutContextBundle(self, request, context):
         """PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
         """
@@ -1288,6 +1334,26 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.TestTrigger,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.TestTriggerRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.TestTriggerResponse.SerializeToString,
+            ),
+            'ListPendingApprovals': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListPendingApprovals,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListPendingApprovalsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListPendingApprovalsResponse.SerializeToString,
+            ),
+            'GrantApproval': grpc.unary_unary_rpc_method_handler(
+                    servicer.GrantApproval,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GrantApprovalRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GrantApprovalResponse.SerializeToString,
+            ),
+            'DenyApproval': grpc.unary_unary_rpc_method_handler(
+                    servicer.DenyApproval,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DenyApprovalRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DenyApprovalResponse.SerializeToString,
+            ),
+            'GetRunCost': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetRunCost,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetRunCostRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetRunCostResponse.SerializeToString,
             ),
             'PutContextBundle': grpc.unary_unary_rpc_method_handler(
                     servicer.PutContextBundle,
@@ -2868,6 +2934,114 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/TestTrigger',
             kortecx_dot_v1_dot_gateway__pb2.TestTriggerRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.TestTriggerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListPendingApprovals(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListPendingApprovals',
+            kortecx_dot_v1_dot_gateway__pb2.ListPendingApprovalsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListPendingApprovalsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GrantApproval(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GrantApproval',
+            kortecx_dot_v1_dot_gateway__pb2.GrantApprovalRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GrantApprovalResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DenyApproval(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DenyApproval',
+            kortecx_dot_v1_dot_gateway__pb2.DenyApprovalRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DenyApprovalResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetRunCost(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetRunCost',
+            kortecx_dot_v1_dot_gateway__pb2.GetRunCostRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetRunCostResponse.FromString,
             options,
             channel_credentials,
             insecure,

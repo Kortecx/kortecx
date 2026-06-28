@@ -82,6 +82,8 @@ from .recipes import (
 )
 from .replan import ReplanRound, ReplanRoundPage
 from .run import AsyncRun, Result, Run
+from .approvals import PendingApproval, PendingApprovalsPage
+from .cost import RunCost
 from .run_agent import run_agent, run_agent_async
 from .runs import RunInputs, RunPage, RunSummary
 from .secrets import SecretName, SecretNamesPage
@@ -275,6 +277,10 @@ __all__ = [
     "McpServersPage",
     "RegisterServerResult",
     "CallToolResult",
+    # D114 HITL approval gate + M11 cost-spend (ListPendingApprovals / Grant / Deny / GetRunCost)
+    "PendingApproval",
+    "PendingApprovalsPage",
+    "RunCost",
     # D170 / MM-3 operator secret store (PutSecret / ListSecretNames / DeleteSecret)
     "SecretName",
     "SecretNamesPage",

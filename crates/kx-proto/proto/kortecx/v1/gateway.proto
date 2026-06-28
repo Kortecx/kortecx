@@ -1836,6 +1836,48 @@ message SubmitTriggerResponse {
 message TestTriggerRequest  { string name = 1; string payload_json = 2; }
 message TestTriggerResponse { bool ok = 1; string detail = 2; }
 
+// ===========================================================================
+// D114 — HITL pre-action approval gate. The OPERATOR control plane over pending
+// world-mutating action approvals. request_id is SERVER-DERIVED 16B (SN-8); Grant/
+// Deny RELEASE/REJECT a STAGED action (it fires exactly once, or the chain dead-
+// letters) — never mint a client warrant. Off-DAG fold view; UNIMPLEMENTED on a
+// serve without the approval substrate.
+// ===========================================================================
+message ListPendingApprovalsRequest { uint32 limit = 1; }  // 0 ⇒ all
+message PendingApproval {
+  bytes  request_id       = 1;  // 16B server-derived (the grant/deny key)
+  bytes  instance_id      = 2;  // 16B the run awaiting approval
+  bytes  mote_id          = 3;  // 32B the proposing observation Mote
+  string tool_id          = 4;  // proposed tool name (display)
+  string tool_version     = 5;
+  string intent           = 6;  // display-only proposed-action summary
+  uint64 deadline_unix_ms = 7;  // 0 ⇒ operator-driven (no auto-expiry)
+  uint64 created_unix_ms  = 8;  // audit wall-clock
+}
+message ListPendingApprovalsResponse { repeated PendingApproval approvals = 1; }
+message GrantApprovalRequest  { bytes request_id = 1; string reason = 2; }
+message GrantApprovalResponse { bool granted = 1; }  // false ⇒ unknown/already-resolved
+message DenyApprovalRequest   { bytes request_id = 1; string reason = 2; }
+message DenyApprovalResponse  { bool denied  = 1; }
+
+// ===========================================================================
+// M11 — DISPLAY-ONLY deterministic LOCAL spend estimate over the durable turn/tool
+// counters at operator-set micro_usd rates. A BUDGET GUARDRAIL readout, NOT Cloud
+// per-expert billing — the D129/D156/GR19 boundary holds (no token / price-per-
+// expert data crosses this wire). UNIMPLEMENTED on a serve without the counters.
+// ===========================================================================
+message GetRunCostRequest  { bytes instance_id = 1; }  // 16B ownership ticket
+message GetRunCostResponse {
+  bytes  instance_id             = 1;
+  uint64 turns                   = 2;  // committed model turns counted
+  uint64 tool_calls              = 3;  // committed tool calls counted
+  uint64 estimated_micro_usd     = 4;  // turns*per_turn + tool_calls*per_tool_call
+  uint64 ceiling_micro_usd       = 5;  // 0 ⇒ no ceiling
+  uint64 per_turn_micro_usd      = 6;  // operator-configured rate (provenance)
+  uint64 per_tool_call_micro_usd = 7;
+  bool   over_ceiling            = 8;  // estimated >= ceiling (display flag)
+}
+
 service KxGateway {
   rpc SubmitRun(SubmitRunRequest) returns (RunHandle);
   rpc Invoke(InvokeRequest) returns (InvokeResponse);
@@ -1965,6 +2007,13 @@ service KxGateway {
   rpc DeregisterTrigger(DeregisterTriggerRequest) returns (DeregisterTriggerResponse);
   rpc SubmitTrigger(SubmitTriggerRequest) returns (SubmitTriggerResponse);
   rpc TestTrigger(TestTriggerRequest) returns (TestTriggerResponse);
+
+  // D114 — HITL pre-action approval gate (operator control plane).
+  rpc ListPendingApprovals(ListPendingApprovalsRequest) returns (ListPendingApprovalsResponse);
+  rpc GrantApproval(GrantApprovalRequest) returns (GrantApprovalResponse);
+  rpc DenyApproval(DenyApprovalRequest) returns (DenyApprovalResponse);
+  // M11 — cost-spend guardrail readout (display-only local estimate).
+  rpc GetRunCost(GetRunCostRequest) returns (GetRunCostResponse);
 
   // PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
   rpc PutContextBundle(PutContextBundleRequest) returns (PutContextBundleResponse);

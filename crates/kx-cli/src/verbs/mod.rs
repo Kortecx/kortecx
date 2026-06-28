@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod alerts;
 pub mod app;
+pub mod approvals;
 pub mod blueprint;
 pub mod branch;
 pub mod capture;
@@ -13,6 +14,7 @@ pub mod chat;
 pub mod connections;
 pub mod content;
 pub mod context;
+pub mod cost;
 pub mod datasets;
 pub mod events;
 pub mod feedback;

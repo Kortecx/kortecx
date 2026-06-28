@@ -1,0 +1,17 @@
+[package]
+name         = "kx-pricing"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx M11/D115 cost-spend price-book — a thin, FFI-free leaf that maps the runtime's DURABLE turn/tool counters to an integer micro-USD spend ESTIMATE. A local FinOps guardrail + runaway-agent kill-switch (OSS), NOT Cloud per-token billing/metering. Integer micro_usd only (no float — SN-8); a pure, total fold (`spent = turns*per_turn + tool_calls*per_tool_call`). Off the journal + identity path; the frozen trio never depends on it. Cloud swaps a rich per-token price-book behind the same shape (D129/D170.b)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -532,6 +532,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         Some(sink) => coordinator.with_audit_sink(sink.clone()),
         None => coordinator,
     };
+    // D114/M11: capture a CLONE of the coordinator handle BEFORE it is moved into the
+    // embedded coordinator server, so the autonomy-safety admin (the approval/cost RPCs)
+    // can dispatch grant/deny/cost commands against it. Wired into the gateway below.
+    let approval_coordinator = coordinator.clone();
     let coord_addr = resolve_listen(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
     let coord_task = tokio::spawn(async move {
         if let Err(error) = Server::builder()
@@ -1374,6 +1378,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             None
         }
     };
+    // D114/M11: wire the autonomy-safety admin (ListPendingApprovals/Grant/Deny/GetRunCost)
+    // over the cloned coordinator handle captured above + the env-resolved price-book.
+    gateway = gateway.with_approval_admin(std::sync::Arc::new(
+        crate::approval_gateway::HostApprovalAdmin::new(approval_coordinator),
+    ));
+    tracing::info!("D114/M11: autonomy-safety admin wired (approval gate + cost readout)");
     #[cfg(feature = "hnsw")]
     {
         gateway = gateway

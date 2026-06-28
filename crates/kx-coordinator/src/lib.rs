@@ -75,3 +75,4 @@ pub use registry::{
 };
 pub use repudiation::{RepudiationError, RepudiationOutcome};
 pub use service::CoordinatorService;
+pub use state::PendingApprovalView;
