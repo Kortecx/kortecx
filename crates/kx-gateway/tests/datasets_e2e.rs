@@ -78,6 +78,7 @@ async fn ingest_list_query_client_vectors_end_to_end() {
             query_text: String::new(),
             query_embedding: vec4(0.0, 1.0, 0.0, 0.1),
             k: 3,
+            retrieval_mode: 0,
         })
         .await
         .unwrap()
@@ -123,6 +124,7 @@ async fn text_query_without_an_embedder_is_failed_precondition() {
             query_text: "find alpha".into(),
             query_embedding: Vec::new(),
             k: 1,
+            retrieval_mode: 0,
         })
         .await
         .unwrap_err();
@@ -151,6 +153,7 @@ async fn unknown_dataset_query_is_not_found() {
             query_text: String::new(),
             query_embedding: vec4(1.0, 0.0, 0.0, 0.1),
             k: 1,
+            retrieval_mode: 0,
         })
         .await
         .unwrap_err();
@@ -199,6 +202,7 @@ async fn datasets_are_durable_across_restart() {
             query_text: String::new(),
             query_embedding: vec4(1.0, 0.0, 0.0, 0.1),
             k: 1,
+            retrieval_mode: 0,
         })
         .await
         .unwrap()
