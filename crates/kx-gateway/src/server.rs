@@ -926,14 +926,27 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(feature = "hnsw")]
     let dataset_view: Arc<crate::datasets::HostDatasetView> = {
         let datasets_dir = catalog_dir.join("datasets");
+        // RC4a: thread the operator RAG config (chunk + hybrid knobs) at open.
         #[cfg_attr(not(feature = "serve-engine"), allow(unused_mut))]
-        let mut view = crate::datasets::HostDatasetView::open(&datasets_dir)?;
+        let mut view = crate::datasets::HostDatasetView::open(&datasets_dir)?
+            .with_rag_config(crate::env_caps::rag_config());
         #[cfg(feature = "serve-engine")]
         if let Some(embedder) = dataset_embedder {
             view = view.with_embedder(embedder);
         }
         Arc::new(view)
     };
+    // RC4a (T-OLLAMA-EMBED-COLD-TIMEOUT): optionally pre-load the embed model in the
+    // background so the first ingest is already warm — probe-only, never blocks startup.
+    #[cfg(all(feature = "hnsw", feature = "serve-engine"))]
+    if crate::env_caps::warm_embed() {
+        let warm_view = dataset_view.clone();
+        tokio::task::spawn_blocking(move || {
+            if warm_view.warm_embed() {
+                tracing::info!("KX_SERVE_WARM_EMBED: pre-loading the dataset embed model");
+            }
+        });
+    }
     let binder: Arc<dyn RecipeBinder> = {
         #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
         let mut host_binder = if autogrant {
@@ -1196,14 +1209,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         };
         // PR-B: the configured dataset embed model (the entry flagged `can_embed`, set
         // from KX_SERVE_EMBED_MODEL else the primary). Empty on a model-less serve.
-        let embed_model_id = model_catalog_entries
-            .iter()
-            .find(|e| e.can_embed)
-            .map(|e| e.model_id.clone())
-            .unwrap_or_default();
+        // RC4a: the embed entry also carries `embed_is_decoder` (set in build_serve_runtime).
+        let embed_entry = model_catalog_entries.iter().find(|e| e.can_embed);
+        let embed_model_id = embed_entry.map(|e| e.model_id.clone()).unwrap_or_default();
+        let embed_model_is_decoder = embed_entry.is_some_and(|e| e.embed_is_decoder);
         kx_gateway_core::ServerInfoFacts {
             model_id,
             embed_model_id,
+            embed_model_is_decoder,
             model_path,
             listen_addr: cfg.listen.to_string(),
             ws_addr: cfg.ws_listen.to_string(),

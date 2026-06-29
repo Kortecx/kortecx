@@ -24,6 +24,10 @@ pub struct ServerInfoFacts {
     /// PR-B: the configured dataset embed model id (`KX_SERVE_EMBED_MODEL` else the
     /// primary). Empty on a model-less serve. Display/Settings only (never identity).
     pub embed_model_id: String,
+    /// RC4a (T-RAG-EMBED-QUALITY): `true` iff the configured embedder is a generative
+    /// DECODER LLM, not a dedicated embedding model (weak embeddings). Drives the
+    /// honest "recommend a dedicated embed model" advisory across CLI/UI/Settings.
+    pub embed_model_is_decoder: bool,
     /// Resolved serve model GGUF path (empty on a model-less serve).
     pub model_path: String,
     /// gRPC listener bind address (`addr:port`).

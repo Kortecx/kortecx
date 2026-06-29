@@ -68,6 +68,7 @@ describe("ServerInfo.fromProto", () => {
       embed_model_id: "embeddinggemma",
       active_model_id: "",
       allow_model_pull: false,
+      embed_model_is_decoder: false,
     });
   });
 

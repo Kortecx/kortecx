@@ -18,19 +18,46 @@ import type {
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { encode } from "./hexids.js";
 
+/**
+ * RC4a: the retrieval strategy for `queryDataset` / `fuzzyDiscovery` — re-exported
+ * from the generated proto enum so it is type-compatible with the wire. `UNSPECIFIED`
+ * ⇒ the server's configured default; `HYBRID` (BM25 + dense, RRF-fused) falls back to
+ * dense when there is no query text.
+ */
+export { RetrievalMode } from "./gen/kortecx/v1/gateway_pb.js";
+
 /** One dataset in a `ListDatasets` enumeration. */
 export class DatasetSummary {
   constructor(
     readonly datasetId: string,
     readonly name: string,
+    /** Distinct PARENT documents (RC4a: not chunks — see `chunkCount`). */
     readonly docCount: number,
     readonly dim: number,
     /** Unix-ms create time (display only; off every hash). */
     readonly createdMs: number,
+    /** RC4a: ingested under the chunking pipeline (hits are passages). */
+    readonly chunked: boolean = false,
+    /** RC4a: distinct retrievable chunks (== `docCount` for an un-chunked corpus). */
+    readonly chunkCount: number = 0,
+    /** RC4a: on-disk retrieval-index schema version. */
+    readonly indexVersion: number = 0,
+    /** RC4a: hex of the index fingerprint (`""` = legacy/unstamped). */
+    readonly embedModelFingerprint: string = "",
   ) {}
 
   static fromProto(d: PbDatasetSummary): DatasetSummary {
-    return new DatasetSummary(d.datasetId, d.name, Number(d.docCount), d.dim, Number(d.createdMs));
+    return new DatasetSummary(
+      d.datasetId,
+      d.name,
+      Number(d.docCount),
+      d.dim,
+      Number(d.createdMs),
+      d.chunked,
+      Number(d.chunkCount),
+      d.indexVersion,
+      d.embedModelFingerprint,
+    );
   }
 
   /** A plain snake_case object (stable wire-shaped serialization for UIs/logs). */
@@ -41,31 +68,56 @@ export class DatasetSummary {
       doc_count: this.docCount,
       dim: this.dim,
       created_ms: this.createdMs,
+      chunked: this.chunked,
+      chunk_count: this.chunkCount,
+      index_version: this.indexVersion,
+      embed_model_fingerprint: this.embedModelFingerprint,
     };
   }
 }
 
-/** One retrieval hit: the content-addressed ref (hex), the document bytes, and the
- *  DISPLAY-ONLY similarity score (SN-8 — never an identity input). */
+/** One retrieval hit: the content-addressed ref (hex) of the CHUNK, the chunk
+ *  bytes, and the DISPLAY-ONLY similarity score (SN-8 — never an identity input).
+ *  RC4a adds chunk provenance (`parentRef` / `chunkIndex` / `chunkCount`). */
 export class DatasetHit {
   constructor(
     readonly contentRef: string,
     readonly content: Uint8Array,
     readonly score: number,
+    /** RC4a: hex of the parent document (== `contentRef` for an un-chunked corpus). */
+    readonly parentRef: string = "",
+    /** RC4a: 0-based ordinal of this chunk in its parent. */
+    readonly chunkIndex: number = 0,
+    /** RC4a: total chunks in the parent. */
+    readonly chunkCount: number = 1,
   ) {}
 
   static fromProto(h: PbDatasetHit): DatasetHit {
-    return new DatasetHit(encode(h.contentRef), h.content, h.score);
+    return new DatasetHit(
+      encode(h.contentRef),
+      h.content,
+      h.score,
+      encode(h.parentRef),
+      h.chunkIndex,
+      h.chunkCount,
+    );
   }
 
-  /** The retrieved document bytes decoded as UTF-8 (best-effort) — for text corpora. */
+  /** The retrieved chunk bytes decoded as UTF-8 (best-effort) — for text corpora. */
   get text(): string {
     return new TextDecoder().decode(this.content);
   }
 
   /** A plain snake_case object — byte-shape parity with `kx datasets query --json`. */
   toJSON() {
-    return { content_ref: this.contentRef, score: this.score, text: this.text };
+    return {
+      content_ref: this.contentRef,
+      score: this.score,
+      text: this.text,
+      parent_ref: this.parentRef,
+      chunk_index: this.chunkIndex,
+      chunk_count: this.chunkCount,
+    };
   }
 }
 

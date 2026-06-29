@@ -132,6 +132,7 @@ mod tests {
             source: "local".into(),
             active: false,
             chat_rag_handle: String::new(),
+            embed_is_decoder: false,
         }]);
         let listed = catalog.list().unwrap();
         assert_eq!(listed.len(), 1);
@@ -167,6 +168,7 @@ mod tests {
                 source: "local".into(),
                 active: false,
                 chat_rag_handle: String::new(),
+                embed_is_decoder: false,
             },
             ModelSummaryEntry {
                 model_id: "b".into(),
@@ -181,6 +183,7 @@ mod tests {
                 source: "ollama".into(),
                 active: false,
                 chat_rag_handle: String::new(),
+                embed_is_decoder: false,
             },
         ];
         // Only "b" resident.
@@ -208,6 +211,7 @@ mod tests {
             source: "pulled-ollama".into(),
             active: false,
             chat_rag_handle: String::new(),
+            embed_is_decoder: false,
         }
     }
 

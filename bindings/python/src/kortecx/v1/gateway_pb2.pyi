@@ -39,6 +39,12 @@ class RecipeParamType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RECIPE_PARAM_TYPE_BYTES: _ClassVar[RecipeParamType]
     RECIPE_PARAM_TYPE_ENUM: _ClassVar[RecipeParamType]
 
+class RetrievalMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    RETRIEVAL_MODE_UNSPECIFIED: _ClassVar[RetrievalMode]
+    RETRIEVAL_MODE_DENSE: _ClassVar[RetrievalMode]
+    RETRIEVAL_MODE_HYBRID: _ClassVar[RetrievalMode]
+
 class LowerVerdict(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     LOWER_VERDICT_UNSPECIFIED: _ClassVar[LowerVerdict]
@@ -99,6 +105,9 @@ RECIPE_PARAM_TYPE_INT: RecipeParamType
 RECIPE_PARAM_TYPE_BOOL: RecipeParamType
 RECIPE_PARAM_TYPE_BYTES: RecipeParamType
 RECIPE_PARAM_TYPE_ENUM: RecipeParamType
+RETRIEVAL_MODE_UNSPECIFIED: RetrievalMode
+RETRIEVAL_MODE_DENSE: RetrievalMode
+RETRIEVAL_MODE_HYBRID: RetrievalMode
 LOWER_VERDICT_UNSPECIFIED: LowerVerdict
 LOWER_VERDICT_UNAVAILABLE: LowerVerdict
 LOWER_VERDICT_WOULD_LOWER: LowerVerdict
@@ -570,18 +579,26 @@ class ListDatasetsRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class DatasetSummary(_message.Message):
-    __slots__ = ("dataset_id", "name", "doc_count", "dim", "created_ms")
+    __slots__ = ("dataset_id", "name", "doc_count", "dim", "created_ms", "chunked", "embed_model_fingerprint", "index_version", "chunk_count")
     DATASET_ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     DOC_COUNT_FIELD_NUMBER: _ClassVar[int]
     DIM_FIELD_NUMBER: _ClassVar[int]
     CREATED_MS_FIELD_NUMBER: _ClassVar[int]
+    CHUNKED_FIELD_NUMBER: _ClassVar[int]
+    EMBED_MODEL_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    INDEX_VERSION_FIELD_NUMBER: _ClassVar[int]
+    CHUNK_COUNT_FIELD_NUMBER: _ClassVar[int]
     dataset_id: str
     name: str
     doc_count: int
     dim: int
     created_ms: int
-    def __init__(self, dataset_id: _Optional[str] = ..., name: _Optional[str] = ..., doc_count: _Optional[int] = ..., dim: _Optional[int] = ..., created_ms: _Optional[int] = ...) -> None: ...
+    chunked: bool
+    embed_model_fingerprint: str
+    index_version: int
+    chunk_count: int
+    def __init__(self, dataset_id: _Optional[str] = ..., name: _Optional[str] = ..., doc_count: _Optional[int] = ..., dim: _Optional[int] = ..., created_ms: _Optional[int] = ..., chunked: bool = ..., embed_model_fingerprint: _Optional[str] = ..., index_version: _Optional[int] = ..., chunk_count: _Optional[int] = ...) -> None: ...
 
 class ListDatasetsResponse(_message.Message):
     __slots__ = ("datasets",)
@@ -629,26 +646,34 @@ class IngestDocumentsResponse(_message.Message):
     def __init__(self, dataset_id: _Optional[str] = ..., doc_count: _Optional[int] = ..., inserted: _Optional[int] = ..., dim: _Optional[int] = ...) -> None: ...
 
 class QueryDatasetRequest(_message.Message):
-    __slots__ = ("dataset", "query_text", "query_embedding", "k")
+    __slots__ = ("dataset", "query_text", "query_embedding", "k", "retrieval_mode")
     DATASET_FIELD_NUMBER: _ClassVar[int]
     QUERY_TEXT_FIELD_NUMBER: _ClassVar[int]
     QUERY_EMBEDDING_FIELD_NUMBER: _ClassVar[int]
     K_FIELD_NUMBER: _ClassVar[int]
+    RETRIEVAL_MODE_FIELD_NUMBER: _ClassVar[int]
     dataset: str
     query_text: str
     query_embedding: _containers.RepeatedScalarFieldContainer[float]
     k: int
-    def __init__(self, dataset: _Optional[str] = ..., query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ...) -> None: ...
+    retrieval_mode: RetrievalMode
+    def __init__(self, dataset: _Optional[str] = ..., query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ..., retrieval_mode: _Optional[_Union[RetrievalMode, str]] = ...) -> None: ...
 
 class DatasetHit(_message.Message):
-    __slots__ = ("content_ref", "content", "score")
+    __slots__ = ("content_ref", "content", "score", "parent_ref", "chunk_index", "chunk_count")
     CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
     CONTENT_FIELD_NUMBER: _ClassVar[int]
     SCORE_FIELD_NUMBER: _ClassVar[int]
+    PARENT_REF_FIELD_NUMBER: _ClassVar[int]
+    CHUNK_INDEX_FIELD_NUMBER: _ClassVar[int]
+    CHUNK_COUNT_FIELD_NUMBER: _ClassVar[int]
     content_ref: bytes
     content: bytes
     score: float
-    def __init__(self, content_ref: _Optional[bytes] = ..., content: _Optional[bytes] = ..., score: _Optional[float] = ...) -> None: ...
+    parent_ref: bytes
+    chunk_index: int
+    chunk_count: int
+    def __init__(self, content_ref: _Optional[bytes] = ..., content: _Optional[bytes] = ..., score: _Optional[float] = ..., parent_ref: _Optional[bytes] = ..., chunk_index: _Optional[int] = ..., chunk_count: _Optional[int] = ...) -> None: ...
 
 class QueryDatasetResponse(_message.Message):
     __slots__ = ("hits",)
@@ -657,24 +682,30 @@ class QueryDatasetResponse(_message.Message):
     def __init__(self, hits: _Optional[_Iterable[_Union[DatasetHit, _Mapping]]] = ...) -> None: ...
 
 class FuzzyDiscoveryRequest(_message.Message):
-    __slots__ = ("dataset", "query_text", "query_embedding", "k")
+    __slots__ = ("dataset", "query_text", "query_embedding", "k", "retrieval_mode")
     DATASET_FIELD_NUMBER: _ClassVar[int]
     QUERY_TEXT_FIELD_NUMBER: _ClassVar[int]
     QUERY_EMBEDDING_FIELD_NUMBER: _ClassVar[int]
     K_FIELD_NUMBER: _ClassVar[int]
+    RETRIEVAL_MODE_FIELD_NUMBER: _ClassVar[int]
     dataset: str
     query_text: str
     query_embedding: _containers.RepeatedScalarFieldContainer[float]
     k: int
-    def __init__(self, dataset: _Optional[str] = ..., query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ...) -> None: ...
+    retrieval_mode: RetrievalMode
+    def __init__(self, dataset: _Optional[str] = ..., query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ..., retrieval_mode: _Optional[_Union[RetrievalMode, str]] = ...) -> None: ...
 
 class FuzzyHit(_message.Message):
-    __slots__ = ("content_ref", "score_bp")
+    __slots__ = ("content_ref", "score_bp", "parent_ref", "chunk_index")
     CONTENT_REF_FIELD_NUMBER: _ClassVar[int]
     SCORE_BP_FIELD_NUMBER: _ClassVar[int]
+    PARENT_REF_FIELD_NUMBER: _ClassVar[int]
+    CHUNK_INDEX_FIELD_NUMBER: _ClassVar[int]
     content_ref: bytes
     score_bp: int
-    def __init__(self, content_ref: _Optional[bytes] = ..., score_bp: _Optional[int] = ...) -> None: ...
+    parent_ref: bytes
+    chunk_index: int
+    def __init__(self, content_ref: _Optional[bytes] = ..., score_bp: _Optional[int] = ..., parent_ref: _Optional[bytes] = ..., chunk_index: _Optional[int] = ...) -> None: ...
 
 class FuzzyDiscoveryResponse(_message.Message):
     __slots__ = ("hits",)
@@ -985,7 +1016,7 @@ class ListModelsRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class ModelSummary(_message.Message):
-    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle", "engine", "can_embed", "source", "active", "chat_rag_handle")
+    __slots__ = ("model_id", "modalities", "description", "serving", "context_len", "loaded", "chat_handle", "engine", "can_embed", "source", "active", "chat_rag_handle", "embed_is_decoder")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODALITIES_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
@@ -998,6 +1029,7 @@ class ModelSummary(_message.Message):
     SOURCE_FIELD_NUMBER: _ClassVar[int]
     ACTIVE_FIELD_NUMBER: _ClassVar[int]
     CHAT_RAG_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    EMBED_IS_DECODER_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     modalities: _containers.RepeatedScalarFieldContainer[str]
     description: str
@@ -1010,7 +1042,8 @@ class ModelSummary(_message.Message):
     source: str
     active: bool
     chat_rag_handle: str
-    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ..., engine: _Optional[str] = ..., can_embed: bool = ..., source: _Optional[str] = ..., active: bool = ..., chat_rag_handle: _Optional[str] = ...) -> None: ...
+    embed_is_decoder: bool
+    def __init__(self, model_id: _Optional[str] = ..., modalities: _Optional[_Iterable[str]] = ..., description: _Optional[str] = ..., serving: bool = ..., context_len: _Optional[int] = ..., loaded: bool = ..., chat_handle: _Optional[str] = ..., engine: _Optional[str] = ..., can_embed: bool = ..., source: _Optional[str] = ..., active: bool = ..., chat_rag_handle: _Optional[str] = ..., embed_is_decoder: bool = ...) -> None: ...
 
 class ListModelsResponse(_message.Message):
     __slots__ = ("models",)
@@ -2038,7 +2071,7 @@ class GetServerInfoRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class GetServerInfoResponse(_message.Message):
-    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls", "embed_model_id", "active_model_id", "allow_model_pull")
+    __slots__ = ("model_id", "model_path", "listen_addr", "ws_addr", "console_addr", "metrics_addr", "content_root", "journal_path", "catalog_dir", "max_lease", "content_max_bytes", "cors_origins", "tls_enabled", "auth_mode", "feature_hnsw", "feature_inference", "feature_console", "feature_vision", "audit_log_enabled", "react_max_turns", "react_max_tool_calls", "embed_model_id", "active_model_id", "allow_model_pull", "embed_model_is_decoder")
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     MODEL_PATH_FIELD_NUMBER: _ClassVar[int]
     LISTEN_ADDR_FIELD_NUMBER: _ClassVar[int]
@@ -2063,6 +2096,7 @@ class GetServerInfoResponse(_message.Message):
     EMBED_MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     ACTIVE_MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     ALLOW_MODEL_PULL_FIELD_NUMBER: _ClassVar[int]
+    EMBED_MODEL_IS_DECODER_FIELD_NUMBER: _ClassVar[int]
     model_id: str
     model_path: str
     listen_addr: str
@@ -2087,7 +2121,8 @@ class GetServerInfoResponse(_message.Message):
     embed_model_id: str
     active_model_id: str
     allow_model_pull: bool
-    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ..., embed_model_id: _Optional[str] = ..., active_model_id: _Optional[str] = ..., allow_model_pull: bool = ...) -> None: ...
+    embed_model_is_decoder: bool
+    def __init__(self, model_id: _Optional[str] = ..., model_path: _Optional[str] = ..., listen_addr: _Optional[str] = ..., ws_addr: _Optional[str] = ..., console_addr: _Optional[str] = ..., metrics_addr: _Optional[str] = ..., content_root: _Optional[str] = ..., journal_path: _Optional[str] = ..., catalog_dir: _Optional[str] = ..., max_lease: _Optional[int] = ..., content_max_bytes: _Optional[int] = ..., cors_origins: _Optional[_Iterable[str]] = ..., tls_enabled: bool = ..., auth_mode: _Optional[str] = ..., feature_hnsw: bool = ..., feature_inference: bool = ..., feature_console: bool = ..., feature_vision: bool = ..., audit_log_enabled: bool = ..., react_max_turns: _Optional[int] = ..., react_max_tool_calls: _Optional[int] = ..., embed_model_id: _Optional[str] = ..., active_model_id: _Optional[str] = ..., allow_model_pull: bool = ..., embed_model_is_decoder: bool = ...) -> None: ...
 
 class PutSecretRequest(_message.Message):
     __slots__ = ("name", "value")

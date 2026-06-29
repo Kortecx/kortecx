@@ -39,6 +39,8 @@ export class ModelSummary {
     readonly active: boolean = false,
     /** Model Control v2: the RAG-grounded chat recipe handle for THIS model (or ""). */
     readonly chatRagHandle: string = "",
+    /** RC4a: `true` iff this (the configured embedder) is a decoder LLM (weak embeddings). */
+    readonly embedIsDecoder: boolean = false,
   ) {}
 
   static fromProto(m: PbModelSummary): ModelSummary {
@@ -55,6 +57,7 @@ export class ModelSummary {
       m.source,
       m.active,
       m.chatRagHandle,
+      m.embedIsDecoder,
     );
   }
 
@@ -73,6 +76,7 @@ export class ModelSummary {
       source: this.source,
       active: this.active,
       chat_rag_handle: this.chatRagHandle,
+      embed_is_decoder: this.embedIsDecoder,
     };
   }
 }

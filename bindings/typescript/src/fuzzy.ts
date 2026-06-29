@@ -12,17 +12,22 @@
 import type { FuzzyHit as PbFuzzyHit } from "./gen/kortecx/v1/gateway_pb.js";
 import { encode } from "./hexids.js";
 
-/** One advisory discovery hit: the content-addressed ref (hex) + a display score. */
+/** One advisory discovery hit: the content-addressed ref (hex) + a display score.
+ *  RC4a adds chunk provenance (`parentRef` / `chunkIndex`). */
 export class FuzzyHit {
   constructor(
-    /** The 32-byte content-addressed id (hex) — the EXACT-OUT join key. */
+    /** The 32-byte content-addressed id (hex) of the CHUNK — the EXACT-OUT join key. */
     readonly contentRef: string,
     /** Display-only similarity in basis points (0..=10000); NEVER identity (SN-8). */
     readonly scoreBp: number,
+    /** RC4a: hex of the parent document (== `contentRef` for an un-chunked corpus). */
+    readonly parentRef: string = "",
+    /** RC4a: 0-based ordinal of this chunk in its parent. */
+    readonly chunkIndex: number = 0,
   ) {}
 
   static fromProto(h: PbFuzzyHit): FuzzyHit {
-    return new FuzzyHit(encode(h.contentRef), h.scoreBp);
+    return new FuzzyHit(encode(h.contentRef), h.scoreBp, encode(h.parentRef), h.chunkIndex);
   }
 
   /** The similarity as a 0..1 fraction (display only). */
@@ -32,6 +37,11 @@ export class FuzzyHit {
 
   /** A plain snake_case object (stable wire-shaped serialization for UIs/logs). */
   toJSON() {
-    return { content_ref: this.contentRef, score_bp: this.scoreBp };
+    return {
+      content_ref: this.contentRef,
+      score_bp: this.scoreBp,
+      parent_ref: this.parentRef,
+      chunk_index: this.chunkIndex,
+    };
   }
 }

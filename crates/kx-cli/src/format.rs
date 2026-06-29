@@ -579,6 +579,8 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
                     "source": m.source,
                     "active": m.active,
                     "chat_rag_handle": m.chat_rag_handle,
+                    // RC4a: true iff this (the configured embedder) is a decoder LLM.
+                    "embed_is_decoder": m.embed_is_decoder,
                 })
             })
             .collect();
@@ -608,7 +610,12 @@ pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
                     if m.serving { "  (serving)" } else { "" },
                     if m.active { "  (active)" } else { "" },
                     if m.loaded { "  (loaded)" } else { "" },
-                    if m.can_embed { "  (embed)" } else { "" },
+                    // RC4a: mark the embedder, flagging a decoder-as-embedder.
+                    match (m.can_embed, m.embed_is_decoder) {
+                        (true, true) => "  (embed·decoder — recommend a dedicated embed model)",
+                        (true, false) => "  (embed)",
+                        _ => "",
+                    },
                     // Model Control v2: provenance of a pulled/runtime model.
                     match m.source.as_str() {
                         "pulled-ollama" | "pulled-url" => "  (pulled)",
@@ -725,6 +732,10 @@ pub fn render_datasets(resp: &proto::ListDatasetsResponse, json: bool) -> String
                     "doc_count": d.doc_count,
                     "dim": d.dim,
                     "created_ms": d.created_ms,
+                    "chunked": d.chunked,
+                    "chunk_count": d.chunk_count,
+                    "index_version": d.index_version,
+                    "embed_model_fingerprint": d.embed_model_fingerprint,
                 })
             })
             .collect();
@@ -734,7 +745,14 @@ pub fn render_datasets(resp: &proto::ListDatasetsResponse, json: bool) -> String
     } else {
         resp.datasets
             .iter()
-            .map(|d| format!("{}  docs={}  dim={}", d.dataset_id, d.doc_count, d.dim))
+            .map(|d| {
+                // RC4a: docs = parent documents; chunks = retrievable passages.
+                let chunked = if d.chunked { "  chunked" } else { "" };
+                format!(
+                    "{}  docs={}  chunks={}  dim={}{}",
+                    d.dataset_id, d.doc_count, d.chunk_count, d.dim, chunked
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -789,6 +807,9 @@ pub fn render_dataset_hits(resp: &proto::QueryDatasetResponse, json: bool) -> St
                     "content_ref": hex::encode(&h.content_ref),
                     "score": h.score,
                     "text": String::from_utf8_lossy(&h.content),
+                    "parent_ref": hex::encode(&h.parent_ref),
+                    "chunk_index": h.chunk_index,
+                    "chunk_count": h.chunk_count,
                 })
             })
             .collect();
@@ -799,10 +820,22 @@ pub fn render_dataset_hits(resp: &proto::QueryDatasetResponse, json: bool) -> St
         resp.hits
             .iter()
             .map(|h| {
-                // Show the leading 16 hex chars of the ref + the score + a snippet.
+                // Show the leading 16 hex chars of the chunk ref + score + a snippet.
+                // For a chunked corpus also show the passage position within its parent.
                 let r = hex::encode(&h.content_ref);
                 let short = r.get(..16).unwrap_or(&r);
-                format!("{:.3}  {}  {}", h.score, short, doc_snippet(&h.content))
+                let chunk = if h.chunk_count > 1 {
+                    format!("  [chunk {}/{}]", h.chunk_index + 1, h.chunk_count)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "{:.3}  {}{}  {}",
+                    h.score,
+                    short,
+                    chunk,
+                    doc_snippet(&h.content)
+                )
             })
             .collect::<Vec<_>>()
             .join("\n")

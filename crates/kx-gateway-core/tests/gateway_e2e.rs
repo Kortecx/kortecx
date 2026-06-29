@@ -1068,6 +1068,7 @@ async fn dataset_rpcs_unimplemented_without_a_seam() {
                 query_text: String::new(),
                 query_embedding: vec![1.0, 0.0],
                 k: 1,
+                retrieval_mode: 0,
             })
             .await
             .unwrap_err()

@@ -521,6 +521,7 @@ async fn list_models_maps_the_catalog_and_degrades_without_a_seam() {
         source: "local".into(),
         active: true,
         chat_rag_handle: "kx/recipes/chat-rag".into(),
+        embed_is_decoder: false,
     }]);
     let service = GatewayService::new(reader, no_submitter(), content)
         .with_model_catalog_view(Arc::new(catalog));

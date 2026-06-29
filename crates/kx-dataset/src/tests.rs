@@ -146,3 +146,109 @@ fn retrieval_skips_dimension_mismatch() {
     assert_eq!(hits[1].id, wrong);
     assert!(hits[0].score > hits[1].score);
 }
+
+#[test]
+fn vector_of_returns_the_stored_vector() {
+    let mut index = InMemoryRetrievalIndex::new();
+    let a = ContentRef::of(b"a");
+    index.insert(a, vec![1.0, 2.0, 3.0]);
+    assert_eq!(index.vector_of(&a), Some(vec![1.0, 2.0, 3.0]));
+    assert_eq!(index.vector_of(&ContentRef::of(b"absent")), None);
+}
+
+// ---- hybrid fusion (RRF) + diversity rerank (MMR) + index fingerprint ----
+
+use crate::fusion::{index_fingerprint, mmr_rerank, rrf_fuse};
+use crate::Hit;
+
+fn hit(tag: u8, score: f32) -> Hit {
+    Hit {
+        id: ContentRef::from_bytes([tag; 32]),
+        score,
+    }
+}
+
+#[test]
+fn rrf_rewards_agreement_across_both_rankers() {
+    // Doc 1 is mid-rank in BOTH lists; docs 0 and 2 each top exactly one list.
+    let dense = vec![hit(0, 0.9), hit(1, 0.8), hit(3, 0.1)];
+    let sparse = vec![hit(2, 5.0), hit(1, 4.0), hit(4, 0.5)];
+    let fused = rrf_fuse(&dense, &sparse, 60, 5);
+    // Doc 1 (ranked in both) outranks docs that appear in only one list.
+    assert_eq!(fused[0].id, hit(1, 0.0).id, "agreed-on doc wins");
+}
+
+#[test]
+fn rrf_is_deterministic_and_truncates() {
+    let dense = vec![hit(0, 0.9), hit(1, 0.8)];
+    let sparse = vec![hit(1, 4.0), hit(2, 3.0)];
+    assert_eq!(rrf_fuse(&dense, &sparse, 60, 2).len(), 2);
+    assert_eq!(
+        rrf_fuse(&dense, &sparse, 60, 9),
+        rrf_fuse(&dense, &sparse, 60, 9)
+    );
+    assert!(rrf_fuse(&dense, &sparse, 60, 0).is_empty());
+}
+
+#[test]
+fn mmr_demotes_a_near_duplicate() {
+    // Relevance is the INCOMING score: `a` (1.0) > `b` (0.9) > `c` (0.5). `a` and `b`
+    // are near-duplicate vectors; `c` is diverse. MMR keeps the top `a`, then must
+    // rank the DIVERSE `c` ABOVE the redundant `b` — even though `b` is more
+    // relevant than `c` — because `b` is near-identical to the already-picked `a`.
+    let a = hit(0, 1.0);
+    let b = hit(1, 0.9);
+    let c = hit(2, 0.5);
+    let vecs = |id: &ContentRef| -> Option<Vec<f32>> {
+        if *id == a.id {
+            Some(vec![1.0, 0.0])
+        } else if *id == b.id {
+            Some(vec![0.99, 0.14]) // ~identical to `a`
+        } else {
+            Some(vec![0.0, 1.0]) // diverse
+        }
+    };
+    let ranked = mmr_rerank(&[a, b, c], vecs, 0.5, 3);
+    assert_eq!(ranked[0].id, a.id, "the most relevant is kept first");
+    assert_eq!(
+        ranked[1].id, c.id,
+        "diversity: the diverse doc beats the more-relevant near-duplicate"
+    );
+    assert_eq!(ranked[2].id, b.id, "the near-duplicate is demoted last");
+}
+
+#[test]
+fn mmr_preserves_the_top_fused_hit_and_truncates() {
+    // The first pick is always the highest incoming (fused) score, so MMR never
+    // discards the best hit; out_k truncates.
+    let cands = vec![hit(0, 0.2), hit(1, 0.9), hit(2, 0.5)];
+    let vecs = |_: &ContentRef| Some(vec![1.0, 0.0]);
+    let out = mmr_rerank(&cands, vecs, 0.7, 2);
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].id, hit(1, 0.0).id, "the top fused score leads");
+}
+
+#[test]
+fn fingerprint_changes_with_config_and_is_stable() {
+    let base = index_fingerprint("embeddinggemma", 0, 768, 1, 1000, 200, 1, false);
+    // Stable for identical inputs.
+    assert_eq!(
+        base,
+        index_fingerprint("embeddinggemma", 0, 768, 1, 1000, 200, 1, false)
+    );
+    // A different embed model ⇒ a different fingerprint (the silent-mismatch guard).
+    assert_ne!(
+        base,
+        index_fingerprint("nomic-embed", 0, 768, 1, 1000, 200, 1, false)
+    );
+    // A different chunk size ⇒ a different fingerprint.
+    assert_ne!(
+        base,
+        index_fingerprint("embeddinggemma", 0, 768, 1, 500, 200, 1, false)
+    );
+    // A different dimension ⇒ a different fingerprint.
+    assert_ne!(
+        base,
+        index_fingerprint("embeddinggemma", 0, 384, 1, 1000, 200, 1, false)
+    );
+}

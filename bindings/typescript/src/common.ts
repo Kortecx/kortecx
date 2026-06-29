@@ -147,7 +147,7 @@ export type { LocalToolDef, LocalToolSpec, LocalParamType, LocalParamSpec } from
 export { TeamSummary, TeamMember, TeamMembers, WarrantView, teamsFromProto } from "./teams.js";
 export { GrantView, AssetGrants } from "./grants.js";
 
-export { DatasetSummary, DatasetHit, IngestResult } from "./datasets.js";
+export { DatasetSummary, DatasetHit, IngestResult, RetrievalMode } from "./datasets.js";
 export type { IngestDoc } from "./datasets.js";
 export { FuzzyHit } from "./fuzzy.js";
 

@@ -25,16 +25,21 @@
 
 use kx_proto::proto;
 
-use crate::datasets::DatasetError;
+use crate::datasets::{DatasetError, RetrievalMode};
 
 /// One advisory discovery hit: the exact-out join key + a display-only score.
 #[derive(Clone, Copy, Debug)]
 pub struct FuzzyHitEntry {
-    /// The 32-byte content-addressed id of the candidate document (EXACT-OUT).
+    /// The 32-byte content-addressed id of the candidate CHUNK (EXACT-OUT, RC4a).
     pub content_ref: [u8; 32],
     /// The similarity, in basis points (0..=10000) — DISPLAY-ONLY (SN-8). NEVER
     /// an identity input; the host derives it from the approximate ANN score.
     pub score_bp: u32,
+    /// RC4a: the 32-byte id of the PARENT document (== `content_ref` for
+    /// legacy/un-chunked corpora).
+    pub parent_ref: [u8; 32],
+    /// RC4a: 0-based ordinal of this chunk within its parent (display/ordering).
+    pub chunk_index: u32,
 }
 
 /// The advisory fuzzy-discovery seam. The host implements it over the same
@@ -55,6 +60,7 @@ pub trait FuzzyDiscoveryView: Send + Sync {
         query_embedding: Option<&[f32]>,
         query_text: &str,
         k: usize,
+        mode: RetrievalMode,
     ) -> Result<Vec<FuzzyHitEntry>, DatasetError>;
 }
 
@@ -80,6 +86,8 @@ pub(crate) fn fuzzy_hit_to_proto(h: FuzzyHitEntry) -> proto::FuzzyHit {
     proto::FuzzyHit {
         content_ref: h.content_ref.to_vec(),
         score_bp: h.score_bp,
+        parent_ref: h.parent_ref.to_vec(),
+        chunk_index: h.chunk_index,
     }
 }
 
@@ -105,9 +113,13 @@ mod tests {
         let h = FuzzyHitEntry {
             content_ref: [7u8; 32],
             score_bp: 4_242,
+            parent_ref: [3u8; 32],
+            chunk_index: 5,
         };
         let p = fuzzy_hit_to_proto(h);
         assert_eq!(p.content_ref, vec![7u8; 32]);
         assert_eq!(p.score_bp, 4_242);
+        assert_eq!(p.parent_ref, vec![3u8; 32]);
+        assert_eq!(p.chunk_index, 5);
     }
 }

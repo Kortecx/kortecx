@@ -86,7 +86,16 @@ fn print_human(info: &proto::GetServerInfoResponse) {
     }
     if !info.embed_model_id.is_empty() {
         // PR-B: the configured datasets/RAG embed model (operator-config else primary).
-        println!("  embed      {} (datasets/RAG)", info.embed_model_id);
+        // RC4a: flag a decoder-as-embedder (weak sentence embeddings).
+        let decoder = if info.embed_model_is_decoder {
+            " (decoder — recommend a dedicated embed model)"
+        } else {
+            ""
+        };
+        println!(
+            "  embed      {} (datasets/RAG){decoder}",
+            info.embed_model_id
+        );
     }
     println!("  downloads  {}", on_off(info.allow_model_pull));
     println!(
@@ -129,6 +138,7 @@ fn render_json(info: &proto::GetServerInfoResponse) -> String {
     json!({
         "model_id": info.model_id,
         "embed_model_id": info.embed_model_id,
+        "embed_model_is_decoder": info.embed_model_is_decoder,
         "model_path": info.model_path,
         "listen_addr": info.listen_addr,
         "ws_addr": info.ws_addr,

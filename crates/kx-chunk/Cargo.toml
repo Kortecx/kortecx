@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-chunk"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx deterministic document chunker (RC4a) — a pure, std-only, recursive character text splitter that segments a document into bounded, overlapping passages along a fixed separator hierarchy (paragraph → line → sentence → word → hard char). Sizes are measured in Unicode scalar values (never bytes, never tokens) so a chunk never splits a codepoint and the boundaries are byte-identical on any machine: no locale, no RNG, no float, no model. Each chunk maps to a contiguous [char_start, char_end) range of the parent, so a chunk's text is an exact substring (content-addressable, provenance-exact). FFI-free leaf with ZERO dependencies; the chunk size/overlap + CHUNKER_VERSION are a retrieval-index fingerprint axis."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# (none — std-only, deterministic, FFI-free)
+
+[lints]
+workspace = true

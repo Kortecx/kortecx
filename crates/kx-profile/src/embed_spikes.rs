@@ -154,6 +154,8 @@ async fn query_one(
             query_text: text.to_string(),
             query_embedding: Vec::new(), // empty ⇒ server-embed
             k: 5,
+            // RC4a: profile the hybrid (BM25 + dense, RRF-fused) retrieval path.
+            retrieval_mode: proto::RetrievalMode::Hybrid as i32,
         },
         token,
     )?)

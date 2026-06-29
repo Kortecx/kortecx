@@ -494,13 +494,28 @@ message ListAssetGrantsResponse {
 // (D129).
 // ---------------------------------------------------------------------------
 
+// RC4a — the retrieval strategy for QueryDataset / FuzzyDiscovery. UNSPECIFIED ⇒
+// the server-configured default (operator-authoritative), NOT an error (unlike the
+// identity enums). HYBRID silently falls back to dense when there is no query_text
+// (the FFI-free client-vector path has no text to BM25-match). The hybrid weights
+// (RRF k, MMR lambda) are operator-config only — never a client float (SN-8).
+enum RetrievalMode {
+  RETRIEVAL_MODE_UNSPECIFIED = 0;        // use the server-configured default
+  RETRIEVAL_MODE_DENSE       = 1;        // dense (embedding) ANN only — reproducible
+  RETRIEVAL_MODE_HYBRID      = 2;        // BM25 + dense, RRF-fused (+ operator MMR rerank)
+}
+
 message ListDatasetsRequest {}
 message DatasetSummary {
   string dataset_id = 1;                 // the dataset's stable host name (server-validated, not a hash)
   string name       = 2;                 // advisory human handle (today == dataset_id)
-  uint64 doc_count  = 3;                 // indexed (distinct, content-addressed) document count
+  uint64 doc_count  = 3;                 // distinct PARENT documents (RC4a: not chunks — see chunk_count)
   uint32 dim        = 4;                 // embedding dimension (0 until the first insert fixes it)
   int64  created_ms = 5;                 // unix-ms create time (display only; off every hash)
+  bool   chunked                 = 6;    // RC4a: ingested under the chunking pipeline (hits are passages, not whole docs)
+  string embed_model_fingerprint = 7;    // RC4a: hex of the index fingerprint (embed model/pooling/dim/chunk/tokenizer); "" = legacy/unstamped
+  uint32 index_version           = 8;    // RC4a: on-disk retrieval-index schema version (cold-index / compat guard)
+  uint64 chunk_count             = 9;    // RC4a: distinct retrievable chunks (== doc_count for legacy/un-chunked corpora)
 }
 message ListDatasetsResponse {
   repeated DatasetSummary datasets = 1;  // deterministic (name) order
@@ -531,11 +546,15 @@ message QueryDatasetRequest {
   string query_text              = 2;    // server-embed path (needs `inference` + an embedder)
   repeated float query_embedding = 3;    // client-vector path (FFI-free); takes precedence when non-empty
   uint32 k                       = 4;    // top-k (server-clamped to a sane max)
+  RetrievalMode retrieval_mode   = 5;    // RC4a: UNSPECIFIED ⇒ server default; HYBRID needs query_text (else falls back to dense)
 }
 message DatasetHit {
-  bytes content_ref = 1;                 // 32B content-addressed id of the retrieved document
-  bytes content     = 2;                 // the document payload bytes (so a UI can show the snippet)
+  bytes content_ref = 1;                 // 32B content-addressed id of the retrieved CHUNK (RC4a: a chunk, not the whole doc)
+  bytes content     = 2;                 // the chunk payload bytes (so a UI can show the snippet)
   float score       = 3;                 // SN-8: DISPLAY-ONLY similarity; NEVER an identity input
+  bytes  parent_ref  = 4;                // RC4a: 32B content-addressed id of the PARENT document (== content_ref for legacy/un-chunked)
+  uint32 chunk_index = 5;                // RC4a: 0-based ordinal of this chunk within the parent (display/ordering)
+  uint32 chunk_count = 6;                // RC4a: total chunks in the parent (display)
 }
 message QueryDatasetResponse {
   repeated DatasetHit hits = 1;          // ordered: score desc, then ascending ref (deterministic)
@@ -560,10 +579,13 @@ message FuzzyDiscoveryRequest {
   string query_text              = 2;    // server-embed path (needs `inference` + an embedder)
   repeated float query_embedding = 3;    // client-vector path (FFI-free); takes precedence when non-empty
   uint32 k                       = 4;    // top-k (server-clamped to a sane max)
+  RetrievalMode retrieval_mode   = 5;    // RC4a: UNSPECIFIED ⇒ server default; HYBRID needs query_text (else falls back to dense)
 }
 message FuzzyHit {
   bytes  content_ref = 1;                // 32B content-addressed id — the EXACT-OUT join key (GetContent)
   uint32 score_bp    = 2;                // 0..=10000 DISPLAY-ONLY basis points; NEVER an identity input (SN-8)
+  bytes  parent_ref  = 3;                // RC4a: 32B content-addressed id of the PARENT document (== content_ref for legacy/un-chunked)
+  uint32 chunk_index = 4;                // RC4a: 0-based ordinal of this chunk within the parent (display/ordering)
 }
 message FuzzyDiscoveryResponse {
   repeated FuzzyHit hits = 1;            // best-first; deterministic tiebreak (score desc, then ascending ref)
@@ -889,6 +911,10 @@ message ModelSummary {
   string chat_rag_handle = 12;           // Model Control v2: the RAG-grounded chat recipe handle for
                                          //   THIS model (kx/recipes/chat-rag[-m-<id>]) so New Chat can
                                          //   ground a switched model; empty when none. Additive
+  bool embed_is_decoder = 13;            // RC4a (T-RAG-EMBED-QUALITY): set on the can_embed entry —
+                                         //   true iff the server's embedder is a generative DECODER
+                                         //   LLM, not a dedicated embed model (weak embeddings). The
+                                         //   `kx models list` decoder-embedder marker. Display only
 }
 
 message ListModelsResponse {
@@ -1729,6 +1755,11 @@ message GetServerInfoResponse {
   // (KX_SERVE_ALLOW_MODEL_PULL). false ⇒ PullModel refuses (deny-by-default). The UI
   // renders an honest-disabled Pull panel when false. Display only.
   bool   allow_model_pull     = 24;
+  // RC4a (T-RAG-EMBED-QUALITY): true iff the configured dataset embedder is a
+  // generative DECODER LLM, not a dedicated embedding model — weak sentence
+  // embeddings (paraphrase mis-rank). The CLI/UI/Settings surface an honest
+  // "recommend a dedicated embed model" advisory from this single flag. Display only.
+  bool   embed_model_is_decoder = 25;
 }
 
 // ===========================================================================

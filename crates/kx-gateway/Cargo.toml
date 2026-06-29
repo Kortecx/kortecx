@@ -158,6 +158,12 @@ kx-tool-registry   = { workspace = true }
 # is byte-unchanged. The client-vector path works under `hnsw` ALONE.
 kx-dataset         = { workspace = true }
 kx-dataset-hnsw    = { workspace = true, optional = true }
+# RC4a: deterministic document chunker (FFI-free, zero deps) — NON-optional, the
+# server-embed ingest path splits docs into passages before embedding.
+kx-chunk           = { workspace = true }
+# RC4a: the SPARSE (BM25) leg of hybrid retrieval — OPTIONAL behind `hnsw`, rebuilt
+# from the same rows as the dense index (FFI-free, no external dep; dep-wall holds).
+kx-dataset-bm25    = { workspace = true, optional = true }
 # W1.A5: the advisory MCP-intelligence surface — TaskBundle (kx-bundle) +
 # manifest ranking / the fail-closed lowering dry-run (kx-toolscout). Both
 # pure-Rust, FFI-free, ALWAYS-ON (the manifests/score RPCs answer on every
@@ -317,7 +323,7 @@ inference = [
 # pure-Rust crates (the dep-wall + `build-no-inference` stay green). The server-embed
 # path ADDITIONALLY needs `inference` (an EmbeddingBackend); without it, server-embed
 # requests return FAILED_PRECONDITION. Independent of `inference` — they compose.
-hnsw = ["dep:kx-dataset-hnsw"]
+hnsw = ["dep:kx-dataset-hnsw", "dep:kx-dataset-bm25"]
 # D139: `kx serve` hosts the embedded web console (the built React SPA) on a third
 # loopback listener (default 127.0.0.1:8888). OFF by default: the dist is embedded
 # at COMPILE time by build.rs, so a console build needs `ui/dist` (a repo checkout

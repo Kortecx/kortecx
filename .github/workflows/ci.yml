@@ -244,6 +244,40 @@ jobs:
         run: cargo deny check
 
   # ---------------------------------------------------------------------------
+  # eval — the measure-first quality GATE (RC1+, D172). Scores the embedded
+  # golden-v1 corpus (scripted transcripts: task success / tool-call F1 /
+  # groundedness / retrieval quality / loop efficiency) and fails CLOSED on any
+  # regression vs the COMMITTED baseline or on corpus drift. FFI-free + flake-proof
+  # (no model / network / clock), so the GitHub gate matches `just ci` — GR23: no
+  # local-vs-CI gap on the eval ratchet every later RC PR must hold.
+  # ---------------------------------------------------------------------------
+  eval:
+    name: eval (golden-v1 regression gate)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        # No submodules — kx-eval is FFI-free (no llama.cpp).
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-eval-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-eval-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: cargo run -p kx-eval -- run
+        run: cargo run -q -p kx-eval -- run
+
+  # ---------------------------------------------------------------------------
   # doc — workspace-wide rustdoc with -D warnings (catches broken intra-doc
   # links + missing docs at the workspace policy level).
   # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ use kx_content::ContentRef;
 use kx_gateway_core::{
     AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError, BoundRecipe,
     BundleStore, CatalogSeamError, ContentWriter, DatasetView, RecipeBinder, RecipeCatalog,
-    RecipeFormFieldEntry, RecipeMetadataEntry, RecipeParamKind, RegisteredSignature,
+    RecipeFormFieldEntry, RecipeMetadataEntry, RecipeParamKind, RegisteredSignature, RetrievalMode,
     ScoredRecipeEntry, SignatureCatalog, SignatureSummaryEntry, WorkflowAuthor,
 };
 use kx_invoke::{bind_snapshot, InvokeError, UseWarrantResolver};
@@ -1746,7 +1746,12 @@ impl HostRecipeBinder {
             .map_or(CHAT_RAG_DEFAULT_K, |k| {
                 k.clamp(1, crate::env_caps::chat_rag_max_k())
             });
-        let hits = match g.datasets.query(dataset, None, &prompt, k) {
+        // RC4a: chat-RAG grounding uses HYBRID retrieval (BM25 + dense, RRF-fused) so a
+        // keyword the decoder-LLM embedding mis-ranks is still caught (operator-overridable).
+        let hits = match g
+            .datasets
+            .query(dataset, None, &prompt, k, RetrievalMode::Hybrid)
+        {
             Ok(hits) if !hits.is_empty() => hits,
             // Unknown dataset / embedder-unavailable / empty index / backend error ⇒
             // a plain (ungrounded) answer rather than a failed turn (honest degrade).
@@ -4576,6 +4581,7 @@ mod tests {
             _query_embedding: Option<&[f32]>,
             _query_text: &str,
             k: usize,
+            _mode: RetrievalMode,
         ) -> Result<Vec<kx_gateway_core::DatasetHitEntry>, kx_gateway_core::DatasetError> {
             match dataset {
                 "missing" => Err(kx_gateway_core::DatasetError::NotFound),
@@ -4583,11 +4589,15 @@ mod tests {
                 name => Ok((0..k.min(2))
                     .map(|i| {
                         let content = format!("{name}-doc-{i}").into_bytes();
+                        let cref = *ContentRef::of(&content).as_bytes();
                         kx_gateway_core::DatasetHitEntry {
-                            content_ref: *ContentRef::of(&content).as_bytes(),
+                            content_ref: cref,
                             content,
                             #[allow(clippy::cast_precision_loss)]
                             score: 0.9 - (i as f32) * 0.1, // display-only — must NOT reach identity
+                            parent_ref: cref,
+                            chunk_index: 0,
+                            chunk_count: 1,
                         }
                     })
                     .collect()),
@@ -4862,6 +4872,43 @@ mod tests {
         );
         // The limit caps the result set.
         assert_eq!(lib.search_recipes("", &[], 1).len(), 1);
+    }
+
+    /// RC4a (`T-RECIPE-SEARCH-COLD-INDEX`): the recipe-search ranker is a pure,
+    /// deterministic integer-bp token-overlap scorer with an ascending-handle
+    /// tiebreak — so an AMBIGUOUS query (several recipes tied on score) yields a
+    /// STABLE order across repeated calls, even on a freshly-opened ("cold")
+    /// library. This pins the cold-corpus determinism (the recipe-side of the
+    /// cold-index class the dataset path closes via warm-before-ready).
+    #[test]
+    fn recipe_search_is_stable_on_a_cold_ambiguous_query() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        // "recipes" matches the shared "kx/recipes/..." handle substring of MANY
+        // recipes ⇒ a tie-heavy result; repeated cold searches must be identical.
+        let first = lib.search_recipes("recipes", &[], 50);
+        for _ in 0..5 {
+            let again = lib.search_recipes("recipes", &[], 50);
+            assert_eq!(
+                first.iter().map(|r| &r.handle).collect::<Vec<_>>(),
+                again.iter().map(|r| &r.handle).collect::<Vec<_>>(),
+                "a cold ambiguous recipe search must be order-stable"
+            );
+        }
+        // Tied entries are ordered by ascending handle (the deterministic tiebreak).
+        for w in first.windows(2) {
+            if w[0].score_bp == w[1].score_bp {
+                assert!(
+                    w[0].handle <= w[1].handle,
+                    "tied recipes break ties by ascending handle"
+                );
+            }
+        }
     }
 
     #[test]

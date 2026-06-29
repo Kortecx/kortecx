@@ -40,7 +40,14 @@ from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
 from .cost import RunCost
 from .critic import decode_critic_verdict
-from .datasets import DatasetHit, DatasetSummary, FuzzyHit, IngestDocument, IngestResult
+from .datasets import (
+    DatasetHit,
+    DatasetSummary,
+    FuzzyHit,
+    IngestDocument,
+    IngestResult,
+    RetrievalMode,
+)
 from .defaults import (
     chat,
     default_client,
@@ -223,6 +230,7 @@ __all__ = [
     "GrantView",
     "AssetGrants",
     "DatasetSummary",
+    "RetrievalMode",
     "ContentItem",
     "PutResult",
     "ContextBundle",

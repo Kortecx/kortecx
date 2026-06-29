@@ -118,6 +118,7 @@ describe("ModelSummary.fromProto", () => {
       source: "local",
       active: true,
       chat_rag_handle: "kx/recipes/chat-rag",
+      embed_is_decoder: false,
     });
   });
 });
