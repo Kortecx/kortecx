@@ -139,17 +139,37 @@ impl RetrievalIndex for HnswRetrievalIndex {
             return Vec::new();
         }
         let ef = self.params.ef_search.max(k);
-        let neighbours = self.hnsw.search(query, k, ef);
-        let mut hits: Vec<Hit> = neighbours
-            .iter()
-            .filter_map(|n| {
-                self.ids.get(n.get_origin_id()).map(|&id| Hit {
-                    id,
-                    // DistCosine distance == 1 - cosine_similarity → similarity == 1 - distance.
-                    score: 1.0 - n.get_distance(),
+        // EXACT search when the corpus fits the search width (`n <= ef`): HNSW's
+        // approximate graph traversal buys nothing once `ef >= n`, and on a TINY
+        // graph the crate's randomized layer assignment can occasionally MISS the
+        // true nearest neighbour even with `ef >= n` (the
+        // `T-DATASETS-HNSW-DISCOVER-FLAKE` class — a non-deterministic top-hit on a
+        // small corpus). A brute-force pass over the stored vectors is exhaustive,
+        // deterministic, and cheaper here; above `ef` we keep the HNSW path
+        // unchanged for large corpora. `score = cosine similarity` matches the HNSW
+        // arm's `1.0 - DistCosine` (DistCosine == 1 - cosine_similarity).
+        let mut hits: Vec<Hit> = if self.ids.len() <= ef {
+            self.vectors
+                .iter()
+                .enumerate()
+                .map(|(data_id, v)| Hit {
+                    id: self.ids[data_id],
+                    score: cosine_similarity(query, v),
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            self.hnsw
+                .search(query, k, ef)
+                .iter()
+                .filter_map(|n| {
+                    self.ids.get(n.get_origin_id()).map(|&id| Hit {
+                        id,
+                        // DistCosine distance == 1 - cosine_similarity → similarity == 1 - distance.
+                        score: 1.0 - n.get_distance(),
+                    })
+                })
+                .collect()
+        };
         // Deterministic order for the committed ordered-ref fact: score desc, then
         // ascending content ref — mirrors InMemoryRetrievalIndex's stable tiebreak.
         hits.sort_by(|a, b| {
@@ -163,5 +183,26 @@ impl RetrievalIndex for HnswRetrievalIndex {
 
     fn len(&self) -> usize {
         self.ids.len()
+    }
+}
+
+/// Cosine similarity in `[-1, 1]`, matching `1.0 - DistCosine` (the HNSW arm's
+/// score). Used by the exact small-corpus path in [`HnswRetrievalIndex::query`].
+/// Pure + total: a zero-norm vector (no direction) yields `0.0` rather than a
+/// `NaN` division; inputs are already validated finite upstream.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let mut dot = 0.0f32;
+    let mut na = 0.0f32;
+    let mut nb = 0.0f32;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    let denom = na.sqrt() * nb.sqrt();
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot / denom
     }
 }
