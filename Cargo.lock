@@ -1629,6 +1629,7 @@ dependencies = [
  "kx-capture",
  "kx-catalog",
  "kx-content",
+ "kx-context-assembler",
  "kx-coordinator",
  "kx-critic",
  "kx-dataset",

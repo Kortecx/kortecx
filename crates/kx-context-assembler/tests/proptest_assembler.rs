@@ -527,12 +527,13 @@ proptest! {
             "exactly one tool item should be emitted"
         );
         let item = &ctx.items[0];
-        // PR-1/BUG-32: the menu leads with the granted name, then the description.
-        let expected_menu = format!("name: {tool_name_seed}-only\n{description}");
+        // PR-1/BUG-32 + RC3: the menu leads with the granted name, then the pinned
+        // version, then the description (the version steers the exact `"version"`).
+        let expected_menu = format!("name: {tool_name_seed}-only\nversion: 1\n{description}");
         prop_assert_eq!(
             item.bytes.as_ref(),
             expected_menu.as_bytes(),
-            "tool item bytes MUST be the `name:` steering line then the description"
+            "tool item bytes MUST be the `name:`/`version:` steering lines then the description"
         );
         // source_ref MUST be the canonical def hash. We can't recompute the
         // def hash here without rebuilding the ToolDef; but we CAN assert
@@ -687,7 +688,7 @@ fn mixed_parents_and_tools_emit_independent_items_with_correct_shapes() {
         .expect("tool item present");
     assert_eq!(
         &tool_item.bytes[..],
-        b"name: h2-mixed-tool\ndescribes a tool whose description bytes go to the model"
+        b"name: h2-mixed-tool\nversion: 1\ndescribes a tool whose description bytes go to the model"
     );
     assert_ne!(
         tool_item.source_ref,

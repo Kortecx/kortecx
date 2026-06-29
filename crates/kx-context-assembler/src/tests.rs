@@ -205,9 +205,12 @@ fn assemble_two_parents_one_tool() {
     // Parent bytes are resolved content (NEVER hashes).
     assert_eq!(&ctx.items[0].bytes[..], parent_a_bytes);
     assert_eq!(&ctx.items[1].bytes[..], parent_b_bytes);
-    // Tool item leads with the granted name (PR-1/BUG-32 steering), then the
-    // description (this byte change is prompt-only — see `source_ref` below).
-    assert_eq!(&ctx.items[2].bytes[..], b"name: fs-read\nreads files");
+    // Tool item leads with the granted name + pinned version (PR-1/BUG-32 steering +
+    // RC3), then the description (this byte change is prompt-only — see `source_ref`).
+    assert_eq!(
+        &ctx.items[2].bytes[..],
+        b"name: fs-read\nversion: 1\nreads files"
+    );
 }
 
 // -----------------------------------------------------------------
@@ -585,4 +588,123 @@ fn content_ref_changes_with_bytes() {
         }],
     };
     assert_ne!(ctx_a.content_ref(), ctx_b.content_ref());
+}
+
+// -----------------------------------------------------------------
+// RC3 (T-REACT-TOOL-MENU): render_tool_menu — the live-serve tool menu the
+// model is shown so it PROPOSES well-formed calls autonomously. Reuses the
+// same tool_menu_text the assembly path uses (one renderer, no drift).
+// -----------------------------------------------------------------
+
+fn echo_like_def() -> ToolDef {
+    ToolDef {
+        tool_id: ToolName("mcp-echo/echo".into()),
+        tool_version: ToolVersion("1".into()),
+        kind: ToolKind::Builtin,
+        required_capability: permissive_req(),
+        description: "echoes its input".into(),
+        idempotency_class: kx_tool_registry::IdempotencyClass::Readback,
+        input_schema: Some(kx_tool_registry::InputSchema {
+            params: vec![kx_tool_registry::ParamSpec {
+                name: "text".into(),
+                ty: kx_tool_registry::ParamType::Str { max_len: 4096 },
+                required: true,
+            }],
+            deny_unknown: true,
+        }),
+    }
+}
+
+#[test]
+fn render_tool_menu_lists_each_granted_tool_with_typed_example() {
+    let mut registry = InMemoryToolRegistry::new();
+    let def = echo_like_def();
+    let _ = registry
+        .register(
+            def.clone(),
+            ToolProvenance::HumanAuthored {
+                author: "ops".into(),
+            },
+        )
+        .unwrap();
+    let grants = BTreeSet::from([ToolGrant {
+        tool_id: def.tool_id.clone(),
+        tool_version: def.tool_version.clone(),
+    }]);
+
+    let menu = render_tool_menu(&grants, &registry);
+
+    // Leads with the exact namespaced callable (PR-1 name-steering / BUG-33) AND the
+    // pinned version (RC3 — so the model emits the EXACT `"version"`, not a guess).
+    assert!(menu.contains("name: mcp-echo/echo"), "menu: {menu}");
+    assert!(
+        menu.contains("version: 1"),
+        "menu must pin the version: {menu}"
+    );
+    assert!(menu.contains("echoes its input"), "menu: {menu}");
+    // Typed-param block + a deterministic worked example with the RIGHT key.
+    assert!(menu.contains("text (string, required)"), "menu: {menu}");
+    assert!(
+        menu.contains("Example: {\"text\": \"<string>\"}"),
+        "menu: {menu}"
+    );
+}
+
+#[test]
+fn render_tool_menu_empty_grants_is_empty_string() {
+    let registry = InMemoryToolRegistry::new();
+    assert_eq!(render_tool_menu(&BTreeSet::new(), &registry), "");
+}
+
+#[test]
+fn render_tool_menu_unresolved_grant_is_fail_soft() {
+    // A grant the registry cannot resolve must STILL appear (name+version+envelope
+    // shape) — never panic, never silently vanish.
+    let registry = InMemoryToolRegistry::new();
+    let grants = BTreeSet::from([ToolGrant {
+        tool_id: ToolName("ghost/tool".into()),
+        tool_version: ToolVersion("9".into()),
+    }]);
+    let menu = render_tool_menu(&grants, &registry);
+    assert!(menu.contains("name: ghost/tool"), "menu: {menu}");
+    assert!(menu.contains("schema unavailable"), "menu: {menu}");
+    assert!(menu.contains("\"name\":\"ghost/tool\""), "menu: {menu}");
+}
+
+#[test]
+fn render_tool_menu_renders_only_granted_tools_and_is_deterministic() {
+    // Two tools registered, only ONE granted ⇒ the other must NOT leak.
+    let mut registry = InMemoryToolRegistry::new();
+    let granted = echo_like_def();
+    let secret = ToolDef {
+        tool_id: ToolName("secret/admin".into()),
+        tool_version: ToolVersion("1".into()),
+        ..echo_like_def()
+    };
+    let _ = registry
+        .register(
+            granted.clone(),
+            ToolProvenance::HumanAuthored {
+                author: "ops".into(),
+            },
+        )
+        .unwrap();
+    let _ = registry
+        .register(
+            secret.clone(),
+            ToolProvenance::HumanAuthored {
+                author: "ops".into(),
+            },
+        )
+        .unwrap();
+    let grants = BTreeSet::from([ToolGrant {
+        tool_id: granted.tool_id.clone(),
+        tool_version: granted.tool_version.clone(),
+    }]);
+
+    let a = render_tool_menu(&grants, &registry);
+    let b = render_tool_menu(&grants, &registry);
+    assert_eq!(a, b, "render_tool_menu must be deterministic");
+    assert!(a.contains("mcp-echo/echo"));
+    assert!(!a.contains("secret/admin"), "ungranted tool leaked: {a}");
 }

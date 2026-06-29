@@ -167,6 +167,59 @@ KX_SERVE_REACT_GRAMMAR=0 kx serve     # disable grammar-constrained tool-calling
 (A per-run `.unconstrained()` override on the SDK chain is forward-declared; the
 serve flag is the reliable global switch today.)
 
+### The tool menu (so the model proposes tools)
+
+Grammar-constraint only *shapes* a tool call once the model decides to make one —
+it is dormant until the model proposes. For the model to propose autonomously, it
+has to **know which tools it has**. On a tool-eligible ReAct turn the runtime now
+prepends a **granted-tool menu** to the prompt, derived automatically from the run's
+warrant grants:
+
+```text
+You can call the following tools:
+
+name: mcp-calc/calc
+Bundled deterministic integer arithmetic …
+Inputs:
+  - op (enum, required)
+  - a (integer, required)
+  - b (integer, required)
+Example: {"op": "add", "a": 0, "b": 0}
+```
+
+- **Auto-derived, grant-scoped.** The menu lists *only* the tools granted to that
+  run (`warrant.tool_grants`) — never the full registry, so no ungranted tool ever
+  leaks into the prompt. Each entry leads with the exact callable name, then the
+  description, typed inputs, and a worked example so the model emits the right keys.
+- **One renderer.** It reuses the same renderer the context assembler uses, so the
+  menu the model sees is identical across the harness and the live server.
+- **Off-digest, advisory (SN-8).** The menu is built at dispatch and never journaled
+  or part of a run's identity (the digest is invariant); it is *advisory* — the
+  warrant grant-check and `inputSchema` validation remain the only authority.
+
+On by default; disable per deployment when starting `kx serve`:
+
+```bash
+KX_SERVE_REACT_TOOL_MENU=0 kx serve   # don't show the granted-tool menu
+```
+
+### The agentic system prompt
+
+ReAct turns are framed by a curated **agentic system contract** that states the
+reason→act→observe loop, the canonical tool-call envelope, and when to stop and
+answer — so small local models follow the protocol reliably. Chat/leaf turns keep
+the plain precise-assistant prompt unchanged.
+
+Operators can override the agentic contract with a domain persona per deployment:
+
+```bash
+KX_SERVE_REACT_SYSTEM="You are Ada, a terse SRE copilot. Prefer tools over guessing." kx serve
+```
+
+(Per-**run** system prompts — a different persona per invocation — are a planned
+follow-up; they need an optional recipe slot + a durable carry across the run's
+turn-0 anchor. The serve-level override is the reliable switch today.)
+
 ## Authoring a `tool()` step
 
 Beyond the ReAct loop (where the *model* picks tools), you can author a **`tool()`

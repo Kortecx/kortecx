@@ -514,15 +514,36 @@ const AGENT_MIN_CTX_TOKENS: u32 = 2048;
 /// ChatML system turn) — so the system prompt is identical on both paths.
 const SERVE_SYSTEM: &str = "You are a precise assistant. Follow the instruction exactly.";
 
-/// Qwen ChatML wrapping of a user prompt — the **training contract** the
-/// companion model repo mirrors (kept byte-identical to
+/// RC3 (T-REACT-TOOL-MENU): the curated AGENTIC/ReAct system contract used for
+/// tool-eligible ReAct turns (selected by turn kind in `dispatch_model`). It states
+/// the loop + the canonical tool-call envelope (the exact shape
+/// `kx_toolcall::parse_tool_call` accepts — `crates/kx-toolcall/src/parse.rs`) so a
+/// real model knows the PROTOCOL even before the per-turn menu names specific tools,
+/// plus the act-vs-answer decision. Presentation only (SN-8): fed to `render_chat` /
+/// [`chatml_with`] exactly like [`SERVE_SYSTEM`] ⇒ off the MoteId / off-digest /
+/// never journaled (so `7d22d4bd` and recovery are untouched). The model is told to
+/// use ONLY listed tools; the runtime still enforces grant membership + the arg
+/// schema fail-closed (`parse_tool_call` + `validate_args`).
+const REACT_SYSTEM: &str = "You are a precise, autonomous assistant that can call tools to \
+accomplish the task. Think step by step. When a tool is needed, reply with EXACTLY one JSON \
+object and nothing else: {\"tool_call\":{\"name\":\"<tool name>\",\"version\":\"<tool version>\",\
+\"args\":{ ... }}} — use a name and version from the provided tool list and fill args per that \
+tool's inputs. After a tool result is returned, keep reasoning. When you have enough information, \
+reply with the final answer as plain text and do NOT emit a tool_call. Never invent a tool, \
+version, or argument that is not listed.";
+
+/// Qwen ChatML wrapping of a user prompt with an EXPLICIT system message — the
+/// **training contract** the companion model repo mirrors (kept byte-identical to
 /// `kx_model_harness::prompt::chatml`; duplicated here so the production gateway
-/// need not depend on the eval harness). The FALLBACK used when the backend
-/// cannot render the model's own chat template (PR-1 model-agnostic templating).
+/// need not depend on the eval harness). The FALLBACK used when the backend cannot
+/// render the model's own chat template (PR-1 model-agnostic templating). RC3
+/// selects the system per turn kind in `dispatch_model` (`REACT_SYSTEM` for a
+/// tool-eligible ReAct turn, else [`SERVE_SYSTEM`]); the system text is
+/// presentation only (SN-8) — never an identity/journal input.
 #[must_use]
-fn chatml(prompt: &str) -> String {
+fn chatml_with(system: &str, prompt: &str) -> String {
     format!(
-        "<|im_start|>system\n{SERVE_SYSTEM}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
+        "<|im_start|>system\n{system}<|im_end|>\n<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n"
     )
 }
 
@@ -999,6 +1020,14 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// streaming `dispatch` is taken); out-of-band — never journal / digest /
     /// identity.
     token_publisher: Option<Arc<crate::token_broker::TokenBroker>>,
+    /// RC3 (T-REACT-TOOL-MENU): the live serve tool registry (the SAME `Arc` the
+    /// coordinator settle + broker share, `server.rs`). When set, a tool-eligible
+    /// ReAct turn derives the granted-tool MENU from `warrant.tool_grants` at
+    /// dispatch and prepends it to the EPHEMERAL instruction so the model proposes
+    /// well-formed calls (RC2's grammar only constrains a proposal once made). Off
+    /// the MoteDef identity — never written to `config_subset` / journaled — exactly
+    /// like the RC2 grammar carrier. `None` ⇒ no menu ⇒ byte-identical dispatch.
+    tool_registry: Option<Arc<dyn kx_tool_registry::ToolRegistry>>,
 }
 
 impl<B: InferenceBackend> ModelRouterExecutor<B> {
@@ -1022,6 +1051,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             image_ref_ctx: Mutex::new(None),
             usage: None,
             token_publisher: None,
+            tool_registry: None,
         }
     }
 
@@ -1040,6 +1070,19 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         broker: Arc<crate::token_broker::TokenBroker>,
     ) -> Self {
         self.token_publisher = Some(broker);
+        self
+    }
+
+    /// RC3 (T-REACT-TOOL-MENU): wire the live serve tool registry so a tool-eligible
+    /// ReAct turn prepends the granted-tool MENU to its ephemeral instruction (the
+    /// model then proposes well-formed calls; RC2 grammar only constrains a proposal
+    /// once made). Off-MoteDef / off-digest (mirrors `with_token_publisher`'s
+    /// out-of-band posture). Unset ⇒ byte-identical dispatch.
+    pub(crate) fn with_tool_registry(
+        mut self,
+        registry: Arc<dyn kx_tool_registry::ToolRegistry>,
+    ) -> Self {
+        self.tool_registry = Some(registry);
         self
     }
 
@@ -1182,9 +1225,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // byte-identical to pre-F-7. A missing/oversized upstream fails closed.
         let instruction = match self.take_parent_context(mote.id) {
             Some(parents) if !parents.is_empty() => {
-                let context =
-                    crate::assemble_serve::assemble_from_parent_results(&parents, &self.store)
-                        .map_err(|e| internal(&format!("assemble F-7 context: {e}")))?;
+                let context = self.assemble_parent_context(mote, &parents)?;
                 format!("{context}{instruction}")
             }
             _ => instruction,
@@ -1230,6 +1271,16 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // think/no-think directive. ABSENT ⇒ byte-identical (the directive is a
         // no-op for `Default`), so a no-reasoning Mote's prompt is unchanged.
         let instruction = apply_reasoning_directive(instruction, reasoning_mode_from_config(mote));
+        // RC3 (T-REACT-TOOL-MENU): on a tool-eligible ReAct turn, prepend the
+        // granted-tool MENU so the model PROPOSES well-formed calls AUTONOMOUSLY
+        // (RC2's grammar only CONSTRAINS a proposal once made — it is dormant until
+        // the model proposes; the menu is the unblocker). The menu is derived OFF the
+        // MoteDef identity and prepended to the EPHEMERAL `instruction` only (see
+        // [`Self::react_tool_menu`]); `7d22d4bd` and replay are untouched.
+        let instruction = match self.react_tool_menu(mote, warrant) {
+            Some(menu) => format!("{menu}\n{instruction}"),
+            None => instruction,
+        };
         // Batch A (vision): a Mote carrying `config_subset[IMAGE_REF_KEY]` (the
         // bound `kx/recipes/vision` arg) dispatches MULTIMODAL — the media
         // marker heads the user turn (the projector splices the image in marker
@@ -1246,10 +1297,15 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // to pre-PR-1 for those paths. The wrapping is presentation only, never an
         // identity/authority input (SN-8); the raw `instruction` already fixed the
         // Mote identity via `config_subset[PROMPT_KEY]`.
+        // RC3: a ReAct turn uses the curated AGENTIC contract (or the operator
+        // `KX_SERVE_REACT_SYSTEM` persona override); all other turns keep the
+        // precise-assistant `SERVE_SYSTEM`. Presentation only (SN-8) — off-MoteDef /
+        // off-digest, never journaled. (See [`Self::dispatch_system_prompt`].)
+        let system = Self::dispatch_system_prompt(mote);
         let format = |user: &str| -> String {
             self.backend
-                .render_chat(&mote.def.model_id, SERVE_SYSTEM, user)
-                .unwrap_or_else(|| chatml(user))
+                .render_chat(&mote.def.model_id, &system, user)
+                .unwrap_or_else(|| chatml_with(&system, user))
         };
         // AGENTIC-VISION: turn 0 (and single-shot vision) carries the image INLINE in
         // `config_subset[IMAGE_REF_KEY]`; a SUCCESSOR ReAct turn carries NO inline image,
@@ -1346,6 +1402,64 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             .config_subset
             .get(&ConfigKey(REACT_UNCONSTRAINED_KEY.to_string()))
             .is_some_and(|v| matches!(v.0.as_slice(), b"true" | b"1"))
+    }
+
+    /// RC3 (T-REACT-TOOL-MENU): the granted-tool MENU to prepend to a tool-eligible
+    /// ReAct turn's EPHEMERAL instruction, or `None` when no menu applies — not a
+    /// react turn, no grants, an `unconstrained` opt-out, the `KX_SERVE_REACT_TOOL_MENU`
+    /// kill-switch, no wired registry, or an empty render. Derived from
+    /// `warrant.tool_grants` via the SHARED [`kx_context_assembler::render_tool_menu`]
+    /// (the SAME renderer the context-assembly path uses — no harness↔serve drift),
+    /// gated EXACTLY like the RC2 grammar path. The menu is advisory prompt bytes only
+    /// (SN-8) and is computed OFF the MoteDef identity (never written to
+    /// `config_subset` / journaled), so the canonical no-tools demo renders nothing
+    /// and `7d22d4bd` + replay are untouched.
+    fn react_tool_menu(&self, mote: &Mote, warrant: &WarrantSpec) -> Option<String> {
+        let reg = self.tool_registry.as_ref()?;
+        let eligible = Self::is_react_turn(mote)
+            && !warrant.tool_grants.is_empty()
+            && !Self::is_unconstrained(mote)
+            && crate::mcp_tool::tool_menu_enabled();
+        if !eligible {
+            return None;
+        }
+        let menu = kx_context_assembler::render_tool_menu(&warrant.tool_grants, reg.as_ref());
+        (!menu.is_empty()).then_some(menu)
+    }
+
+    /// RC3: the system prompt for this dispatch. A ReAct turn uses the operator
+    /// `KX_SERVE_REACT_SYSTEM` persona override if set, else the curated agentic
+    /// contract [`REACT_SYSTEM`]; every other turn keeps the precise-assistant
+    /// [`SERVE_SYSTEM`] (byte-identical to pre-RC3). Presentation only (SN-8) — never
+    /// an identity / journal input, so it is off-MoteDef and off-digest.
+    fn dispatch_system_prompt(mote: &Mote) -> std::borrow::Cow<'static, str> {
+        if !Self::is_react_turn(mote) {
+            return std::borrow::Cow::Borrowed(SERVE_SYSTEM);
+        }
+        crate::mcp_tool::react_system_override().map_or(
+            std::borrow::Cow::Borrowed(REACT_SYSTEM),
+            std::borrow::Cow::Owned,
+        )
+    }
+
+    /// RC3: assemble this Mote's delivered upstream context. A ReAct turn's trajectory
+    /// is delivered by the coordinator in TIME order (turn0, obs0, turn1, … — D78), so
+    /// it renders ORDER-PRESERVING (+ recency-trim on overflow); the pre-RC3 path
+    /// re-sorted by MoteId (run-salted blake3 → non-monotonic), scrambling the
+    /// conversation the model reads. A non-react F-7 / critic context is genuinely
+    /// unordered Data parents ⇒ keep the MoteId-sorted render. Off-digest (ephemeral
+    /// prompt); a missing / oversized upstream still fails closed.
+    fn assemble_parent_context(
+        &self,
+        mote: &Mote,
+        parents: &[(MoteId, ContentRef)],
+    ) -> Result<String, MoteExecutorError> {
+        let assembled = if Self::is_react_turn(mote) {
+            crate::assemble_serve::assemble_trajectory(parents, &self.store)
+        } else {
+            crate::assemble_serve::assemble_from_parent_results(parents, &self.store)
+        };
+        assembled.map_err(|e| internal(&format!("assemble F-7 context: {e}")))
     }
 
     /// Run a ReAct TURN Mote: `dispatch_model` verbatim (the F-7 trajectory
@@ -1957,10 +2071,12 @@ mod tests {
 
     #[test]
     fn chatml_is_the_training_contract() {
-        let p = chatml("hi");
+        let p = chatml_with(SERVE_SYSTEM, "hi");
         assert!(p.starts_with("<|im_start|>system\n"));
         assert!(p.ends_with("<|im_start|>assistant\n"));
         assert!(p.contains("<|im_start|>user\nhi<|im_end|>"));
+        // The default (non-react) system is unchanged from pre-RC3.
+        assert!(p.contains("You are a precise assistant. Follow the instruction exactly."));
     }
 
     // --- PR-4 (T-FEAT1): the opt-in reasoning-mode knob (config_subset) ---
@@ -2822,6 +2938,190 @@ mod tests {
             None,
             "unconstrained=true ⇒ grammar skipped"
         );
+    }
+
+    // --- RC3 (T-REACT-TOOL-MENU): the granted-tool menu + curated system prompt ---
+
+    /// A live tool registry holding the tool `granted_warrant` grants (`mcp-echo` v1),
+    /// WITH a typed schema, so a granted react turn renders a rich menu. Reuses the
+    /// bundled `echo_tool_def` (the real schema), re-id'd to match the grant.
+    fn menu_registry() -> Arc<dyn kx_tool_registry::ToolRegistry> {
+        use kx_tool_registry::ToolRegistry as _; // bring `register` into scope.
+        let mut reg = kx_tool_registry::InMemoryToolRegistry::new();
+        let mut def = crate::mcp_tool::echo_tool_def();
+        def.tool_id = kx_mote::ToolName("mcp-echo".into()); // match granted_warrant
+        reg.register(
+            def,
+            kx_tool_registry::ToolProvenance::HumanAuthored {
+                author: "test".into(),
+            },
+        )
+        .expect("register echo def");
+        Arc::new(reg)
+    }
+
+    /// The LEAD fix: a tool-eligible ReAct turn with grants + a wired registry
+    /// prepends the granted-tool MENU (name + schema + worked example) to the prompt,
+    /// so a real model can PROPOSE a call without the instruction describing the format.
+    #[test]
+    fn menu_is_injected_on_a_granted_react_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"blue", None);
+        let exec = exec.with_tool_registry(menu_registry());
+        exec.run(&react_turn_mote(), &granted_warrant(), None)
+            .expect("react turn dispatches");
+        let prompt = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            prompt.contains("You can call the following tools:"),
+            "menu header absent: {prompt}"
+        );
+        assert!(
+            prompt.contains("name: mcp-echo"),
+            "tool name absent: {prompt}"
+        );
+        assert!(
+            prompt.contains("Example: "),
+            "worked example absent: {prompt}"
+        );
+        // The user's instruction still rides AFTER the menu.
+        assert!(
+            prompt.contains("list the files"),
+            "instruction absent: {prompt}"
+        );
+    }
+
+    /// No grant ⇒ no menu (the canonical-demo / answer-only invariant — same posture
+    /// as the grammar gate, so `7d22d4bd` is untouched).
+    #[test]
+    fn no_menu_on_a_react_turn_without_grants() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"blue", None);
+        let exec = exec.with_tool_registry(menu_registry());
+        exec.run(
+            &react_turn_mote(),
+            &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+            None,
+        )
+        .expect("react turn dispatches");
+        let prompt = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            !prompt.contains("You can call the following tools:"),
+            "no grant ⇒ no menu, got: {prompt}"
+        );
+    }
+
+    /// A non-react (shaper) turn is NEVER menu-injected, even with a granted warrant.
+    #[test]
+    fn no_menu_on_a_non_react_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(
+            &store,
+            TWO_CHILD_PROPOSAL,
+            Some(worker_recipes(&model_id())),
+        );
+        let exec = exec.with_tool_registry(menu_registry());
+        exec.run(&shaper_mote(), &granted_warrant(), None)
+            .expect("shaper dispatches");
+        let prompt = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            !prompt.contains("You can call the following tools:"),
+            "a shaper turn is never menu-injected, got: {prompt}"
+        );
+    }
+
+    /// No registry wired ⇒ no menu (the `None` path is byte-identical to pre-RC3 —
+    /// the menu is purely additive and unset means unchanged dispatch).
+    #[test]
+    fn no_menu_when_registry_not_wired() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"blue", None);
+        exec.run(&react_turn_mote(), &granted_warrant(), None)
+            .expect("react turn dispatches");
+        let prompt = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            !prompt.contains("You can call the following tools:"),
+            "no registry ⇒ no menu, got: {prompt}"
+        );
+    }
+
+    /// RC3 curated system prompt: a ReAct turn is framed by the AGENTIC contract
+    /// (`REACT_SYSTEM`); a non-react (shaper) turn keeps the precise-assistant
+    /// `SERVE_SYSTEM` (byte-identical to pre-RC3). Asserted via the ChatML fallback
+    /// the stub backend takes (`render_chat` returns `None`), which embeds the system.
+    #[test]
+    fn react_turn_uses_curated_agentic_system_else_serve_system() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+
+        // ReAct turn → REACT_SYSTEM.
+        let (exec, backend) = executor(&store, b"blue", None);
+        exec.run(
+            &react_turn_mote(),
+            &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+            None,
+        )
+        .expect("react turn dispatches");
+        let react_prompt = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            react_prompt.contains("autonomous assistant that can call tools"),
+            "react turn should use the agentic system prompt: {react_prompt}"
+        );
+
+        // Shaper turn → SERVE_SYSTEM (unchanged).
+        let (exec2, backend2) = executor(
+            &store,
+            TWO_CHILD_PROPOSAL,
+            Some(worker_recipes(&model_id())),
+        );
+        exec2
+            .run(
+                &shaper_mote(),
+                &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+                None,
+            )
+            .expect("shaper dispatches");
+        let shaper_prompt = backend2.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            shaper_prompt.contains("You are a precise assistant. Follow the instruction exactly."),
+            "shaper turn should keep SERVE_SYSTEM: {shaper_prompt}"
+        );
+    }
+
+    /// RC3: the agentic system prompt is selected by turn kind — a ReAct turn gets the
+    /// curated `REACT_SYSTEM` (absent an env override), every other turn keeps
+    /// `SERVE_SYSTEM`. Tested without the env (the `KX_SERVE_REACT_SYSTEM` override is
+    /// the thin process-global wrapper, exercised by the live witness).
+    #[test]
+    fn dispatch_system_prompt_selects_by_turn_kind() {
+        let react = ModelRouterExecutor::<StubBackend>::dispatch_system_prompt(&react_turn_mote());
+        assert!(
+            react.contains("autonomous assistant that can call tools"),
+            "react turn ⇒ curated agentic contract: {react}"
+        );
+        let shaper = ModelRouterExecutor::<StubBackend>::dispatch_system_prompt(&shaper_mote());
+        assert_eq!(&*shaper, SERVE_SYSTEM, "non-react turn keeps SERVE_SYSTEM");
+    }
+
+    /// Render↔parse coherence: the canonical tool-call envelope the curated
+    /// `REACT_SYSTEM` instructs the model to emit (and the menu names) is EXACTLY the
+    /// shape the authority gate `kx_toolcall::parse_tool_call` accepts — so a model
+    /// that follows the prompt produces a call the runtime resolves to the granted
+    /// tool. (Format coverage over the same envelope is gated in `kx-eval`; this pins
+    /// the serve-side curated-prompt↔parser agreement.)
+    #[test]
+    fn react_system_envelope_round_trips_through_parse_tool_call() {
+        let warrant = granted_warrant(); // grants mcp-echo v1
+        let envelope = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"text":"ping"}}}"#;
+        let call =
+            kx_toolcall::parse_tool_call(envelope, &warrant, kx_toolcall::max_args_bytes(&warrant))
+                .expect("the curated envelope parses")
+                .expect("a tool call is decoded");
+        assert_eq!(call.name, kx_mote::ToolName("mcp-echo".into()));
+        assert_eq!(call.version, kx_mote::ToolVersion("1".into()));
     }
 
     /// PR-9d (model-side half): `dispatch_model` PREPENDS the carried grounding context

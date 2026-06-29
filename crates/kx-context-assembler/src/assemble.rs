@@ -2,12 +2,14 @@
 //! closure (Data-edge parent `result_ref`s + warrant `tool_grants`) into
 //! byte-deterministic [`crate::AssembledContext`].
 
+use std::collections::BTreeSet;
+
 use bytes::Bytes;
 use kx_content::{ContentRef, ContentStore};
 use kx_mote::{decode_context_items, ConfigKey, EdgeKind, Mote, MoteId, CONTEXT_ITEMS_KEY};
 use kx_projection::Snapshot;
 use kx_tool_registry::{InputSchema, ParamType, ToolDef, ToolRegistry};
-use kx_warrant::WarrantSpec;
+use kx_warrant::{ToolGrant, WarrantSpec};
 
 use crate::errors::AssemblyError;
 use crate::types::{AssembledContext, AssembledItem};
@@ -24,7 +26,13 @@ use crate::types::{AssembledContext, AssembledItem};
 /// advisory prompt bytes only: it lands in `AssembledItem.bytes` (read by the model),
 /// never in `source_ref`/the journal/`MoteId`, so it moves no committed-fact digest.
 fn tool_menu_text(grant_id: &str, def: &ToolDef) -> String {
-    let head = format!("name: {grant_id}\n");
+    // Lead with the EXACT callable name AND the pinned version (PR-1/BUG-32 name-
+    // steering + RC3): the call envelope is `{"name":…,"version":…,"args":…}`, and the
+    // runtime matches the version EXACTLY (SN-8). Without the version in the menu a
+    // model guesses (e.g. emits `"1.0"` for a `"1"` grant) and the call is refused —
+    // observed live on Ollama gemma3 (the llama.cpp grammar enumerates the pair, but
+    // the Ollama honest-degrade path has only the prompt to go on).
+    let head = format!("name: {grant_id}\nversion: {}\n", def.tool_version.0);
     let Some(schema) = &def.input_schema else {
         return format!("{head}{}", def.description);
     };
@@ -86,6 +94,52 @@ fn example_call_json(schema: &InputSchema) -> String {
         parts.push(format!("\"{}\": {val}", p.name));
     }
     format!("{{{}}}", parts.join(", "))
+}
+
+/// RC3 (T-REACT-TOOL-MENU): render the advisory tool MENU a tool-eligible ReAct
+/// turn shows the model so it PROPOSES well-formed calls autonomously. RC2's
+/// grammar only CONSTRAINS a proposal once made; the menu is what makes the model
+/// propose at all. Pure, total and deterministic: it iterates `grants` in
+/// `BTreeSet` `(tool_id, tool_version)` order, looks each one up, and renders it
+/// through the SAME `tool_menu_text` the context-assembly path uses (name
+/// steering, typed params and a worked example) so the harness menu and the
+/// live-serve menu can never drift. A grant the registry cannot resolve degrades
+/// to a name, version and envelope shape only (fail-soft — it never panics a
+/// dispatch and never silently omits a granted tool). It renders ONLY `grants`
+/// (= `warrant.tool_grants`), so no UNGRANTED tool can ever leak. The output is
+/// advisory prompt bytes only (SN-8): the runtime still validates the model's
+/// REAL proposal fail-closed (`kx_toolcall::parse_tool_call` + `validate_args`).
+/// Empty `grants` yields `""`, so the dispatch menu gate prepends nothing and the
+/// canonical no-tools demo stays byte-unchanged.
+#[must_use]
+pub fn render_tool_menu(grants: &BTreeSet<ToolGrant>, registry: &dyn ToolRegistry) -> String {
+    if grants.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("You can call the following tools:\n");
+    for grant in grants {
+        out.push('\n');
+        if let Some(def) = registry.lookup(&grant.tool_id, &grant.tool_version) {
+            out.push_str(&tool_menu_text(&grant.tool_id.0, &def));
+        } else {
+            // Fail-soft: the registry could not resolve a granted tool (a
+            // BUG-33-class id skew or a registry-open race). Emit the name,
+            // version and the canonical envelope shape so the grant is never
+            // silently dropped from the menu. Plain `push_str` (no `format!`)
+            // keeps the clippy `format_push_string` lint clean.
+            out.push_str("name: ");
+            out.push_str(&grant.tool_id.0);
+            out.push_str("\nversion: ");
+            out.push_str(&grant.tool_version.0);
+            out.push_str("\n(schema unavailable — call as {\"tool_call\":{\"name\":\"");
+            out.push_str(&grant.tool_id.0);
+            out.push_str("\",\"version\":\"");
+            out.push_str(&grant.tool_version.0);
+            out.push_str("\",\"args\":{}}})");
+        }
+        out.push('\n');
+    }
+    out
 }
 
 /// Assemble the Mote's explicit dependency closure into byte-deterministic
@@ -293,7 +347,7 @@ mod tool_menu_tests {
         // model emits it verbatim, then the description.
         assert_eq!(
             tool_menu_text("fs-list", &def(None)),
-            "name: fs-list\nList a directory."
+            "name: fs-list\nversion: 1\nList a directory."
         );
     }
 
@@ -303,7 +357,7 @@ mod tool_menu_tests {
         // full callable id (the grant id, not the def's bare name).
         assert_eq!(
             tool_menu_text("kxlocal-a1b2c3d4/multiply", &def(None)),
-            "name: kxlocal-a1b2c3d4/multiply\nList a directory."
+            "name: kxlocal-a1b2c3d4/multiply\nversion: 1\nList a directory."
         );
     }
 
@@ -320,7 +374,7 @@ mod tool_menu_tests {
         // `path` is OPTIONAL, so the minimal valid call has zero required keys: {}.
         assert_eq!(
             tool_menu_text("fs-list", &def(Some(schema))),
-            "name: fs-list\nList a directory.\nInputs:\n  - path (string, optional)\nExample: {}"
+            "name: fs-list\nversion: 1\nList a directory.\nInputs:\n  - path (string, optional)\nExample: {}"
         );
     }
 
@@ -338,7 +392,7 @@ mod tool_menu_tests {
         };
         assert_eq!(
             tool_menu_text("mcp-echo/echo", &def(Some(schema))),
-            "name: mcp-echo/echo\nList a directory.\nInputs:\n  - text (string, required)\n\
+            "name: mcp-echo/echo\nversion: 1\nList a directory.\nInputs:\n  - text (string, required)\n\
              Example: {\"text\": \"<string>\"}"
         );
     }

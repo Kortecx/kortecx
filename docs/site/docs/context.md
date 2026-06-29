@@ -202,9 +202,27 @@ At bind, the runtime resolves each attached handle to its item refs (caller-scop
 fail-closed on an unknown handle) and folds the sorted ref-set into the **entry
 Mote's identity-bearing `config_subset`**. At run time, the model executor fetches
 each blob from the content store and prepends it to the prompt as a labeled
-`[context <name>]` block, ahead of any upstream (parent) context. A missing ref or
-a window overflow **fails closed** — the model never runs on partial or unbounded
-context.
+`[context <name>]` block, ahead of any upstream (parent) context. A missing ref
+still **fails closed** — the model never runs on *partial* context.
+
+### Window budgeting (deterministic, never silent)
+
+Items arrive in relevance order (e.g. a RAG bundle is top-k by similarity). If the
+bundle fits the model window it is rendered verbatim. If it overflows, the runtime
+keeps the **highest-relevance prefix that fits** and appends a bounded, honest
+marker — `[context truncated: kept k/N items, dropped Bb]` — rather than failing the
+run. The cut is fully deterministic (same items + window ⇒ same prompt), so recovery
+re-reads identically. A single item larger than the whole window still fails closed
+(there is no partial-item rendering).
+
+### ReAct conversation order
+
+A multi-turn agent reads its own trajectory — prior turns and their tool
+observations — in **time order** (turn 0, its observation, turn 1, …), so the model
+follows the conversation as it happened. Very long autonomous chains are bounded by
+a **recency window**: the oldest steps are dropped (with an honest marker) to keep
+the most recent context, which is what the next step needs. This is all off-digest
+(it shapes the live prompt only, never a committed fact).
 
 A run that attaches **no** bundle is byte-identical to one authored before context
 bundles existed.

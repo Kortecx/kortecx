@@ -579,6 +579,15 @@ build-serve-engine:
     echo " ✓ no kx-llamacpp in the kx-gateway serve-engine,hnsw closure"
     cargo build -p kx-cli --features serve-engine,hnsw
     cargo build -p kx-gateway --features serve-engine,hnsw
+    # RC3 (GR23 CI-hardening): the standard `clippy`/`test` stages run with DEFAULT
+    # features, which EXCLUDE `serve-engine` — so the live `kx serve` model loop
+    # (`model_exec`: dispatch, grammar-constrained tool-calling, the RC3 tool menu +
+    # curated agentic prompt) was previously only `cargo build`-checked, never
+    # clippy-linted or unit-tested in CI. Lint + run its FFI-free inline unit tests
+    # here (this recipe runs in the toolchain-free `build-serve-engine` CI job).
+    echo "Linting + unit-testing the FFI-free serve-engine model loop (model_exec)..."
+    cargo clippy -p kx-gateway --features serve-engine,hnsw --lib -- -D warnings
+    cargo test -p kx-gateway --features serve-engine,hnsw --lib -- --nocapture
     echo " ✓ build-serve-engine: PASS"
 
 # The installed-binary feature matrix stays buildable (the v0.1.0 campaign

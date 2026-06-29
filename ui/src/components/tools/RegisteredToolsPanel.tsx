@@ -51,6 +51,15 @@ export function RegisteredToolsPanel() {
 
   return (
     <div data-testid="tools-registered">
+      {/* RC3: a short, honest note on how granted tools reach an agent — the model
+          is shown a menu of its granted tools (name, schema, a worked example) and
+          its proposals are grammar-constrained to the canonical envelope, so local
+          models call tools autonomously. The per-tool envelope is previewed below. */}
+      <p className="muted" data-testid="tools-agentic-note">
+        Agents are shown a <strong>menu</strong> of their granted tools and steered to the canonical
+        call envelope, so they propose tool calls autonomously. Each row previews how the model is
+        told to call it.
+      </p>
       {/* A deregister failure is typically non-retryable (forbidden / not-found),
           so surface it as a dismissable inline message (the RegisterToolForm
           pattern) — it clears on the next deregister attempt. */}
@@ -125,6 +134,16 @@ function RegistryRow({
           <Badge label={tool.registrationStatus} color={statusColor(tool.registrationStatus)} />
         </div>
         {tool.description ? <p className="registry-row__desc muted">{tool.description}</p> : null}
+        {/* RC3: how an agent is told to call this tool — the canonical tool-call
+            envelope the menu + grammar steer the model to emit. See the
+            "Agentic prompts" docs for the full menu (typed inputs + example). */}
+        <p
+          className="registry-row__desc mono"
+          data-testid={`tool-call-format-${tool.toolName}-${tool.toolVersion}`}
+          title="How an agent is told to call this tool — the canonical tool-call envelope"
+        >
+          {`{"tool_call":{"name":"${tool.toolName}","version":"${tool.toolVersion}","args":{ … }}}`}
+        </p>
         <dl className="registry-row__meta">
           <div>
             <dt className="muted">provenance</dt>
