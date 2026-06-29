@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-dataset-bm25"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx opt-in SPARSE (keyword / BM25) retrieval backend (RC4a) — a hand-rolled, pure-Rust, FFI-free inverted index implementing kx-dataset::LexicalIndex. It ranks by lexical term overlap (Okapi BM25+, non-negative IDF) so a hybrid retriever catches exact-term matches a weak decoder-LLM embedding misses. Off the truth path (SN-8): the BM25 score is a display/ranking aid that is rank-fused and then discarded; only the ordered content-ref SET is committed. The on-disk form is a REBUILDABLE CACHE of (ContentRef, text) records — the inverted index is re-tokenized on open, so a tokenizer change is recovered by replay (D40), never a migration. Sync, zero external deps; the exact InMemory dense index stays the default and this pairs with kx-dataset-hnsw under RRF fusion."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The LexicalIndex trait + Hit this backend implements (the shared seam).
+kx-dataset = { workspace = true }
+# Content-addressed identity the postings + cache records are keyed by.
+kx-content = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+# Durability / corrupt-file / path-traversal integration tests write a cache file.
+tempfile   = { workspace = true }
+
+[lints]
+workspace = true

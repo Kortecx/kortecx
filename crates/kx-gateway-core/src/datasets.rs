@@ -22,6 +22,31 @@
 use kx_proto::proto;
 use tonic::Status;
 
+/// The retrieval strategy a query requests — gateway-core's own vocab (the host
+/// maps it to dense-only vs BM25+dense RRF fusion). `Default` ⇒ the host's
+/// operator-configured default; `Hybrid` silently falls back to dense when there
+/// is no `query_text` (the FFI-free client-vector path). RC4a.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum RetrievalMode {
+    /// Use the host's operator-configured default.
+    #[default]
+    Default,
+    /// Dense (embedding) ANN only — reproducible.
+    Dense,
+    /// BM25 + dense, RRF-fused (+ operator MMR rerank).
+    Hybrid,
+}
+
+/// Map the wire enum discriminant to gateway-core's [`RetrievalMode`]. Unknown /
+/// `UNSPECIFIED` ⇒ `Default` (the host default), never an error.
+pub(crate) fn retrieval_mode_from_proto(v: i32) -> RetrievalMode {
+    match proto::RetrievalMode::try_from(v) {
+        Ok(proto::RetrievalMode::Dense) => RetrievalMode::Dense,
+        Ok(proto::RetrievalMode::Hybrid) => RetrievalMode::Hybrid,
+        _ => RetrievalMode::Default,
+    }
+}
+
 /// One dataset in a [`DatasetView::list_datasets`] enumeration.
 #[derive(Clone, Debug)]
 pub struct DatasetSummaryEntry {
@@ -29,12 +54,21 @@ pub struct DatasetSummaryEntry {
     pub dataset_id: String,
     /// The advisory human handle (today == `dataset_id`).
     pub name: String,
-    /// The indexed (distinct, content-addressed) document count.
+    /// The distinct PARENT document count (RC4a: not chunks — see `chunk_count`).
     pub doc_count: u64,
     /// The embedding dimension (0 until the first insert fixes it).
     pub dim: u32,
     /// The unix-ms create time (display only; off every hash).
     pub created_ms: i64,
+    /// RC4a: ingested under the chunking pipeline (hits are passages, not docs).
+    pub chunked: bool,
+    /// RC4a: hex of the index fingerprint (embed model/pooling/dim/chunk/tokenizer);
+    /// empty for a legacy/unstamped dataset.
+    pub embed_model_fingerprint: String,
+    /// RC4a: the on-disk retrieval-index schema version (cold-index / compat guard).
+    pub index_version: u32,
+    /// RC4a: distinct retrievable chunks (== `doc_count` for legacy/un-chunked).
+    pub chunk_count: u64,
 }
 
 /// One document to ingest: content bytes ALWAYS, plus an OPTIONAL client-computed
@@ -65,12 +99,19 @@ pub struct IngestOutcome {
 /// One retrieval hit. `score` is DISPLAY-ONLY (SN-8).
 #[derive(Clone, Debug)]
 pub struct DatasetHitEntry {
-    /// The 32-byte content-addressed id of the retrieved document.
+    /// The 32-byte content-addressed id of the retrieved CHUNK (RC4a).
     pub content_ref: [u8; 32],
-    /// The document payload bytes (so a UI can show the snippet).
+    /// The chunk payload bytes (so a UI can show the snippet).
     pub content: Vec<u8>,
     /// The similarity score — DISPLAY-ONLY; NEVER an identity input.
     pub score: f32,
+    /// RC4a: the 32-byte id of the PARENT document (== `content_ref` for
+    /// legacy/un-chunked corpora).
+    pub parent_ref: [u8; 32],
+    /// RC4a: 0-based ordinal of this chunk within its parent (display/ordering).
+    pub chunk_index: u32,
+    /// RC4a: total chunks in the parent (display).
+    pub chunk_count: u32,
 }
 
 /// A failure from the [`DatasetView`] seam, mapped to honest gRPC codes by the
@@ -86,6 +127,11 @@ pub enum DatasetError {
     /// A server-embed was requested (a vector-less doc / `query_text`) but no
     /// embedder is wired ⇒ `failed_precondition`.
     EmbedderUnavailable,
+    /// RC4a: the live embedder's fingerprint disagrees with the one the dataset was
+    /// indexed under (a different embed model / pooling / chunk params) — querying
+    /// would compare incompatible vector spaces, so the host refuses rather than
+    /// silently mis-rank ⇒ `failed_precondition`. Re-ingest to rebuild.
+    StaleIndex(String),
     /// A malformed request (empty content, bad dataset name, non-UTF-8 text for a
     /// server-embed) ⇒ `invalid_argument`.
     InvalidArgument(String),
@@ -108,9 +154,10 @@ pub trait DatasetView: Send + Sync {
     /// or a backend failure.
     fn ingest(&self, dataset: &str, docs: &[IngestDoc<'_>]) -> Result<IngestOutcome, DatasetError>;
 
-    /// Query `dataset` for the top-`k` nearest documents. `query_embedding`
+    /// Query `dataset` for the top-`k` nearest chunks. `query_embedding`
     /// (`Some`) is the client-vector path; `None` falls back to embedding
-    /// `query_text` (needs an embedder). Ordered score-desc, ascending-ref.
+    /// `query_text` (needs an embedder). `mode` selects dense vs hybrid (RC4a;
+    /// hybrid needs `query_text`). Ordered score-desc, ascending-ref.
     ///
     /// # Errors
     /// [`DatasetError::NotFound`] for an unknown dataset; otherwise as `ingest`.
@@ -120,6 +167,7 @@ pub trait DatasetView: Send + Sync {
         query_embedding: Option<&[f32]>,
         query_text: &str,
         k: usize,
+        mode: RetrievalMode,
     ) -> Result<Vec<DatasetHitEntry>, DatasetError>;
 }
 
@@ -134,6 +182,7 @@ pub(crate) fn dataset_status(err: DatasetError) -> Status {
             "no embedding model wired: provide vectors client-side, or run \
              `kx serve --features inference` with a model",
         ),
+        DatasetError::StaleIndex(detail) => Status::failed_precondition(detail),
         DatasetError::Internal(detail) => Status::internal(detail),
     }
 }
@@ -146,6 +195,10 @@ pub(crate) fn dataset_summary_to_proto(d: DatasetSummaryEntry) -> proto::Dataset
         doc_count: d.doc_count,
         dim: d.dim,
         created_ms: d.created_ms,
+        chunked: d.chunked,
+        embed_model_fingerprint: d.embed_model_fingerprint,
+        index_version: d.index_version,
+        chunk_count: d.chunk_count,
     }
 }
 
@@ -155,6 +208,9 @@ pub(crate) fn dataset_hit_to_proto(h: DatasetHitEntry) -> proto::DatasetHit {
         content_ref: h.content_ref.to_vec(),
         content: h.content,
         score: h.score,
+        parent_ref: h.parent_ref.to_vec(),
+        chunk_index: h.chunk_index,
+        chunk_count: h.chunk_count,
     }
 }
 
@@ -182,8 +238,27 @@ mod tests {
             Code::FailedPrecondition
         );
         assert_eq!(
+            dataset_status(DatasetError::StaleIndex("stale".into())).code(),
+            Code::FailedPrecondition
+        );
+        assert_eq!(
             dataset_status(DatasetError::Internal("i".into())).code(),
             Code::Internal
         );
+    }
+
+    #[test]
+    fn retrieval_mode_from_proto_maps_known_and_defaults_unknown() {
+        assert_eq!(
+            retrieval_mode_from_proto(proto::RetrievalMode::Dense as i32),
+            RetrievalMode::Dense
+        );
+        assert_eq!(
+            retrieval_mode_from_proto(proto::RetrievalMode::Hybrid as i32),
+            RetrievalMode::Hybrid
+        );
+        // UNSPECIFIED and any unknown discriminant ⇒ the host default.
+        assert_eq!(retrieval_mode_from_proto(0), RetrievalMode::Default);
+        assert_eq!(retrieval_mode_from_proto(99), RetrievalMode::Default);
     }
 }

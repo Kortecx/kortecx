@@ -68,7 +68,8 @@ export function DatasetsPanel({
             >
               <span className="chip__label">{d.name || d.datasetId}</span>
               <span className="chip__meta">
-                {d.docCount} doc{d.docCount === 1 ? "" : "s"} · dim {d.dim}
+                {d.docCount} doc{d.docCount === 1 ? "" : "s"}
+                {d.chunked ? ` · ${d.chunkCount} chunks` : ""} · dim {d.dim}
               </span>
             </button>
           ))}

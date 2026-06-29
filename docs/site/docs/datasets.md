@@ -26,10 +26,34 @@ kx datasets list
 kx datasets ingest my-corpus --text "the first document" --text "another doc"
 kx datasets ingest my-corpus --file ./notes.md
 kx datasets query my-corpus --text "what did we decide?" --k 5
+kx datasets query my-corpus --text "what did we decide?" --mode hybrid   # BM25 + dense
 ```
 
 Add `--json` to any subcommand for a machine-readable form (byte-shape parity with
 the SDKs).
+
+## Hybrid retrieval & chunking
+
+Retrieval combines two signals, fused by **Reciprocal Rank Fusion (RRF)** and
+diversified by **MMR**:
+
+- **Dense** — embedding (vector) similarity. Good at *meaning* (paraphrase, synonymy).
+- **Sparse (BM25)** — keyword/term overlap. Good at *exact terms* a weak sentence
+  embedding mis-ranks (names, codes, rare words).
+
+`--mode hybrid` (the default for server-embedded text) runs both legs; `--mode dense`
+runs vectors only. The SDKs take a `mode` argument (`RetrievalMode.HYBRID` / `.DENSE`);
+the Data Lab search panel exposes a **Hybrid / Dense** chip. Hybrid silently falls
+back to dense when there is no query text (the FFI-free client-vector path).
+
+**Chunking.** Server-embedded documents are split into overlapping **passages**
+(default ~1000 chars, 200 overlap) before embedding, so a hit is the relevant
+*passage*, not a whole document. Each hit carries chunk **provenance** — its parent
+document ref and its position (`chunk i/N`) — surfaced in `kx datasets query` and the
+Data Lab. Client-vector ingest is never chunked (the client owns granularity). A
+dataset's summary shows `chunked` + the distinct `chunk_count` alongside `doc_count`
+(parent documents). Existing (pre-chunking) corpora keep working — a whole document is
+treated as a single chunk.
 
 ## Embedding: server-side or bring-your-own vectors
 
@@ -53,6 +77,42 @@ client = KxClient(endpoint="http://127.0.0.1:50151", token="…")
 client.ingest_documents("my-corpus", [IngestDocument(content=b"hello", embedding=[0.1, 0.2, …])])
 hits = client.query_dataset("my-corpus", text="greeting", k=5)
 ```
+
+## Embedding quality — use a dedicated embedder
+
+Retrieval is only as good as the embeddings. A generative **decoder** chat model
+(e.g. Gemma) produces weak sentence embeddings that mis-rank paraphrases, so for the
+server-embed path we strongly recommend a **dedicated embedding model**:
+
+- **Ollama** — `ollama pull embeddinggemma`, then `KX_SERVE_EMBED_MODEL=embeddinggemma`.
+- **llama.cpp** — register a small embedding GGUF (e.g. `nomic-embed-text`,
+  `bge-small`) and point `KX_SERVE_EMBED_MODEL` at it.
+
+When the configured embedder is a decoder model, the runtime says so honestly — `kx
+info` and `kx models list` flag it, `kx datasets ingest` prints a one-line advisory,
+and the Data Lab shows a notice. Retrieval still works (it never blocks); hybrid +
+chunking lift quality regardless.
+
+## Operator tuning (`KX_SERVE_RAG_*`)
+
+Retrieval is operator-configurable (never client-chosen — SN-8). All are additive and
+default-preserving (unset ⇒ the documented default):
+
+| Env knob | Default | Effect |
+| --- | --- | --- |
+| `KX_SERVE_RAG_MODE` | `hybrid` | default retrieval mode (`dense` \| `hybrid`) |
+| `KX_SERVE_RAG_CHUNK_SIZE` | `1000` | max chunk size (chars) |
+| `KX_SERVE_RAG_CHUNK_OVERLAP` | `200` | chunk overlap (chars) |
+| `KX_SERVE_RAG_MAX_CHUNKS_PER_DOC` | `0` (unbounded) | per-document chunk cap |
+| `KX_SERVE_RAG_RRF_K` | `60` | RRF fusion constant |
+| `KX_SERVE_RAG_MMR_LAMBDA` | `7000` | MMR relevance/diversity (basis points) |
+| `KX_SERVE_RAG_RERANK` | `on` | MMR diversity rerank on/off |
+| `KX_SERVE_RAG_STOPWORDS` | `off` | drop English stopwords in BM25 |
+| `KX_SERVE_WARM_EMBED` | `off` | pre-load the embed model at serve start (avoids a cold first-ingest timeout) |
+
+Changing the embed model or the chunk config invalidates an existing server-embedded
+corpus: a server-embed query then returns `FAILED_PRECONDITION` (re-ingest to rebuild)
+rather than silently mis-ranking. The client-vector path is unaffected.
 
 ## Scores are display-only (SN-8)
 

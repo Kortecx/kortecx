@@ -184,6 +184,13 @@ impl RetrievalIndex for HnswRetrievalIndex {
     fn len(&self) -> usize {
         self.ids.len()
     }
+
+    fn vector_of(&self, id: &ContentRef) -> Option<Vec<f32>> {
+        self.by_ref
+            .get(id)
+            .and_then(|&i| self.vectors.get(i))
+            .cloned()
+    }
 }
 
 /// Cosine similarity in `[-1, 1]`, matching `1.0 - DistCosine` (the HNSW arm's

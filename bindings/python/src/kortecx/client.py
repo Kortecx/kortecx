@@ -24,6 +24,7 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    cast,
 )
 
 import grpc
@@ -56,6 +57,7 @@ from .datasets import (
     FuzzyHit,
     IngestDocument,
     IngestResult,
+    RetrievalMode,
     _to_documents,
 )
 from .errors import KxError, KxFailedPrecondition, KxUsage, from_rpc_error
@@ -2104,12 +2106,19 @@ class KxClient:
         text: Optional[str] = None,
         embedding: Optional[Sequence[float]] = None,
         k: int = 10,
+        mode: RetrievalMode = RetrievalMode.DEFAULT,
     ) -> List[DatasetHit]:
-        """Query ``dataset`` for the top-``k`` nearest documents. Pass ``embedding``
+        """Query ``dataset`` for the top-``k`` nearest chunks. Pass ``embedding``
         (the FFI-free client-vector path, takes precedence) or ``text`` (server-embed,
-        needs the ``inference`` feature). Hits are ordered by the DISPLAY-ONLY score
-        (SN-8). An unknown dataset raises ``KxNotFound``."""
-        req = _g.QueryDatasetRequest(dataset=dataset, query_text=text or "", k=k)
+        needs the ``inference`` feature). ``mode`` (RC4a) selects dense vs hybrid
+        (BM25 + dense); ``DEFAULT`` uses the server default. Hits are ordered by the
+        DISPLAY-ONLY score (SN-8). An unknown dataset raises ``KxNotFound``."""
+        req = _g.QueryDatasetRequest(
+            dataset=dataset,
+            query_text=text or "",
+            k=k,
+            retrieval_mode=cast("_g.RetrievalMode", int(mode)),
+        )
         if embedding:
             req.query_embedding.extend(embedding)
         resp = self._call(lambda: self._stub.QueryDataset(req, metadata=self._md))
@@ -2122,13 +2131,19 @@ class KxClient:
         text: Optional[str] = None,
         embedding: Optional[Sequence[float]] = None,
         k: int = 10,
+        mode: RetrievalMode = RetrievalMode.DEFAULT,
     ) -> List[FuzzyHit]:
         """Slice-B advisory fuzzy-in / exact-out discovery over ``dataset`` (D151).
         Like :meth:`query_dataset`, but each :class:`FuzzyHit` carries ONLY the
         content-addressed ref + a DISPLAY-ONLY basis-point score (SN-8) — join back
         to bytes with an EXACT :meth:`get_content` on the ref. An old / ``hnsw``-less
         gateway raises ``KxUnimplemented``."""
-        req = _g.FuzzyDiscoveryRequest(dataset=dataset, query_text=text or "", k=k)
+        req = _g.FuzzyDiscoveryRequest(
+            dataset=dataset,
+            query_text=text or "",
+            k=k,
+            retrieval_mode=cast("_g.RetrievalMode", int(mode)),
+        )
         if embedding:
             req.query_embedding.extend(embedding)
         resp = self._call(lambda: self._stub.FuzzyDiscovery(req, metadata=self._md))
@@ -2798,8 +2813,16 @@ class AsyncKxClient:
         text: Optional[str] = None,
         embedding: Optional[Sequence[float]] = None,
         k: int = 10,
+        mode: RetrievalMode = RetrievalMode.DEFAULT,
     ) -> List[DatasetHit]:
-        req = _g.QueryDatasetRequest(dataset=dataset, query_text=text or "", k=k)
+        """Async twin of :meth:`KxClient.query_dataset` (RC4a ``mode`` selects dense
+        vs hybrid)."""
+        req = _g.QueryDatasetRequest(
+            dataset=dataset,
+            query_text=text or "",
+            k=k,
+            retrieval_mode=cast("_g.RetrievalMode", int(mode)),
+        )
         if embedding:
             req.query_embedding.extend(embedding)
         resp = await self._acall(self._stub.QueryDataset(req, metadata=self._md))
@@ -2812,11 +2835,17 @@ class AsyncKxClient:
         text: Optional[str] = None,
         embedding: Optional[Sequence[float]] = None,
         k: int = 10,
+        mode: RetrievalMode = RetrievalMode.DEFAULT,
     ) -> List[FuzzyHit]:
         """Slice-B advisory fuzzy-in / exact-out discovery (D151) — async twin of
         :meth:`KxClient.fuzzy_discovery`. Returns refs + DISPLAY-ONLY basis-point
         scores (SN-8); join back to bytes with an EXACT ``get_content``."""
-        req = _g.FuzzyDiscoveryRequest(dataset=dataset, query_text=text or "", k=k)
+        req = _g.FuzzyDiscoveryRequest(
+            dataset=dataset,
+            query_text=text or "",
+            k=k,
+            retrieval_mode=cast("_g.RetrievalMode", int(mode)),
+        )
         if embedding:
             req.query_embedding.extend(embedding)
         resp = await self._acall(self._stub.FuzzyDiscovery(req, metadata=self._md))

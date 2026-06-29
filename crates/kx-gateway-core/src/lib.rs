@@ -105,6 +105,7 @@ pub use bundles_view::{
 pub use capture_view::{CaptureRecordEntry, CaptureView};
 pub use datasets::{
     DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView, IngestDoc, IngestOutcome,
+    RetrievalMode,
 };
 pub use error::GatewayError;
 pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};

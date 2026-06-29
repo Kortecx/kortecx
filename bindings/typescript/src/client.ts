@@ -35,7 +35,13 @@ import {
   PutContextBundleResult,
 } from "./context.js";
 import { RunCost } from "./cost.js";
-import { DatasetHit, DatasetSummary, type IngestDoc, IngestResult } from "./datasets.js";
+import {
+  DatasetHit,
+  DatasetSummary,
+  type IngestDoc,
+  IngestResult,
+  RetrievalMode,
+} from "./datasets.js";
 import {
   KxConnectError,
   KxError,
@@ -1881,7 +1887,7 @@ export abstract class KxClientBase {
    */
   async queryDataset(
     dataset: string,
-    opts: { text?: string; embedding?: readonly number[]; k?: number } = {},
+    opts: { text?: string; embedding?: readonly number[]; k?: number; mode?: RetrievalMode } = {},
   ): Promise<DatasetHit[]> {
     const resp = await rpc(
       this.grpc.queryDataset({
@@ -1889,6 +1895,7 @@ export abstract class KxClientBase {
         queryText: opts.text ?? "",
         queryEmbedding: opts.embedding ? Array.from(opts.embedding) : [],
         k: opts.k ?? 10,
+        retrievalMode: opts.mode ?? RetrievalMode.UNSPECIFIED,
       }),
     );
     return resp.hits.map((h) => DatasetHit.fromProto(h));
@@ -1904,7 +1911,7 @@ export abstract class KxClientBase {
    */
   async fuzzyDiscovery(
     dataset: string,
-    opts: { text?: string; embedding?: readonly number[]; k?: number } = {},
+    opts: { text?: string; embedding?: readonly number[]; k?: number; mode?: RetrievalMode } = {},
   ): Promise<FuzzyHit[]> {
     const resp = await rpc(
       this.grpc.fuzzyDiscovery({
@@ -1912,6 +1919,7 @@ export abstract class KxClientBase {
         queryText: opts.text ?? "",
         queryEmbedding: opts.embedding ? Array.from(opts.embedding) : [],
         k: opts.k ?? 10,
+        retrievalMode: opts.mode ?? RetrievalMode.UNSPECIFIED,
       }),
     );
     return resp.hits.map((h) => FuzzyHit.fromProto(h));

@@ -23,6 +23,14 @@ use crate::error::OllamaError;
 /// daemon must not stall the gateway.
 const CONTROL_TIMEOUT_MS: u64 = 2_000;
 
+/// Per-call timeout for `/api/embed`. Generous (`RC4a`, `T-OLLAMA-EMBED-COLD-TIMEOUT`):
+/// the FIRST embed on a cold daemon triggers a model LOAD that easily exceeds the
+/// 2 s control budget — a fixed short timeout would fail the first ingest with a
+/// spurious read-timeout. 120 s absorbs any realistic cold load; the warm-embed
+/// probe (`KX_SERVE_WARM_EMBED`) additionally pre-loads so the first real ingest is
+/// already warm.
+const EMBED_TIMEOUT_MS: u64 = 120_000;
+
 /// Connect timeout for every dial — a closed port fails fast (the probe-time
 /// "Ollama absent" signal) instead of waiting on the OS default.
 const CONNECT_TIMEOUT_MS: u64 = 1_500;
@@ -234,7 +242,7 @@ impl OllamaClient {
         let resp = self
             .agent
             .post(&url)
-            .timeout(Duration::from_millis(CONTROL_TIMEOUT_MS))
+            .timeout(Duration::from_millis(EMBED_TIMEOUT_MS))
             .set("Content-Type", "application/json")
             .send_bytes(&bytes)
             .map_err(classify)?;

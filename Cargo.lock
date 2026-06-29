@@ -1393,6 +1393,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-chunk"
+version = "0.1.0"
+
+[[package]]
 name = "kx-cli"
 version = "0.1.1"
 dependencies = [
@@ -1518,6 +1522,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-dataset-bm25"
+version = "0.1.0"
+dependencies = [
+ "kx-content",
+ "kx-dataset",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "kx-dataset-hnsw"
 version = "0.1.1"
 dependencies = [
@@ -1628,11 +1642,13 @@ dependencies = [
  "kx-capability",
  "kx-capture",
  "kx-catalog",
+ "kx-chunk",
  "kx-content",
  "kx-context-assembler",
  "kx-coordinator",
  "kx-critic",
  "kx-dataset",
+ "kx-dataset-bm25",
  "kx-dataset-hnsw",
  "kx-executor",
  "kx-fleet",

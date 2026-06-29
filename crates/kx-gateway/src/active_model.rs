@@ -76,6 +76,7 @@ mod tests {
             source: "ollama".into(),
             active: false,
             chat_rag_handle: String::new(),
+            embed_is_decoder: false,
         }
     }
 

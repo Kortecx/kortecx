@@ -92,6 +92,97 @@ pub(crate) fn chat_rag_max_k() -> usize {
     )
 }
 
+/// Defensive bounds on the RC4a RAG knobs (chars / chunks-per-doc). Generous; an
+/// out-of-range value falls back to the default (never silent garbage).
+#[cfg(feature = "hnsw")]
+const MAX_RAG_CHARS: usize = 100_000;
+#[cfg(feature = "hnsw")]
+const MAX_RAG_CHUNKS_PER_DOC: usize = 100_000;
+
+/// Resolve a boolean knob: `1/true/yes/on` ⇒ true, `0/false/no/off` ⇒ false, else
+/// the default. Pure + total.
+#[cfg(feature = "hnsw")]
+fn parse_bool(raw: Option<&str>, default: bool) -> bool {
+    match raw.map(|s| s.trim().to_ascii_lowercase()) {
+        Some(s) if s == "1" || s == "true" || s == "yes" || s == "on" => true,
+        Some(s) if s == "0" || s == "false" || s == "no" || s == "off" => false,
+        _ => default,
+    }
+}
+
+/// Resolve a basis-point knob (0..=10000), else the default.
+#[cfg(feature = "hnsw")]
+fn parse_bp(raw: Option<&str>, default: u32) -> u32 {
+    raw.and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|&v| v <= 10_000)
+        .unwrap_or(default)
+}
+
+/// The operator RAG config (RC4a `KX_SERVE_RAG_*` knobs): retrieval mode, chunk
+/// size/overlap, the per-doc chunk cap, RRF k, MMR lambda + on/off, and stopwords.
+/// Each is additive + default-preserving (unset ⇒ [`RagConfig::default`]); all are
+/// OPERATOR config, never client-chosen (SN-8).
+#[cfg(feature = "hnsw")]
+pub(crate) fn rag_config() -> crate::datasets::RagConfig {
+    use kx_gateway_core::RetrievalMode;
+    let mut c = crate::datasets::RagConfig::default();
+    if let Ok(m) = std::env::var("KX_SERVE_RAG_MODE") {
+        c.default_mode = match m.trim().to_ascii_lowercase().as_str() {
+            "dense" => RetrievalMode::Dense,
+            "hybrid" => RetrievalMode::Hybrid,
+            _ => c.default_mode,
+        };
+    }
+    c.chunk_max_chars = parse_cap(
+        std::env::var("KX_SERVE_RAG_CHUNK_SIZE").ok().as_deref(),
+        c.chunk_max_chars,
+        1,
+        MAX_RAG_CHARS,
+    );
+    c.chunk_overlap_chars = parse_cap(
+        std::env::var("KX_SERVE_RAG_CHUNK_OVERLAP").ok().as_deref(),
+        c.chunk_overlap_chars,
+        0,
+        MAX_RAG_CHARS,
+    );
+    c.max_chunks_per_doc = parse_cap(
+        std::env::var("KX_SERVE_RAG_MAX_CHUNKS_PER_DOC")
+            .ok()
+            .as_deref(),
+        c.max_chunks_per_doc,
+        0,
+        MAX_RAG_CHUNKS_PER_DOC,
+    );
+    c.rrf_k = parse_cap_u32(
+        std::env::var("KX_SERVE_RAG_RRF_K").ok().as_deref(),
+        c.rrf_k,
+        10_000,
+    );
+    c.mmr_lambda_bp = parse_bp(
+        std::env::var("KX_SERVE_RAG_MMR_LAMBDA").ok().as_deref(),
+        c.mmr_lambda_bp,
+    );
+    c.rerank = parse_bool(
+        std::env::var("KX_SERVE_RAG_RERANK").ok().as_deref(),
+        c.rerank,
+    );
+    c.stopwords = parse_bool(
+        std::env::var("KX_SERVE_RAG_STOPWORDS").ok().as_deref(),
+        c.stopwords,
+    );
+    c
+}
+
+/// Whether to PRE-LOAD the dataset embed model in the background at serve start
+/// (`KX_SERVE_WARM_EMBED`, default off). Probe-only — it fires one throwaway embed
+/// to pull the model resident so the FIRST real ingest is already warm
+/// (`T-OLLAMA-EMBED-COLD-TIMEOUT`); it never force-pulls a missing model and never
+/// blocks startup.
+#[cfg(all(feature = "hnsw", feature = "serve-engine"))]
+pub(crate) fn warm_embed() -> bool {
+    parse_bool(std::env::var("KX_SERVE_WARM_EMBED").ok().as_deref(), false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -33,6 +33,10 @@ describe("DatasetSummary.fromProto", () => {
       doc_count: 42,
       dim: 64,
       created_ms: 1234,
+      chunked: false,
+      chunk_count: 0,
+      index_version: 0,
+      embed_model_fingerprint: "",
     });
   });
 });
@@ -58,7 +62,12 @@ describe("FuzzyHit.fromProto", () => {
     expect(hit.contentRef).toBe("cd".repeat(32));
     expect(hit.scoreBp).toBe(8750);
     expect(hit.score).toBeCloseTo(0.875); // bp/10000 fraction (SN-8 display only)
-    expect(hit.toJSON()).toEqual({ content_ref: "cd".repeat(32), score_bp: 8750 });
+    expect(hit.toJSON()).toEqual({
+      content_ref: "cd".repeat(32),
+      score_bp: 8750,
+      parent_ref: "",
+      chunk_index: 0,
+    });
   });
 });
 

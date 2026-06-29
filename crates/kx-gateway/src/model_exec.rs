@@ -287,8 +287,12 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
     // PR-B: resolve the dataset embed model (operator-config else primary) + flag the
     // matching catalog entry `can_embed` so ListModels / Settings surface the embedder.
     let embed_model = resolve_embed_model(&primary, &entries);
+    // RC4a (T-RAG-EMBED-QUALITY): flag the embed entry, and whether the configured
+    // embedder is a generative DECODER (weak sentence embeddings) vs a dedicated one.
+    let embed_is_decoder = !is_dedicated_embedder(&embed_model.0);
     for entry in &mut entries {
         entry.can_embed = entry.model_id == embed_model.0;
+        entry.embed_is_decoder = entry.can_embed && embed_is_decoder;
     }
     Some(ServeRuntime {
         routing: Arc::new(RoutingBackend::new(engines)),
@@ -299,6 +303,29 @@ pub(crate) fn build_serve_runtime(store: &Arc<LocalFsContentStore>) -> Option<Se
         #[cfg(feature = "inference")]
         llama_registry,
     })
+}
+
+/// Heuristic: does `model_id` name a DEDICATED embedding model (vs a generative
+/// decoder LLM pressed into service as an embedder)? The engines expose no per-model
+/// embed-capability flag, so this is a NAME heuristic over the well-known
+/// embedding-model families. A false negative (an unrecognized dedicated embedder)
+/// only OVER-warns ("recommend a dedicated embed model"); it never blocks embedding.
+/// RC4a (`T-RAG-EMBED-QUALITY`).
+fn is_dedicated_embedder(model_id: &str) -> bool {
+    let id = model_id.to_ascii_lowercase();
+    [
+        "embed",
+        "bge",
+        "gte",
+        "e5",
+        "minilm",
+        "nomic",
+        "mxbai",
+        "arctic-embed",
+        "sentence",
+    ]
+    .iter()
+    .any(|p| id.contains(p))
 }
 
 /// Resolve the dataset server-embed model. `KX_SERVE_EMBED_MODEL` (operator-config,
@@ -477,6 +504,7 @@ fn ollama_catalog_entry(
         active: false,
         // Set in `build_serve_runtime` once chat-RAG recipes are resolved.
         chat_rag_handle: String::new(),
+        embed_is_decoder: false,
     }
 }
 
@@ -705,6 +733,7 @@ pub(crate) fn catalog_entry(
         active: false,
         // Set in `build_serve_runtime` once chat-RAG recipes are resolved.
         chat_rag_handle: String::new(),
+        embed_is_decoder: false,
     }
 }
 
@@ -1989,6 +2018,38 @@ fn internal(reason: &str) -> MoteExecutorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dedicated_embedder_heuristic_flags_decoders() {
+        // Known embedding-model families ⇒ dedicated (NOT a decoder).
+        for id in [
+            "embeddinggemma",
+            "nomic-embed-text",
+            "bge-small-en",
+            "gte-base",
+            "e5-large",
+            "all-minilm",
+            "mxbai-embed-large",
+            "snowflake-arctic-embed",
+        ] {
+            assert!(
+                is_dedicated_embedder(id),
+                "{id} should be a dedicated embedder"
+            );
+        }
+        // Generative chat decoders ⇒ NOT dedicated (used-as-embedder warning fires).
+        for id in [
+            "gemma3:12b",
+            "qwen3-0.6b",
+            "llama3.2",
+            "kx-serve:gemma-3-4b",
+        ] {
+            assert!(
+                !is_dedicated_embedder(id),
+                "{id} is a decoder, not an embedder"
+            );
+        }
+    }
 
     #[cfg(feature = "inference")]
     #[test]

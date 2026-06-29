@@ -125,20 +125,27 @@ engine** — it routes through the same `RoutingBackend`, embedding via the in-p
 llama.cpp backend or an Ollama daemon, whichever serves the embed model. (Without an
 embed model the FFI-free **client-vector** path still works: supply vectors yourself.)
 
-By default the embedder is the **primary chat model**. To use a dedicated
-embedding model, set `KX_SERVE_EMBED_MODEL` (operator config, SN-8 — never
-client-chosen):
+By default the embedder is the **primary chat model** — a generative **decoder**,
+which produces weak sentence embeddings (paraphrase mis-rank). For real retrieval
+quality, set `KX_SERVE_EMBED_MODEL` to a **dedicated embedding model** (operator
+config, SN-8 — never client-chosen). The runtime flags a decoder-as-embedder honestly
+(`kx info` / `kx models list` / the Data Lab notice), but never blocks.
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `KX_SERVE_EMBED_MODEL` | *(primary model)* | the model used to embed dataset text. **Must be an embedding-capable model** — e.g. `embeddinggemma` on Ollama (`ollama pull embeddinggemma`), or an embedding GGUF on llama.cpp. A non-embedding model is accepted at startup but fails on the first embed. |
+| `KX_SERVE_EMBED_MODEL` | *(primary model)* | the model used to embed dataset text. **Use an embedding model** — e.g. `embeddinggemma` on Ollama (`ollama pull embeddinggemma`), or an embedding GGUF (`nomic-embed-text` / `bge-small`) on llama.cpp. A non-embedding model is accepted at startup but fails on the first embed. |
+| `KX_SERVE_WARM_EMBED` | `off` | pre-load the embed model in the background at serve start, so the first ingest doesn't hit a cold model-load timeout (Ollama). Probe-only — never force-pulls a missing model. |
 
 ```sh
 ollama pull gemma3:12b && ollama pull embeddinggemma
-KX_SERVE_EMBED_MODEL=embeddinggemma kx serve --dev-allow-local --features hnsw
-kx info        # shows: embed  embeddinggemma (datasets/RAG)
+KX_SERVE_EMBED_MODEL=embeddinggemma KX_SERVE_WARM_EMBED=1 \
+  kx serve --dev-allow-local --features hnsw
+kx info        # shows: embed  embeddinggemma (datasets/RAG)   [no decoder warning]
 kx models list # the embed model carries an (embed) marker
 ```
+
+See [Data Lab → Hybrid retrieval & chunking](./datasets.md) for the `KX_SERVE_RAG_*`
+retrieval-tuning knobs (hybrid mode, chunk size, RRF/MMR), which apply on both engines.
 
 Two parity notes:
 

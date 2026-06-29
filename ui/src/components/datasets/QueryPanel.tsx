@@ -1,3 +1,4 @@
+import { RetrievalMode } from "@kortecx/sdk/web";
 import { m } from "framer-motion";
 import { type FormEvent, useState } from "react";
 import { fadeUp, rowEntrance } from "../../app/motion";
@@ -42,12 +43,14 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
   const [query, setQuery] = useState("");
   const [k, setK] = useState(10);
   const [mode, setMode] = useState<Mode>("search");
+  // RC4a: dense vs hybrid (BM25 + dense) retrieval; hybrid is the recommended default.
+  const [retrieval, setRetrieval] = useState<RetrievalMode>(RetrievalMode.HYBRID);
   const [openRef, setOpenRef] = useState<string | null>(null);
 
   // Only the active mode's query runs (the other is disabled via an undefined dataset).
   const searchDs = mode === "search" ? (dataset ?? undefined) : undefined;
   const discoverDs = mode === "discover" ? (dataset ?? undefined) : undefined;
-  const hits = useDatasetQuery(searchDs, query, k);
+  const hits = useDatasetQuery(searchDs, query, k, retrieval);
   const fuzzy = useFuzzyDiscovery(discoverDs, query, k);
   const active = mode === "search" ? hits : fuzzy;
 
@@ -114,6 +117,33 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
         />
       </label>
 
+      {mode === "search" ? (
+        <fieldset
+          className="view-toggle"
+          aria-label="Retrieval mode"
+          data-testid="dataset-retrieval"
+        >
+          <button
+            type="button"
+            data-testid="dataset-retrieval-hybrid"
+            aria-pressed={retrieval === RetrievalMode.HYBRID}
+            onClick={() => setRetrieval(RetrievalMode.HYBRID)}
+            title="BM25 keyword + dense embedding, RRF-fused (recommended)"
+          >
+            Hybrid
+          </button>
+          <button
+            type="button"
+            data-testid="dataset-retrieval-dense"
+            aria-pressed={retrieval === RetrievalMode.DENSE}
+            onClick={() => setRetrieval(RetrievalMode.DENSE)}
+            title="Dense embedding similarity only"
+          >
+            Dense
+          </button>
+        </fieldset>
+      ) : null}
+
       {mode === "discover" ? (
         <p className="muted dataset-discover-note">
           Advisory discovery — returns content-addressed refs + a display-only score (SN-8). Resolve
@@ -159,7 +189,16 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
                   </span>
                   <span className="dataset-hit__text">{snippet(h.text)}</span>
                 </button>
-                <DigestChip hex={h.contentRef} label="doc" />
+                {h.chunkCount > 1 ? (
+                  <span
+                    className="muted dataset-hit__chunk"
+                    data-testid="dataset-hit-chunk"
+                    title="The retrieved passage's position within its parent document (RC4a chunking)"
+                  >
+                    chunk {h.chunkIndex + 1}/{h.chunkCount}
+                  </span>
+                ) : null}
+                <DigestChip hex={h.contentRef} label="chunk" />
                 {open ? (
                   <div className="dataset-hit__detail" data-testid="dataset-hit-detail">
                     <AssetViewer

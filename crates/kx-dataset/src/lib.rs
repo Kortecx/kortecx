@@ -44,13 +44,19 @@
 
 pub mod annotation;
 mod error;
+pub mod fusion;
 mod index;
+mod lexical;
 mod schema;
 mod store;
 
 pub use annotation::{Annotation, AnnotationStore};
 pub use error::DataError;
+pub use fusion::{
+    index_fingerprint, mmr_rerank, rrf_fuse, INDEX_FORMAT_VERSION, MMR_LAMBDA_BP, RRF_C,
+};
 pub use index::{Hit, InMemoryRetrievalIndex, RetrievalIndex};
+pub use lexical::LexicalIndex;
 pub use schema::{ContentSchema, TensorDType, TypedRef};
 pub use store::{DataStore, Dataset, DatasetId, InMemoryDataStore};
 

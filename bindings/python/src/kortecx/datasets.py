@@ -14,10 +14,24 @@ feature embed the text server-side.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Dict, List, Optional, Sequence
 
 from . import hexids
 from .v1 import gateway_pb2 as _g
+
+
+class RetrievalMode(IntEnum):
+    """RC4a: the retrieval strategy for ``query_dataset`` / ``fuzzy_discovery``.
+
+    ``DEFAULT`` ⇒ the server's configured default; ``HYBRID`` (BM25 + dense,
+    RRF-fused) falls back to dense when there is no query text (the client-vector
+    path). The wire values match ``proto.RetrievalMode``.
+    """
+
+    DEFAULT = 0
+    DENSE = 1
+    HYBRID = 2
 
 
 @dataclass(frozen=True)
@@ -26,9 +40,13 @@ class DatasetSummary:
 
     dataset_id: str
     name: str
-    doc_count: int
+    doc_count: int  # distinct PARENT documents (RC4a: not chunks — see chunk_count)
     dim: int
     created_ms: int  # unix-ms create time (display only; off every hash)
+    chunked: bool = False  # RC4a: ingested under the chunking pipeline
+    chunk_count: int = 0  # RC4a: distinct retrievable chunks (== doc_count if un-chunked)
+    index_version: int = 0  # RC4a: on-disk retrieval-index schema version
+    embed_model_fingerprint: str = ""  # RC4a: hex of the index fingerprint ("" = unstamped)
 
     @classmethod
     def from_proto(cls, d: "_g.DatasetSummary") -> "DatasetSummary":
@@ -38,17 +56,25 @@ class DatasetSummary:
             doc_count=d.doc_count,
             dim=d.dim,
             created_ms=d.created_ms,
+            chunked=d.chunked,
+            chunk_count=d.chunk_count,
+            index_version=d.index_version,
+            embed_model_fingerprint=d.embed_model_fingerprint,
         )
 
 
 @dataclass(frozen=True)
 class DatasetHit:
-    """One retrieval hit: the content-addressed ref (hex), the document bytes, and
-    the DISPLAY-ONLY similarity score (SN-8 — never an identity input)."""
+    """One retrieval hit: the content-addressed ref (hex) of the CHUNK, the chunk
+    bytes, and the DISPLAY-ONLY similarity score (SN-8 — never an identity input).
+    RC4a adds chunk provenance (``parent_ref`` / ``chunk_index`` / ``chunk_count``)."""
 
-    content_ref: str  # hex
+    content_ref: str  # hex (the retrieved chunk)
     content: bytes
     score: float
+    parent_ref: str = ""  # RC4a: hex of the parent document (== content_ref if un-chunked)
+    chunk_index: int = 0  # RC4a: 0-based ordinal of this chunk in its parent
+    chunk_count: int = 1  # RC4a: total chunks in the parent
 
     @classmethod
     def from_proto(cls, h: "_g.DatasetHit") -> "DatasetHit":
@@ -56,11 +82,14 @@ class DatasetHit:
             content_ref=hexids.encode(h.content_ref),
             content=h.content,
             score=h.score,
+            parent_ref=hexids.encode(h.parent_ref),
+            chunk_index=h.chunk_index,
+            chunk_count=h.chunk_count,
         )
 
     @property
     def text(self) -> str:
-        """The retrieved document bytes decoded as UTF-8 (best-effort)."""
+        """The retrieved chunk bytes decoded as UTF-8 (best-effort)."""
         return self.content.decode("utf-8", errors="replace")
 
 
@@ -69,14 +98,21 @@ class FuzzyHit:
     """Slice-B advisory fuzzy-in / exact-out discovery hit (``FuzzyDiscovery``):
     the content-addressed ref (hex) + a DISPLAY-ONLY basis-point score (SN-8 —
     never an identity input). Join back to bytes with an EXACT ``get_content`` on
-    the ref ("fuzzy in, exact out")."""
+    the ref ("fuzzy in, exact out"). RC4a adds chunk provenance."""
 
-    content_ref: str  # hex — the EXACT-OUT join key
+    content_ref: str  # hex — the EXACT-OUT join key (the chunk)
     score_bp: int  # 0..=10000 display-only basis points
+    parent_ref: str = ""  # RC4a: hex of the parent document
+    chunk_index: int = 0  # RC4a: 0-based ordinal of this chunk in its parent
 
     @classmethod
     def from_proto(cls, h: "_g.FuzzyHit") -> "FuzzyHit":
-        return cls(content_ref=hexids.encode(h.content_ref), score_bp=h.score_bp)
+        return cls(
+            content_ref=hexids.encode(h.content_ref),
+            score_bp=h.score_bp,
+            parent_ref=hexids.encode(h.parent_ref),
+            chunk_index=h.chunk_index,
+        )
 
     @property
     def score(self) -> float:

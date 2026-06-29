@@ -8,9 +8,12 @@
 //!   `kx serve --features inference` with a model; without one the gateway answers
 //!   `FAILED_PRECONDITION` honestly. The client-vector (FFI-free) ingest path is an
 //!   SDK surface (vectors over the wire), not a CLI one.
-//! - `kx datasets query <dataset> --text <query> [--k N] [--json]` — top-k semantic
-//!   search. Each hit's `score` is DISPLAY-ONLY (SN-8) — a ranking aid, never an
-//!   identity input; the durable result is the ordered content-ref SET.
+//! - `kx datasets query <dataset> --text <query> [--k N] [--mode dense|hybrid] [--json]`
+//!   — top-k semantic search. `--mode` (RC4a) selects dense-only vs hybrid (BM25 +
+//!   dense, RRF-fused); omitted ⇒ the server's configured default. Each hit's `score`
+//!   is DISPLAY-ONLY (SN-8) — a ranking aid, never an identity input; the durable
+//!   result is the ordered content-ref SET. A chunked corpus shows each hit's passage
+//!   position within its parent document.
 //!
 //! A pre-T3.7 / `hnsw`-less gateway has no dataset view and answers
 //! `Unimplemented`, rendered honestly. There is no `delete` subcommand (the OSS
@@ -76,6 +79,8 @@ pub struct QueryArgs {
     pub text: String,
     /// Top-k (absent ⇒ `DEFAULT_K`; the server clamps to a sane max).
     pub k: Option<u32>,
+    /// RC4a: retrieval mode wire value (0 = server default, 1 = dense, 2 = hybrid).
+    pub mode: i32,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -148,6 +153,7 @@ fn parse_query(mut args: impl Iterator<Item = String>) -> Result<QueryArgs, CliE
     let mut dataset: Option<String> = None;
     let mut text: Option<String> = None;
     let mut k: Option<u32> = None;
+    let mut mode: i32 = proto::RetrievalMode::Unspecified as i32;
     let mut common = ClientCommon::default();
     while let Some(tok) = args.next() {
         if common.try_consume(&tok, &mut args)? {
@@ -160,6 +166,18 @@ fn parse_query(mut args: impl Iterator<Item = String>) -> Result<QueryArgs, CliE
                 k = Some(v.parse::<u32>().map_err(|_| {
                     CliError::Usage(format!("--k must be a positive integer, got {v:?}"))
                 })?);
+            }
+            "--mode" => {
+                let v = next_value(&mut args, "--mode")?;
+                mode = match v.to_ascii_lowercase().as_str() {
+                    "dense" => proto::RetrievalMode::Dense as i32,
+                    "hybrid" => proto::RetrievalMode::Hybrid as i32,
+                    other => {
+                        return Err(CliError::Usage(format!(
+                            "--mode must be dense|hybrid, got {other:?}"
+                        )))
+                    }
+                };
             }
             other if other.starts_with("--") => {
                 return Err(CliError::Usage(format!("unknown flag {other:?}")))
@@ -180,6 +198,7 @@ fn parse_query(mut args: impl Iterator<Item = String>) -> Result<QueryArgs, CliE
         dataset,
         text,
         k,
+        mode,
         common,
     })
 }
@@ -240,6 +259,11 @@ async fn execute_ingest(args: IngestArgs) -> Result<(), CliError> {
     }
     let resolved = args.common.resolve()?;
     let mut client = resolved.connect().await?;
+    // RC4a: warn (stderr) when the serve embeds with a decoder LLM (human runs only —
+    // never pollutes the --json stdout contract).
+    if !args.common.json {
+        warn_if_decoder_embed(&mut client, &resolved).await;
+    }
     let resp = client
         .ingest_documents(resolved.request(proto::IngestDocumentsRequest {
             dataset: args.dataset.clone(),
@@ -261,12 +285,36 @@ async fn execute_query(args: QueryArgs) -> Result<(), CliError> {
             query_text: args.text.clone(),
             query_embedding: Vec::new(),
             k: args.k.unwrap_or(DEFAULT_K),
+            retrieval_mode: args.mode,
         })?)
         .await
         .map_err(map_datasets_status)?
         .into_inner();
     println!("{}", format::render_dataset_hits(&resp, args.common.json));
     Ok(())
+}
+
+/// Best-effort decoder-as-embedder advisory (RC4a, `T-RAG-EMBED-QUALITY`): a single
+/// `GetServerInfo` read; if the serve's embedder is a generative decoder LLM, print a
+/// one-line stderr note recommending a dedicated embed model. Never fails the command
+/// (an old / unauthenticated / model-less serve just skips the advisory).
+async fn warn_if_decoder_embed(
+    client: &mut kx_proto::proto::kx_gateway_client::KxGatewayClient<tonic::transport::Channel>,
+    resolved: &crate::client::Resolved,
+) {
+    let Ok(req) = resolved.request(proto::GetServerInfoRequest {}) else {
+        return;
+    };
+    if let Ok(resp) = client.get_server_info(req).await {
+        let info = resp.into_inner();
+        if info.embed_model_is_decoder {
+            eprintln!(
+                "note: embedding with a decoder model ({}) — for better retrieval set \
+                 KX_SERVE_EMBED_MODEL to a dedicated embedder (e.g. embeddinggemma)",
+                info.embed_model_id
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +381,24 @@ mod tests {
         // --k defaults to None (execute applies DEFAULT_K).
         let b = query(&["query", "c", "--text", "x"]);
         assert_eq!(b.k, None);
+        // --mode defaults to UNSPECIFIED (the server default).
+        assert_eq!(b.mode, proto::RetrievalMode::Unspecified as i32);
+    }
+
+    #[test]
+    fn query_parses_mode() {
+        assert_eq!(
+            query(&["query", "c", "--text", "x", "--mode", "hybrid"]).mode,
+            proto::RetrievalMode::Hybrid as i32
+        );
+        assert_eq!(
+            query(&["query", "c", "--text", "x", "--mode", "DENSE"]).mode,
+            proto::RetrievalMode::Dense as i32
+        );
+        assert!(
+            p(&["query", "c", "--text", "x", "--mode", "bogus"]).is_err(),
+            "--mode must be dense|hybrid"
+        );
     }
 
     #[test]

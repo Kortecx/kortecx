@@ -59,6 +59,11 @@ pub struct ModelSummaryEntry {
     /// ground a switched model. Empty when no dataset/embedder is configured for it.
     /// Additive (proto tag 12).
     pub chat_rag_handle: String,
+    /// RC4a (T-RAG-EMBED-QUALITY): set on the `can_embed` entry — `true` iff the
+    /// server's configured embedder is a generative DECODER LLM, not a dedicated
+    /// embedding model (weak sentence embeddings). The `kx models list` decoder-as-
+    /// embedder marker. Display/audit ONLY; `false` otherwise. Additive (proto tag 13).
+    pub embed_is_decoder: bool,
 }
 
 /// The model-catalog read seam. The host implements it over the model registry

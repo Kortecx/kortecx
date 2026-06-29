@@ -36,16 +36,101 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use kx_chunk::{chunk, ChunkParams};
 use kx_content::ContentRef;
-use kx_dataset::RetrievalIndex;
+use kx_dataset::{mmr_rerank, rrf_fuse, Hit, LexicalIndex, RetrievalIndex, MMR_LAMBDA_BP, RRF_C};
+use kx_dataset_bm25::{Bm25Index, Bm25Params};
 use kx_dataset_hnsw::HnswRetrievalIndex;
+// The index-fingerprint axes are used only on the server-embed path (the
+// client-vector path owns its own vector space, so it has no embed fingerprint).
+#[cfg(feature = "serve-engine")]
+use kx_chunk::CHUNKER_VERSION;
+#[cfg(feature = "serve-engine")]
+use kx_dataset::index_fingerprint;
+#[cfg(feature = "serve-engine")]
+use kx_dataset_bm25::TOKENIZER_VERSION;
 use kx_gateway_core::{
     score_to_bp, DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView,
-    FuzzyDiscoveryView, FuzzyHitEntry, IngestDoc, IngestOutcome,
+    FuzzyDiscoveryView, FuzzyHitEntry, IngestDoc, IngestOutcome, RetrievalMode,
 };
 use rusqlite::{params, Connection};
 
 use crate::error::GatewayError;
+
+/// Operator-config retrieval tuning (all from `KX_SERVE_RAG_*` env — never client-
+/// chosen, SN-8). Threaded into [`HostDatasetView`] at open. RC4a.
+#[derive(Clone, Copy, Debug)]
+pub struct RagConfig {
+    /// Max chunk size in Unicode chars (server-embed ingest).
+    pub chunk_max_chars: usize,
+    /// Chunk overlap in chars.
+    pub chunk_overlap_chars: usize,
+    /// Per-document chunk cap (0 ⇒ unbounded; still bounded by content-max-bytes).
+    pub max_chunks_per_doc: usize,
+    /// The retrieval mode applied when a client sends `UNSPECIFIED`.
+    pub default_mode: RetrievalMode,
+    /// The RRF fusion constant.
+    pub rrf_k: u32,
+    /// The MMR relevance/diversity trade-off, in basis points.
+    pub mmr_lambda_bp: u32,
+    /// Whether MMR diversity rerank runs.
+    pub rerank: bool,
+    /// Whether the BM25 tokenizer drops the fixed English stoplist.
+    pub stopwords: bool,
+}
+
+impl Default for RagConfig {
+    fn default() -> Self {
+        Self {
+            chunk_max_chars: kx_chunk::DEFAULT_MAX_CHARS,
+            chunk_overlap_chars: kx_chunk::DEFAULT_OVERLAP_CHARS,
+            max_chunks_per_doc: 0,
+            default_mode: RetrievalMode::Hybrid,
+            rrf_k: RRF_C,
+            mmr_lambda_bp: MMR_LAMBDA_BP,
+            rerank: true,
+            stopwords: false,
+        }
+    }
+}
+
+impl RagConfig {
+    /// The BM25 parameters derived from this config (stopwords only; k1/b default).
+    fn bm25_params(self) -> Bm25Params {
+        Bm25Params {
+            stopwords: self.stopwords,
+            ..Bm25Params::default()
+        }
+    }
+}
+
+/// One resolved chunk ready to index: its content-addressed ref + bytes + vector,
+/// plus provenance back to the parent document.
+struct ChunkRow {
+    chunk_ref: ContentRef,
+    content: Vec<u8>,
+    vector: Vec<f32>,
+    parent_ref: ContentRef,
+    chunk_index: u32,
+}
+
+/// Per-chunk provenance (off every hash — display/grouping only).
+#[derive(Clone, Copy)]
+struct ChunkProv {
+    parent_ref: ContentRef,
+    chunk_index: u32,
+}
+
+/// One raw search result from the shared search core; the wire mappers turn it
+/// into a `DatasetHitEntry` (with content) or a `FuzzyHitEntry` (refs + score only).
+struct SearchHit {
+    chunk_ref: ContentRef,
+    content: Vec<u8>,
+    score: f32,
+    parent_ref: ContentRef,
+    chunk_index: u32,
+    chunk_count: u32,
+}
 
 /// The server-side cap on a query's top-`k` (kept ≤ the HNSW default `ef_search`
 /// so the ANN candidate list always covers the requested neighbours). An untrusted
@@ -56,21 +141,51 @@ const MAX_K: usize = 64;
 /// path-traversal bound — there is no per-dataset file).
 const MAX_NAME_LEN: usize = 128;
 
-/// The durable schema (idempotent). `documents.ref`/`vector` are BLOBs; the HNSW
-/// graph is rebuilt from these rows on open.
+/// The current on-disk retrieval-index schema version (RC4a: chunk provenance +
+/// the embed fingerprint). A legacy (pre-RC4a) dataset rebuilds at version 1.
+const INDEX_VERSION: u32 = 1;
+
+/// The durable schema (idempotent — fresh dbs). `documents.ref`/`vector` are BLOBs;
+/// the HNSW + BM25 indices are rebuilt from these rows on open. RC4a adds chunk
+/// provenance (`parent_ref`/`chunk_index`) + per-dataset compat metadata
+/// (`chunked`/`embed_fingerprint`/`index_version`); [`migrate_schema`] adds the same
+/// columns to a pre-RC4a db.
 const SCHEMA: &str = "\
 CREATE TABLE IF NOT EXISTS datasets (
-    name       TEXT PRIMARY KEY,
-    created_ms INTEGER NOT NULL,
-    dim        INTEGER NOT NULL DEFAULT 0
+    name              TEXT PRIMARY KEY,
+    created_ms        INTEGER NOT NULL,
+    dim               INTEGER NOT NULL DEFAULT 0,
+    chunked           INTEGER NOT NULL DEFAULT 0,
+    embed_fingerprint TEXT NOT NULL DEFAULT '',
+    index_version     INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS documents (
-    dataset TEXT NOT NULL,
-    ref     BLOB NOT NULL,
-    content BLOB NOT NULL,
-    vector  BLOB NOT NULL,
+    dataset     TEXT NOT NULL,
+    ref         BLOB NOT NULL,
+    content     BLOB NOT NULL,
+    vector      BLOB NOT NULL,
+    parent_ref  BLOB,
+    chunk_index INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (dataset, ref)
 );";
+
+/// Bring a pre-RC4a `datasets.db` up to the current schema by adding the new columns.
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, so a duplicate-column error means the
+/// column already exists and is ignored. PURELY ADDITIVE — never a reshape, so a new
+/// binary reads an old db (degraded back-compat: a legacy whole-doc row is a
+/// single chunk with a NULL parent_ref) and an old binary still reads the base
+/// columns of a new db.
+fn migrate_schema(conn: &Connection) {
+    for stmt in [
+        "ALTER TABLE datasets ADD COLUMN chunked INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE datasets ADD COLUMN embed_fingerprint TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE datasets ADD COLUMN index_version INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE documents ADD COLUMN parent_ref BLOB",
+        "ALTER TABLE documents ADD COLUMN chunk_index INTEGER NOT NULL DEFAULT 0",
+    ] {
+        let _ = conn.execute(stmt, []); // duplicate-column ⇒ already migrated (ignore)
+    }
+}
 
 /// Canonical little-endian f32 encoding of a vector (byte-identical to
 /// `kx_model_harness::rag::encode_vector_le` — the reproducible content-addressed
@@ -134,22 +249,43 @@ fn validate_dataset_name(name: &str) -> Result<(), DatasetError> {
     Ok(())
 }
 
-/// One dataset's in-memory state: the rebuilt-on-open ANN index + the ref→content
-/// map (for hit snippets). `dim` is fixed by the first insert.
+/// One dataset's in-memory state: the rebuilt-on-open dense (HNSW) + sparse (BM25)
+/// indices, the chunk→content map (for hit snippets), and chunk provenance. `dim`
+/// is fixed by the first insert. RC4a.
 struct DatasetState {
     created_ms: i64,
     dim: Option<u32>,
+    /// True once a server-embed (chunked) ingest has run (display/advisory).
+    chunked: bool,
+    /// Hex of the index fingerprint the corpus was embedded under (empty = unstamped).
+    embed_fingerprint: String,
+    /// The on-disk index schema version (cold-index / compat guard).
+    index_version: u32,
+    /// The dense (embedding) ANN index.
     index: HnswRetrievalIndex,
+    /// The sparse (BM25 keyword) index — the hybrid leg (RC4a).
+    lex: Bm25Index,
+    /// chunk_ref → chunk content bytes (hit snippets).
     docs: HashMap<ContentRef, Vec<u8>>,
+    /// chunk_ref → provenance (parent doc + ordinal). Off every hash.
+    prov: HashMap<ContentRef, ChunkProv>,
+    /// parent_ref → number of chunks (for the per-hit `chunk_count`).
+    parent_chunks: HashMap<ContentRef, u32>,
 }
 
 impl DatasetState {
-    fn empty(created_ms: i64) -> Self {
+    fn empty(created_ms: i64, bm25: Bm25Params) -> Self {
         Self {
             created_ms,
             dim: None,
+            chunked: false,
+            embed_fingerprint: String::new(),
+            index_version: INDEX_VERSION,
             index: HnswRetrievalIndex::new(),
+            lex: Bm25Index::with_params(bm25),
             docs: HashMap::new(),
+            prov: HashMap::new(),
+            parent_chunks: HashMap::new(),
         }
     }
 }
@@ -162,6 +298,7 @@ impl DatasetState {
 struct Inner {
     db: Connection,
     datasets: HashMap<String, DatasetState>,
+    config: RagConfig,
 }
 
 impl Inner {
@@ -180,20 +317,22 @@ impl Inner {
     fn ingest_resolved(
         &mut self,
         dataset: &str,
-        resolved: Vec<(ContentRef, Vec<u8>, Vec<f32>)>,
+        rows: Vec<ChunkRow>,
+        chunked: bool,
+        fingerprint: Option<String>,
     ) -> Result<IngestOutcome, DatasetError> {
-        let first = resolved
+        let first = rows
             .first()
             .ok_or_else(|| DatasetError::InvalidArgument("no documents".to_string()))?;
-        let batch_dim = u32::try_from(first.2.len())
+        let batch_dim = u32::try_from(first.vector.len())
             .map_err(|_| DatasetError::InvalidArgument("vector too large".to_string()))?;
         let target_dim = self
             .datasets
             .get(dataset)
             .and_then(|s| s.dim)
             .unwrap_or(batch_dim);
-        for (_, _, v) in &resolved {
-            let vlen = u32::try_from(v.len())
+        for r in &rows {
+            let vlen = u32::try_from(r.vector.len())
                 .map_err(|_| DatasetError::InvalidArgument("vector too large".to_string()))?;
             if vlen != target_dim {
                 return Err(DatasetError::DimMismatch(format!(
@@ -202,17 +341,27 @@ impl Inner {
             }
         }
 
-        // Content-addressed dedup BEFORE any write — against the already-persisted docs
+        // RC4a staleness guard: refuse to MIX an existing corpus's embed space with a
+        // different embed model / chunk config (would compare incompatible vectors).
+        if let (Some(existing), Some(new_fp)) = (self.datasets.get(dataset), fingerprint.as_ref()) {
+            if !existing.embed_fingerprint.is_empty() && existing.embed_fingerprint != *new_fp {
+                return Err(DatasetError::StaleIndex(format!(
+                    "dataset '{dataset}' was indexed under a different embed model / chunk \
+                     config; create a new dataset or re-ingest to rebuild"
+                )));
+            }
+        }
+
+        // Content-addressed dedup BEFORE any write — against the already-persisted chunks
         // AND within this batch — so the durable INSERTs and the in-memory apply act on
-        // the SAME new-doc set and `inserted` is exact.
+        // the SAME new-chunk set and `inserted` is exact.
         let mut batch_seen: HashSet<ContentRef> = HashSet::new();
-        let to_apply: Vec<(ContentRef, Vec<u8>, Vec<f32>)> = {
+        let to_apply: Vec<ChunkRow> = {
             let existing = self.datasets.get(dataset);
-            resolved
-                .into_iter()
-                .filter(|(r, _, _)| {
-                    let already = existing.is_some_and(|s| s.docs.contains_key(r));
-                    !already && batch_seen.insert(*r)
+            rows.into_iter()
+                .filter(|r| {
+                    let already = existing.is_some_and(|s| s.docs.contains_key(&r.chunk_ref));
+                    !already && batch_seen.insert(r.chunk_ref)
                 })
                 .collect()
         };
@@ -222,59 +371,144 @@ impl Inner {
             .get(dataset)
             .map_or_else(now_ms, |s| s.created_ms);
 
-        // DURABLE FIRST: stage every row, then COMMIT, before touching the derived state.
-        {
-            let txn = self
-                .db
-                .transaction()
-                .map_err(|e| DatasetError::Internal(e.to_string()))?;
-            txn.execute(
-                "INSERT OR IGNORE INTO datasets(name, created_ms, dim) VALUES(?, ?, ?)",
-                params![dataset, created_ms, target_dim],
-            )
-            .map_err(|e| DatasetError::Internal(e.to_string()))?;
-            // Fix the dim on the first real insert (the create above may have written a 0).
-            txn.execute(
-                "UPDATE datasets SET dim = ? WHERE name = ? AND dim = 0",
-                params![target_dim, dataset],
-            )
-            .map_err(|e| DatasetError::Internal(e.to_string()))?;
-            for (doc_ref, content, vector) in &to_apply {
-                txn.execute(
-                    "INSERT OR IGNORE INTO documents(dataset, ref, content, vector) \
-                     VALUES(?, ?, ?, ?)",
-                    params![
-                        dataset,
-                        &doc_ref.as_bytes()[..],
-                        content.as_slice(),
-                        encode_vector_le(vector).as_slice()
-                    ],
-                )
-                .map_err(|e| DatasetError::Internal(e.to_string()))?;
-            }
-            txn.commit()
-                .map_err(|e| DatasetError::Internal(e.to_string()))?;
-        }
-
-        // COMMITTED — only now apply to the derived in-memory state (infallible, so it
-        // cannot leave the index/docs ahead of the durable rows).
+        // DURABLE FIRST: COMMIT every row before touching the derived state.
         let inserted = u64::try_from(to_apply.len()).unwrap_or(u64::MAX);
-        let state = self
-            .datasets
-            .entry(dataset.to_string())
-            .or_insert_with(|| DatasetState::empty(created_ms));
-        state.dim = Some(target_dim);
-        for (doc_ref, content, vector) in to_apply {
-            state.index.insert(doc_ref, vector);
-            state.docs.insert(doc_ref, content);
-        }
+        self.persist_batch(
+            dataset,
+            created_ms,
+            target_dim,
+            chunked,
+            fingerprint.as_deref(),
+            &to_apply,
+        )?;
+        // COMMITTED — only now apply to the derived in-memory state (infallible).
+        let doc_count = self.apply_to_state(
+            dataset,
+            created_ms,
+            target_dim,
+            chunked,
+            fingerprint,
+            to_apply,
+        );
 
         Ok(IngestOutcome {
             dataset_id: dataset.to_string(),
-            doc_count: u64::try_from(state.docs.len()).unwrap_or(u64::MAX),
+            doc_count,
             inserted,
             dim: target_dim,
         })
+    }
+
+    /// Stage + COMMIT a batch's durable rows in one transaction (the durable-first half
+    /// of `ingest_resolved`). The derived in-memory state is untouched until this
+    /// returns `Ok`, so a failed write never leaves a phantom queryable document.
+    fn persist_batch(
+        &mut self,
+        dataset: &str,
+        created_ms: i64,
+        target_dim: u32,
+        chunked: bool,
+        fingerprint: Option<&str>,
+        to_apply: &[ChunkRow],
+    ) -> Result<(), DatasetError> {
+        let txn = self
+            .db
+            .transaction()
+            .map_err(|e| DatasetError::Internal(e.to_string()))?;
+        txn.execute(
+            "INSERT OR IGNORE INTO datasets(name, created_ms, dim, chunked, index_version) \
+             VALUES(?, ?, ?, ?, ?)",
+            params![
+                dataset,
+                created_ms,
+                target_dim,
+                i64::from(chunked),
+                INDEX_VERSION
+            ],
+        )
+        .map_err(|e| DatasetError::Internal(e.to_string()))?;
+        // Fix the dim on the first real insert (the create above may have written a 0).
+        txn.execute(
+            "UPDATE datasets SET dim = ? WHERE name = ? AND dim = 0",
+            params![target_dim, dataset],
+        )
+        .map_err(|e| DatasetError::Internal(e.to_string()))?;
+        if chunked {
+            txn.execute(
+                "UPDATE datasets SET chunked = 1 WHERE name = ?",
+                params![dataset],
+            )
+            .map_err(|e| DatasetError::Internal(e.to_string()))?;
+        }
+        // Stamp the fingerprint on the FIRST server-embed ingest (only when unset).
+        if let Some(fp) = fingerprint {
+            txn.execute(
+                "UPDATE datasets SET embed_fingerprint = ? WHERE name = ? AND embed_fingerprint = ''",
+                params![fp, dataset],
+            )
+            .map_err(|e| DatasetError::Internal(e.to_string()))?;
+        }
+        for r in to_apply {
+            txn.execute(
+                "INSERT OR IGNORE INTO documents(dataset, ref, content, vector, parent_ref, chunk_index) \
+                 VALUES(?, ?, ?, ?, ?, ?)",
+                params![
+                    dataset,
+                    &r.chunk_ref.as_bytes()[..],
+                    r.content.as_slice(),
+                    encode_vector_le(&r.vector).as_slice(),
+                    &r.parent_ref.as_bytes()[..],
+                    r.chunk_index,
+                ],
+            )
+            .map_err(|e| DatasetError::Internal(e.to_string()))?;
+        }
+        txn.commit()
+            .map_err(|e| DatasetError::Internal(e.to_string()))
+    }
+
+    /// Apply a committed batch to the in-memory dense + sparse indices, the
+    /// content + provenance maps (infallible). Returns the dataset's distinct
+    /// PARENT-document count.
+    fn apply_to_state(
+        &mut self,
+        dataset: &str,
+        created_ms: i64,
+        target_dim: u32,
+        chunked: bool,
+        fingerprint: Option<String>,
+        to_apply: Vec<ChunkRow>,
+    ) -> u64 {
+        let bm25 = self.config.bm25_params();
+        let state = self
+            .datasets
+            .entry(dataset.to_string())
+            .or_insert_with(|| DatasetState::empty(created_ms, bm25));
+        state.dim = Some(target_dim);
+        if chunked {
+            state.chunked = true;
+        }
+        if let Some(fp) = fingerprint {
+            if state.embed_fingerprint.is_empty() {
+                state.embed_fingerprint = fp;
+            }
+        }
+        for r in to_apply {
+            state.index.insert(r.chunk_ref, r.vector);
+            if let Ok(text) = std::str::from_utf8(&r.content) {
+                state.lex.insert(r.chunk_ref, text);
+            }
+            state.docs.insert(r.chunk_ref, r.content);
+            state.prov.insert(
+                r.chunk_ref,
+                ChunkProv {
+                    parent_ref: r.parent_ref,
+                    chunk_index: r.chunk_index,
+                },
+            );
+            *state.parent_chunks.entry(r.parent_ref).or_insert(0) += 1;
+        }
+        u64::try_from(state.parent_chunks.len()).unwrap_or(u64::MAX)
     }
 }
 
@@ -314,6 +548,20 @@ impl HostEmbedder {
             .map_err(|e| DatasetError::Internal(format!("embedding: {e}")))?;
         Ok(out.vector)
     }
+
+    /// The embed model id string — a fingerprint axis (RC4a).
+    fn model_id_string(&self) -> String {
+        self.model_id.0.clone()
+    }
+
+    /// The pooling strategy as a stable u8 tag — a fingerprint axis (RC4a).
+    fn pooling_tag(&self) -> u8 {
+        match self.pooling {
+            kx_inference::EmbeddingPooling::Mean => 0,
+            kx_inference::EmbeddingPooling::Cls => 1,
+            kx_inference::EmbeddingPooling::Last => 2,
+        }
+    }
 }
 
 /// A [`DatasetView`] over a durable SQLite store + a rebuilt-on-open HNSW ANN index.
@@ -321,13 +569,17 @@ impl HostEmbedder {
 /// (the `serve-engine` path); without it, only the client-vector path is available.
 pub struct HostDatasetView {
     inner: Mutex<Inner>,
+    config: RagConfig,
     #[cfg(feature = "serve-engine")]
     embedder: Option<HostEmbedder>,
 }
 
 impl HostDatasetView {
     /// Open (or create) the dataset store under `dir`, rebuilding every dataset's
-    /// HNSW index from its durable rows.
+    /// dense (HNSW) + sparse (BM25) indices SYNCHRONOUSLY from its durable rows
+    /// before returning — no dataset is queryable before both arms are warm
+    /// (closes the cold-index race). Uses the default [`RagConfig`]; override with
+    /// [`with_rag_config`](Self::with_rag_config).
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] if the directory / db / schema cannot be opened.
@@ -345,13 +597,39 @@ impl HostDatasetView {
         .map_err(|e| GatewayError::Catalog(format!("datasets pragma: {e}")))?;
         conn.execute_batch(SCHEMA)
             .map_err(|e| GatewayError::Catalog(format!("datasets schema: {e}")))?;
-        let datasets = rebuild_state(&conn)
+        // Purely-additive migration of a pre-RC4a db (idempotent; never a reshape).
+        migrate_schema(&conn);
+        let config = RagConfig::default();
+        let datasets = rebuild_state(&conn, config)
             .map_err(|e| GatewayError::Catalog(format!("datasets rebuild: {e}")))?;
         Ok(Self {
-            inner: Mutex::new(Inner { db: conn, datasets }),
+            inner: Mutex::new(Inner {
+                db: conn,
+                datasets,
+                config,
+            }),
+            config,
             #[cfg(feature = "serve-engine")]
             embedder: None,
         })
+    }
+
+    /// Override the operator retrieval config (chunking + hybrid knobs). Re-builds
+    /// the in-memory indices under the new BM25 params so a config change takes
+    /// effect on open (the durable rows are unchanged).
+    ///
+    /// # Errors
+    /// [`GatewayError::Catalog`] if the rebuild fails (a poisoned lock).
+    #[must_use]
+    pub fn with_rag_config(mut self, config: RagConfig) -> Self {
+        self.config = config;
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.config = config;
+            if let Ok(rebuilt) = rebuild_state(&inner.db, config) {
+                inner.datasets = rebuilt;
+            }
+        }
+        self
     }
 
     /// Attach a server embedder (the `serve-engine` path), enabling text-only ingest
@@ -363,30 +641,56 @@ impl HostDatasetView {
         self
     }
 
-    /// Embed `content` server-side (UTF-8), or [`DatasetError::EmbedderUnavailable`]
-    /// when no embedder is wired (an `hnsw`-only build, or `serve-engine` without a model).
-    #[cfg_attr(not(feature = "serve-engine"), allow(clippy::unused_self))]
-    fn embed_bytes(&self, content: &[u8]) -> Result<Vec<f32>, DatasetError> {
-        #[cfg(feature = "serve-engine")]
-        {
-            let text = std::str::from_utf8(content).map_err(|_| {
-                DatasetError::InvalidArgument("server-embed requires UTF-8 text".to_string())
-            })?;
-            self.embedder
-                .as_ref()
-                .ok_or(DatasetError::EmbedderUnavailable)?
-                .embed(text)
-        }
-        #[cfg(not(feature = "serve-engine"))]
-        {
-            let _ = content;
-            Err(DatasetError::EmbedderUnavailable)
+    /// Pre-load the embed model by firing ONE throwaway embed (`KX_SERVE_WARM_EMBED`).
+    /// Probe-only: it pulls the model resident so the first real ingest is already
+    /// warm (`T-OLLAMA-EMBED-COLD-TIMEOUT`); an error (no embedder / unreachable
+    /// daemon) is ignored and never force-pulls a missing model. Returns whether a
+    /// warm-up embed was attempted. Blocking — call it off the async runtime.
+    #[cfg(feature = "serve-engine")]
+    pub fn warm_embed(&self) -> bool {
+        match &self.embedder {
+            Some(e) => {
+                let _ = e.embed("warmup");
+                true
+            }
+            None => false,
         }
     }
 
-    /// Embed a query string server-side, or [`DatasetError::EmbedderUnavailable`].
+    /// The current operator retrieval config (chunk params / hybrid knobs).
+    #[must_use]
+    pub fn rag_config(&self) -> RagConfig {
+        self.config
+    }
+
+    /// Compute the live index fingerprint for `dim` from the current embedder +
+    /// config — `None` when there is no server embedder (the client-vector path).
+    #[cfg(feature = "serve-engine")]
+    fn compute_fingerprint(&self, dim: u32) -> Option<String> {
+        let e = self.embedder.as_ref()?;
+        let fp = index_fingerprint(
+            &e.model_id_string(),
+            e.pooling_tag(),
+            dim,
+            CHUNKER_VERSION,
+            u32::try_from(self.config.chunk_max_chars).unwrap_or(u32::MAX),
+            u32::try_from(self.config.chunk_overlap_chars).unwrap_or(u32::MAX),
+            TOKENIZER_VERSION,
+            self.config.stopwords,
+        );
+        Some(ContentRef::from_bytes(fp).to_hex())
+    }
+
+    #[cfg(not(feature = "serve-engine"))]
+    #[allow(clippy::unused_self)]
+    fn compute_fingerprint(&self, _dim: u32) -> Option<String> {
+        None
+    }
+
+    /// Embed `text` server-side, or [`DatasetError::EmbedderUnavailable`] when no
+    /// embedder is wired (an `hnsw`-only build, or `serve-engine` without a model).
     #[cfg_attr(not(feature = "serve-engine"), allow(clippy::unused_self))]
-    fn embed_query(&self, text: &str) -> Result<Vec<f32>, DatasetError> {
+    fn embed_text(&self, text: &str) -> Result<Vec<f32>, DatasetError> {
         #[cfg(feature = "serve-engine")]
         {
             self.embedder
@@ -401,35 +705,40 @@ impl HostDatasetView {
         }
     }
 
-    /// The shared ANN-search core for [`DatasetView::query`] and
-    /// [`FuzzyDiscoveryView::discover`]: resolve the query vector (client-vector
-    /// path takes precedence; text-only falls back to the server embedder),
-    /// validate it, then run the cosine ANN search under one lock — returning the
-    /// raw hits as `(content_ref, content, score)`. `query` ships the content;
-    /// the exact-out `discover` ignores it (its wire carries refs + a display
-    /// score only). One source of the search logic; one lock, no re-lock race.
-    fn ann_search(
+    /// The shared search core for [`DatasetView::query`] and
+    /// [`FuzzyDiscoveryView::discover`]: resolve the query vector (client-vector path
+    /// takes precedence; text-only falls back to the server embedder), guard
+    /// staleness, then run dense ANN + (for hybrid) BM25, RRF-fuse, MMR-rerank —
+    /// all under ONE lock. Returns `(chunk_ref, content, score, parent_ref,
+    /// chunk_index, chunk_count)`. One source of the search logic; no re-lock race.
+    fn search(
         &self,
         dataset: &str,
         query_embedding: Option<&[f32]>,
         query_text: &str,
         k: usize,
-    ) -> Result<Vec<(ContentRef, Vec<u8>, f32)>, DatasetError> {
+        mode: RetrievalMode,
+    ) -> Result<Vec<SearchHit>, DatasetError> {
         if k == 0 {
             return Ok(Vec::new());
         }
         let k = k.min(MAX_K);
-        // Resolve the query vector outside the lock (the client-vector path takes
-        // precedence; text-only falls back to the server embedder).
-        let qvec = match query_embedding {
-            Some(v) if !v.is_empty() => v.to_vec(),
+        let effective_mode = match mode {
+            RetrievalMode::Default => self.config.default_mode,
+            m => m,
+        };
+        // Resolve the query vector outside the lock (client-vector takes precedence;
+        // text-only falls back to the server embedder). `server_embedded` ⇒ the
+        // staleness guard applies (the client-vector path owns its own space).
+        let (qvec, server_embedded) = match query_embedding {
+            Some(v) if !v.is_empty() => (v.to_vec(), false),
             _ => {
                 if query_text.is_empty() {
                     return Err(DatasetError::InvalidArgument(
                         "query requires query_text or a query_embedding".to_string(),
                     ));
                 }
-                self.embed_query(query_text)?
+                (self.embed_text(query_text)?, true)
             }
         };
         if !all_finite(&qvec) {
@@ -437,6 +746,14 @@ impl HostDatasetView {
                 "query vector must be finite (no NaN/inf)".to_string(),
             ));
         }
+        // The live fingerprint (server-embed only) — computed outside the lock.
+        let live_fp = server_embedded
+            .then(|| {
+                let dim = u32::try_from(qvec.len()).unwrap_or(0);
+                self.compute_fingerprint(dim)
+            })
+            .flatten();
+
         let inner = self
             .inner
             .lock()
@@ -451,13 +768,66 @@ impl HostDatasetView {
                 )));
             }
         }
-        Ok(state
-            .index
-            .query(&qvec, k)
+        // Staleness guard (server-embed only): never query a corpus embedded under a
+        // different model / chunk config with the live embedder (incompatible space).
+        if let Some(live) = &live_fp {
+            if !state.embed_fingerprint.is_empty() && state.embed_fingerprint != *live {
+                return Err(DatasetError::StaleIndex(format!(
+                    "dataset '{dataset}' was indexed under a different embed model / chunk \
+                     config; re-ingest to rebuild (the client-vector path is unaffected)"
+                )));
+            }
+        }
+
+        // Candidate width: a bounded multiple of k (pinned function of k ⇒ reproducible).
+        let n = k.saturating_mul(4).clamp(k, 256);
+        let dense: Vec<Hit> = state.index.query(&qvec, n);
+        // Sparse arm only when hybrid is requested AND there is query text to match.
+        let sparse_on = effective_mode == RetrievalMode::Hybrid
+            && !query_text.is_empty()
+            && !state.lex.is_empty();
+        let fused: Vec<Hit> = if sparse_on {
+            let sparse = state.lex.query(query_text, n);
+            rrf_fuse(&dense, &sparse, self.config.rrf_k, n)
+        } else {
+            let mut d = dense;
+            d.truncate(n);
+            d
+        };
+        // MMR diversity rerank (deterministic, off the committed fact): preserves the
+        // fused relevance order while demoting near-duplicate passages. Skipped when
+        // disabled by the operator.
+        let ranked: Vec<Hit> = if self.config.rerank {
+            #[allow(clippy::cast_precision_loss)]
+            let lambda = self.config.mmr_lambda_bp as f32 / 10_000.0;
+            mmr_rerank(&fused, |id| state.index.vector_of(id), lambda, k)
+        } else {
+            let mut f = fused;
+            f.truncate(k);
+            f
+        };
+
+        Ok(ranked
             .into_iter()
             .map(|h| {
                 let content = state.docs.get(&h.id).cloned().unwrap_or_default();
-                (h.id, content, h.score)
+                let prov = state.prov.get(&h.id).copied().unwrap_or(ChunkProv {
+                    parent_ref: h.id,
+                    chunk_index: 0,
+                });
+                let chunk_count = state
+                    .parent_chunks
+                    .get(&prov.parent_ref)
+                    .copied()
+                    .unwrap_or(1);
+                SearchHit {
+                    chunk_ref: h.id,
+                    content,
+                    score: h.score,
+                    parent_ref: prov.parent_ref,
+                    chunk_index: prov.chunk_index,
+                    chunk_count,
+                }
             })
             .collect())
     }
@@ -474,9 +844,14 @@ impl DatasetView for HostDatasetView {
             .map(|(name, s)| DatasetSummaryEntry {
                 dataset_id: name.clone(),
                 name: name.clone(),
-                doc_count: u64::try_from(s.docs.len()).unwrap_or(u64::MAX),
+                // doc_count = distinct PARENT documents; chunk_count = chunks.
+                doc_count: u64::try_from(s.parent_chunks.len()).unwrap_or(u64::MAX),
                 dim: s.dim.unwrap_or(0),
                 created_ms: s.created_ms,
+                chunked: s.chunked,
+                embed_model_fingerprint: s.embed_fingerprint.clone(),
+                index_version: s.index_version,
+                chunk_count: u64::try_from(s.docs.len()).unwrap_or(u64::MAX),
             })
             .collect();
         out.sort_by(|a, b| a.dataset_id.cmp(&b.dataset_id));
@@ -488,35 +863,95 @@ impl DatasetView for HostDatasetView {
         if docs.is_empty() {
             return Err(DatasetError::InvalidArgument("no documents".to_string()));
         }
-        // Resolve every vector BEFORE taking the lock (embedding may be slow + the
-        // embed backend is its own owner thread; never hold the dataset lock across it).
-        let mut resolved: Vec<(ContentRef, Vec<u8>, Vec<f32>)> = Vec::with_capacity(docs.len());
+        // Resolve every chunk + vector BEFORE taking the lock (embedding may be slow +
+        // the embed backend is its own owner thread; never hold the dataset lock
+        // across it). A client-vector doc is one whole-doc chunk (the client owns
+        // granularity); a server-embed doc is chunked, then each chunk is embedded.
+        let chunk_params = ChunkParams {
+            max_chars: self.config.chunk_max_chars,
+            overlap_chars: self.config.chunk_overlap_chars,
+        };
+        let mut rows: Vec<ChunkRow> = Vec::with_capacity(docs.len());
+        let mut used_server_embed = false;
         for d in docs {
             if d.content.is_empty() {
                 return Err(DatasetError::InvalidArgument(
                     "empty document content".to_string(),
                 ));
             }
-            let vector = match d.embedding {
-                Some(v) if !v.is_empty() => v.to_vec(),
-                _ => self.embed_bytes(d.content)?,
-            };
-            if vector.is_empty() {
-                return Err(DatasetError::InvalidArgument(
-                    "empty embedding vector".to_string(),
-                ));
+            match d.embedding {
+                Some(v) if !v.is_empty() => {
+                    // Client-vector path: one chunk = the whole doc (no chunking).
+                    if !all_finite(v) {
+                        return Err(DatasetError::InvalidArgument(
+                            "embedding must be finite (no NaN/inf)".to_string(),
+                        ));
+                    }
+                    let chunk_ref = ContentRef::of(d.content);
+                    rows.push(ChunkRow {
+                        chunk_ref,
+                        content: d.content.to_vec(),
+                        vector: v.to_vec(),
+                        parent_ref: chunk_ref,
+                        chunk_index: 0,
+                    });
+                }
+                _ => {
+                    // Server-embed path: chunk the document, embed each passage.
+                    used_server_embed = true;
+                    let text = std::str::from_utf8(d.content).map_err(|_| {
+                        DatasetError::InvalidArgument(
+                            "server-embed requires UTF-8 text".to_string(),
+                        )
+                    })?;
+                    let parent_ref = ContentRef::of(d.content);
+                    let chunks = chunk(text, chunk_params);
+                    if self.config.max_chunks_per_doc > 0
+                        && chunks.len() > self.config.max_chunks_per_doc
+                    {
+                        return Err(DatasetError::InvalidArgument(format!(
+                            "document produces {} chunks, over the {}-chunk cap",
+                            chunks.len(),
+                            self.config.max_chunks_per_doc
+                        )));
+                    }
+                    for ch in chunks {
+                        let chunk_bytes = ch.text.into_bytes();
+                        let chunk_ref = ContentRef::of(&chunk_bytes);
+                        let vector =
+                            self.embed_text(std::str::from_utf8(&chunk_bytes).unwrap_or_default())?;
+                        if vector.is_empty() || !all_finite(&vector) {
+                            return Err(DatasetError::InvalidArgument(
+                                "embedding must be non-empty and finite (no NaN/inf)".to_string(),
+                            ));
+                        }
+                        rows.push(ChunkRow {
+                            chunk_ref,
+                            content: chunk_bytes,
+                            vector,
+                            parent_ref,
+                            chunk_index: ch.index,
+                        });
+                    }
+                }
             }
-            if !all_finite(&vector) {
-                return Err(DatasetError::InvalidArgument(
-                    "embedding must be finite (no NaN/inf)".to_string(),
-                ));
-            }
-            resolved.push((ContentRef::of(d.content), d.content.to_vec(), vector));
         }
+        if rows.is_empty() {
+            return Err(DatasetError::InvalidArgument(
+                "no indexable content".to_string(),
+            ));
+        }
+        // Stamp the fingerprint on a server-embed ingest (the dim is the resolved one).
+        let fingerprint = if used_server_embed {
+            let dim = u32::try_from(rows[0].vector.len()).unwrap_or(0);
+            self.compute_fingerprint(dim)
+        } else {
+            None
+        };
         self.inner
             .lock()
             .map_err(|_| DatasetError::Internal("dataset store lock poisoned".to_string()))?
-            .ingest_resolved(dataset, resolved)
+            .ingest_resolved(dataset, rows, used_server_embed, fingerprint)
     }
 
     fn query(
@@ -525,21 +960,25 @@ impl DatasetView for HostDatasetView {
         query_embedding: Option<&[f32]>,
         query_text: &str,
         k: usize,
+        mode: RetrievalMode,
     ) -> Result<Vec<DatasetHitEntry>, DatasetError> {
         Ok(self
-            .ann_search(dataset, query_embedding, query_text, k)?
+            .search(dataset, query_embedding, query_text, k, mode)?
             .into_iter()
-            .map(|(id, content, score)| DatasetHitEntry {
-                content_ref: *id.as_bytes(),
-                content,
-                score,
+            .map(|h| DatasetHitEntry {
+                content_ref: *h.chunk_ref.as_bytes(),
+                content: h.content,
+                score: h.score,
+                parent_ref: *h.parent_ref.as_bytes(),
+                chunk_index: h.chunk_index,
+                chunk_count: h.chunk_count,
             })
             .collect())
     }
 }
 
 impl FuzzyDiscoveryView for HostDatasetView {
-    /// Advisory fuzzy-in / exact-out discovery: the SAME cosine ANN search as
+    /// Advisory fuzzy-in / exact-out discovery: the SAME search as
     /// [`DatasetView::query`], but the result is the ordered content-ref SET +
     /// a DISPLAY-ONLY basis-point score (SN-8) — no content bytes on the wire.
     /// The caller joins back to bytes with an EXACT `GetContent` on the ref.
@@ -549,67 +988,94 @@ impl FuzzyDiscoveryView for HostDatasetView {
         query_embedding: Option<&[f32]>,
         query_text: &str,
         k: usize,
+        mode: RetrievalMode,
     ) -> Result<Vec<FuzzyHitEntry>, DatasetError> {
         Ok(self
-            .ann_search(dataset, query_embedding, query_text, k)?
+            .search(dataset, query_embedding, query_text, k, mode)?
             .into_iter()
-            .map(|(id, _content, score)| FuzzyHitEntry {
-                content_ref: *id.as_bytes(),
-                score_bp: score_to_bp(score),
+            .map(|h| FuzzyHitEntry {
+                content_ref: *h.chunk_ref.as_bytes(),
+                score_bp: score_to_bp(h.score),
+                parent_ref: *h.parent_ref.as_bytes(),
+                chunk_index: h.chunk_index,
             })
             .collect())
     }
 }
 
-/// Rebuild every dataset's in-memory state (the HNSW index + the ref→content map)
-/// from the durable rows on open.
-fn rebuild_state(conn: &Connection) -> Result<HashMap<String, DatasetState>, rusqlite::Error> {
+/// Rebuild every dataset's in-memory state (the dense HNSW + sparse BM25 indices +
+/// the chunk→content map + chunk provenance) from the durable rows on open. Both
+/// indices are built SYNCHRONOUSLY here, so a dataset is fully warm before it is
+/// queryable (closes the cold-index race). A legacy (pre-RC4a) row has a NULL
+/// `parent_ref` ⇒ it is a single whole-doc chunk that is its own parent.
+fn rebuild_state(
+    conn: &Connection,
+    config: RagConfig,
+) -> Result<HashMap<String, DatasetState>, rusqlite::Error> {
+    let bm25 = config.bm25_params();
     let mut datasets: HashMap<String, DatasetState> = HashMap::new();
     {
-        let mut stmt = conn.prepare("SELECT name, created_ms, dim FROM datasets")?;
+        let mut stmt = conn.prepare(
+            "SELECT name, created_ms, dim, chunked, embed_fingerprint, index_version FROM datasets",
+        )?;
         let rows = stmt.query_map([], |row| {
-            let name: String = row.get(0)?;
-            let created_ms: i64 = row.get(1)?;
-            let dim: i64 = row.get(2)?;
-            Ok((name, created_ms, dim))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
         })?;
         for row in rows {
-            let (name, created_ms, dim) = row?;
-            let mut state = DatasetState::empty(created_ms);
+            let (name, created_ms, dim, chunked, fp, iv) = row?;
+            let mut state = DatasetState::empty(created_ms, bm25);
             if dim > 0 {
                 state.dim = u32::try_from(dim).ok();
             }
+            state.chunked = chunked != 0;
+            state.embed_fingerprint = fp;
+            state.index_version = u32::try_from(iv).unwrap_or(INDEX_VERSION);
             datasets.insert(name, state);
         }
     }
     {
-        let mut stmt =
-            conn.prepare("SELECT dataset, ref, content, vector FROM documents ORDER BY rowid")?;
+        let mut stmt = conn.prepare(
+            "SELECT dataset, ref, content, vector, parent_ref, chunk_index FROM documents \
+             ORDER BY rowid",
+        )?;
         let rows = stmt.query_map([], |row| {
-            let dataset: String = row.get(0)?;
-            let ref_blob: Vec<u8> = row.get(1)?;
-            let content: Vec<u8> = row.get(2)?;
-            let vec_blob: Vec<u8> = row.get(3)?;
-            Ok((dataset, ref_blob, content, vec_blob))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Option<Vec<u8>>>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
         })?;
         for row in rows {
-            let (dataset, ref_blob, content, vec_blob) = row?;
+            let (dataset, ref_blob, content, vec_blob, parent_blob, chunk_index) = row?;
             let Ok(ref_arr) = <[u8; 32]>::try_from(ref_blob.as_slice()) else {
                 continue; // a corrupt (non-32B) ref row is skipped, never panics
             };
-            let doc_ref = ContentRef::from_bytes(ref_arr);
+            let chunk_ref = ContentRef::from_bytes(ref_arr);
             let vector = decode_vector_le(&vec_blob);
+            // A NULL/corrupt parent_ref ⇒ a legacy whole-doc chunk = its own parent.
+            let parent_ref = parent_blob
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+                .map_or(chunk_ref, ContentRef::from_bytes);
+            let ci = u32::try_from(chunk_index).unwrap_or(0);
             let state = datasets
                 .entry(dataset.clone())
-                .or_insert_with(|| DatasetState::empty(now_ms()));
+                .or_insert_with(|| DatasetState::empty(now_ms(), bm25));
             if state.dim.is_none() && !vector.is_empty() {
                 state.dim = u32::try_from(vector.len()).ok();
             }
             // A row whose stored vector dim disagrees with the dataset's (externally
-            // corrupted db only — the ingest path enforces a uniform batch dim) would
-            // be SILENTLY skipped by the HNSW insert yet still counted in docs.len().
-            // Skip it from BOTH the index and the docs map (+ warn) so doc_count never
-            // over-reports retrievable documents.
+            // corrupted db only — the ingest path enforces a uniform batch dim) is
+            // skipped from EVERY index/map (+ warn) so counts never over-report.
             let dim_ok = state
                 .dim
                 .is_none_or(|d| u32::try_from(vector.len()).is_ok_and(|n| n == d));
@@ -620,8 +1086,19 @@ fn rebuild_state(conn: &Connection) -> Result<HashMap<String, DatasetState>, rus
                 );
                 continue;
             }
-            state.index.insert(doc_ref, vector);
-            state.docs.insert(doc_ref, content);
+            state.index.insert(chunk_ref, vector);
+            if let Ok(text) = std::str::from_utf8(&content) {
+                state.lex.insert(chunk_ref, text);
+            }
+            state.docs.insert(chunk_ref, content);
+            state.prov.insert(
+                chunk_ref,
+                ChunkProv {
+                    parent_ref,
+                    chunk_index: ci,
+                },
+            );
+            *state.parent_chunks.entry(parent_ref).or_insert(0) += 1;
         }
     }
     Ok(datasets)
@@ -666,7 +1143,9 @@ mod tests {
         assert_eq!(out.dim, 4);
 
         // A query closest to axis 1 ⇒ "bravo" is the top hit, with its bytes attached.
-        let hits = view.query("corpus", Some(&axis_vec(1)), "", 1).unwrap();
+        let hits = view
+            .query("corpus", Some(&axis_vec(1)), "", 1, RetrievalMode::Default)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, b"bravo");
         assert_eq!(hits[0].content_ref, *ContentRef::of(b"bravo").as_bytes());
@@ -690,7 +1169,9 @@ mod tests {
         assert_eq!(list[0].doc_count, 2);
         assert_eq!(list[0].dim, 4);
         // The rebuilt index still serves the right neighbour.
-        let hits = reopened.query("c", Some(&axis_vec(0)), "", 1).unwrap();
+        let hits = reopened
+            .query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
+            .unwrap();
         assert_eq!(hits[0].content, b"alpha");
     }
 
@@ -724,7 +1205,9 @@ mod tests {
         let view = open_view(dir.path());
         view.ingest("c", &[doc(b"a", &axis_vec(0))]).unwrap(); // dim 4
         let three = vec![0.0f32; 3];
-        let err = view.query("c", Some(&three), "", 1).unwrap_err();
+        let err = view
+            .query("c", Some(&three), "", 1, RetrievalMode::Default)
+            .unwrap_err();
         assert!(matches!(err, DatasetError::DimMismatch(_)));
     }
 
@@ -732,7 +1215,9 @@ mod tests {
     fn unknown_dataset_is_not_found() {
         let dir = tempfile::tempdir().unwrap();
         let view = open_view(dir.path());
-        let err = view.query("nope", Some(&axis_vec(0)), "", 1).unwrap_err();
+        let err = view
+            .query("nope", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
+            .unwrap_err();
         assert!(matches!(err, DatasetError::NotFound));
     }
 
@@ -746,7 +1231,9 @@ mod tests {
         };
         let err = view.ingest("c", &[textonly]).unwrap_err();
         assert!(matches!(err, DatasetError::EmbedderUnavailable));
-        let qerr = view.query("c", None, "hello", 1).unwrap_err();
+        let qerr = view
+            .query("c", None, "hello", 1, RetrievalMode::Default)
+            .unwrap_err();
         // unknown dataset OR embedder-unavailable — both are honest; the embed is
         // attempted first (before the lock), so EmbedderUnavailable wins here.
         assert!(matches!(qerr, DatasetError::EmbedderUnavailable));
@@ -842,7 +1329,9 @@ mod tests {
         assert_eq!(out.inserted, 3);
         assert_eq!(out.dim, 4);
         // A text-only query is embedded server-side ⇒ the "bravo" doc is nearest.
-        let hits = view.query("corpus", None, "where is bravo", 1).unwrap();
+        let hits = view
+            .query("corpus", None, "where is bravo", 1, RetrievalMode::Default)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, b"bravo two");
     }
@@ -881,7 +1370,9 @@ mod tests {
 
         view.ingest("c", &[doc(b"a", &axis_vec(0))]).unwrap();
         let inf = vec![f32::INFINITY, 0.0, 0.0, 0.0];
-        let qerr = view.query("c", Some(&inf), "", 1).unwrap_err();
+        let qerr = view
+            .query("c", Some(&inf), "", 1, RetrievalMode::Default)
+            .unwrap_err();
         assert!(matches!(qerr, DatasetError::InvalidArgument(_)));
     }
 
@@ -897,7 +1388,9 @@ mod tests {
         .unwrap();
         // Closest to axis 1 ⇒ "bravo" is the top hit; the result carries the EXACT
         // content-ref + a display-only bp score (no content bytes — SN-8 exact-out).
-        let hits = view.discover("corpus", Some(&axis_vec(1)), "", 3).unwrap();
+        let hits = view
+            .discover("corpus", Some(&axis_vec(1)), "", 3, RetrievalMode::Default)
+            .unwrap();
         assert_eq!(hits.len(), 3);
         assert_eq!(hits[0].content_ref, *ContentRef::of(b"bravo").as_bytes());
         assert!(
@@ -913,12 +1406,222 @@ mod tests {
         let view = open_view(dir.path());
         view.ingest("c", &[doc(b"a", &axis_vec(0))]).unwrap();
         assert!(view
-            .discover("c", Some(&axis_vec(0)), "", 0)
+            .discover("c", Some(&axis_vec(0)), "", 0, RetrievalMode::Default)
             .unwrap()
             .is_empty());
         let err = view
-            .discover("nope", Some(&axis_vec(0)), "", 1)
+            .discover("nope", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
             .unwrap_err();
         assert!(matches!(err, DatasetError::NotFound));
+    }
+
+    // ---- RC4a: chunking, hybrid, provenance, fingerprint staleness, back-compat ----
+
+    #[test]
+    fn client_vector_ingest_is_not_chunked() {
+        let dir = tempfile::tempdir().unwrap();
+        let view = open_view(dir.path());
+        view.ingest(
+            "c",
+            &[doc(b"a fairly long client document here", &axis_vec(0))],
+        )
+        .unwrap();
+        let list = view.list_datasets();
+        assert!(!list[0].chunked, "the client-vector path is never chunked");
+        assert_eq!(list[0].chunk_count, 1, "one whole-doc chunk");
+        assert_eq!(list[0].doc_count, 1);
+        assert!(
+            list[0].embed_model_fingerprint.is_empty(),
+            "no server embed ⇒ no fingerprint"
+        );
+        // A hit's parent is itself (a whole-doc chunk).
+        let hits = view
+            .query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
+            .unwrap();
+        assert_eq!(hits[0].parent_ref, hits[0].content_ref);
+        assert_eq!(hits[0].chunk_index, 0);
+        assert_eq!(hits[0].chunk_count, 1);
+    }
+
+    #[cfg(feature = "serve-engine")]
+    #[test]
+    fn server_embed_chunks_a_long_document_into_passages() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder = HostEmbedder::new(
+            std::sync::Arc::new(KeywordEmbed),
+            kx_mote::ModelId("fake-embed".into()),
+            kx_warrant::WarrantSpec::default(),
+        );
+        let view = HostDatasetView::open(dir.path())
+            .unwrap()
+            .with_rag_config(RagConfig {
+                chunk_max_chars: 12,
+                chunk_overlap_chars: 3,
+                ..RagConfig::default()
+            })
+            .with_embedder(embedder);
+        let long = "alpha bravo charlie delta echo foxtrot golf hotel india";
+        let out = view
+            .ingest(
+                "c",
+                &[IngestDoc {
+                    content: long.as_bytes(),
+                    embedding: None,
+                }],
+            )
+            .unwrap();
+        assert_eq!(out.doc_count, 1, "one parent document");
+        let list = view.list_datasets();
+        assert_eq!(list[0].doc_count, 1, "one parent");
+        assert!(
+            list[0].chunk_count > 1,
+            "the long doc split into multiple chunks (got {})",
+            list[0].chunk_count
+        );
+        assert!(list[0].chunked, "the chunked flag is set");
+        assert!(
+            !list[0].embed_model_fingerprint.is_empty(),
+            "a server-embed ingest stamps the fingerprint"
+        );
+        assert_eq!(list[0].index_version, INDEX_VERSION);
+    }
+
+    #[cfg(feature = "serve-engine")]
+    #[test]
+    fn hybrid_surfaces_a_keyword_match_a_dense_tie_misses() {
+        let dir = tempfile::tempdir().unwrap();
+        let embedder = HostEmbedder::new(
+            std::sync::Arc::new(KeywordEmbed),
+            kx_mote::ModelId("fake-embed".into()),
+            kx_warrant::WarrantSpec::default(),
+        );
+        // No chunking (small docs); rerank OFF so the test reads the pure RRF fusion.
+        let view = HostDatasetView::open(dir.path())
+            .unwrap()
+            .with_rag_config(RagConfig {
+                rerank: false,
+                ..RagConfig::default()
+            })
+            .with_embedder(embedder);
+        // Both docs embed to axis 0 ("alpha") — a DENSE tie; only one has "xylophone".
+        view.ingest(
+            "c",
+            &[
+                IngestDoc {
+                    content: b"alpha foo bar",
+                    embedding: None,
+                },
+                IngestDoc {
+                    content: b"alpha xylophone baz",
+                    embedding: None,
+                },
+            ],
+        )
+        .unwrap();
+        // A single rare query term: dense cannot separate the docs, but the BM25 arm
+        // gives the ONLY doc containing "xylophone" a fusion boost no other doc has.
+        let hits = view
+            .query("c", None, "xylophone", 5, RetrievalMode::Hybrid)
+            .unwrap();
+        assert_eq!(
+            hits[0].content, b"alpha xylophone baz",
+            "the BM25 keyword match leads the hybrid fusion"
+        );
+    }
+
+    #[cfg(feature = "serve-engine")]
+    #[test]
+    fn fingerprint_staleness_refuses_a_model_swap_but_exempts_client_vectors() {
+        let dir = tempfile::tempdir().unwrap();
+        // Ingest server-embed under "model-a".
+        {
+            let view = HostDatasetView::open(dir.path())
+                .unwrap()
+                .with_embedder(HostEmbedder::new(
+                    std::sync::Arc::new(KeywordEmbed),
+                    kx_mote::ModelId("model-a".into()),
+                    kx_warrant::WarrantSpec::default(),
+                ));
+            view.ingest(
+                "c",
+                &[IngestDoc {
+                    content: b"alpha one",
+                    embedding: None,
+                }],
+            )
+            .unwrap();
+        }
+        // Reopen with a DIFFERENT embed model id ⇒ a server-embed query is refused.
+        let view = HostDatasetView::open(dir.path())
+            .unwrap()
+            .with_embedder(HostEmbedder::new(
+                std::sync::Arc::new(KeywordEmbed),
+                kx_mote::ModelId("model-b".into()),
+                kx_warrant::WarrantSpec::default(),
+            ));
+        let err = view
+            .query("c", None, "where is alpha", 1, RetrievalMode::Default)
+            .unwrap_err();
+        assert!(
+            matches!(err, DatasetError::StaleIndex(_)),
+            "a same-dim model swap is refused, never silently mis-ranked"
+        );
+        // The client-vector path owns its own space ⇒ exempt from the guard.
+        assert!(
+            view.query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
+                .is_ok(),
+            "the client-vector path is exempt from the staleness guard"
+        );
+    }
+
+    #[test]
+    fn legacy_db_without_chunk_columns_migrates_and_queries() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("datasets.db");
+        // Simulate a pre-RC4a db: the OLD schema (no chunk columns) + a whole-doc row.
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE datasets(name TEXT PRIMARY KEY, created_ms INTEGER NOT NULL, \
+                 dim INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE documents(dataset TEXT NOT NULL, ref BLOB NOT NULL, \
+                 content BLOB NOT NULL, vector BLOB NOT NULL, PRIMARY KEY(dataset, ref));",
+            )
+            .unwrap();
+            let v = axis_vec(1);
+            let content = b"legacy bravo".to_vec();
+            let cref = ContentRef::of(&content);
+            conn.execute(
+                "INSERT INTO datasets(name, created_ms, dim) VALUES('c', 0, 4)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO documents(dataset, ref, content, vector) VALUES('c', ?, ?, ?)",
+                params![
+                    &cref.as_bytes()[..],
+                    content.as_slice(),
+                    encode_vector_le(&v).as_slice()
+                ],
+            )
+            .unwrap();
+        }
+        // New code opens it ⇒ migrate_schema adds the columns ⇒ queryable as one chunk.
+        let view = open_view(dir.path());
+        let list = view.list_datasets();
+        assert_eq!(list[0].doc_count, 1);
+        assert_eq!(
+            list[0].chunk_count, 1,
+            "a legacy whole-doc row is one chunk"
+        );
+        assert!(!list[0].chunked, "a legacy dataset is not marked chunked");
+        let hits = view
+            .query("c", Some(&axis_vec(1)), "", 1, RetrievalMode::Default)
+            .unwrap();
+        assert_eq!(hits[0].content, b"legacy bravo");
+        assert_eq!(
+            hits[0].parent_ref, hits[0].content_ref,
+            "a legacy chunk is its own parent"
+        );
     }
 }

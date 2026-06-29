@@ -64,6 +64,8 @@ export class ServerInfo {
     readonly activeModelId: string = "",
     /** Model Control v2: operator-enabled model downloads (`KX_SERVE_ALLOW_MODEL_PULL`). */
     readonly allowModelPull: boolean = false,
+    /** RC4a: the configured embedder is a decoder LLM (weak embeddings) — advisory. */
+    readonly embedModelIsDecoder: boolean = false,
   ) {}
 
   static fromProto(r: PbGetServerInfoResponse): ServerInfo {
@@ -92,6 +94,7 @@ export class ServerInfo {
       r.embedModelId,
       r.activeModelId,
       r.allowModelPull,
+      r.embedModelIsDecoder,
     );
   }
 
@@ -122,6 +125,7 @@ export class ServerInfo {
       embed_model_id: this.embedModelId,
       active_model_id: this.activeModelId,
       allow_model_pull: this.allowModelPull,
+      embed_model_is_decoder: this.embedModelIsDecoder,
     };
   }
 }

@@ -2180,6 +2180,7 @@ impl KxGateway for GatewayService {
                     source: m.source,
                     active,
                     chat_rag_handle: m.chat_rag_handle,
+                    embed_is_decoder: m.embed_is_decoder,
                 }
             })
             .collect();
@@ -2233,6 +2234,8 @@ impl KxGateway for GatewayService {
                 .and_then(|a| a.get())
                 .unwrap_or_default(),
             allow_model_pull: facts.allow_model_pull,
+            // RC4a (T-RAG-EMBED-QUALITY): honest decoder-as-embedder advisory flag.
+            embed_model_is_decoder: facts.embed_model_is_decoder,
         }))
     }
 
@@ -4340,8 +4343,9 @@ impl KxGateway for GatewayService {
         // A non-empty client vector takes precedence (the FFI-free path); an empty
         // one falls back to embedding `query_text` (needs an embedder).
         let qe = (!req.query_embedding.is_empty()).then_some(req.query_embedding.as_slice());
+        let mode = crate::datasets::retrieval_mode_from_proto(req.retrieval_mode);
         let hits = view
-            .query(&req.dataset, qe, &req.query_text, req.k as usize)
+            .query(&req.dataset, qe, &req.query_text, req.k as usize, mode)
             .map_err(crate::datasets::dataset_status)?;
         let hits = hits
             .into_iter()
@@ -4363,8 +4367,9 @@ impl KxGateway for GatewayService {
         // `query_dataset` exactly — but the response carries refs + bp only (no
         // content echo, exact-out).
         let qe = (!req.query_embedding.is_empty()).then_some(req.query_embedding.as_slice());
+        let mode = crate::datasets::retrieval_mode_from_proto(req.retrieval_mode);
         let hits = view
-            .discover(&req.dataset, qe, &req.query_text, req.k as usize)
+            .discover(&req.dataset, qe, &req.query_text, req.k as usize, mode)
             .map_err(crate::datasets::dataset_status)?;
         let hits = hits
             .into_iter()

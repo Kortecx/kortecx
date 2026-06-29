@@ -41,6 +41,15 @@ pub trait RetrievalIndex {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// The stored vector for `id`, if present. Defaults to `None` so existing
+    /// backends compile unchanged; backends that retain their vectors (the
+    /// in-memory + HNSW indices) override it. Used by MMR diversity rerank
+    /// ([`crate::fusion::mmr_rerank`]) to measure candidate-to-candidate
+    /// redundancy without re-embedding.
+    fn vector_of(&self, _id: &ContentRef) -> Option<Vec<f32>> {
+        None
+    }
 }
 
 /// An exact brute-force cosine-similarity index. Deterministic: ties break by
@@ -111,5 +120,12 @@ impl RetrievalIndex for InMemoryRetrievalIndex {
 
     fn len(&self) -> usize {
         self.items.len()
+    }
+
+    fn vector_of(&self, id: &ContentRef) -> Option<Vec<f32>> {
+        self.items
+            .iter()
+            .find(|(existing, _)| existing == id)
+            .map(|(_, v)| v.clone())
     }
 }

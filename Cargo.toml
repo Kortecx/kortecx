@@ -32,8 +32,10 @@ members = [
     "crates/kx-worker",
     "crates/kx-chaos",
     "crates/kx-workflow",
+    "crates/kx-chunk",
     "crates/kx-dataset",
     "crates/kx-dataset-hnsw",
+    "crates/kx-dataset-bm25",
     "crates/kx-critic-types",
     "crates/kx-critic",
     "crates/kx-capture",
@@ -170,14 +172,21 @@ kx-runtime           = { path = "crates/kx-runtime",           version = "0.1.1"
 # The workflow engine (codename Morphic, P4.1) — compiles a WorkflowDef to a
 # Mote DAG. Sits above the scheduler; emits kx-mote + kx-warrant types only.
 kx-workflow          = { path = "crates/kx-workflow",          version = "0.1.1" }
+# Deterministic document chunker (RC4a) — pure, std-only recursive character text
+# splitter; FFI-free, zero deps. Both the gateway ingest + the harness use it.
+kx-chunk             = { path = "crates/kx-chunk",             version = "0.1.0" }
 # The data-management seam (P4.1c) — typed (tensor/vector/blob/multi-modal)
-# DataStore/Dataset/RetrievalIndex over committed content; journal-authoritative.
+# DataStore/Dataset/RetrievalIndex/LexicalIndex over committed content; journal-authoritative.
 kx-dataset           = { path = "crates/kx-dataset",           version = "0.1.1" }
 # The opt-in SCALE retrieval backend (DP3, T2.3) — a file-backed in-process HNSW
 # index implementing kx-dataset::RetrievalIndex via the pure-Rust hnsw_rs crate.
 # Off the truth path (SN-8); the exact InMemory index stays the reproducible
 # default. Consumed only behind an opt-in feature (kx-gateway's `hnsw`, T3.7).
 kx-dataset-hnsw      = { path = "crates/kx-dataset-hnsw",      version = "0.1.1" }
+# The opt-in SPARSE (keyword / BM25) retrieval backend (RC4a) — a hand-rolled,
+# FFI-free inverted index implementing kx-dataset::LexicalIndex; the keyword leg of
+# hybrid retrieval (RRF-fused with the dense index). Off the truth path (SN-8).
+kx-dataset-bm25      = { path = "crates/kx-dataset-bm25",      version = "0.1.0" }
 # Deterministic-critic vocabulary (P4.2) — CriticVerdict / CriticReason / CheckSpec.
 # Parser-free + dataset-free so kx-mote can embed a CheckSpec in MoteDef without a
 # dependency cycle or inheriting regex/serde_json.

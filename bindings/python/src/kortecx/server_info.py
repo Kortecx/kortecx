@@ -53,6 +53,9 @@ class ServerInfo:
     react_max_tool_calls: int = 0
     # PR-B: the configured datasets/RAG embed model id ("" on a model-less serve).
     embed_model_id: str = ""
+    # RC4a: the configured embedder is a decoder LLM (weak sentence embeddings) — the
+    # CLI/UI surface an honest "recommend a dedicated embed model" advisory.
+    embed_model_is_decoder: bool = False
     # Model Control v2: the active default model ("" ⇒ the primary) + the download
     # posture (operator opt-in; the UI renders an honest-disabled Pull panel when off).
     active_model_id: str = ""
@@ -83,6 +86,7 @@ class ServerInfo:
             react_max_turns=r.react_max_turns,
             react_max_tool_calls=r.react_max_tool_calls,
             embed_model_id=r.embed_model_id,
+            embed_model_is_decoder=r.embed_model_is_decoder,
             active_model_id=r.active_model_id,
             allow_model_pull=r.allow_model_pull,
         )

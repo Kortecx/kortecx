@@ -29,6 +29,7 @@ class ModelSummary:
     source: str = ""  # Model Control v2: "local" | "ollama" | "pulled-ollama" | "pulled-url"
     active: bool = False  # Model Control v2: the server's ACTIVE default model (advisory)
     chat_rag_handle: str = ""  # Model Control v2: the RAG-grounded chat recipe for THIS model
+    embed_is_decoder: bool = False  # RC4a: the embedder is a decoder LLM (weak embeddings)
 
     @classmethod
     def from_proto(cls, m: "_g.ModelSummary") -> "ModelSummary":
@@ -45,6 +46,7 @@ class ModelSummary:
             source=m.source,
             active=m.active,
             chat_rag_handle=m.chat_rag_handle,
+            embed_is_decoder=m.embed_is_decoder,
         )
 
 

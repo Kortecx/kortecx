@@ -1,6 +1,7 @@
 import { m } from "framer-motion";
 import { useState } from "react";
 import { stagger } from "../../app/motion";
+import { useServerInfo } from "../../kx/use-server-info";
 import { AgentOutputsPanel } from "../datasets/AgentOutputsPanel";
 import { DatasetsPanel } from "../datasets/DatasetsPanel";
 import { IngestPanel } from "../datasets/IngestPanel";
@@ -37,6 +38,9 @@ function CloudCard({ label, detail }: { label: string; detail: string }) {
  */
 export function DatasetsSection() {
   const [selected, setSelected] = useState<string | null>(null);
+  // RC4a (T-RAG-EMBED-QUALITY): warn honestly when the serve embeds with a decoder LLM.
+  const info = useServerInfo();
+  const decoderEmbed = info.data?.embedModelIsDecoder ?? false;
   return (
     <section className="screen" data-testid="datasets-section">
       <h1>Data Lab</h1>
@@ -44,6 +48,13 @@ export function DatasetsSection() {
         Retrieval corpora for grounding agentic runs — ingest documents, then search by meaning and
         preview hits (text, JSON, markdown, images, audio &amp; video) in the browser.
       </p>
+      {decoderEmbed ? (
+        <p className="notice notice--warn" data-testid="datasets-decoder-embed-notice">
+          Embedding with a decoder model (<code>{info.data?.embedModelId}</code>). For sharper
+          retrieval, set <code>KX_SERVE_EMBED_MODEL</code> to a dedicated embedder (e.g.{" "}
+          <code>embeddinggemma</code>).
+        </p>
+      ) : null}
       <m.div className="datasets-grid" variants={stagger()} initial="hidden" animate="show">
         <DatasetsPanel selectedDataset={selected} onSelect={setSelected} />
         <QueryPanel dataset={selected} />

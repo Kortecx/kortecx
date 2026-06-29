@@ -9,6 +9,7 @@
  */
 
 import type { DatasetHit, DatasetSummary, IngestResult } from "@kortecx/sdk/web";
+import { RetrievalMode } from "@kortecx/sdk/web";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useConnection } from "./connection-context";
 import { queryKeys } from "./query-keys";
@@ -27,10 +28,16 @@ export function useDatasets() {
   });
 }
 
-export function useDatasetQuery(dataset: string | undefined, text: string, k = 10) {
+export function useDatasetQuery(
+  dataset: string | undefined,
+  text: string,
+  k = 10,
+  mode: RetrievalMode = RetrievalMode.UNSPECIFIED,
+) {
   const { client, endpoint, status } = useConnection();
   return useQuery({
-    queryKey: queryKeys.datasetQuery(endpoint, dataset ?? "", text, k),
+    // RC4a: the retrieval mode is part of the cache key (dense vs hybrid differ).
+    queryKey: [...queryKeys.datasetQuery(endpoint, dataset ?? "", text, k), mode],
     enabled:
       status === "connected" && client !== null && Boolean(dataset) && text.trim().length > 0,
     retry: false,
@@ -38,7 +45,7 @@ export function useDatasetQuery(dataset: string | undefined, text: string, k = 1
       if (!client || !dataset) {
         throw new Error("not connected");
       }
-      return client.queryDataset(dataset, { text, k });
+      return client.queryDataset(dataset, { text, k, mode });
     },
   });
 }
