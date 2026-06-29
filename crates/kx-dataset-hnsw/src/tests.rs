@@ -61,6 +61,34 @@ fn deterministic_repeat_query_on_fixed_graph() {
 }
 
 #[test]
+fn tiny_corpus_query_is_exact_and_deterministic() {
+    // Regression for T-DATASETS-HNSW-DISCOVER-FLAKE: on a tiny corpus (n <= ef) the
+    // query takes the EXACT brute-force path, so the true nearest neighbour is ALWAYS
+    // the top hit — the approximate HNSW graph could occasionally MISS it (a random
+    // top-hit on a small graph). The gateway `discover_returns_exact_out_refs_and_bp_scores`
+    // flake lived here. Rebuild the index 50× (a fresh randomized graph each time) to
+    // pin that the result no longer depends on the graph's random layer assignment.
+    for _ in 0..50 {
+        let mut idx = HnswRetrievalIndex::new();
+        idx.insert(cref(0), onehot(3, 0)); // alpha   (axis 0)
+        idx.insert(cref(1), onehot(3, 1)); // bravo   (axis 1)
+        idx.insert(cref(2), onehot(3, 2)); // charlie (axis 2)
+        let hits = idx.query(&onehot(3, 1), 3); // closest to axis 1 ⇒ bravo (cosine 1.0)
+        assert_eq!(hits.len(), 3);
+        assert_eq!(
+            hits[0].id,
+            cref(1),
+            "the exact nearest (bravo) must ALWAYS rank first"
+        );
+        assert!(
+            (hits[0].score - 1.0).abs() < 1e-6,
+            "the exact-match cosine score is ~1.0, got {}",
+            hits[0].score
+        );
+    }
+}
+
+#[test]
 fn idempotent_duplicate_insert() {
     let mut idx = HnswRetrievalIndex::new();
     idx.insert(cref(1), onehot(4, 0));
