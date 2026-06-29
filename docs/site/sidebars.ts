@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         "agent-runner",
         "security",
         "tools",
+        "agentic-prompts",
         "authoring-a-connector",
         "managing-secrets",
         "authoring-a-trigger",

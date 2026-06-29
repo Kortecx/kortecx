@@ -325,3 +325,146 @@ async fn grammar_forces_and_witnesses_a_tool_fire() {
         "the forcing chain settled a terminal branch"
     );
 }
+
+/// RC3 menu witness (Tier-B, observe-not-gate per GR16): the LEAD proof for
+/// T-REACT-TOOL-MENU. Unlike the grammar witness above, the instruction describes
+/// only the DESIRED EFFECT — NOT the tool name, args, or call format. Pre-RC3 a real
+/// model could not fire a tool from such a goal (the live prompt showed NO tool
+/// menu); RC3 prepends the granted-tool MENU (+ the curated agentic system prompt) so
+/// the model proposes the call AUTONOMOUSLY, and the RC2 grammar then constrains it.
+/// This PRINTS each turn's raw output + whether a tool fired (the headline signal,
+/// observed not gated) and soft-asserts the chain settles. Run on BOTH engines
+/// (restart-per-run): `KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just
+/// eval-real` and `KX_SERVE_MODEL_GGUF=<gemma-4-12b-it-q4_k_m.gguf> just eval-real`.
+/// T-OLLAMA-GEMMA3-GGUF-SKEW: the llama.cpp arm needs the HF unsloth GGUF (`just
+/// fetch-gemma-model`), NOT Ollama's gemma3 blob.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real LLM; witnesses that the tool MENU (not a format hint) elicits an autonomous tool fire"]
+async fn menu_elicits_a_tool_without_format_instructions() {
+    if let Some(gguf) = serve_gguf() {
+        std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    } else if !ollama_opted_in() {
+        eprintln!("skipping: no model");
+        return;
+    }
+    std::env::set_var("KX_SERVE_AUTOGRANT", "1");
+    // The menu is on by default; assert it is NOT disabled for this witness.
+    std::env::remove_var("KX_SERVE_REACT_TOOL_MENU");
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let recipes = c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    if !recipes
+        .recipes
+        .iter()
+        .any(|r| r.handle == REACT_RECIPE_HANDLE)
+    {
+        eprintln!("skipping: react not provisioned (bundled bins missing)");
+        running.shutdown().await.unwrap();
+        std::env::remove_var("KX_SERVE_AUTOGRANT");
+        return;
+    }
+
+    // Goal describes the EFFECT only — no tool name, no args, no envelope. A tool fire
+    // here is attributable to the MENU, not to the instruction describing the format.
+    let resp = c
+        .invoke(proto::InvokeRequest {
+            handle: REACT_AUTO_RECIPE_HANDLE.to_string(),
+            args: {
+                let instruction =
+                    std::env::var("KX_MENU_WITNESS_INSTRUCTION").unwrap_or_else(|_| {
+                        "Use your available tools to echo the word 'kortecx', then tell me \
+                     exactly what the tool returned."
+                            .to_string()
+                    });
+                format!(r#"{{"instruction":"{instruction}","max_turns":4,"max_tool_calls":3}}"#)
+                    .into_bytes()
+            },
+            context_bundles: vec![],
+            context_refs: vec![],
+        })
+        .await
+        .expect("invoke react-auto")
+        .into_inner();
+
+    let mut settled = None;
+    for _ in 0..1500 {
+        let t = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(resp.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        if t.turns
+            .iter()
+            .any(|x| x.branch == "answer" || x.branch == "dead_lettered")
+        {
+            settled = Some(t);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let turns = settled.expect("the chain settled a terminal branch").turns;
+
+    let view = c
+        .get_projection(proto::GetProjectionRequest {
+            instance_id: resp.instance_id.clone(),
+            at_seq: None,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    let mut fired: Vec<String> = Vec::new();
+    for t in &turns {
+        let raw = view
+            .motes
+            .iter()
+            .find(|m| m.mote_id == t.turn_mote_id)
+            .and_then(|m| m.result_ref.clone());
+        let text = match raw {
+            Some(rref) => c
+                .get_content(proto::GetContentRequest {
+                    content_ref: rref,
+                    instance_id: resp.instance_id.clone(),
+                })
+                .await
+                .ok()
+                .map(|r| String::from_utf8_lossy(&r.into_inner().payload).into_owned())
+                .unwrap_or_default(),
+            None => String::new(),
+        };
+        eprintln!(
+            "MENU-WITNESS turn={} branch={} tool_id={} raw={:?}",
+            t.turn, t.branch, t.tool_id, text
+        );
+        if t.branch == "tool" {
+            fired.push(t.tool_id.clone());
+        }
+    }
+    eprintln!(
+        "MENU-WITNESS: fired tools (from a NO-format-hint goal) = {fired:?} \
+         — non-empty proves the menu elicited an autonomous tool proposal"
+    );
+
+    running.shutdown().await.unwrap();
+    std::env::remove_var("KX_SERVE_AUTOGRANT");
+
+    assert!(
+        turns
+            .iter()
+            .any(|t| t.branch == "answer" || t.branch == "dead_lettered"),
+        "the menu-driven chain settled a terminal branch"
+    );
+}

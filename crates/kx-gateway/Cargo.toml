@@ -66,6 +66,13 @@ kx-toolcall     = { workspace = true }
 # dispatch + injected OFF-MoteDef (off-digest) so a react tool turn is
 # grammar-constrained. FFI-free leaf; the dep_wall keeps the gateway FFI-free.
 kx-grammar      = { workspace = true }
+# RC3 (T-REACT-TOOL-MENU): the SHARED tool-menu text renderer (`render_tool_menu`,
+# the same `tool_menu_text` the context-assembly path uses — one renderer, no
+# harness↔serve drift). Derived at dispatch + prepended OFF-MoteDef (off-digest)
+# so a tool-eligible ReAct turn shows the model its granted-tool menu. Pure FFI-free
+# leaf; OPTIONAL + ridden by `serve-engine` only (its sole caller `model_exec` is
+# serve-engine-gated), so the DEFAULT build closure stays byte-unchanged + dep-wall green.
+kx-context-assembler = { workspace = true, optional = true }
 # Inline parent-edge storage for the PURE Mote built by `pure_run_request`
 # (`Mote::new`'s `parents` is a `SmallVec<[ParentRef; 4]>`). Promoted from a dev-dep
 # (R3) so the helper is a NORMAL public library fn. FFI-free (the dep_wall forbids
@@ -290,6 +297,8 @@ serve-engine = [
     "dep:kx-planner",
     "dep:kx-critic",
     "dep:kx-mcp",
+    # RC3 (T-REACT-TOOL-MENU): the shared tool-menu renderer for the live ReAct prompt.
+    "dep:kx-context-assembler",
     "mcp-gateway",
 ]
 # inference: serve-engine PLUS the in-process llama.cpp backend (the C++ FFI via

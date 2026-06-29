@@ -256,6 +256,39 @@ pub(crate) fn grammar_constrained_enabled() -> bool {
     }
 }
 
+/// RC3 (T-REACT-TOOL-MENU): the operator SERVE-LEVEL kill-switch for the
+/// granted-tool MENU prepend (`KX_SERVE_REACT_TOOL_MENU`). Default-ON (unset /
+/// `"1"` / `"true"` ⇒ `true`) — byte-mirrors [`grammar_constrained_enabled`]; set
+/// `"0"` / `"false"` / `"off"` to skip menu derivation for every dispatch (the
+/// reliable global opt-out ⇒ byte-identical to pre-RC3). The menu is advisory
+/// prompt bytes only (SN-8) and is derived OFF the MoteId, so the toggle changes
+/// only the live prompt, never a committed fact or the digest.
+pub(crate) fn tool_menu_enabled() -> bool {
+    match std::env::var_os("KX_SERVE_REACT_TOOL_MENU") {
+        Some(v) => {
+            let v = v.to_string_lossy();
+            let v = v.trim();
+            !(v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
+        }
+        None => true,
+    }
+}
+
+/// RC3: the operator's optional per-DEPLOYMENT override of the curated agentic
+/// system prompt (`KX_SERVE_REACT_SYSTEM` — e.g. a domain persona). `Some(text)`
+/// iff set to a non-empty (trimmed) value; else `None` ⇒ the built-in `REACT_SYSTEM`.
+/// Presentation only (SN-8), off the MoteId / off-digest — a different persona never
+/// changes a Mote's identity or any committed fact. Per-RUN (per-invocation) system
+/// prompts are a ticketed follow-up (`T-REACT-SYSTEM-PROMPT-PER-RUN`): they need the
+/// recipe `SlotBinding::Optional` model + a durable `ReactRound` carry across the
+/// seed-swap, so they ship as their own focused PR, not here.
+pub(crate) fn react_system_override() -> Option<String> {
+    std::env::var("KX_SERVE_REACT_SYSTEM")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Resolve a bundled MCP tool binary's path: an explicit `env_override` var
 /// first, then the fixed in-image path, then a dev/test walk up to the workspace
 /// `target/` dir (the `real_body_binary_path` precedent). `None` ⇒ no binary on

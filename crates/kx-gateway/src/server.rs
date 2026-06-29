@@ -611,7 +611,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 .with_usage_sink(Arc::new(telemetry_ledger.sink()))
                 // PR-4.2: the ADVISORY token publisher — streams each model mote's
                 // tokens out-of-band (keyed by mote.id). Byte-identical dispatch.
-                .with_token_publisher(token_broker.clone()),
+                .with_token_publisher(token_broker.clone())
+                // RC3 (T-REACT-TOOL-MENU): the SAME live `Arc<SqliteToolRegistry>` the
+                // coordinator settle + broker share (resolved at :479). A tool-eligible
+                // ReAct turn renders its granted-tool menu from this registry at
+                // dispatch — off-MoteDef / off-digest (the canonical no-tools demo
+                // renders no menu). Unsized-coerces to `Arc<dyn ToolRegistry>`.
+                .with_tool_registry(tool_registry.clone()),
             );
             let sink: Arc<dyn kx_worker::ContextSink> = model_exec.clone();
             let wrapped: Arc<dyn MoteExecutor> = model_exec;
