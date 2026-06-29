@@ -62,6 +62,10 @@ kx-refusal      = { workspace = true }
 # PR-2d-1: the model-proposed tool-call AUTHORITY GATE — the react turn arm's
 # pre-commit fence decodes through the ONE shared crate (never a byte-mirror).
 kx-toolcall     = { workspace = true }
+# RC2: render the warrant's granted tool set to a grammar spec, derived at
+# dispatch + injected OFF-MoteDef (off-digest) so a react tool turn is
+# grammar-constrained. FFI-free leaf; the dep_wall keeps the gateway FFI-free.
+kx-grammar      = { workspace = true }
 # Inline parent-edge storage for the PURE Mote built by `pure_run_request`
 # (`Mote::new`'s `parents` is a `SmallVec<[ParentRef; 4]>`). Promoted from a dev-dep
 # (R3) so the helper is a NORMAL public library fn. FFI-free (the dep_wall forbids

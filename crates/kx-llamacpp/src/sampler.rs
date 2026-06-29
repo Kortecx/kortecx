@@ -11,6 +11,7 @@
 //! Lifetime: a [`Sampler`] borrows the [`crate::LlamaBackend`] so that the
 //! backend outlives every sampler chain.
 
+use std::ffi::CString;
 use std::ptr::NonNull;
 
 use kx_llamacpp_sys as sys;
@@ -18,7 +19,7 @@ use kx_llamacpp_sys as sys;
 use crate::backend::LlamaBackend;
 use crate::context::Context;
 use crate::error::LlamaError;
-use crate::vocab::Token;
+use crate::vocab::{Token, Vocab};
 
 /// RAII handle to a `llama_sampler` chain.
 ///
@@ -196,6 +197,95 @@ impl<'b> SamplerChainBuilder<'b> {
     pub fn add_temp_ext(self, t: f32, delta: f32, exponent: f32) -> Result<Self, LlamaError> {
         let ptr = unsafe { sys::llama_sampler_init_temp_ext(t, delta, exponent) };
         self.add(ptr, "temp_ext")
+    }
+
+    /// Append a **GBNF grammar** stage that masks every token which would
+    /// violate `grammar` (rooted at `root`) to `-inf`, so the downstream
+    /// selection stage (greedy / dist) can only pick a grammar-valid
+    /// continuation. Place this FIRST in the chain — before any top-k / top-p
+    /// truncation — so truncation can never remove the only grammar-valid
+    /// token.
+    ///
+    /// The grammar is parsed at init; an unparseable GBNF makes
+    /// `llama_sampler_init_grammar` return NULL, surfaced as
+    /// [`LlamaError::SamplerInitFailed`] (the fail-closed boundary for a
+    /// malformed grammar).
+    ///
+    /// # Safety contract
+    /// The constructed grammar sampler stores `vocab`'s raw pointer internally
+    /// and dereferences it at sampling time. The resulting [`Sampler`] therefore
+    /// MUST NOT outlive the [`crate::Model`] that owns `vocab`. Call sites build
+    /// and consume the sampler within a single generation scope where the model
+    /// is live, which upholds this.
+    ///
+    /// # Errors
+    /// [`LlamaError::GrammarStringInvalid`] if `grammar` / `root` contains an
+    /// interior NUL; [`LlamaError::SamplerInitFailed`] on a GBNF parse failure
+    /// (or host-OOM).
+    pub fn add_grammar(
+        self,
+        vocab: &Vocab<'_, '_>,
+        grammar: &str,
+        root: &str,
+    ) -> Result<Self, LlamaError> {
+        let grammar_c = CString::new(grammar).map_err(|_| LlamaError::GrammarStringInvalid)?;
+        let root_c = CString::new(root).map_err(|_| LlamaError::GrammarStringInvalid)?;
+        // SAFETY: vocab ptr is borrowed from a live model; the two CStrings
+        // outlive this call; llama.cpp parses the grammar during init and
+        // returns NULL on parse failure (mapped to SamplerInitFailed by `add`).
+        let ptr = unsafe {
+            sys::llama_sampler_init_grammar(vocab.as_ptr(), grammar_c.as_ptr(), root_c.as_ptr())
+        };
+        self.add(ptr, "grammar")
+    }
+
+    /// Append a **lazy / triggered** GBNF grammar stage: generation flows
+    /// completely unconstrained until one of `trigger_patterns` matches from the
+    /// start of the output, at which point the grammar (rooted at `root`) is fed
+    /// content starting at the pattern's first match group. This is what lets a
+    /// ReAct turn emit a free-form prose answer OR commit to a constrained
+    /// tool-call envelope (the grammar arms only once the model types the
+    /// tool-call opener).
+    ///
+    /// Same FIRST-in-chain placement + [safety contract](Self::add_grammar) as
+    /// [`Self::add_grammar`]. No trigger *tokens* are used (only patterns).
+    ///
+    /// # Errors
+    /// [`LlamaError::GrammarStringInvalid`] if `grammar` / `root` / any pattern
+    /// contains an interior NUL; [`LlamaError::SamplerInitFailed`] on a GBNF
+    /// parse failure (or host-OOM).
+    pub fn add_grammar_lazy(
+        self,
+        vocab: &Vocab<'_, '_>,
+        grammar: &str,
+        root: &str,
+        trigger_patterns: &[&str],
+    ) -> Result<Self, LlamaError> {
+        let grammar_c = CString::new(grammar).map_err(|_| LlamaError::GrammarStringInvalid)?;
+        let root_c = CString::new(root).map_err(|_| LlamaError::GrammarStringInvalid)?;
+        let pattern_cs: Vec<CString> = trigger_patterns
+            .iter()
+            .map(|p| CString::new(*p).map_err(|_| LlamaError::GrammarStringInvalid))
+            .collect::<Result<_, _>>()?;
+        let mut pattern_ptrs: Vec<*const core::ffi::c_char> =
+            pattern_cs.iter().map(|c| c.as_ptr()).collect();
+        // SAFETY: vocab ptr borrowed from a live model; the grammar/root CStrings
+        // and the pattern CStrings (kept alive in `pattern_cs`) outlive this
+        // call; `pattern_ptrs` is a contiguous array of `pattern_ptrs.len()`
+        // valid C-string pointers; no trigger tokens (null + 0). NULL on parse
+        // failure is mapped to SamplerInitFailed by `add`.
+        let ptr = unsafe {
+            sys::llama_sampler_init_grammar_lazy_patterns(
+                vocab.as_ptr(),
+                grammar_c.as_ptr(),
+                root_c.as_ptr(),
+                pattern_ptrs.as_mut_ptr(),
+                pattern_ptrs.len(),
+                core::ptr::null(),
+                0,
+            )
+        };
+        self.add(ptr, "grammar_lazy")
     }
 
     /// Finalize the chain into a [`Sampler`].

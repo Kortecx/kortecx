@@ -54,7 +54,9 @@ fn aggregate_gate_values_are_pinned() {
     // The rejection-recovery task spends one extra turn ⇒ the aggregate is below perfect:
     // (1000×6 + 750) / 7 = 964 per-mille (integer floor).
     assert_eq!(gate("loop_efficiency"), Some(964));
-    // All 13 model-output formats decode as intended (the committed "before").
+    // Every model-output format decodes as intended — the 13 RC1 "before" formats
+    // PLUS the RC2 grammar-shaped multi-tool envelopes (mcp-calc/calc, mcp-kv/get):
+    // the canonical envelope the grammar enforces is the parser's strongest path.
     assert_eq!(gate("format_coverage"), Some(1000));
 }
 

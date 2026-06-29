@@ -239,18 +239,35 @@ pub(crate) fn autogrant_enabled() -> bool {
     }
 }
 
-/// Resolve the bundled tool binary's path: an explicit `KX_MCP_ECHO_PATH`
-/// override first, then the fixed in-image path, then a dev/test walk up to the
-/// workspace `target/` dir (the `real_body_binary_path` precedent). `None` ⇒
-/// no tool available on this host/image.
-fn echo_binary_path() -> Option<PathBuf> {
-    if let Some(over) = std::env::var_os("KX_MCP_ECHO_PATH") {
+/// RC2: the operator SERVE-LEVEL kill-switch for grammar-constrained tool-calling
+/// (`KX_SERVE_REACT_GRAMMAR`). Default-ON (unset / `"1"` / `"true"` ⇒ `true`) — the
+/// always-on posture; set to `"0"` / `"false"` to disable grammar derivation for
+/// every dispatch (the reliable global opt-out). A per-run / per-mote opt-out rides
+/// `config_subset[REACT_UNCONSTRAINED_KEY]` (the SDK `.unconstrained()`); full
+/// per-turn propagation across a chain is a ticketed follow-on (T-GRAMMAR-PERRUN-OPTOUT).
+pub(crate) fn grammar_constrained_enabled() -> bool {
+    match std::env::var_os("KX_SERVE_REACT_GRAMMAR") {
+        Some(v) => {
+            let v = v.to_string_lossy();
+            let v = v.trim();
+            !(v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
+        }
+        None => true,
+    }
+}
+
+/// Resolve a bundled MCP tool binary's path: an explicit `env_override` var
+/// first, then the fixed in-image path, then a dev/test walk up to the workspace
+/// `target/` dir (the `real_body_binary_path` precedent). `None` ⇒ no binary on
+/// this host/image (fail-soft). Shared by every bundled stdio tool.
+fn bundled_binary_path(bin: &str, env_override: &str) -> Option<PathBuf> {
+    if let Some(over) = std::env::var_os(env_override) {
         let path = PathBuf::from(over);
         if path.exists() {
             return Some(path);
         }
     }
-    let in_image = PathBuf::from("/usr/local/libexec/kx/kx-mcp-echo");
+    let in_image = PathBuf::from(format!("/usr/local/libexec/kx/{bin}"));
     if in_image.exists() {
         return Some(in_image);
     }
@@ -258,7 +275,7 @@ fn echo_binary_path() -> Option<PathBuf> {
     for ancestor in exe.ancestors() {
         if ancestor.file_name().is_some_and(|n| n == "target") {
             for profile in ["debug", "release"] {
-                let candidate = ancestor.join(profile).join("kx-mcp-echo");
+                let candidate = ancestor.join(profile).join(bin);
                 if candidate.exists() {
                     return Some(candidate);
                 }
@@ -266,6 +283,163 @@ fn echo_binary_path() -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The bundled echo binary's path (`KX_MCP_ECHO_PATH` override).
+fn echo_binary_path() -> Option<PathBuf> {
+    bundled_binary_path("kx-mcp-echo", "KX_MCP_ECHO_PATH")
+}
+
+// ---- RC2 (S6 / T-EVAL-LIVE-MULTITOOL): the bundled calc + kv ORACLE tools ----
+// Two more deterministic, no-egress stdio tools (RC1) wired into the live
+// `react-auto` auto-grant set so the autonomous loop can FIRE a genuine
+// multi-tool / sequential chain (a kv lookup feeding a calc). Both mirror the
+// echo registration shape; both are read-only (`Readback` ⇒ the HITL gate
+// auto-proceeds them). The MCP binaries compute purely from `arguments` (the
+// remote method name is unused), so the typed `input_schema` is what
+// `validate_args` (and the RC2 arg-schema grammar stretch) gates on.
+
+/// The bundled integer-arithmetic tool's identity — `mcp-calc/calc@1`. The
+/// `<server>/<remote>` shape (last segment = the MCP remote method) lets a model
+/// emit the bare leaf `calc` and still resolve (BUG-33 guard).
+#[must_use]
+pub(crate) fn calc_tool() -> (ToolName, ToolVersion) {
+    (ToolName("mcp-calc/calc".into()), ToolVersion("1".into()))
+}
+
+/// The `mcp-calc/calc@1` [`ToolDef`]: one op over two integers, no egress. The
+/// typed schema (`op` enum + two required `Int`s, unknown keys refused) matches
+/// the binary's `{op,a,b}` contract so `validate_args` gates every proposed call.
+#[must_use]
+pub(crate) fn calc_tool_def() -> ToolDef {
+    let (tool_id, tool_version) = calc_tool();
+    ToolDef {
+        tool_id,
+        tool_version,
+        kind: ToolKind::Mcp {
+            endpoint: McpEndpointId("stdio://kx-mcp-calc".into()),
+            remote_name: "calc".into(),
+        },
+        required_capability: ToolRequirement {
+            net_scope_required: NetScope::None,
+            fs_scope_required: FsScope::empty(),
+            syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+            min_resource_ceiling: ResourceCeiling {
+                cpu_milli: 0,
+                mem_bytes: 0,
+                wall_clock_ms: 0,
+                fd_count: 0,
+                disk_bytes: 0,
+            },
+        },
+        description: "Bundled deterministic integer arithmetic: {\"op\":\"add|sub|mul|div\",\"a\":<int>,\"b\":<int>}. No egress; read-only/idempotent.".into(),
+        idempotency_class: IdempotencyClass::Readback,
+        input_schema: Some(InputSchema {
+            params: vec![
+                ParamSpec {
+                    name: "op".into(),
+                    ty: ParamType::Enum {
+                        allowed: ["add", "sub", "mul", "div"]
+                            .iter()
+                            .map(|s| (*s).to_string())
+                            .collect(),
+                    },
+                    required: true,
+                },
+                ParamSpec { name: "a".into(), ty: ParamType::Int { min: None, max: None }, required: true },
+                ParamSpec { name: "b".into(), ty: ParamType::Int { min: None, max: None }, required: true },
+            ],
+            deny_unknown: true,
+        }),
+    }
+}
+
+/// The bundled key-value lookup tool's identity — `mcp-kv/get@1`.
+#[must_use]
+pub(crate) fn kv_tool() -> (ToolName, ToolVersion) {
+    (ToolName("mcp-kv/get".into()), ToolVersion("1".into()))
+}
+
+/// The `mcp-kv/get@1` [`ToolDef`]: a fixed-seed key lookup, no egress. One
+/// required `key: Str` param (unknown keys refused), matching the binary.
+#[must_use]
+pub(crate) fn kv_tool_def() -> ToolDef {
+    let (tool_id, tool_version) = kv_tool();
+    ToolDef {
+        tool_id,
+        tool_version,
+        kind: ToolKind::Mcp {
+            endpoint: McpEndpointId("stdio://kx-mcp-kv".into()),
+            remote_name: "get".into(),
+        },
+        required_capability: ToolRequirement {
+            net_scope_required: NetScope::None,
+            fs_scope_required: FsScope::empty(),
+            syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+            min_resource_ceiling: ResourceCeiling {
+                cpu_milli: 0,
+                mem_bytes: 0,
+                wall_clock_ms: 0,
+                fd_count: 0,
+                disk_bytes: 0,
+            },
+        },
+        description: "Bundled deterministic key-value lookup: {\"key\":<string>} → the seed value. No egress; read-only/idempotent.".into(),
+        idempotency_class: IdempotencyClass::Readback,
+        input_schema: Some(InputSchema {
+            params: vec![ParamSpec {
+                name: "key".into(),
+                ty: ParamType::Str { max_len: 256 },
+                required: true,
+            }],
+            deny_unknown: true,
+        }),
+    }
+}
+
+/// Register the bundled calc + kv ORACLE capabilities on the serve broker, each
+/// fail-soft (a missing binary is skipped). Returns the identities that actually
+/// registered — the live `react-auto` auto-grant union grants exactly this set,
+/// so the autonomous loop can fire a real multi-tool chain. Mirrors
+/// [`register_echo_capability`].
+pub(crate) fn register_oracle_capabilities<S: ContentStore + Send + Sync>(
+    broker: &LocalCapabilityBroker<S>,
+) -> Vec<(ToolName, ToolVersion)> {
+    let mut registered = Vec::new();
+    for (def_fn, bin, env_override, remote) in [
+        (
+            calc_tool_def as fn() -> ToolDef,
+            "kx-mcp-calc",
+            "KX_MCP_CALC_PATH",
+            "calc",
+        ),
+        (
+            kv_tool_def as fn() -> ToolDef,
+            "kx-mcp-kv",
+            "KX_MCP_KV_PATH",
+            "get",
+        ),
+    ] {
+        let Some(path) = bundled_binary_path(bin, env_override) else {
+            continue;
+        };
+        let def = def_fn();
+        let (tool_id, tool_version) = (def.tool_id.clone(), def.tool_version.clone());
+        let endpoint = match &def.kind {
+            ToolKind::Mcp { endpoint, .. } => endpoint.clone(),
+            _ => continue,
+        };
+        broker.register_capability(Box::new(McpCapability::new(
+            tool_id.clone(),
+            tool_version.clone(),
+            endpoint,
+            remote,
+            Box::new(StdioTransport::new(path.to_string_lossy().as_ref())),
+        )));
+        tracing::info!(bin = %path.display(), tool = %tool_id.0, "RC2: bundled oracle tool registered (react-auto multi-tool)");
+        registered.push((tool_id, tool_version));
+    }
+    registered
 }
 
 #[cfg(test)]
@@ -295,5 +469,62 @@ mod tests {
             ),
             _ => panic!("bundled echo must be an MCP tool"),
         }
+    }
+
+    /// RC2 (S6): the calc + kv oracle ids are `<server>/<remote>` (so the model's
+    /// bare leaf resolves) and their leaf equals the MCP remote method, mirroring
+    /// the echo BUG-33 guard.
+    #[test]
+    fn oracle_tool_ids_are_server_slash_remote() {
+        for (name, def) in [
+            (calc_tool().0, calc_tool_def()),
+            (kv_tool().0, kv_tool_def()),
+        ] {
+            assert!(
+                name.0.contains('/'),
+                "oracle id must be <server>/<remote>: {:?}",
+                name.0
+            );
+            let leaf = name.0.rsplit('/').next().unwrap();
+            match &def.kind {
+                ToolKind::Mcp { remote_name, .. } => {
+                    assert_eq!(leaf, remote_name, "leaf must equal the MCP remote name");
+                }
+                _ => panic!("oracle tool must be an MCP tool"),
+            }
+        }
+    }
+
+    /// The oracle schemas match the BINARY contracts so `validate_args` gates a
+    /// proposed call: calc = op(enum)+a(int)+b(int); kv = key(str). Unknown keys
+    /// refused on both; both read-only (`Readback`).
+    #[test]
+    fn oracle_tool_defs_have_typed_schemas() {
+        let calc = calc_tool_def().input_schema.expect("calc schema");
+        assert!(calc.deny_unknown);
+        let names: Vec<&str> = calc.params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["op", "a", "b"], "calc params");
+        assert!(
+            matches!(calc.params[0].ty, ParamType::Enum { .. }),
+            "op is an enum"
+        );
+        assert!(
+            matches!(calc.params[1].ty, ParamType::Int { .. }),
+            "a is an int"
+        );
+
+        let kv = kv_tool_def().input_schema.expect("kv schema");
+        assert!(kv.deny_unknown);
+        assert_eq!(kv.params.len(), 1);
+        assert_eq!(kv.params[0].name, "key");
+        assert!(
+            matches!(kv.params[0].ty, ParamType::Str { .. }),
+            "key is a str"
+        );
+        assert_eq!(
+            calc_tool_def().idempotency_class,
+            IdempotencyClass::Readback
+        );
+        assert_eq!(kv_tool_def().idempotency_class, IdempotencyClass::Readback);
     }
 }

@@ -125,6 +125,18 @@ pub const REACT_MAX_TOOL_CALLS_KEY: &str = "max_tool_calls";
 /// budget caps are anchored). Absent ⇒ `false` (no gate; byte-identical to today).
 pub const REACT_REQUIRE_APPROVAL_KEY: &str = "require_approval";
 
+/// The [`ConfigKey`] *name* under which a ReAct Mote may OPT OUT of RC2
+/// grammar-constrained tool-calling (the `kx/recipes/react` `unconstrained`
+/// slot; a canonical-JSON boolean). ABSENT ⇒ `false` ⇒ grammar is armed on a
+/// tool-eligible turn (the always-on default; byte-identical config to pre-RC2
+/// since no prior Mote carries this key, so adding the constant moves no digest).
+/// PRESENT + `true` ⇒ the executor skips the grammar derivation and decodes
+/// unconstrained (relying on the `kx_toolcall` parser). The grammar itself is
+/// derived OFF-MoteDef at dispatch (off-digest, D108.2) — only this OPT-OUT is an
+/// identity-bearing config choice (a different posture ⇒ a different `MoteId`,
+/// the right semantics).
+pub const REACT_UNCONSTRAINED_KEY: &str = "unconstrained";
+
 /// The single canonical [`ConfigKey`] *name* under which a STANDALONE authored
 /// `tool()` Mote (PR-6b-2) carries its tool-call argument object — ONE
 /// canonical-JSON object (e.g. `{"q":"…"}`; `{}` when the call has no args),

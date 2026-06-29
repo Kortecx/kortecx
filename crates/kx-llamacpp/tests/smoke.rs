@@ -1162,3 +1162,112 @@ fn smoke_sampler_seed_determinism() {
     );
     assert!(a.len() >= 2, "expected at least 2 generated tokens");
 }
+
+/// S1 (RC2): the GBNF grammar sampler stages construct over a real vocab.
+/// A valid GBNF builds a sampler; an unparseable GBNF fails CLOSED with
+/// `SamplerInitFailed("grammar")` (llama.cpp returns NULL on a parse error);
+/// the lazy / triggered variant builds with a trigger pattern. This is the
+/// fail-closed boundary RC2's `model_exec` derivation relies on.
+#[test]
+fn smoke_grammar_sampler_stages() {
+    use kx_llamacpp::LlamaError;
+
+    let backend = LlamaBackend::new().expect("backend init");
+    let params = ModelParams::new().with_n_gpu_layers(0);
+    let model = Model::load_with_params(&backend, MODEL_PATH, &params).expect("load stories260K");
+    let vocab = model.vocab();
+
+    // A minimal, valid GBNF rooted at `root`.
+    let good_gbnf = "root ::= \"{\" ws \"}\"\nws ::= [ \\t\\n]*\n";
+    let ok = Sampler::chain(&backend)
+        .add_grammar(&vocab, good_gbnf, "root")
+        .and_then(|b| b.add_greedy())
+        .and_then(|b| b.build());
+    assert!(ok.is_ok(), "valid GBNF must build a grammar sampler");
+
+    // An unparseable GBNF must fail CLOSED (NULL → SamplerInitFailed), never panic.
+    let bad = Sampler::chain(&backend)
+        .add_grammar(&vocab, "root ::= (((", "root")
+        .map(|_| ());
+    assert!(
+        matches!(bad, Err(LlamaError::SamplerInitFailed("grammar"))),
+        "malformed GBNF must fail closed as SamplerInitFailed, got {bad:?}"
+    );
+
+    // The lazy / triggered variant builds with a JSON-envelope trigger pattern.
+    let lazy = Sampler::chain(&backend)
+        .add_grammar_lazy(
+            &vocab,
+            good_gbnf,
+            "root",
+            &[r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#],
+        )
+        .and_then(|b| b.add_greedy())
+        .and_then(|b| b.build());
+    assert!(lazy.is_ok(), "valid lazy GBNF + trigger must build");
+
+    // An interior NUL in the grammar payload is rejected before reaching FFI.
+    let nul = Sampler::chain(&backend)
+        .add_grammar(&vocab, "root ::= \"a\0b\"", "root")
+        .map(|_| ());
+    assert!(
+        matches!(nul, Err(LlamaError::GrammarStringInvalid)),
+        "interior NUL must be rejected as GrammarStringInvalid, got {nul:?}"
+    );
+}
+
+/// S3 (RC2) cross-check: the EXACT envelope GBNF that `kx-grammar` renders (see
+/// its `gbnf_golden_for_bundled_oracles` golden) PARSES in llama.cpp and builds a
+/// LAZY/triggered sampler with the tool-call-opener trigger. This closes the loop
+/// kx-grammar can't (it has no llama.cpp dep): kx-grammar renders shape X, here we
+/// prove llama.cpp accepts shape X. If kx-grammar's golden changes, re-sync this.
+#[test]
+fn smoke_grammar_from_kx_grammar() {
+    let backend = LlamaBackend::new().expect("backend init");
+    let params = ModelParams::new().with_n_gpu_layers(0);
+    let model = Model::load_with_params(&backend, MODEL_PATH, &params).expect("load stories260K");
+    let vocab = model.vocab();
+
+    // MUST match kx_grammar's `gbnf_golden_for_bundled_oracles`.
+    let gbnf = concat!(
+        "root ::= \"{\" ws \"\\\"tool_call\\\"\" ws \":\" ws call ws \"}\"\n",
+        "call ::= call0 | call1\n",
+        "call0 ::= \"{\" ws \"\\\"name\\\"\" ws \":\" ws \"\\\"calc/add\\\"\" ws \",\" ws \"\\\"version\\\"\" ws \":\" ws \"\\\"1\\\"\" ws \",\" ws \"\\\"args\\\"\" ws \":\" ws object ws \"}\"\n",
+        "call1 ::= \"{\" ws \"\\\"name\\\"\" ws \":\" ws \"\\\"kv/get\\\"\" ws \",\" ws \"\\\"version\\\"\" ws \":\" ws \"\\\"1\\\"\" ws \",\" ws \"\\\"args\\\"\" ws \":\" ws object ws \"}\"\n",
+        "object ::= \"{\" ws ( member ( ws \",\" ws member )* )? ws \"}\"\n",
+        "member ::= jstring ws \":\" ws value\n",
+        "array ::= \"[\" ws ( value ( ws \",\" ws value )* )? ws \"]\"\n",
+        "value ::= object | array | jstring | number | \"true\" | \"false\" | \"null\"\n",
+        "jstring ::= \"\\\"\" jchar* \"\\\"\"\n",
+        "jchar ::= [^\"\\\\] | \"\\\\\" ([\"\\\\/bfnrt] | \"u\" hex hex hex hex)\n",
+        "hex ::= [0-9a-fA-F]\n",
+        "integer ::= \"-\"? (\"0\" | [1-9] [0-9]*)\n",
+        "number ::= integer (\".\" [0-9]+)? ([eEfF] [-+]? [0-9]+)?\n",
+        "ws ::= [ \\t\\n]*\n",
+    );
+
+    // Strict build (parses the whole grammar).
+    let strict = Sampler::chain(&backend)
+        .add_grammar(&vocab, gbnf, "root")
+        .and_then(|b| b.add_greedy())
+        .and_then(|b| b.build());
+    assert!(
+        strict.is_ok(),
+        "kx-grammar envelope GBNF must parse in llama.cpp"
+    );
+
+    // Lazy build with the production tool-call-opener trigger (what build_sampler uses).
+    let lazy = Sampler::chain(&backend)
+        .add_grammar_lazy(
+            &vocab,
+            gbnf,
+            "root",
+            &[r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#],
+        )
+        .and_then(|b| b.add_greedy())
+        .and_then(|b| b.build());
+    assert!(
+        lazy.is_ok(),
+        "kx-grammar envelope GBNF must build a lazy sampler"
+    );
+}

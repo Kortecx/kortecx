@@ -1,6 +1,6 @@
 {
   "suite_id": "golden-v1",
-  "suite_digest": "f05cb658ee50469bba21ffd0c5f9c5da90dd0b4c4db45e7d9f9810fcc3427f98",
+  "suite_digest": "5c1456fc9ae2371af2adc685a3c2ff3b1e65e4bc5d96783798e6279658483a5e",
   "gates": [
     {
       "id": "task_success",

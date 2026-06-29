@@ -10,18 +10,25 @@
 //! (`inference_params_from_mote`, `check_within`) stay in `kx-inference`
 //! since they reference `WarrantSpec`.
 //!
-//! Two forward-compat hooks reserved per the PR 8 strategy plan:
-//!   - [`crate::Grammar`] — opaque constrained-generation payload.
-//!   - [`crate::InferenceParams::grammar`] — reserved Option field.
+//! Constrained-generation hooks (reserved in PR 8, IMPLEMENTED in RC2):
+//!   - [`crate::Grammar`] — opaque constrained-generation payload (RC2 carries a
+//!     serialized `kx_grammar::ToolEnvelopeSpec`; the type stays opaque here).
+//!   - [`crate::InferenceParams::grammar`] — `Option` field, default `None`. When
+//!     `Some`, the OSS backends HONOR it (GBNF on llama.cpp, JSON-mode on Ollama)
+//!     to constrain tool-calling. Identity-bearing (D50) but, in the live serve
+//!     loop, populated OFF-MoteDef at dispatch from the warrant's granted tools
+//!     (off-digest, D108.2) — see `kx-gateway`'s `model_exec`.
 
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-/// Reserved opaque grammar specification for constrained generation.
+/// Opaque grammar specification for constrained generation.
 ///
-/// Future backends interpret the payload (GBNF for llama.cpp, JSON
-/// schema for cloud APIs). OSS v0.1 backends MUST return
-/// `Err(Unsupported)` if [`InferenceParams::grammar`] is `Some(_)`.
+/// The payload is interpreted by the backend (RC2: a serialized
+/// `kx_grammar::ToolEnvelopeSpec` the in-process llama.cpp backend renders to
+/// GBNF and the Ollama backend renders to a JSON Schema). The type stays opaque
+/// here so the identity substrate carries no engine coupling. A backend that
+/// cannot honor a `Some(_)` grammar returns `Err(Unsupported)`.
 ///
 /// # Examples
 ///
@@ -69,8 +76,8 @@ impl Grammar {
 /// ```
 /// use kx_mote::InferenceParams;
 ///
-/// // Defaults are greedy (temperature_bps == 0); grammar is reserved
-/// // for future PRs and defaults to None.
+/// // Defaults are greedy (temperature_bps == 0); grammar defaults to None
+/// // (set per-dispatch from the granted tools to constrain tool-calling).
 /// let p = InferenceParams::default();
 /// assert_eq!(p.temperature_bps, 0);
 /// assert!(p.grammar.is_none());
@@ -103,11 +110,12 @@ pub struct InferenceParams {
     /// Stop tokens / stop sequences. Empty = no stop.
     pub stop_tokens: SmallVec<[String; 4]>,
 
-    /// **Reserved**: opaque grammar specification for constrained
-    /// generation (GBNF / JSON-schema). OSS v0.1 backends MUST return
-    /// `Err(Unsupported)` on `Some(_)`. The field exists ahead of
-    /// implementation so the trait stays additive when grammar support
-    /// lands.
+    /// Opaque grammar specification for constrained generation (GBNF /
+    /// JSON-schema). Default `None` (unconstrained). When `Some(_)`, the OSS
+    /// backends constrain decoding to it (RC2); a backend that cannot returns
+    /// `Err(Unsupported)`. Identity-bearing (D50) — but the live serve loop sets
+    /// it OFF-MoteDef at dispatch (off-digest, D108.2), so the canonical demo
+    /// (which grants no tools) keeps `grammar: None` and the digest is invariant.
     pub grammar: Option<Grammar>,
 }
 

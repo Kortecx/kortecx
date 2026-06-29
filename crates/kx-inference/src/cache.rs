@@ -38,6 +38,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kx_content::ContentRef;
+use kx_grammar::ToolEnvelopeSpec;
 use kx_llamacpp::{
     Bitmap, ChatMessage, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model,
     ModelWithProjector, Mtmd, PoolingType, Sampler, Vocab,
@@ -641,14 +642,50 @@ fn get_or_load<'a, 'b>(
     Ok(&mut lru[idx].1)
 }
 
-/// Build the sampler for `params` (greedy when `temperature_bps == 0`, else
-/// temp/top-k/top-p). Shared by the text and multi-modal generation paths.
+/// The start symbol of the GBNF `kx_grammar` renders.
+const GRAMMAR_ROOT: &str = "root";
+
+/// Lazy-grammar trigger: the canonical JSON tool-call envelope opener. Prose
+/// answers flow free until the model emits `{"tool_call"`, at which point the
+/// grammar arms and constrains the rest of the envelope to a grant-pinned shape.
+/// Native-marker tool-call formats (Gemma `<|tool_call>`, Llama `<|python_tag|>`,
+/// Qwen `<tool_call>`) never match this opener, so they pass through UNCONSTRAINED
+/// to the fail-closed `kx_toolcall` parser — an honest GR15 capability gap, not a
+/// silent one (the accept-side gate is identical for both paths).
+const TOOL_CALL_TRIGGERS: [&str; 1] = [r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#];
+
+/// Build the sampler for `params`. The SELECTION stages are unchanged (greedy
+/// when `temperature_bps == 0`, else top-k/top-p/temp/dist) — byte-identical to
+/// the prior `Sampler::greedy`/`Sampler::typical` shapes when no grammar is set.
+///
+/// RC2: when `params.grammar` is present (a serialized [`ToolEnvelopeSpec`] in the
+/// off-digest carrier), prepend a LAZY GBNF stage FIRST in the chain. The grammar
+/// only MASKS logits (to grammar-valid tokens); the selection stage still picks
+/// within that masked set, so greedy + grammar = argmax over valid tokens (no
+/// extra `dist` stage needed). A malformed carrier fails CLOSED (the dispatch
+/// errors) rather than silently dropping the constraint.
 fn build_sampler<'b>(
     backend: &'b LlamaBackend,
+    vocab: &Vocab<'_, '_>,
     params: &InferenceParams,
 ) -> Result<Sampler<'b>, InferenceError> {
-    if params.temperature_bps == 0 {
-        Sampler::greedy(backend).map_err(map_llama_err)
+    let mut chain = Sampler::chain(backend);
+
+    if let Some(grammar) = &params.grammar {
+        let spec = ToolEnvelopeSpec::from_raw(&grammar.raw).map_err(|e| {
+            InferenceError::BackendFailure {
+                backend: BACKEND_NAME,
+                message: format!("grammar spec carrier: {e}"),
+            }
+        })?;
+        let gbnf = spec.to_gbnf();
+        chain = chain
+            .add_grammar_lazy(vocab, &gbnf, GRAMMAR_ROOT, &TOOL_CALL_TRIGGERS)
+            .map_err(map_llama_err)?;
+    }
+
+    let chain = if params.temperature_bps == 0 {
+        chain.add_greedy().map_err(map_llama_err)?
     } else {
         #[allow(clippy::cast_precision_loss)]
         let temp = (params.temperature_bps as f32) / 10_000.0;
@@ -656,8 +693,17 @@ fn build_sampler<'b>(
         let top_p = (params.top_p_bps as f32) / 10_000.0;
         #[allow(clippy::cast_possible_wrap)]
         let top_k = params.top_k as i32;
-        Sampler::typical(backend, temp, top_k, top_p, params.seed).map_err(map_llama_err)
-    }
+        chain
+            .add_top_k(top_k)
+            .map_err(map_llama_err)?
+            .add_top_p(top_p, 1)
+            .map_err(map_llama_err)?
+            .add_temp(temp)
+            .map_err(map_llama_err)?
+            .add_dist(params.seed)
+            .map_err(map_llama_err)?
+    };
+    chain.build().map_err(map_llama_err)
 }
 
 /// The token-emission loop: pull tokens from `generator`, detokenize into bytes,
@@ -732,7 +778,7 @@ fn generate(
         .map_err(map_llama_err)?;
     check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
 
-    let mut sampler = build_sampler(backend, &job.params)?;
+    let mut sampler = build_sampler(backend, &vocab, &job.params)?;
     let generator =
         Generator::new(&mut ctx, &mut sampler, &vocab, prompt_tokens).map_err(map_llama_err)?;
     run_generation(generator, &vocab, job, start, timeout)
@@ -820,7 +866,7 @@ fn generate_multimodal(
     check_timeout(start.elapsed(), timeout, job.wall_clock_ms)?;
 
     let vocab = model.vocab();
-    let mut sampler = build_sampler(backend, &job.params)?;
+    let mut sampler = build_sampler(backend, &vocab, &job.params)?;
     let generator = Generator::from_prefilled(&mut ctx, &mut sampler, &vocab, n_past);
     run_generation(generator, &vocab, job, start, timeout)
 }

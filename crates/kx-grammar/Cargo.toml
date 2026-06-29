@@ -1,0 +1,30 @@
+[package]
+name         = "kx-grammar"
+version      = "0.1.1"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx engine-agnostic constrained-generation spec (RC2). Renders a granted tool set to GBNF (llama.cpp) OR a JSON Schema (Ollama) so a model CANNOT emit a malformed or ungranted tool call — structurally eradicating the T-GEMMA-PAREN parse-fragility class. Pure, FFI-free leaf: it constrains the ACCEPT side only and is derived at dispatch from `warrant.tool_grants` (never journaled, never in MoteId, off-digest per D108.2); the authority gate stays the exact-equality `kx-toolcall` parser (SN-8)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# InputSchema / ParamType / ParamSpec — the closed, integer-/bytes-typed tool
+# arg contract the per-tool (stretch) grammar is rendered from.
+kx-tool-registry = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true, features = ["raw_value"] }
+
+[dev-dependencies]
+# Round-trip contract: a rendered envelope must be ACCEPTED by the real
+# authority-gate parser. Building a WarrantSpec to feed it needs these.
+kx-toolcall = { workspace = true }
+kx-warrant  = { workspace = true }
+kx-mote     = { workspace = true }
+kx-content  = { workspace = true }
+
+[lints]
+workspace = true

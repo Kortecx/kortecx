@@ -104,6 +104,17 @@ impl<'m, 'b: 'm> Vocab<'m, 'b> {
         }
     }
 
+    /// The raw `llama_vocab` pointer, for the grammar-sampler FFI
+    /// (`llama_sampler_init_grammar{,_lazy_patterns}` take a `const
+    /// llama_vocab *`). `pub(crate)` so the unsafe ptr never escapes the crate;
+    /// the grammar sampler stores this pointer internally, so a sampler built
+    /// from it MUST NOT outlive the model that owns this vocab (upheld at the
+    /// call site, which builds + consumes the sampler within one generation
+    /// scope — see [`crate::SamplerChainBuilder::add_grammar`]).
+    pub(crate) fn as_ptr(&self) -> *const sys::llama_vocab {
+        self.ptr.as_ptr()
+    }
+
     /// Number of distinct tokens in the vocabulary.
     pub fn n_tokens(&self) -> i32 {
         // SAFETY: ptr borrowed from a live model.

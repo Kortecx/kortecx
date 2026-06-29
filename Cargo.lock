@@ -1636,6 +1636,7 @@ dependencies = [
  "kx-executor",
  "kx-fleet",
  "kx-gateway-core",
+ "kx-grammar",
  "kx-inference",
  "kx-invoke",
  "kx-journal",
@@ -1701,12 +1702,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-grammar"
+version = "0.1.1"
+dependencies = [
+ "kx-content",
+ "kx-mote",
+ "kx-tool-registry",
+ "kx-toolcall",
+ "kx-warrant",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kx-inference"
 version = "0.1.1"
 dependencies = [
  "bytes",
  "kx-content",
  "kx-context-assembler",
+ "kx-grammar",
  "kx-journal",
  "kx-llamacpp",
  "kx-memoizer",

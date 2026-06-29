@@ -34,6 +34,7 @@ use kx_inference::{inference_params_from_mote, InferenceBackend, InferenceInput,
 // generic executor below without them. The `RoutingBackend` (which both engines ride)
 // is the seam the shaper/executor wiring actually holds.
 use crate::routing_backend::RoutingBackend;
+use kx_grammar::{ToolEnvelopeSpec, ToolSpec};
 #[cfg(feature = "inference")]
 use kx_inference::LlamaInferenceBackend;
 #[cfg(feature = "inference")]
@@ -44,8 +45,9 @@ use kx_model_validator::{
     RequiredCapabilities, ValidatorOutcome,
 };
 use kx_mote::{
-    decode_context_items, ConfigKey, EffectPattern, InferenceParams, LogicRef, ModelId, Mote,
-    MoteId, NdClass, PromptTemplateHash, RoleId, ToolName, CONTEXT_ITEMS_KEY, PROMPT_KEY,
+    decode_context_items, ConfigKey, EffectPattern, Grammar, InferenceParams, LogicRef, ModelId,
+    Mote, MoteId, NdClass, PromptTemplateHash, RoleId, ToolName, CONTEXT_ITEMS_KEY, PROMPT_KEY,
+    REACT_UNCONSTRAINED_KEY,
 };
 use kx_planner::{
     decode_loop_proposal, decode_replan_proposal, lower_loop_to_topology_decision, max_plan_bytes,
@@ -125,6 +127,27 @@ pub(crate) fn shaper_warrant(model_id: &ModelId, exec_class: ExecutorClass) -> W
         executor_class: exec_class,
         ..Default::default()
     }
+}
+
+/// RC2: derive a grammar-constraint carrier from the warrant's granted tools, for a
+/// tool-eligible ReAct turn. Returns `None` when no tools are granted (so the
+/// canonical demo + any answer-only turn stay unconstrained ⇒ digest `7d22d4bd`
+/// invariant). The carrier is a serialized [`ToolEnvelopeSpec`] (envelope + name
+/// enum; envelope-first — args stay a generic object, the per-tool arg-schema
+/// stretch is a follow-on once live results justify it). The grammar is the
+/// ACCEPT-side constraint only; the authority gate stays `kx_toolcall` (SN-8).
+fn build_tool_grammar(warrant: &WarrantSpec) -> Option<Grammar> {
+    if warrant.tool_grants.is_empty() {
+        return None;
+    }
+    let tools: Vec<ToolSpec> = warrant
+        .tool_grants
+        .iter()
+        .map(|g| ToolSpec::new(g.tool_id.0.clone(), g.tool_version.0.clone()))
+        .collect();
+    // Serialization of the closed spec types does not fail in practice; on the
+    // off chance it does, degrade to unconstrained (never panic on a dispatch).
+    ToolEnvelopeSpec::new(tools).to_raw().ok().map(Grammar::new)
 }
 
 /// Build the shaper runtime from the resolved serve backend. The `worker` role maps
@@ -1245,8 +1268,26 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             },
             None => InferenceInput::text(format(&instruction)),
         };
-        let params = inference_params_from_mote(mote, warrant)
+        let mut params = inference_params_from_mote(mote, warrant)
             .map_err(|e| internal(&format!("inference params: {e}")))?;
+        // RC2 grammar-constrained tool-calling: on a tool-eligible ReAct turn (the
+        // model PROPOSES a tool call), derive a grammar from the warrant's granted
+        // tools and arm it — OFF the MoteDef identity (a clone of the dispatch
+        // params), so it is off-digest (D108.2) and the canonical demo (which grants
+        // no tools ⇒ `build_tool_grammar` returns `None`) keeps `7d22d4bd`. The
+        // backend decides HOW to honor it (llama.cpp = lazy/triggered GBNF; Ollama =
+        // honest-degrade). A per-run `unconstrained` opt-out skips it. Shaper / leaf
+        // / answer-only turns are never constrained (the `is_react_turn` gate). A
+        // per-mote `unconstrained` opt-out OR the serve-level `KX_SERVE_REACT_GRAMMAR=0`
+        // kill-switch disables it.
+        if Self::is_react_turn(mote)
+            && !Self::is_unconstrained(mote)
+            && crate::mcp_tool::grammar_constrained_enabled()
+        {
+            if let Some(grammar) = build_tool_grammar(warrant) {
+                params.grammar = Some(grammar);
+            }
+        }
         // PR-4.2 (T-STREAM1): when a token broker is wired, stream this mote's
         // tokens out-of-band (keyed by `mote.id`) and `finish` the mote on BOTH
         // the Ok and Err paths so a subscriber's stream always ends. The streamed
@@ -1293,6 +1334,18 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         mote.def
             .config_subset
             .contains_key(&kx_mote::ConfigKey(kx_mote::REACT_TURN_KEY.to_string()))
+    }
+
+    /// `true` iff this Mote opts OUT of RC2 grammar-constrained tool-calling via
+    /// `config_subset[REACT_UNCONSTRAINED_KEY] = true` (the SDK `.unconstrained()`
+    /// / CLI `--unconstrained` escape hatch). Absent ⇒ `false` ⇒ grammar is armed
+    /// (the always-on default). The value is a canonical-JSON / raw boolean, so a
+    /// recipe-bound `Bool` (`true`) and a directly-built `b"true"` both match.
+    fn is_unconstrained(mote: &Mote) -> bool {
+        mote.def
+            .config_subset
+            .get(&ConfigKey(REACT_UNCONSTRAINED_KEY.to_string()))
+            .is_some_and(|v| matches!(v.0.as_slice(), b"true" | b"1"))
     }
 
     /// Run a ReAct TURN Mote: `dispatch_model` verbatim (the F-7 trajectory
@@ -2023,18 +2076,23 @@ mod tests {
         /// PR-9d: the last `Text` prompt the backend was dispatched (so a test can
         /// assert what `dispatch_model` assembled — e.g. the carried context prefix).
         last_prompt: std::sync::Mutex<Option<String>>,
+        /// RC2: the last dispatched `params.grammar` (`None` = unconstrained;
+        /// `Some(g)` = a grammar carrier was injected). The tests dispatch exactly
+        /// once, so this reads the single call's grammar (off-digest injection).
+        last_grammar: std::sync::Mutex<Option<Grammar>>,
     }
     impl InferenceBackend for StubBackend {
         fn dispatch(
             &self,
             model_id: &ModelId,
             input: &InferenceInput,
-            _params: &kx_mote::InferenceParams,
+            params: &kx_mote::InferenceParams,
             _warrant: &WarrantSpec,
         ) -> Result<InferenceOutput, InferenceError> {
             if let InferenceInput::Text(s) = input {
                 *self.last_prompt.lock().unwrap() = Some(s.clone());
             }
+            *self.last_grammar.lock().unwrap() = params.grammar.clone();
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(InferenceOutput {
                 bytes: self.reply.clone(),
@@ -2111,6 +2169,7 @@ mod tests {
             reply: reply.to_vec(),
             calls: AtomicUsize::new(0),
             last_prompt: std::sync::Mutex::new(None),
+            last_grammar: std::sync::Mutex::new(None),
         });
         let exec = ModelRouterExecutor::new(
             Arc::new(NeverInner),
@@ -2662,6 +2721,107 @@ mod tests {
         let bytes = store.get(&out.result_ref).unwrap();
         assert_eq!(bytes.as_ref(), b"The answer is blue.");
         assert_eq!(out.result_ref, ContentRef::of(b"The answer is blue."));
+    }
+
+    /// A react turn mote carrying an `unconstrained=true` opt-out (RC2 / S5).
+    fn react_turn_mote_unconstrained() -> Mote {
+        let mut m = react_turn_mote();
+        let mut def = m.def.clone();
+        def.config_subset.insert(
+            ConfigKey(REACT_UNCONSTRAINED_KEY.to_string()),
+            ConfigVal(b"true".to_vec()),
+        );
+        // Rebuild so the MoteId reflects the opt-out config (identity-bearing).
+        m = Mote::new(
+            def,
+            InputDataId::from_bytes([2u8; 32]),
+            GraphPosition(vec![2u8]),
+            SmallVec::new(),
+        );
+        m
+    }
+
+    /// RC2 (S5): a tool-eligible ReAct turn ARMS grammar — `dispatch_model` derives
+    /// a `ToolEnvelopeSpec` from the warrant's granted tools and injects it into the
+    /// dispatch params (off the MoteDef identity). The carrier deserializes to the
+    /// granted `(name, version)`.
+    #[test]
+    fn grammar_is_armed_on_a_granted_react_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"blue", None);
+        // A prose answer commits cleanly while still exercising the dispatch.
+        exec.run(&react_turn_mote(), &granted_warrant(), None)
+            .expect("react turn dispatches");
+        let grammar = backend
+            .last_grammar
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("grammar armed on a granted react turn");
+        let spec = kx_grammar::ToolEnvelopeSpec::from_raw(&grammar.raw).expect("valid carrier");
+        assert!(
+            spec.tools
+                .iter()
+                .any(|t| t.name == "mcp-echo" && t.version == "1"),
+            "the granted tool is in the spec: {:?}",
+            spec.tools
+        );
+    }
+
+    /// No grant ⇒ no grammar (the canonical-demo / answer-only invariant that keeps
+    /// the digest `7d22d4bd` — `build_tool_grammar` returns `None`).
+    #[test]
+    fn no_grammar_on_a_react_turn_without_grants() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"blue", None);
+        exec.run(
+            &react_turn_mote(),
+            &shaper_warrant(&model_id(), ExecutorClass::MacOsSandbox),
+            None,
+        )
+        .expect("react turn dispatches");
+        assert_eq!(
+            *backend.last_grammar.lock().unwrap(),
+            None,
+            "no grant ⇒ no grammar"
+        );
+    }
+
+    /// A non-react (shaper) turn is NEVER constrained, even with a granted warrant —
+    /// the shaper proposes a TopologyDecision, not a tool call.
+    #[test]
+    fn no_grammar_on_a_non_react_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(
+            &store,
+            TWO_CHILD_PROPOSAL,
+            Some(worker_recipes(&model_id())),
+        );
+        exec.run(&shaper_mote(), &granted_warrant(), None)
+            .expect("shaper dispatches");
+        assert_eq!(
+            *backend.last_grammar.lock().unwrap(),
+            None,
+            "a shaper turn is never grammar-constrained"
+        );
+    }
+
+    /// The per-run `unconstrained` opt-out skips grammar even on a granted react turn.
+    #[test]
+    fn unconstrained_opt_out_skips_grammar() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"blue", None);
+        exec.run(&react_turn_mote_unconstrained(), &granted_warrant(), None)
+            .expect("react turn dispatches");
+        assert_eq!(
+            *backend.last_grammar.lock().unwrap(),
+            None,
+            "unconstrained=true ⇒ grammar skipped"
+        );
     }
 
     /// PR-9d (model-side half): `dispatch_model` PREPENDS the carried grounding context

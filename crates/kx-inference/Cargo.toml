@@ -30,6 +30,10 @@ kx-llamacpp          = { workspace = true, optional = true }
 # the in-process backend consumes it; a bring-your-own backend pulls it directly
 # if it wants the registry. FFI-free, so it never affects `build-no-inference`.
 kx-model-store       = { workspace = true, optional = true }
+# RC2 grammar-constrained tool-calling: render a granted tool set to GBNF for the
+# in-process llama.cpp sampler. FFI-free + optional behind `llamacpp` (only the
+# concrete backend's sampler uses it; the bring-your-own-backend build drops it).
+kx-grammar           = { workspace = true, optional = true }
 serde                = { workspace = true }
 thiserror            = { workspace = true }
 tracing              = { workspace = true }
@@ -47,7 +51,7 @@ smallvec             = { workspace = true }
 # --workspace` keep the FFI ON because kx-model-harness (the only consumer of the
 # concrete backend) opts back in with `features = ["llamacpp"]`.
 default  = ["llamacpp"]
-llamacpp = ["dep:kx-llamacpp", "dep:kx-model-store"]
+llamacpp = ["dep:kx-llamacpp", "dep:kx-model-store", "dep:kx-grammar"]
 
 [dev-dependencies]
 kx-journal         = { workspace = true }

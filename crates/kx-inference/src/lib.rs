@@ -7,13 +7,14 @@
 //! participates in the idempotency key (kx-mote → `MoteDef.model_id`) so
 //! model changes correctly bust the cache.
 //!
-//! PR 8 ships two forward-compat trait-shape hooks to prevent breaking
-//! trait changes when multimodal + constrained-generation features land:
-//! `InferenceInput::Multimodal` (reserved variant) and
-//! `InferenceParams.grammar` (reserved Option field). The OSS v0.1
-//! `LlamaInferenceBackend` returns `Err(InferenceError::Unsupported)` on
-//! either path — see `roadmap-multimodal-synthesis-post-pr9` for the
-//! future-PR sequencing commitment.
+//! PR 8 shipped two forward-compat trait-shape hooks; both are now IMPLEMENTED.
+//! `InferenceInput::Multimodal` serves image dispatch on a vision model, and
+//! `InferenceParams.grammar` (RC2) constrains tool-call decoding: when set, the
+//! `LlamaInferenceBackend` renders the carried `kx_grammar::ToolEnvelopeSpec` to
+//! GBNF and prepends a lazy/triggered sampler stage (`build_sampler`) — never in
+//! the frozen `dispatcher.rs`, and only on a real model load (a malformed grammar
+//! carrier fails closed). A backend that cannot honor a variant still returns
+//! `Err(InferenceError::Unsupported)`.
 //!
 //! # Quick example
 //!
