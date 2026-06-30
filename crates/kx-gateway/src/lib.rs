@@ -122,6 +122,12 @@ mod metrics;
 // decode arm lives in the serve-engine executor; the MCP adapter is FFI-free).
 #[cfg(feature = "serve-engine")]
 mod mcp_tool;
+// RC4b (agentic RAG): the bundled read-only `retrieve@1` capability + typed ToolDef
+// + serve-broker registration — makes a dataset a first-class tool the live ReAct
+// loop (`kx/recipes/react-rag`) calls autonomously. Needs the serve broker
+// (`serve-engine`) AND the dataset view (`hnsw`); off-digest, SN-8 (scores dropped).
+#[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+mod retrieve_tool;
 // PR-6b-1 (D159): the EXTERNAL MCP gateway host wiring — the McpGatewayAdmin impl
 // over kx_mcp_gateway::McpGateway + the BrokerCapabilitySink. Behind the
 // `mcp-gateway` feature (ON by default); FFI-free, off-journal, off-digest. DIALS
@@ -242,7 +248,8 @@ pub use provision::{
     DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
     CHAT_RAG_RECIPE_HANDLE, DEMO_RECIPE_HANDLE, JUDGE_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,
     PASSTHROUGH_DAG_HANDLE, REACT_AUTO_RECIPE_HANDLE, REACT_EDIT_RECIPE_HANDLE,
-    REACT_FS_RECIPE_HANDLE, REACT_RECIPE_HANDLE, REACT_VISION_RECIPE_HANDLE, VISION_RECIPE_HANDLE,
+    REACT_FS_RECIPE_HANDLE, REACT_RAG_RECIPE_HANDLE, REACT_RECIPE_HANDLE,
+    REACT_VISION_RECIPE_HANDLE, VISION_RAG_RECIPE_HANDLE, VISION_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
 pub use teams::{seed_workspace_team, HostGrantView, HostMembershipView, WORKSPACE_TEAM_HANDLE};

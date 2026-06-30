@@ -102,6 +102,17 @@ KX_SERVE_FS_ROOT=/path/to/readable/dir kx serve --features inference
 `fs-list` never reads file *contents* — it returns names only, confined to the
 granted mount (canonicalized; no traversal out).
 
+## The `retrieve` built-in
+
+`retrieve@1` is the read-only **dataset-search** tool that powers
+**[Agentic RAG](./agentic-rag.md)**. On a serve with datasets enabled (the `hnsw` build)
+the runtime grants it to the `kx/recipes/react-rag` loop, so the model can search a corpus
+on its own: `{"dataset": <name>, "query": <text>, "k": <1..64>}` → ordered passages (chunk
+hash + text + provenance) over the [hybrid](./datasets.md) index. No egress, no filesystem
+scope, `Readback` (auto-proceeds the HITL gate); the committed Observation is the ordered
+chunk-ref set (scores excluded, SN-8). A missing/empty dataset returns an empty observation
+the agent recovers from — the loop never dead-letters on a retrieval miss.
+
 ## Reviewing what agents produce
 
 Every committed tool output (and every model turn) is captured in the **Data Lab →

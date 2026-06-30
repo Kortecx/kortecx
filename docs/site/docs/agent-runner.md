@@ -74,6 +74,17 @@ kx agent run --goal "Use the echo tool to repeat 'pong'." --max-tool-calls 20 --
 > the granted tool set is fixed and part of the step's identity. There is no separate
 > chains `agent()` node by design (it would be a second, divergent wire shape).
 
+## Searching a dataset (agentic RAG)
+
+Pass `--dataset <name>` and the agent gets a read-only **`retrieve` tool** — it decides
+when to search, phrases its own query, reads the passages, re-queries, and answers grounded
+in what it found (the `kx/recipes/react-rag` recipe over the hybrid index). See
+**[Agentic RAG](./agentic-rag.md)** for the full cross-surface walkthrough.
+
+```bash
+kx agent run --goal "What does the handbook say about parental leave?" --dataset handbook
+```
+
 ## Vision in agents (agentic vision)
 
 Attach an **image** and the agent reasons over it on **every turn** of the loop — not

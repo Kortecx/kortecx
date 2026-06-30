@@ -843,6 +843,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             }
         }
     }
+    // RC4b (agentic RAG): seed retrieve@1 into the durable registry so DiscoverTools +
+    // the react-rag tool menu show it, exactly when the retrieve capability is
+    // registerable (the hnsw + serve build). The capability itself registers below, once
+    // the dataset view is built (the broker's register_capability is interior-mutable).
+    #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+    if let Err(error) = tool_registry.register_server_tool(
+        crate::retrieve_tool::retrieve_tool_def(),
+        kx_tool_registry::ToolProvenance::HumanAuthored {
+            author: "kx-gateway".to_string(),
+        },
+        None,
+    ) {
+        tracing::warn!(%error, "RC4b: failed to seed retrieve@1 into tools.db");
+    }
     // Batch A: vision is a SERVE FACT derived from what actually registered
     // (the catalog entry declares "image" iff the projector resolved + the
     // backend built) — the vision recipe seeds exactly when the dispatch path
@@ -876,12 +890,22 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .collect();
     #[cfg(not(feature = "serve-engine"))]
     let secondary_models: Vec<kx_mote::ModelId> = Vec::new();
+    // RC4b: the retrieve@1 tool identity the react-rag recipe's warrant grants — `Some`
+    // exactly when the retrieve capability is registerable (the hnsw + serve build), so
+    // the react-rag recipe is provisioned (+ vision-rag knows datasets are available).
+    // `None` ⇒ neither RAG recipe is seeded (byte-identical to before).
+    #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+    let retrieve_tool_id: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> =
+        Some(crate::retrieve_tool::retrieve_tool());
+    #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
+    let retrieve_tool_id: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
     let demo = Arc::new(DemoLibrary::open_serve(
         &catalog_dir,
         default_executor_class(),
         &parties,
         serve_model.as_ref(),
         react_tool.as_ref(),
+        retrieve_tool_id.as_ref(),
         vision_supported,
         fs_list_binding,
         autogrant,
@@ -947,6 +971,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             }
         });
     }
+    // RC4b (agentic RAG): register the read-only retrieve@1 capability on the SAME serve
+    // broker, over the live dataset view (the broker's register_capability is
+    // interior-mutable, so this late registration — after the dataset view is built — is
+    // supported; the kx/recipes/react-rag recipe seeded above grants exactly this tool).
+    #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+    crate::retrieve_tool::register_retrieve_capability(
+        &local_broker,
+        dataset_view.clone() as std::sync::Arc<dyn kx_gateway_core::DatasetView>,
+    );
     let binder: Arc<dyn RecipeBinder> = {
         #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
         let mut host_binder = if autogrant {

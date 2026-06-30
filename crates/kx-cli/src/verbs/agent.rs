@@ -23,6 +23,10 @@ const REACT_RECIPE_HANDLE: &str = "kx/recipes/react";
 /// AGENTIC-VISION: the image-grounded ReAct recipe — bound (form-gated) when `--image`
 /// is supplied so the served VLM reasons over the attached image on every turn.
 const REACT_VISION_RECIPE_HANDLE: &str = "kx/recipes/react-vision";
+/// RC4b AGENTIC RAG: the dataset-grounded ReAct recipe — bound (form-gated) when
+/// `--dataset` is supplied so the model AUTONOMOUSLY searches the corpus with the
+/// read-only `retrieve` tool, reads the passages, and can re-query across turns.
+const REACT_RAG_RECIPE_HANDLE: &str = "kx/recipes/react-rag";
 /// The recipe's anchored bounded-loop budget (mirrors the SDK + the UI's planReactArgs).
 const DEFAULT_MAX_TURNS: u32 = 8;
 // T-MULTI-ELEMENT-TOOLCALLS: the default tool-call cap rose 6 → 20 (decoupled from
@@ -51,6 +55,11 @@ pub struct AgentArgs {
     /// the run binds `kx/recipes/react-vision` (form-gated) so the served VLM reasons over
     /// the image on EVERY turn; fail-closed (a usage error) when no vision model is served.
     pub image: Option<String>,
+    /// RC4b AGENTIC RAG: a dataset to ground the agentic run (`--dataset <name>`). When
+    /// set, the run binds `kx/recipes/react-rag` (form-gated) so the model searches the
+    /// corpus with the `retrieve` tool; honest-degrade to a plain agent when react-rag
+    /// is not provisioned (the non-`hnsw` build). Mutually exclusive with `--image`.
+    pub dataset: Option<String>,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -74,6 +83,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
     let mut max_turns = DEFAULT_MAX_TURNS;
     let mut max_tool_calls = DEFAULT_MAX_TOOL_CALLS;
     let mut image: Option<String> = None;
+    let mut dataset: Option<String> = None;
     let mut common = ClientCommon::default();
     while let Some(flag) = args.next() {
         if common.try_consume(&flag, &mut args)? {
@@ -109,6 +119,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
                 })?;
             }
             "--image" => image = Some(next_value(&mut args, "--image")?),
+            "--dataset" => dataset = Some(next_value(&mut args, "--dataset")?),
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
         }
     }
@@ -122,6 +133,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AgentArgs, CliErr
         max_turns,
         max_tool_calls,
         image,
+        dataset,
         common,
     })
 }
@@ -160,26 +172,27 @@ async fn upload_image(
     Ok(crate::hex::encode(&put.content_ref))
 }
 
-/// Execute `agent run`.
-pub async fn execute(args: AgentArgs) -> Result<(), CliError> {
-    let resolved = args.common.resolve()?;
-    let mut client = resolved.connect().await?;
-
-    let instruction = fold_inputs(&args.goal, &args.inputs);
-    let mut obj = serde_json::Map::new();
-    obj.insert("instruction".to_string(), serde_json::json!(instruction));
-    obj.insert("max_turns".to_string(), serde_json::json!(args.max_turns));
-    obj.insert(
-        "max_tool_calls".to_string(),
-        serde_json::json!(args.max_tool_calls),
-    );
-
-    // AGENTIC-VISION: `--image` binds the image-grounded ReAct recipe (form-gated) so the
-    // served VLM reasons over the attached image on EVERY turn of the chain. Fail-closed
-    // (a usage error) when no vision model is served — never silently run text-only and
-    // drop the image (that would be a lie; GR15).
-    let handle = if let Some(path) = &args.image {
-        let image_ref = upload_image(&mut client, &resolved, std::path::Path::new(path)).await?;
+/// Select the ReAct recipe handle for this run + fold any image/dataset binding into
+/// `obj`. `--image` ⇒ `react-vision` (form-gated, fail-closed when no vision model);
+/// `--dataset` ⇒ `react-rag` (form-gated, honest-degrade to a plain agent); else the
+/// plain `react` recipe. `--image` + `--dataset` is a usage error (no agentic vision-RAG
+/// recipe yet — `kx chat --image --dataset` does single-shot vision-RAG).
+async fn select_handle(
+    client: &mut proto::kx_gateway_client::KxGatewayClient<tonic::transport::Channel>,
+    resolved: &crate::client::Resolved,
+    args: &AgentArgs,
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+) -> Result<&'static str, CliError> {
+    if let Some(path) = &args.image {
+        if args.dataset.is_some() {
+            return Err(CliError::Usage(
+                "--image and --dataset cannot be combined for `kx agent` (an agentic \
+                 vision-RAG loop is not a recipe yet); use `kx chat --image --dataset` for a \
+                 single-shot image + text-RAG answer, or drop one flag"
+                    .into(),
+            ));
+        }
+        let image_ref = upload_image(client, resolved, std::path::Path::new(path)).await?;
         let form = client
             .get_recipe_form(resolved.request(proto::GetRecipeFormRequest {
                 handle: REACT_VISION_RECIPE_HANDLE.to_string(),
@@ -201,10 +214,50 @@ pub async fn execute(args: AgentArgs) -> Result<(), CliError> {
         eprintln!(
             "· image attached — binding the vision agent (reasons over the image every turn)"
         );
-        REACT_VISION_RECIPE_HANDLE
+        Ok(REACT_VISION_RECIPE_HANDLE)
+    } else if let Some(dataset) = &args.dataset {
+        // RC4b: `--dataset` binds the agentic-RAG ReAct recipe so the model searches the
+        // corpus with the read-only `retrieve` tool. Form-gated: honest-degrade to a plain
+        // agent when react-rag is not provisioned (the non-hnsw build), never fake grounding.
+        let provisioned = client
+            .get_recipe_form(resolved.request(proto::GetRecipeFormRequest {
+                handle: REACT_RAG_RECIPE_HANDLE.to_string(),
+            })?)
+            .await
+            .is_ok();
+        if provisioned {
+            obj.insert("dataset".to_string(), serde_json::json!(dataset));
+            eprintln!(
+                "· agentic RAG over dataset '{dataset}' — the model searches it with the retrieve tool"
+            );
+            Ok(REACT_RAG_RECIPE_HANDLE)
+        } else {
+            eprintln!(
+                "· dataset '{dataset}' requested but react-rag is not provisioned (needs the \
+                 hnsw build) — running a plain agent"
+            );
+            Ok(REACT_RECIPE_HANDLE)
+        }
     } else {
-        REACT_RECIPE_HANDLE
-    };
+        Ok(REACT_RECIPE_HANDLE)
+    }
+}
+
+/// Execute `agent run`.
+pub async fn execute(args: AgentArgs) -> Result<(), CliError> {
+    let resolved = args.common.resolve()?;
+    let mut client = resolved.connect().await?;
+
+    let instruction = fold_inputs(&args.goal, &args.inputs);
+    let mut obj = serde_json::Map::new();
+    obj.insert("instruction".to_string(), serde_json::json!(instruction));
+    obj.insert("max_turns".to_string(), serde_json::json!(args.max_turns));
+    obj.insert(
+        "max_tool_calls".to_string(),
+        serde_json::json!(args.max_tool_calls),
+    );
+
+    let handle = select_handle(&mut client, &resolved, &args, &mut obj).await?;
     let req_args = serde_json::Value::Object(obj).to_string().into_bytes();
 
     let resp = client
@@ -308,6 +361,20 @@ mod tests {
         );
         assert!(a.common.json);
         assert_eq!(a.timeout_secs, DEFAULT_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn run_parses_dataset_for_agentic_rag() {
+        let a = p(&[
+            "run",
+            "--goal",
+            "what does the handbook say",
+            "--dataset",
+            "handbook",
+        ])
+        .unwrap();
+        assert_eq!(a.dataset.as_deref(), Some("handbook"));
+        assert!(a.image.is_none());
     }
 
     #[test]

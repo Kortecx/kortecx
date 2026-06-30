@@ -21,6 +21,9 @@ use crate::{verbs, wait};
 /// The vision recipe (PR-B2) — `--image` binds it (image→text / prompted OCR on a
 /// vision-capable model on either engine).
 const VISION_CHAT_HANDLE: &str = "kx/recipes/vision";
+/// RC4b VISION-RAG: `--image` + `--dataset` binds this (the served VLM answers about the
+/// image WHILE grounded on the dataset's top-k retrieved text passages — one generation).
+const VISION_RAG_CHAT_HANDLE: &str = "kx/recipes/vision-rag";
 
 /// Default `--wait` timeout (matches `invoke`/`agent`).
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -117,13 +120,31 @@ pub async fn execute(args: ChatArgs) -> Result<(), CliError> {
     // image_ref slot), print a notice and answer the message plainly — never silently
     // drop the image, never fake an answer about it.
     let (handle, args_json): (String, serde_json::Value) = if let Some(path) = args.image.clone() {
-        if args.dataset.is_some() {
-            return Err(CliError::Usage(
-                "--image and --dataset cannot be combined (vision-RAG is not yet supported)".into(),
-            ));
-        }
-        if let Some(plan) = plan_vision(&mut client, &resolved, &path, &args.message).await? {
+        // RC4b: `--image` + `--dataset` binds `kx/recipes/vision-rag` (the VLM answers about
+        // the image WHILE grounded on the dataset's retrieved text). HONEST-degrade ladder:
+        // vision-rag → plain vision (image only) → plain chat — never silently drop the image
+        // or fake grounding (GR15).
+        let rag = args.dataset.as_deref().map(|d| (d, args.k));
+        if let Some(plan) = plan_vision(&mut client, &resolved, &path, &args.message, rag).await? {
             plan
+        } else if rag.is_some() {
+            // vision-rag not provisioned — try plain vision (image only), then plain chat.
+            if let Some(plan) =
+                plan_vision(&mut client, &resolved, &path, &args.message, None).await?
+            {
+                eprintln!(
+                    "· vision-RAG not available — answering about the image without dataset grounding"
+                );
+                plan
+            } else {
+                eprintln!(
+                    "· image + dataset attached but no image-capable model is served — answering plainly"
+                );
+                (
+                    PLAIN_CHAT_HANDLE.to_string(),
+                    serde_json::json!({ "prompt": args.message }),
+                )
+            }
         } else {
             eprintln!(
                 "· image attached but no image-capable model is served — answering without it"
@@ -208,15 +229,18 @@ async fn plan_text(
     }
 }
 
-/// Plan an image-bearing chat (PR-B2): upload the image, resolve the `kx/recipes/vision`
-/// form, and assemble `{ prompt, image_ref, model }`. Returns `None` when no
-/// image-capable model is served (the form is absent / lacks the `image_ref` slot), so
-/// the caller can honest-degrade to plain chat instead of faking an answer.
+/// Plan an image-bearing chat: upload the image, resolve the recipe form, and assemble
+/// `{ prompt, image_ref, model }` (PR-B2). When `rag = Some((dataset, k))` it targets
+/// `kx/recipes/vision-rag` and ALSO passes `{ dataset, k }` (stripped + folded server-side
+/// into the retrieved-text context) — the VLM answers about the image grounded on the
+/// dataset (RC4b). Returns `None` when the targeted recipe is not provisioned (the form is
+/// absent / lacks the `image_ref` slot), so the caller can honest-degrade.
 async fn plan_vision(
     client: &mut kx_proto::proto::kx_gateway_client::KxGatewayClient<tonic::transport::Channel>,
     resolved: &crate::client::Resolved,
     path: &std::path::Path,
     message: &str,
+    rag: Option<(&str, u32)>,
 ) -> Result<Option<(String, serde_json::Value)>, CliError> {
     let payload =
         std::fs::read(path).map_err(|e| CliError::Io(format!("read {}: {e}", path.display())))?;
@@ -235,11 +259,16 @@ async fn plan_vision(
         .into_inner();
     let image_ref = crate::hex::encode(&put.content_ref);
 
-    // Resolve the vision recipe form (the SAME form-gate the SDK/console use). An
-    // absent form / RPC error ⇒ honest-degrade (`None`).
+    // Resolve the targeted recipe form (vision-rag when grounding, else vision) — the SAME
+    // form-gate the SDK/console use. An absent form / RPC error ⇒ honest-degrade (`None`).
+    let handle = if rag.is_some() {
+        VISION_RAG_CHAT_HANDLE
+    } else {
+        VISION_CHAT_HANDLE
+    };
     let Ok(form_resp) = client
         .get_recipe_form(resolved.request(proto::GetRecipeFormRequest {
-            handle: VISION_CHAT_HANDLE.to_string(),
+            handle: handle.to_string(),
         })?)
         .await
     else {
@@ -261,11 +290,16 @@ async fn plan_vision(
         let chosen = model.allowed.first().cloned().unwrap_or_default();
         obj.insert("model".to_string(), serde_json::json!(chosen));
     }
-    eprintln!("· image attached — binding the vision model (image→text / OCR)");
-    Ok(Some((
-        VISION_CHAT_HANDLE.to_string(),
-        serde_json::Value::Object(obj),
-    )))
+    if let Some((dataset, k)) = rag {
+        // dataset/k are NOT declared slots — the server strips them and folds the
+        // retrieved text into the prompt (the chat-rag grounding path; SN-8 exact refs).
+        obj.insert("dataset".to_string(), serde_json::json!(dataset));
+        obj.insert("k".to_string(), serde_json::json!(k));
+        eprintln!("· image + dataset '{dataset}' — grounding the vision answer on retrieved text");
+    } else {
+        eprintln!("· image attached — binding the vision model (image→text / OCR)");
+    }
+    Ok(Some((handle.to_string(), serde_json::Value::Object(obj))))
 }
 
 #[cfg(test)]
@@ -332,10 +366,11 @@ mod tests {
     }
 
     #[test]
-    fn image_and_dataset_both_parse_execute_rejects() {
-        // Parse accepts both; the mutual-exclusion (vision-RAG unsupported) is enforced
-        // in `execute` after connect (covered by the live e2e). This pins that parse
-        // does not pre-reject the combination.
+    fn image_and_dataset_both_parse_and_route_to_vision_rag() {
+        // RC4b: `--image` + `--dataset` is now SUPPORTED — it parses and (in `execute`,
+        // covered by the live e2e) binds `kx/recipes/vision-rag` with an honest-degrade
+        // ladder (vision-rag → plain vision → plain chat). This pins that parse accepts
+        // the combination (no pre-rejection).
         let a = parse_v(&["hi", "--image", "/tmp/x.png", "--dataset", "docs"]).unwrap();
         assert!(a.image.is_some() && a.dataset.is_some());
     }

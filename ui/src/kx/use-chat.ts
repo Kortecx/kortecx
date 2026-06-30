@@ -66,6 +66,18 @@ export const REACT_AUTO_RECIPE_HANDLE = "kx/recipes/react-auto";
  *  prefix, so it settles as a react CHAIN. */
 export const REACT_VISION_RECIPE_HANDLE = "kx/recipes/react-vision";
 
+/** RC4b AGENTIC RAG: the dataset-grounded ReAct loop — agent mode + a selected dataset
+ *  route here so the model AUTONOMOUSLY searches the corpus with the read-only `retrieve`
+ *  tool (hybrid), reads passages, and can re-query. Provisioned only on an `hnsw` serve;
+ *  absent ⇒ agent mode honest-degrades to the plain react loop (the dataset is dropped).
+ *  Shares the `kx/recipes/react` prefix, so it settles as a react CHAIN. */
+export const REACT_RAG_RECIPE_HANDLE = "kx/recipes/react-rag";
+
+/** RC4b VISION-RAG: image + a selected dataset route here — the served VLM answers about
+ *  the image WHILE grounded on the dataset's retrieved text (one generation). Provisioned
+ *  only on a vision + `hnsw` serve; absent ⇒ honest-degrade to plain vision (image only). */
+export const VISION_RAG_RECIPE_HANDLE = "kx/recipes/vision-rag";
+
 interface ActiveTurn {
   readonly assistantId: string;
   readonly instanceId: string;
@@ -89,10 +101,11 @@ export interface UseChatOptions {
    *  the model reasons + fires tools until it answers. Only honored when the
    *  react recipe is provisioned (the caller gates the toggle). */
   readonly agentMode?: boolean;
-  /** POC-1 CHAT-RAG: ground each turn over this dataset (embed → top-k → fold the
-   *  exact refs). `undefined` ⇒ a plain chat. Ignored in agent mode (the loop has
-   *  its own context carry). The server honestly degrades to a plain answer when
-   *  the dataset is missing/empty. */
+  /** POC-1 CHAT-RAG / RC4b: ground each turn over this dataset. In a PLAIN turn the
+   *  server embeds → top-k → folds the exact refs (chat-rag). In AGENT mode it routes to
+   *  react-rag — the model autonomously searches the corpus with the `retrieve` tool.
+   *  `undefined` ⇒ a plain chat. The server/recipe honestly degrades when the dataset is
+   *  missing/empty (grounding is never faked). */
   readonly dataset?: string;
   /** POC-5d (AppChat): App-fixed context refs (bundle handles) attached to EVERY
    *  turn, in ADDITION to any per-message context. Optional + additive — existing
@@ -215,6 +228,47 @@ export function planReactVisionArgs(
   return args;
 }
 
+/**
+ * RC4b: build the arg set for an agentic-RAG turn — the react args (`instruction` + budget
+ * caps) PLUS a `dataset` selector the server strips + folds into the instruction (the model
+ * searches it with the `retrieve` tool). `null` when the react-rag form lacks `instruction`
+ * (then agent mode honest-degrades to the plain react loop). Pure — unit-testable.
+ */
+export function planReactRagArgs(
+  form: Pick<RecipeForm, "fields">,
+  text: string,
+  dataset: string,
+): Record<string, unknown> | null {
+  const args = planReactArgs(form, text);
+  if (args === null) {
+    return null;
+  }
+  args.dataset = dataset;
+  return args;
+}
+
+/**
+ * RC4b: build the arg set for a vision-RAG turn — the vision args (`prompt`/`image_ref`/
+ * `model`) PLUS a `dataset` + `k` the server strips + folds into the retrieved-text context.
+ * `null` when the vision-rag form lacks `image_ref` (then honest-degrade to plain vision).
+ */
+export function planVisionRagArgs(
+  form: Pick<RecipeForm, "fields">,
+  text: string,
+  imageRef: string,
+  modelId: string | undefined,
+  dataset: string,
+  k: number,
+): Record<string, unknown> | null {
+  const args = planVisionArgs(form, text, imageRef, modelId);
+  if (args === null) {
+    return null;
+  }
+  args.dataset = dataset;
+  args.k = k;
+  return args;
+}
+
 export function useChat({
   handle,
   promptKey,
@@ -237,6 +291,10 @@ export function useChat({
   // AGENTIC-VISION: the react-vision form (agent mode + an image probes it; `null` = the
   // serve has no vision model ⇒ agent mode runs text-only, the image stays display-only).
   const reactVisionFormRef = useRef<RecipeForm | null | undefined>(undefined);
+  // RC4b: the react-rag + vision-rag forms (agent/image + a dataset probe them; `null` =
+  // the serve has no hnsw datasets ⇒ honest-degrade to plain react / plain vision).
+  const reactRagFormRef = useRef<RecipeForm | null | undefined>(undefined);
+  const visionRagFormRef = useRef<RecipeForm | null | undefined>(undefined);
 
   const projection = useProjection(
     active?.instanceId,
@@ -418,6 +476,36 @@ export function useChat({
     return reactVisionFormRef.current;
   }, [client]);
 
+  /** RC4b: the react-rag recipe's form, probed once (absent ⇒ agent mode drops the dataset
+   *  and runs the plain react loop). */
+  const reactRagForm = useCallback(async (): Promise<RecipeForm | null> => {
+    if (reactRagFormRef.current !== undefined) {
+      return reactRagFormRef.current;
+    }
+    try {
+      reactRagFormRef.current = client ? await client.getRecipeForm(REACT_RAG_RECIPE_HANDLE) : null;
+    } catch {
+      reactRagFormRef.current = null; // no hnsw datasets — plain react handles the turn
+    }
+    return reactRagFormRef.current;
+  }, [client]);
+
+  /** RC4b: the vision-rag recipe's form, probed once (absent ⇒ image + dataset degrades to
+   *  plain vision, the image answer is ungrounded). */
+  const visionRagForm = useCallback(async (): Promise<RecipeForm | null> => {
+    if (visionRagFormRef.current !== undefined) {
+      return visionRagFormRef.current;
+    }
+    try {
+      visionRagFormRef.current = client
+        ? await client.getRecipeForm(VISION_RAG_RECIPE_HANDLE)
+        : null;
+    } catch {
+      visionRagFormRef.current = null; // no vision+hnsw — plain vision handles the turn
+    }
+    return visionRagFormRef.current;
+  }, [client]);
+
   /** Plan the turn: agent task (+ image → vision agent) → react loop; image → vision; else chat. */
   const planTurn = useCallback(
     async (text: string, attachments: readonly MessageAttachment[]): Promise<TurnPlan> => {
@@ -435,6 +523,18 @@ export function useChat({
             }
           }
         }
+        // RC4b: agent mode + a selected dataset (no image) → the agentic-RAG loop, so the
+        // model searches the corpus with the `retrieve` tool. Form-gated; absent ⇒ fall
+        // through to the plain react loop (the dataset is dropped, honestly).
+        if (dataset && !image) {
+          const rform = await reactRagForm();
+          if (rform) {
+            const args = planReactRagArgs(rform, text, dataset);
+            if (args !== null) {
+              return { handle: REACT_RAG_RECIPE_HANDLE, args };
+            }
+          }
+        }
         const form = await reactForm();
         if (form) {
           const args = planReactArgs(form, text);
@@ -445,6 +545,24 @@ export function useChat({
       }
       const image = attachments.find((a) => a.mediaType.startsWith("image/"));
       if (image) {
+        // RC4b: image + a selected dataset → vision-RAG (the VLM answers about the image
+        // grounded on the dataset's retrieved text). Form-gated; absent ⇒ plain vision.
+        if (dataset) {
+          const vrform = await visionRagForm();
+          if (vrform) {
+            const args = planVisionRagArgs(
+              vrform,
+              text,
+              image.ref,
+              modelId,
+              dataset,
+              CHAT_RAG_DEFAULT_K,
+            );
+            if (args !== null) {
+              return { handle: VISION_RAG_RECIPE_HANDLE, args };
+            }
+          }
+        }
         const form = await visionForm();
         if (form) {
           const args = planVisionArgs(form, text, image.ref, modelId);
@@ -464,7 +582,18 @@ export function useChat({
       }
       return { handle, args: { [promptKey]: text } };
     },
-    [handle, promptKey, modelId, agentMode, dataset, reactForm, reactVisionForm, visionForm],
+    [
+      handle,
+      promptKey,
+      modelId,
+      agentMode,
+      dataset,
+      reactForm,
+      reactRagForm,
+      reactVisionForm,
+      visionForm,
+      visionRagForm,
+    ],
   );
 
   const startTurn = useCallback(

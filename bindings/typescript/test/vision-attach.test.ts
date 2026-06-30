@@ -69,8 +69,20 @@ describe("chat({ image })", () => {
     expect((c.invoked?.args as Record<string, unknown>).model).toBe("gemma3:12b");
   });
 
-  it("rejects dataset + image together (vision-RAG not supported)", async () => {
+  it("binds kx/recipes/vision-rag for image + dataset (grounds the image answer)", async () => {
+    // RC4b: image + dataset is now SUPPORTED — it binds vision-rag with {dataset, k}.
     const c = new VisionFake(visionForm(["m"]));
+    const out = await c.chat("describe", { image: new Uint8Array([1]), dataset: "docs", k: 3 });
+    expect(out).toBe("a cat");
+    expect(c.invoked?.handle).toBe("kx/recipes/vision-rag");
+    const args = c.invoked?.args as Record<string, unknown>;
+    expect(args.image_ref).toBe("ab".repeat(32));
+    expect(args.dataset).toBe("docs");
+    expect(args.k).toBe(3);
+  });
+
+  it("honest-degrades to a clear error when vision-RAG is not provisioned", async () => {
+    const c = new VisionFake(null); // getRecipeForm throws ⇒ no vision-rag recipe
     await expect(
       c.chat("hi", { image: new Uint8Array([1]), dataset: "docs" }),
     ).rejects.toBeInstanceOf(KxUsage);

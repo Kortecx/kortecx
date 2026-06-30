@@ -138,6 +138,17 @@ export const VISION_RECIPE_HANDLE = "kx/recipes/vision";
  * so it settles as a react CHAIN (the `isReactHandle` prefix check). */
 export const REACT_VISION_RECIPE_HANDLE = "kx/recipes/react-vision";
 
+/** RC4b AGENTIC RAG: the dataset-grounded ReAct recipe — a live agent loop whose warrant
+ * grants the read-only `retrieve` tool, so the model AUTONOMOUSLY searches a corpus
+ * (hybrid), reads passages, and can re-query. Invoke with `{ instruction, dataset }`;
+ * shares the `kx/recipes/react` prefix, so it settles as a chain. */
+export const REACT_RAG_RECIPE_HANDLE = "kx/recipes/react-rag";
+
+/** RC4b VISION-RAG: a single grounded multimodal completion — the served VLM answers
+ * about an attached image WHILE grounded on a dataset's retrieved TEXT passages (one
+ * generation). `chat(prompt, { image, dataset })` binds it. Text-only datasets. */
+export const VISION_RAG_RECIPE_HANDLE = "kx/recipes/vision-rag";
+
 /**
  * An image to attach to a {@link KxClientBase.chat} call (PR-B2). Either an existing
  * `{ ref }` (a 64-hex `PutContent` ref) or raw `bytes` to upload (a bare `Uint8Array`
@@ -324,17 +335,16 @@ export abstract class KxClientBase {
     opts: { dataset?: string; k?: number; timeoutMs?: number; image?: ImageInput } = {},
   ): Promise<string> {
     // PR-B2 vision: an `image` attaches to the SAME single-entry chat call and binds
-    // the `kx/recipes/vision` recipe (image→text on whichever engine serves a
-    // vision-capable model). `dataset` + `image` together is not yet supported
-    // (vision-RAG is a follow-up) — a clear usage error, never a silent drop.
+    // the `kx/recipes/vision` recipe (image→text). RC4b: `image` + `dataset` together
+    // binds `kx/recipes/vision-rag` — the VLM answers about the image WHILE grounded on
+    // the dataset's retrieved text (a clear usage error when vision-RAG is not
+    // provisioned, never a silent drop).
     if (opts.image !== undefined) {
-      if (opts.dataset !== undefined) {
-        throw new KxUsage(
-          "chat: `dataset` and `image` cannot be combined (vision-RAG is not yet supported)",
-        );
-      }
       const imageRef = await this.resolveImageRef(opts.image);
-      const { handle, args } = await this.bindVision(prompt, imageRef);
+      const { handle, args } =
+        opts.dataset !== undefined
+          ? await this.bindVisionRag(prompt, imageRef, opts.dataset, opts.k ?? 4)
+          : await this.bindVision(prompt, imageRef);
       const result = (await this.invoke(handle, args, {
         wait: true,
         timeoutMs: opts.timeoutMs,
@@ -399,6 +409,42 @@ export abstract class KxClientBase {
           : model.allowed[0];
     }
     return { handle: VISION_RECIPE_HANDLE, args };
+  }
+
+  /**
+   * RC4b: bind `kx/recipes/vision-rag` — the served VLM answers about the image WHILE
+   * grounded on the dataset's top-k retrieved text (`{ prompt, image_ref, model, dataset,
+   * k }`; the server strips + folds `dataset`/`k`). Honest-degrade: a clear usage error
+   * when vision-RAG is not provisioned (needs BOTH a vision model AND dataset/hnsw).
+   */
+  private async bindVisionRag(
+    prompt: string,
+    imageRef: string,
+    dataset: string,
+    k: number,
+  ): Promise<{ handle: string; args: Args }> {
+    let form: RecipeForm;
+    try {
+      form = await this.getRecipeForm(VISION_RAG_RECIPE_HANDLE);
+    } catch {
+      throw new KxUsage(
+        "vision-RAG is not available on this serve — it needs BOTH an image-capable model AND the dataset (hnsw) features. Drop `dataset` for a plain vision answer, or serve a vision model with datasets enabled.",
+      );
+    }
+    const has = (n: string) => form.fields.find((f) => f.name === n);
+    if (!has("image_ref")) {
+      throw new KxUsage("the kx/recipes/vision-rag form does not declare an image_ref slot");
+    }
+    const args: Args = { image_ref: imageRef, dataset, k };
+    if (has("prompt")) args.prompt = prompt;
+    const model = has("model");
+    if (model) {
+      args.model =
+        this.defaultModel !== undefined && model.allowed.includes(this.defaultModel)
+          ? this.defaultModel
+          : model.allowed[0];
+    }
+    return { handle: VISION_RAG_RECIPE_HANDLE, args };
   }
 
   /**
