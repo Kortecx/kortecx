@@ -55,6 +55,12 @@ dataset's summary shows `chunked` + the distinct `chunk_count` alongside `doc_co
 (parent documents). Existing (pre-chunking) corpora keep working — a whole document is
 treated as a single chunk.
 
+:::tip Let an agent search it
+The same hybrid pipeline powers **[Agentic RAG](./agentic-rag.md)** — hand a dataset to an
+agent (`kx agent run --dataset <name>`) and the model searches it autonomously with the
+`retrieve` tool, re-querying until it can answer.
+:::
+
 ## Embedding: server-side or bring-your-own vectors
 
 Ingest and query are **pluggable** on embedding:

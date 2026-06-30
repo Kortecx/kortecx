@@ -274,6 +274,48 @@ const REACT_VISION_LOGIC_REF: [u8; 32] = [0x57; 32];
 /// with `react-edit`). `0x59` is the next free sentinel after chat-rag (`0x58`).
 const APP_SCAFFOLD_WRITE_LOGIC_REF: [u8; 32] = [0x59; 32];
 
+/// RC4b (agentic RAG): the wire handle of the `react-rag` recipe — a live ReAct loop
+/// like [`REACT_RECIPE_HANDLE`] BUT whose server-built warrant grants the read-only
+/// `retrieve@1` tool (RC4a hybrid `HostDatasetView::query`) instead of `mcp-echo@1`,
+/// so the model AUTONOMOUSLY searches a dataset and re-queries across turns. The
+/// query-rewrite is FREE: the retrieve-call turn IS the committed `ReadOnlyNondet`
+/// rewrite. A SEPARATE recipe BY DESIGN (the react-fs precedent) so the canonical
+/// `kx/recipes/react` + the projection digest stay byte-unchanged. Seeded only when a
+/// model is served AND the retrieve capability is registered (`hnsw`); reuses the
+/// react free-param contract, with a `dataset` selector folded ADVISORILY into the
+/// instruction (the model copies it into the retrieve args). The SDK prefix detector
+/// (`startswith("kx/recipes/react")`) settles it as a react CHAIN.
+pub const REACT_RAG_RECIPE_HANDLE: &str = "kx/recipes/react-rag";
+
+/// A DISTINCT placeholder `logic_ref` for the `react-rag` seed step (the BUG-25 class —
+/// react-rag's body differs from `kx/recipes/react` ONLY by its server-built warrant
+/// [echo grant → retrieve grant], so a shared logic ref maps both to the same manifest
+/// id with different bytes and panics at seed). `0x5a` is the next free sentinel after
+/// app-scaffold-write (`0x59`).
+const REACT_RAG_LOGIC_REF: [u8; 32] = [0x5a; 32];
+
+/// The react-rag args key naming the dataset the model should search (stripped from the
+/// args before free-param binding — it is NOT a declared slot; the binder folds it into
+/// the instruction). Absent ⇒ the model retrieves only if the instruction names a dataset.
+const REACT_RAG_DATASET_KEY: &str = "dataset";
+
+/// RC4b VISION-RAG: the wire handle of the `vision-rag` recipe — the `vision` recipe
+/// (a single PURE greedy model step with REQUIRED `image_ref` + `model` slots) PLUS the
+/// chat-rag dataset fold: a `dataset` arg retrieves the top-k TEXT passages (hybrid) and
+/// folds the EXACT refs into `CONTEXT_ITEMS_KEY`, so the served VLM answers grounded on
+/// BOTH the image AND the retrieved text in ONE generation (`dispatch_model` already
+/// composes context-items + image). Datasets stay TEXT-only (image-embedding deferred
+/// post-RC). A SEPARATE recipe BY DESIGN (the vision/react-fs precedent) so the canonical
+/// recipes + the projection digest stay byte-unchanged. NOT a react chain (a single PURE
+/// step — it settles on its terminal mote, and `kx/recipes/vision-rag` does NOT match the
+/// `kx/recipes/react` prefix). Seeded only when an IMAGE-capable model is served AND
+/// datasets are available (`retrieve_tool = Some`).
+pub const VISION_RAG_RECIPE_HANDLE: &str = "kx/recipes/vision-rag";
+
+/// A DISTINCT placeholder `logic_ref` for the `vision-rag` seed step (the BUG-25 class).
+/// `0x5b` is the next free sentinel after react-rag (`0x5a`).
+const VISION_RAG_LOGIC_REF: [u8; 32] = [0x5b; 32];
+
 /// T-AGENT2: the opt-in self-checking model recipe — a single greedy model
 /// PRODUCER step (a `prompt` free-param) gated by an LLM-JUDGE critic that grades
 /// the answer against a fixed rubric using the served model. The terminal is the
@@ -433,6 +475,7 @@ impl DemoLibrary {
             parties,
             None,
             None,
+            None,
             false,
             None,
             false,
@@ -461,6 +504,7 @@ impl DemoLibrary {
             exec_class,
             parties,
             serve_model.as_ref(),
+            None,
             None,
             false,
             None,
@@ -495,6 +539,8 @@ impl DemoLibrary {
             parties,
             serve_model,
             react_tool,
+            // open_complete predates RC4b's RAG recipes; serve wires them via open_serve.
+            None,
             vision,
             fs_list,
             autogrant,
@@ -510,12 +556,14 @@ impl DemoLibrary {
     /// # Errors
     /// [`GatewayError::Catalog`] on a ledger open / seed failure.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub fn open_serve(
         dir: &Path,
         exec_class: ExecutorClass,
         parties: &[String],
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
+        retrieve_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
         fs_list: Option<(&[(ToolName, ToolVersion)], &Path)>,
         autogrant: bool,
@@ -527,6 +575,7 @@ impl DemoLibrary {
             parties,
             serve_model,
             react_tool,
+            retrieve_tool,
             vision,
             fs_list,
             autogrant,
@@ -549,6 +598,11 @@ impl DemoLibrary {
         parties: &[String],
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
+        // RC4b: the `retrieve@1` tool identity, `Some` exactly when the retrieve
+        // capability is registered (the `hnsw`+serve build) ⇒ provision `react-rag`
+        // (grants it) and signal that datasets are available for `vision-rag`. `None`
+        // ⇒ neither RAG recipe is seeded (byte-identical to before).
+        retrieve_tool: Option<&(ToolName, ToolVersion)>,
         vision: bool,
         fs_list: Option<(&[(ToolName, ToolVersion)], &Path)>,
         autogrant: bool,
@@ -897,6 +951,84 @@ impl DemoLibrary {
                 RecipeMeta {
                     owner_root: react_fs_w,
                     free_params: react_contract(),
+                },
+            ));
+        }
+
+        // (react-rag) RC4b AGENTIC RAG: a SEPARATE live ReAct recipe whose server-built
+        // warrant grants the read-only `retrieve@1` tool (RC4a hybrid
+        // `HostDatasetView::query`), so the served model AUTONOMOUSLY searches a dataset
+        // and re-queries across turns — the retrieve-call turn IS the committed
+        // `ReadOnlyNondet` query-rewrite (no separate Mote). Seeded only when a model is
+        // served AND the retrieve capability is registered (the `hnsw` build passes
+        // `retrieve_tool = Some`). Reuses the react free-param contract but carries its OWN
+        // logic ref (BUG-25 — react-rag's body differs from `kx/recipes/react` ONLY by its
+        // warrant [echo grant → retrieve grant], so a shared ref panics at seed). The bind
+        // folds a `dataset` selector into the instruction (advisory). `react_warrant`
+        // already leaves `fs_scope` empty / `net_scope` None — exactly retrieve@1's
+        // declared requirement — so the broker precheck passes with no fs root.
+        if let (Some(model_id), Some(retrieve)) = (serve_model, retrieve_tool) {
+            let react_rag_w = react_warrant(exec_class, model_id, retrieve);
+            let react_rag_h = react_rag_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &react_rag_h,
+                recipe_body(
+                    LogicRef::from_bytes(REACT_RAG_LOGIC_REF),
+                    &react_rag_w,
+                    &[
+                        kx_mote::REACT_INSTRUCTION_KEY,
+                        kx_mote::REACT_MAX_TURNS_KEY,
+                        kx_mote::REACT_MAX_TOOL_CALLS_KEY,
+                    ],
+                ),
+                &react_rag_w,
+            )?;
+            recipes.push((
+                react_rag_h,
+                RecipeMeta {
+                    owner_root: react_rag_w,
+                    free_params: react_contract(),
+                },
+            ));
+        }
+
+        // (vision-rag) RC4b: the vision recipe (a single PURE greedy step with REQUIRED
+        // `image_ref` + `model` slots) PLUS the chat-rag dataset fold — a `dataset` arg
+        // retrieves the top-k TEXT passages (hybrid) at bind and folds the EXACT refs into
+        // CONTEXT_ITEMS, so the served VLM answers grounded on BOTH the image AND the
+        // retrieved text in ONE generation (`dispatch_model` already composes context-items
+        // + image_ref). Seeded only when an IMAGE-capable model is served AND datasets are
+        // available (`retrieve_tool = Some` signals the hnsw build). OWN logic ref (BUG-25);
+        // NOT a react chain (a single PURE step — it settles on its terminal mote). The
+        // warrant raises `mem_bytes` to the vision image ceiling (the BUG-26 class).
+        if let (Some(model_id), Some(_)) = (serve_model.filter(|_| vision), retrieve_tool) {
+            let mut vision_rag_w = model_warrant(exec_class, model_id);
+            vision_rag_w.resource_ceiling.mem_bytes = VISION_MAX_IMAGE_BYTES;
+            let vision_rag_h = vision_rag_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &vision_rag_h,
+                recipe_body(
+                    LogicRef::from_bytes(VISION_RAG_LOGIC_REF),
+                    &vision_rag_w,
+                    &[PROMPT_KEY, IMAGE_REF_KEY, VISION_MODEL_KEY],
+                ),
+                &vision_rag_w,
+            )?;
+            recipes.push((
+                vision_rag_h,
+                RecipeMeta {
+                    owner_root: vision_rag_w,
+                    free_params: vision_contract(),
                 },
             ));
         }
@@ -1359,6 +1491,14 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
             "ReAct-FS — a live agent loop with read-only filesystem tools (list directory entries + read a file's contents) under the granted root.",
             &["agent", "react", "tools", "filesystem", "fs-list", "fs-read"],
         ),
+        REACT_RAG_RECIPE_HANDLE => (
+            "ReAct-RAG — an agentic-RAG loop: the model autonomously SEARCHES a dataset with the read-only `retrieve` tool (hybrid keyword+semantic), reads the passages, can re-query, and answers grounded in what it found. Pass a `dataset` arg to point it at a corpus.",
+            &["agent", "react", "rag", "retrieval", "dataset", "tools", "grounding", "search"],
+        ),
+        VISION_RAG_RECIPE_HANDLE => (
+            "Vision-RAG — a grounded multimodal completion: answers about an attached image while ALSO retrieving the top-k text passages from a `dataset` (hybrid) and folding them into the prompt; honest plain vision when no dataset/index.",
+            &["vision", "image", "multimodal", "rag", "retrieval", "dataset", "grounding"],
+        ),
         REACT_AUTO_RECIPE_HANDLE => (
             "ReAct-Auto — a live agent loop that auto-grants the registered/dialed tool set (the model picks from all live tools).",
             &["agent", "react", "tools", "auto-grant", "mcp"],
@@ -1700,14 +1840,72 @@ impl HostRecipeBinder {
     /// empty prompt, or any retrieval failure (unknown dataset / no embedder / empty
     /// index) ⇒ the stripped args + the ORIGINAL refs (a plain, ungrounded chat —
     /// never a faked grounding, never a failed turn).
+    /// RC4b: rewrite a `react-rag` bind's args — STRIP the `dataset` selector (not a
+    /// declared slot, so it never reaches schema validation) and, when present, APPEND a
+    /// directive to the `instruction` free-param naming the dataset to search with the
+    /// `retrieve@1` tool. The model retrieves LIVE in the loop (no bind-time retrieval),
+    /// so the context refs are unchanged. Honest no-op when there is no dataset arg (the
+    /// instruction may already name one in prose).
+    fn fold_react_rag_dataset<'a>(
+        args: &'a [u8],
+        context_refs: &'a [String],
+    ) -> Result<GroundedArgs<'a>, BinderError> {
+        let mut value: serde_json::Value = if args.is_empty() {
+            serde_json::Value::Object(serde_json::Map::new())
+        } else {
+            serde_json::from_slice(args)
+                .map_err(|e| BinderError::InvalidArgs(format!("react-rag args parse: {e}")))?
+        };
+        let obj = value.as_object_mut().ok_or_else(|| {
+            BinderError::InvalidArgs("react-rag args must be a JSON object".into())
+        })?;
+        let dataset = obj.remove(REACT_RAG_DATASET_KEY);
+        let dataset = dataset.as_ref().and_then(serde_json::Value::as_str);
+        if let Some(dataset) = dataset.filter(|d| !d.is_empty()) {
+            let base = obj
+                .get(kx_mote::REACT_INSTRUCTION_KEY)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            // NOTE: do NOT show a literal `{"dataset":...}` call example here — the RC3
+            // tool MENU already renders the exact call envelope, and a second inline
+            // example primes some models to emit a stray `call:`-style prefix that breaks
+            // native `<|tool_call>` recovery (RC4b live-witness finding on Gemma-4). Name
+            // the dataset + the tool; let the menu own the format.
+            let folded = format!(
+                "{base}\n\nYou have a `retrieve` tool that searches text datasets. Use it to \
+                 search the \"{dataset}\" dataset for relevant passages before you answer; you \
+                 may search again with a refined query if the first result is not enough."
+            );
+            obj.insert(
+                kx_mote::REACT_INSTRUCTION_KEY.to_string(),
+                serde_json::Value::String(folded),
+            );
+        }
+        let stripped = serde_json::to_vec(&value)
+            .map_err(|e| BinderError::InvalidArgs(format!("react-rag args re-encode: {e}")))?;
+        Ok((Cow::Owned(stripped), Cow::Borrowed(context_refs)))
+    }
+
     fn ground_chat_rag<'a>(
         &self,
         asset_path: &AssetPath,
         args: &'a [u8],
         context_refs: &'a [String],
     ) -> Result<GroundedArgs<'a>, BinderError> {
-        let is_chat_rag = parse_handle(CHAT_RAG_RECIPE_HANDLE).is_some_and(|p| p == *asset_path);
-        if !is_chat_rag {
+        // RC4b react-rag: fold the `dataset` selector into the instruction so the model
+        // copies it into the retrieve@1 args. The model retrieves LIVE in the loop (no
+        // bind-time retrieval, no context-ref fold) — the agentic half of RAG.
+        if parse_handle(REACT_RAG_RECIPE_HANDLE).is_some_and(|p| p == *asset_path) {
+            return Self::fold_react_rag_dataset(args, context_refs);
+        }
+        // chat-rag AND vision-rag share the SAME dataset fold: strip `dataset`/`k`, read
+        // `prompt` as the query, retrieve the top-k passages (hybrid), and append their
+        // EXACT refs to CONTEXT_ITEMS. vision-rag's `image_ref`/`model` slots are not
+        // selector keys, so they pass through untouched to bind_snapshot (RC4b).
+        let is_rag_fold = [CHAT_RAG_RECIPE_HANDLE, VISION_RAG_RECIPE_HANDLE]
+            .iter()
+            .any(|h| parse_handle(h).is_some_and(|p| p == *asset_path));
+        if !is_rag_fold {
             return Ok((Cow::Borrowed(args), Cow::Borrowed(context_refs)));
         }
         // Read `prompt` (the query text) and pull out the `dataset`/`k` selectors so
@@ -1914,6 +2112,11 @@ impl RecipeBinder for HostRecipeBinder {
                 REACT_FS_RECIPE_HANDLE,
                 REACT_AUTO_RECIPE_HANDLE,
                 REACT_VISION_RECIPE_HANDLE,
+                // RC4b: react-rag is a live ReAct chain (the retrieve@1 loop) ⇒ it MUST
+                // seed the run-salted chain too, else the loop never runs as a chain AND
+                // the empty react_chain_salt makes the client retrieve the wrong chain on
+                // serve's shared journal (BUG-34, the react-vision lesson).
+                REACT_RAG_RECIPE_HANDLE,
             ]
             .iter()
             .any(|h| parse_handle(h).is_some_and(|p| p == asset_path)),
@@ -2992,6 +3195,18 @@ fn tool_step_warrant(
 fn react_fs_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(REACT_FS_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid react-fs recipe handle".into()))
+}
+
+/// RC4b: the `react-rag` recipe handle (the agentic-RAG live ReAct loop).
+fn react_rag_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(REACT_RAG_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid react-rag recipe handle".into()))
+}
+
+/// RC4b: the `vision-rag` recipe handle (image + dataset-grounded completion).
+fn vision_rag_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(VISION_RAG_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid vision-rag recipe handle".into()))
 }
 
 /// D155 Phase-3: the server-built `react-edit` step warrant. A bounded live ReAct
@@ -5324,6 +5539,7 @@ mod tests {
                 &parties,
                 Some(&primary),
                 None,
+                None,
                 false,
                 None,
                 false,
@@ -5345,6 +5561,7 @@ mod tests {
                 ExecutorClass::Bwrap,
                 &parties,
                 Some(&primary),
+                None,
                 None,
                 false,
                 None,
@@ -5430,6 +5647,153 @@ mod tests {
             w.resource_ceiling.wall_clock_ms >= 300_000,
             "the wall clock must comfortably exceed a full-budget greedy decode"
         );
+    }
+
+    #[test]
+    fn react_rag_recipe_seeded_only_with_the_retrieve_tool() {
+        // RC4b: react-rag is a SEPARATE recipe, seeded only when a model is served AND
+        // the retrieve@1 capability is registerable (the hnsw build passes Some). None ⇒
+        // the canonical set is byte-unchanged (no react-rag).
+        let model = ModelId("kx-serve:m".to_string());
+        let parties = ["alice@acme".to_string()];
+        let retrieve = (ToolName("retrieve".into()), ToolVersion("1".into()));
+
+        // retrieve tool present ⇒ react-rag seeded, granting exactly retrieve@1.
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_serve(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &parties,
+            Some(&model),
+            None,
+            Some(&retrieve),
+            false,
+            None,
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(
+            lib.recipe_handles()
+                .contains(&REACT_RAG_RECIPE_HANDLE.to_string()),
+            "react-rag is provisioned when the retrieve tool is available"
+        );
+
+        // no retrieve tool ⇒ NOT seeded (canonical set unchanged).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_serve(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &parties,
+            Some(&model),
+            None,
+            None,
+            false,
+            None,
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(
+            !lib2
+                .recipe_handles()
+                .contains(&REACT_RAG_RECIPE_HANDLE.to_string()),
+            "no retrieve tool ⇒ no react-rag (byte-identical to before)"
+        );
+    }
+
+    #[test]
+    fn vision_rag_recipe_seeded_only_with_vision_and_datasets() {
+        // RC4b: vision-rag needs BOTH an image-capable model (vision=true) AND datasets
+        // available (retrieve_tool=Some). Either absent ⇒ not seeded.
+        let model = ModelId("kx-serve:m".to_string());
+        let parties = ["alice@acme".to_string()];
+        let retrieve = (ToolName("retrieve".into()), ToolVersion("1".into()));
+
+        // vision + datasets ⇒ seeded.
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_serve(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &parties,
+            Some(&model),
+            None,
+            Some(&retrieve),
+            true,
+            None,
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(lib
+            .recipe_handles()
+            .contains(&VISION_RAG_RECIPE_HANDLE.to_string()));
+
+        // datasets but NO vision ⇒ not seeded.
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_serve(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &parties,
+            Some(&model),
+            None,
+            Some(&retrieve),
+            false,
+            None,
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(!lib2
+            .recipe_handles()
+            .contains(&VISION_RAG_RECIPE_HANDLE.to_string()));
+        // distinct logic ref (BUG-25).
+        assert_ne!(VISION_RAG_LOGIC_REF, REACT_RAG_LOGIC_REF);
+        assert_ne!(VISION_RAG_LOGIC_REF, VISION_LOGIC_REF);
+    }
+
+    #[test]
+    fn react_rag_warrant_grants_exactly_the_retrieve_tool() {
+        // The react-rag warrant grants retrieve@1 and (like the echo react warrant)
+        // leaves fs/net empty — matching retrieve@1's declared requirement so the broker
+        // precheck passes with no fs root.
+        let retrieve = (ToolName("retrieve".into()), ToolVersion("1".into()));
+        let w = react_warrant(ExecutorClass::Bwrap, &ModelId("m".to_string()), &retrieve);
+        assert_eq!(w.tool_grants.len(), 1);
+        let g = w.tool_grants.iter().next().unwrap();
+        assert_eq!(g.tool_id.0, "retrieve");
+        assert_eq!(g.tool_version.0, "1");
+        assert!(w.fs_scope.mounts.is_empty(), "retrieve has no fs scope");
+        assert_eq!(w.net_scope, NetScope::None, "retrieve has no egress");
+        // Distinct logic ref (BUG-25) — never collides with the echo react body.
+        assert_ne!(REACT_RAG_LOGIC_REF, REACT_LOGIC_REF);
+        assert_ne!(REACT_RAG_LOGIC_REF, REACT_FS_LOGIC_REF);
+    }
+
+    #[test]
+    fn react_rag_folds_the_dataset_into_the_instruction() {
+        // The bind strips the `dataset` selector (not a declared slot) and folds it into
+        // the instruction so the model copies it into the retrieve args.
+        let args = serde_json::json!({
+            "instruction": "What does the handbook say about parental leave?",
+            "dataset": "handbook",
+        });
+        let bytes = serde_json::to_vec(&args).unwrap();
+        let (folded_args, _refs) = HostRecipeBinder::fold_react_rag_dataset(&bytes, &[]).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&folded_args).unwrap();
+        // dataset key stripped (it is not a declared free-param)...
+        assert!(v.get(REACT_RAG_DATASET_KEY).is_none());
+        // ...and the instruction now names the dataset + the retrieve tool.
+        let instr = v[kx_mote::REACT_INSTRUCTION_KEY].as_str().unwrap();
+        assert!(instr.contains("parental leave"), "keeps the user's ask");
+        assert!(instr.contains("handbook"), "names the dataset");
+        assert!(instr.contains("retrieve"), "names the tool");
+
+        // No dataset arg ⇒ instruction untouched (honest no-op; prose may name one).
+        let plain = serde_json::to_vec(&serde_json::json!({"instruction": "hi"})).unwrap();
+        let (out, _) = HostRecipeBinder::fold_react_rag_dataset(&plain, &[]).unwrap();
+        let v2: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v2[kx_mote::REACT_INSTRUCTION_KEY], "hi");
     }
 
     #[test]

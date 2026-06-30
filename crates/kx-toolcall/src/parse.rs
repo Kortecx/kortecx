@@ -152,6 +152,74 @@ fn extract_gemma_native(text: &str) -> Option<NativeCall<'_>> {
     Some(NativeCall { raw_name, args })
 }
 
+/// Gemma-4 sometimes wraps the FULL `{"tool_call":{…}}` ENVELOPE inside its native
+/// delimiters — `<|tool_call>call:{"tool_call":{…}}<tool_call|>` — instead of the bare
+/// `call:NAME{ARGS}`. The `NAME{ARGS}` arm ([`extract_gemma_native`]) reads an EMPTY name
+/// there (the `{` follows the optional `call:`) and bails, so this returns the inner
+/// brace-balanced `{…}` object for the envelope decoder to recover. DEFINED-delimiter
+/// only (the marker is the boundary; [`balanced_object`] bounds the JSON) — never a
+/// mid-string `{` search, so the SN-8 injection boundary is unchanged. `None` unless the
+/// text opens with the Gemma marker AND the body is a leading brace-balanced object.
+/// Total + panic-free.
+fn gemma_marked_envelope(text: &str) -> Option<&str> {
+    let after_open = text.trim_start().strip_prefix(GEMMA_TOOL_OPEN)?;
+    let after_marker_ws = after_open.trim_start();
+    let after_marker = after_marker_ws
+        .strip_prefix(GEMMA_CALL_MARKER)
+        .unwrap_or(after_marker_ws)
+        .trim_start();
+    if after_marker.starts_with('{') {
+        balanced_object(after_marker)
+    } else {
+        None
+    }
+}
+
+/// Resolve a decoded `{"tool_call":{name,version,args}}` envelope to a granted
+/// [`ToolCall`], or a LOUD [`DecodeError`]. Exact `(name, version)` crypto-equality
+/// FIRST (SN-8); only an empty version resolves the name to a UNIQUE grant (the menu-label
+/// drift shape); a non-empty wrong version stays `UngrantedTool`. Args carried verbatim,
+/// size-capped (IMP-16). Shared by the bare-envelope path AND the Gemma-marked-envelope
+/// recovery so the authority surface is identical. Total + panic-free.
+fn resolve_envelope_call(
+    raw: RawToolCall,
+    warrant: &WarrantSpec,
+    max_args_bytes: usize,
+) -> Result<ToolCall, DecodeError> {
+    let name = ToolName(raw.name);
+    let version = ToolVersion(raw.version);
+    let exact = ToolGrant {
+        tool_id: name.clone(),
+        tool_version: version.clone(),
+    };
+    let grant = if warrant.tool_grants.contains(&exact) {
+        exact
+    } else if version.0.trim().is_empty() {
+        match resolve_name(&name.0, warrant) {
+            NameResolution::Unique(g) => g,
+            NameResolution::Ambiguous(candidates) => {
+                return Err(DecodeError::Ambiguous { name, candidates })
+            }
+            NameResolution::Unresolved => return Err(DecodeError::UngrantedTool { name, version }),
+        }
+    } else {
+        return Err(DecodeError::UngrantedTool { name, version });
+    };
+    let args_bytes =
+        args_value_bytes(&raw.args).unwrap_or_else(|| raw.args.get().as_bytes().to_vec());
+    if args_bytes.len() > max_args_bytes {
+        return Err(DecodeError::Oversize {
+            got: args_bytes.len(),
+            max: max_args_bytes,
+        });
+    }
+    Ok(ToolCall {
+        name: grant.tool_id,
+        version: grant.tool_version,
+        args_bytes,
+    })
+}
+
 /// Return the prefix of `s` (which MUST start with `{`) spanning the first
 /// brace-balanced JSON object, ignoring braces inside double-quoted strings
 /// (with `\"` escapes). `None` if unbalanced or past `MAX_DEPTH`. Total +
@@ -805,6 +873,23 @@ pub fn parse_tool_call(
         return Ok(Some(resolve_native_call(&native, warrant, max_args_bytes)?));
     }
 
+    // (1a') Gemma-4 sometimes wraps the `{"tool_call":…}` ENVELOPE inside its native
+    //       markers (`<|tool_call>call:{"tool_call":{…}}<tool_call|>`) rather than the
+    //       bare `call:NAME{ARGS}`. The native arm above reads an EMPTY name there (the
+    //       `{` follows the optional `call:`), so recover the inner envelope through the
+    //       SAME exact-grant resolution + args cap as a bare envelope — SN-8 unchanged (the
+    //       DEFINED marker is the boundary, never a `{` search). A wrapped object that is
+    //       NOT a `tool_call` envelope falls through to a normal completion. (Live
+    //       RC4b witness: Gemma-4 emits this for the `retrieve` tool — T-GEMMA-ENVELOPE-IN-MARKER.)
+    if let Some(inner) = gemma_marked_envelope(trimmed) {
+        if let Ok(Envelope {
+            tool_call: Some(raw),
+        }) = serde_json::from_str::<Envelope>(inner)
+        {
+            return Ok(Some(resolve_envelope_call(raw, warrant, max_args_bytes)?));
+        }
+    }
+
     // (1b) Llama-3.1 `<|python_tag|>{…}` and Qwen3/Hermes `<tool_call>{…}</tool_call>`
     //      — two MORE DEFINED-delimiter shapes (markers required; never a `{` search),
     //      each wrapping a `{"name":…, "arguments"|"parameters"|"args":…}` object.
@@ -852,57 +937,11 @@ pub fn parse_tool_call(
         return decode_markerless(trimmed, warrant, max_args_bytes);
     };
 
-    // (3) The model committed to a tool call. Enforce tool ∈ warrant.tool_grants.
-    //     EXACT (name, version) crypto-equality is tried FIRST — byte-identical to
-    //     every prior row (SN-8 / D70). Only on an exact MISS *with an empty
-    //     version* (the `mcp-echo:echo` separator/version-drift shape a model emits
-    //     when it copies the menu label) do we resolve the name to a UNIQUE grant
-    //     and take the GRANT's version — never the model's. A NON-empty wrong
-    //     version stays `UngrantedTool` (the model pinned a different tool — SN-8;
-    //     keeps `ungranted_tool_is_refused` valid). The returned call is an element
-    //     of `tool_grants` by construction (never widens the set).
-    let name = ToolName(raw.name);
-    let version = ToolVersion(raw.version);
-    let exact = ToolGrant {
-        tool_id: name.clone(),
-        tool_version: version.clone(),
-    };
-    let grant = if warrant.tool_grants.contains(&exact) {
-        exact
-    } else if version.0.trim().is_empty() {
-        // A committed `tool_call` envelope ⇒ a non-unique name is a LOUD refusal:
-        // ambiguity carries the candidate full-ids for the disambiguating re-prompt;
-        // no grant stays `UngrantedTool` (preserving the model's pinned name+version).
-        match resolve_name(&name.0, warrant) {
-            NameResolution::Unique(g) => g,
-            NameResolution::Ambiguous(candidates) => {
-                return Err(DecodeError::Ambiguous { name, candidates })
-            }
-            NameResolution::Unresolved => return Err(DecodeError::UngrantedTool { name, version }),
-        }
-    } else {
-        return Err(DecodeError::UngrantedTool { name, version });
-    };
-
-    // (4) Carry the args verbatim, size-capped (IMP-16). An args OBJECT is carried
-    //     byte-for-byte (the PR-2d-1 pin); a pre-serialized JSON-STRING value (some
-    //     models emit `"args":"{…}"`) is unescaped to its inner JSON, then repaired +
-    //     schema-validated downstream — the envelope-side complement to PR-3's args
-    //     repair. A non-object/non-string value carries verbatim (refused downstream).
-    let args_bytes =
-        args_value_bytes(&raw.args).unwrap_or_else(|| raw.args.get().as_bytes().to_vec());
-    if args_bytes.len() > max_args_bytes {
-        return Err(DecodeError::Oversize {
-            got: args_bytes.len(),
-            max: max_args_bytes,
-        });
-    }
-
-    Ok(Some(ToolCall {
-        name: grant.tool_id,
-        version: grant.tool_version,
-        args_bytes,
-    }))
+    // (3) The model committed to a tool call. Enforce tool ∈ warrant.tool_grants via the
+    //     SHARED envelope resolver (exact (name, version) crypto-equality FIRST, SN-8;
+    //     empty-version name-resolve for the menu-label drift shape; args carried verbatim
+    //     + size-capped) — the SAME path the Gemma-marked-envelope recovery uses.
+    Ok(Some(resolve_envelope_call(raw, warrant, max_args_bytes)?))
 }
 
 /// Decode ALL model-proposed tool calls from raw model output, fail-closed —
@@ -1334,6 +1373,55 @@ mod tests {
         assert_eq!(call.name, ToolName("fs-list".into())); // `_`→`-` normalized
         assert_eq!(call.version, ToolVersion("1".into())); // resolved from the grant
         assert_eq!(call.args_bytes, b"{}".to_vec());
+    }
+
+    #[test]
+    fn gemma_marked_envelope_is_recovered_to_a_granted_call() {
+        // RC4b live-witness (T-GEMMA-ENVELOPE-IN-MARKER): Gemma-4 sometimes wraps the FULL
+        // {"tool_call":{…}} envelope INSIDE its native markers (`call:` then a `{`, not a
+        // bare name). The native NAME{ARGS} arm reads an EMPTY name; the envelope must be
+        // recovered through the same exact-grant resolution + args cap (SN-8).
+        let w = warrant_granting(Some(("retrieve", "1")));
+        let env = br#"<|tool_call>call:{"tool_call":{"name":"retrieve","version":"1","args":{"dataset":"science","query":"plants energy sun"}}}<tool_call|>"#;
+        let call = parse_tool_call(env, &w, 4096)
+            .unwrap()
+            .expect("the marked envelope recovers to a granted call");
+        assert_eq!(call.name, ToolName("retrieve".into()));
+        assert_eq!(call.version, ToolVersion("1".into()));
+        assert_eq!(
+            call.args_bytes,
+            br#"{"dataset":"science","query":"plants energy sun"}"#.to_vec()
+        );
+    }
+
+    #[test]
+    fn gemma_marked_envelope_without_call_marker_is_recovered() {
+        // The `call:` marker is optional — `<|tool_call>{envelope}` recovers too.
+        let w = warrant_granting(Some(("retrieve", "1")));
+        let env = br#"<|tool_call>{"tool_call":{"name":"retrieve","version":"1","args":{"dataset":"d","query":"q"}}}"#;
+        let call = parse_tool_call(env, &w, 4096).unwrap().expect("recovered");
+        assert_eq!(call.name, ToolName("retrieve".into()));
+    }
+
+    #[test]
+    fn gemma_marked_envelope_ungranted_is_refused_not_silent() {
+        // SN-8: a marked envelope naming an UNGRANTED tool is a LOUD refusal, never prose —
+        // the recovery still flows through the exact-grant authority gate.
+        let w = warrant_granting(Some(("retrieve", "1")));
+        let env = br#"<|tool_call>call:{"tool_call":{"name":"rm-rf","version":"1","args":{}}}<tool_call|>"#;
+        assert!(matches!(
+            parse_tool_call(env, &w, 4096),
+            Err(DecodeError::UngrantedTool { .. })
+        ));
+    }
+
+    #[test]
+    fn gemma_marked_non_envelope_object_is_a_normal_completion() {
+        // A Gemma marker wrapping a NON-tool_call object is prose, not a refusal (the
+        // model emitted structured non-call JSON). Degrades to a normal completion.
+        let w = warrant_granting(Some(("retrieve", "1")));
+        let env = br#"<|tool_call>call:{"thought":"I should search"}<tool_call|>"#;
+        assert!(parse_tool_call(env, &w, 4096).unwrap().is_none());
     }
 
     #[test]

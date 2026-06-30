@@ -46,6 +46,10 @@ fn curated_keywords(tool_id: &str) -> Vec<&'static str> {
         "fs-write" => vec!["file", "write", "save", "filesystem", "disk", "store"],
         "text-summarize" => vec!["text", "summarize", "summary", "condense", "digest"],
         "mcp-echo" => vec!["echo", "repeat", "mirror", "ping"],
+        // RC4b: the agentic-RAG dataset-search tool (seeded on an hnsw + serve build).
+        "retrieve" => vec![
+            "retrieve", "search", "dataset", "rag", "passage", "find", "lookup",
+        ],
         _ => vec![],
     }
 }

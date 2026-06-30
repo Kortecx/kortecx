@@ -78,8 +78,23 @@ def test_chat_prefers_default_model_when_legal() -> None:
     assert c.invoked[1]["model"] == "gemma3:12b"
 
 
-def test_dataset_and_image_together_is_usage() -> None:
+def test_dataset_and_image_binds_vision_rag() -> None:
+    # RC4b: image + dataset now binds kx/recipes/vision-rag (the VLM answers about the
+    # image WHILE grounded on the dataset's retrieved text) — no longer a usage error.
     c = _VisionFake(_vision_form(["m"]))
+    out = c.chat("describe", image=b"\x01", dataset="docs", k=3)
+    assert out == "a cat"
+    handle, args = c.invoked
+    assert handle == "kx/recipes/vision-rag"
+    assert args["image_ref"] == "ab" * 32
+    assert args["dataset"] == "docs"
+    assert args["k"] == 3
+
+
+def test_dataset_and_image_honest_degrades_when_vision_rag_absent() -> None:
+    # No vision-rag recipe (no image-capable model / non-hnsw serve) ⇒ a clear KxUsage,
+    # never a silent drop of the image or the dataset (GR15).
+    c = _VisionFake(None)
     with pytest.raises(KxUsage):
         c.chat("hi", image=b"\x01", dataset="docs")
 

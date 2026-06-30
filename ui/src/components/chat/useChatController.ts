@@ -129,7 +129,10 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
     promptKey: backing.promptKey,
     modelId,
     agentMode: agentTurn,
-    dataset: agentTurn ? undefined : dataset,
+    // RC4b: pass the dataset in BOTH modes — a plain turn grounds via chat-rag, an agent
+    // turn routes to react-rag (the model searches it with the `retrieve` tool). The
+    // recipe form-gate honest-degrades when react-rag is not provisioned.
+    dataset,
     contextRefs: config.contextRefs,
   });
 

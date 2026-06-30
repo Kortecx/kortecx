@@ -177,6 +177,19 @@ VISION_RECIPE_HANDLE = "kx/recipes/vision"
 #: ``kx/recipes/react`` prefix, so :func:`_is_react_handle` settles it as a chain.
 REACT_VISION_RECIPE_HANDLE = "kx/recipes/react-vision"
 
+#: RC4b AGENTIC RAG: the dataset-grounded ReAct recipe — a live agent loop whose warrant
+#: grants the read-only ``retrieve`` tool, so the model AUTONOMOUSLY searches a corpus
+#: (hybrid keyword+semantic), reads the passages, and can re-query across turns. Invoke it
+#: with ``{"instruction": <goal>, "dataset": <name>}``; the server folds the dataset name
+#: into the instruction. Shares the ``kx/recipes/react`` prefix, so it settles as a chain.
+REACT_RAG_RECIPE_HANDLE = "kx/recipes/react-rag"
+
+#: RC4b VISION-RAG: a single grounded multimodal completion — the served VLM answers about
+#: an attached image WHILE grounded on a dataset's top-k retrieved TEXT passages (one
+#: generation). Bind ``{"prompt", "image_ref", "model", "dataset", "k"}`` (``chat(image=,
+#: dataset=)`` does this). Datasets stay text-only (image-embedding is post-RC).
+VISION_RAG_RECIPE_HANDLE = "kx/recipes/vision-rag"
+
 ArgsType = Union[dict, bytes, bytearray, str]
 IdType = Union[str, bytes]
 #: PR-B2: an image to attach to :meth:`chat`. Raw ``bytes`` (uploaded), or a dict
@@ -640,6 +653,36 @@ class KxClient:
             raise KxUsage("the kx/recipes/react-vision form does not declare an image_ref slot")
         return REACT_VISION_RECIPE_HANDLE, {**args, "image_ref": image_ref}
 
+    def _bind_vision_rag(
+        self, prompt: str, image_ref: str, dataset: str, k: int
+    ) -> Tuple[str, dict]:
+        """RC4b: bind ``kx/recipes/vision-rag`` — the VLM answers about the image WHILE
+        grounded on the dataset's retrieved text (one generation). Honest-degrades with a
+        clear error when vision-RAG is not provisioned (needs BOTH a vision model AND the
+        dataset/hnsw features) — never silently drops the dataset (GR15)."""
+        try:
+            form = self.get_recipe_form(VISION_RAG_RECIPE_HANDLE)
+        except Exception as e:  # recipe not provisioned (text-only / non-hnsw / old gateway)
+            raise KxUsage(
+                "vision-RAG is not available on this serve — it needs BOTH an image-capable "
+                "model AND the dataset (hnsw) features. Drop 'dataset' for a plain vision "
+                "answer, or serve a vision model with datasets enabled."
+            ) from e
+        by = {f.name: f for f in form.fields}
+        if "image_ref" not in by:
+            raise KxUsage("the kx/recipes/vision-rag form does not declare an image_ref slot")
+        args: dict = {"image_ref": image_ref, "dataset": dataset, "k": k}
+        if "prompt" in by:
+            args["prompt"] = prompt
+        model = by.get("model")
+        if model is not None:
+            args["model"] = (
+                self.default_model
+                if (self.default_model and self.default_model in model.allowed)
+                else model.allowed[0]
+            )
+        return VISION_RAG_RECIPE_HANDLE, args
+
     def chat(
         self,
         prompt: str,
@@ -668,17 +711,16 @@ class KxClient:
 
         PR-B2: pass ``image`` (raw ``bytes`` or ``{"ref": <hex>}``) to attach an image
         and bind ``kx/recipes/vision`` (image→text on a vision-capable model on either
-        engine; also prompted OCR). ``dataset`` + ``image`` together is not yet
-        supported (vision-RAG is a follow-up) — a clear :class:`KxUsage`, never a
-        silent drop."""
+        engine; also prompted OCR). RC4b: ``dataset`` + ``image`` together binds
+        ``kx/recipes/vision-rag`` — the VLM answers about the image WHILE grounded on the
+        dataset's retrieved text (a clear :class:`KxUsage` when vision-RAG is not
+        provisioned, never a silent drop)."""
         if image is not None:
-            if dataset is not None:
-                raise KxUsage(
-                    "chat: 'dataset' and 'image' cannot be combined "
-                    "(vision-RAG is not yet supported)"
-                )
             image_ref = self._resolve_image_ref(image)
-            v_handle, v_args = self._bind_vision(prompt, image_ref)
+            if dataset is not None:
+                v_handle, v_args = self._bind_vision_rag(prompt, image_ref, dataset, k)
+            else:
+                v_handle, v_args = self._bind_vision(prompt, image_ref)
             v_result = self.invoke(v_handle, v_args, wait=True, timeout=timeout)
             assert isinstance(v_result, Result)
             return v_result.text or ""
@@ -2358,6 +2400,33 @@ class AsyncKxClient:
             raise KxUsage("the kx/recipes/react-vision form does not declare an image_ref slot")
         return REACT_VISION_RECIPE_HANDLE, {**args, "image_ref": image_ref}
 
+    async def _bind_vision_rag(
+        self, prompt: str, image_ref: str, dataset: str, k: int
+    ) -> Tuple[str, dict]:
+        """Async mirror of :meth:`KxClient._bind_vision_rag` (RC4b vision-RAG)."""
+        try:
+            form = await self.get_recipe_form(VISION_RAG_RECIPE_HANDLE)
+        except Exception as e:  # recipe not provisioned (text-only / non-hnsw / old gateway)
+            raise KxUsage(
+                "vision-RAG is not available on this serve — it needs BOTH an image-capable "
+                "model AND the dataset (hnsw) features. Drop 'dataset' for a plain vision "
+                "answer, or serve a vision model with datasets enabled."
+            ) from e
+        by = {f.name: f for f in form.fields}
+        if "image_ref" not in by:
+            raise KxUsage("the kx/recipes/vision-rag form does not declare an image_ref slot")
+        args: dict = {"image_ref": image_ref, "dataset": dataset, "k": k}
+        if "prompt" in by:
+            args["prompt"] = prompt
+        model = by.get("model")
+        if model is not None:
+            args["model"] = (
+                self.default_model
+                if (self.default_model and self.default_model in model.allowed)
+                else model.allowed[0]
+            )
+        return VISION_RAG_RECIPE_HANDLE, args
+
     async def chat(
         self,
         prompt: str,
@@ -2371,16 +2440,14 @@ class AsyncKxClient:
         question (optionally AUTO-RAG-grounded against ``dataset``, or image-bearing
         via ``image`` → ``kx/recipes/vision``) and return the committed answer text.
         The server degrades honestly to a plain answer when the dataset is
-        missing/empty (never fakes grounding); ``dataset`` + ``image`` together is a
-        :class:`KxUsage` (vision-RAG is a follow-up)."""
+        missing/empty (never fakes grounding); RC4b: ``dataset`` + ``image`` together
+        binds ``kx/recipes/vision-rag`` (image answer grounded on retrieved text)."""
         if image is not None:
-            if dataset is not None:
-                raise KxUsage(
-                    "chat: 'dataset' and 'image' cannot be combined "
-                    "(vision-RAG is not yet supported)"
-                )
             image_ref = await self._resolve_image_ref(image)
-            v_handle, v_args = await self._bind_vision(prompt, image_ref)
+            if dataset is not None:
+                v_handle, v_args = await self._bind_vision_rag(prompt, image_ref, dataset, k)
+            else:
+                v_handle, v_args = await self._bind_vision(prompt, image_ref)
             v_result = await self.invoke(v_handle, v_args, wait=True, timeout=timeout)
             assert isinstance(v_result, Result)
             return v_result.text or ""

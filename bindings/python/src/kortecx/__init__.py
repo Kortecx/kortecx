@@ -31,6 +31,8 @@ from .capture import CaptureRecord, CaptureRecordPage
 from .chains import Chain, Task, chain, model, pure
 from .client import (
     DEFAULT_ENDPOINT,
+    REACT_RAG_RECIPE_HANDLE,
+    VISION_RAG_RECIPE_HANDLE,
     VISION_RECIPE_HANDLE,
     AsyncKxClient,
     ImageInput,
@@ -147,6 +149,9 @@ __all__ = [
     "AsyncKxClient",
     # PR-B2 vision
     "VISION_RECIPE_HANDLE",
+    # RC4b agentic RAG
+    "REACT_RAG_RECIPE_HANDLE",
+    "VISION_RAG_RECIPE_HANDLE",
     "ImageInput",
     # POC-4 Apps (kortecx.app/v1 envelopes)
     "app",

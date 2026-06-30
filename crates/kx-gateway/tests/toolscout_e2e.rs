@@ -56,16 +56,34 @@ async fn list_tool_manifests_enumerates_the_builtins() {
         .into_inner()
         .manifests;
 
+    // `mcp-echo/echo` registers only when the bundled bin is present (env-dependent — in
+    // CI's inference-checks it is absent), so filter it out and assert the DETERMINISTIC
+    // registry builtins. RC4b: the read-only `retrieve@1` tool is seeded whenever datasets
+    // are available (a `serve-engine` + `hnsw` build), so it joins the OSS builtins in the
+    // advisory discovery surface — sorted between `fs-write` and `text-summarize`.
     let ids: Vec<(&str, &str)> = manifests
         .iter()
         .map(|m| (m.tool_id.as_str(), m.tool_version.as_str()))
+        .filter(|(id, _)| !id.starts_with("mcp-echo"))
         .collect();
+    #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+    let expected = vec![
+        ("fs-read", "1"),
+        ("fs-write", "1"),
+        ("retrieve", "1"),
+        ("text-summarize", "1"),
+    ];
+    #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
+    let expected = vec![("fs-read", "1"), ("fs-write", "1"), ("text-summarize", "1")];
     assert_eq!(
-        ids,
-        vec![("fs-read", "1"), ("fs-write", "1"), ("text-summarize", "1")],
+        ids, expected,
         "the OSS builtins, in deterministic (tool_id, tool_version) order"
     );
-    for m in &manifests {
+    // (skip the env-dependent `mcp-echo/echo` — it is kind `Mcp`, not `Builtin`).
+    for m in manifests
+        .iter()
+        .filter(|m| !m.tool_id.starts_with("mcp-echo"))
+    {
         assert_eq!(m.kind, "Builtin");
         assert!(
             !m.description.is_empty(),
@@ -100,7 +118,21 @@ async fn score_task_bundle_ranks_deterministically_and_stays_advisory() {
 
     // Every manifest ranked, best first; the exact intent keywords ("read",
     // "file", "disk") hit fs-read's curated keyword set at the 10 000 ceiling.
-    assert_eq!(first.ranked.len(), 3, "every registered manifest is ranked");
+    // Filter the env-dependent `mcp-echo/echo`; RC4b: +1 (retrieve@1) on a serve-engine +
+    // hnsw build (see the manifests test).
+    let ranked_builtins = first
+        .ranked
+        .iter()
+        .filter(|r| !r.tool_id.starts_with("mcp-echo"))
+        .count();
+    #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+    let expected_count = 4;
+    #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
+    let expected_count = 3;
+    assert_eq!(
+        ranked_builtins, expected_count,
+        "every registered manifest is ranked"
+    );
     assert_eq!(first.ranked[0].tool_id, "fs-read");
     assert_eq!(first.ranked[0].score_bp, 10_000);
     assert!(
