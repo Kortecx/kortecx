@@ -1948,7 +1948,7 @@ impl HostRecipeBinder {
         // keyword the decoder-LLM embedding mis-ranks is still caught (operator-overridable).
         let hits = match g
             .datasets
-            .query(dataset, None, &prompt, k, RetrievalMode::Hybrid)
+            .query(dataset, None, &prompt, k, RetrievalMode::Hybrid, None)
         {
             Ok(hits) if !hits.is_empty() => hits,
             // Unknown dataset / embedder-unavailable / empty index / backend error ⇒
@@ -4797,6 +4797,7 @@ mod tests {
             _query_text: &str,
             k: usize,
             _mode: RetrievalMode,
+            _rerank: Option<bool>,
         ) -> Result<Vec<kx_gateway_core::DatasetHitEntry>, kx_gateway_core::DatasetError> {
             match dataset {
                 "missing" => Err(kx_gateway_core::DatasetError::NotFound),

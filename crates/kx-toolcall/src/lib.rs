@@ -26,5 +26,5 @@ mod parse;
 mod types;
 
 pub use dedup::{duplicate_call_reason, is_duplicate_call};
-pub use parse::{max_args_bytes, parse_tool_call, parse_tool_calls};
+pub use parse::{max_args_bytes, parse_permutation, parse_tool_call, parse_tool_calls};
 pub use types::{DecodeError, ToolCall};

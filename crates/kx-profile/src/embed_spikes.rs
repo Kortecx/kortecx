@@ -156,6 +156,8 @@ async fn query_one(
             k: 5,
             // RC4a: profile the hybrid (BM25 + dense, RRF-fused) retrieval path.
             retrieval_mode: proto::RetrievalMode::Hybrid as i32,
+            // RC4c: server default rerank (the profile measures the standard path).
+            rerank: None,
         },
         token,
     )?)

@@ -718,6 +718,7 @@ impl HostDatasetView {
         query_text: &str,
         k: usize,
         mode: RetrievalMode,
+        rerank: Option<bool>,
     ) -> Result<Vec<SearchHit>, DatasetError> {
         if k == 0 {
             return Ok(Vec::new());
@@ -796,8 +797,8 @@ impl HostDatasetView {
         };
         // MMR diversity rerank (deterministic, off the committed fact): preserves the
         // fused relevance order while demoting near-duplicate passages. Skipped when
-        // disabled by the operator.
-        let ranked: Vec<Hit> = if self.config.rerank {
+        // disabled by the operator — or by a per-query `rerank` override (RC4c).
+        let ranked: Vec<Hit> = if rerank.unwrap_or(self.config.rerank) {
             #[allow(clippy::cast_precision_loss)]
             let lambda = self.config.mmr_lambda_bp as f32 / 10_000.0;
             mmr_rerank(&fused, |id| state.index.vector_of(id), lambda, k)
@@ -961,9 +962,10 @@ impl DatasetView for HostDatasetView {
         query_text: &str,
         k: usize,
         mode: RetrievalMode,
+        rerank: Option<bool>,
     ) -> Result<Vec<DatasetHitEntry>, DatasetError> {
         Ok(self
-            .search(dataset, query_embedding, query_text, k, mode)?
+            .search(dataset, query_embedding, query_text, k, mode, rerank)?
             .into_iter()
             .map(|h| DatasetHitEntry {
                 content_ref: *h.chunk_ref.as_bytes(),
@@ -991,7 +993,8 @@ impl FuzzyDiscoveryView for HostDatasetView {
         mode: RetrievalMode,
     ) -> Result<Vec<FuzzyHitEntry>, DatasetError> {
         Ok(self
-            .search(dataset, query_embedding, query_text, k, mode)?
+            // Fuzzy discovery uses the operator's MMR default (no per-call override).
+            .search(dataset, query_embedding, query_text, k, mode, None)?
             .into_iter()
             .map(|h| FuzzyHitEntry {
                 content_ref: *h.chunk_ref.as_bytes(),
@@ -1144,7 +1147,14 @@ mod tests {
 
         // A query closest to axis 1 ⇒ "bravo" is the top hit, with its bytes attached.
         let hits = view
-            .query("corpus", Some(&axis_vec(1)), "", 1, RetrievalMode::Default)
+            .query(
+                "corpus",
+                Some(&axis_vec(1)),
+                "",
+                1,
+                RetrievalMode::Default,
+                None,
+            )
             .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, b"bravo");
@@ -1170,7 +1180,7 @@ mod tests {
         assert_eq!(list[0].dim, 4);
         // The rebuilt index still serves the right neighbour.
         let hits = reopened
-            .query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
+            .query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default, None)
             .unwrap();
         assert_eq!(hits[0].content, b"alpha");
     }
@@ -1206,7 +1216,7 @@ mod tests {
         view.ingest("c", &[doc(b"a", &axis_vec(0))]).unwrap(); // dim 4
         let three = vec![0.0f32; 3];
         let err = view
-            .query("c", Some(&three), "", 1, RetrievalMode::Default)
+            .query("c", Some(&three), "", 1, RetrievalMode::Default, None)
             .unwrap_err();
         assert!(matches!(err, DatasetError::DimMismatch(_)));
     }
@@ -1216,7 +1226,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let view = open_view(dir.path());
         let err = view
-            .query("nope", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
+            .query(
+                "nope",
+                Some(&axis_vec(0)),
+                "",
+                1,
+                RetrievalMode::Default,
+                None,
+            )
             .unwrap_err();
         assert!(matches!(err, DatasetError::NotFound));
     }
@@ -1232,7 +1249,7 @@ mod tests {
         let err = view.ingest("c", &[textonly]).unwrap_err();
         assert!(matches!(err, DatasetError::EmbedderUnavailable));
         let qerr = view
-            .query("c", None, "hello", 1, RetrievalMode::Default)
+            .query("c", None, "hello", 1, RetrievalMode::Default, None)
             .unwrap_err();
         // unknown dataset OR embedder-unavailable — both are honest; the embed is
         // attempted first (before the lock), so EmbedderUnavailable wins here.
@@ -1330,7 +1347,14 @@ mod tests {
         assert_eq!(out.dim, 4);
         // A text-only query is embedded server-side ⇒ the "bravo" doc is nearest.
         let hits = view
-            .query("corpus", None, "where is bravo", 1, RetrievalMode::Default)
+            .query(
+                "corpus",
+                None,
+                "where is bravo",
+                1,
+                RetrievalMode::Default,
+                None,
+            )
             .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, b"bravo two");
@@ -1371,7 +1395,7 @@ mod tests {
         view.ingest("c", &[doc(b"a", &axis_vec(0))]).unwrap();
         let inf = vec![f32::INFINITY, 0.0, 0.0, 0.0];
         let qerr = view
-            .query("c", Some(&inf), "", 1, RetrievalMode::Default)
+            .query("c", Some(&inf), "", 1, RetrievalMode::Default, None)
             .unwrap_err();
         assert!(matches!(qerr, DatasetError::InvalidArgument(_)));
     }
@@ -1436,7 +1460,7 @@ mod tests {
         );
         // A hit's parent is itself (a whole-doc chunk).
         let hits = view
-            .query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
+            .query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default, None)
             .unwrap();
         assert_eq!(hits[0].parent_ref, hits[0].content_ref);
         assert_eq!(hits[0].chunk_index, 0);
@@ -1521,11 +1545,78 @@ mod tests {
         // A single rare query term: dense cannot separate the docs, but the BM25 arm
         // gives the ONLY doc containing "xylophone" a fusion boost no other doc has.
         let hits = view
-            .query("c", None, "xylophone", 5, RetrievalMode::Hybrid)
+            .query("c", None, "xylophone", 5, RetrievalMode::Hybrid, None)
             .unwrap();
         assert_eq!(
             hits[0].content, b"alpha xylophone baz",
             "the BM25 keyword match leads the hybrid fusion"
+        );
+    }
+
+    /// RC4c: the per-query `rerank` override correctly selects the MMR path —
+    /// `Some(false)` on a rerank-on view matches a rerank-off view, and vice-versa.
+    /// A near-duplicate corpus makes MMR change the result, so the equivalence is
+    /// non-trivial (proves the override is plumbed, not a no-op).
+    #[test]
+    fn per_query_rerank_override_selects_the_mmr_path() {
+        // Two dense-identical docs (A, B) + one distinct (C); MMR demotes the dup.
+        let (v0a, v0b, v2) = (axis_vec(0), axis_vec(0), axis_vec(2));
+        let corpus = [
+            doc(b"alpha one", &v0a),
+            doc(b"alpha two", &v0b),
+            doc(b"charlie far", &v2),
+        ];
+        let q = axis_vec(0);
+
+        let mk = |rerank: bool, dir: &std::path::Path| {
+            let view = open_view(dir).with_rag_config(RagConfig {
+                rerank,
+                // λ=0 ⇒ pure diversity, so MMR (when on) provably demotes the exact
+                // duplicate B in favour of the distinct C — making on≠off observable.
+                mmr_lambda_bp: 0,
+                ..RagConfig::default()
+            });
+            view.ingest("c", &corpus).unwrap();
+            view
+        };
+        let refs =
+            |hits: &[DatasetHitEntry]| hits.iter().map(|h| h.content_ref).collect::<Vec<_>>();
+
+        let d_on = tempfile::tempdir().unwrap();
+        let on = mk(true, d_on.path());
+        let d_off = tempfile::tempdir().unwrap();
+        let off = mk(false, d_off.path());
+
+        // Config defaults (no override).
+        let on_default = on
+            .query("c", Some(&q), "", 2, RetrievalMode::Default, None)
+            .unwrap();
+        let off_default = off
+            .query("c", Some(&q), "", 2, RetrievalMode::Default, None)
+            .unwrap();
+        // MMR must actually change the top-2 on this near-dup corpus (else the test is vacuous).
+        assert_ne!(
+            refs(&on_default),
+            refs(&off_default),
+            "MMR reorders the near-dup corpus"
+        );
+
+        // Override flips each view to the OTHER config's behavior.
+        let on_forced_off = on
+            .query("c", Some(&q), "", 2, RetrievalMode::Default, Some(false))
+            .unwrap();
+        let off_forced_on = off
+            .query("c", Some(&q), "", 2, RetrievalMode::Default, Some(true))
+            .unwrap();
+        assert_eq!(
+            refs(&on_forced_off),
+            refs(&off_default),
+            "Some(false) disables MMR"
+        );
+        assert_eq!(
+            refs(&off_forced_on),
+            refs(&on_default),
+            "Some(true) enables MMR"
         );
     }
 
@@ -1560,7 +1651,7 @@ mod tests {
                 kx_warrant::WarrantSpec::default(),
             ));
         let err = view
-            .query("c", None, "where is alpha", 1, RetrievalMode::Default)
+            .query("c", None, "where is alpha", 1, RetrievalMode::Default, None)
             .unwrap_err();
         assert!(
             matches!(err, DatasetError::StaleIndex(_)),
@@ -1568,7 +1659,7 @@ mod tests {
         );
         // The client-vector path owns its own space ⇒ exempt from the guard.
         assert!(
-            view.query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default)
+            view.query("c", Some(&axis_vec(0)), "", 1, RetrievalMode::Default, None)
                 .is_ok(),
             "the client-vector path is exempt from the staleness guard"
         );
@@ -1616,7 +1707,7 @@ mod tests {
         );
         assert!(!list[0].chunked, "a legacy dataset is not marked chunked");
         let hits = view
-            .query("c", Some(&axis_vec(1)), "", 1, RetrievalMode::Default)
+            .query("c", Some(&axis_vec(1)), "", 1, RetrievalMode::Default, None)
             .unwrap();
         assert_eq!(hits[0].content, b"legacy bravo");
         assert_eq!(

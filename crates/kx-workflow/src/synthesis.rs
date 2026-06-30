@@ -105,6 +105,31 @@ pub fn generator(
     )
 }
 
+/// A **query-rewrite** step (RC4c): the model expands / rephrases the user query
+/// before retrieval, catching the paraphrase + vocabulary gaps a single embedding
+/// misses. Same shape as [`generator`] — READ-ONLY-NONDET + `StageThenCommit`, so
+/// the rewrite is a committed fact (sampled once, served-not-re-sampled on replay) —
+/// but a distinct builder so the authored DAG reads `rewrite → retrieve` and the
+/// harness can route it through its query-rewrite logic. Wire `rewrite ──data──>
+/// query` so the retrieval step consumes the rewritten query.
+#[must_use]
+pub fn rewrite_query(
+    logic_ref: LogicRef,
+    model_id: ModelId,
+    warrant: WarrantSpec,
+    capability: ToolName,
+) -> StepDef {
+    step(
+        logic_ref,
+        model_id,
+        NdClass::ReadOnlyNondet,
+        EffectPattern::StageThenCommit,
+        StepRole::Plain,
+        warrant,
+        capability,
+    )
+}
+
 /// A transform step: a deterministic function of its inputs (PURE,
 /// `IdempotentByConstruction`).
 #[must_use]

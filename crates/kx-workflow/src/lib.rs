@@ -63,14 +63,14 @@ pub use def::{CompiledMote, CompiledWorkflow, StepDef, StepEdge, StepRef, StepRo
 pub use error::CompileError;
 pub use prompt::{put_rendered_prompt, render_prompts, PromptTemplate, TEMPLATE_KEY};
 pub use recipes::{
-    fan_out_gather, image_batch_describe_reduce, map_reduce, rag_pipeline, react_tool_loop,
-    retry_until_critic, WorkerKind, IMAGE_REF_KEY,
+    fan_out_gather, image_batch_describe_reduce, map_reduce, rag_pipeline, rag_pipeline_hybrid,
+    react_tool_loop, retry_until_critic, WorkerKind, IMAGE_REF_KEY,
 };
 pub use retrieval::{encode_retrieval_fact, retrieval, retrieval_result_ref};
 pub use share::{Manifest, ManifestId};
 pub use synthesis::{
-    critic, deterministic_critic, generator, judge, permissive_warrant, synthesis_pipeline,
-    tool_step, topology_shaper, transform,
+    critic, deterministic_critic, generator, judge, permissive_warrant, rewrite_query,
+    synthesis_pipeline, tool_step, topology_shaper, transform,
 };
 // Re-export the check vocabulary so a workflow author building a critic / judge
 // step depends on `kx-workflow` alone (the `deterministic_critic` / `judge`

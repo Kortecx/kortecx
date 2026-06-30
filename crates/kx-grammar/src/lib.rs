@@ -16,6 +16,16 @@
 //! [`ToolEnvelopeSpec::to_gbnf`] for llama.cpp, [`ToolEnvelopeSpec::to_ollama_format`]
 //! for Ollama.
 //!
+//! ## Two constrained-output uses, one carrier (RC4c)
+//! The carrier [`GrammarSpec`] is a tagged enum: a [`ToolEnvelopeSpec`] (RC2
+//! tool-calling) OR a [`PermutationSpec`] (RC4c listwise rerank). The tool envelope
+//! renders to GBNF (llama.cpp, armed lazily) + a JSON schema (Ollama). The permutation
+//! renders ONLY to an Ollama whole-response `format`; on llama.cpp it degrades to the
+//! fail-closed parser (the char-level GBNF crashes some tokenizers — see
+//! [`PermutationSpec`]). The enum is `#[serde(untagged)]` so an existing RC2 carrier
+//! raw still decodes as [`GrammarSpec::ToolEnvelope`] (the variants have disjoint
+//! required keys — `tools` vs `n`).
+//!
 //! ## Boundaries (SN-8 / D108.2)
 //! - **Accept-side only.** The grammar can only NARROW what the model emits. It
 //!   is NOT the authority gate — `kx_toolcall::parse_tool_call` still resolves
@@ -25,10 +35,18 @@
 //!   never journaled and never participates in `MoteId`. This crate is pure and
 //!   FFI-free — it produces strings, it does not touch any engine.
 
+// Inline unit tests use `.unwrap()`/`.expect()` for fixture construction (the
+// workspace lints deny these in library code, allow in tests).
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+
+mod carrier;
 mod error;
 mod gbnf;
 mod ollama;
+mod permutation;
 mod spec;
 
+pub use carrier::GrammarSpec;
 pub use error::GrammarError;
+pub use permutation::PermutationSpec;
 pub use spec::{ToolEnvelopeSpec, ToolSpec};

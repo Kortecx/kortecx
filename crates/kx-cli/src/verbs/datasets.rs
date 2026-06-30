@@ -8,9 +8,10 @@
 //!   `kx serve --features inference` with a model; without one the gateway answers
 //!   `FAILED_PRECONDITION` honestly. The client-vector (FFI-free) ingest path is an
 //!   SDK surface (vectors over the wire), not a CLI one.
-//! - `kx datasets query <dataset> --text <query> [--k N] [--mode dense|hybrid] [--json]`
+//! - `kx datasets query <dataset> --text <query> [--k N] [--mode dense|hybrid] [--rerank on|off] [--json]`
 //!   — top-k semantic search. `--mode` (RC4a) selects dense-only vs hybrid (BM25 +
-//!   dense, RRF-fused); omitted ⇒ the server's configured default. Each hit's `score`
+//!   dense, RRF-fused); `--rerank` (RC4c) overrides the operator's MMR diversity-rerank
+//!   default per query; both omitted ⇒ the server's configured default. Each hit's `score`
 //!   is DISPLAY-ONLY (SN-8) — a ranking aid, never an identity input; the durable
 //!   result is the ordered content-ref SET. A chunked corpus shows each hit's passage
 //!   position within its parent document.
@@ -81,6 +82,8 @@ pub struct QueryArgs {
     pub k: Option<u32>,
     /// RC4a: retrieval mode wire value (0 = server default, 1 = dense, 2 = hybrid).
     pub mode: i32,
+    /// RC4c: per-query MMR diversity-rerank override (`None` ⇒ the server default).
+    pub rerank: Option<bool>,
     /// Common client flags.
     pub common: ClientCommon,
 }
@@ -154,6 +157,7 @@ fn parse_query(mut args: impl Iterator<Item = String>) -> Result<QueryArgs, CliE
     let mut text: Option<String> = None;
     let mut k: Option<u32> = None;
     let mut mode: i32 = proto::RetrievalMode::Unspecified as i32;
+    let mut rerank: Option<bool> = None;
     let mut common = ClientCommon::default();
     while let Some(tok) = args.next() {
         if common.try_consume(&tok, &mut args)? {
@@ -179,6 +183,18 @@ fn parse_query(mut args: impl Iterator<Item = String>) -> Result<QueryArgs, CliE
                     }
                 };
             }
+            "--rerank" => {
+                let v = next_value(&mut args, "--rerank")?;
+                rerank = Some(match v.to_ascii_lowercase().as_str() {
+                    "on" | "true" | "yes" | "1" => true,
+                    "off" | "false" | "no" | "0" => false,
+                    other => {
+                        return Err(CliError::Usage(format!(
+                            "--rerank must be on|off, got {other:?}"
+                        )))
+                    }
+                });
+            }
             other if other.starts_with("--") => {
                 return Err(CliError::Usage(format!("unknown flag {other:?}")))
             }
@@ -199,6 +215,7 @@ fn parse_query(mut args: impl Iterator<Item = String>) -> Result<QueryArgs, CliE
         text,
         k,
         mode,
+        rerank,
         common,
     })
 }
@@ -286,6 +303,7 @@ async fn execute_query(args: QueryArgs) -> Result<(), CliError> {
             query_embedding: Vec::new(),
             k: args.k.unwrap_or(DEFAULT_K),
             retrieval_mode: args.mode,
+            rerank: args.rerank,
         })?)
         .await
         .map_err(map_datasets_status)?
@@ -398,6 +416,29 @@ mod tests {
         assert!(
             p(&["query", "c", "--text", "x", "--mode", "bogus"]).is_err(),
             "--mode must be dense|hybrid"
+        );
+    }
+
+    #[test]
+    fn query_parses_rerank_override() {
+        // omitted ⇒ None (server default).
+        assert_eq!(query(&["query", "c", "--text", "x"]).rerank, None);
+        // on/off (+ aliases) map to Some(bool).
+        assert_eq!(
+            query(&["query", "c", "--text", "x", "--rerank", "on"]).rerank,
+            Some(true)
+        );
+        assert_eq!(
+            query(&["query", "c", "--text", "x", "--rerank", "OFF"]).rerank,
+            Some(false)
+        );
+        assert_eq!(
+            query(&["query", "c", "--text", "x", "--rerank", "false"]).rerank,
+            Some(false)
+        );
+        assert!(
+            p(&["query", "c", "--text", "x", "--rerank", "maybe"]).is_err(),
+            "--rerank must be on|off"
         );
     }
 

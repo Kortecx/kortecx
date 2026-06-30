@@ -27,6 +27,11 @@ kx-content   = { workspace = true }
 # ceiling the backend enforces, SN-8 / D35). Both FFI-free leaves.
 kx-mote      = { workspace = true }
 kx-warrant   = { workspace = true }
+# RC4c: parse the off-digest grammar carrier (`GrammarSpec`) so a listwise-rerank
+# turn applies its permutation schema as a strict whole-response Ollama `format`
+# (the one constrained-output case that does NOT need a lazy/triggered mode — a
+# rerank turn's entire output is the permutation). An FFI-free pure-string leaf.
+kx-grammar   = { workspace = true }
 # The blocking HTTP client (already a workspace dependency — no new top-level dep,
 # no deny.toml change). `tls` is on for a future `https://` operator URL; the
 # loopback default dials plaintext `http://127.0.0.1`.

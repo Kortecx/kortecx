@@ -52,6 +52,9 @@ const ALLOWED: &[&str] = &[
     "kx-content",
     "kx-mote",
     "kx-warrant",
+    // RC4c: the engine-agnostic grammar spec (FFI-free pure-string renderer) — the
+    // Ollama leg renders a rerank turn's permutation schema as a whole-response `format`.
+    "kx-grammar",
     "ureq",
     "base64",
     "serde",

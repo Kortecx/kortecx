@@ -45,12 +45,14 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
   const [mode, setMode] = useState<Mode>("search");
   // RC4a: dense vs hybrid (BM25 + dense) retrieval; hybrid is the recommended default.
   const [retrieval, setRetrieval] = useState<RetrievalMode>(RetrievalMode.HYBRID);
+  // RC4c: per-query MMR diversity-rerank override — undefined ⇒ the server default.
+  const [rerank, setRerank] = useState<boolean | undefined>(undefined);
   const [openRef, setOpenRef] = useState<string | null>(null);
 
   // Only the active mode's query runs (the other is disabled via an undefined dataset).
   const searchDs = mode === "search" ? (dataset ?? undefined) : undefined;
   const discoverDs = mode === "discover" ? (dataset ?? undefined) : undefined;
-  const hits = useDatasetQuery(searchDs, query, k, retrieval);
+  const hits = useDatasetQuery(searchDs, query, k, retrieval, rerank);
   const fuzzy = useFuzzyDiscovery(discoverDs, query, k);
   const active = mode === "search" ? hits : fuzzy;
 
@@ -140,6 +142,38 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
             title="Dense embedding similarity only"
           >
             Dense
+          </button>
+        </fieldset>
+      ) : null}
+
+      {mode === "search" ? (
+        <fieldset className="view-toggle" aria-label="Rerank" data-testid="dataset-rerank">
+          <button
+            type="button"
+            data-testid="dataset-rerank-auto"
+            aria-pressed={rerank === undefined}
+            onClick={() => setRerank(undefined)}
+            title="Use the server's configured MMR diversity-rerank default"
+          >
+            Auto
+          </button>
+          <button
+            type="button"
+            data-testid="dataset-rerank-on"
+            aria-pressed={rerank === true}
+            onClick={() => setRerank(true)}
+            title="Force MMR diversity rerank on (demotes near-duplicate passages)"
+          >
+            Rerank
+          </button>
+          <button
+            type="button"
+            data-testid="dataset-rerank-off"
+            aria-pressed={rerank === false}
+            onClick={() => setRerank(false)}
+            title="Force MMR diversity rerank off (raw fused order)"
+          >
+            Off
           </button>
         </fieldset>
       ) : null}

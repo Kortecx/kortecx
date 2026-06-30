@@ -82,6 +82,41 @@ fn strip_code_fence(text: &str) -> &str {
     }
 }
 
+/// Parse a model's listwise-rerank output (RC4c) into a validated PERMUTATION of
+/// `[0, n)` — the retrieved candidate indices in the model's proposed best→worst
+/// order.
+///
+/// **FAIL-CLOSED.** Returns `None` unless the extracted text is a JSON array of
+/// EXACTLY `n` integers that is a permutation of `[0, n)` (length `n`, every element
+/// in range, no duplicates). The grammar (`kx_grammar::PermutationSpec`) narrows the
+/// SHAPE; this function is the AUTHORITY on validity (SN-8: the model proposes an
+/// order, the runtime enforces exact validity — there is no similarity/closeness
+/// operator). On `None`, the caller keeps the upstream (RRF/MMR) order, so a rerank
+/// can never reorder into garbage.
+///
+/// Reuses the tool-call extractor: strips a single leading reasoning block
+/// (`<think>…</think>` / `<|channel>…<channel|>`) and a surrounding markdown code
+/// fence, then requires a bare `[ … ]`. Total + panic-free.
+#[must_use]
+pub fn parse_permutation(text: &str, n: usize) -> Option<Vec<usize>> {
+    let body = extract_json_envelope(text);
+    let arr: Vec<i64> = serde_json::from_str(body).ok()?;
+    if arr.len() != n {
+        return None;
+    }
+    let mut seen = vec![false; n];
+    let mut out = Vec::with_capacity(n);
+    for v in arr {
+        let idx = usize::try_from(v).ok()?;
+        if idx >= n || seen[idx] {
+            return None; // out of range OR duplicate ⇒ not a permutation
+        }
+        seen[idx] = true;
+        out.push(idx);
+    }
+    Some(out)
+}
+
 /// Gemma-4's NATIVE tool-call open delimiter (`<|tool_call>call:NAME{ARGS}<tool_call|>`).
 const GEMMA_TOOL_OPEN: &str = "<|tool_call>";
 /// Gemma-4's NATIVE tool-call CLOSE delimiter — optional + truncation-tolerant for a
@@ -2299,5 +2334,53 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, ToolName("refconn/echo".into()));
         assert_eq!(calls[1].name, ToolName("refconn/reverse".into()));
+    }
+
+    // ── RC4c: parse_permutation (fail-closed listwise-rerank order) ─────────
+
+    #[test]
+    fn parse_permutation_accepts_a_valid_permutation() {
+        assert_eq!(parse_permutation("[2,0,1]", 3), Some(vec![2, 0, 1]));
+        assert_eq!(parse_permutation("[0]", 1), Some(vec![0]));
+        // identity is valid.
+        assert_eq!(parse_permutation("[0,1,2,3]", 4), Some(vec![0, 1, 2, 3]));
+        // whitespace tolerated (the GBNF emits it).
+        assert_eq!(parse_permutation("[ 1 , 0 ]", 2), Some(vec![1, 0]));
+    }
+
+    #[test]
+    fn parse_permutation_strips_reasoning_and_code_fence() {
+        assert_eq!(
+            parse_permutation("<think>rank them</think>[1,0]", 2),
+            Some(vec![1, 0])
+        );
+        assert_eq!(
+            parse_permutation("```json\n[2,1,0]\n```", 3),
+            Some(vec![2, 1, 0])
+        );
+    }
+
+    #[test]
+    fn parse_permutation_fails_closed_on_non_permutations() {
+        // wrong length (too long / too short)
+        assert_eq!(parse_permutation("[0,1,2,3]", 3), None);
+        assert_eq!(parse_permutation("[0,1]", 3), None);
+        // out of range
+        assert_eq!(parse_permutation("[0,1,3]", 3), None);
+        // duplicate
+        assert_eq!(parse_permutation("[0,1,1]", 3), None);
+        // negative (a permutation index is never negative)
+        assert_eq!(parse_permutation("[-1,0,1]", 3), None);
+        // prose / not an array
+        assert_eq!(parse_permutation("the best order is 2, 0, 1", 3), None);
+        assert_eq!(parse_permutation("{\"order\":[0,1,2]}", 3), None);
+        // empty body (an unclosed reasoning tag yields "")
+        assert_eq!(parse_permutation("<think>oops", 3), None);
+    }
+
+    #[test]
+    fn parse_permutation_n_zero_only_accepts_empty_array() {
+        assert_eq!(parse_permutation("[]", 0), Some(vec![]));
+        assert_eq!(parse_permutation("[0]", 0), None);
     }
 }

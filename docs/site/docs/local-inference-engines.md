@@ -57,11 +57,23 @@ gap (a visible "unavailable on this engine"), never a silent one:
 | Embeddings / RAG (Datasets) | ✅ (`/api/embed`) | ✅ |
 | Vision / multi-modal input (image→text, OCR) | ✅ (vision tags) | ✅ (mmproj) |
 | Agentic vision (image carried across the ReAct loop) | ✅ | ✅ |
-| Constrained decode (grammar) | reserved | reserved |
+| Constrained tool-calling (grammar) | parser-based¹ | ✅ (lazy GBNF) |
+| Constrained listwise rerank (permutation) | ✅ (strict `format`) | parser-based² |
 
 A vision turn on a **text-only model** (either engine) is refused, not faked — the
 gateway never answers about an image a non-vision model cannot see. ⏳ *planned*
 capabilities land in a follow-up release.
+
+¹ Ollama has no lazy/triggered grammar, so a tool turn (which may answer in prose OR
+call a tool) honest-degrades to the multi-format parser rather than a whole-response
+`format`. A **rerank** turn is different — its entire output is a permutation, so a
+strict whole-response `format` is applied on Ollama.
+
+² On llama.cpp the rerank also relies on the model + the fail-closed parser: its
+char-level grammar sampler crashes mid-decode when constraining a digit-array
+permutation against some tokenizers (e.g. Gemma's), so the model emits a clean array
+after its reasoning and `parse_permutation` strips the preamble + enforces validity.
+On both engines the model proposes the order and the runtime enforces it.
 
 ## Option A — Ollama (zero-friction)
 

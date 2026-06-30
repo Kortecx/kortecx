@@ -4345,7 +4345,14 @@ impl KxGateway for GatewayService {
         let qe = (!req.query_embedding.is_empty()).then_some(req.query_embedding.as_slice());
         let mode = crate::datasets::retrieval_mode_from_proto(req.retrieval_mode);
         let hits = view
-            .query(&req.dataset, qe, &req.query_text, req.k as usize, mode)
+            .query(
+                &req.dataset,
+                qe,
+                &req.query_text,
+                req.k as usize,
+                mode,
+                req.rerank,
+            )
             .map_err(crate::datasets::dataset_status)?;
         let hits = hits
             .into_iter()

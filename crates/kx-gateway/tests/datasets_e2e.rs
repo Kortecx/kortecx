@@ -79,6 +79,7 @@ async fn ingest_list_query_client_vectors_end_to_end() {
             query_embedding: vec4(0.0, 1.0, 0.0, 0.1),
             k: 3,
             retrieval_mode: 0,
+            rerank: None,
         })
         .await
         .unwrap()
@@ -125,6 +126,7 @@ async fn text_query_without_an_embedder_is_failed_precondition() {
             query_embedding: Vec::new(),
             k: 1,
             retrieval_mode: 0,
+            rerank: None,
         })
         .await
         .unwrap_err();
@@ -154,6 +156,7 @@ async fn unknown_dataset_query_is_not_found() {
             query_embedding: vec4(1.0, 0.0, 0.0, 0.1),
             k: 1,
             retrieval_mode: 0,
+            rerank: None,
         })
         .await
         .unwrap_err();
@@ -203,6 +206,7 @@ async fn datasets_are_durable_across_restart() {
             query_embedding: vec4(1.0, 0.0, 0.0, 0.1),
             k: 1,
             retrieval_mode: 0,
+            rerank: None,
         })
         .await
         .unwrap()
