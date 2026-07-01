@@ -25,7 +25,7 @@ mod common;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use kx_gateway::{start, CHAT_RAG_RECIPE_HANDLE, REACT_RAG_RECIPE_HANDLE};
 use kx_proto::proto;
@@ -128,6 +128,11 @@ async fn chat_rag_grounded_answer_is_reranked() {
         return;
     }
 
+    // M7c (GR10): the LIVE wall-clock from submit → the durable `ReRankRound` settling —
+    // model-INCLUSIVE (unlike M7a/M7b, the rerank turn is coordinator-materialized, not
+    // client-submittable, so it cannot be driven model-free; this is the real dual-engine
+    // number for the private trend). Structured, greppable; no hard threshold.
+    let t_submit = Instant::now();
     let resp = c
         .invoke(proto::InvokeRequest {
             handle: CHAT_RAG_RECIPE_HANDLE.to_string(),
@@ -142,6 +147,11 @@ async fn chat_rag_grounded_answer_is_reranked() {
     assert_eq!(resp.instance_id.len(), 16, "journaled instance_id is 16B");
 
     // Await the rerank round (be generous — a 12B rerank turn is slow).
+    let engine = if std::env::var_os("KX_SERVE_OLLAMA").is_some() {
+        "ollama"
+    } else {
+        "llamacpp"
+    };
     let mut outcome: Option<String> = None;
     for _ in 0..3000 {
         let rounds = c
@@ -154,19 +164,29 @@ async fn chat_rag_grounded_answer_is_reranked() {
             .into_inner();
         if let Some(t) = rounds.turns.iter().find(|t| t.outcome != "pending") {
             outcome = Some(t.outcome.clone());
+            let settled_ms = t_submit.elapsed().as_secs_f64() * 1000.0;
             eprintln!(
                 "✓ chat-rag rerank fired: outcome={} candidates={} permutation={:?}",
                 t.outcome, t.candidate_count, t.permutation
+            );
+            // M7c — copy into the private `docs/benchmarks/` trend (SN-2).
+            eprintln!(
+                "M7c rerank | engine={engine} | candidates={} | submit_to_settled_ms={settled_ms:.1} | outcome={}",
+                t.candidate_count, t.outcome
             );
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     running.shutdown().await.unwrap();
-    let outcome = outcome.expect("a chat-rag ReRankRound must settle (reranked | failed_closed)");
-    assert!(
-        outcome == "reranked" || outcome == "failed_closed",
-        "the rerank must settle a terminal outcome, got {outcome}"
+    let outcome = outcome.expect("a chat-rag ReRankRound must settle");
+    // RC4c-2c (GR24 parity gate): BOTH engines — llama.cpp Gemma-4 (grammar-free, the
+    // chat-template fix) AND Ollama gemma3 (strict `format`) — must ACTUALLY rerank the
+    // chat-rag context bundle, not fail-closed to base order. Before RC4c-2c llama.cpp
+    // fail-closed here (an un-templated prompt degenerated the instruct model).
+    assert_eq!(
+        outcome, "reranked",
+        "the chat-rag rerank must settle `reranked`, got {outcome}"
     );
 }
 

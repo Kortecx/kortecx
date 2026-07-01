@@ -280,7 +280,10 @@ pub fn rerank_hits(
     let params = InferenceParams {
         grammar: Some(Grammar::new(carrier)),
         temperature_bps: 0, // greedy — the permutation is a decision, not creative output
-        max_output_tokens: rerank_output_cap(n),
+        // Clamp to the warrant's output ceiling (GR16 class — swept from the serve
+        // rerank turn): an unclamped `rerank_output_cap` above the ceiling is refused
+        // as a scope violation → fail-closed to upstream order.
+        max_output_tokens: rerank_output_cap(n).min(warrant.model_route.max_output_tokens),
         ..InferenceParams::default()
     };
     let input = InferenceInput::text(render_rerank_prompt(query, texts));

@@ -96,11 +96,19 @@ fn strip_code_fence(text: &str) -> &str {
 ///
 /// Reuses the tool-call extractor: strips a single leading reasoning block
 /// (`<think>…</think>` / `<|channel>…<channel|>`) and a surrounding markdown code
-/// fence, then requires a bare `[ … ]`. Total + panic-free.
+/// fence, then parses the LEADING JSON array and ignores any trailing bytes — a model
+/// may append an explanation after the permutation (`[2,0,1] because …`). Deserializing
+/// from position 0 keeps the SN-8 discipline (a JSON value boundary at the START, never
+/// a mid-string scan); trailing content is discarded, not searched. Total + panic-free.
 #[must_use]
 pub fn parse_permutation(text: &str, n: usize) -> Option<Vec<usize>> {
     let body = extract_json_envelope(text);
-    let arr: Vec<i64> = serde_json::from_str(body).ok()?;
+    // Parse ONE leading value; a `StreamDeserializer` reads a single `Vec<i64>` from the
+    // start and leaves any trailing bytes untouched (we never advance the iterator again).
+    let arr: Vec<i64> = serde_json::Deserializer::from_str(body)
+        .into_iter::<Vec<i64>>()
+        .next()?
+        .ok()?;
     if arr.len() != n {
         return None;
     }
@@ -2358,6 +2366,33 @@ mod tests {
             parse_permutation("```json\n[2,1,0]\n```", 3),
             Some(vec![2, 1, 0])
         );
+    }
+
+    #[test]
+    fn parse_permutation_tolerates_trailing_prose() {
+        // RC4c-2c (GR24 llama.cpp parity): a model may append an explanation AFTER the
+        // array. We parse the LEADING array and ignore the trailing bytes (SN-8: still a
+        // value boundary at position 0, no mid-string scan).
+        assert_eq!(
+            parse_permutation("[1,0] because passage 1 is most relevant", 2),
+            Some(vec![1, 0])
+        );
+        assert_eq!(
+            parse_permutation("[2,0,1]\n\nExplanation: tectonics is off-topic.", 3),
+            Some(vec![2, 0, 1])
+        );
+        // reasoning preamble stripped THEN a trailing explanation ignored.
+        assert_eq!(
+            parse_permutation("<|channel>let me rank<channel|>[2,0,1] done", 3),
+            Some(vec![2, 0, 1])
+        );
+        // trailing text after a code fence is already discarded by the fence strip.
+        assert_eq!(
+            parse_permutation("```json\n[0,1]\n```\nHere you go.", 2),
+            Some(vec![0, 1])
+        );
+        // LEADING prose still fails closed — the array must start the (stripped) body.
+        assert_eq!(parse_permutation("The order is [1,0]", 2), None);
     }
 
     #[test]

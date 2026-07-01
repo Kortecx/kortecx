@@ -64,6 +64,21 @@ impl ToolSpec {
 pub struct ToolEnvelopeSpec {
     /// The granted tools, in canonical `(name, version)` order.
     pub tools: Vec<ToolSpec>,
+    /// RC4c-2c (`T-OLLAMA-GRAMMAR-FORMAT`): opt-in **tool-required** mode. When `true`, the
+    /// Ollama backend applies this envelope as a STRICT whole-response `format` — the model
+    /// MUST emit a tool call and can no longer answer with prose on this turn. Default
+    /// `false` ⇒ honest-degrade to the fail-closed parser (the free-form ANSWER path is
+    /// preserved). llama.cpp is unaffected (it already arms a LAZY/triggered GBNF that lets
+    /// prose flow until the tool-call opener). Serialized ONLY when set, so the default
+    /// carrier stays byte-identical to pre-RC4c-2c (off-digest either way, D108.2).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub strict: bool,
+}
+
+/// `skip_serializing_if` predicate — omit `strict` when `false` (byte-identical default carrier).
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl ToolEnvelopeSpec {
@@ -74,7 +89,17 @@ impl ToolEnvelopeSpec {
     pub fn new(mut tools: Vec<ToolSpec>) -> Self {
         tools.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.version.cmp(&b.version)));
         tools.dedup();
-        Self { tools }
+        Self {
+            tools,
+            strict: false,
+        }
+    }
+
+    /// Set the RC4c-2c opt-in tool-required (`strict`) mode (chainable). See the field docs.
+    #[must_use]
+    pub fn with_strict(mut self, strict: bool) -> Self {
+        self.strict = strict;
+        self
     }
 
     /// True when no tools are granted — a grammar must not be derived.

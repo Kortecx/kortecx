@@ -66,6 +66,7 @@ mod tests {
             turns,
             final_answer: answered.then(|| "ok".to_string()),
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         }
@@ -77,6 +78,8 @@ mod tests {
             answer_must_contain: vec![],
             expected_tools: vec![],
             grounded_in: vec![],
+            rerank_best_index: None,
+            rerank_top_k: 0,
             ideal_turns,
             ideal_tool_calls,
         }

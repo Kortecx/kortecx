@@ -64,6 +64,7 @@ mod tests {
             }],
             final_answer: Some(answer.to_string()),
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         }
@@ -75,6 +76,8 @@ mod tests {
             answer_must_contain: must.iter().map(|s| (*s).to_string()).collect(),
             expected_tools: vec![],
             grounded_in: vec![],
+            rerank_best_index: None,
+            rerank_top_k: 0,
             ideal_turns: 1,
             ideal_tool_calls: 0,
         }
@@ -116,6 +119,7 @@ mod tests {
             }],
             final_answer: None,
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         };
@@ -124,6 +128,8 @@ mod tests {
             answer_must_contain: vec![],
             expected_tools: vec![],
             grounded_in: vec![],
+            rerank_best_index: None,
+            rerank_top_k: 0,
             ideal_turns: 8,
             ideal_tool_calls: 20,
         };

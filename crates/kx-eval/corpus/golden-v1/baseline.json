@@ -1,6 +1,6 @@
 {
   "suite_id": "golden-v1",
-  "suite_digest": "5c1456fc9ae2371af2adc685a3c2ff3b1e65e4bc5d96783798e6279658483a5e",
+  "suite_digest": "10c65a016542b9f4f36bf6e78c8f634c75ff9aef7aab8f346706d387d432801b",
   "gates": [
     {
       "id": "task_success",
@@ -16,7 +16,11 @@
     },
     {
       "id": "loop_efficiency",
-      "per_mille": 964
+      "per_mille": 968
+    },
+    {
+      "id": "rerank_quality",
+      "per_mille": 1000
     },
     {
       "id": "format_coverage",

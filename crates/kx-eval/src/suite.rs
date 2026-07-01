@@ -58,6 +58,14 @@ pub struct Expectation {
     /// in at least one retrieved doc. Empty ⇒ groundedness is N/A for this task.
     #[serde(default)]
     pub grounded_in: Vec<String>,
+    /// RC4c-2c: the pre-rerank BASE index of the most-relevant candidate (e.g. an on-topic
+    /// passage placed LAST). The rerank scorer checks it landed in the top-`rerank_top_k`
+    /// after the reorder. `None` ⇒ the rerank scorer is N/A for this task.
+    #[serde(default)]
+    pub rerank_best_index: Option<u32>,
+    /// The rank window the best candidate must land within (0/omitted ⇒ 1, must be first).
+    #[serde(default)]
+    pub rerank_top_k: u32,
     /// The ideal number of turns to solve the task (the loop-efficiency denominator).
     pub ideal_turns: u32,
     /// The ideal number of tool calls to solve the task.

@@ -49,6 +49,22 @@ pub struct TurnRecord {
     pub rejection_reason: String,
 }
 
+/// The listwise-rerank outcome of a RAG run (RC4c-2c) — present iff the run reranked its
+/// retrieved candidates. Authored directly by a Tier-A fixture or folded from the committed
+/// `ReRankRound` fact (Tier-B, via the gateway's `ListReRankTurns`). SN-8: the permutation
+/// is the committed decision (new-rank → source index); no scores are carried.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RerankInfo {
+    /// The number of candidates `n` the rerank ranked.
+    pub candidate_count: u32,
+    /// The committed permutation of `0..candidate_count` (index = new rank, value = source
+    /// index into the pre-rerank order). Empty unless `outcome == "reranked"`.
+    #[serde(default)]
+    pub permutation: Vec<u32>,
+    /// The settled outcome: `"reranked"` | `"failed_closed"` | `"pending"`.
+    pub outcome: String,
+}
+
 /// A `(tool_id, tool_version)` identity used to compare an actual call against an
 /// expected one. Exact equality only (SN-8 posture — scoring never fuzzy-matches a
 /// tool identity).
@@ -76,6 +92,10 @@ pub struct Transcript {
     /// for a non-RAG run.
     #[serde(default)]
     pub retrieved_docs: Vec<String>,
+    /// The listwise-rerank outcome, present iff the run reranked its retrieved candidates
+    /// (RC4c-2c). `None` for a non-rerank run (the rerank scorer is then N/A).
+    #[serde(default)]
+    pub rerank: Option<RerankInfo>,
     /// The run's admitted turn cap (durable at anchor).
     pub max_turns: u32,
     /// The run's admitted tool-call cap (durable at anchor).
@@ -167,6 +187,7 @@ mod tests {
             ],
             final_answer: Some("hi".to_string()),
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         };
@@ -187,6 +208,7 @@ mod tests {
             turns: vec![a, b, turn(1, Branch::Answer, "")],
             final_answer: Some("ok".to_string()),
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         };
@@ -202,6 +224,7 @@ mod tests {
             turns: vec![],
             final_answer: None,
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         };

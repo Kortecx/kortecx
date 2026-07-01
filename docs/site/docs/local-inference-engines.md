@@ -67,13 +67,21 @@ capabilities land in a follow-up release.
 ¹ Ollama has no lazy/triggered grammar, so a tool turn (which may answer in prose OR
 call a tool) honest-degrades to the multi-format parser rather than a whole-response
 `format`. A **rerank** turn is different — its entire output is a permutation, so a
-strict whole-response `format` is applied on Ollama.
+strict whole-response `format` is applied on Ollama. For a **tool-first** recipe you can
+opt in to a strict tool-call `format` on Ollama tool turns with
+`KX_SERVE_OLLAMA_TOOL_FORMAT=1` (default off) — but that is **tool-required**: the model
+can no longer answer in prose on a tool turn, so a multi-turn agent that must answer would
+dead-letter. Leave it off for general agents; llama.cpp is unaffected (its lazy GBNF lets
+prose flow until the tool-call opener).
 
 ² On llama.cpp the rerank also relies on the model + the fail-closed parser: its
 char-level grammar sampler crashes mid-decode when constraining a digit-array
 permutation against some tokenizers (e.g. Gemma's), so the model emits a clean array
-after its reasoning and `parse_permutation` strips the preamble + enforces validity.
-On both engines the model proposes the order and the runtime enforces it.
+after its reasoning and `parse_permutation` strips the preamble + tolerates trailing text.
+The rerank prompt is rendered through the served model's **chat template** — an
+un-templated prompt degenerates an instruct model into repetition (a `[3] and and …`
+collapse that fails closed to base order). On both engines the model proposes the order
+and the runtime enforces it.
 
 ## Option A — Ollama (zero-friction)
 
@@ -111,6 +119,7 @@ Mote-controlled. No warrant or recipe parameter can redirect the engine.
 | `KX_SERVE_OLLAMA_URL` | `http://127.0.0.1:11434` | the daemon endpoint (**loopback only** by default) |
 | `KX_SERVE_OLLAMA_MODELS` | *(all)* | a comma/`;`/newline tag allowlist |
 | `KX_SERVE_OLLAMA_ALLOW_REMOTE` | *(unset)* | set `1` to permit a **non-loopback** URL (deny-by-default) |
+| `KX_SERVE_OLLAMA_TOOL_FORMAT` | *(off)* | set `1` to force a strict tool-call `format` on Ollama tool turns (**tool-required** — breaks prose answering; tool-first recipes only) |
 
 A non-loopback `KX_SERVE_OLLAMA_URL` is **refused** unless you explicitly opt in
 with `KX_SERVE_OLLAMA_ALLOW_REMOTE=1` — the gateway will not silently dial a remote

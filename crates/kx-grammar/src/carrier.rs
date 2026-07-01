@@ -84,6 +84,37 @@ mod tests {
     }
 
     #[test]
+    fn strict_defaults_false_skip_serialized_and_round_trips() {
+        // RC4c-2c: the DEFAULT (non-strict) carrier is BYTE-IDENTICAL to pre-RC4c-2c —
+        // `strict:false` is skip-serialized, so no `"strict"` key appears.
+        let raw = ToolEnvelopeSpec::new(vec![ToolSpec::new("retrieve", "1")])
+            .to_raw()
+            .unwrap();
+        assert!(
+            !raw.contains("strict"),
+            "default carrier must omit strict: {raw}"
+        );
+        // An old `{"tools":[…]}` carrier decodes with strict = false (back-compat).
+        match GrammarSpec::from_raw(&raw).unwrap() {
+            GrammarSpec::ToolEnvelope(spec) => assert!(!spec.strict),
+            GrammarSpec::Permutation(_) => panic!("must decode as ToolEnvelope"),
+        }
+        // The OPT-IN strict carrier serializes + round-trips with strict = true.
+        let strict_raw = ToolEnvelopeSpec::new(vec![ToolSpec::new("retrieve", "1")])
+            .with_strict(true)
+            .to_raw()
+            .unwrap();
+        assert!(
+            strict_raw.contains("\"strict\":true"),
+            "strict carrier must carry it"
+        );
+        match GrammarSpec::from_raw(&strict_raw).unwrap() {
+            GrammarSpec::ToolEnvelope(spec) => assert!(spec.strict),
+            GrammarSpec::Permutation(_) => panic!("must decode as ToolEnvelope"),
+        }
+    }
+
+    #[test]
     fn permutation_raw_decodes_as_permutation() {
         let raw = GrammarSpec::Permutation(PermutationSpec::new(8))
             .to_raw()

@@ -145,9 +145,18 @@ fn build_tool_grammar(warrant: &WarrantSpec) -> Option<Grammar> {
         .iter()
         .map(|g| ToolSpec::new(g.tool_id.0.clone(), g.tool_version.0.clone()))
         .collect();
+    // RC4c-2c (T-OLLAMA-GRAMMAR-FORMAT): opt-in Ollama tool-REQUIRED `strict` mode
+    // (`KX_SERVE_OLLAMA_TOOL_FORMAT`, default OFF). When off, `with_strict(false)` is
+    // skip-serialized ⇒ the carrier is byte-identical to pre-RC4c-2c (the free-form answer
+    // path is preserved). llama.cpp ignores `strict` (it already arms a lazy/triggered GBNF).
+    let strict = crate::mcp_tool::ollama_tool_format_enabled();
     // Serialization of the closed spec types does not fail in practice; on the
     // off chance it does, degrade to unconstrained (never panic on a dispatch).
-    ToolEnvelopeSpec::new(tools).to_raw().ok().map(Grammar::new)
+    ToolEnvelopeSpec::new(tools)
+        .with_strict(strict)
+        .to_raw()
+        .ok()
+        .map(Grammar::new)
 }
 
 /// RC4c-2b: read a 32-byte `ContentRef` from a Mote's `config_subset` at `key` — the
@@ -1617,14 +1626,36 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         ))
         .to_raw()
         .map_err(|e| internal(&format!("rerank grammar carrier: {e}")))?;
+        // Clamp the desired rerank budget to the warrant's output ceiling. The rerank
+        // turn inherits the answer warrant's `max_output_tokens`, so an unclamped
+        // `rerank_output_cap` above it is REFUSED as a scope violation → the rerank
+        // Mote dead-letters → fail-closed to base order (the GR24 llama.cpp parity gap
+        // root cause: with `rerank_output_cap` raised for reasoning headroom, `n*6+512`
+        // exceeded the inherited 512 ceiling). GR16 class: a dispatch's requested
+        // `max_output_tokens` MUST be clamped to the warrant ceiling (swept to the
+        // harness rerank in `kx-model-harness::rag` too).
+        let cap =
+            kx_context_assembler::rerank_output_cap(n).min(warrant.model_route.max_output_tokens);
         let params = InferenceParams {
             grammar: Some(Grammar::new(carrier)),
             temperature_bps: 0,
-            max_output_tokens: kx_context_assembler::rerank_output_cap(n),
+            max_output_tokens: cap,
             ..InferenceParams::default()
         };
-        let input =
-            InferenceInput::text(kx_context_assembler::render_rerank_prompt(&query, &texts));
+        // Render the rerank prompt through the served model's OWN chat template — the
+        // GR24 llama.cpp parity root cause: an instruct model (Gemma-4) fed a RAW,
+        // un-templated prompt greedy-degenerates into repetition garbage (`[4] and and
+        // …`), so `parse_permutation` fail-closes to base order. The react turn already
+        // templates via `render_chat`; the rerank turn must too. Ollama auto-templates
+        // server-side, which is why only llama.cpp exhibited the gap. Presentation only
+        // (SN-8) — off-MoteDef / off-digest, never journaled.
+        let user = kx_context_assembler::render_rerank_prompt(&query, &texts);
+        let system = Self::dispatch_system_prompt(mote);
+        let prompt = self
+            .backend
+            .render_chat(&mote.def.model_id, &system, &user)
+            .unwrap_or_else(|| chatml_with(&system, &user));
+        let input = InferenceInput::text(prompt);
         let out = self
             .backend
             .dispatch(&mote.def.model_id, &input, &params, warrant)

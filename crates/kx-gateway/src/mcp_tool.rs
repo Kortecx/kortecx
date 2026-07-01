@@ -256,6 +256,27 @@ pub(crate) fn grammar_constrained_enabled() -> bool {
     }
 }
 
+/// RC4c-2c (`T-OLLAMA-GRAMMAR-FORMAT`): the operator SERVE-LEVEL OPT-IN for Ollama
+/// **tool-required** format (`KX_SERVE_OLLAMA_TOOL_FORMAT`). Default-**OFF** (unset ⇒
+/// `false`; only `"1"` / `"true"` / `"on"` ⇒ `true`) — the OPPOSITE default of the
+/// grammar kill-switch above, because it changes behavior: when on, the tool-envelope
+/// grammar is armed with `strict`, so the Ollama backend applies it as a whole-response
+/// `format` and the model MUST emit a tool call (it can no longer answer with prose on a
+/// tool turn). Intended for TOOL-FIRST recipes only; leave OFF (the default) to preserve
+/// the free-form answer path. llama.cpp is unaffected (it already arms a lazy/triggered
+/// GBNF that lets prose flow until the tool-call opener). Off-digest (the grammar rides
+/// off the MoteId, D108.2) — the toggle changes only the live dispatch, never a fact.
+pub(crate) fn ollama_tool_format_enabled() -> bool {
+    match std::env::var_os("KX_SERVE_OLLAMA_TOOL_FORMAT") {
+        Some(v) => {
+            let v = v.to_string_lossy();
+            let v = v.trim();
+            v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("on")
+        }
+        None => false,
+    }
+}
+
 /// RC3 (T-REACT-TOOL-MENU): the operator SERVE-LEVEL kill-switch for the
 /// granted-tool MENU prepend (`KX_SERVE_REACT_TOOL_MENU`). Default-ON (unset /
 /// `"1"` / `"true"` ⇒ `true`) — byte-mirrors [`grammar_constrained_enabled`]; set

@@ -214,10 +214,7 @@ impl Worker {
             // next item. Transport/RPC errors on the lease/commit calls stay batch-level.
             let exec = if mote.nd_class() == NdClass::Pure {
                 run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)
-            } else if is_react_turn(&mote)
-                || is_rerank_turn(&mote)
-                || mote.def.critic_check.is_some()
-            {
+            } else if dispatches_through_executor(&mote) {
                 // PR-2d-2: a coordinator-materialized ReAct TURN (the identity-
                 // bearing marker, NO tool_contract) is a prompt-carrying ROND
                 // model Mote — it dispatches through the hosted EXECUTOR (whose
@@ -474,6 +471,22 @@ fn is_rerank_turn(mote: &Mote) -> bool {
             .contains_key(&ConfigKey(RERANK_TURN_KEY.to_string()))
 }
 
+/// `true` iff `mote` dispatches DIRECTLY through the hosted executor rather than the
+/// capability-broker WM path. Three coordinator-materialized ROND "model" Mote classes
+/// route here — a ReAct TURN, a live LLM RERANK TURN, and the opt-in LLM-JUDGE critic —
+/// each PROPOSES output the executor's `run()` commits, firing NO effect (so `run_wm`'s
+/// tool-contract resolution would dead-letter them).
+///
+/// **Named + unit-tested deliberately (RC4c-2c).** A new such class silently missing from
+/// this predicate is the `T-RERANK-WORKER-ROUTE` class: RC4c-2b shipped with the rerank
+/// turn routed to `run_wm` → dead-lettered UNRUN → the rerank silently fell back to base
+/// order, and it passed every unit test + 22 CI jobs precisely because it fails closed. The
+/// `dispatches_through_executor_covers_rerank_and_react` test bites if the rerank (or
+/// react) term is ever dropped again.
+fn dispatches_through_executor(mote: &Mote) -> bool {
+    is_react_turn(mote) || is_rerank_turn(mote) || mote.def.critic_check.is_some()
+}
+
 /// Wall-clock milliseconds since the Unix epoch (liveness only; never hashed).
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -481,4 +494,80 @@ fn now_ms() -> u64 {
         .ok()
         .and_then(|d| u64::try_from(d.as_millis()).ok())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kx_mote::{
+        ConfigVal, EffectPattern, GraphPosition, InferenceParams, InputDataId, LogicRef, ModelId,
+        MoteDef, PromptTemplateHash, ToolName, ToolVersion, MOTE_DEF_SCHEMA_VERSION,
+    };
+    use smallvec::SmallVec;
+    use std::collections::BTreeMap;
+
+    /// Build a minimal Mote for the routing predicate: an optional `config_subset` marker
+    /// (react/rerank), and whether it declares a `tool_contract` (the WM/broker shape).
+    fn routing_mote(marker: Option<&str>, wm: bool) -> Mote {
+        let mut config_subset = BTreeMap::new();
+        if let Some(key) = marker {
+            config_subset.insert(ConfigKey(key.to_string()), ConfigVal(vec![1]));
+        }
+        let mut tool_contract = BTreeMap::new();
+        if wm {
+            tool_contract.insert(ToolName("kx-test/effect".into()), ToolVersion("1".into()));
+        }
+        let def = MoteDef {
+            critic_check: None,
+            logic_ref: LogicRef::from_bytes([7u8; 32]),
+            model_id: ModelId("m".into()),
+            prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),
+            tool_contract,
+            nd_class: if wm {
+                NdClass::WorldMutating
+            } else {
+                NdClass::ReadOnlyNondet
+            },
+            config_subset,
+            effect_pattern: EffectPattern::IdempotentByConstruction,
+            critic_for: None,
+            is_topology_shaper: false,
+            inference_params: InferenceParams::default(),
+            schema_version: MOTE_DEF_SCHEMA_VERSION,
+        };
+        Mote::new(
+            def,
+            InputDataId::from_bytes([1u8; 32]),
+            GraphPosition(vec![1]),
+            SmallVec::new(),
+        )
+    }
+
+    /// RC4c-2c regression guard for the `T-RERANK-WORKER-ROUTE` class: a coordinator-
+    /// materialized live LLM RERANK TURN (identity-bearing marker, NO `tool_contract`) MUST
+    /// route to the direct-executor arm, NOT the broker WM path (which would dead-letter it
+    /// unrun → the rerank silently falls back to base order — a fail-closed miss that no
+    /// unit test + 22 CI jobs caught). A ReAct TURN routes the same way; a plain WM tool
+    /// Mote does NOT.
+    #[test]
+    fn dispatches_through_executor_covers_rerank_and_react() {
+        assert!(
+            dispatches_through_executor(&routing_mote(Some(RERANK_TURN_KEY), false)),
+            "a rerank turn MUST dispatch through the executor (T-RERANK-WORKER-ROUTE)"
+        );
+        assert!(
+            dispatches_through_executor(&routing_mote(Some(REACT_TURN_KEY), false)),
+            "a react turn dispatches through the executor"
+        );
+        assert!(
+            !dispatches_through_executor(&routing_mote(None, true)),
+            "a plain WM tool Mote routes to the broker, not the executor"
+        );
+        // A marker with a NON-empty tool_contract is NOT a rerank/react turn (the markers
+        // require an empty contract) — it stays on the WM path.
+        assert!(
+            !dispatches_through_executor(&routing_mote(Some(RERANK_TURN_KEY), true)),
+            "a marker + tool_contract is not a promptless turn"
+        );
+    }
 }

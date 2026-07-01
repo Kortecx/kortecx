@@ -36,8 +36,12 @@ deterministic MMR rerank remains the always-on default and is unaffected.
 - **Durable + replayable.** The reorder is a committed fact; recovery re-derives it from
   committed state, and replay serves the same order (recovery/audit/time-travel — not a
   re-run).
-- **Dual-engine.** Ollama applies a strict whole-response JSON `format`; llama.cpp relies
-  on the model plus the fail-closed parser (see [engine notes](./local-inference-engines.md)).
+- **Dual-engine parity.** Both engines produce a valid permutation, validated live on Gemma.
+  Ollama applies a strict whole-response JSON `format`; llama.cpp runs the rerank turn through
+  the served model's **chat template** plus the fail-closed parser (its permutation grammar is
+  disabled to avoid a tokenizer crash, so the templated prompt + the tolerant parser carry it —
+  an un-templated prompt degenerates an instruct model). See
+  [engine notes](./local-inference-engines.md).
 
 ## Observe it — one entry point, chained everywhere
 
@@ -71,6 +75,21 @@ turns.forEach((t) => console.log(t.round, t.outcome, t.modelId, t.candidateCount
 
 In the **console**, the **Monitoring → ReRank rounds** panel shows each round's outcome
 (`reranked` / `failed_closed` / `pending`), model, candidate count, and permutation.
+
+## Quality gate
+
+Rerank quality is regression-gated by the `kx-eval` **`rerank_quality`** scorer: a golden
+task places the most-relevant passage **last** and asserts the rerank moves it to the top.
+
+```sh
+just eval          # or: kx eval run
+#   rerank_quality   1000 / 1000
+```
+
+The gate fails closed if a change stops the rerank actually reordering — a `failed_closed`
+outcome scores **0**. (This exists because the feature fails *closed*: a routing regression
+that silently fell back to base order once passed every unit test + CI job. See
+[Evaluation](./evaluation.md).)
 
 ## Chaining example — grounded chat with rerank
 
