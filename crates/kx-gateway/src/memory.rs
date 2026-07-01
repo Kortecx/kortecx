@@ -58,6 +58,12 @@ impl HostMemoryView {
     /// Resolve a text payload/query to `(vector, embed_fingerprint)`. A client-supplied
     /// vector wins (the FFI-free path, no fingerprint guard); else the server embedder
     /// embeds `text` and stamps its fingerprint; else no embedder ⇒ `EmbedderUnavailable`.
+    // Without `serve-engine` there is no embedder, so `text`/`self` are unused (the
+    // client-vector path is the only one) — the FFI-free `hnsw`-alone build.
+    #[cfg_attr(
+        not(feature = "serve-engine"),
+        allow(unused_variables, clippy::unused_self)
+    )]
     fn resolve_vector(
         &self,
         provided: Option<&[f32]>,
