@@ -73,6 +73,10 @@ class Flow:
         #: this flow submits — see :meth:`with_mcp`. Stored OFF the lowered graph so
         #: ``to_chain`` / ``build`` stay byte-identical (the golden digest holds).
         self._mcp: List[dict] = []
+        #: RC5a: durable memory facts to REMEMBER (each a ``store_memory`` kwargs dict)
+        #: BEFORE this flow submits — see :meth:`with_memory`. Stored OFF the lowered
+        #: graph so ``to_chain`` / ``build`` stay byte-identical (the golden digest holds).
+        self._memory: List[dict] = []
         #: AGENTIC-VISION: an image ref pending for the NEXT agent step (set by
         #: :meth:`image`, consumed + cleared by :meth:`agent`). Per-step, so a multi-step
         #: flow can ground each step with a different image.
@@ -217,6 +221,32 @@ class Flow:
         for spec in self._mcp:
             kx.register_mcp_server(**spec)
 
+    def with_memory(self, facts: "Union[str, List[str]]") -> "Flow":
+        """Seed durable MEMORY facts (RC5a), BEFORE this flow submits, so a downstream
+        ``.agent(...)`` on a ``kx/recipes/react-memory`` chain can ``recall`` them —
+        memory is thus reachable from the SAME single chaining entry point as
+        everything else::
+
+            (kx.flow()
+               .with_memory(["the deadline is March 3rd", "the client prefers email"])
+               .agent("when is my deadline?")
+               .run())
+
+        Pure pre-submit sugar over :meth:`KxClient.store_memory` (content-addressed +
+        idempotent). It does NOT change the lowered workflow — :meth:`to_chain` /
+        :meth:`build` are byte-identical with or without it, so the golden tri-surface
+        digest holds; the store is an imperative side effect, never a DAG node.
+        Every memory is scoped to the caller's own principal."""
+        for fact in [facts] if isinstance(facts, str) else facts:
+            self._memory.append({"content": fact})
+        return self
+
+    def _register_memory(self, kx) -> None:
+        """Store each :meth:`with_memory` fact (in declaration order) before the flow
+        submits, so a downstream ``recall`` in a react-memory chain can surface it."""
+        for spec in self._memory:
+            kx.store_memory(**spec)
+
     # -- terminals --
 
     def _require_node(self) -> "_Node":
@@ -254,6 +284,7 @@ class Flow:
 
         kx = client if client is not None else default_client()
         self._register_mcp(kx)
+        self._register_memory(kx)
         return kx.run_chain(self.to_chain(), wait=wait, timeout=timeout)
 
     def submit(self, *, client=None) -> "Run":
@@ -263,6 +294,7 @@ class Flow:
 
         kx = client if client is not None else default_client()
         self._register_mcp(kx)
+        self._register_memory(kx)
         run = kx.run_chain(self.to_chain(), wait=False)
         return run  # type: ignore[return-value]
 

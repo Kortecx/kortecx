@@ -42,6 +42,7 @@ const sidebars: SidebarsConfig = {
         "local-inference-engines",
         "datasets",
         "agentic-rag",
+        "memory",
         "branches",
         "scripts",
         "reading-run-outputs",

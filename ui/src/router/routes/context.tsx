@@ -14,11 +14,12 @@ const ContextSection = lazy(() =>
   import("../../components/sections/ContextSection").then((m) => ({ default: m.ContextSection })),
 );
 
-/** The Context tabs: bundles (default, absent) and the RAG datasets / Data Lab. */
-export type ContextTab = "bundles" | "datasets";
+/** The Context tabs: bundles (default, absent), the RAG datasets / Data Lab, and
+ *  the durable agentic Memories (RC5a). */
+export type ContextTab = "bundles" | "datasets" | "memories";
 interface ContextSearch {
   /** The active tab; absent = the Bundles tab. */
-  tab?: "datasets";
+  tab?: "datasets" | "memories";
 }
 
 function ContextScreen() {
@@ -32,7 +33,7 @@ function ContextScreen() {
     <Suspense fallback={<EmptyState title="Loading…" />}>
       <ContextSection
         tab={search.tab ?? "bundles"}
-        onTab={(tab) => void navigate({ search: tab === "datasets" ? { tab } : {}, replace: true })}
+        onTab={(tab) => void navigate({ search: tab === "bundles" ? {} : { tab }, replace: true })}
       />
     </Suspense>
   );
@@ -43,5 +44,7 @@ export const contextRoute = createRoute({
   path: "/context",
   component: ContextScreen,
   validateSearch: (search: Record<string, unknown>): ContextSearch =>
-    search.tab === "datasets" ? { tab: "datasets" } : {},
+    search.tab === "datasets" || search.tab === "memories"
+      ? { tab: search.tab as "datasets" | "memories" }
+      : {},
 });

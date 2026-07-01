@@ -541,7 +541,9 @@ impl HostEmbedder {
         }
     }
 
-    fn embed(&self, text: &str) -> Result<Vec<f32>, DatasetError> {
+    // `pub(crate)` so `HostMemoryView` (RC5a) reuses the SAME embedder type to embed
+    // memory content/queries — one embedder abstraction, two data-plane views.
+    pub(crate) fn embed(&self, text: &str) -> Result<Vec<f32>, DatasetError> {
         let out = self
             .backend
             .dispatch_embedding(&self.model_id, text, self.pooling, &self.warrant)
@@ -550,12 +552,12 @@ impl HostEmbedder {
     }
 
     /// The embed model id string — a fingerprint axis (RC4a).
-    fn model_id_string(&self) -> String {
+    pub(crate) fn model_id_string(&self) -> String {
         self.model_id.0.clone()
     }
 
     /// The pooling strategy as a stable u8 tag — a fingerprint axis (RC4a).
-    fn pooling_tag(&self) -> u8 {
+    pub(crate) fn pooling_tag(&self) -> u8 {
         match self.pooling {
             kx_inference::EmbeddingPooling::Mean => 0,
             kx_inference::EmbeddingPooling::Cls => 1,

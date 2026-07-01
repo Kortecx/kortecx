@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-memory"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx durable agentic MEMORY subsystem (RC5a) — a cross-run, per-namespace store of what an agent learned: content-addressed durable rows (memory.db) + a rebuildable in-memory similarity index over the kx-dataset RetrievalIndex seam. Semantic recall + an episodic log. Off the truth path (SN-8): recall returns only the ordered memory-ref SET (similarity stays inside; scores are display-only, never on an identity/commit path); the store is a rebuildable projection (lose it → rebuild from the durable rows / re-fold committed remember-actions), never a second source of truth. Journal-authoritative like kx-dataset; NO journal schema bump."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Content-addressed identity the memory records are keyed by (memory_id = of(content)).
+kx-content = { workspace = true }
+# The RetrievalIndex/Hit similarity seam + the exact InMemoryRetrievalIndex (the
+# deterministic default; the file-backed kx-dataset-hnsw HnswRetrievalIndex is a
+# drop-in for scale behind the same trait). SN-8: similarity confined to this seam.
+kx-dataset = { workspace = true }
+# Persistence-friendly derives + wire tags on the record / kind types.
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+# The durable memory.db store (WAL, per-namespace rows). rusqlite adds no spine→memory
+# edge (this crate is a data-plane leaf off the guarantee path, like kx-dataset /
+# kx-catalog / kx-fleet) — the SN-8 wall is enforced by the dependency direction.
+rusqlite   = { workspace = true }
+
+[dev-dependencies]
+# Durability / rebuild-on-open / corrupt-row integration tests write a temp db.
+tempfile   = { workspace = true }
+
+[lints]
+workspace = true

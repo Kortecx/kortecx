@@ -60,6 +60,11 @@ mod fuzzy_discovery;
 mod identity;
 mod locks_view;
 mod mcp_gateway_admin;
+// RC5a: the durable multi-tier MEMORY seam (StoreMemory/ListMemories/RecallMemory/
+// ForgetMemory). Pure vocabulary trait; the host impl is `kx-memory`-backed +
+// embedder. Off the journal/digest — memory.db is a rebuildable sidecar (no schema
+// bump). SN-8: recall commits only the ordered ref set; the score is display-only.
+mod memory;
 // MM-3 (D110): the LOCAL secret-store admin seam (PutSecret/ListSecretNames/
 // DeleteSecret). Pure vocabulary trait; the host impl is keychain-backed. The
 // value is write-only (put arg) — never on a return type, the wire, or the journal.
@@ -112,6 +117,10 @@ pub use error::GatewayError;
 pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 pub use fuzzy_discovery::{score_to_bp, FuzzyDiscoveryView, FuzzyHitEntry};
 pub use locks_view::{LockStore, LOCKED_BRANCH_REFUSAL_CODE};
+pub use memory::{
+    memory_namespace, MemoryEntry, MemoryError, MemoryHitEntry, MemoryKindTag, MemoryView,
+    MemoryWrite, StoreMemoryOutcome,
+};
 pub use scaffold::{
     authoring_prompt, body_is_empty, derive_phase, split_done_pending, try_committed_body,
     AppScaffolder, ScaffoldFile, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,

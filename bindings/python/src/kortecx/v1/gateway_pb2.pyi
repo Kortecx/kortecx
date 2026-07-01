@@ -45,6 +45,12 @@ class RetrievalMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     RETRIEVAL_MODE_DENSE: _ClassVar[RetrievalMode]
     RETRIEVAL_MODE_HYBRID: _ClassVar[RetrievalMode]
 
+class MemoryKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    MEMORY_KIND_UNSPECIFIED: _ClassVar[MemoryKind]
+    MEMORY_KIND_SEMANTIC: _ClassVar[MemoryKind]
+    MEMORY_KIND_EPISODIC: _ClassVar[MemoryKind]
+
 class LowerVerdict(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     LOWER_VERDICT_UNSPECIFIED: _ClassVar[LowerVerdict]
@@ -108,6 +114,9 @@ RECIPE_PARAM_TYPE_ENUM: RecipeParamType
 RETRIEVAL_MODE_UNSPECIFIED: RetrievalMode
 RETRIEVAL_MODE_DENSE: RetrievalMode
 RETRIEVAL_MODE_HYBRID: RetrievalMode
+MEMORY_KIND_UNSPECIFIED: MemoryKind
+MEMORY_KIND_SEMANTIC: MemoryKind
+MEMORY_KIND_EPISODIC: MemoryKind
 LOWER_VERDICT_UNSPECIFIED: LowerVerdict
 LOWER_VERDICT_UNAVAILABLE: LowerVerdict
 LOWER_VERDICT_WOULD_LOWER: LowerVerdict
@@ -828,6 +837,104 @@ class ListReRankTurnsResponse(_message.Message):
     turns: _containers.RepeatedCompositeFieldContainer[ReRankTurnSummary]
     has_more: bool
     def __init__(self, turns: _Optional[_Iterable[_Union[ReRankTurnSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class StoreMemoryRequest(_message.Message):
+    __slots__ = ("content", "embedding", "kind", "namespace")
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    EMBEDDING_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    content: bytes
+    embedding: _containers.RepeatedScalarFieldContainer[float]
+    kind: MemoryKind
+    namespace: str
+    def __init__(self, content: _Optional[bytes] = ..., embedding: _Optional[_Iterable[float]] = ..., kind: _Optional[_Union[MemoryKind, str]] = ..., namespace: _Optional[str] = ...) -> None: ...
+
+class StoreMemoryResponse(_message.Message):
+    __slots__ = ("memory_id", "inserted", "dim")
+    MEMORY_ID_FIELD_NUMBER: _ClassVar[int]
+    INSERTED_FIELD_NUMBER: _ClassVar[int]
+    DIM_FIELD_NUMBER: _ClassVar[int]
+    memory_id: bytes
+    inserted: bool
+    dim: int
+    def __init__(self, memory_id: _Optional[bytes] = ..., inserted: bool = ..., dim: _Optional[int] = ...) -> None: ...
+
+class ListMemoriesRequest(_message.Message):
+    __slots__ = ("limit", "instance_id", "namespace")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    instance_id: bytes
+    namespace: str
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., namespace: _Optional[str] = ...) -> None: ...
+
+class MemorySummary(_message.Message):
+    __slots__ = ("memory_id", "content", "kind", "instance_id", "created_ms", "dim")
+    MEMORY_ID_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    CREATED_MS_FIELD_NUMBER: _ClassVar[int]
+    DIM_FIELD_NUMBER: _ClassVar[int]
+    memory_id: bytes
+    content: bytes
+    kind: str
+    instance_id: bytes
+    created_ms: int
+    dim: int
+    def __init__(self, memory_id: _Optional[bytes] = ..., content: _Optional[bytes] = ..., kind: _Optional[str] = ..., instance_id: _Optional[bytes] = ..., created_ms: _Optional[int] = ..., dim: _Optional[int] = ...) -> None: ...
+
+class ListMemoriesResponse(_message.Message):
+    __slots__ = ("memories", "has_more")
+    MEMORIES_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    memories: _containers.RepeatedCompositeFieldContainer[MemorySummary]
+    has_more: bool
+    def __init__(self, memories: _Optional[_Iterable[_Union[MemorySummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class RecallMemoryRequest(_message.Message):
+    __slots__ = ("query_text", "query_embedding", "k", "namespace")
+    QUERY_TEXT_FIELD_NUMBER: _ClassVar[int]
+    QUERY_EMBEDDING_FIELD_NUMBER: _ClassVar[int]
+    K_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    query_text: str
+    query_embedding: _containers.RepeatedScalarFieldContainer[float]
+    k: int
+    namespace: str
+    def __init__(self, query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ..., namespace: _Optional[str] = ...) -> None: ...
+
+class MemoryHit(_message.Message):
+    __slots__ = ("memory_id", "content", "score")
+    MEMORY_ID_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    SCORE_FIELD_NUMBER: _ClassVar[int]
+    memory_id: bytes
+    content: bytes
+    score: float
+    def __init__(self, memory_id: _Optional[bytes] = ..., content: _Optional[bytes] = ..., score: _Optional[float] = ...) -> None: ...
+
+class RecallMemoryResponse(_message.Message):
+    __slots__ = ("hits",)
+    HITS_FIELD_NUMBER: _ClassVar[int]
+    hits: _containers.RepeatedCompositeFieldContainer[MemoryHit]
+    def __init__(self, hits: _Optional[_Iterable[_Union[MemoryHit, _Mapping]]] = ...) -> None: ...
+
+class ForgetMemoryRequest(_message.Message):
+    __slots__ = ("memory_id", "namespace")
+    MEMORY_ID_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    memory_id: bytes
+    namespace: str
+    def __init__(self, memory_id: _Optional[bytes] = ..., namespace: _Optional[str] = ...) -> None: ...
+
+class ForgetMemoryResponse(_message.Message):
+    __slots__ = ("forgotten",)
+    FORGOTTEN_FIELD_NUMBER: _ClassVar[int]
+    forgotten: bool
+    def __init__(self, forgotten: bool = ...) -> None: ...
 
 class ListCaptureRecordsRequest(_message.Message):
     __slots__ = ("limit", "instance_id")

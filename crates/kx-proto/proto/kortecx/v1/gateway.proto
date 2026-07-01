@@ -715,6 +715,77 @@ message ListReRankTurnsResponse {
   bool has_more = 2;                     // a further page exists beyond the last returned turn
 }
 
+// ---------------------------------------------------------------------------
+// RC5a: durable multi-tier MEMORY — semantic recall + episodic store.
+//
+// A cross-run, per-namespace store of what an agent LEARNED. Off the truth path
+// (SN-8): a recall returns only the ordered memory-ref SET; the similarity `score`
+// is DISPLAY-ONLY, never an identity input. The store (memory.db) is a rebuildable
+// projection — NO journal schema bump (the retrieve@1 precedent). `namespace` is the
+// caller's ISOLATION scope; a "" request namespace ⇒ the server-derived caller
+// default (a client never scopes into another principal's memories). These RPCs are
+// the operator/SDK/CLI + episodic-log surface; the in-run recall@1 / remember@1 tools
+// use the same store out-of-band under a server-injected namespace.
+// ---------------------------------------------------------------------------
+enum MemoryKind {
+  MEMORY_KIND_UNSPECIFIED = 0;           // ⇒ SEMANTIC (the default)
+  MEMORY_KIND_SEMANTIC    = 1;           // a durable fact the agent learned
+  MEMORY_KIND_EPISODIC    = 2;           // an event/observation from a run
+}
+
+message StoreMemoryRequest {
+  bytes  content           = 1;          // the payload to remember (ALWAYS present; content-addressed → memory_id)
+  repeated float embedding = 2;          // OPTIONAL client vector; empty ⇒ server-embed (needs `inference`)
+  MemoryKind kind          = 3;          // UNSPECIFIED ⇒ SEMANTIC
+  string namespace         = 4;          // "" ⇒ the caller's server-derived default namespace
+}
+message StoreMemoryResponse {
+  bytes  memory_id = 1;                  // 32B content-addressed id
+  bool   inserted  = 2;                  // false ⇒ a content-addressed dedup hit (idempotent)
+  uint32 dim       = 3;                  // the namespace's embedding dimension
+}
+
+message ListMemoriesRequest {
+  optional uint32 limit       = 1;       // page size; server clamps (absent = default page)
+  optional bytes  instance_id = 2;       // 16B — scope to one run (absent = all runs in the namespace)
+  string namespace            = 3;       // "" ⇒ caller default
+}
+message MemorySummary {
+  bytes  memory_id  = 1;                 // 32B content-addressed id (the citation key)
+  bytes  content    = 2;                 // the remembered payload (UI snippet)
+  string kind       = 3;                 // "semantic" | "episodic"
+  bytes  instance_id = 4;                // 16B — the run that wrote it (all-zero = operator/SDK write)
+  int64  created_ms = 5;                 // unix-ms (display only; off every hash)
+  uint32 dim        = 6;                 // the memory vector's embedding dimension
+}
+message ListMemoriesResponse {
+  repeated MemorySummary memories = 1;   // newest-first
+  bool has_more = 2;                     // a further page exists beyond the last returned memory
+}
+
+message RecallMemoryRequest {
+  string query_text              = 1;    // server-embed path (needs `inference` + an embedder)
+  repeated float query_embedding = 2;    // client-vector path (FFI-free); takes precedence when non-empty
+  uint32 k                       = 3;    // top-k (server-clamped to a sane max)
+  string namespace               = 4;    // "" ⇒ caller default
+}
+message MemoryHit {
+  bytes memory_id = 1;                   // 32B content-addressed id (the citation key)
+  bytes content   = 2;                   // the remembered payload bytes
+  float score     = 3;                   // SN-8: DISPLAY-ONLY similarity; NEVER an identity input
+}
+message RecallMemoryResponse {
+  repeated MemoryHit hits = 1;           // ordered: score desc, then ascending ref (deterministic)
+}
+
+message ForgetMemoryRequest {
+  bytes  memory_id = 1;                  // the memory to erase
+  string namespace = 2;                  // "" ⇒ caller default
+}
+message ForgetMemoryResponse {
+  bool forgotten = 1;                    // true ⇒ a row was removed
+}
+
 // The Morphic Data Engine read surface (campaign Batch 2): one durably-captured
 // ACTION record — a committed Mote's join keys, mirrored into the gateway's
 // capture.db sidecar (a rebuildable cache folded from the journal; the journal
@@ -2005,6 +2076,13 @@ service KxGateway {
 
   // RC4c-2: enumerate the durable `ReRankRound` facts (live LLM listwise rerank).
   rpc ListReRankTurns(ListReRankTurnsRequest) returns (ListReRankTurnsResponse);
+  // RC5a additive (D120.6): durable multi-tier MEMORY (semantic recall + episodic
+  // store). Off the truth path; NO journal schema bump. UNIMPLEMENTED when the seam
+  // yields None (an old gateway, or memory disabled / no `hnsw`).
+  rpc StoreMemory(StoreMemoryRequest) returns (StoreMemoryResponse);
+  rpc ListMemories(ListMemoriesRequest) returns (ListMemoriesResponse);
+  rpc RecallMemory(RecallMemoryRequest) returns (RecallMemoryResponse);
+  rpc ForgetMemory(ForgetMemoryRequest) returns (ForgetMemoryResponse);
   // Campaign Batch 2 additive (D120.6): the Morphic Data Engine capture read
   // surface (durable action exhaust; read-only, off-truth-path).
   rpc ListCaptureRecords(ListCaptureRecordsRequest) returns (ListCaptureRecordsResponse);

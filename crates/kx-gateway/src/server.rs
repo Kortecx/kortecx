@@ -446,6 +446,19 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             crate::model_exec::shaper_warrant(&embed_model, default_executor_class()),
         )
     });
+    // RC5a: a SEPARATE server embedder for the durable-MEMORY view (the RAG one above
+    // is moved into `dataset_view`). Same construction — one embedder abstraction
+    // (`HostEmbedder`), two data-plane views. `None` (a model-less serve) ⇒ memory
+    // falls back to the FFI-free client-vector path.
+    #[cfg(all(feature = "hnsw", feature = "serve-engine"))]
+    let memory_embedder: Option<crate::datasets::HostEmbedder> = serve_rt.as_ref().map(|r| {
+        let embed_model = r.embed_model.clone();
+        crate::datasets::HostEmbedder::new(
+            r.routing.clone(),
+            embed_model.clone(),
+            crate::model_exec::shaper_warrant(&embed_model, default_executor_class()),
+        )
+    });
 
     // (1) Embedded coordinator — the SOLE journal writer. It opens the journal
     //     read-write (by value) and verifies each committed result_ref against
@@ -857,6 +870,27 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     ) {
         tracing::warn!(%error, "RC4b: failed to seed retrieve@1 into tools.db");
     }
+    // RC5a (durable memory): seed remember@1 + recall@1 into the durable registry so
+    // DiscoverTools + the react-memory tool menu show them, exactly when memory is
+    // enabled (the hnsw + serve build + KX_SERVE_MEMORY). The capabilities themselves
+    // register below, once the memory view is built.
+    #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+    if crate::env_caps::memory_enabled() {
+        for def in [
+            crate::remember_tool::remember_tool_def(),
+            crate::recall_tool::recall_tool_def(),
+        ] {
+            if let Err(error) = tool_registry.register_server_tool(
+                def,
+                kx_tool_registry::ToolProvenance::HumanAuthored {
+                    author: "kx-gateway".to_string(),
+                },
+                None,
+            ) {
+                tracing::warn!(%error, "RC5a: failed to seed a memory tool into tools.db");
+            }
+        }
+    }
     // Batch A: vision is a SERVE FACT derived from what actually registered
     // (the catalog entry declares "image" iff the projector resolved + the
     // backend built) — the vision recipe seeds exactly when the dispatch path
@@ -899,6 +933,24 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         Some(crate::retrieve_tool::retrieve_tool());
     #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
     let retrieve_tool_id: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
+    // RC5a: the durable-memory tool identities (remember@1 + recall@1) the react-memory
+    // recipe's warrant grants — `Some` exactly when memory is enabled (the hnsw + serve
+    // build + KX_SERVE_MEMORY), so the react-memory recipe is provisioned. `None` ⇒ no
+    // memory recipe is seeded (byte-identical to before).
+    #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+    let memory_tool_ids: Vec<(kx_mote::ToolName, kx_mote::ToolVersion)> =
+        if crate::env_caps::memory_enabled() {
+            vec![
+                crate::remember_tool::remember_tool(),
+                crate::recall_tool::recall_tool(),
+            ]
+        } else {
+            Vec::new()
+        };
+    #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
+    let memory_tool_ids: Vec<(kx_mote::ToolName, kx_mote::ToolVersion)> = Vec::new();
+    let memory_tools_binding: Option<&[(kx_mote::ToolName, kx_mote::ToolVersion)]> =
+        (!memory_tool_ids.is_empty()).then_some(memory_tool_ids.as_slice());
     let demo = Arc::new(DemoLibrary::open_serve(
         &catalog_dir,
         default_executor_class(),
@@ -906,6 +958,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         serve_model.as_ref(),
         react_tool.as_ref(),
         retrieve_tool_id.as_ref(),
+        memory_tools_binding,
         vision_supported,
         fs_list_binding,
         autogrant,
@@ -980,6 +1033,40 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         &local_broker,
         dataset_view.clone() as std::sync::Arc<dyn kx_gateway_core::DatasetView>,
     );
+    // RC5a (durable memory): the serve-side memory view (memory.db + embedder) under the
+    // catalog dir. Built like the dataset view (always under `hnsw` so the embedder is
+    // consumed uniformly); the RPCs + capabilities are gated on `KX_SERVE_MEMORY` below.
+    #[cfg(feature = "hnsw")]
+    let memory_view: std::sync::Arc<crate::memory::HostMemoryView> = {
+        let memory_dir = catalog_dir.join("memory");
+        #[cfg_attr(not(feature = "serve-engine"), allow(unused_mut))]
+        let mut view = crate::memory::HostMemoryView::open(&memory_dir)?;
+        #[cfg(feature = "serve-engine")]
+        if let Some(embedder) = memory_embedder {
+            view = view.with_embedder(embedder);
+        }
+        std::sync::Arc::new(view)
+    };
+    // RC5a: register recall@1 + remember@1 on the SAME serve broker over the live memory
+    // view, bound to the serve's primary-principal namespace (verdict #5 — the model
+    // NEVER scopes it; aligns with the operator's `kx memory` RPC namespace on a
+    // single-node serve, so an agent's `remember` and `kx memory list` see one bucket).
+    // Gated on KX_SERVE_MEMORY (the react-memory recipe is seeded above under the same gate).
+    #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+    if crate::env_caps::memory_enabled() {
+        let memory_principal = parties
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "local-dev".to_string());
+        let memory_ns = kx_gateway_core::memory_namespace(&memory_principal, "");
+        let mv: std::sync::Arc<dyn kx_gateway_core::MemoryView> = memory_view.clone();
+        crate::recall_tool::register_recall_capability(
+            &local_broker,
+            mv.clone(),
+            memory_ns.clone(),
+        );
+        crate::remember_tool::register_remember_capability(&local_broker, mv, memory_ns);
+    }
     let binder: Arc<dyn RecipeBinder> = {
         #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
         let mut host_binder = if autogrant {
@@ -1478,6 +1565,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         gateway = gateway
             .with_dataset_view(dataset_view.clone())
             .with_fuzzy_discovery(dataset_view);
+        // RC5a: wire the memory RPCs only when KX_SERVE_MEMORY is on (else they honestly
+        // return `unimplemented`). The client-vector StoreMemory/RecallMemory path works
+        // under `hnsw` alone; server-embed needs `serve-engine` + a model.
+        if crate::env_caps::memory_enabled() {
+            gateway = gateway.with_memory_view(
+                memory_view.clone() as std::sync::Arc<dyn kx_gateway_core::MemoryView>
+            );
+        }
     }
     // PR-4.2 (T-STREAM1): wire the broker-backed live token tailer behind the gRPC
     // `StreamModelTokens` RPC (the inference build only; the default `NoTokenTailer`
