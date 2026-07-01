@@ -842,6 +842,106 @@ pub fn render_dataset_hits(resp: &proto::QueryDatasetResponse, json: bool) -> St
     }
 }
 
+/// Render `memory add` — the content-addressed store receipt.
+#[must_use]
+pub fn render_store_memory(resp: &proto::StoreMemoryResponse, json: bool) -> String {
+    let id = hex::encode(&resp.memory_id);
+    if json {
+        json!({
+            "memory_id": id,
+            "inserted": resp.inserted,
+            "dim": resp.dim,
+        })
+        .to_string()
+    } else {
+        let dedup = if resp.inserted {
+            "remembered"
+        } else {
+            "already remembered (deduped)"
+        };
+        let short = id.get(..16).unwrap_or(&id);
+        format!("{dedup}: {short} (dim={})", resp.dim)
+    }
+}
+
+/// Render `memory list` — the episodic log (newest-first).
+#[must_use]
+pub fn render_memories(resp: &proto::ListMemoriesResponse, json: bool) -> String {
+    if json {
+        let memories: Vec<Value> = resp
+            .memories
+            .iter()
+            .map(|m| {
+                json!({
+                    "memory_id": hex::encode(&m.memory_id),
+                    "text": String::from_utf8_lossy(&m.content),
+                    "kind": m.kind,
+                    "instance_id": hex::encode(&m.instance_id),
+                    "created_ms": m.created_ms,
+                    "dim": m.dim,
+                })
+            })
+            .collect();
+        json!({ "memories": memories, "has_more": resp.has_more }).to_string()
+    } else if resp.memories.is_empty() {
+        "(no memories)".to_string()
+    } else {
+        resp.memories
+            .iter()
+            .map(|m| {
+                let r = hex::encode(&m.memory_id);
+                let short = r.get(..16).unwrap_or(&r);
+                format!("{}  {}  {}", short, m.kind, doc_snippet(&m.content))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `memory recall` hits. The `score` is DISPLAY-ONLY (SN-8) — a ranking aid,
+/// never an identity input; the durable result is the ordered content-ref SET.
+#[must_use]
+pub fn render_memory_hits(resp: &proto::RecallMemoryResponse, json: bool) -> String {
+    if json {
+        let hits: Vec<Value> = resp
+            .hits
+            .iter()
+            .map(|h| {
+                json!({
+                    "memory_id": hex::encode(&h.memory_id),
+                    "score": h.score,
+                    "text": String::from_utf8_lossy(&h.content),
+                })
+            })
+            .collect();
+        json!({ "hits": hits }).to_string()
+    } else if resp.hits.is_empty() {
+        "(no relevant memories)".to_string()
+    } else {
+        resp.hits
+            .iter()
+            .map(|h| {
+                let r = hex::encode(&h.memory_id);
+                let short = r.get(..16).unwrap_or(&r);
+                format!("{:.3}  {}  {}", h.score, short, doc_snippet(&h.content))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `memory forget`.
+#[must_use]
+pub fn render_forget_memory(resp: &proto::ForgetMemoryResponse, json: bool) -> String {
+    if json {
+        json!({ "forgotten": resp.forgotten }).to_string()
+    } else if resp.forgotten {
+        "forgotten".to_string()
+    } else {
+        "(no such memory)".to_string()
+    }
+}
+
 /// Render `signatures list`.
 #[must_use]
 pub fn render_signatures_list(resp: &proto::ListSignaturesResponse, json: bool) -> String {

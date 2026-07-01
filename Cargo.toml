@@ -36,6 +36,7 @@ members = [
     "crates/kx-dataset",
     "crates/kx-dataset-hnsw",
     "crates/kx-dataset-bm25",
+    "crates/kx-memory",
     "crates/kx-critic-types",
     "crates/kx-critic",
     "crates/kx-capture",
@@ -193,6 +194,12 @@ kx-dataset-hnsw      = { path = "crates/kx-dataset-hnsw",      version = "0.1.1"
 # FFI-free inverted index implementing kx-dataset::LexicalIndex; the keyword leg of
 # hybrid retrieval (RRF-fused with the dense index). Off the truth path (SN-8).
 kx-dataset-bm25      = { path = "crates/kx-dataset-bm25",      version = "0.1.0" }
+# The durable agentic MEMORY subsystem (RC5a) — a cross-run, per-namespace store of
+# what an agent learned (memory.db) + a rebuildable similarity index over the
+# kx-dataset RetrievalIndex seam (semantic recall + episodic log). Off the truth path
+# (SN-8), journal-authoritative, NO journal schema bump. The recall@1 / remember@1
+# capabilities (kx-gateway) are the live surface.
+kx-memory            = { path = "crates/kx-memory",            version = "0.1.0" }
 # Deterministic-critic vocabulary (P4.2) — CriticVerdict / CriticReason / CheckSpec.
 # Parser-free + dataset-free so kx-mote can embed a CheckSpec in MoteDef without a
 # dependency cycle or inheriting regex/serde_json.

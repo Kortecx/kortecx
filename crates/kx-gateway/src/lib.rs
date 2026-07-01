@@ -128,6 +128,19 @@ mod mcp_tool;
 // (`serve-engine`) AND the dataset view (`hnsw`); off-digest, SN-8 (scores dropped).
 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
 mod retrieve_tool;
+// RC5a (durable memory): the serve-side HostMemoryView (memory.db + embedder) behind
+// the opt-in `hnsw` feature — the durable, per-namespace, cross-run memory store. The
+// StoreMemory/ListMemories/RecallMemory/ForgetMemory RPCs bind to it; off-digest.
+#[cfg(feature = "hnsw")]
+mod memory;
+// RC5a: the bundled recall@1 (read) + remember@1 (write) capabilities + typed ToolDefs
+// + serve-broker registration — the durable-memory tools the live ReAct loop
+// (`kx/recipes/react-memory`) calls autonomously. Needs the serve broker
+// (`serve-engine`) AND the memory view (`hnsw`); off-digest, SN-8 (scores dropped).
+#[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+mod recall_tool;
+#[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+mod remember_tool;
 // PR-6b-1 (D159): the EXTERNAL MCP gateway host wiring — the McpGatewayAdmin impl
 // over kx_mcp_gateway::McpGateway + the BrokerCapabilitySink. Behind the
 // `mcp-gateway` feature (ON by default); FFI-free, off-journal, off-digest. DIALS
@@ -248,8 +261,9 @@ pub use provision::{
     DemoLibrary, HostRecipeBinder, HostRecipeCatalog, HostSignatureCatalog, HostWorkflowAuthor,
     CHAT_RAG_RECIPE_HANDLE, DEMO_RECIPE_HANDLE, JUDGE_RECIPE_HANDLE, MODEL_RECIPE_HANDLE,
     PASSTHROUGH_DAG_HANDLE, REACT_AUTO_RECIPE_HANDLE, REACT_EDIT_RECIPE_HANDLE,
-    REACT_FS_RECIPE_HANDLE, REACT_RAG_RECIPE_HANDLE, REACT_RECIPE_HANDLE,
-    REACT_VISION_RECIPE_HANDLE, VISION_RAG_RECIPE_HANDLE, VISION_RECIPE_HANDLE,
+    REACT_FS_RECIPE_HANDLE, REACT_MEMORY_RECIPE_HANDLE, REACT_RAG_RECIPE_HANDLE,
+    REACT_RECIPE_HANDLE, REACT_VISION_RECIPE_HANDLE, VISION_RAG_RECIPE_HANDLE,
+    VISION_RECIPE_HANDLE,
 };
 pub use server::{serve, start, RunningGateway};
 pub use teams::{seed_workspace_team, HostGrantView, HostMembershipView, WORKSPACE_TEAM_HANDLE};

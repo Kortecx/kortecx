@@ -118,6 +118,16 @@ fn parse_bp(raw: Option<&str>, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
+/// RC5a: is the durable-MEMORY subsystem enabled? `KX_SERVE_MEMORY` (default OFF —
+/// a new per-principal state surface, opt-in). When ON (and the `hnsw` build), the
+/// serve builds a `HostMemoryView`, registers the `recall@1`/`remember@1` capabilities,
+/// seeds `kx/recipes/react-memory`, and wires the memory RPCs; when OFF, the memory
+/// RPCs honestly return `unimplemented` and no memory recipe is seeded.
+#[cfg(feature = "hnsw")]
+pub(crate) fn memory_enabled() -> bool {
+    parse_bool(std::env::var("KX_SERVE_MEMORY").ok().as_deref(), false)
+}
+
 /// The operator RAG config (RC4a `KX_SERVE_RAG_*` knobs): retrieval mode, chunk
 /// size/overlap, the per-doc chunk cap, RRF k, MMR lambda + on/off, and stopwords.
 /// Each is additive + default-preserving (unset ⇒ [`RagConfig::default`]); all are

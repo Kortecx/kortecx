@@ -2,10 +2,12 @@ import type { ContextTab } from "../../router/routes/context";
 import { ContextBundleList } from "../context/ContextBundleList";
 import { NewContextBundleForm } from "../context/NewContextBundleForm";
 import { DatasetsSection } from "./DatasetsSection";
+import { MemoriesSection } from "./MemoriesSection";
 
 const TABS: ReadonlyArray<{ id: ContextTab; label: string }> = [
   { id: "bundles", label: "Bundles" },
   { id: "datasets", label: "Datasets" },
+  { id: "memories", label: "Memories" },
 ];
 
 /**
@@ -57,6 +59,8 @@ export function ContextSection({
 
       {tab === "datasets" ? (
         <DatasetsSection />
+      ) : tab === "memories" ? (
+        <MemoriesSection />
       ) : (
         <>
           <h2>Your bundles</h2>

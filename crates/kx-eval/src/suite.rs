@@ -66,6 +66,12 @@ pub struct Expectation {
     /// The rank window the best candidate must land within (0/omitted ⇒ 1, must be first).
     #[serde(default)]
     pub rerank_top_k: u32,
+    /// RC5a: facts the run must RECALL from durable memory (each must appear both in the
+    /// recalled memories — carried as `retrieved_docs` — AND in the final answer, i.e.
+    /// recalled AND grounded). Empty ⇒ the memory_quality scorer is N/A for this task. The
+    /// fail-closed guard: a recall that silently returns nothing scores 0.
+    #[serde(default)]
+    pub memory_must_recall: Vec<String>,
     /// The ideal number of turns to solve the task (the loop-efficiency denominator).
     pub ideal_turns: u32,
     /// The ideal number of tool calls to solve the task.

@@ -67,6 +67,9 @@ export interface FlowClient {
    * {@link Flow.withMcp} to register a connector before the flow submits. A test double
    * without it is fine UNLESS the flow uses `.withMcp(...)` (then `run()` throws). */
   registerMcpServer?(input: RegisterMcpServerInput): Promise<unknown>;
+  /** OPTIONAL — present on the real {@link import("./client.js").KxClient}. Used by
+   * {@link Flow.withMemory} to seed a durable memory before the flow submits (RC5a). */
+  storeMemory?(content: string | Uint8Array, opts?: { kind?: number }): Promise<unknown>;
 }
 
 /** Resolve the client for a terminal: the explicit one, else the zero-config Node
@@ -99,6 +102,10 @@ export class Flow {
    * {@link withMcp}. Stored OFF the lowered graph so `toChain`/`build` stay
    * byte-identical (the golden digest holds). */
   private readonly mcp: RegisterMcpServerInput[] = [];
+  /** RC5a: durable memory facts to REMEMBER BEFORE this flow submits — see
+   * {@link withMemory}. Stored OFF the lowered graph so `toChain`/`build` stay
+   * byte-identical (the golden digest holds). */
+  private readonly memoryFacts: string[] = [];
   /** AGENTIC-VISION: an image ref pending for the NEXT agent step (set by {@link image},
    * consumed + cleared by {@link agent}). Per-step, so a multi-step flow can ground each
    * step with a different image. */
@@ -226,6 +233,38 @@ export class Flow {
     for (const spec of this.mcp) await client.registerMcpServer(spec);
   }
 
+  /**
+   * Seed durable MEMORY facts (RC5a), BEFORE this flow submits, so a downstream
+   * `.agent(...)` on a `kx/recipes/react-memory` chain can `recall` them — memory is
+   * thus reachable from the SAME single chaining entry point as everything else:
+   *
+   *   flow()
+   *     .withMemory(["the deadline is March 3rd", "the client prefers email"])
+   *     .agent("when is my deadline?")
+   *     .run()
+   *
+   * Pure pre-submit sugar over {@link import("./client.js").KxClient.storeMemory}
+   * (content-addressed + idempotent). It does NOT change the lowered workflow —
+   * `toChain`/`build` are byte-identical with or without it, so the golden digest
+   * holds; the store is an imperative side effect, never a DAG node. Every memory is
+   * scoped to the caller's own principal.
+   */
+  withMemory(facts: string | string[]): this {
+    for (const fact of typeof facts === "string" ? [facts] : facts) this.memoryFacts.push(fact);
+    return this;
+  }
+
+  /** Store each {@link withMemory} fact (declaration order) before submit. */
+  private async registerMemory(client: FlowClient): Promise<void> {
+    if (this.memoryFacts.length === 0) return;
+    if (typeof client.storeMemory !== "function") {
+      throw new KxUsage(
+        "withMemory() needs a client that can store memories — pass { client: new KxClient(...) }",
+      );
+    }
+    for (const fact of this.memoryFacts) await client.storeMemory(fact);
+  }
+
   /** Lower this flow to a {@link Chain}. */
   toChain(): Chain {
     if (this.node === undefined) {
@@ -261,6 +300,7 @@ export class Flow {
   ): Promise<Run | Result> {
     const client = resolveClient(opts.client);
     await this.registerMcp(client);
+    await this.registerMemory(client);
     return client.runChain(this.toChain(), {
       wait: opts.wait ?? true,
       timeoutMs: opts.timeoutMs,

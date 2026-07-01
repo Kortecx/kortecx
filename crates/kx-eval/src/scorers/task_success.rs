@@ -78,6 +78,7 @@ mod tests {
             grounded_in: vec![],
             rerank_best_index: None,
             rerank_top_k: 0,
+            memory_must_recall: vec![],
             ideal_turns: 1,
             ideal_tool_calls: 0,
         }
@@ -130,6 +131,7 @@ mod tests {
             grounded_in: vec![],
             rerank_best_index: None,
             rerank_top_k: 0,
+            memory_must_recall: vec![],
             ideal_turns: 8,
             ideal_tool_calls: 20,
         };

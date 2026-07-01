@@ -82,6 +82,11 @@ export const queryKeys = {
   /** Advisory fuzzy discovery (`FuzzyDiscovery`), scoped by dataset + text + k. */
   fuzzyDiscovery: (endpoint: string, dataset: string, text: string, k: number) =>
     ["kx", endpoint, "fuzzy-discovery", dataset, text, k] as const,
+  /** RC5a: the durable agentic memories (`ListMemories`, episodic log). */
+  memories: (endpoint: string) => ["kx", endpoint, "memories"] as const,
+  /** RC5a: a memory recall (`RecallMemory`), scoped by query text + k. */
+  memoryRecall: (endpoint: string, text: string, k: number) =>
+    ["kx", endpoint, "memory-recall", text, k] as const,
   /** Gateway liveness probe (endpoint-scoped). */
   health: (endpoint: string) => ["kx", endpoint, "health"] as const,
   /** POC-1 Settings "Workspace": the non-secret server configuration (`GetServerInfo`). */

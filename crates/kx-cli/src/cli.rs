@@ -80,6 +80,7 @@ usage: kx <command> [args]
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list|load <id>|offload <id>       (model discovery + local lifecycle)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
+    kx memory add <text> | list | recall --text <q> [--k N] | forget <id>   (durable cross-run agent memory)
     kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
     kx eval run [--tolerance <per_mille>] | score <INSTANCE_ID>   (RC1/D172 — golden gate + per-run quality)
@@ -156,6 +157,9 @@ pub enum Cli {
     Models(verbs::models::ModelsArgs),
     /// The RAG data-plane (`ListDatasets` / `IngestDocuments` / `QueryDataset`).
     Datasets(verbs::datasets::DatasetsArgs),
+    /// Durable agentic MEMORY (`StoreMemory` / `ListMemories` / `RecallMemory` /
+    /// `ForgetMemory`) — remember/recall facts across runs (RC5a).
+    Memory(verbs::memory::MemoryArgs),
     /// Liveness/readiness probe (grpc.health.v1).
     Health(verbs::health::HealthArgs),
     /// POC-1 Settings "Workspace": the non-secret server configuration (`GetServerInfo`).
@@ -228,6 +232,7 @@ impl Cli {
             Some("branch") => Ok(Cli::Branch(verbs::branch::parse(args)?)),
             Some("models") => Ok(Cli::Models(verbs::models::parse(args)?)),
             Some("datasets") => Ok(Cli::Datasets(verbs::datasets::parse(args)?)),
+            Some("memory") => Ok(Cli::Memory(verbs::memory::parse(args)?)),
             Some("health") => Ok(Cli::Health(verbs::health::parse(args)?)),
             Some("info") => Ok(Cli::Info(verbs::info::parse(args)?)),
             Some("secrets") => Ok(Cli::Secrets(verbs::secrets::parse(args)?)),
@@ -311,6 +316,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Branch(a) => verbs::branch::execute(a).await,
         Cli::Models(a) => verbs::models::execute(a).await,
         Cli::Datasets(a) => verbs::datasets::execute(a).await,
+        Cli::Memory(a) => verbs::memory::execute(a).await,
         Cli::Info(a) => verbs::info::execute(a).await,
         Cli::Health(a) => verbs::health::execute(a).await,
         Cli::Secrets(a) => verbs::secrets::execute(a).await,
@@ -787,6 +793,18 @@ kx datasets query <name> --text <query> [--k N] [client flags]
   `query` returns top-k hits; each `score` is DISPLAY-ONLY (SN-8), a ranking aid
   never an identity input. The store is APPEND-ONLY + content-dedup (no delete).
   A pre-T3.7 / `hnsw`-less gateway answers Unimplemented (run `kx serve --features hnsw`)."
+            .into(),
+        "memory" => "\
+kx memory add <text> [--kind semantic|episodic] [client flags]
+kx memory list [--instance <hex16>] [--limit N] [client flags]
+kx memory recall --text <query> [--k N] [client flags]
+kx memory forget <memory_id_hex> [client flags]
+  Durable agentic MEMORY (RC5a): remember facts and recall them across runs. `add`
+  content-addresses + embeds the fact (server-embed, needs `inference,hnsw` + a
+  model + KX_SERVE_MEMORY=1); `recall` returns the top-k most-similar memories (each
+  `score` is DISPLAY-ONLY, SN-8); `list` is the episodic log; `forget` erases by id.
+  Every memory is scoped to the caller's own principal. A gateway without memory
+  enabled answers Unimplemented."
             .into(),
         "secrets" => "\
 kx secrets set --name <NAME> --value <VALUE> [client flags]

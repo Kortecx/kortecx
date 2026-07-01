@@ -197,6 +197,28 @@
         "max_turns": 8,
         "max_tool_calls": 20
       }
+    },
+    {
+      "id": "memory_remember_then_recall",
+      "description": "RC5a: the agent recalls a fact it learned in an earlier run and grounds its answer on it. The fail-closed guard — a recall that returned nothing scores 0.",
+      "instruction": "Remember that my project deadline is March 3rd, then tell me my deadline.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["March 3rd"],
+        "expected_tools": [],
+        "grounded_in": [],
+        "memory_must_recall": ["March 3rd"],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      },
+      "scripted_transcript": {
+        "task_id": "memory_remember_then_recall",
+        "turns": [{ "turn": 0, "branch": "answer" }],
+        "final_answer": "You told me earlier: your project deadline is March 3rd.",
+        "retrieved_docs": ["the project deadline is March 3rd"],
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
     }
   ]
 }

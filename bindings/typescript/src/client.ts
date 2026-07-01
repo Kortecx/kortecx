@@ -73,7 +73,8 @@ import {
   WorkflowStepKind,
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { AssetGrants } from "./grants.js";
-import { INSTANCE_LEN, REF_LEN, asBytes, encode } from "./hexids.js";
+import { INSTANCE_LEN, REF_LEN, asBytes, decode, encode } from "./hexids.js";
+import { Memory, MemoryHit, MemoryKind, StoreResult } from "./memory.js";
 import { ModelLifecycleResult, ModelSummary, PullStatus } from "./models.js";
 import { MoteDetail } from "./motes.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
@@ -1971,6 +1972,85 @@ export abstract class KxClientBase {
       }),
     );
     return resp.hits.map((h) => DatasetHit.fromProto(h));
+  }
+
+  // -- RC5a: durable agentic memory (also via the `memory` accessor) --
+
+  /**
+   * Remember a fact for LATER runs to recall (RC5a). Content-addressed + idempotent
+   * (the same fact dedups to one memory). The SDK uses the SERVER-EMBED path, so the
+   * gateway needs `inference,hnsw` + a model + `KX_SERVE_MEMORY=1` (else
+   * {@link KxUnimplemented} / {@link KxFailedPrecondition}). Scoped to the caller's
+   * own principal.
+   */
+  async storeMemory(
+    content: string | Uint8Array,
+    opts: { kind?: MemoryKind } = {},
+  ): Promise<StoreResult> {
+    const body = typeof content === "string" ? new TextEncoder().encode(content) : content;
+    const resp = await rpc(
+      this.grpc.storeMemory({
+        content: body,
+        kind: opts.kind ?? MemoryKind.UNSPECIFIED,
+        namespace: "",
+      }),
+    );
+    return StoreResult.fromProto(resp);
+  }
+
+  /**
+   * The episodic memory log, newest-first, optionally scoped to one run
+   * (`instanceId` hex). An old / memory-less gateway throws {@link KxUnimplemented}.
+   */
+  async listMemories(opts: { instanceId?: string; limit?: number } = {}): Promise<Memory[]> {
+    const resp = await rpc(
+      this.grpc.listMemories({
+        limit: opts.limit,
+        instanceId: opts.instanceId ? decode(opts.instanceId) : undefined,
+        namespace: "",
+      }),
+    );
+    return resp.memories.map((m) => Memory.fromProto(m));
+  }
+
+  /**
+   * Recall the top-`k` memories most similar to `text` (RC5a). Each hit's `score` is
+   * DISPLAY-ONLY (SN-8). Scoped to the caller's own principal.
+   */
+  async recallMemory(text: string, opts: { k?: number } = {}): Promise<MemoryHit[]> {
+    const resp = await rpc(
+      this.grpc.recallMemory({ queryText: text, k: opts.k ?? 5, namespace: "" }),
+    );
+    return resp.hits.map((h) => MemoryHit.fromProto(h));
+  }
+
+  /**
+   * Erase a memory by its content id (hex). Returns `true` if a row was removed.
+   * Scoped to the caller's own principal.
+   */
+  async forgetMemory(memoryId: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.forgetMemory({ memoryId: decode(memoryId), namespace: "" }));
+    return resp.forgotten;
+  }
+
+  /**
+   * The durable agentic MEMORY namespace (RC5a) — `memory.store / list / recall /
+   * forget` (the verb vocabulary of the `kx memory` CLI). Cross-run, per-principal
+   * memory the agent recalls in later runs. Chain seed facts into a flow with
+   * `flow().withMemory(...)`.
+   */
+  get memory() {
+    return {
+      store: (
+        content: string | Uint8Array,
+        opts: { kind?: MemoryKind } = {},
+      ): Promise<StoreResult> => this.storeMemory(content, opts),
+      list: (opts: { instanceId?: string; limit?: number } = {}): Promise<Memory[]> =>
+        this.listMemories(opts),
+      recall: (text: string, opts: { k?: number } = {}): Promise<MemoryHit[]> =>
+        this.recallMemory(text, opts),
+      forget: (memoryId: string): Promise<boolean> => this.forgetMemory(memoryId),
+    };
   }
 
   /**

@@ -316,6 +316,24 @@ pub const VISION_RAG_RECIPE_HANDLE: &str = "kx/recipes/vision-rag";
 /// `0x5b` is the next free sentinel after react-rag (`0x5a`).
 const VISION_RAG_LOGIC_REF: [u8; 32] = [0x5b; 32];
 
+/// RC5a DURABLE MEMORY: the wire handle of the `react-memory` recipe — like
+/// [`REACT_RECIPE_HANDLE`] BUT whose server-built warrant grants the durable-memory
+/// tools `remember@1` + `recall@1` (over the in-process `MemoryView`), so the model
+/// AUTONOMOUSLY records what it learns and recalls it in later runs. A SEPARATE recipe
+/// BY DESIGN (the react-rag/react-fs precedent) so the canonical `kx/recipes/react` +
+/// the projection digest stay byte-unchanged. Seeded only when a model is served AND
+/// the memory capabilities are registered (`hnsw` + `KX_SERVE_MEMORY`). Reuses the
+/// react free-param contract; the SDK prefix detector (`startswith("kx/recipes/react")`)
+/// settles it as a react CHAIN.
+pub const REACT_MEMORY_RECIPE_HANDLE: &str = "kx/recipes/react-memory";
+
+/// A DISTINCT placeholder `logic_ref` for the `react-memory` seed step (the BUG-25
+/// class — react-memory's body differs from `kx/recipes/react` ONLY by its server-built
+/// warrant [echo grant → remember+recall grant], so a shared ref maps both to the same
+/// manifest id with different bytes and panics at seed). `0x5c` is the next free
+/// sentinel after vision-rag (`0x5b`).
+const REACT_MEMORY_LOGIC_REF: [u8; 32] = [0x5c; 32];
+
 /// T-AGENT2: the opt-in self-checking model recipe — a single greedy model
 /// PRODUCER step (a `prompt` free-param) gated by an LLM-JUDGE critic that grades
 /// the answer against a fixed rubric using the served model. The terminal is the
@@ -476,6 +494,7 @@ impl DemoLibrary {
             None,
             None,
             None,
+            None,
             false,
             None,
             false,
@@ -504,6 +523,7 @@ impl DemoLibrary {
             exec_class,
             parties,
             serve_model.as_ref(),
+            None,
             None,
             None,
             false,
@@ -541,6 +561,8 @@ impl DemoLibrary {
             react_tool,
             // open_complete predates RC4b's RAG recipes; serve wires them via open_serve.
             None,
+            // RC5a: memory recipes are serve-only too (wired via open_serve).
+            None,
             vision,
             fs_list,
             autogrant,
@@ -564,6 +586,7 @@ impl DemoLibrary {
         serve_model: Option<&ModelId>,
         react_tool: Option<&(ToolName, ToolVersion)>,
         retrieve_tool: Option<&(ToolName, ToolVersion)>,
+        memory_tools: Option<&[(ToolName, ToolVersion)]>,
         vision: bool,
         fs_list: Option<(&[(ToolName, ToolVersion)], &Path)>,
         autogrant: bool,
@@ -576,6 +599,7 @@ impl DemoLibrary {
             serve_model,
             react_tool,
             retrieve_tool,
+            memory_tools,
             vision,
             fs_list,
             autogrant,
@@ -603,6 +627,11 @@ impl DemoLibrary {
         // (grants it) and signal that datasets are available for `vision-rag`. `None`
         // ⇒ neither RAG recipe is seeded (byte-identical to before).
         retrieve_tool: Option<&(ToolName, ToolVersion)>,
+        // RC5a: the durable-memory tool identities (`remember@1` + `recall@1`), `Some`
+        // exactly when the memory capabilities are registered (the `hnsw` + serve build
+        // + `KX_SERVE_MEMORY`) ⇒ provision `react-memory` (grants them). `None` ⇒ the
+        // memory recipe is not seeded (byte-identical to before).
+        memory_tools: Option<&[(ToolName, ToolVersion)]>,
         vision: bool,
         fs_list: Option<(&[(ToolName, ToolVersion)], &Path)>,
         autogrant: bool,
@@ -992,6 +1021,44 @@ impl DemoLibrary {
                 react_rag_h,
                 RecipeMeta {
                     owner_root: react_rag_w,
+                    free_params: react_contract(),
+                },
+            ));
+        }
+
+        // (react-memory) RC5a: like `kx/recipes/react` BUT the server-built warrant grants
+        // the durable-memory tools `remember@1` + `recall@1` (over the in-process
+        // `MemoryView`), so the served model AUTONOMOUSLY records what it learns and recalls
+        // it in later runs. Seeded only when a model is served AND the memory capabilities
+        // are registered (the `hnsw`+serve+`KX_SERVE_MEMORY` build passes `memory_tools =
+        // Some`). Reuses the react free-param contract; OWN logic ref (BUG-25). `react_memory_
+        // warrant` leaves fs_scope empty / net_scope None — exactly the tools' declared
+        // requirement — so the broker precheck passes with no fs root.
+        if let (Some(model_id), Some(mem_tools)) = (serve_model, memory_tools) {
+            let react_mem_w = react_memory_warrant(exec_class, model_id, mem_tools);
+            let react_mem_h = react_memory_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &react_mem_h,
+                recipe_body(
+                    LogicRef::from_bytes(REACT_MEMORY_LOGIC_REF),
+                    &react_mem_w,
+                    &[
+                        kx_mote::REACT_INSTRUCTION_KEY,
+                        kx_mote::REACT_MAX_TURNS_KEY,
+                        kx_mote::REACT_MAX_TOOL_CALLS_KEY,
+                    ],
+                ),
+                &react_mem_w,
+            )?;
+            recipes.push((
+                react_mem_h,
+                RecipeMeta {
+                    owner_root: react_mem_w,
                     free_params: react_contract(),
                 },
             ));
@@ -1494,6 +1561,10 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
         REACT_RAG_RECIPE_HANDLE => (
             "ReAct-RAG — an agentic-RAG loop: the model autonomously SEARCHES a dataset with the read-only `retrieve` tool (hybrid keyword+semantic), reads the passages, can re-query, and answers grounded in what it found. Pass a `dataset` arg to point it at a corpus.",
             &["agent", "react", "rag", "retrieval", "dataset", "tools", "grounding", "search"],
+        ),
+        REACT_MEMORY_RECIPE_HANDLE => (
+            "ReAct-Memory — a durable-memory agent loop: the model autonomously REMEMBERS facts (`remember`) and RECALLS them across runs (`recall`, semantic search), so it grounds its answer on what it learned in earlier sessions.",
+            &["agent", "react", "memory", "remember", "recall", "durable", "tools", "learning"],
         ),
         VISION_RAG_RECIPE_HANDLE => (
             "Vision-RAG — a grounded multimodal completion: answers about an attached image while ALSO retrieving the top-k text passages from a `dataset` (hybrid) and folding them into the prompt; honest plain vision when no dataset/index.",
@@ -2117,6 +2188,9 @@ impl RecipeBinder for HostRecipeBinder {
                 // the empty react_chain_salt makes the client retrieve the wrong chain on
                 // serve's shared journal (BUG-34, the react-vision lesson).
                 REACT_RAG_RECIPE_HANDLE,
+                // RC5a: react-memory is the SAME live ReAct chain (remember/recall grant)
+                // ⇒ it MUST seed the run-salted chain too (BUG-34, the react-rag lesson).
+                REACT_MEMORY_RECIPE_HANDLE,
             ]
             .iter()
             .any(|h| parse_handle(h).is_some_and(|p| p == asset_path)),
@@ -3151,6 +3225,49 @@ pub(crate) fn react_fs_warrant(
     }
 }
 
+/// RC5a: the server-built `react-memory` step warrant. Mirrors [`react_warrant`] but
+/// grants BOTH durable-memory tools (`remember@1` + `recall@1`) with NO fs mount /
+/// NO egress — both reach the store via the in-process `MemoryView` (`fs_scope` empty,
+/// `net_scope` None, exactly their declared requirement, so the broker precheck passes
+/// with no root). Tool authority NEVER enters via a client warrant (BLOCKER #5/SN-8).
+pub(crate) fn react_memory_warrant(
+    exec_class: ExecutorClass,
+    model_id: &ModelId,
+    tools: &[(ToolName, ToolVersion)],
+) -> WarrantSpec {
+    let mut tool_grants = BTreeSet::new();
+    for tool in tools {
+        tool_grants.insert(kx_warrant::ToolGrant {
+            tool_id: tool.0.clone(),
+            tool_version: tool.1.clone(),
+        });
+    }
+    WarrantSpec {
+        mote_class: MoteClass::ReadOnlyNondet,
+        nd_class: MoteClass::ReadOnlyNondet,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0u8; 32]),
+        tool_grants,
+        model_route: ModelRoute {
+            model_id: model_id.clone(),
+            max_input_tokens: 4_096,
+            max_output_tokens: 512,
+            max_calls: 8,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            wall_clock_ms: 120_000,
+            fd_count: 0,
+            disk_bytes: 0,
+        },
+        environment_ref: None,
+        executor_class: exec_class,
+        ..Default::default()
+    }
+}
+
 /// PR-6b-2: the COMPLETE server-built warrant for a standalone authored `tool()`
 /// step — mirrors [`react_fs_warrant`] (a server-built, directly-admitted warrant)
 /// but GENERIC over the tool's DECLARED `required_capability`. Grants EXACTLY
@@ -3207,6 +3324,12 @@ fn react_rag_handle() -> Result<AssetPath, GatewayError> {
 fn vision_rag_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(VISION_RAG_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid vision-rag recipe handle".into()))
+}
+
+/// RC5a: the `react-memory` recipe handle (the durable-memory live ReAct loop).
+fn react_memory_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(REACT_MEMORY_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid react-memory recipe handle".into()))
 }
 
 /// D155 Phase-3: the server-built `react-edit` step warrant. A bounded live ReAct
@@ -5541,6 +5664,7 @@ mod tests {
                 Some(&primary),
                 None,
                 None,
+                None,
                 false,
                 None,
                 false,
@@ -5562,6 +5686,7 @@ mod tests {
                 ExecutorClass::Bwrap,
                 &parties,
                 Some(&primary),
+                None,
                 None,
                 None,
                 false,
@@ -5668,6 +5793,7 @@ mod tests {
             Some(&model),
             None,
             Some(&retrieve),
+            None,
             false,
             None,
             false,
@@ -5689,6 +5815,7 @@ mod tests {
             Some(&model),
             None,
             None,
+            None,
             false,
             None,
             false,
@@ -5701,6 +5828,83 @@ mod tests {
                 .contains(&REACT_RAG_RECIPE_HANDLE.to_string()),
             "no retrieve tool ⇒ no react-rag (byte-identical to before)"
         );
+    }
+
+    #[test]
+    fn react_memory_recipe_seeded_only_with_the_memory_tools() {
+        // RC5a: react-memory is a SEPARATE recipe, seeded only when a model is served AND
+        // the memory capabilities are registerable (KX_SERVE_MEMORY passes Some). None ⇒
+        // the canonical set is byte-unchanged (no react-memory).
+        let model = ModelId("kx-serve:m".to_string());
+        let parties = ["alice@acme".to_string()];
+        let mem_tools = [
+            (ToolName("remember".into()), ToolVersion("1".into())),
+            (ToolName("recall".into()), ToolVersion("1".into())),
+        ];
+
+        // memory tools present ⇒ react-memory seeded, granting both memory tools.
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_serve(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &parties,
+            Some(&model),
+            None,
+            None,
+            Some(&mem_tools),
+            false,
+            None,
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(
+            lib.recipe_handles()
+                .contains(&REACT_MEMORY_RECIPE_HANDLE.to_string()),
+            "react-memory is provisioned when the memory tools are available"
+        );
+
+        // no memory tools ⇒ NOT seeded (canonical set unchanged).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_serve(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &parties,
+            Some(&model),
+            None,
+            None,
+            None,
+            false,
+            None,
+            false,
+            &[],
+        )
+        .unwrap();
+        assert!(
+            !lib2
+                .recipe_handles()
+                .contains(&REACT_MEMORY_RECIPE_HANDLE.to_string()),
+            "no memory tools ⇒ no react-memory (byte-identical to before)"
+        );
+    }
+
+    #[test]
+    fn react_memory_warrant_grants_exactly_the_memory_tools() {
+        let model = ModelId("kx-serve:m".to_string());
+        let mem_tools = [
+            (ToolName("remember".into()), ToolVersion("1".into())),
+            (ToolName("recall".into()), ToolVersion("1".into())),
+        ];
+        let w = react_memory_warrant(ExecutorClass::Bwrap, &model, &mem_tools);
+        // Both memory tools are granted; NO fs mount, NO egress (in-process view).
+        assert_eq!(w.tool_grants.len(), 2);
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "remember"));
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "recall"));
+        assert!(
+            w.fs_scope.mounts.is_empty(),
+            "memory reaches the store via the in-process view"
+        );
+        assert_eq!(w.net_scope, NetScope::None);
     }
 
     #[test]
@@ -5720,6 +5924,7 @@ mod tests {
             Some(&model),
             None,
             Some(&retrieve),
+            None,
             true,
             None,
             false,
@@ -5739,6 +5944,7 @@ mod tests {
             Some(&model),
             None,
             Some(&retrieve),
+            None,
             false,
             None,
             false,

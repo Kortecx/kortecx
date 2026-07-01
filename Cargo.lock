@@ -1682,6 +1682,7 @@ dependencies = [
  "kx-journal",
  "kx-mcp",
  "kx-mcp-gateway",
+ "kx-memory",
  "kx-model-store",
  "kx-model-validator",
  "kx-mote",
@@ -1895,6 +1896,18 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kx-memory"
+version = "0.1.0"
+dependencies = [
+ "kx-content",
+ "kx-dataset",
+ "rusqlite",
+ "serde",
+ "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

@@ -64,6 +64,7 @@ from .errors import KxError, KxFailedPrecondition, KxUsage, from_rpc_error
 from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
+from .memory import Memory, MemoryHit, MemoryKind, StoreResult
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteDetail
 from .react import ReactTurn, ReactTurnPage
@@ -338,6 +339,35 @@ class _Connections:
     def fire(self, name: str, tool: str, args: Optional[str] = None) -> "CallToolResult":
         """Operator diagnostic: fire ONE registered tool live. See ``call_mcp_tool``."""
         return self._c.call_mcp_tool(name=name, tool=tool, args=args)
+
+
+class _Memory:
+    """The ``kx.memory`` namespace — durable agentic MEMORY (RC5a), with a verb
+    vocabulary matching the ``kx memory`` CLI (``store`` / ``list`` / ``recall`` /
+    ``forget``). Each method delegates 1:1 to the flat ``store_memory`` /
+    ``list_memories`` / ``recall_memory`` / ``forget_memory`` methods. Every memory
+    is scoped to the caller's own principal (server-derived)."""
+
+    def __init__(self, client: "KxClient") -> None:
+        self._c = client
+
+    def store(
+        self, content: "str | bytes", *, kind: MemoryKind = MemoryKind.SEMANTIC
+    ) -> StoreResult:
+        """Remember a fact (content-addressed, idempotent). See ``store_memory``."""
+        return self._c.store_memory(content, kind=kind)
+
+    def list(self, *, instance_id: Optional[str] = None, limit: int = 0) -> List[Memory]:
+        """The episodic log, newest-first. See ``list_memories``."""
+        return self._c.list_memories(instance_id=instance_id, limit=limit)
+
+    def recall(self, text: str, *, k: int = 5) -> List[MemoryHit]:
+        """The top-k most-similar memories. See ``recall_memory``."""
+        return self._c.recall_memory(text, k=k)
+
+    def forget(self, memory_id: str) -> bool:
+        """Erase a memory by its content id (hex). See ``forget_memory``."""
+        return self._c.forget_memory(memory_id)
 
 
 class _Secrets:
@@ -1838,6 +1868,14 @@ class KxClient:
         ``kx.flow().with_mcp(...)``."""
         return _Connections(self)
 
+    @property
+    def memory(self) -> _Memory:
+        """The durable agentic MEMORY namespace (RC5a) — ``kx.memory.store / list /
+        recall / forget`` (the verb vocabulary of the ``kx memory`` CLI). Cross-run,
+        per-principal memory the agent recalls in later runs. Chain seed facts into a
+        flow with ``kx.flow().with_memory(...)``."""
+        return _Memory(self)
+
     # --- D170 / MM-3: operator secret store (PutSecret / List / Delete) ---
 
     def put_secret(self, *, name: str, value: str) -> bool:
@@ -2234,6 +2272,47 @@ class KxClient:
         submits, nothing journals. An old gateway raises ``KxUnimplemented``."""
         resp = self._call(lambda: self._stub.ScoreTaskBundle(spec.to_proto(), metadata=self._md))
         return BundleScore.from_proto(resp)
+
+    # -- RC5a: durable agentic memory (also via the `kx.memory` sub-client) --
+    def store_memory(
+        self, content: "str | bytes", *, kind: MemoryKind = MemoryKind.SEMANTIC
+    ) -> StoreResult:
+        """Remember a fact for LATER runs to recall (RC5a). Content-addressed +
+        idempotent (the same fact dedups to one memory). The CLI/SDK use the
+        SERVER-EMBED path, so the gateway needs ``inference,hnsw`` + a model +
+        ``KX_SERVE_MEMORY=1`` (else ``KxUnimplemented`` / ``KxFailedPrecondition``).
+        Scoped to the caller's own principal."""
+        body = content.encode("utf-8") if isinstance(content, str) else content
+        req = _g.StoreMemoryRequest(
+            content=body, kind=cast("_g.MemoryKind", int(kind)), namespace=""
+        )
+        resp = self._call(lambda: self._stub.StoreMemory(req, metadata=self._md))
+        return StoreResult.from_proto(resp)
+
+    def list_memories(self, *, instance_id: Optional[str] = None, limit: int = 0) -> List[Memory]:
+        """The episodic memory log, newest-first, optionally scoped to one run
+        (``instance_id`` hex). An old / memory-less gateway raises ``KxUnimplemented``."""
+        req = _g.ListMemoriesRequest(namespace="")
+        if limit:
+            req.limit = limit
+        if instance_id:
+            req.instance_id = hexids.decode(instance_id)
+        resp = self._call(lambda: self._stub.ListMemories(req, metadata=self._md))
+        return [Memory.from_proto(m) for m in resp.memories]
+
+    def recall_memory(self, text: str, *, k: int = 5) -> List[MemoryHit]:
+        """Recall the top-k memories most similar to ``text`` (RC5a). Each hit's
+        ``score`` is DISPLAY-ONLY (SN-8). Scoped to the caller's own principal."""
+        req = _g.RecallMemoryRequest(query_text=text, k=k, namespace="")
+        resp = self._call(lambda: self._stub.RecallMemory(req, metadata=self._md))
+        return [MemoryHit.from_proto(h) for h in resp.hits]
+
+    def forget_memory(self, memory_id: str) -> bool:
+        """Erase a memory by its content id (hex). Returns ``True`` if a row was
+        removed. Scoped to the caller's own principal."""
+        req = _g.ForgetMemoryRequest(memory_id=hexids.decode(memory_id), namespace="")
+        resp = self._call(lambda: self._stub.ForgetMemory(req, metadata=self._md))
+        return resp.forgotten
 
     # -- wait plumbing --
     def _await_terminal(
@@ -2934,6 +3013,42 @@ class AsyncKxClient:
             req.query_embedding.extend(embedding)
         resp = await self._acall(self._stub.QueryDataset(req, metadata=self._md))
         return [DatasetHit.from_proto(h) for h in resp.hits]
+
+    # -- RC5a: durable agentic memory (async twins) --
+    async def store_memory(
+        self, content: "str | bytes", *, kind: MemoryKind = MemoryKind.SEMANTIC
+    ) -> StoreResult:
+        """Async twin of :meth:`KxClient.store_memory`."""
+        body = content.encode("utf-8") if isinstance(content, str) else content
+        req = _g.StoreMemoryRequest(
+            content=body, kind=cast("_g.MemoryKind", int(kind)), namespace=""
+        )
+        resp = await self._acall(self._stub.StoreMemory(req, metadata=self._md))
+        return StoreResult.from_proto(resp)
+
+    async def list_memories(
+        self, *, instance_id: Optional[str] = None, limit: int = 0
+    ) -> List[Memory]:
+        """Async twin of :meth:`KxClient.list_memories`."""
+        req = _g.ListMemoriesRequest(namespace="")
+        if limit:
+            req.limit = limit
+        if instance_id:
+            req.instance_id = hexids.decode(instance_id)
+        resp = await self._acall(self._stub.ListMemories(req, metadata=self._md))
+        return [Memory.from_proto(m) for m in resp.memories]
+
+    async def recall_memory(self, text: str, *, k: int = 5) -> List[MemoryHit]:
+        """Async twin of :meth:`KxClient.recall_memory`."""
+        req = _g.RecallMemoryRequest(query_text=text, k=k, namespace="")
+        resp = await self._acall(self._stub.RecallMemory(req, metadata=self._md))
+        return [MemoryHit.from_proto(h) for h in resp.hits]
+
+    async def forget_memory(self, memory_id: str) -> bool:
+        """Async twin of :meth:`KxClient.forget_memory`."""
+        req = _g.ForgetMemoryRequest(memory_id=hexids.decode(memory_id), namespace="")
+        resp = await self._acall(self._stub.ForgetMemory(req, metadata=self._md))
+        return resp.forgotten
 
     async def fuzzy_discovery(
         self,

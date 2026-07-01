@@ -17,6 +17,7 @@ use crate::datasets::DatasetView;
 use crate::error::{hash_32, instance_id_16, GatewayError};
 use crate::fuzzy_discovery::FuzzyDiscoveryView;
 use crate::identity::CallerParty;
+use crate::memory::MemoryView;
 use crate::reader::{ContentReader, JournalReader};
 use crate::submit::{RunSubmitter, SubmitterError};
 use crate::{events, view};
@@ -647,6 +648,11 @@ pub struct GatewayService {
     /// `kx-dataset-hnsw`-backed view as `datasets` (one `Arc`, two seams). `None`
     /// ⇒ `FuzzyDiscovery` returns `unimplemented`. Advisory, off the journal/digest.
     fuzzy: Option<Arc<dyn FuzzyDiscoveryView>>,
+    /// The optional durable-MEMORY seam (RC5a — the host injects a `kx-memory`-backed
+    /// view behind the `hnsw` feature). `None` ⇒ `StoreMemory` / `ListMemories` /
+    /// `RecallMemory` / `ForgetMemory` return `unimplemented`. Off the journal/digest
+    /// (memory.db is a rebuildable sidecar); namespace-scoped per caller principal.
+    memory: Option<Arc<dyn MemoryView>>,
     /// The optional capture-view seam (the Morphic Data Engine — the host injects
     /// a `capture.db`-backed view folded from the journal). `None` ⇒
     /// `ListCaptureRecords` returns `unimplemented`. Read-only, off-truth-path.
@@ -871,6 +877,7 @@ impl GatewayService {
             grants_view: None,
             datasets: None,
             fuzzy: None,
+            memory: None,
             capture: None,
             tailer: Arc::new(SnapshotTailer),
             global_tailer: Arc::new(SnapshotGlobalTailer),
@@ -1033,6 +1040,16 @@ impl GatewayService {
     #[must_use]
     pub fn with_fuzzy_discovery(mut self, fuzzy: Arc<dyn FuzzyDiscoveryView>) -> Self {
         self.fuzzy = Some(fuzzy);
+        self
+    }
+
+    /// Wire the durable-MEMORY seam (RC5a — the host's `kx-memory`-backed view,
+    /// behind the `hnsw` feature). Enables `StoreMemory` / `ListMemories` /
+    /// `RecallMemory` / `ForgetMemory`. Off the journal/digest — memory.db is a
+    /// rebuildable sidecar; each memory is namespaced to the caller principal.
+    #[must_use]
+    pub fn with_memory_view(mut self, memory: Arc<dyn MemoryView>) -> Self {
+        self.memory = Some(memory);
         self
     }
 
@@ -4374,6 +4391,118 @@ impl KxGateway for GatewayService {
             .map(crate::datasets::dataset_hit_to_proto)
             .collect();
         Ok(Response::new(proto::QueryDatasetResponse { hits }))
+    }
+
+    // ---- RC5a: durable multi-tier MEMORY (semantic recall + episodic store) ------
+
+    async fn store_memory(
+        &self,
+        request: Request<proto::StoreMemoryRequest>,
+    ) -> Result<Response<proto::StoreMemoryResponse>, Status> {
+        let view = self
+            .memory
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("StoreMemory: no memory view wired"))?;
+        // The namespace is DERIVED from the server-resolved principal — never trusted
+        // from the wire (verdict #5: no cross-principal write).
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let ns = crate::memory::memory_namespace(&principal, &req.namespace);
+        let embedding = (!req.embedding.is_empty()).then_some(req.embedding.as_slice());
+        let out = view
+            .store(crate::memory::MemoryWrite {
+                namespace: &ns,
+                content: &req.content,
+                embedding,
+                kind: crate::memory::memory_kind_from_proto(req.kind),
+                // An operator/SDK write is not part of a run (all-zero instance_id).
+                instance_id: [0u8; 16],
+            })
+            .map_err(crate::memory::memory_status)?;
+        Ok(Response::new(proto::StoreMemoryResponse {
+            memory_id: out.memory_id.to_vec(),
+            inserted: out.inserted,
+            dim: out.dim,
+        }))
+    }
+
+    async fn list_memories(
+        &self,
+        request: Request<proto::ListMemoriesRequest>,
+    ) -> Result<Response<proto::ListMemoriesResponse>, Status> {
+        let view = self
+            .memory
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListMemories: no memory view wired"))?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let ns = crate::memory::memory_namespace(&principal, &req.namespace);
+        let limit = req.limit.map_or(200, |l| l.clamp(1, 500)) as usize;
+        let instance_filter = req
+            .instance_id
+            .as_deref()
+            .and_then(|b| <[u8; 16]>::try_from(b).ok());
+        // Fetch one extra to compute `has_more` without a second query.
+        let mut rows = view
+            .list(&ns, instance_filter, limit + 1)
+            .map_err(crate::memory::memory_status)?;
+        let has_more = rows.len() > limit;
+        rows.truncate(limit);
+        let memories = rows
+            .into_iter()
+            .map(crate::memory::memory_summary_to_proto)
+            .collect();
+        Ok(Response::new(proto::ListMemoriesResponse {
+            memories,
+            has_more,
+        }))
+    }
+
+    async fn recall_memory(
+        &self,
+        request: Request<proto::RecallMemoryRequest>,
+    ) -> Result<Response<proto::RecallMemoryResponse>, Status> {
+        let view = self
+            .memory
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("RecallMemory: no memory view wired"))?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let ns = crate::memory::memory_namespace(&principal, &req.namespace);
+        // A non-empty client vector takes precedence (FFI-free); else embed query_text.
+        let qe = (!req.query_embedding.is_empty()).then_some(req.query_embedding.as_slice());
+        let k = if req.k == 0 {
+            5
+        } else {
+            (req.k as usize).min(64)
+        };
+        let hits = view
+            .recall(&ns, qe, &req.query_text, k)
+            .map_err(crate::memory::memory_status)?;
+        let hits = hits
+            .into_iter()
+            .map(crate::memory::memory_hit_to_proto)
+            .collect();
+        Ok(Response::new(proto::RecallMemoryResponse { hits }))
+    }
+
+    async fn forget_memory(
+        &self,
+        request: Request<proto::ForgetMemoryRequest>,
+    ) -> Result<Response<proto::ForgetMemoryResponse>, Status> {
+        let view = self
+            .memory
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ForgetMemory: no memory view wired"))?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let ns = crate::memory::memory_namespace(&principal, &req.namespace);
+        let id = <[u8; 32]>::try_from(req.memory_id.as_slice())
+            .map_err(|_| Status::invalid_argument("memory_id must be 32 bytes"))?;
+        let forgotten = view
+            .forget(&ns, &id)
+            .map_err(crate::memory::memory_status)?;
+        Ok(Response::new(proto::ForgetMemoryResponse { forgotten }))
     }
 
     async fn fuzzy_discovery(

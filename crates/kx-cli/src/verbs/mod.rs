@@ -22,6 +22,7 @@ pub mod feedback;
 pub mod health;
 pub mod info;
 pub mod invoke;
+pub mod memory;
 pub mod models;
 pub mod mote;
 pub mod projection;

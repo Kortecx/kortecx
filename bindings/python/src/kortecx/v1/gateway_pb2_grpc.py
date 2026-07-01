@@ -149,6 +149,26 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsResponse.FromString,
                 _registered_method=True)
+        self.StoreMemory = channel.unary_unary(
+                '/kortecx.v1.KxGateway/StoreMemory',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.StoreMemoryRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.StoreMemoryResponse.FromString,
+                _registered_method=True)
+        self.ListMemories = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListMemories',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMemoriesRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMemoriesResponse.FromString,
+                _registered_method=True)
+        self.RecallMemory = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RecallMemory',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RecallMemoryRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RecallMemoryResponse.FromString,
+                _registered_method=True)
+        self.ForgetMemory = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ForgetMemory',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryResponse.FromString,
+                _registered_method=True)
         self.ListCaptureRecords = channel.unary_unary(
                 '/kortecx.v1.KxGateway/ListCaptureRecords',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsRequest.SerializeToString,
@@ -605,6 +625,33 @@ class KxGatewayServicer(object):
     def ListReRankTurns(self, request, context):
         """RC4c-2: enumerate the durable `ReRankRound` facts (live LLM listwise rerank).
         """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StoreMemory(self, request, context):
+        """RC5a additive (D120.6): durable multi-tier MEMORY (semantic recall + episodic
+        store). Off the truth path; NO journal schema bump. UNIMPLEMENTED when the seam
+        yields None (an old gateway, or memory disabled / no `hnsw`).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListMemories(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RecallMemory(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ForgetMemory(self, request, context):
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -1203,6 +1250,26 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListReRankTurns,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsResponse.SerializeToString,
+            ),
+            'StoreMemory': grpc.unary_unary_rpc_method_handler(
+                    servicer.StoreMemory,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.StoreMemoryRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.StoreMemoryResponse.SerializeToString,
+            ),
+            'ListMemories': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListMemories,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListMemoriesRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListMemoriesResponse.SerializeToString,
+            ),
+            'RecallMemory': grpc.unary_unary_rpc_method_handler(
+                    servicer.RecallMemory,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RecallMemoryRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RecallMemoryResponse.SerializeToString,
+            ),
+            'ForgetMemory': grpc.unary_unary_rpc_method_handler(
+                    servicer.ForgetMemory,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryResponse.SerializeToString,
             ),
             'ListCaptureRecords': grpc.unary_unary_rpc_method_handler(
                     servicer.ListCaptureRecords,
@@ -2131,6 +2198,114 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListReRankTurns',
             kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StoreMemory(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/StoreMemory',
+            kortecx_dot_v1_dot_gateway__pb2.StoreMemoryRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.StoreMemoryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListMemories(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListMemories',
+            kortecx_dot_v1_dot_gateway__pb2.ListMemoriesRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListMemoriesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RecallMemory(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RecallMemory',
+            kortecx_dot_v1_dot_gateway__pb2.RecallMemoryRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RecallMemoryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ForgetMemory(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ForgetMemory',
+            kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryResponse.FromString,
             options,
             channel_credentials,
             insecure,
