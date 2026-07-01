@@ -205,7 +205,7 @@ pub const RETRIEVAL_MODE_KEY: &str = "kx.retrieval.mode";
 pub const RERANK_TURN_KEY: &str = "kx.rerank.turn";
 
 /// RC4c-2b: the [`ConfigKey`] *name* under which a live rerank turn carries the
-/// content-store ref (a 32-byte [`crate::MoteId`]-style [`ContentRef`]) of the QUERY
+/// content-store ref (a 32-byte content-addressed `ContentRef`) of the QUERY
 /// its candidates are scored against. Identity-bearing (a different query ⇒ a distinct
 /// rerank `MoteId`) and recovery-stable: the worker resolves the query text from this
 /// ref at dispatch, and the value equals the `ReRankRound` anchor's `query_ref` so a
