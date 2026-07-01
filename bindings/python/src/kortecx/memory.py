@@ -37,6 +37,9 @@ class Memory:
     instance_id: str  # hex (the run that wrote it; all-zero = operator/SDK write)
     created_ms: int  # unix-ms (display only; off every hash)
     dim: int
+    access_count: int = 0  # RC5b: recall count (salience; display only)
+    last_accessed_ms: int = 0  # RC5b: last recall time, unix-ms (0 = never)
+    tombstoned_ms: int = 0  # RC5b: decay tombstone time (0 = live; >0 = decayed, restorable)
 
     @classmethod
     def from_proto(cls, m: "_g.MemorySummary") -> "Memory":
@@ -47,12 +50,20 @@ class Memory:
             instance_id=hexids.encode(m.instance_id),
             created_ms=m.created_ms,
             dim=m.dim,
+            access_count=m.access_count,
+            last_accessed_ms=m.last_accessed_ms,
+            tombstoned_ms=m.tombstoned_ms,
         )
 
     @property
     def text(self) -> str:
         """The remembered bytes decoded as UTF-8 (best-effort)."""
         return self.content.decode("utf-8", errors="replace")
+
+    @property
+    def is_decayed(self) -> bool:
+        """True if this memory has been decayed (soft-tombstoned; restorable)."""
+        return self.tombstoned_ms > 0
 
 
 @dataclass(frozen=True)
@@ -92,4 +103,87 @@ class StoreResult:
             memory_id=hexids.encode(r.memory_id),
             inserted=r.inserted,
             dim=r.dim,
+        )
+
+
+@dataclass(frozen=True)
+class DecayCandidate:
+    """One memory a decay policy matched (RC5b) — a reversible soft-tombstone, never a
+    hard delete."""
+
+    memory_id: str  # hex
+    content: bytes
+    kind: str  # "semantic" | "episodic"
+    created_ms: int
+    access_count: int
+    last_accessed_ms: int
+    age_days: int
+
+    @classmethod
+    def from_proto(cls, c: "_g.DecayCandidate") -> "DecayCandidate":
+        return cls(
+            memory_id=hexids.encode(c.memory_id),
+            content=c.content,
+            kind=c.kind,
+            created_ms=c.created_ms,
+            access_count=c.access_count,
+            last_accessed_ms=c.last_accessed_ms,
+            age_days=c.age_days,
+        )
+
+    @property
+    def text(self) -> str:
+        """The memory bytes decoded as UTF-8 (best-effort)."""
+        return self.content.decode("utf-8", errors="replace")
+
+
+@dataclass(frozen=True)
+class DecayReport:
+    """The outcome of a ``DecayMemory`` sweep (RC5b). ``dry_run`` ⇒ a preview that
+    evicted nothing; evictions are reversible via ``restore_memory``."""
+
+    candidates: tuple[DecayCandidate, ...]
+    would_evict: int
+    evicted: int
+    kept: int
+    dry_run: bool
+
+    @classmethod
+    def from_proto(cls, r: "_g.DecayMemoryResponse") -> "DecayReport":
+        return cls(
+            candidates=tuple(DecayCandidate.from_proto(c) for c in r.candidates),
+            would_evict=r.would_evict,
+            evicted=r.evicted,
+            kept=r.kept,
+            dry_run=r.dry_run,
+        )
+
+
+@dataclass(frozen=True)
+class MemoryStats:
+    """Namespace memory statistics (RC5b) — live counts by kind, tombstoned count, dim,
+    the embed fingerprint, and the live age range."""
+
+    total: int
+    semantic: int
+    episodic: int
+    tombstoned: int
+    dim: int
+    embed_fingerprint: str
+    oldest_ms: int
+    newest_ms: int
+    namespace: str
+
+    @classmethod
+    def from_proto(cls, s: "_g.MemoryStatsResponse") -> "MemoryStats":
+        return cls(
+            total=s.total,
+            semantic=s.semantic,
+            episodic=s.episodic,
+            tombstoned=s.tombstoned,
+            dim=s.dim,
+            embed_fingerprint=s.embed_fingerprint,
+            oldest_ms=s.oldest_ms,
+            newest_ms=s.newest_ms,
+            namespace=s.namespace,
         )

@@ -64,7 +64,7 @@ from .errors import KxError, KxFailedPrecondition, KxUsage, from_rpc_error
 from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
-from .memory import Memory, MemoryHit, MemoryKind, StoreResult
+from .memory import DecayReport, Memory, MemoryHit, MemoryKind, MemoryStats, StoreResult
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteDetail
 from .react import ReactTurn, ReactTurnPage
@@ -341,12 +341,39 @@ class _Connections:
         return self._c.call_mcp_tool(name=name, tool=tool, args=args)
 
 
+def _consolidate_cutoff(window_hours: Optional[int]) -> Optional[int]:
+    """The unix-ms lower bound for a consolidation window (``None`` = unbounded)."""
+    if not window_hours:
+        return None
+    import time
+
+    return int(time.time() * 1000) - window_hours * 3_600_000
+
+
+def _consolidation_instruction(query: Optional[str], window_hours: Optional[int]) -> str:
+    """The instruction the react-memory consolidation chain follows (mirrors the CLI).
+
+    Phrased to FORCE tool use: an OSS model will otherwise answer from guesswork at turn 0
+    (it cannot see its episodic memories until it calls ``consolidate``).
+    """
+    focus = f' about "{query}"' if query else ""
+    window = f" from the last {window_hours} hours" if window_hours else ""
+    return (
+        "You have episodic memories from earlier that you CANNOT see until you "
+        "retrieve them. FIRST call the `consolidate` tool to bundle your recent "
+        f"episodic memories{focus}{window}. THEN distill the key durable facts and call "
+        '`remember` with kind="semantic" to save ONE concise summary. Only AFTER '
+        "remembering, report what you consolidated. Do NOT answer from guesswork "
+        "— you must use the tools."
+    )
+
+
 class _Memory:
-    """The ``kx.memory`` namespace — durable agentic MEMORY (RC5a), with a verb
+    """The ``kx.memory`` namespace — durable agentic MEMORY (RC5a/RC5b), with a verb
     vocabulary matching the ``kx memory`` CLI (``store`` / ``list`` / ``recall`` /
-    ``forget``). Each method delegates 1:1 to the flat ``store_memory`` /
-    ``list_memories`` / ``recall_memory`` / ``forget_memory`` methods. Every memory
-    is scoped to the caller's own principal (server-derived)."""
+    ``forget`` / ``decay`` / ``stats`` / ``restore`` / ``consolidate``). Each method
+    delegates 1:1 to the flat client methods. Every memory is scoped to the caller's
+    own principal (server-derived)."""
 
     def __init__(self, client: "KxClient") -> None:
         self._c = client
@@ -357,9 +384,17 @@ class _Memory:
         """Remember a fact (content-addressed, idempotent). See ``store_memory``."""
         return self._c.store_memory(content, kind=kind)
 
-    def list(self, *, instance_id: Optional[str] = None, limit: int = 0) -> List[Memory]:
+    def list(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        limit: int = 0,
+        include_tombstoned: bool = False,
+    ) -> List[Memory]:
         """The episodic log, newest-first. See ``list_memories``."""
-        return self._c.list_memories(instance_id=instance_id, limit=limit)
+        return self._c.list_memories(
+            instance_id=instance_id, limit=limit, include_tombstoned=include_tombstoned
+        )
 
     def recall(self, text: str, *, k: int = 5) -> List[MemoryHit]:
         """The top-k most-similar memories. See ``recall_memory``."""
@@ -368,6 +403,34 @@ class _Memory:
     def forget(self, memory_id: str) -> bool:
         """Erase a memory by its content id (hex). See ``forget_memory``."""
         return self._c.forget_memory(memory_id)
+
+    def decay(
+        self, *, ttl_days: int = 90, min_access: int = 1, dry_run: bool = True
+    ) -> DecayReport:
+        """Preview or apply a reversible TTL+salience decay sweep. See ``decay_memory``."""
+        return self._c.decay_memory(ttl_days=ttl_days, min_access=min_access, dry_run=dry_run)
+
+    def stats(self) -> MemoryStats:
+        """Namespace memory statistics. See ``memory_stats``."""
+        return self._c.memory_stats()
+
+    def restore(self, memory_id: str) -> bool:
+        """Un-decay a soft-tombstoned memory. See ``restore_memory``."""
+        return self._c.restore_memory(memory_id)
+
+    def consolidate(
+        self,
+        *,
+        query: Optional[str] = None,
+        k: int = 16,
+        window_hours: Optional[int] = None,
+        dry_run: bool = True,
+        timeout: float = 120.0,
+    ) -> "Union[List[Memory], Result]":
+        """Preview or drive a memory-consolidation chain. See ``consolidate_memory``."""
+        return self._c.consolidate_memory(
+            query=query, k=k, window_hours=window_hours, dry_run=dry_run, timeout=timeout
+        )
 
 
 class _Secrets:
@@ -2289,10 +2352,17 @@ class KxClient:
         resp = self._call(lambda: self._stub.StoreMemory(req, metadata=self._md))
         return StoreResult.from_proto(resp)
 
-    def list_memories(self, *, instance_id: Optional[str] = None, limit: int = 0) -> List[Memory]:
+    def list_memories(
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        limit: int = 0,
+        include_tombstoned: bool = False,
+    ) -> List[Memory]:
         """The episodic memory log, newest-first, optionally scoped to one run
-        (``instance_id`` hex). An old / memory-less gateway raises ``KxUnimplemented``."""
-        req = _g.ListMemoriesRequest(namespace="")
+        (``instance_id`` hex). ``include_tombstoned=True`` surfaces decayed memories
+        (the RC5b decayed view). An old / memory-less gateway raises ``KxUnimplemented``."""
+        req = _g.ListMemoriesRequest(namespace="", include_tombstoned=include_tombstoned)
         if limit:
             req.limit = limit
         if instance_id:
@@ -2313,6 +2383,69 @@ class KxClient:
         req = _g.ForgetMemoryRequest(memory_id=hexids.decode(memory_id), namespace="")
         resp = self._call(lambda: self._stub.ForgetMemory(req, metadata=self._md))
         return resp.forgotten
+
+    def decay_memory(
+        self, *, ttl_days: int = 90, min_access: int = 1, dry_run: bool = True
+    ) -> DecayReport:
+        """Preview (``dry_run=True``, the default) or apply a reversible TTL+salience
+        decay sweep (RC5b). A candidate is older than ``ttl_days`` AND recalled fewer
+        than ``min_access`` times; evictions are soft-tombstones (the row is never
+        deleted — restore via :meth:`restore_memory`). Scoped to the caller's principal."""
+        req = _g.DecayMemoryRequest(
+            namespace="", ttl_days=ttl_days, min_access=min_access, dry_run=dry_run
+        )
+        resp = self._call(lambda: self._stub.DecayMemory(req, metadata=self._md))
+        return DecayReport.from_proto(resp)
+
+    def memory_stats(self) -> MemoryStats:
+        """Namespace memory statistics (RC5b) — live counts by kind, tombstoned count,
+        dim, embed fingerprint, and the live age range."""
+        req = _g.MemoryStatsRequest(namespace="")
+        resp = self._call(lambda: self._stub.MemoryStats(req, metadata=self._md))
+        return MemoryStats.from_proto(resp)
+
+    def restore_memory(self, memory_id: str) -> bool:
+        """Un-decay (restore) a soft-tombstoned memory by its content id (hex, RC5b).
+        Returns ``True`` if a tombstone was cleared."""
+        req = _g.RestoreMemoryRequest(memory_id=hexids.decode(memory_id), namespace="")
+        resp = self._call(lambda: self._stub.RestoreMemory(req, metadata=self._md))
+        return resp.restored
+
+    def consolidate_memory(
+        self,
+        *,
+        query: Optional[str] = None,
+        k: int = 16,
+        window_hours: Optional[int] = None,
+        dry_run: bool = True,
+        timeout: float = 120.0,
+    ) -> "Union[List[Memory], Result]":
+        """Consolidate recent episodic memories into ONE durable semantic fact (RC5b).
+
+        ``dry_run=True`` (the default) is a model-free PREVIEW returning the episodic
+        memories that WOULD be consolidated. ``dry_run=False`` drives a react-memory
+        chain (needs a served model + ``KX_SERVE_MEMORY=1``) that bundles → distills →
+        remembers, and returns the committed :class:`Result`."""
+        if dry_run:
+            preview = self.list_memories(limit=max(1, k * 4))
+            cutoff = _consolidate_cutoff(window_hours)
+            episodics = [
+                m
+                for m in preview
+                if m.kind == "episodic" and (cutoff is None or m.created_ms >= cutoff)
+            ]
+            return episodics[:k]
+        instruction = _consolidation_instruction(query, window_hours)
+        # wait=True always yields a committed Result (never a Run handle).
+        return cast(
+            "Result",
+            self.invoke(
+                "kx/recipes/react-memory",
+                {"instruction": instruction, "max_turns": 6, "max_tool_calls": 4},
+                wait=True,
+                timeout=timeout,
+            ),
+        )
 
     # -- wait plumbing --
     def _await_terminal(
@@ -3027,10 +3160,14 @@ class AsyncKxClient:
         return StoreResult.from_proto(resp)
 
     async def list_memories(
-        self, *, instance_id: Optional[str] = None, limit: int = 0
+        self,
+        *,
+        instance_id: Optional[str] = None,
+        limit: int = 0,
+        include_tombstoned: bool = False,
     ) -> List[Memory]:
         """Async twin of :meth:`KxClient.list_memories`."""
-        req = _g.ListMemoriesRequest(namespace="")
+        req = _g.ListMemoriesRequest(namespace="", include_tombstoned=include_tombstoned)
         if limit:
             req.limit = limit
         if instance_id:
@@ -3049,6 +3186,59 @@ class AsyncKxClient:
         req = _g.ForgetMemoryRequest(memory_id=hexids.decode(memory_id), namespace="")
         resp = await self._acall(self._stub.ForgetMemory(req, metadata=self._md))
         return resp.forgotten
+
+    async def decay_memory(
+        self, *, ttl_days: int = 90, min_access: int = 1, dry_run: bool = True
+    ) -> DecayReport:
+        """Async twin of :meth:`KxClient.decay_memory` (RC5b)."""
+        req = _g.DecayMemoryRequest(
+            namespace="", ttl_days=ttl_days, min_access=min_access, dry_run=dry_run
+        )
+        resp = await self._acall(self._stub.DecayMemory(req, metadata=self._md))
+        return DecayReport.from_proto(resp)
+
+    async def memory_stats(self) -> MemoryStats:
+        """Async twin of :meth:`KxClient.memory_stats` (RC5b)."""
+        req = _g.MemoryStatsRequest(namespace="")
+        resp = await self._acall(self._stub.MemoryStats(req, metadata=self._md))
+        return MemoryStats.from_proto(resp)
+
+    async def restore_memory(self, memory_id: str) -> bool:
+        """Async twin of :meth:`KxClient.restore_memory` (RC5b)."""
+        req = _g.RestoreMemoryRequest(memory_id=hexids.decode(memory_id), namespace="")
+        resp = await self._acall(self._stub.RestoreMemory(req, metadata=self._md))
+        return resp.restored
+
+    async def consolidate_memory(
+        self,
+        *,
+        query: Optional[str] = None,
+        k: int = 16,
+        window_hours: Optional[int] = None,
+        dry_run: bool = True,
+        timeout: float = 120.0,
+    ) -> "Union[List[Memory], Result]":
+        """Async twin of :meth:`KxClient.consolidate_memory` (RC5b)."""
+        if dry_run:
+            preview = await self.list_memories(limit=max(1, k * 4))
+            cutoff = _consolidate_cutoff(window_hours)
+            episodics = [
+                m
+                for m in preview
+                if m.kind == "episodic" and (cutoff is None or m.created_ms >= cutoff)
+            ]
+            return episodics[:k]
+        instruction = _consolidation_instruction(query, window_hours)
+        # wait=True always yields a committed Result (never an AsyncRun handle).
+        return cast(
+            "Result",
+            await self.invoke(
+                "kx/recipes/react-memory",
+                {"instruction": instruction, "max_turns": 6, "max_tool_calls": 4},
+                wait=True,
+                timeout=timeout,
+            ),
+        )
 
     async def fuzzy_discovery(
         self,

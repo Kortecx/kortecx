@@ -140,6 +140,64 @@ pub struct MemoryEntry {
     pub created_ms: i64,
     /// The memory vector's embedding dimension.
     pub dim: u32,
+    /// RC5b: recall count (salience; off-digest sidecar). Display only.
+    pub access_count: u32,
+    /// RC5b: last recall time, unix-ms (0 = never). Display only.
+    pub last_accessed_ms: i64,
+    /// RC5b: `Some(ms)` if decayed (soft-tombstoned, restorable); `None` if live.
+    pub tombstoned_ms: Option<i64>,
+}
+
+/// One memory a decay policy matched ([`MemoryView::decay`]). The store row is never
+/// deleted — a soft, reversible tombstone.
+#[derive(Clone, Debug)]
+pub struct DecayCandidateEntry {
+    /// The 32-byte content-addressed id.
+    pub memory_id: [u8; 32],
+    /// The payload bytes (preview snippet).
+    pub content: Vec<u8>,
+    /// Semantic vs episodic.
+    pub kind: MemoryKindTag,
+    /// The unix-ms write time.
+    pub created_ms: i64,
+    /// Recall count (salience).
+    pub access_count: u32,
+    /// Last recall time, unix-ms (0 = never).
+    pub last_accessed_ms: i64,
+}
+
+/// The outcome of a [`MemoryView::decay`] sweep.
+#[derive(Clone, Debug)]
+pub struct DecayReportEntry {
+    /// The memories the policy matched (previewed or evicted).
+    pub candidates: Vec<DecayCandidateEntry>,
+    /// The number actually tombstoned this call (0 on a dry run).
+    pub evicted: usize,
+    /// The number of live memories that survived the sweep.
+    pub kept: usize,
+    /// Whether this was a preview (`dry_run`).
+    pub dry_run: bool,
+}
+
+/// Namespace statistics ([`MemoryView::stats`]).
+#[derive(Clone, Debug, Default)]
+pub struct MemoryStatsEntry {
+    /// Live (non-tombstoned) memory count.
+    pub total: u32,
+    /// Live semantic memories.
+    pub semantic: u32,
+    /// Live episodic memories.
+    pub episodic: u32,
+    /// Tombstoned (restorable) memories.
+    pub tombstoned: u32,
+    /// The namespace embedding dimension (0 = empty).
+    pub dim: u32,
+    /// The embed-model fingerprint the namespace was indexed under.
+    pub embed_fingerprint: String,
+    /// The oldest live memory's `created_ms` (0 = empty).
+    pub oldest_ms: i64,
+    /// The newest live memory's `created_ms` (0 = empty).
+    pub newest_ms: i64,
 }
 
 /// One recall hit. `score` is DISPLAY-ONLY (SN-8).
@@ -206,7 +264,8 @@ pub trait MemoryView: Send + Sync {
     ) -> Result<Vec<MemoryHitEntry>, MemoryError>;
 
     /// The episodic log of `namespace`, newest-first, at most `limit` rows,
-    /// optionally scoped to the run `instance_filter`.
+    /// optionally scoped to the run `instance_filter`. `include_tombstoned` = `false`
+    /// hides decayed memories (default view); `true` surfaces them (the decayed view).
     ///
     /// # Errors
     /// [`MemoryError::Internal`] on a backend failure.
@@ -215,9 +274,55 @@ pub trait MemoryView: Send + Sync {
         namespace: &str,
         instance_filter: Option<[u8; 16]>,
         limit: usize,
+        include_tombstoned: bool,
     ) -> Result<Vec<MemoryEntry>, MemoryError>;
 
-    /// Erase a memory from `namespace`. Returns `true` if a row was removed.
+    /// Gather a set of (live) memories for the model to consolidate — the newest
+    /// (`query_text == None`) or most-similar-to-a-query (`Some`, host-embedded) slice
+    /// of `namespace`, optionally restricted by kind + a `created_ms` window. The
+    /// returned entries carry NO score (SN-8 by return type).
+    ///
+    /// # Errors
+    /// [`MemoryError`] on a bad namespace / missing embedder / dim mismatch / stale
+    /// index / backend failure.
+    fn bundle(
+        &self,
+        namespace: &str,
+        query_text: Option<&str>,
+        kind_filter: Option<MemoryKindTag>,
+        window_ms: Option<(i64, i64)>,
+        limit: usize,
+    ) -> Result<Vec<MemoryEntry>, MemoryError>;
+
+    /// Preview (`dry_run`) or apply a TTL + salience decay sweep over `namespace`.
+    /// Evictions are reversible soft-tombstones (the store row is never deleted).
+    ///
+    /// # Errors
+    /// [`MemoryError`] on a bad namespace / backend failure.
+    fn decay(
+        &self,
+        namespace: &str,
+        ttl_ms: i64,
+        min_access: u32,
+        dry_run: bool,
+    ) -> Result<DecayReportEntry, MemoryError>;
+
+    /// Namespace statistics — live counts by kind, tombstoned count, dim, fingerprint,
+    /// and the live age range.
+    ///
+    /// # Errors
+    /// [`MemoryError::Internal`] on a backend failure.
+    fn stats(&self, namespace: &str) -> Result<MemoryStatsEntry, MemoryError>;
+
+    /// Un-decay (restore) a soft-tombstoned memory. Returns `true` if a tombstone was
+    /// cleared.
+    ///
+    /// # Errors
+    /// [`MemoryError::Internal`] on a backend failure.
+    fn restore(&self, namespace: &str, memory_id: &[u8; 32]) -> Result<bool, MemoryError>;
+
+    /// Erase a memory from `namespace` (a HARD delete, not reversible — unlike decay).
+    /// Returns `true` if a row was removed.
     ///
     /// # Errors
     /// [`MemoryError::Internal`] on a backend failure.
@@ -249,6 +354,10 @@ pub(crate) fn memory_summary_to_proto(e: MemoryEntry) -> proto::MemorySummary {
         instance_id: e.instance_id.to_vec(),
         created_ms: e.created_ms,
         dim: e.dim,
+        access_count: e.access_count,
+        last_accessed_ms: e.last_accessed_ms,
+        // 0 = live on the wire; Some(ms) = decayed (unix-ms is always > 0).
+        tombstoned_ms: e.tombstoned_ms.unwrap_or(0),
     }
 }
 
@@ -258,6 +367,54 @@ pub(crate) fn memory_hit_to_proto(h: MemoryHitEntry) -> proto::MemoryHit {
         memory_id: h.memory_id.to_vec(),
         content: h.content,
         score: h.score,
+    }
+}
+
+/// Map a gateway-core decay report into the wire type. `now_ms` derives each
+/// candidate's `age_days` at sweep time (display only).
+pub(crate) fn decay_report_to_proto(
+    r: DecayReportEntry,
+    now_ms: i64,
+) -> proto::DecayMemoryResponse {
+    let would_evict = u32::try_from(r.candidates.len()).unwrap_or(u32::MAX);
+    let candidates = r
+        .candidates
+        .into_iter()
+        .map(|c| proto::DecayCandidate {
+            memory_id: c.memory_id.to_vec(),
+            content: c.content,
+            kind: c.kind.as_str().to_string(),
+            created_ms: c.created_ms,
+            access_count: c.access_count,
+            last_accessed_ms: c.last_accessed_ms,
+            age_days: u32::try_from(now_ms.saturating_sub(c.created_ms).max(0) / 86_400_000)
+                .unwrap_or(u32::MAX),
+        })
+        .collect();
+    proto::DecayMemoryResponse {
+        candidates,
+        would_evict,
+        evicted: u32::try_from(r.evicted).unwrap_or(u32::MAX),
+        kept: u32::try_from(r.kept).unwrap_or(u32::MAX),
+        dry_run: r.dry_run,
+    }
+}
+
+/// Map gateway-core namespace stats into the wire type.
+pub(crate) fn memory_stats_to_proto(
+    s: MemoryStatsEntry,
+    namespace: String,
+) -> proto::MemoryStatsResponse {
+    proto::MemoryStatsResponse {
+        total: s.total,
+        semantic: s.semantic,
+        episodic: s.episodic,
+        tombstoned: s.tombstoned,
+        dim: s.dim,
+        embed_fingerprint: s.embed_fingerprint,
+        oldest_ms: s.oldest_ms,
+        newest_ms: s.newest_ms,
+        namespace,
     }
 }
 

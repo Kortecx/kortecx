@@ -153,7 +153,15 @@ export { GrantView, AssetGrants } from "./grants.js";
 export { DatasetSummary, DatasetHit, IngestResult, RetrievalMode } from "./datasets.js";
 export type { IngestDoc } from "./datasets.js";
 // RC5a: durable agentic memory (StoreMemory / ListMemories / RecallMemory / ForgetMemory).
-export { Memory, MemoryHit, MemoryKind, StoreResult } from "./memory.js";
+export {
+  DecayCandidate,
+  DecayReport,
+  Memory,
+  MemoryHit,
+  MemoryKind,
+  MemoryStats,
+  StoreResult,
+} from "./memory.js";
 export { FuzzyHit } from "./fuzzy.js";
 
 // Batch A: client uploads + batch content reads + model discovery.

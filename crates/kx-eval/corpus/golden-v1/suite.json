@@ -219,6 +219,29 @@
         "max_turns": 8,
         "max_tool_calls": 20
       }
+    },
+    {
+      "id": "memory_consolidate_episodics",
+      "description": "RC5b: the agent bundles several episodic memories, distills them into one semantic summary, then recalls + grounds it. Fail-closed: nothing consolidated scores 0.",
+      "instruction": "Consolidate your recent notes about the Q3 launch, then tell me the plan.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["March 3rd", "email", "Fridays"],
+        "expected_tools": [],
+        "grounded_in": [],
+        "memory_must_recall": ["March 3rd"],
+        "consolidation_must_capture": ["March 3rd", "email", "Fridays"],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      },
+      "scripted_transcript": {
+        "task_id": "memory_consolidate_episodics",
+        "turns": [{ "turn": 0, "branch": "answer" }],
+        "final_answer": "Consolidated: the deadline is March 3rd, the client prefers email, plants are watered Fridays.",
+        "retrieved_docs": ["deadline March 3rd; client prefers email; plants watered Fridays"],
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
     }
   ]
 }

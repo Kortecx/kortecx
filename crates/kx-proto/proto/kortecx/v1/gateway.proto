@@ -749,6 +749,7 @@ message ListMemoriesRequest {
   optional uint32 limit       = 1;       // page size; server clamps (absent = default page)
   optional bytes  instance_id = 2;       // 16B — scope to one run (absent = all runs in the namespace)
   string namespace            = 3;       // "" ⇒ caller default
+  bool include_tombstoned     = 4;       // RC5b: false (default) hides decayed memories; true = the decayed view
 }
 message MemorySummary {
   bytes  memory_id  = 1;                 // 32B content-addressed id (the citation key)
@@ -757,6 +758,9 @@ message MemorySummary {
   bytes  instance_id = 4;                // 16B — the run that wrote it (all-zero = operator/SDK write)
   int64  created_ms = 5;                 // unix-ms (display only; off every hash)
   uint32 dim        = 6;                 // the memory vector's embedding dimension
+  uint32 access_count     = 7;           // RC5b: recall count (salience; off-digest sidecar). Display only.
+  int64  last_accessed_ms = 8;           // RC5b: last recall time, unix-ms (0 = never). Display only.
+  int64  tombstoned_ms    = 9;           // RC5b: decay tombstone time, unix-ms (0 = live; >0 = soft-evicted, restorable)
 }
 message ListMemoriesResponse {
   repeated MemorySummary memories = 1;   // newest-first
@@ -784,6 +788,53 @@ message ForgetMemoryRequest {
 }
 message ForgetMemoryResponse {
   bool forgotten = 1;                    // true ⇒ a row was removed
+}
+
+// RC5b additive: reversible TTL + salience DECAY (soft-tombstone; the `memories` row
+// is never deleted — restorable), namespace STATS, and RESTORE. All off the truth
+// path / off-digest (the memory_decay sidecar); NO journal schema bump.
+message DecayMemoryRequest {
+  string namespace  = 1;                 // "" ⇒ caller default
+  uint32 ttl_days   = 2;                 // age threshold (0 ⇒ the server default)
+  uint32 min_access = 3;                 // salience floor — a memory recalled >= this many times is protected
+  bool   dry_run    = 4;                 // true (recommended default) ⇒ preview candidates, evict nothing
+}
+message DecayCandidate {
+  bytes  memory_id       = 1;            // 32B content-addressed id
+  bytes  content         = 2;            // the payload (preview snippet)
+  string kind            = 3;            // "semantic" | "episodic"
+  int64  created_ms      = 4;            // unix-ms write time
+  uint32 access_count    = 5;            // recall count (salience)
+  int64  last_accessed_ms = 6;           // last recall time, unix-ms (0 = never)
+  uint32 age_days        = 7;            // derived age at sweep time (display)
+}
+message DecayMemoryResponse {
+  repeated DecayCandidate candidates = 1; // the memories the policy matched
+  uint32 would_evict = 2;                // candidates.len() (the preview/eviction count)
+  uint32 evicted     = 3;                // actually tombstoned this call (0 on a dry run)
+  uint32 kept        = 4;                // live memories that survived the sweep
+  bool   dry_run     = 5;                // echoes the request
+}
+message MemoryStatsRequest {
+  string namespace = 1;                  // "" ⇒ caller default
+}
+message MemoryStatsResponse {
+  uint32 total      = 1;                 // live (non-tombstoned) memories
+  uint32 semantic   = 2;                 // live semantic
+  uint32 episodic   = 3;                 // live episodic
+  uint32 tombstoned = 4;                 // decayed (restorable) memories
+  uint32 dim        = 5;                 // namespace embedding dimension (0 = empty)
+  string embed_fingerprint = 6;          // the embed-model fingerprint the namespace was indexed under
+  int64  oldest_ms  = 7;                 // oldest live created_ms (0 = empty)
+  int64  newest_ms  = 8;                 // newest live created_ms (0 = empty)
+  string namespace  = 9;                 // the resolved (server-derived) namespace
+}
+message RestoreMemoryRequest {
+  bytes  memory_id = 1;                  // the tombstoned memory to un-decay
+  string namespace = 2;                  // "" ⇒ caller default
+}
+message RestoreMemoryResponse {
+  bool restored = 1;                     // true ⇒ a tombstone was cleared
 }
 
 // The Morphic Data Engine read surface (campaign Batch 2): one durably-captured
@@ -2083,6 +2134,11 @@ service KxGateway {
   rpc ListMemories(ListMemoriesRequest) returns (ListMemoriesResponse);
   rpc RecallMemory(RecallMemoryRequest) returns (RecallMemoryResponse);
   rpc ForgetMemory(ForgetMemoryRequest) returns (ForgetMemoryResponse);
+  // RC5b additive (D120.6): reversible TTL+salience decay (dry-run preview default),
+  // namespace stats, and restore. Off the truth path; NO journal schema bump.
+  rpc DecayMemory(DecayMemoryRequest) returns (DecayMemoryResponse);
+  rpc MemoryStats(MemoryStatsRequest) returns (MemoryStatsResponse);
+  rpc RestoreMemory(RestoreMemoryRequest) returns (RestoreMemoryResponse);
   // Campaign Batch 2 additive (D120.6): the Morphic Data Engine capture read
   // surface (durable action exhaust; read-only, off-truth-path).
   rpc ListCaptureRecords(ListCaptureRecordsRequest) returns (ListCaptureRecordsResponse);

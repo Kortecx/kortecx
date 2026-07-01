@@ -169,6 +169,21 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryResponse.FromString,
                 _registered_method=True)
+        self.DecayMemory = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DecayMemory',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DecayMemoryRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DecayMemoryResponse.FromString,
+                _registered_method=True)
+        self.MemoryStats = channel.unary_unary(
+                '/kortecx.v1.KxGateway/MemoryStats',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.MemoryStatsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.MemoryStatsResponse.FromString,
+                _registered_method=True)
+        self.RestoreMemory = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RestoreMemory',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RestoreMemoryRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RestoreMemoryResponse.FromString,
+                _registered_method=True)
         self.ListCaptureRecords = channel.unary_unary(
                 '/kortecx.v1.KxGateway/ListCaptureRecords',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsRequest.SerializeToString,
@@ -651,6 +666,26 @@ class KxGatewayServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def ForgetMemory(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DecayMemory(self, request, context):
+        """RC5b additive (D120.6): reversible TTL+salience decay (dry-run preview default),
+        namespace stats, and restore. Off the truth path; NO journal schema bump.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def MemoryStats(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RestoreMemory(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1270,6 +1305,21 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ForgetMemory,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryResponse.SerializeToString,
+            ),
+            'DecayMemory': grpc.unary_unary_rpc_method_handler(
+                    servicer.DecayMemory,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DecayMemoryRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DecayMemoryResponse.SerializeToString,
+            ),
+            'MemoryStats': grpc.unary_unary_rpc_method_handler(
+                    servicer.MemoryStats,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.MemoryStatsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.MemoryStatsResponse.SerializeToString,
+            ),
+            'RestoreMemory': grpc.unary_unary_rpc_method_handler(
+                    servicer.RestoreMemory,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RestoreMemoryRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RestoreMemoryResponse.SerializeToString,
             ),
             'ListCaptureRecords': grpc.unary_unary_rpc_method_handler(
                     servicer.ListCaptureRecords,
@@ -2306,6 +2356,87 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ForgetMemory',
             kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ForgetMemoryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DecayMemory(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DecayMemory',
+            kortecx_dot_v1_dot_gateway__pb2.DecayMemoryRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DecayMemoryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MemoryStats(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/MemoryStats',
+            kortecx_dot_v1_dot_gateway__pb2.MemoryStatsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.MemoryStatsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RestoreMemory(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RestoreMemory',
+            kortecx_dot_v1_dot_gateway__pb2.RestoreMemoryRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RestoreMemoryResponse.FromString,
             options,
             channel_credentials,
             insecure,

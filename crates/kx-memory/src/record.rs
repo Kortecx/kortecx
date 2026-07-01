@@ -79,6 +79,15 @@ pub struct MemoryRecord {
     pub created_ms: i64,
     /// The embedding dimension of this memory's vector (0 if unknown).
     pub dim: u32,
+    /// How many times this memory has been recalled — salience, from the off-digest
+    /// `memory_decay` sidecar (0 if never accessed). Display / decay-policy only.
+    pub access_count: u32,
+    /// The unix-ms time this memory was last recalled (0 if never). Display only.
+    pub last_accessed_ms: i64,
+    /// `Some(ms)` if this memory has been decayed (soft-tombstoned) — reversible via
+    /// [`crate::MemoryStore::restore`]; `None` if live. Off-digest; the `memories`
+    /// row itself is NEVER deleted (that is the reversibility guarantee).
+    pub tombstoned_ms: Option<i64>,
 }
 
 /// One recall result — a content-addressed memory + its similarity score.
@@ -124,6 +133,118 @@ pub struct StoreOutcome {
     pub inserted: bool,
     /// The namespace's embedding dimension after this store.
     pub dim: u32,
+}
+
+/// A read request into [`crate::MemoryStore::bundle`] — gather a set of memories for
+/// the model to consolidate (distill into one durable semantic fact). A struct (not a
+/// long arg list) so the seam stays readable and additive.
+#[derive(Clone, Copy, Debug)]
+pub struct BundleRequest<'a> {
+    /// The isolation scope (server-derived caller principal).
+    pub namespace: &'a str,
+    /// Restrict to one kind (consolidation passes `Some(Episodic)`); `None` = any.
+    pub kind: Option<MemoryKind>,
+    /// `Some(vec)` ⇒ semantically-scoped (the entries most similar to this query,
+    /// re-ranked by cosine); `None` ⇒ pure recency (newest-first).
+    pub query_vec: Option<&'a [f32]>,
+    /// Inclusive `created_ms` window `lo..=hi` (a wall-clock READ filter, off every
+    /// hash); `None` = unbounded.
+    pub window_ms: Option<(i64, i64)>,
+    /// The embed-model fingerprint the query vector was produced under (the
+    /// vector-space guard); empty ⇒ opt out. Ignored on the recency path.
+    pub embed_fingerprint: &'a str,
+    /// The maximum number of memories to bundle.
+    pub limit: usize,
+}
+
+/// The eviction policy for [`crate::MemoryStore::decay`]. A memory is a candidate iff
+/// it is BOTH older than `ttl_ms` AND under-recalled (`access_count < min_access`) — a
+/// salient (frequently-recalled) old fact is protected. `dry_run` previews without
+/// tombstoning anything.
+#[derive(Clone, Copy, Debug)]
+pub struct DecayPolicy {
+    /// Age threshold in ms — a memory older than this is TTL-eligible.
+    pub ttl_ms: i64,
+    /// Salience floor — a memory recalled at least this many times is protected.
+    pub min_access: u32,
+    /// `true` ⇒ compute + return candidates but tombstone NOTHING (preview).
+    pub dry_run: bool,
+}
+
+/// One memory that a [`DecayPolicy`] matched (would-be or actual eviction). The
+/// `memories` row is never deleted — this is a reversible soft-tombstone.
+#[derive(Clone, Debug)]
+pub struct DecayCandidate {
+    /// The content-addressed id (the citation key).
+    pub memory_id: ContentRef,
+    /// The remembered payload bytes (so a preview can show the snippet).
+    pub content: Vec<u8>,
+    /// Semantic vs episodic.
+    pub kind: MemoryKind,
+    /// The unix-ms write time (display only).
+    pub created_ms: i64,
+    /// How many times it was recalled (salience).
+    pub access_count: u32,
+    /// The unix-ms time it was last recalled (0 if never).
+    pub last_accessed_ms: i64,
+}
+
+/// The outcome of a [`crate::MemoryStore::decay`] sweep.
+#[derive(Clone, Debug)]
+pub struct DecayReport {
+    /// The memories the policy matched (previewed or evicted).
+    pub candidates: Vec<DecayCandidate>,
+    /// The number actually tombstoned this call (0 on a dry run).
+    pub swept: usize,
+    /// The number of live memories that survived the sweep (not matched).
+    pub kept: usize,
+    /// Whether this was a preview (`dry_run`).
+    pub dry_run: bool,
+}
+
+/// A namespace's memory statistics ([`crate::MemoryStore::stats`]). Live counts
+/// exclude tombstoned rows; `tombstoned` counts the soft-evicted (restorable) ones.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MemoryStats {
+    /// Live (non-tombstoned) memory count.
+    pub total: usize,
+    /// Live semantic memories.
+    pub semantic: usize,
+    /// Live episodic memories.
+    pub episodic: usize,
+    /// Tombstoned (decayed, restorable) memories.
+    pub tombstoned: usize,
+    /// The namespace's fixed embedding dimension (0 if empty).
+    pub dim: u32,
+    /// The embed-model fingerprint the namespace was indexed under.
+    pub fingerprint: String,
+    /// The oldest live memory's `created_ms` (0 if empty).
+    pub oldest_ms: i64,
+    /// The newest live memory's `created_ms` (0 if empty).
+    pub newest_ms: i64,
+}
+
+/// Cosine similarity of two equal-length finite vectors (the re-rank used by the
+/// semantically-scoped [`crate::MemoryStore::bundle`] path). Returns `0.0` for a
+/// length mismatch or a zero-magnitude vector — a safe, order-neutral default.
+pub(crate) fn cosine_sim(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut na = 0.0f32;
+    let mut nb = 0.0f32;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    let denom = na.sqrt() * nb.sqrt();
+    if denom <= 0.0 {
+        0.0
+    } else {
+        dot / denom
+    }
 }
 
 /// The content-addressed identity of a memory — the [`ContentRef`] of its payload.

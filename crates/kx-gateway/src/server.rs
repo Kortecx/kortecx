@@ -879,6 +879,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         for def in [
             crate::remember_tool::remember_tool_def(),
             crate::recall_tool::recall_tool_def(),
+            crate::consolidate_tool::consolidate_tool_def(),
         ] {
             if let Err(error) = tool_registry.register_server_tool(
                 def,
@@ -943,6 +944,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             vec![
                 crate::remember_tool::remember_tool(),
                 crate::recall_tool::recall_tool(),
+                crate::consolidate_tool::consolidate_tool(),
             ]
         } else {
             Vec::new()
@@ -1065,7 +1067,32 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             mv.clone(),
             memory_ns.clone(),
         );
+        // RC5b: consolidate@1 over the SAME view + namespace (bundles episodics; the
+        // model distills + writes via remember@1 — a normal react turn, no journal fact).
+        crate::consolidate_tool::register_consolidate_capability(
+            &local_broker,
+            mv.clone(),
+            memory_ns.clone(),
+        );
         crate::remember_tool::register_remember_capability(&local_broker, mv, memory_ns);
+    }
+    // RC5b: opt-in decay auto-sweep on open (KX_MEMORY_DECAY_AUTO, default OFF) — a
+    // reversible TTL+salience sweep across all namespaces. Off-digest; default OFF ⇒
+    // serve start is byte-identical to RC5a.
+    #[cfg(feature = "hnsw")]
+    if crate::env_caps::memory_enabled() && crate::env_caps::memory_decay_auto() {
+        let ttl_ms = i64::try_from(crate::env_caps::memory_decay_ttl_days())
+            .unwrap_or(i64::MAX / 86_400_000)
+            .saturating_mul(86_400_000);
+        let min_access =
+            u32::try_from(crate::env_caps::memory_decay_min_access()).unwrap_or(u32::MAX);
+        match memory_view.sweep_all(ttl_ms, min_access) {
+            Ok(n) if n > 0 => {
+                tracing::info!("RC5b: decay auto-sweep tombstoned {n} stale memories on open");
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("RC5b: decay auto-sweep failed (non-fatal): {e:?}"),
+        }
     }
     let binder: Arc<dyn RecipeBinder> = {
         #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]

@@ -10,7 +10,10 @@
  */
 
 import type {
+  DecayCandidate as PbDecayCandidate,
+  DecayMemoryResponse as PbDecayMemoryResponse,
   MemoryHit as PbMemoryHit,
+  MemoryStatsResponse as PbMemoryStatsResponse,
   MemorySummary as PbMemorySummary,
   StoreMemoryResponse as PbStoreMemoryResponse,
 } from "./gen/kortecx/v1/gateway_pb.js";
@@ -36,6 +39,12 @@ export class Memory {
     /** Unix-ms write time (display only; off every hash). */
     readonly createdMs: number,
     readonly dim: number,
+    /** RC5b: recall count (salience; display only). */
+    readonly accessCount: number = 0,
+    /** RC5b: last recall time, unix-ms (0 = never). */
+    readonly lastAccessedMs: number = 0,
+    /** RC5b: decay tombstone time, unix-ms (0 = live; >0 = decayed, restorable). */
+    readonly tombstonedMs: number = 0,
   ) {}
 
   static fromProto(m: PbMemorySummary): Memory {
@@ -46,12 +55,20 @@ export class Memory {
       encode(m.instanceId),
       Number(m.createdMs),
       m.dim,
+      m.accessCount,
+      Number(m.lastAccessedMs),
+      Number(m.tombstonedMs),
     );
   }
 
   /** The remembered bytes decoded as UTF-8 (best-effort). */
   get text(): string {
     return new TextDecoder().decode(this.content);
+  }
+
+  /** True if this memory has been decayed (soft-tombstoned; restorable). */
+  get isDecayed(): boolean {
+    return this.tombstonedMs > 0;
   }
 
   /** A plain snake_case object (stable wire-shaped serialization for UIs/logs). */
@@ -63,6 +80,9 @@ export class Memory {
       instance_id: this.instanceId,
       created_ms: this.createdMs,
       dim: this.dim,
+      access_count: this.accessCount,
+      last_accessed_ms: this.lastAccessedMs,
+      tombstoned_ms: this.tombstonedMs,
     };
   }
 }
@@ -105,5 +125,123 @@ export class StoreResult {
 
   toJSON() {
     return { memory_id: this.memoryId, inserted: this.inserted, dim: this.dim };
+  }
+}
+
+/** One memory a decay policy matched (RC5b) — a reversible soft-tombstone, never a
+ *  hard delete. */
+export class DecayCandidate {
+  constructor(
+    readonly memoryId: string,
+    readonly content: Uint8Array,
+    readonly kind: string,
+    readonly createdMs: number,
+    readonly accessCount: number,
+    readonly lastAccessedMs: number,
+    readonly ageDays: number,
+  ) {}
+
+  static fromProto(c: PbDecayCandidate): DecayCandidate {
+    return new DecayCandidate(
+      encode(c.memoryId),
+      c.content,
+      c.kind,
+      Number(c.createdMs),
+      c.accessCount,
+      Number(c.lastAccessedMs),
+      c.ageDays,
+    );
+  }
+
+  /** The memory bytes decoded as UTF-8 (best-effort). */
+  get text(): string {
+    return new TextDecoder().decode(this.content);
+  }
+
+  toJSON() {
+    return {
+      memory_id: this.memoryId,
+      text: this.text,
+      kind: this.kind,
+      created_ms: this.createdMs,
+      access_count: this.accessCount,
+      last_accessed_ms: this.lastAccessedMs,
+      age_days: this.ageDays,
+    };
+  }
+}
+
+/** The outcome of a `DecayMemory` sweep (RC5b). `dryRun` ⇒ a preview that evicted
+ *  nothing; evictions are reversible via `restoreMemory`. */
+export class DecayReport {
+  constructor(
+    readonly candidates: DecayCandidate[],
+    readonly wouldEvict: number,
+    readonly evicted: number,
+    readonly kept: number,
+    readonly dryRun: boolean,
+  ) {}
+
+  static fromProto(r: PbDecayMemoryResponse): DecayReport {
+    return new DecayReport(
+      r.candidates.map((c) => DecayCandidate.fromProto(c)),
+      r.wouldEvict,
+      r.evicted,
+      r.kept,
+      r.dryRun,
+    );
+  }
+
+  toJSON() {
+    return {
+      candidates: this.candidates.map((c) => c.toJSON()),
+      would_evict: this.wouldEvict,
+      evicted: this.evicted,
+      kept: this.kept,
+      dry_run: this.dryRun,
+    };
+  }
+}
+
+/** Namespace memory statistics (RC5b). */
+export class MemoryStats {
+  constructor(
+    readonly total: number,
+    readonly semantic: number,
+    readonly episodic: number,
+    readonly tombstoned: number,
+    readonly dim: number,
+    readonly embedFingerprint: string,
+    readonly oldestMs: number,
+    readonly newestMs: number,
+    readonly namespace: string,
+  ) {}
+
+  static fromProto(s: PbMemoryStatsResponse): MemoryStats {
+    return new MemoryStats(
+      s.total,
+      s.semantic,
+      s.episodic,
+      s.tombstoned,
+      s.dim,
+      s.embedFingerprint,
+      Number(s.oldestMs),
+      Number(s.newestMs),
+      s.namespace,
+    );
+  }
+
+  toJSON() {
+    return {
+      total: this.total,
+      semantic: this.semantic,
+      episodic: this.episodic,
+      tombstoned: this.tombstoned,
+      dim: this.dim,
+      embed_fingerprint: this.embedFingerprint,
+      oldest_ms: this.oldestMs,
+      newest_ms: this.newestMs,
+      namespace: this.namespace,
+    };
   }
 }

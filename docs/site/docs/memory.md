@@ -20,24 +20,27 @@ off-digest, rebuildable sidecar (lose it and it rebuilds from its durable rows) 
 schema change**. It is reachable from the **one entry point** — `kx` / `KxClient` — exactly
 like every other capability.
 
-## The two tools
+## The memory tools
 
 The `kx/recipes/react-memory` recipe (a sibling of [`react`](./agent-runner.md) and
-`react-rag`) grants the agent two read/write built-in tools:
+`react-rag`) grants the agent three read/write built-in tools:
 
 ```json
-remember@1 — {"content": <fact to remember>, "kind": "semantic"|"episodic" (optional)}
-           → { "memory_id": <hash>, "stored": true }
-recall@1   — {"query": <what to recall>, "k": <1..64, optional>}
-           → ordered memories: [{ "ref": <hash>, "text": ... }]
+remember@1    — {"content": <fact to remember>, "kind": "semantic"|"episodic" (optional)}
+              → { "memory_id": <hash>, "stored": true }
+recall@1      — {"query": <what to recall>, "k": <1..64, optional>}
+              → ordered memories: [{ "ref": <hash>, "text": ... }]
+consolidate@1 — {"query"?, "k"?, "kind_filter"?, "window_hours"?}   (RC5b; see below)
+              → ordered episodic entries to distill: [{ "ref": <hash>, "text": ... }]
 ```
 
-Both have **no egress and no filesystem scope** (the store is reached in-process). `recall` is
-**read-only** (`Readback` — the human-in-the-loop gate auto-proceeds it). `remember` is an
-**idempotent write** (`Token`): remembering the same fact twice is a durable no-op, so a
-crash-recovery re-dispatch never duplicates a memory, and it **auto-proceeds** too (a local,
-reversible, no-egress write). Both **fail soft** — a missing embedder or an empty store returns
-an honest empty observation the agent reads and recovers from; the loop never dead-letters.
+All have **no egress and no filesystem scope** (the store is reached in-process). `recall` and
+`consolidate` are **read-only** (`Readback` — the human-in-the-loop gate auto-proceeds them).
+`remember` is an **idempotent write** (`Token`): remembering the same fact twice is a durable
+no-op, so a crash-recovery re-dispatch never duplicates a memory, and it **auto-proceeds** too
+(a local, reversible, no-egress write). All **fail soft** — a missing embedder or an empty store
+returns an honest empty observation the agent reads and recovers from; the loop never
+dead-letters.
 
 Every memory is **scoped to your own principal** (server-derived) — a client can never reach
 another principal's memories.
@@ -133,11 +136,69 @@ with per-item forget. Without memory enabled it degrades to an honest not-wired 
 
 | Env var | Default | Effect |
 |---|---|---|
-| `KX_SERVE_MEMORY` | off | Enable the durable-memory subsystem (the `remember`/`recall` tools, the `react-memory` recipe, and the memory RPCs). |
+| `KX_SERVE_MEMORY` | off | Enable the durable-memory subsystem (the `remember`/`recall`/`consolidate` tools, the `react-memory` recipe, and the memory RPCs). |
 | `KX_SERVE_EMBED_MODEL` | (the primary served model) | The embed model for storing/recalling text; set it to a dedicated embedder (e.g. `embeddinggemma`) for sharper recall. |
+| `KX_MEMORY_DECAY_AUTO` | off | Run a decay sweep across all namespaces at serve open (opt-in; decay is normally an explicit `kx memory decay`). |
+| `KX_MEMORY_DECAY_TTL_DAYS` | 90 | The age threshold for the auto-sweep (a memory older than this AND under-recalled is eligible). |
+| `KX_MEMORY_DECAY_MIN_ACCESS` | 1 | The salience floor for the auto-sweep (a memory recalled at least this many times is protected). |
+
+## Decay & consolidation (adaptive memory)
+
+Memory is **adaptive**: an agent can distill what it learned, and stale memories age out —
+both safely and reversibly.
+
+### Consolidation
+
+`consolidate` is a third memory tool (granted to `react-memory` alongside `remember`/`recall`).
+It bundles the run's recent EPISODIC memories so the model can distill them into ONE durable
+SEMANTIC fact — which the model then writes with `remember`. It is a normal react turn (no new
+journal fact), so it is provable and replayable like any other. Trigger it from an agent
+(the model calls `consolidate` autonomously) or as an operator:
+
+```bash
+kx memory consolidate --dry-run                 # model-free preview of what would be distilled
+kx memory consolidate --apply --query "Q3 launch"   # drive the react-memory chain
+```
+
+```python
+kx.memory.consolidate(dry_run=True)                       # preview (List[Memory])
+kx.memory.consolidate(query="Q3 launch", dry_run=False)   # run the chain → Result
+```
+
+```typescript
+await client.memory.consolidate({ dryRun: true });                    // preview
+await client.memory.consolidate({ query: "Q3 launch", dryRun: false }); // run → Result
+```
+
+### Decay (reversible TTL + salience)
+
+Decay evicts memories that are BOTH older than a TTL **and** rarely recalled — a
+frequently-recalled old fact is protected by its salience. Evictions are **reversible
+soft-tombstones**: the stored row is never deleted, so any decayed memory can be restored. The
+default trigger is a `--dry-run` preview.
+
+```bash
+kx memory decay --dry-run                       # preview candidates (evicts nothing) — the default
+kx memory decay --apply --ttl-days 30 --min-access 2   # evict (reversible)
+kx memory stats                                 # counts by kind + decayed count
+kx memory list --include-tombstoned             # the decayed view
+kx memory restore <memory_id>                   # un-decay a soft-tombstoned memory
+```
+
+**Policy tuning.** A candidate is `age > ttl_days AND access_count < min_access`:
+
+| TTL (days) | Min recalls to keep | Effect |
+|---|---|---|
+| 90 / 1 (default) | | Evict facts older than 90 days that were never recalled; keep anything recalled at least once. |
+| 30 / 2 | | Aggressive: evict 30-day-old facts recalled fewer than twice. |
+| 180 / 1 | | Conservative: only very old, never-recalled facts age out. |
+
+Decay lives in the off-digest `memory.db` sidecar (no journal bump). A full rebuild from the
+committed `remember` facts re-materializes every memory and **re-runs decay** on the next open
+when `KX_MEMORY_DECAY_AUTO=1` — the committed facts are the ultimate truth; decay is cleanup.
 
 ## What is Cloud
 
-Cross-run memory for **one principal on one node** is OSS. Sharing memory across parties,
-tenants, or nodes, plus consolidation/decay policy tuning at scale, are part of Kortecx Cloud.
-Consolidation (summarizing episodes into semantic facts) and decay land in a later release.
+Cross-run memory for **one principal on one node** is OSS — including consolidation and decay.
+Sharing memory across parties, tenants, or nodes, and consolidation/decay policy tuning at
+fleet scale, are part of Kortecx Cloud.

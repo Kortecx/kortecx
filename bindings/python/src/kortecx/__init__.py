@@ -79,7 +79,15 @@ from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
 from .flow import Flow, flow
 from .grants import AssetGrants, GrantView
-from .memory import Memory, MemoryHit, MemoryKind, StoreResult
+from .memory import (
+    DecayCandidate,
+    DecayReport,
+    Memory,
+    MemoryHit,
+    MemoryKind,
+    MemoryStats,
+    StoreResult,
+)
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
 from .react import ReactTurn, ReactTurnPage
@@ -240,9 +248,12 @@ __all__ = [
     "AssetGrants",
     "DatasetSummary",
     "RetrievalMode",
+    "DecayCandidate",
+    "DecayReport",
     "Memory",
     "MemoryHit",
     "MemoryKind",
+    "MemoryStats",
     "StoreResult",
     "ContentItem",
     "PutResult",

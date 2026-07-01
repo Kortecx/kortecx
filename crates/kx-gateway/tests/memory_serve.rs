@@ -162,6 +162,7 @@ async fn store_then_recall_returns_the_fact_on_both_engines() {
             limit: None,
             instance_id: None,
             namespace: String::new(),
+            include_tombstoned: false,
         })
         .await
         .expect("list_memories")

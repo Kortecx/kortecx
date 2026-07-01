@@ -118,8 +118,8 @@ pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 pub use fuzzy_discovery::{score_to_bp, FuzzyDiscoveryView, FuzzyHitEntry};
 pub use locks_view::{LockStore, LOCKED_BRANCH_REFUSAL_CODE};
 pub use memory::{
-    memory_namespace, MemoryEntry, MemoryError, MemoryHitEntry, MemoryKindTag, MemoryView,
-    MemoryWrite, StoreMemoryOutcome,
+    memory_namespace, DecayCandidateEntry, DecayReportEntry, MemoryEntry, MemoryError,
+    MemoryHitEntry, MemoryKindTag, MemoryStatsEntry, MemoryView, MemoryWrite, StoreMemoryOutcome,
 };
 pub use scaffold::{
     authoring_prompt, body_is_empty, derive_phase, split_done_pending, try_committed_body,

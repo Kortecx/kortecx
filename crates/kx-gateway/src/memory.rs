@@ -14,8 +14,8 @@
 use std::path::Path;
 
 use kx_gateway_core::{
-    MemoryEntry, MemoryError, MemoryHitEntry, MemoryKindTag, MemoryView, MemoryWrite,
-    StoreMemoryOutcome,
+    DecayCandidateEntry, DecayReportEntry, MemoryEntry, MemoryError, MemoryHitEntry, MemoryKindTag,
+    MemoryStatsEntry, MemoryView, MemoryWrite, StoreMemoryOutcome,
 };
 use kx_memory::{MemoryError as StoreError, MemoryStore};
 
@@ -108,6 +108,39 @@ fn from_store_kind(k: kx_memory::MemoryKind) -> MemoryKindTag {
     }
 }
 
+/// Map a durable `kx-memory` record into the gateway-core wire entry (shared by
+/// `list` + `bundle`).
+fn record_to_entry(r: kx_memory::MemoryRecord) -> MemoryEntry {
+    MemoryEntry {
+        memory_id: *r.memory_id.as_bytes(),
+        content: r.content,
+        kind: from_store_kind(r.kind),
+        instance_id: r.instance_id,
+        created_ms: r.created_ms,
+        dim: r.dim,
+        access_count: r.access_count,
+        last_accessed_ms: r.last_accessed_ms,
+        tombstoned_ms: r.tombstoned_ms,
+    }
+}
+
+impl HostMemoryView {
+    /// Apply a decay sweep across EVERY namespace (the operator auto-sweep on open).
+    /// Best-effort; returns the total number of memories tombstoned.
+    ///
+    /// # Errors
+    /// [`MemoryError::Internal`] on a backend failure.
+    pub(crate) fn sweep_all(&self, ttl_ms: i64, min_access: u32) -> Result<usize, MemoryError> {
+        self.store
+            .decay_all(kx_memory::DecayPolicy {
+                ttl_ms,
+                min_access,
+                dry_run: false,
+            })
+            .map_err(map_store_err)
+    }
+}
+
 impl MemoryView for HostMemoryView {
     fn store(&self, w: MemoryWrite<'_>) -> Result<StoreMemoryOutcome, MemoryError> {
         // Server-embed needs valid UTF-8 text; a non-UTF-8 payload must supply a
@@ -168,22 +201,107 @@ impl MemoryView for HostMemoryView {
         namespace: &str,
         instance_filter: Option<[u8; 16]>,
         limit: usize,
+        include_tombstoned: bool,
     ) -> Result<Vec<MemoryEntry>, MemoryError> {
         let rows = self
             .store
-            .list(namespace, instance_filter, limit)
+            .list(namespace, instance_filter, limit, include_tombstoned)
             .map_err(map_store_err)?;
-        Ok(rows
-            .into_iter()
-            .map(|r| MemoryEntry {
-                memory_id: *r.memory_id.as_bytes(),
-                content: r.content,
-                kind: from_store_kind(r.kind),
-                instance_id: r.instance_id,
-                created_ms: r.created_ms,
-                dim: r.dim,
-            })
-            .collect())
+        Ok(rows.into_iter().map(record_to_entry).collect())
+    }
+
+    fn bundle(
+        &self,
+        namespace: &str,
+        query_text: Option<&str>,
+        kind_filter: Option<MemoryKindTag>,
+        window_ms: Option<(i64, i64)>,
+        limit: usize,
+    ) -> Result<Vec<MemoryEntry>, MemoryError> {
+        let kind = kind_filter.map(to_store_kind);
+        // A non-empty query focuses the bundle semantically (host-embedded); else recency.
+        let query = query_text.filter(|t| !t.is_empty());
+        let rows = if let Some(text) = query {
+            let (vector, fp) = self.resolve_vector(None, text)?;
+            self.store
+                .bundle(kx_memory::BundleRequest {
+                    namespace,
+                    kind,
+                    query_vec: Some(&vector),
+                    window_ms,
+                    embed_fingerprint: &fp,
+                    limit,
+                })
+                .map_err(map_store_err)?
+        } else {
+            self.store
+                .bundle(kx_memory::BundleRequest {
+                    namespace,
+                    kind,
+                    query_vec: None,
+                    window_ms,
+                    embed_fingerprint: "",
+                    limit,
+                })
+                .map_err(map_store_err)?
+        };
+        Ok(rows.into_iter().map(record_to_entry).collect())
+    }
+
+    fn decay(
+        &self,
+        namespace: &str,
+        ttl_ms: i64,
+        min_access: u32,
+        dry_run: bool,
+    ) -> Result<DecayReportEntry, MemoryError> {
+        let report = self
+            .store
+            .decay(
+                namespace,
+                kx_memory::DecayPolicy {
+                    ttl_ms,
+                    min_access,
+                    dry_run,
+                },
+            )
+            .map_err(map_store_err)?;
+        Ok(DecayReportEntry {
+            candidates: report
+                .candidates
+                .into_iter()
+                .map(|c| DecayCandidateEntry {
+                    memory_id: *c.memory_id.as_bytes(),
+                    content: c.content,
+                    kind: from_store_kind(c.kind),
+                    created_ms: c.created_ms,
+                    access_count: c.access_count,
+                    last_accessed_ms: c.last_accessed_ms,
+                })
+                .collect(),
+            evicted: report.swept,
+            kept: report.kept,
+            dry_run: report.dry_run,
+        })
+    }
+
+    fn stats(&self, namespace: &str) -> Result<MemoryStatsEntry, MemoryError> {
+        let s = self.store.stats(namespace).map_err(map_store_err)?;
+        Ok(MemoryStatsEntry {
+            total: u32::try_from(s.total).unwrap_or(u32::MAX),
+            semantic: u32::try_from(s.semantic).unwrap_or(u32::MAX),
+            episodic: u32::try_from(s.episodic).unwrap_or(u32::MAX),
+            tombstoned: u32::try_from(s.tombstoned).unwrap_or(u32::MAX),
+            dim: s.dim,
+            embed_fingerprint: s.fingerprint,
+            oldest_ms: s.oldest_ms,
+            newest_ms: s.newest_ms,
+        })
+    }
+
+    fn restore(&self, namespace: &str, memory_id: &[u8; 32]) -> Result<bool, MemoryError> {
+        let mid = kx_content::ContentRef::from_bytes(*memory_id);
+        self.store.restore(namespace, &mid).map_err(map_store_err)
     }
 
     fn forget(&self, namespace: &str, memory_id: &[u8; 32]) -> Result<bool, MemoryError> {

@@ -2141,6 +2141,23 @@ select {
   cursor: pointer;
   text-align: left;
 }
+/* RC5b memory panels: a horizontal row of policy chips + the selected chip. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.4rem 0;
+}
+.chip--active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-input));
+}
+/* A decayed (soft-tombstoned) memory row is de-emphasized. */
+.dataset-hit--muted {
+  opacity: 0.6;
+}
 .chip:hover {
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
 }
