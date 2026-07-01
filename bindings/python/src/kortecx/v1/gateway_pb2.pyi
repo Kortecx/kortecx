@@ -793,6 +793,42 @@ class ListReactTurnsResponse(_message.Message):
     has_more: bool
     def __init__(self, turns: _Optional[_Iterable[_Union[ReactTurnSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
 
+class ListReRankTurnsRequest(_message.Message):
+    __slots__ = ("limit", "instance_id")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    instance_id: bytes
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ...) -> None: ...
+
+class ReRankTurnSummary(_message.Message):
+    __slots__ = ("round", "rerank_mote_id", "instance_id", "model_id", "outcome", "candidate_count", "permutation", "seq")
+    ROUND_FIELD_NUMBER: _ClassVar[int]
+    RERANK_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    OUTCOME_FIELD_NUMBER: _ClassVar[int]
+    CANDIDATE_COUNT_FIELD_NUMBER: _ClassVar[int]
+    PERMUTATION_FIELD_NUMBER: _ClassVar[int]
+    SEQ_FIELD_NUMBER: _ClassVar[int]
+    round: int
+    rerank_mote_id: bytes
+    instance_id: bytes
+    model_id: str
+    outcome: str
+    candidate_count: int
+    permutation: _containers.RepeatedScalarFieldContainer[int]
+    seq: int
+    def __init__(self, round: _Optional[int] = ..., rerank_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., outcome: _Optional[str] = ..., candidate_count: _Optional[int] = ..., permutation: _Optional[_Iterable[int]] = ..., seq: _Optional[int] = ...) -> None: ...
+
+class ListReRankTurnsResponse(_message.Message):
+    __slots__ = ("turns", "has_more")
+    TURNS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    turns: _containers.RepeatedCompositeFieldContainer[ReRankTurnSummary]
+    has_more: bool
+    def __init__(self, turns: _Optional[_Iterable[_Union[ReRankTurnSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
 class ListCaptureRecordsRequest(_message.Message):
     __slots__ = ("limit", "instance_id")
     LIMIT_FIELD_NUMBER: _ClassVar[int]

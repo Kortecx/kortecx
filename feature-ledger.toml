@@ -118,3 +118,33 @@ covers   = [
 ]
 inherits = ["integrations-foundation"]
 notes    = "The autonomy safety gates (D114 + M11): the last safety prerequisite before POC-GATE. Digest 7d22d4bd invariant (Approval facts + require_approval off-DAG; checkpoint v8→v9 zero-record byte-identical; cost is a pure off-journal fold); frozen trio src diff EMPTY (executor forwards the additive EffectRequest field); I1.c byte-determinism held; additive-only proto + codegen-fresh; full just ci green. DEFERRED follow-ups: UI (Security approvals inbox + Monitoring cost panel) · docs pages · flow()/agent() authoring-chain + per-run cost_ceiling request field · broker step-7 backstop · live-Gemma/MCP block→grant→fire witness."
+
+[[feature]]
+id       = "rc4c-2a-rerank-substrate"
+lane     = "oss"
+state    = "in-review"
+branch   = "feat/rc4c-2a-rerank-substrate"
+covers   = [
+  "ReRankRound durable journal fact (kind 11, journal v15→v16) + ReRankOutcome{Pending|Reranked{permutation}|FailedClosed}; hand-rolled encode/decode + v15→v16 pure-passthrough migration + pinning test (schema_version_is_v16)",
+  "projection ReRankRoundRecord + off-DAG fold + rerank_rounds/rerank_rounds_of/latest_rerank_round accessors",
+  "checkpoint v9→v10 (rerank_rounds DTO + From impls + roundtrip); digest 7d22d4bd invariant (a0_guard); frozen trio untouched",
+  "ListReRankTurns RPC + ReRankTurnSummary (additive proto, fields 1-8) + Rust(tonic)/TS/Py codegen",
+  "kx-gateway-core rerank.rs list_rerank_turns (instance filter + pagination, 6 tests) + tonic service arm; dep_wall green",
+]
+inherits = ["autonomy-safety-gates"]
+notes    = "RC4c-2 SPLIT (RC4c-2a): the DURABLE rerank substrate + ListReRankTurns observability — the journal bump lands isolated (corpus-preferred). The LIVE coordinator rerank-turn is rc4c-2b. Digest 7d22d4bd invariant; frozen trio diff-EMPTY; additive-only proto + codegen-fresh; no external dep. Once merged, unblocks rc4c-2b on the shared lane and lets sidecars/cloud proceed in their own lanes without colliding on the journal schema (v16)."
+
+[[feature]]
+id       = "rc4c-2b-rerank-live"
+lane     = "oss"
+state    = "planned"
+covers   = [
+  "coordinator-materialized off-DAG rerank Mote (react_shape::build_rerank_turn + kx-rerank-turn id salt) + anchor/materialize/settle/recover (ReRankRound Pending→Reranked/FailedClosed)",
+  "model_exec rerank dispatch arm (render_rerank_prompt + Grammar::Permutation(n) + parse_permutation → committed reordered refs)",
+  "react-rag insertion (post-retrieve obs, off-budget) + chat-rag pre-answer insertion + F-7 context-feeding of reranked refs",
+  "KX_SERVE_RAG_LLM_RERANK operator env + coordinator enable-flag path",
+  "kx-eval RAG-quality rerank scorer (deliberate suite_digest re-baseline) + kx-profile M7c spike + gated dual-engine Gemma e2e",
+  "cross-surface: kx rerank list (CLI) · list_rerank_turns (Py+TS) · Monitoring ReRankRounds UI · docs llm-rerank.md",
+]
+inherits = ["rc4c-2a-rerank-substrate"]
+notes    = "RC4c-2 SPLIT (RC4c-2b): the LIVE coordinator rerank-turn (both react-rag + chat-rag), building on rc4c-2a's ReRankRound fact + ListReRankTurns. A sole-writer-spine change ⇒ its own focused, recovery-tested, dual-engine-validated PR. Fully MAPPED (materialize/settle/recover mirror of the ReAct lifecycle) — a direct build, not a re-exploration."

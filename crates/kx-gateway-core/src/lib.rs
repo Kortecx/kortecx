@@ -79,6 +79,7 @@ mod mote_detail;
 mod react;
 mod reader;
 mod replan;
+mod rerank;
 mod run_inputs_view;
 mod runs;
 mod scaffold;

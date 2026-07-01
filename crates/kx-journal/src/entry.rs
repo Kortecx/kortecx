@@ -250,7 +250,16 @@ use smallvec::SmallVec;
 /// `None`; kinds 0..=8 are byte-identical). An OLD binary still refuses a v14 journal
 /// loudly. The product identity digest is invariant (the PURE-8-mote demo never writes a
 /// `ReactRound`; `image_ref` is off-DAG metadata, never an identity input).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 15;
+///
+/// v16 (RC4c-2) adds the brand-new `ReRankRound` kind (11) — the durable anchor +
+/// frozen outcome of a coordinator-materialized live LLM listwise rerank turn. A
+/// v15 → v16 migration is a PURE pass-through: no v15 journal can contain a kind-11
+/// body, and every existing kind (0..=10) is byte-identical, so v15 bytes decode
+/// correctly under v16 unchanged. An OLD (v15) binary still refuses a v16 journal
+/// loudly (`verify_schema_version`). The product identity digest is invariant (the
+/// PURE-8-mote demo never writes a `ReRankRound`; it is off-DAG metadata, never an
+/// identity input).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 16;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -385,6 +394,22 @@ pub const KIND_REACT_ROUND: u8 = 9;
 /// (F15) can replay (D114.1).
 pub const KIND_APPROVAL: u8 = 10;
 
+/// `ReRankRound` entry-kind byte (NEW in v16; RC4c-2, live LLM listwise rerank).
+/// Off-DAG metadata (kind 11): the durable ANCHOR of a coordinator-materialized
+/// rerank turn (reorder a RAG retrieval's candidate refs) PLUS its frozen outcome.
+/// The header `mote_id` slot carries the rerank Mote's (run-salted) id directly (a
+/// real Mote id, like `ReactRound`); the `idempotency_key` slot is the all-zero
+/// sentinel. Does NOT participate in dedup-by-key (the dedup index stays
+/// `{1, 2, 4}`) and is NEVER folded into any digest. See
+/// [`JournalEntry::ReRankRound`] + [`ReRankOutcome`].
+pub const KIND_RERANK_ROUND: u8 = 11;
+
+/// Hard cap on the number of candidates a single [`JournalEntry::ReRankRound`]
+/// reranks — a `DoS`/size bound on the recorded permutation (mirrors
+/// [`MAX_TOOL_BATCH_CALLS`]). Live RAG retrieval clamps `k` to ≤ 64, so this
+/// bounds the permutation vector well under [`MAX_ENTRY_LEN`].
+pub const MAX_RERANK_CANDIDATES: usize = 64;
+
 /// Length in bytes of an approval `request_id` (a server-derived, deterministic
 /// 16-byte handle that keys the `Requested → Granted/Denied/Expired` handshake).
 pub const APPROVAL_REQUEST_ID_LEN: usize = 16;
@@ -442,6 +467,11 @@ pub const MAX_REPLAN_FAILED_STEPS: usize = 64;
 /// (before the variable model_id, the branch tag + its optional tool fields,
 /// and the trailing budget caps).
 const REACT_ROUND_PREFIX_LEN: usize = 4 + INSTANCE_ID_LEN + 32 + 32 + 2;
+
+/// `ReRankRound` body PREFIX length (v16, RC4c-2): the fixed head read before the
+/// variable-length `model_id`: `round(u32=4) ‖ instance_id(16) ‖
+/// base_results_ref(32) ‖ query_ref(32) ‖ warrant_ref(32) ‖ u16 model_id len(2)`.
+const RERANK_ROUND_PREFIX_LEN: usize = 4 + INSTANCE_ID_LEN + 32 + 32 + 32 + 2;
 
 /// The settled branch of a ReAct turn, FROZEN into the durable [`JournalEntry::ReactRound`]
 /// fact at append time (v8, PR-2d-1) so recovery re-reads the committed decision and
@@ -537,6 +567,46 @@ impl ReactBranch {
             Self::Pending => 3,
             Self::Rejected { .. } => 4,
             Self::ToolBatch { .. } => 5,
+        }
+    }
+}
+
+/// The frozen outcome of a [`JournalEntry::ReRankRound`] (v16, RC4c-2). The anchor
+/// records [`Self::Pending`]; a settle appends the resolved outcome. Like
+/// [`ReactBranch`], the journal's canonical on-disk encoding is the hand-rolled
+/// [`Self::as_u8`] tag (the `serde` derives serve the checkpoint DTO only). The
+/// outcome is FROZEN at append so recovery/replay re-read the decision, never a
+/// re-sampled tail — the model proposes the ordering, the runtime enforced it via
+/// `parse_permutation` before recording it (SN-8: an exact permutation, never a
+/// similarity score).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReRankOutcome {
+    /// The rerank Mote is materialized but not yet settled (the anchor state).
+    /// Recovery treats a trailing `Pending` as the work frontier.
+    Pending,
+    /// The model returned a VALID permutation of `0..candidate_count` (frozen).
+    /// The `Vec` index is the NEW rank; each value is the source index into the
+    /// pre-rerank candidate list — applying it to `base_results_ref`'s decoded
+    /// ordered refs yields the reranked order the next turn reads.
+    Reranked {
+        /// The ordered source indices (a permutation of `0..candidate_count`),
+        /// bounded by [`MAX_RERANK_CANDIDATES`].
+        permutation: Vec<u32>,
+    },
+    /// The rerank fell back to the upstream (RRF/MMR) order — a parse/dispatch
+    /// error yielded no valid permutation (fail-closed). Terminal; the next turn
+    /// reads the unchanged candidate order.
+    FailedClosed,
+}
+
+impl ReRankOutcome {
+    /// The outcome's closed `u8` tag (the on-disk discriminant).
+    #[must_use]
+    pub fn as_u8(&self) -> u8 {
+        match self {
+            Self::Pending => 0,
+            Self::Reranked { .. } => 1,
+            Self::FailedClosed => 2,
         }
     }
 }
@@ -1373,6 +1443,70 @@ pub enum JournalEntry {
         /// Journal-assigned sequence (0 until appended).
         seq: u64,
     },
+
+    /// The durable record of a coordinator-driven **LLM listwise rerank turn**
+    /// (v16, RC4c-2) — an append-only, off-DAG coordinator-metadata fact (kind 11).
+    ///
+    /// After a live-serve RAG retrieval, an optional model turn reorders the
+    /// retrieved candidate refs (an on-topic passage that ranked last is promoted).
+    /// That reorder must be a committed, recoverable fact: the `Committed` entry
+    /// for the rerank Mote stores only `mote_def_hash`, so without this anchor the
+    /// in-flight rerank's candidates/query/warrant are lost on a crash (the same
+    /// durability finding that produced `ReplanRound`/`ReactRound`). `recover()`
+    /// re-derives the rerank Mote ONLY from committed facts —
+    /// `(instance_id, base_results_ref, query_ref, warrant_ref, model_id,
+    /// candidate_count)` — and re-inserts it into dispatch admission if not yet
+    /// `Committed`.
+    ///
+    /// Two fact shapes share the kind: the **anchor** (written when the rerank is
+    /// materialized, `outcome = Pending`) and the per-round **settle** (a frozen
+    /// [`ReRankOutcome::Reranked`] / [`ReRankOutcome::FailedClosed`]). The outcome
+    /// is FROZEN at append so recovery re-reads the decision, never a re-sampled
+    /// tail. A single round per rerank (rerank is one model turn, not a loop);
+    /// `round` is kept for symmetry with `ReplanRound`/`ReactRound` and future
+    /// multi-pass reranking.
+    ///
+    /// **Keyed by `instance_id`** (the run-salt) — serve's journal is SHARED across
+    /// runs, so every settle/recover query scopes by the registered run identity
+    /// (mirrors `ReactRound`). **Metadata, never identity** — never folded into
+    /// `MoteId`/`input_data_id`/any content-addressed digest; the projection folds
+    /// it as a `last_seq`-advance plus a `rerank_rounds` record. Does NOT
+    /// participate in dedup-by-key (the dedup index stays `{1, 2, 4}`); the header
+    /// `mote_id` slot carries `rerank_mote_id` directly; the `idempotency_key` slot
+    /// is the all-zero sentinel; `nondeterminism` is the 0 sentinel.
+    ReRankRound {
+        /// The rerank round index. `0` is the only round today (rerank is a single
+        /// model turn); kept for symmetry + future multi-pass reranking.
+        round: u32,
+        /// The rerank Mote's `MoteId` (also the header `mote_id` slot) — the
+        /// RUN-SALTED id. Recovery looks up its `state_of` to decide whether to
+        /// re-materialize it.
+        rerank_mote_id: MoteId,
+        /// The registered run identity (the run-salt). Keys every settle/recover
+        /// query in the shared serve journal.
+        instance_id: [u8; INSTANCE_ID_LEN],
+        /// `ContentRef` of the ENCODED ordered pre-rerank candidate refs (the hits
+        /// the model reorders) — the after-recovery source for rebuilding the rerank
+        /// Mote's input. SN-8: ordered content refs only, no scores.
+        base_results_ref: ContentRef,
+        /// `ContentRef` of the query text the rerank ranks against — rebuilds the
+        /// rank prompt after recovery.
+        query_ref: ContentRef,
+        /// `blake3(canonical_bincode(WarrantSpec))` of the run-fixed rerank warrant.
+        /// Replay re-derives the warrant bit-for-bit (the dispatch authority).
+        warrant_ref: ContentRef,
+        /// The resolved model id the rerank runs (audit + reconstruction).
+        model_id: String,
+        /// The number of candidates `n` reranked (the `Permutation(n)` grammar
+        /// bound). Lets a reader validate a committed permutation's length without
+        /// decoding `base_results_ref`. Bounded by [`MAX_RERANK_CANDIDATES`].
+        candidate_count: u32,
+        /// The round's settled outcome, FROZEN at append. The anchor records
+        /// [`ReRankOutcome::Pending`]; a settle appends the resolved outcome.
+        outcome: ReRankOutcome,
+        /// Journal-assigned sequence (0 until appended).
+        seq: u64,
+    },
 }
 
 /// The all-zero sentinel returned as the dedupe key of a `RunRegistered` entry,
@@ -1426,7 +1560,8 @@ impl JournalEntry {
             | Self::DigestSealed { seq, .. }
             | Self::ReplanRound { seq, .. }
             | Self::ReactRound { seq, .. }
-            | Self::Approval { seq, .. } => *seq,
+            | Self::Approval { seq, .. }
+            | Self::ReRankRound { seq, .. } => *seq,
         }
     }
 
@@ -1457,7 +1592,8 @@ impl JournalEntry {
             | Self::DigestSealed { .. }
             | Self::ReplanRound { .. }
             | Self::ReactRound { .. }
-            | Self::Approval { .. } => &ZERO_IDEMPOTENCY_KEY,
+            | Self::Approval { .. }
+            | Self::ReRankRound { .. } => &ZERO_IDEMPOTENCY_KEY,
         }
     }
 
@@ -1486,6 +1622,9 @@ impl JournalEntry {
             Self::Approval {
                 awaiting_mote_id, ..
             } => *awaiting_mote_id,
+            // The header slot IS the rerank Mote's (run-salted) id — recovery uses
+            // it to look up the rerank Mote's `state_of`.
+            Self::ReRankRound { rerank_mote_id, .. } => *rerank_mote_id,
         }
     }
 
@@ -1504,6 +1643,7 @@ impl JournalEntry {
             Self::ReplanRound { .. } => KIND_REPLAN_ROUND,
             Self::ReactRound { .. } => KIND_REACT_ROUND,
             Self::Approval { .. } => KIND_APPROVAL,
+            Self::ReRankRound { .. } => KIND_RERANK_ROUND,
         }
     }
 }
@@ -1620,6 +1760,20 @@ pub enum DecodeError {
         /// The declared call count.
         got: usize,
     },
+    /// A `ReRankRound` entry's `outcome` tag byte is not one of the known
+    /// [`ReRankOutcome`] tags (v16, RC4c-2).
+    #[error("unknown ReRankRound outcome tag: {0}")]
+    UnknownReRankOutcome(u8),
+    /// A `ReRankRound` entry declares more reranked candidates than
+    /// [`MAX_RERANK_CANDIDATES`] (v16, RC4c-2) — a `DoS` bound.
+    #[error(
+        "ReRankRound candidate count {got} exceeds max {}",
+        MAX_RERANK_CANDIDATES
+    )]
+    ReRankRoundTooManyCandidates {
+        /// The declared candidate count.
+        got: usize,
+    },
     /// A `ReactRound` entry's trailing `is_agentic_launch` tag byte is neither `0`
     /// (run-level) nor `1` (agentic launch) (v11, PR-R1).
     #[error("unknown ReactRound is_agentic_launch tag: {0}")]
@@ -1707,6 +1861,17 @@ pub enum EncodeError {
         MAX_ENTRY_LEN
     )]
     ReactRoundTooLarge {
+        /// The encoded entry's byte length.
+        got: usize,
+    },
+    /// A `ReRankRound` entry would exceed the absolute size cap
+    /// ([`MAX_ENTRY_LEN`]) — a pathologically large model id or permutation
+    /// (v16, RC4c-2).
+    #[error(
+        "ReRankRound entry exceeds size cap: {got} bytes > {} max",
+        MAX_ENTRY_LEN
+    )]
+    ReRankRoundTooLarge {
         /// The encoded entry's byte length.
         got: usize,
     },
@@ -1812,6 +1977,14 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             seq,
             ..
         } => (*awaiting_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
+        // v16 (RC4c-2): the header `mote_id` slot carries the rerank Mote's
+        // (run-salted) id directly; all-zero idempotency key (kind 11 does not
+        // dedup), 0 nd (a rerank-round fact is not a Mote).
+        JournalEntry::ReRankRound {
+            rerank_mote_id,
+            seq,
+            ..
+        } => (*rerank_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
     };
     out.extend_from_slice(mote_id_for_header.as_bytes());
     out.extend_from_slice(&idempotency_key);
@@ -2081,6 +2254,53 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             // over-cap a single oversize entry.
             if out.len() > MAX_ENTRY_LEN {
                 return Err(EncodeError::ReactRoundTooLarge { got: out.len() });
+            }
+        }
+        JournalEntry::ReRankRound {
+            round,
+            instance_id,
+            base_results_ref,
+            query_ref,
+            warrant_ref,
+            model_id,
+            candidate_count,
+            outcome,
+            ..
+        } => {
+            // v16 (RC4c-2): body = round(u32 LE) ‖ instance_id(16) ‖
+            // base_results_ref(32) ‖ query_ref(32) ‖ warrant_ref(32) ‖
+            // u16-prefixed model_id ‖ candidate_count(u32 LE) ‖ outcome_tag(u8) ‖
+            // [if Reranked (tag 1): perm_count(u16 LE) ‖ perm_count × u32 LE]. The
+            // header `mote_id` slot carries `rerank_mote_id` (a real Mote id, like
+            // ReactRound — read directly on decode; no synthetic root).
+            out.extend_from_slice(&round.to_le_bytes());
+            out.extend_from_slice(instance_id);
+            out.extend_from_slice(base_results_ref.as_bytes());
+            out.extend_from_slice(query_ref.as_bytes());
+            out.extend_from_slice(warrant_ref.as_bytes());
+            push_len_prefixed_str(&mut out, model_id)?;
+            out.extend_from_slice(&candidate_count.to_le_bytes());
+            out.push(outcome.as_u8());
+            if let ReRankOutcome::Reranked { permutation } = outcome {
+                if permutation.len() > MAX_RERANK_CANDIDATES {
+                    return Err(EncodeError::ReRankRoundTooLarge {
+                        got: permutation.len(),
+                    });
+                }
+                let count = u16::try_from(permutation.len()).map_err(|_| {
+                    EncodeError::ReRankRoundTooLarge {
+                        got: permutation.len(),
+                    }
+                })?;
+                out.extend_from_slice(&count.to_le_bytes());
+                for idx in permutation {
+                    out.extend_from_slice(&idx.to_le_bytes());
+                }
+            }
+            // Pathological-id guard (mirrors ReplanRound) — refuse rather than
+            // over-cap a single oversize entry.
+            if out.len() > MAX_ENTRY_LEN {
+                return Err(EncodeError::ReRankRoundTooLarge { got: out.len() });
             }
         }
         JournalEntry::Approval {
@@ -2654,6 +2874,62 @@ pub fn decode_entry_with_def_hash(
                 context_items_ref,
                 image_ref,
                 require_approval,
+                seq,
+            })
+        }
+        KIND_RERANK_ROUND => {
+            // v16 (RC4c-2): variable-length body. Cursor-based parse with strict
+            // bounds at every read; reject trailing bytes at the end. The header
+            // `mote_id` slot IS the rerank Mote's (run-salted) id (read directly,
+            // like ReactRound — no synthetic root to re-derive).
+            if body.len() < RERANK_ROUND_PREFIX_LEN {
+                return Err(DecodeError::BodyTooShort {
+                    kind,
+                    got: body.len(),
+                    expected: RERANK_ROUND_PREFIX_LEN,
+                });
+            }
+            let rerank_mote_id = mote_id;
+            let round = u32::from_le_bytes(body[..4].try_into().expect("4 bytes"));
+            let mut cursor = 4usize;
+            let mut instance_id = [0u8; INSTANCE_ID_LEN];
+            instance_id.copy_from_slice(&body[cursor..cursor + INSTANCE_ID_LEN]);
+            cursor += INSTANCE_ID_LEN;
+            let base_results_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let query_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let warrant_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            let model_id = read_len_prefixed_str(body, &mut cursor, kind)?;
+            let candidate_count = read_u32(body, &mut cursor, kind)?;
+            let outcome_tag = read_u8(body, &mut cursor, kind)?;
+            let outcome = match outcome_tag {
+                0 => ReRankOutcome::Pending,
+                1 => {
+                    let perm_count = read_u16(body, &mut cursor, kind)? as usize;
+                    if perm_count > MAX_RERANK_CANDIDATES {
+                        return Err(DecodeError::ReRankRoundTooManyCandidates { got: perm_count });
+                    }
+                    let mut permutation = Vec::with_capacity(perm_count);
+                    for _ in 0..perm_count {
+                        permutation.push(read_u32(body, &mut cursor, kind)?);
+                    }
+                    ReRankOutcome::Reranked { permutation }
+                }
+                2 => ReRankOutcome::FailedClosed,
+                other => return Err(DecodeError::UnknownReRankOutcome(other)),
+            };
+            if cursor != body.len() {
+                return Err(DecodeError::TrailingBytes(body.len() - cursor));
+            }
+            Ok(JournalEntry::ReRankRound {
+                round,
+                rerank_mote_id,
+                instance_id,
+                base_results_ref,
+                query_ref,
+                warrant_ref,
+                model_id,
+                candidate_count,
+                outcome,
                 seq,
             })
         }
@@ -3473,6 +3749,95 @@ mod tests {
         assert!(matches!(
             decode_entry(&trailing),
             Err(DecodeError::TrailingBytes(1))
+        ));
+    }
+
+    /// v16 (RC4c-2): every `ReRankRound` outcome shape round-trips through
+    /// encode+decode, and the off-DAG header invariants hold (kind 11, zero
+    /// idempotency key, header `mote_id` slot rebuilds `rerank_mote_id`).
+    #[test]
+    fn rerank_round_roundtrip_and_offdag_invariants() {
+        let rerank_mote_id = MoteId::from_bytes([0x5a; 32]);
+        let instance_id = [0x3c; INSTANCE_ID_LEN];
+        for outcome in [
+            ReRankOutcome::Pending,
+            ReRankOutcome::Reranked {
+                permutation: vec![2, 0, 1],
+            },
+            ReRankOutcome::FailedClosed,
+        ] {
+            let e = JournalEntry::ReRankRound {
+                round: 0,
+                rerank_mote_id,
+                instance_id,
+                base_results_ref: ContentRef::from_bytes([0x11; 32]),
+                query_ref: ContentRef::from_bytes([0x22; 32]),
+                warrant_ref: ContentRef::from_bytes([0x33; 32]),
+                model_id: "gemma-4".to_string(),
+                candidate_count: 3,
+                outcome: outcome.clone(),
+                seq: 12,
+            };
+            // off-DAG invariants (mirrors ReactRound/Approval)
+            assert_eq!(e.kind(), KIND_RERANK_ROUND);
+            assert_eq!(e.idempotency_key(), &[0u8; 32]);
+            assert_eq!(e.mote_id(), rerank_mote_id);
+            // codec round-trip (the header mote_id slot rebuilds rerank_mote_id)
+            assert_eq!(decode_entry(&encode_entry(&e).unwrap()).unwrap(), e);
+        }
+    }
+
+    /// v16 (RC4c-2): a `ReRankRound` body with an unknown outcome tag is
+    /// fail-closed; a trailing garbage byte is fail-closed; an over-cap permutation
+    /// is rejected.
+    #[test]
+    fn rerank_round_rejects_unknown_outcome_and_trailing_bytes() {
+        let e = JournalEntry::ReRankRound {
+            round: 0,
+            rerank_mote_id: MoteId::from_bytes([0x5a; 32]),
+            instance_id: [0x3c; INSTANCE_ID_LEN],
+            base_results_ref: ContentRef::from_bytes([0x11; 32]),
+            query_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0x33; 32]),
+            model_id: "m".to_string(),
+            candidate_count: 0,
+            // FailedClosed writes no trailing permutation, so the outcome tag is the
+            // final body byte — a stable target regardless of model_id length.
+            outcome: ReRankOutcome::FailedClosed,
+            seq: 3,
+        };
+        let bytes = encode_entry(&e).unwrap();
+        let mut corrupt = bytes.clone();
+        let last = corrupt.len() - 1;
+        corrupt[last] = 0xee;
+        assert!(matches!(
+            decode_entry(&corrupt),
+            Err(DecodeError::UnknownReRankOutcome(0xee))
+        ));
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(matches!(
+            decode_entry(&trailing),
+            Err(DecodeError::TrailingBytes(1))
+        ));
+        // An over-cap permutation is refused at encode.
+        let too_big = JournalEntry::ReRankRound {
+            round: 0,
+            rerank_mote_id: MoteId::from_bytes([0x5a; 32]),
+            instance_id: [0x3c; INSTANCE_ID_LEN],
+            base_results_ref: ContentRef::from_bytes([0x11; 32]),
+            query_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0x33; 32]),
+            model_id: "m".to_string(),
+            candidate_count: (MAX_RERANK_CANDIDATES + 1) as u32,
+            outcome: ReRankOutcome::Reranked {
+                permutation: (0..=MAX_RERANK_CANDIDATES as u32).collect(),
+            },
+            seq: 3,
+        };
+        assert!(matches!(
+            encode_entry(&too_big),
+            Err(EncodeError::ReRankRoundTooLarge { .. })
         ));
     }
 

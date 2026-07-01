@@ -53,8 +53,8 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::state::{
-    ApprovalRecord, CommittedInfo, DeclaredInfo, MoteInfo, ReactRoundRecord, ReplanRoundRecord,
-    RunRegistration, RunResolvedVersions, State,
+    ApprovalRecord, CommittedInfo, DeclaredInfo, MoteInfo, ReRankRoundRecord, ReactRoundRecord,
+    ReplanRoundRecord, RunRegistration, RunResolvedVersions, State,
 };
 
 /// The on-disk format version. Bump on **any** change to the envelope layout or
@@ -132,7 +132,16 @@ use crate::state::{
 /// Motes (`digest_projection`), never the checkpoint. A byte-absent v14 `ReactRound`
 /// up-converts `require_approval` to `false`; an approval-free run carries an empty
 /// `approvals` Vec.
-pub const CURRENT_FORMAT_VERSION: u16 = 9;
+///
+/// `10` (RC4c-2): `CheckpointState` gained a top-level `rerank_rounds` Vec (the LLM
+/// listwise rerank facts). Like the v9 `approvals` addition, the new top-level Vec
+/// shifts the bincoded bytes + `state_content_digest()` of EVERY state (an empty
+/// state now serialises a length-0 `rerank_rounds` Vec) — a deliberate,
+/// VERSION-LOCAL checkpoint-format change (a stale v9 sidecar is rejected → full
+/// re-fold from the v16 journal). It does NOT touch the canonical PRODUCT digest
+/// `7d22d4bd`, which folds only `Committed` Motes (`digest_projection`), never the
+/// checkpoint. A rerank-free run carries an empty `rerank_rounds` Vec.
+pub const CURRENT_FORMAT_VERSION: u16 = 10;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -500,6 +509,9 @@ struct CheckpointState {
     /// D114 — the HITL approval handshake facts. A top-level Vec (v8→v9): an
     /// approval-free state serialises a length-0 Vec.
     approvals: Vec<ApprovalRecordDto>,
+    /// RC4c-2 — the LLM listwise rerank facts. A top-level Vec (v9→v10): a
+    /// rerank-free state serialises a length-0 Vec.
+    rerank_rounds: Vec<ReRankRoundRecordDto>,
 }
 
 // Mirrors `MoteInfo`'s flags 1:1 — same `struct_excessive_bools` allow.
@@ -616,6 +628,23 @@ struct ApprovalRecordDto {
     seq: u64,
 }
 
+/// Serializable mirror of [`ReRankRoundRecord`] (RC4c-2). `kx_journal::ReRankOutcome`
+/// is serde-derived for exactly this DTO (the `ReactBranch` precedent); the journal's
+/// canonical on-disk encoding stays the hand-rolled tag.
+#[derive(Serialize, Deserialize)]
+struct ReRankRoundRecordDto {
+    round: u32,
+    rerank_mote_id: MoteId,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    base_results_ref: ContentRef,
+    query_ref: ContentRef,
+    warrant_ref: ContentRef,
+    model_id: String,
+    candidate_count: u32,
+    outcome: kx_journal::ReRankOutcome,
+    seq: u64,
+}
+
 // ----- State -> DTO (infallible; destructure-without-`..` drift guard) -----
 
 impl From<&State> for CheckpointState {
@@ -641,6 +670,7 @@ impl From<&State> for CheckpointState {
             // DERIVED over `approvals` (D114); NOT serialized — the load path
             // re-derives it, so the format change is the `approvals` Vec only.
             approval_index: _,
+            rerank_rounds,
         } = state;
         Self {
             motes: motes
@@ -660,6 +690,10 @@ impl From<&State> for CheckpointState {
                 .collect(),
             react_rounds: react_rounds.iter().map(ReactRoundRecordDto::from).collect(),
             approvals: approvals.iter().map(ApprovalRecordDto::from).collect(),
+            rerank_rounds: rerank_rounds
+                .iter()
+                .map(ReRankRoundRecordDto::from)
+                .collect(),
         }
     }
 }
@@ -853,6 +887,35 @@ impl From<&ApprovalRecord> for ApprovalRecordDto {
     }
 }
 
+impl From<&ReRankRoundRecord> for ReRankRoundRecordDto {
+    fn from(r: &ReRankRoundRecord) -> Self {
+        let ReRankRoundRecord {
+            round,
+            rerank_mote_id,
+            instance_id,
+            base_results_ref,
+            query_ref,
+            warrant_ref,
+            model_id,
+            candidate_count,
+            outcome,
+            seq,
+        } = r;
+        Self {
+            round: *round,
+            rerank_mote_id: *rerank_mote_id,
+            instance_id: *instance_id,
+            base_results_ref: *base_results_ref,
+            query_ref: *query_ref,
+            warrant_ref: *warrant_ref,
+            model_id: model_id.clone(),
+            candidate_count: *candidate_count,
+            outcome: outcome.clone(),
+            seq: *seq,
+        }
+    }
+}
+
 // ----- DTO -> State (fallible: revalidates each parent edge) -----
 
 impl TryFrom<CheckpointState> for State {
@@ -869,6 +932,7 @@ impl TryFrom<CheckpointState> for State {
             replan_rounds,
             react_rounds,
             approvals,
+            rerank_rounds,
         } = dto;
         let mut decoded_motes = BTreeMap::new();
         for (id, mi) in motes {
@@ -896,6 +960,10 @@ impl TryFrom<CheckpointState> for State {
             react_tool_round_of_turn: BTreeMap::new(),
             approvals: approvals.into_iter().map(ApprovalRecord::from).collect(),
             approval_index: BTreeMap::new(),
+            rerank_rounds: rerank_rounds
+                .into_iter()
+                .map(ReRankRoundRecord::from)
+                .collect(),
         };
         // PR-2d-2: RE-DERIVE the react index/turn-set from the deserialized
         // facts — the same shape the fold maintains incrementally, so both
@@ -1156,6 +1224,35 @@ impl From<ApprovalRecordDto> for ApprovalRecord {
     }
 }
 
+impl From<ReRankRoundRecordDto> for ReRankRoundRecord {
+    fn from(dto: ReRankRoundRecordDto) -> Self {
+        let ReRankRoundRecordDto {
+            round,
+            rerank_mote_id,
+            instance_id,
+            base_results_ref,
+            query_ref,
+            warrant_ref,
+            model_id,
+            candidate_count,
+            outcome,
+            seq,
+        } = dto;
+        ReRankRoundRecord {
+            round,
+            rerank_mote_id,
+            instance_id,
+            base_results_ref,
+            query_ref,
+            warrant_ref,
+            model_id,
+            candidate_count,
+            outcome,
+            seq,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1253,6 +1350,22 @@ mod tests {
             seq: 4,
         });
         push_sample_react_rounds(&mut s);
+        // RC4c-2: a rerank round exercises the `rerank_rounds` DTO arm (a Reranked
+        // outcome carries a permutation, the widest shape).
+        s.rerank_rounds.push(ReRankRoundRecord {
+            round: 0,
+            rerank_mote_id: mid(40),
+            instance_id: [0x9c; kx_journal::INSTANCE_ID_LEN],
+            base_results_ref: ContentRef::from_bytes([0xf5; 32]),
+            query_ref: ContentRef::from_bytes([0xf6; 32]),
+            warrant_ref: ContentRef::from_bytes([0xf7; 32]),
+            model_id: "gemma-4".to_string(),
+            candidate_count: 3,
+            outcome: kx_journal::ReRankOutcome::Reranked {
+                permutation: vec![2, 0, 1],
+            },
+            seq: 6,
+        });
         // PR-2d-2: a real State's derived react index/turn-set is ALWAYS
         // consistent with `react_rounds` (the fold maintains it; the load path
         // re-derives it) — the fixture must uphold the same invariant or the
@@ -1309,22 +1422,22 @@ mod tests {
         });
     }
 
-    /// D114: pin the checkpoint format version so the v8→v9 bump (the additive
-    /// `ReactRoundRecordDto.require_approval` field + the top-level `approvals` Vec) is
-    /// an intentional, reviewable change — and so a v8 sidecar written by the previous
-    /// binary is REFUSED (decode error → full-fold self-heal), never misread.
+    /// RC4c-2: pin the checkpoint format version so the v9→v10 bump (the top-level
+    /// `rerank_rounds` Vec) is an intentional, reviewable change — and so a v9 sidecar
+    /// written by the previous binary is REFUSED (decode error → full-fold self-heal),
+    /// never misread.
     #[test]
-    fn format_version_is_v9_and_v8_blobs_are_refused() {
-        assert_eq!(CURRENT_FORMAT_VERSION, 9);
+    fn format_version_is_v10_and_v9_blobs_are_refused() {
+        assert_eq!(CURRENT_FORMAT_VERSION, 10);
         let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
-        // Stamp the envelope version back to v8 (bytes 0..2, LE u16).
-        bytes[0..2].copy_from_slice(&8u16.to_le_bytes());
+        // Stamp the envelope version back to v9 (bytes 0..2, LE u16).
+        bytes[0..2].copy_from_slice(&9u16.to_le_bytes());
         assert!(matches!(
             FoldCheckpoint::from_bytes(&bytes),
-            // The version is part of the digest preimage, so a re-stamped v8
+            // The version is part of the digest preimage, so a re-stamped v9
             // envelope fails as UnsupportedVersion or DigestMismatch — both are
             // fail-safe discards (full fold).
-            Err(CheckpointError::UnsupportedVersion { got: 8 } | CheckpointError::DigestMismatch)
+            Err(CheckpointError::UnsupportedVersion { got: 9 } | CheckpointError::DigestMismatch)
         ));
     }
 
