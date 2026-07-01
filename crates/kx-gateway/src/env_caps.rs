@@ -128,6 +128,39 @@ pub(crate) fn memory_enabled() -> bool {
     parse_bool(std::env::var("KX_SERVE_MEMORY").ok().as_deref(), false)
 }
 
+/// RC5b: run a reversible TTL+salience decay sweep across all namespaces at serve open?
+/// `KX_MEMORY_DECAY_AUTO` (default OFF — decay is normally an explicit operator op via
+/// `kx memory decay`; auto-sweep is opt-in). Off-digest; default OFF ⇒ serve start is
+/// byte-identical to RC5a.
+#[cfg(feature = "hnsw")]
+pub(crate) fn memory_decay_auto() -> bool {
+    parse_bool(std::env::var("KX_MEMORY_DECAY_AUTO").ok().as_deref(), false)
+}
+
+/// RC5b: the decay age threshold in DAYS (`KX_MEMORY_DECAY_TTL_DAYS`, default 90,
+/// clamped 1..=3650). A memory older than this AND under-recalled is decay-eligible.
+#[cfg(feature = "hnsw")]
+pub(crate) fn memory_decay_ttl_days() -> usize {
+    parse_cap(
+        std::env::var("KX_MEMORY_DECAY_TTL_DAYS").ok().as_deref(),
+        90,
+        1,
+        3650,
+    )
+}
+
+/// RC5b: the decay salience floor (`KX_MEMORY_DECAY_MIN_ACCESS`, default 1, clamped
+/// 0..=1_000_000). A memory recalled at least this many times is PROTECTED from decay.
+#[cfg(feature = "hnsw")]
+pub(crate) fn memory_decay_min_access() -> usize {
+    parse_cap(
+        std::env::var("KX_MEMORY_DECAY_MIN_ACCESS").ok().as_deref(),
+        1,
+        0,
+        1_000_000,
+    )
+}
+
 /// The operator RAG config (RC4a `KX_SERVE_RAG_*` knobs): retrieval mode, chunk
 /// size/overlap, the per-doc chunk cap, RRF k, MMR lambda + on/off, and stopwords.
 /// Each is additive + default-preserving (unset ⇒ [`RagConfig::default`]); all are

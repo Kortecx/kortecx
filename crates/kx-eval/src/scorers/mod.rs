@@ -9,6 +9,7 @@
 //! A Gate value is an integer per-mille (`0..=1000`); a pass/fail decision is therefore
 //! an exact integer comparison, never a float (SN-8).
 
+mod consolidation_quality;
 mod format_coverage;
 mod groundedness;
 mod loop_efficiency;
@@ -29,13 +30,14 @@ pub(crate) const PER_MILLE: u32 = 1000;
 
 /// The stable ids of the per-transcript scorers, in the order [`score_transcript`]
 /// emits them. Kept public so the report aggregator and tests can enumerate them.
-pub const TRANSCRIPT_SCORER_IDS: [&str; 6] = [
+pub const TRANSCRIPT_SCORER_IDS: [&str; 7] = [
     "task_success",
     "tool_call_f1",
     "groundedness",
     "loop_efficiency",
     "rerank_quality",
     "memory_quality",
+    "consolidation_quality",
 ];
 
 /// The value a scorer produced: an integer Gate (the decision path) or an absolute
@@ -125,5 +127,6 @@ pub fn score_transcript(input: &ScoreInput) -> Vec<ScoreOutput> {
         loop_efficiency::score(input),
         rerank_quality::score(input),
         memory_quality::score(input),
+        consolidation_quality::score(input),
     ]
 }

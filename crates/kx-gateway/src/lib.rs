@@ -141,6 +141,11 @@ mod memory;
 mod recall_tool;
 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
 mod remember_tool;
+// RC5b: the bundled consolidate@1 (read) capability — bundles recent episodic memories
+// so the model can distill them into ONE durable semantic fact via remember@1 (a normal
+// react turn; no journal fact). Same gate as recall/remember; off-digest, SN-8.
+#[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+mod consolidate_tool;
 // PR-6b-1 (D159): the EXTERNAL MCP gateway host wiring — the McpGatewayAdmin impl
 // over kx_mcp_gateway::McpGateway + the BrokerCapabilitySink. Behind the
 // `mcp-gateway` feature (ON by default); FFI-free, off-journal, off-digest. DIALS

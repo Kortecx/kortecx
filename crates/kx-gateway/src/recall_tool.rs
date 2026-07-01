@@ -262,8 +262,42 @@ mod tests {
             _namespace: &str,
             _instance_filter: Option<[u8; 16]>,
             _limit: usize,
+            _include_tombstoned: bool,
         ) -> Result<Vec<MemoryEntry>, MemoryError> {
             Ok(Vec::new())
+        }
+        fn bundle(
+            &self,
+            _namespace: &str,
+            _query_text: Option<&str>,
+            _kind_filter: Option<kx_gateway_core::MemoryKindTag>,
+            _window_ms: Option<(i64, i64)>,
+            _limit: usize,
+        ) -> Result<Vec<MemoryEntry>, MemoryError> {
+            Ok(Vec::new())
+        }
+        fn decay(
+            &self,
+            _namespace: &str,
+            _ttl_ms: i64,
+            _min_access: u32,
+            _dry_run: bool,
+        ) -> Result<kx_gateway_core::DecayReportEntry, MemoryError> {
+            Ok(kx_gateway_core::DecayReportEntry {
+                candidates: Vec::new(),
+                evicted: 0,
+                kept: 0,
+                dry_run: true,
+            })
+        }
+        fn stats(
+            &self,
+            _namespace: &str,
+        ) -> Result<kx_gateway_core::MemoryStatsEntry, MemoryError> {
+            Ok(kx_gateway_core::MemoryStatsEntry::default())
+        }
+        fn restore(&self, _namespace: &str, _memory_id: &[u8; 32]) -> Result<bool, MemoryError> {
+            Ok(false)
         }
         fn forget(&self, _namespace: &str, _memory_id: &[u8; 32]) -> Result<bool, MemoryError> {
             Ok(false)

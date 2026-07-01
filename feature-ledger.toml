@@ -139,7 +139,9 @@ notes    = "RC4c-2 SPLIT (RC4c-2a): the DURABLE rerank substrate + ListReRankTur
 [[feature]]
 id       = "rc4c-2b-rerank-live"
 lane     = "oss"
-state    = "planned"
+state    = "merged"
+pr       = "278"
+branch   = "feat/rc4c-2b-rerank-live"
 covers   = [
   "coordinator-materialized off-DAG rerank Mote (react_shape::build_rerank_turn + kx-rerank-turn id salt) + anchor/materialize/settle/recover (ReRankRound Pending→Reranked/FailedClosed)",
   "model_exec rerank dispatch arm (render_rerank_prompt + Grammar::Permutation(n) + parse_permutation → committed reordered refs)",
@@ -150,6 +152,49 @@ covers   = [
 ]
 inherits = ["rc4c-2a-rerank-substrate"]
 notes    = "RC4c-2 SPLIT (RC4c-2b): the LIVE coordinator rerank-turn (both react-rag + chat-rag), building on rc4c-2a's ReRankRound fact + ListReRankTurns. A sole-writer-spine change ⇒ its own focused, recovery-tested, dual-engine-validated PR. Fully MAPPED (materialize/settle/recover mirror of the ReAct lifecycle) — a direct build, not a re-exploration."
+
+[[feature]]
+id       = "rc4c-2c-rerank-quality"
+lane     = "oss"
+state    = "merged"
+pr       = "279"
+branch   = "feat/rc4c-2c-rerank-quality"
+covers   = [
+  "rerank quality + dual-engine parity (llama.cpp Gemma-4 renders the rerank prompt through the served chat template) + fail-closed regression guard (kx-eval rerank_quality scorer + golden rag_rerank_on_topic_last)",
+  "cap clamp to warrant ceiling + trailing-tolerant parse_permutation + kx-worker dispatches_through_executor guard + rerank_serve both-engines-reranked + kx-profile M7c",
+]
+inherits = ["rc4c-2b-rerank-live"]
+notes    = "Digest 7d22d4bd invariant; frozen trio untouched; NO journal/checkpoint/proto/dep change; deliberate eval re-baseline (loop_efficiency 964→968). Consolidates RC4c-2b to SOTA."
+
+[[feature]]
+id       = "rc5a-durable-memory"
+lane     = "oss"
+state    = "merged"
+pr       = "280"
+branch   = "feat/rc5a-durable-memory"
+covers   = [
+  "kx-memory crate: SqliteMemoryStore (memory.db rebuildable sidecar; rebuild-never-migrate D40)",
+  "StoreMemory/ListMemories/RecallMemory/ForgetMemory RPCs + MemoryView gateway-core seam (no kx-memory dep on core)",
+  "recall@1 / remember@1 bundled capabilities + kx/recipes/react-memory (0x5c); KX_SERVE_MEMORY env",
+  "cross-surface: kx memory (CLI) · kx.memory (Py sync+async) · client.memory (TS) · Memories UI · flow().with_memory / withMemory · docs/site/docs/memory.md + kx-eval memory_quality scorer",
+]
+inherits = ["rc4c-2c-rerank-quality"]
+notes    = "Durable multi-tier memory (semantic recall + episodic store). Digest 7d22d4bd invariant (memory.db off-journal/off-digest, NO journal schema bump — the retrieve@1 precedent); frozen trio untouched; additive-only proto + codegen-fresh."
+
+[[feature]]
+id       = "rc5b-consolidation-decay-memory-ui"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/rc5b-consolidation-decay-memory-ui"
+covers   = [
+  "kx-memory: bundle (recency + semantic, kind/window-filtered, SN-8 score-dropped) + reversible TTL+salience decay (memory_decay off-digest sidecar table; soft-tombstone + restore; decay_all) + stats + list(include_tombstoned) + best-effort recall salience upsert",
+  "consolidate@1 capability (Readback; model bundles episodics → distills → remember@1; no journal fact) granted to react-memory (3 tools); server seed + register + opt-in decay auto-sweep-on-open (KX_MEMORY_DECAY_AUTO/TTL_DAYS/MIN_ACCESS)",
+  "additive proto: DecayMemory/MemoryStats/RestoreMemory + MemorySummary salience/tombstone fields + ListMemories.include_tombstoned; MemoryView seam bundle/decay/stats/restore; unimplemented-honest degrade",
+  "cross-surface: kx memory decay/stats/restore/consolidate + list --include-tombstoned (CLI) · Py sync+async · TS · Memories-tab StatsStrip/DecayPanel(CHIP)/ConsolidatePanel + restore + vitest · docs/site/docs/memory.md decay+consolidation",
+  "kx-eval consolidation_quality scorer + golden memory_consolidate_episodics (deliberate re-baseline loop_efficiency 972→975) + kx-memory salience-write hot-path probe (GR10) + dual-engine consolidate_serve e2e",
+]
+inherits = ["rc5a-durable-memory"]
+notes    = "RC5b consolidation + decay + memory-UI. Model-driven consolidation (no journal fact) + reversible decay (memories rows never deleted; journal re-fold restores). Digest 7d22d4bd invariant (all new state in memory.db + memory_decay sidecar, off-journal/off-digest); frozen trio EMPTY; NO journal/checkpoint bump; additive-only proto + codegen-fresh."
 
 [[feature]]
 id       = "gmail-integration"

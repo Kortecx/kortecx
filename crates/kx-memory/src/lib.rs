@@ -62,8 +62,9 @@ mod store;
 
 pub use error::MemoryError;
 pub use record::{
-    memory_id, now_ms, MemoryHit, MemoryKind, MemoryRecord, StoreOutcome, StoreRequest,
-    MAX_CONTENT_LEN, MAX_NAMESPACE_LEN,
+    memory_id, now_ms, BundleRequest, DecayCandidate, DecayPolicy, DecayReport, MemoryHit,
+    MemoryKind, MemoryRecord, MemoryStats, StoreOutcome, StoreRequest, MAX_CONTENT_LEN,
+    MAX_NAMESPACE_LEN,
 };
 pub use sqlite::SqliteMemoryStore;
 pub use store::MemoryStore;

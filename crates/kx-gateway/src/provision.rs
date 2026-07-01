@@ -318,8 +318,9 @@ const VISION_RAG_LOGIC_REF: [u8; 32] = [0x5b; 32];
 
 /// RC5a DURABLE MEMORY: the wire handle of the `react-memory` recipe — like
 /// [`REACT_RECIPE_HANDLE`] BUT whose server-built warrant grants the durable-memory
-/// tools `remember@1` + `recall@1` (over the in-process `MemoryView`), so the model
-/// AUTONOMOUSLY records what it learns and recalls it in later runs. A SEPARATE recipe
+/// tools `remember@1` + `recall@1` (+ RC5b `consolidate@1` — bundle recent episodics to
+/// distill) over the in-process `MemoryView`, so the model AUTONOMOUSLY records what it
+/// learns, recalls it in later runs, and consolidates it. A SEPARATE recipe
 /// BY DESIGN (the react-rag/react-fs precedent) so the canonical `kx/recipes/react` +
 /// the projection digest stay byte-unchanged. Seeded only when a model is served AND
 /// the memory capabilities are registered (`hnsw` + `KX_SERVE_MEMORY`). Reuses the
@@ -5894,12 +5895,15 @@ mod tests {
         let mem_tools = [
             (ToolName("remember".into()), ToolVersion("1".into())),
             (ToolName("recall".into()), ToolVersion("1".into())),
+            // RC5b: consolidate@1 joins the memory toolkit (bundles episodics to distill).
+            (ToolName("consolidate".into()), ToolVersion("1".into())),
         ];
         let w = react_memory_warrant(ExecutorClass::Bwrap, &model, &mem_tools);
-        // Both memory tools are granted; NO fs mount, NO egress (in-process view).
-        assert_eq!(w.tool_grants.len(), 2);
+        // All memory tools are granted; NO fs mount, NO egress (in-process view).
+        assert_eq!(w.tool_grants.len(), 3);
         assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "remember"));
         assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "recall"));
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "consolidate"));
         assert!(
             w.fs_scope.mounts.is_empty(),
             "memory reaches the store via the in-process view"

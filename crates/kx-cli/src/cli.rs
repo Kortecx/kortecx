@@ -80,7 +80,7 @@ usage: kx <command> [args]
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list|load <id>|offload <id>       (model discovery + local lifecycle)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
-    kx memory add <text> | list | recall --text <q> [--k N] | forget <id>   (durable cross-run agent memory)
+    kx memory add <text> | list | recall --text <q> | forget <id> | decay | stats | restore <id> | consolidate   (durable cross-run agent memory)
     kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
     kx eval run [--tolerance <per_mille>] | score <INSTANCE_ID>   (RC1/D172 — golden gate + per-run quality)
@@ -796,9 +796,13 @@ kx datasets query <name> --text <query> [--k N] [client flags]
             .into(),
         "memory" => "\
 kx memory add <text> [--kind semantic|episodic] [client flags]
-kx memory list [--instance <hex16>] [--limit N] [client flags]
+kx memory list [--instance <hex16>] [--limit N] [--include-tombstoned] [client flags]
 kx memory recall --text <query> [--k N] [client flags]
 kx memory forget <memory_id_hex> [client flags]
+kx memory decay [--dry-run|--apply] [--ttl-days N] [--min-access N] [client flags]
+kx memory stats [client flags]
+kx memory restore <memory_id_hex> [client flags]
+kx memory consolidate [--query <q>] [--k N] [--window-hours H] [--dry-run|--apply] [client flags]
   Durable agentic MEMORY (RC5a): remember facts and recall them across runs. `add`
   content-addresses + embeds the fact (server-embed, needs `inference,hnsw` + a
   model + KX_SERVE_MEMORY=1); `recall` returns the top-k most-similar memories (each

@@ -74,7 +74,7 @@ import {
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { AssetGrants } from "./grants.js";
 import { INSTANCE_LEN, REF_LEN, asBytes, decode, encode } from "./hexids.js";
-import { Memory, MemoryHit, MemoryKind, StoreResult } from "./memory.js";
+import { DecayReport, Memory, MemoryHit, MemoryKind, MemoryStats, StoreResult } from "./memory.js";
 import { ModelLifecycleResult, ModelSummary, PullStatus } from "./models.js";
 import { MoteDetail } from "./motes.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
@@ -2002,12 +2002,15 @@ export abstract class KxClientBase {
    * The episodic memory log, newest-first, optionally scoped to one run
    * (`instanceId` hex). An old / memory-less gateway throws {@link KxUnimplemented}.
    */
-  async listMemories(opts: { instanceId?: string; limit?: number } = {}): Promise<Memory[]> {
+  async listMemories(
+    opts: { instanceId?: string; limit?: number; includeTombstoned?: boolean } = {},
+  ): Promise<Memory[]> {
     const resp = await rpc(
       this.grpc.listMemories({
         limit: opts.limit,
         instanceId: opts.instanceId ? decode(opts.instanceId) : undefined,
         namespace: "",
+        includeTombstoned: opts.includeTombstoned ?? false,
       }),
     );
     return resp.memories.map((m) => Memory.fromProto(m));
@@ -2034,10 +2037,80 @@ export abstract class KxClientBase {
   }
 
   /**
-   * The durable agentic MEMORY namespace (RC5a) — `memory.store / list / recall /
-   * forget` (the verb vocabulary of the `kx memory` CLI). Cross-run, per-principal
-   * memory the agent recalls in later runs. Chain seed facts into a flow with
-   * `flow().withMemory(...)`.
+   * Preview (`dryRun`, the default) or apply a reversible TTL+salience decay sweep
+   * (RC5b). A candidate is older than `ttlDays` AND recalled fewer than `minAccess`
+   * times; evictions are soft-tombstones (the row is never deleted — restore via
+   * {@link restoreMemory}). Scoped to the caller's own principal.
+   */
+  async decayMemory(
+    opts: { ttlDays?: number; minAccess?: number; dryRun?: boolean } = {},
+  ): Promise<DecayReport> {
+    const resp = await rpc(
+      this.grpc.decayMemory({
+        namespace: "",
+        ttlDays: opts.ttlDays ?? 90,
+        minAccess: opts.minAccess ?? 1,
+        dryRun: opts.dryRun ?? true,
+      }),
+    );
+    return DecayReport.fromProto(resp);
+  }
+
+  /** Namespace memory statistics (RC5b) — live counts by kind, tombstoned count, dim,
+   *  embed fingerprint, and the live age range. */
+  async memoryStats(): Promise<MemoryStats> {
+    const resp = await rpc(this.grpc.memoryStats({ namespace: "" }));
+    return MemoryStats.fromProto(resp);
+  }
+
+  /** Un-decay (restore) a soft-tombstoned memory by its content id (hex, RC5b).
+   *  Returns `true` if a tombstone was cleared. */
+  async restoreMemory(memoryId: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.restoreMemory({ memoryId: decode(memoryId), namespace: "" }));
+    return resp.restored;
+  }
+
+  /**
+   * Consolidate recent episodic memories into ONE durable semantic fact (RC5b).
+   * `dryRun` (the default) is a model-free PREVIEW returning the episodic memories that
+   * WOULD be consolidated. `dryRun: false` drives a react-memory chain (needs a served
+   * model + `KX_SERVE_MEMORY=1`) that bundles → distills → remembers, returning the
+   * committed {@link Result}.
+   */
+  async consolidateMemory(
+    opts: {
+      query?: string;
+      k?: number;
+      windowHours?: number;
+      dryRun?: boolean;
+      timeoutMs?: number;
+    } = {},
+  ): Promise<Memory[] | Result> {
+    const k = opts.k ?? 16;
+    if (opts.dryRun ?? true) {
+      const preview = await this.listMemories({ limit: Math.max(1, k * 4) });
+      const cutoff = opts.windowHours ? Date.now() - opts.windowHours * 3_600_000 : undefined;
+      return preview
+        .filter((m) => m.kind === "episodic" && (cutoff === undefined || m.createdMs >= cutoff))
+        .slice(0, k);
+    }
+    const focus = opts.query ? ` about "${opts.query}"` : "";
+    const window = opts.windowHours ? ` from the last ${opts.windowHours} hours` : "";
+    // Phrased to FORCE tool use: an OSS model otherwise answers from guesswork at turn 0
+    // (it cannot see its episodic memories until it calls `consolidate`).
+    const instruction = `You have episodic memories from earlier that you CANNOT see until you retrieve them. FIRST call the \`consolidate\` tool to bundle your recent episodic memories${focus}${window}. THEN distill the key durable facts and call \`remember\` with kind="semantic" to save ONE concise summary. Only AFTER remembering, report what you consolidated. Do NOT answer from guesswork — you must use the tools.`;
+    return (await this.invoke(
+      "kx/recipes/react-memory",
+      { instruction, max_turns: 6, max_tool_calls: 4 },
+      { wait: true, timeoutMs: opts.timeoutMs },
+    )) as Result;
+  }
+
+  /**
+   * The durable agentic MEMORY namespace (RC5a/RC5b) — `memory.store / list / recall /
+   * forget / decay / stats / restore / consolidate` (the verb vocabulary of the `kx
+   * memory` CLI). Cross-run, per-principal memory the agent recalls in later runs.
+   * Chain seed facts into a flow with `flow().withMemory(...)`.
    */
   get memory() {
     return {
@@ -2045,11 +2118,26 @@ export abstract class KxClientBase {
         content: string | Uint8Array,
         opts: { kind?: MemoryKind } = {},
       ): Promise<StoreResult> => this.storeMemory(content, opts),
-      list: (opts: { instanceId?: string; limit?: number } = {}): Promise<Memory[]> =>
-        this.listMemories(opts),
+      list: (
+        opts: { instanceId?: string; limit?: number; includeTombstoned?: boolean } = {},
+      ): Promise<Memory[]> => this.listMemories(opts),
       recall: (text: string, opts: { k?: number } = {}): Promise<MemoryHit[]> =>
         this.recallMemory(text, opts),
       forget: (memoryId: string): Promise<boolean> => this.forgetMemory(memoryId),
+      decay: (
+        opts: { ttlDays?: number; minAccess?: number; dryRun?: boolean } = {},
+      ): Promise<DecayReport> => this.decayMemory(opts),
+      stats: (): Promise<MemoryStats> => this.memoryStats(),
+      restore: (memoryId: string): Promise<boolean> => this.restoreMemory(memoryId),
+      consolidate: (
+        opts: {
+          query?: string;
+          k?: number;
+          windowHours?: number;
+          dryRun?: boolean;
+          timeoutMs?: number;
+        } = {},
+      ): Promise<Memory[] | Result> => this.consolidateMemory(opts),
     };
   }
 

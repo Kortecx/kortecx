@@ -4444,7 +4444,7 @@ impl KxGateway for GatewayService {
             .and_then(|b| <[u8; 16]>::try_from(b).ok());
         // Fetch one extra to compute `has_more` without a second query.
         let mut rows = view
-            .list(&ns, instance_filter, limit + 1)
+            .list(&ns, instance_filter, limit + 1, req.include_tombstoned)
             .map_err(crate::memory::memory_status)?;
         let has_more = rows.len() > limit;
         rows.truncate(limit);
@@ -4503,6 +4503,77 @@ impl KxGateway for GatewayService {
             .forget(&ns, &id)
             .map_err(crate::memory::memory_status)?;
         Ok(Response::new(proto::ForgetMemoryResponse { forgotten }))
+    }
+
+    async fn decay_memory(
+        &self,
+        request: Request<proto::DecayMemoryRequest>,
+    ) -> Result<Response<proto::DecayMemoryResponse>, Status> {
+        let view = self
+            .memory
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("DecayMemory: no memory view wired"))?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let ns = crate::memory::memory_namespace(&principal, &req.namespace);
+        // Server-side clamps: a 0 TTL falls back to 90 days; TTL is bounded; salience
+        // floor is bounded. A decay is authored by the caller over their OWN namespace.
+        let ttl_days = if req.ttl_days == 0 {
+            90
+        } else {
+            req.ttl_days.min(3650)
+        };
+        let ttl_ms = i64::from(ttl_days) * 86_400_000;
+        let min_access = req.min_access.min(1_000_000);
+        let report = view
+            .decay(&ns, ttl_ms, min_access, req.dry_run)
+            .map_err(crate::memory::memory_status)?;
+        let now_ms = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
+        )
+        .unwrap_or(i64::MAX);
+        Ok(Response::new(crate::memory::decay_report_to_proto(
+            report, now_ms,
+        )))
+    }
+
+    async fn memory_stats(
+        &self,
+        request: Request<proto::MemoryStatsRequest>,
+    ) -> Result<Response<proto::MemoryStatsResponse>, Status> {
+        let view = self
+            .memory
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("MemoryStats: no memory view wired"))?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let ns = crate::memory::memory_namespace(&principal, &req.namespace);
+        let stats = view.stats(&ns).map_err(crate::memory::memory_status)?;
+        Ok(Response::new(crate::memory::memory_stats_to_proto(
+            stats, ns,
+        )))
+    }
+
+    async fn restore_memory(
+        &self,
+        request: Request<proto::RestoreMemoryRequest>,
+    ) -> Result<Response<proto::RestoreMemoryResponse>, Status> {
+        let view = self
+            .memory
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("RestoreMemory: no memory view wired"))?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let ns = crate::memory::memory_namespace(&principal, &req.namespace);
+        let id = <[u8; 32]>::try_from(req.memory_id.as_slice())
+            .map_err(|_| Status::invalid_argument("memory_id must be 32 bytes"))?;
+        let restored = view
+            .restore(&ns, &id)
+            .map_err(crate::memory::memory_status)?;
+        Ok(Response::new(proto::RestoreMemoryResponse { restored }))
     }
 
     async fn fuzzy_discovery(

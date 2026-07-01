@@ -72,6 +72,13 @@ pub struct Expectation {
     /// fail-closed guard: a recall that silently returns nothing scores 0.
     #[serde(default)]
     pub memory_must_recall: Vec<String>,
+    /// RC5b: facts a CONSOLIDATION must distill into ONE recalled semantic entry AND
+    /// ground in the answer. Distinct from `memory_must_recall` (which checks each fact
+    /// in ANY recalled doc): consolidation requires all facts collapsed into a single
+    /// entry. Empty ⇒ the consolidation_quality scorer is N/A. The fail-closed guard: a
+    /// consolidation that produced/recalled nothing scores 0.
+    #[serde(default)]
+    pub consolidation_must_capture: Vec<String>,
     /// The ideal number of turns to solve the task (the loop-efficiency denominator).
     pub ideal_turns: u32,
     /// The ideal number of tool calls to solve the task.

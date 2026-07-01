@@ -879,6 +879,10 @@ pub fn render_memories(resp: &proto::ListMemoriesResponse, json: bool) -> String
                     "instance_id": hex::encode(&m.instance_id),
                     "created_ms": m.created_ms,
                     "dim": m.dim,
+                    "access_count": m.access_count,
+                    "last_accessed_ms": m.last_accessed_ms,
+                    // 0 = live; >0 = decayed (soft-tombstoned, restorable).
+                    "tombstoned_ms": m.tombstoned_ms,
                 })
             })
             .collect();
@@ -891,8 +895,162 @@ pub fn render_memories(resp: &proto::ListMemoriesResponse, json: bool) -> String
             .map(|m| {
                 let r = hex::encode(&m.memory_id);
                 let short = r.get(..16).unwrap_or(&r);
-                format!("{}  {}  {}", short, m.kind, doc_snippet(&m.content))
+                let tomb = if m.tombstoned_ms > 0 {
+                    "  [decayed]"
+                } else {
+                    ""
+                };
+                format!("{}  {}  {}{tomb}", short, m.kind, doc_snippet(&m.content))
             })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `memory decay` — the reversible TTL+salience sweep (preview or applied).
+#[must_use]
+pub fn render_decay_memory(resp: &proto::DecayMemoryResponse, json: bool) -> String {
+    if json {
+        let candidates: Vec<Value> = resp
+            .candidates
+            .iter()
+            .map(|c| {
+                json!({
+                    "memory_id": hex::encode(&c.memory_id),
+                    "text": String::from_utf8_lossy(&c.content),
+                    "kind": c.kind,
+                    "created_ms": c.created_ms,
+                    "access_count": c.access_count,
+                    "last_accessed_ms": c.last_accessed_ms,
+                    "age_days": c.age_days,
+                })
+            })
+            .collect();
+        json!({
+            "candidates": candidates,
+            "would_evict": resp.would_evict,
+            "evicted": resp.evicted,
+            "kept": resp.kept,
+            "dry_run": resp.dry_run,
+        })
+        .to_string()
+    } else {
+        let mut lines: Vec<String> = resp
+            .candidates
+            .iter()
+            .map(|c| {
+                let r = hex::encode(&c.memory_id);
+                let short = r.get(..16).unwrap_or(&r);
+                format!(
+                    "  age={}d  acc={}  {}  {}",
+                    c.age_days,
+                    c.access_count,
+                    short,
+                    doc_snippet(&c.content)
+                )
+            })
+            .collect();
+        let header = if resp.dry_run {
+            format!(
+                "would evict {} (kept {}) — preview only (`--apply` to evict):",
+                resp.would_evict, resp.kept
+            )
+        } else {
+            format!(
+                "evicted {} (kept {}) — reversible via `kx memory restore <id>`:",
+                resp.evicted, resp.kept
+            )
+        };
+        if lines.is_empty() {
+            lines.push("  (nothing to decay)".to_string());
+        }
+        std::iter::once(header)
+            .chain(lines)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `memory stats`.
+#[must_use]
+pub fn render_memory_stats(resp: &proto::MemoryStatsResponse, json: bool) -> String {
+    if json {
+        json!({
+            "total": resp.total,
+            "semantic": resp.semantic,
+            "episodic": resp.episodic,
+            "tombstoned": resp.tombstoned,
+            "dim": resp.dim,
+            "embed_fingerprint": resp.embed_fingerprint,
+            "oldest_ms": resp.oldest_ms,
+            "newest_ms": resp.newest_ms,
+            "namespace": resp.namespace,
+        })
+        .to_string()
+    } else {
+        format!(
+            "memories: {} live ({} semantic, {} episodic) · {} decayed · dim={} · fp={}",
+            resp.total,
+            resp.semantic,
+            resp.episodic,
+            resp.tombstoned,
+            resp.dim,
+            if resp.embed_fingerprint.is_empty() {
+                "(none)"
+            } else {
+                &resp.embed_fingerprint
+            }
+        )
+    }
+}
+
+/// Render `memory restore`.
+#[must_use]
+pub fn render_restore_memory(resp: &proto::RestoreMemoryResponse, json: bool) -> String {
+    if json {
+        json!({ "restored": resp.restored }).to_string()
+    } else if resp.restored {
+        "restored".to_string()
+    } else {
+        "(no decayed memory with that id)".to_string()
+    }
+}
+
+/// Render `memory consolidate --dry-run` — the model-free preview of what WOULD be
+/// consolidated.
+#[must_use]
+pub fn render_consolidate_preview(
+    episodics: &[&proto::MemorySummary],
+    query: Option<&str>,
+    json: bool,
+) -> String {
+    if json {
+        let items: Vec<Value> = episodics
+            .iter()
+            .map(|m| {
+                json!({
+                    "memory_id": hex::encode(&m.memory_id),
+                    "text": String::from_utf8_lossy(&m.content),
+                    "created_ms": m.created_ms,
+                })
+            })
+            .collect();
+        json!({ "would_consolidate": items, "query": query }).to_string()
+    } else if episodics.is_empty() {
+        "(no episodic memories to consolidate — `--apply` needs a served model)".to_string()
+    } else {
+        let focus = query.map_or(String::new(), |q| format!(" about \"{q}\""));
+        let header = format!(
+            "would consolidate {} episodic memories{focus} (`--apply` to run the chain):",
+            episodics.len()
+        );
+        let lines = episodics.iter().map(|m| {
+            let r = hex::encode(&m.memory_id);
+            let short = r.get(..16).unwrap_or(&r);
+            format!("  {}  {}", short, doc_snippet(&m.content))
+        });
+        std::iter::once(header)
+            .chain(lines)
             .collect::<Vec<_>>()
             .join("\n")
     }

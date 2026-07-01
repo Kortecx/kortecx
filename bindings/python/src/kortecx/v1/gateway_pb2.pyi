@@ -861,30 +861,38 @@ class StoreMemoryResponse(_message.Message):
     def __init__(self, memory_id: _Optional[bytes] = ..., inserted: bool = ..., dim: _Optional[int] = ...) -> None: ...
 
 class ListMemoriesRequest(_message.Message):
-    __slots__ = ("limit", "instance_id", "namespace")
+    __slots__ = ("limit", "instance_id", "namespace", "include_tombstoned")
     LIMIT_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_TOMBSTONED_FIELD_NUMBER: _ClassVar[int]
     limit: int
     instance_id: bytes
     namespace: str
-    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., namespace: _Optional[str] = ...) -> None: ...
+    include_tombstoned: bool
+    def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., namespace: _Optional[str] = ..., include_tombstoned: bool = ...) -> None: ...
 
 class MemorySummary(_message.Message):
-    __slots__ = ("memory_id", "content", "kind", "instance_id", "created_ms", "dim")
+    __slots__ = ("memory_id", "content", "kind", "instance_id", "created_ms", "dim", "access_count", "last_accessed_ms", "tombstoned_ms")
     MEMORY_ID_FIELD_NUMBER: _ClassVar[int]
     CONTENT_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     CREATED_MS_FIELD_NUMBER: _ClassVar[int]
     DIM_FIELD_NUMBER: _ClassVar[int]
+    ACCESS_COUNT_FIELD_NUMBER: _ClassVar[int]
+    LAST_ACCESSED_MS_FIELD_NUMBER: _ClassVar[int]
+    TOMBSTONED_MS_FIELD_NUMBER: _ClassVar[int]
     memory_id: bytes
     content: bytes
     kind: str
     instance_id: bytes
     created_ms: int
     dim: int
-    def __init__(self, memory_id: _Optional[bytes] = ..., content: _Optional[bytes] = ..., kind: _Optional[str] = ..., instance_id: _Optional[bytes] = ..., created_ms: _Optional[int] = ..., dim: _Optional[int] = ...) -> None: ...
+    access_count: int
+    last_accessed_ms: int
+    tombstoned_ms: int
+    def __init__(self, memory_id: _Optional[bytes] = ..., content: _Optional[bytes] = ..., kind: _Optional[str] = ..., instance_id: _Optional[bytes] = ..., created_ms: _Optional[int] = ..., dim: _Optional[int] = ..., access_count: _Optional[int] = ..., last_accessed_ms: _Optional[int] = ..., tombstoned_ms: _Optional[int] = ...) -> None: ...
 
 class ListMemoriesResponse(_message.Message):
     __slots__ = ("memories", "has_more")
@@ -935,6 +943,92 @@ class ForgetMemoryResponse(_message.Message):
     FORGOTTEN_FIELD_NUMBER: _ClassVar[int]
     forgotten: bool
     def __init__(self, forgotten: bool = ...) -> None: ...
+
+class DecayMemoryRequest(_message.Message):
+    __slots__ = ("namespace", "ttl_days", "min_access", "dry_run")
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    TTL_DAYS_FIELD_NUMBER: _ClassVar[int]
+    MIN_ACCESS_FIELD_NUMBER: _ClassVar[int]
+    DRY_RUN_FIELD_NUMBER: _ClassVar[int]
+    namespace: str
+    ttl_days: int
+    min_access: int
+    dry_run: bool
+    def __init__(self, namespace: _Optional[str] = ..., ttl_days: _Optional[int] = ..., min_access: _Optional[int] = ..., dry_run: bool = ...) -> None: ...
+
+class DecayCandidate(_message.Message):
+    __slots__ = ("memory_id", "content", "kind", "created_ms", "access_count", "last_accessed_ms", "age_days")
+    MEMORY_ID_FIELD_NUMBER: _ClassVar[int]
+    CONTENT_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    CREATED_MS_FIELD_NUMBER: _ClassVar[int]
+    ACCESS_COUNT_FIELD_NUMBER: _ClassVar[int]
+    LAST_ACCESSED_MS_FIELD_NUMBER: _ClassVar[int]
+    AGE_DAYS_FIELD_NUMBER: _ClassVar[int]
+    memory_id: bytes
+    content: bytes
+    kind: str
+    created_ms: int
+    access_count: int
+    last_accessed_ms: int
+    age_days: int
+    def __init__(self, memory_id: _Optional[bytes] = ..., content: _Optional[bytes] = ..., kind: _Optional[str] = ..., created_ms: _Optional[int] = ..., access_count: _Optional[int] = ..., last_accessed_ms: _Optional[int] = ..., age_days: _Optional[int] = ...) -> None: ...
+
+class DecayMemoryResponse(_message.Message):
+    __slots__ = ("candidates", "would_evict", "evicted", "kept", "dry_run")
+    CANDIDATES_FIELD_NUMBER: _ClassVar[int]
+    WOULD_EVICT_FIELD_NUMBER: _ClassVar[int]
+    EVICTED_FIELD_NUMBER: _ClassVar[int]
+    KEPT_FIELD_NUMBER: _ClassVar[int]
+    DRY_RUN_FIELD_NUMBER: _ClassVar[int]
+    candidates: _containers.RepeatedCompositeFieldContainer[DecayCandidate]
+    would_evict: int
+    evicted: int
+    kept: int
+    dry_run: bool
+    def __init__(self, candidates: _Optional[_Iterable[_Union[DecayCandidate, _Mapping]]] = ..., would_evict: _Optional[int] = ..., evicted: _Optional[int] = ..., kept: _Optional[int] = ..., dry_run: bool = ...) -> None: ...
+
+class MemoryStatsRequest(_message.Message):
+    __slots__ = ("namespace",)
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    namespace: str
+    def __init__(self, namespace: _Optional[str] = ...) -> None: ...
+
+class MemoryStatsResponse(_message.Message):
+    __slots__ = ("total", "semantic", "episodic", "tombstoned", "dim", "embed_fingerprint", "oldest_ms", "newest_ms", "namespace")
+    TOTAL_FIELD_NUMBER: _ClassVar[int]
+    SEMANTIC_FIELD_NUMBER: _ClassVar[int]
+    EPISODIC_FIELD_NUMBER: _ClassVar[int]
+    TOMBSTONED_FIELD_NUMBER: _ClassVar[int]
+    DIM_FIELD_NUMBER: _ClassVar[int]
+    EMBED_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    OLDEST_MS_FIELD_NUMBER: _ClassVar[int]
+    NEWEST_MS_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    total: int
+    semantic: int
+    episodic: int
+    tombstoned: int
+    dim: int
+    embed_fingerprint: str
+    oldest_ms: int
+    newest_ms: int
+    namespace: str
+    def __init__(self, total: _Optional[int] = ..., semantic: _Optional[int] = ..., episodic: _Optional[int] = ..., tombstoned: _Optional[int] = ..., dim: _Optional[int] = ..., embed_fingerprint: _Optional[str] = ..., oldest_ms: _Optional[int] = ..., newest_ms: _Optional[int] = ..., namespace: _Optional[str] = ...) -> None: ...
+
+class RestoreMemoryRequest(_message.Message):
+    __slots__ = ("memory_id", "namespace")
+    MEMORY_ID_FIELD_NUMBER: _ClassVar[int]
+    NAMESPACE_FIELD_NUMBER: _ClassVar[int]
+    memory_id: bytes
+    namespace: str
+    def __init__(self, memory_id: _Optional[bytes] = ..., namespace: _Optional[str] = ...) -> None: ...
+
+class RestoreMemoryResponse(_message.Message):
+    __slots__ = ("restored",)
+    RESTORED_FIELD_NUMBER: _ClassVar[int]
+    restored: bool
+    def __init__(self, restored: bool = ...) -> None: ...
 
 class ListCaptureRecordsRequest(_message.Message):
     __slots__ = ("limit", "instance_id")
