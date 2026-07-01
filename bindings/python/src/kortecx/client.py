@@ -2289,9 +2289,7 @@ class KxClient:
         resp = self._call(lambda: self._stub.StoreMemory(req, metadata=self._md))
         return StoreResult.from_proto(resp)
 
-    def list_memories(
-        self, *, instance_id: Optional[str] = None, limit: int = 0
-    ) -> List[Memory]:
+    def list_memories(self, *, instance_id: Optional[str] = None, limit: int = 0) -> List[Memory]:
         """The episodic memory log, newest-first, optionally scoped to one run
         (``instance_id`` hex). An old / memory-less gateway raises ``KxUnimplemented``."""
         req = _g.ListMemoriesRequest(namespace="")
