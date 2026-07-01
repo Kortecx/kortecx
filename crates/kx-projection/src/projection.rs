@@ -1192,6 +1192,25 @@ impl Projection {
             .max_by(|a, b| a.seq.cmp(&b.seq))
     }
 
+    /// The latest (highest-`seq`) `ReRankRound` for one run keyed by its
+    /// `base_results_ref` (= the retrieve observation's committed result_ref), or
+    /// `None`. The read-path (`resolve_parent_context`) delivery lookup: it has the
+    /// observation ref but NOT the rerank `MoteId` (the query is off the read path),
+    /// so it finds the frozen outcome by base ref. Bounded scan (a run writes at most
+    /// a few reranks; gated cheaply by `rerank_rounds_of(..).next().is_none()`).
+    #[must_use]
+    pub fn latest_rerank_round_by_base(
+        &self,
+        instance_id: &[u8; kx_journal::INSTANCE_ID_LEN],
+        base_results_ref: &ContentRef,
+    ) -> Option<&crate::state::ReRankRoundRecord> {
+        self.state
+            .rerank_rounds
+            .iter()
+            .filter(|r| &r.instance_id == instance_id && &r.base_results_ref == base_results_ref)
+            .max_by(|a, b| a.seq.cmp(&b.seq))
+    }
+
     /// The ReAct-turn metadata (PR-2d-1) folded so far — one record per
     /// `ReactRound` entry, in journal (seq) order.
     ///

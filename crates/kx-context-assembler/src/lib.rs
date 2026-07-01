@@ -97,7 +97,7 @@ mod assemble;
 mod errors;
 mod types;
 
-pub use assemble::{assemble, render_tool_menu};
+pub use assemble::{assemble, render_rerank_prompt, render_tool_menu, rerank_output_cap};
 pub use errors::AssemblyError;
 pub use types::{AssembledContext, AssembledItem};
 

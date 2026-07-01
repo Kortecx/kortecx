@@ -3,6 +3,7 @@
 //! byte-deterministic [`crate::AssembledContext`].
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 
 use bytes::Bytes;
 use kx_content::{ContentRef, ContentStore};
@@ -140,6 +141,44 @@ pub fn render_tool_menu(grants: &BTreeSet<ToolGrant>, registry: &dyn ToolRegistr
         out.push('\n');
     }
     out
+}
+
+/// RC4c-2b: bound a listwise-rerank turn's output — the permutation array (`n`
+/// indices ≈ 6 tokens each) PLUS generous headroom for a model that reasons before
+/// answering (e.g. Gemma's `<|channel>…<channel|>` preamble). Too tight a cap
+/// truncates the decode before the array and the parse fail-closes to input order;
+/// still bounded so a runaway decode can't burn the budget. The SHARED renderer for
+/// BOTH the authored-DAG harness rerank (`kx-model-harness::rag`) and the LIVE serve
+/// rerank turn (`kx-gateway::model_exec`), so the two paths never drift (the
+/// `render_tool_menu` precedent). Pure + FFI-free.
+#[must_use]
+pub fn rerank_output_cap(n: usize) -> u32 {
+    const REASONING_HEADROOM: usize = 256;
+    u32::try_from(n.saturating_mul(6).saturating_add(REASONING_HEADROOM)).unwrap_or(u32::MAX)
+}
+
+/// RC4c-2b: build the listwise-rerank prompt — the query + the `n` candidate passages
+/// (each truncated to `SNIPPET_MAX` chars), instructing the model to emit ONLY a
+/// permutation array of indices. The SHARED renderer for the harness rerank and the
+/// live serve rerank turn (byte-identical prompts ⇒ no harness↔serve drift). The
+/// runtime still enforces validity fail-closed via `kx_toolcall::parse_permutation`
+/// (SN-8: the model proposes an order; the parser is authority). Pure + FFI-free.
+#[must_use]
+pub fn render_rerank_prompt(query: &str, texts: &[String]) -> String {
+    const SNIPPET_MAX: usize = 400;
+    let n = texts.len();
+    let mut p = String::with_capacity(128 + n * SNIPPET_MAX);
+    let _ = write!(
+        p,
+        "Rank the passages by how well each answers the query. Respond with ONLY a JSON \
+         array of the passage indices, most relevant first — a permutation of 0..{n} with no \
+         duplicates (example: [2,0,1]).\n\nQuery: {query}\n\nPassages:\n"
+    );
+    for (i, t) in texts.iter().enumerate() {
+        let snippet: String = t.chars().take(SNIPPET_MAX).collect();
+        let _ = writeln!(p, "[{i}] {snippet}");
+    }
+    p
 }
 
 /// Assemble the Mote's explicit dependency closure into byte-deterministic

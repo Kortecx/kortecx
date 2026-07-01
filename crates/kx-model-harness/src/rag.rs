@@ -16,9 +16,8 @@
 //! enter the committed fact, a `MoteId`, or memoization. Downstream steps consume
 //! the retrieved content by EXACT hash.
 
-use std::fmt::Write as _;
-
 use kx_content::ContentRef;
+use kx_context_assembler::{render_rerank_prompt, rerank_output_cap};
 use kx_dataset::{
     mmr_rerank, rrf_fuse, ContentSchema, DataError, DataStore, Dataset, Hit, LexicalIndex,
     RetrievalIndex, MMR_LAMBDA_BP, RRF_C,
@@ -239,35 +238,6 @@ pub fn query_corpus_hybrid(
     Ok((fact_ref, ranked))
 }
 
-/// Bound the rerank turn's output: the permutation array (`n` indices ≈ 6 tokens
-/// each) PLUS generous headroom for a model that reasons before answering (e.g.
-/// Gemma's `<|channel>…<channel|>` preamble) — too tight a cap truncates the decode
-/// before the array and the parse fail-closes to the input order. Still bounded so a
-/// runaway decode can't burn the budget.
-fn rerank_output_cap(n: usize) -> u32 {
-    const REASONING_HEADROOM: usize = 256;
-    u32::try_from(n.saturating_mul(6).saturating_add(REASONING_HEADROOM)).unwrap_or(u32::MAX)
-}
-
-/// Build the listwise-rerank prompt: the query + the `n` candidate passages (each
-/// truncated), instructing the model to emit ONLY a permutation array of indices.
-fn rerank_prompt(query: &str, texts: &[String]) -> String {
-    const SNIPPET_MAX: usize = 400;
-    let n = texts.len();
-    let mut p = String::with_capacity(128 + n * SNIPPET_MAX);
-    let _ = write!(
-        p,
-        "Rank the passages by how well each answers the query. Respond with ONLY a JSON \
-         array of the passage indices, most relevant first — a permutation of 0..{n} with no \
-         duplicates (example: [2,0,1]).\n\nQuery: {query}\n\nPassages:\n"
-    );
-    for (i, t) in texts.iter().enumerate() {
-        let snippet: String = t.chars().take(SNIPPET_MAX).collect();
-        let _ = writeln!(p, "[{i}] {snippet}");
-    }
-    p
-}
-
 /// LLM listwise rerank (RC4c): ask `backend` to reorder `hits` (whose resolved
 /// `texts[i]` corresponds to `hits[i]`) by relevance to `query`, constrained to a
 /// permutation of `[0, n)` via the off-digest grammar carrier
@@ -313,7 +283,7 @@ pub fn rerank_hits(
         max_output_tokens: rerank_output_cap(n),
         ..InferenceParams::default()
     };
-    let input = InferenceInput::text(rerank_prompt(query, texts));
+    let input = InferenceInput::text(render_rerank_prompt(query, texts));
     // A dispatch failure ⇒ keep the upstream (RRF/MMR) order (fail-closed).
     let Ok(out) = backend.dispatch(model_id, &input, &params, warrant) else {
         return hits.to_vec();

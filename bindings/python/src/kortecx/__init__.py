@@ -93,6 +93,7 @@ from .recipes import (
     recipe_param_type_name,
 )
 from .replan import ReplanRound, ReplanRoundPage
+from .rerank import ReRankTurn, ReRankTurnPage
 from .run import AsyncRun, Result, Run
 from .run_agent import run_agent, run_agent_async
 from .runs import RunInputs, RunPage, RunSummary
@@ -185,6 +186,8 @@ __all__ = [
     "ReactTurnPage",
     "ReplanRound",
     "ReplanRoundPage",
+    "ReRankTurn",
+    "ReRankTurnPage",
     "CaptureRecord",
     "CaptureRecordPage",
     "RecipeForm",

@@ -2368,6 +2368,72 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
     }
 }
 
+/// Render `rerank list` (RC4c-2 observability): newest-first LLM-rerank turns.
+/// `--json` field names mirror the SDK snake_case shape; byte ids are hex. The
+/// `permutation` (the reordered SOURCE indices, NEW-rank order) is present only
+/// for a `reranked` outcome (SN-8: an exact permutation, never a score).
+#[must_use]
+pub fn render_rerank_turns(resp: &proto::ListReRankTurnsResponse, json: bool) -> String {
+    if json {
+        let turns: Vec<Value> = resp
+            .turns
+            .iter()
+            .map(|t| {
+                json!({
+                    "round": t.round,
+                    "rerank_mote_id": hex::encode(&t.rerank_mote_id),
+                    "instance_id": hex::encode(&t.instance_id),
+                    "model_id": t.model_id,
+                    "outcome": t.outcome,
+                    "candidate_count": t.candidate_count,
+                    "permutation": t.permutation,
+                    "seq": t.seq,
+                })
+            })
+            .collect();
+        json!({ "turns": turns, "has_more": resp.has_more }).to_string()
+    } else if resp.turns.is_empty() {
+        "(no rerank turns)".to_string()
+    } else {
+        let mut out = String::new();
+        for t in &resp.turns {
+            // The permutation is set iff outcome == "reranked"; show a compact
+            // NEW-rank ordering (e.g. `perm [2,0,1]`) else a dash.
+            let perm = if t.permutation.is_empty() {
+                "-".to_string()
+            } else {
+                let inner = t
+                    .permutation
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("[{inner}]")
+            };
+            // The leading 16 hex chars of the run-salted rerank Mote id (a stable
+            // join key without the full 64-char id in a table row).
+            let mote = hex::encode(&t.rerank_mote_id);
+            let mote_short = mote.get(..16).unwrap_or(&mote);
+            let _ = write!(
+                out,
+                "{}round {}  {}  model {}  candidates {}  perm {}  seq {}  mote {}",
+                if out.is_empty() { "" } else { "\n" },
+                t.round,
+                t.outcome,
+                t.model_id,
+                t.candidate_count,
+                perm,
+                t.seq,
+                mote_short,
+            );
+        }
+        if resp.has_more {
+            out.push_str("\n(more — raise --limit)");
+        }
+        out
+    }
+}
+
 /// Render `capture list` (the Morphic Data Engine read surface): newest-first
 /// captured-action join keys. `--json` field names mirror the SDK snake_case
 /// shape; an absent `react_turn` is `null` (the Mote is not a ReAct turn).
@@ -2994,6 +3060,64 @@ mod tests {
                 false
             ),
             "(no capture records)"
+        );
+    }
+
+    #[test]
+    fn rerank_turns_json_mirrors_proto_and_human_is_compact() {
+        let rerank = proto::ListReRankTurnsResponse {
+            turns: vec![
+                // A reranked turn carries the frozen permutation on both surfaces.
+                proto::ReRankTurnSummary {
+                    round: 0,
+                    rerank_mote_id: vec![0xabu8; 32],
+                    instance_id: vec![6u8; 16],
+                    model_id: "gemma-4".into(),
+                    outcome: "reranked".into(),
+                    candidate_count: 3,
+                    permutation: vec![2, 0, 1],
+                    seq: 33,
+                },
+                // A failed-closed turn carries no permutation.
+                proto::ReRankTurnSummary {
+                    round: 0,
+                    rerank_mote_id: vec![0xcdu8; 32],
+                    instance_id: vec![6u8; 16],
+                    model_id: "gemma-4".into(),
+                    outcome: "failed_closed".into(),
+                    candidate_count: 3,
+                    permutation: vec![],
+                    seq: 32,
+                },
+            ],
+            has_more: true,
+        };
+        let v: Value = serde_json::from_str(&render_rerank_turns(&rerank, true)).unwrap();
+        assert_eq!(v["turns"][0]["rerank_mote_id"], "ab".repeat(32));
+        assert_eq!(v["turns"][0]["instance_id"], "06".repeat(16));
+        assert_eq!(v["turns"][0]["outcome"], "reranked");
+        assert_eq!(v["turns"][0]["candidate_count"], 3);
+        assert_eq!(v["turns"][0]["permutation"][0], 2);
+        assert_eq!(v["turns"][1]["outcome"], "failed_closed");
+        assert!(v["turns"][1]["permutation"].as_array().unwrap().is_empty());
+        assert_eq!(v["has_more"], true);
+        let human = render_rerank_turns(&rerank, false);
+        // The reranked turn shows the NEW-rank permutation + the mote-id prefix.
+        assert!(human.contains("reranked") && human.contains("perm [2,0,1]"));
+        assert!(human.contains("candidates 3") && human.contains("mote abababab"));
+        // The failed-closed turn shows a dash for the (absent) permutation.
+        assert!(human.contains("failed_closed") && human.contains("perm -"));
+        assert!(human.contains("(more — raise --limit)"));
+        // Empty is an honest placeholder, not an empty string.
+        assert_eq!(
+            render_rerank_turns(
+                &proto::ListReRankTurnsResponse {
+                    turns: vec![],
+                    has_more: false
+                },
+                false
+            ),
+            "(no rerank turns)"
         );
     }
 

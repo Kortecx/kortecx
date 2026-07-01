@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use kx_capability::{CapabilityBroker, INSTANCE_ID_LEN};
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_executor::{LocalResourceManager, MoteExecutor};
-use kx_mote::{ConfigKey, Mote, MoteId, NdClass, REACT_TURN_KEY};
+use kx_mote::{ConfigKey, Mote, MoteId, NdClass, REACT_TURN_KEY, RERANK_TURN_KEY};
 use kx_proto::proto;
 use kx_warrant::{ExecutorClass, WarrantSpec};
 use tokio::task::JoinHandle;
@@ -214,7 +214,10 @@ impl Worker {
             // next item. Transport/RPC errors on the lease/commit calls stay batch-level.
             let exec = if mote.nd_class() == NdClass::Pure {
                 run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)
-            } else if is_react_turn(&mote) || mote.def.critic_check.is_some() {
+            } else if is_react_turn(&mote)
+                || is_rerank_turn(&mote)
+                || mote.def.critic_check.is_some()
+            {
                 // PR-2d-2: a coordinator-materialized ReAct TURN (the identity-
                 // bearing marker, NO tool_contract) is a prompt-carrying ROND
                 // model Mote — it dispatches through the hosted EXECUTOR (whose
@@ -454,6 +457,21 @@ fn is_react_turn(mote: &Mote) -> bool {
             .def
             .config_subset
             .contains_key(&ConfigKey(REACT_TURN_KEY.to_string()))
+}
+
+/// RC4c-2b: `true` iff `mote` is a coordinator-materialized live LLM RERANK TURN — the
+/// identity-bearing [`RERANK_TURN_KEY`] marker with NO `tool_contract`. Like a ReAct
+/// turn it is a ROND model Mote that dispatches DIRECTLY through the hosted executor
+/// (whose `run_rerank_turn` arm renders the rerank prompt + commits the raw
+/// permutation), never the capability-broker WM path (a rerank PROPOSES an order; it
+/// fires no effect). Without this the worker would route it to `run_wm` and dead-letter
+/// it (no tool_contract to resolve).
+fn is_rerank_turn(mote: &Mote) -> bool {
+    mote.def.tool_contract.is_empty()
+        && mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(RERANK_TURN_KEY.to_string()))
 }
 
 /// Wall-clock milliseconds since the Unix epoch (liveness only; never hashed).

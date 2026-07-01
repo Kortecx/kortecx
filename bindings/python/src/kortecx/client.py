@@ -69,6 +69,7 @@ from .motes import MoteDetail
 from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
 from .replan import ReplanRound, ReplanRoundPage
+from .rerank import ReRankTurn, ReRankTurnPage
 from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
 from .secrets import SecretName, SecretNamesPage
@@ -1558,6 +1559,24 @@ class KxClient:
             rounds=[ReplanRound.from_proto(r) for r in resp.rounds], has_more=resp.has_more
         )
 
+    def list_rerank_turns(
+        self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> ReRankTurnPage:
+        """Enumerate a live listwise LLM re-rank loop's durable turn facts
+        (newest-first, paginated; RC4c-2) — the queryable re-rank history with the
+        enforced permutation per settled turn. ``instance_id`` (hex) scopes to one
+        run; absent enumerates every run. The server clamps ``limit`` to its max
+        page."""
+        req = _g.ListReRankTurnsRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        resp = self._call(lambda: self._stub.ListReRankTurns(req, metadata=self._md))
+        return ReRankTurnPage(
+            turns=[ReRankTurn.from_proto(t) for t in resp.turns], has_more=resp.has_more
+        )
+
     def list_capture_records(
         self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
     ) -> CaptureRecordPage:
@@ -2714,6 +2733,20 @@ class AsyncKxClient:
         resp = await self._acall(self._stub.ListReplanRounds(req, metadata=self._md))
         return ReplanRoundPage(
             rounds=[ReplanRound.from_proto(r) for r in resp.rounds], has_more=resp.has_more
+        )
+
+    async def list_rerank_turns(
+        self, *, instance_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> ReRankTurnPage:
+        """Async :meth:`KxClient.list_rerank_turns`."""
+        req = _g.ListReRankTurnsRequest()
+        if instance_id is not None:
+            req.instance_id = hexids.decode(instance_id)
+        if limit is not None:
+            req.limit = limit
+        resp = await self._acall(self._stub.ListReRankTurns(req, metadata=self._md))
+        return ReRankTurnPage(
+            turns=[ReRankTurn.from_proto(t) for t in resp.turns], has_more=resp.has_more
         )
 
     async def list_capture_records(

@@ -10,6 +10,7 @@ import type {
   AlertSummary,
   CaptureRecord,
   MoteTelemetryRow,
+  ReRankTurn,
   ReactTurn,
   ReplanRound,
 } from "@kortecx/sdk/web";
@@ -78,6 +79,44 @@ export function summarizeReact(turns: readonly ReactTurn[]): ReactSummary {
     }
   }
   return { total: turns.length, byBranch, byModel, toolCalls };
+}
+
+export interface RerankSummary {
+  readonly total: number;
+  /** Turns that produced an enforced reordering (`outcome === "reranked"`). */
+  readonly reranked: number;
+  /** Turns per settled outcome (pending | reranked | failed_closed). */
+  readonly byOutcome: Tally;
+  readonly byModel: Tally;
+}
+
+export function summarizeRerank(turns: readonly ReRankTurn[]): RerankSummary {
+  const byOutcome: Record<string, number> = {};
+  const byModel: Record<string, number> = {};
+  let reranked = 0;
+  for (const t of turns) {
+    bump(byOutcome, t.outcome || "—");
+    bump(byModel, t.modelId || "—");
+    if (t.outcome === "reranked") {
+      reranked += 1;
+    }
+  }
+  return { total: turns.length, reranked, byOutcome, byModel };
+}
+
+/** A compact, audit-honest rendering of an enforced re-rank permutation (the
+ *  reordered SOURCE indices; SN-8: an exact reordering, never a score). Empty (a
+ *  non-`reranked` outcome) → "—"; a long permutation is elided with its length so
+ *  the trail row stays single-line. Pure — a deterministic function of the input. */
+export function rerankPermutationLabel(permutation: readonly number[]): string {
+  if (permutation.length === 0) {
+    return "—";
+  }
+  const MAX = 8;
+  if (permutation.length <= MAX) {
+    return permutation.join(" ");
+  }
+  return `${permutation.slice(0, MAX).join(" ")} … (${permutation.length})`;
 }
 
 export interface CaptureSummary {

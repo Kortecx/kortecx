@@ -66,6 +66,7 @@ usage: kx <command> [args]
     kx feedback list [--instance <hex16>] [--limit N] [--before-rowid N]
     kx replan list [--limit N]                   (re-plan rounds, newest-first)
     kx react list [--instance <hex16>] [--chain <hex32>] [--limit N]   (ReAct turns, newest-first)
+    kx rerank list [--instance <hex16>] [--limit N]   (LLM-rerank turns, newest-first)
     kx capture list [--instance <hex16>] [--limit N]   (captured actions, newest-first)
     kx alerts list [--instance <hex16>] [--limit N] [--before-seq N]   (terminal-failure alerts, newest-first)
     kx signatures list | get --id <hex32> | register --manifest-file <path>
@@ -133,6 +134,8 @@ pub enum Cli {
     Replan(verbs::replan::ReplanArgs),
     /// ReAct-turn observability (PR-2d-1 `ListReactTurns`; read-only).
     React(verbs::react::ReactArgs),
+    /// LLM-rerank-turn observability (RC4c-2 `ListReRankTurns`; read-only).
+    ReRank(verbs::rerank::ReRankArgs),
     /// Captured-action records (`ListCaptureRecords`; read-only join keys).
     Capture(verbs::capture::CaptureArgs),
     /// The operator alerts inbox (W1a-2 `ListAlerts`; read-only view).
@@ -214,6 +217,7 @@ impl Cli {
             Some("feedback") => Ok(Cli::Feedback(verbs::feedback::parse(args)?)),
             Some("replan") => Ok(Cli::Replan(verbs::replan::parse(args)?)),
             Some("react") => Ok(Cli::React(verbs::react::parse(args)?)),
+            Some("rerank") => Ok(Cli::ReRank(verbs::rerank::parse(args)?)),
             Some("capture") => Ok(Cli::Capture(verbs::capture::parse(args)?)),
             Some("alerts") => Ok(Cli::Alerts(verbs::alerts::parse(args)?)),
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
@@ -296,6 +300,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Feedback(a) => verbs::feedback::execute(a).await,
         Cli::Replan(a) => verbs::replan::execute(a).await,
         Cli::React(a) => verbs::react::execute(a).await,
+        Cli::ReRank(a) => verbs::rerank::execute(a).await,
         Cli::Capture(a) => verbs::capture::execute(a).await,
         Cli::Alerts(a) => verbs::alerts::execute(a).await,
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
@@ -663,6 +668,16 @@ kx react list [--instance <hex16>] [--chain <hex32>] [--limit N] [client flags]
   branch, and the run's durable budget caps. Newest-first; --instance scopes to
   one run, --chain to a single chain within it (a serve's shared journal carries
   one chain per Invoke plus agentic-step chains)."
+            .into(),
+        "rerank" => "\
+kx rerank list [--instance <hex16>] [--limit N] [client flags]
+  LLM-rerank-turn observability (read-only): the durable ReRankRound facts the
+  live RAG chain commits when it reorders retrieved candidates with a model —
+  each turn's run-salted rerank Mote id, the resolved model, the frozen outcome
+  (pending | reranked | failed_closed), the candidate count, and (for a reranked
+  outcome) the exact permutation the runtime enforced (SN-8: a permutation, never
+  a similarity score). Newest-first; --instance scopes to one run (a serve's
+  journal is shared)."
             .into(),
         "capture" => "\
 kx capture list [--instance <hex16>] [--limit N] [client flags]
