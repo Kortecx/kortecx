@@ -24,6 +24,7 @@ and gate with its `run_conformance` harness (Extension Acceptance Gate items
 | Crate | Provider | Tools | Status |
 |---|---|---|---|
 | `kx-connector-gmail` | Gmail | `search` · `read` · `draft` · `send` | connector shipped (PR-G0); core wiring pending (below) |
+| `kx-connector-discord` | Discord | `send_message` · `read_channel` · `list_channels` | connector shipped; core wiring pending (below) |
 
 ### `kx-connector-gmail`
 
@@ -48,6 +49,35 @@ kx connections fire --name gmail --tool search --args '{"query":"is:unread"}'
 Offline/CI mode: set `KX_GMAIL_FAKE=1` for deterministic canned responses (no
 network, no credential) — used by the unit tests and the conformance gate. A live
 GR15/GR24 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real credential).
+
+### `kx-connector-discord`
+
+A newline-delimited JSON-RPC 2.0 stdio MCP server. Credential-by-reference (D81):
+a Discord **bot token** is injected out-of-band as the env var
+`KX_DISCORD_CREDENTIAL` (JSON `{"bot_token":"…"}`); the connector calls the Discord
+REST API with an `Authorization: Bot <token>` header **inside its own process**. The
+secret value never appears in a reply, a log, or an error. Channel/guild ids are
+validated as bare snowflakes (digits only) before any request is built, so a path
+separator can never smuggle into the URL.
+
+Register it against a running `kx serve`:
+
+```sh
+kx secrets set --name KX_DISCORD_CREDENTIAL \
+  --value '{"bot_token":"…"}'
+kx connections add --name discord \
+  --command kx-connector-discord \
+  --credential-ref KX_DISCORD_CREDENTIAL
+# an agent granted discord/* can now fire the tools:
+kx connections fire --name discord --tool list_channels --args '{"guild_id":"…"}'
+kx connections fire --name discord --tool send_message \
+  --args '{"channel_id":"…","content":"hello from kortecx"}'
+```
+
+Offline/CI mode: set `KX_DISCORD_FAKE=1` for deterministic canned responses (no
+network, no credential) — used by the unit tests and the conformance gate. A live
+GR15/GR24 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real bot token +
+`KX_DISCORD_TEST_GUILD_ID`).
 
 ---
 

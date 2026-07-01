@@ -105,7 +105,8 @@ notes    = "D170 foundation seams (after the connector SDK): the local secret st
 [[feature]]
 id       = "autonomy-safety-gates"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "267"
 branch   = "feat/autonomy-safety-gates"
 covers   = [
   "D114 HITL pre-action approval: off-DAG journal Approval fact (kind 10, Requested→Granted/Denied/Expired; journal v14→v15) + ReactRound.require_approval posture; deterministic recovery-stable request_id",
@@ -122,7 +123,8 @@ notes    = "The autonomy safety gates (D114 + M11): the last safety prerequisite
 [[feature]]
 id       = "rc4c-2a-rerank-substrate"
 lane     = "oss"
-state    = "in-review"
+state    = "merged"
+pr       = "275"
 branch   = "feat/rc4c-2a-rerank-substrate"
 covers   = [
   "ReRankRound durable journal fact (kind 11, journal v15→v16) + ReRankOutcome{Pending|Reranked{permutation}|FailedClosed}; hand-rolled encode/decode + v15→v16 pure-passthrough migration + pinning test (schema_version_is_v16)",
@@ -152,7 +154,8 @@ notes    = "RC4c-2 SPLIT (RC4c-2b): the LIVE coordinator rerank-turn (both react
 [[feature]]
 id       = "gmail-integration"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "276"
 branch   = "feat/gmail-connector-sidecar"
 covers   = [
   "crates/kx-connector-gmail: a bundled Gmail MCP connector — a standalone [[bin]] stdio JSON-RPC 2.0 server (initialize -> tools/list -> tools/call) exposing gmail/{search,read,draft,send}; FFI-free (serde_json/ureq/base64/thiserror only), NO kx-* runtime dependency (not in the gateway or frozen-trio closure)",
@@ -161,3 +164,69 @@ covers   = [
 ]
 inherits = ["connector-extension-sdk", "integrations-foundation"]
 notes    = "PR-G0 (extension lane, isolated per the user's core/extension split): the FIRST bundled app-connector sidecar. Digest 7d22d4bd invariant (a0_guard PASS — the crate is an external process, outside the projection workspace); frozen-trio untouched; no proto/journal change; Cargo.lock += only the crate node (no new external crate; serde_json `raw_value` feature adds no dep); cargo-deny clean. Runtime behaviour = a dialed external MCP process (bucket i). NEXT (separate sessions, core changes): G1 first-class Gmail Integration UI/CLI/SDK, G2 App-pointer->run wiring (references.connections + guards.secret_scope), G3 cross-instance import."
+
+[[feature]]
+id       = "discord-connector"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/connector-discord"
+covers   = [
+  "integrations/kx-connector-discord: a bundled Discord MCP connector — a standalone [[bin]] stdio JSON-RPC 2.0 server (initialize -> tools/list -> tools/call) exposing discord/{send_message,read_channel,list_channels}; FFI-free (serde/serde_json/ureq/thiserror only, no base64), NO kx-* runtime dependency (not in the gateway or frozen-trio closure)",
+  "credential-by-reference (D81): a bot token injected as KX_DISCORD_CREDENTIAL ({bot_token}), sent as `Authorization: Bot <token>` INSIDE the sidecar; secret never in a reply/log/error; snowflake-id guard (digits-only channel_id/guild_id) blocks URL path-injection + a 2000-char content bound",
+  "offline KX_DISCORD_FAKE mode (canned responses) → deterministic unit tests + the run_conformance gate (Extension Acceptance Gate items 3/5/7/10) with a live-#[ignore] witness deferred to registration",
+]
+inherits = ["connector-extension-sdk", "integrations-foundation", "gmail-integration"]
+notes    = "The SECOND bundled app-connector sidecar (the template the Slack/Notion connectors clone). Extension lane, isolated per the core/extension split. Digest 7d22d4bd invariant (a0_guard PASS — external process outside the projection workspace); frozen-trio untouched; no proto/journal change; Cargo.lock += only the crate node (all deps already in the tree — no new external crate); cargo-deny clean. Runtime behaviour = a dialed external MCP process. Usable TODAY via `kx connections add --command kx-connector-discord --credential-ref KX_DISCORD_CREDENTIAL`; first-class/by-pointer UX lands with G1/G2/G3 below."
+
+[[feature]]
+id       = "slack-connector"
+lane     = "oss"
+state    = "planned"
+covers   = [
+  "integrations/kx-connector-slack: a bundled Slack MCP connector modelled on kx-connector-discord — slack/{post_message,read_channel,search,list_channels}; bot-token (xoxb-) credential-by-ref KX_SLACK_CREDENTIAL; FFI-free leaf, no kx-* dep",
+]
+inherits = ["discord-connector"]
+notes    = "Extension lane, same template as discord-connector. Zero core blast radius (digest 7d22d4bd invariant, frozen-trio untouched, no proto/journal change)."
+
+[[feature]]
+id       = "notion-connector"
+lane     = "oss"
+state    = "planned"
+covers   = [
+  "integrations/kx-connector-notion: a bundled Notion MCP connector modelled on kx-connector-discord — notion/{search,read_page,create_page,append_block}; integration-token credential-by-ref KX_NOTION_CREDENTIAL; FFI-free leaf, no kx-* dep",
+]
+inherits = ["discord-connector"]
+notes    = "Extension lane, same template as discord-connector. Zero core blast radius (digest 7d22d4bd invariant, frozen-trio untouched, no proto/journal change)."
+
+[[feature]]
+id       = "first-class-integrations"
+lane     = "oss"
+state    = "planned"
+covers   = [
+  "G1 — curated first-class Integration providers (Gmail/Discord/Slack/Notion) in the Integrations UI section + `kx integrations` CLI + Py/TS SDK helpers, over the EXISTING RegisterMcpServer + PutSecret RPCs (no new proto): a 'Connect <provider>' form that stores the secret by name + registers the connection",
+  "optional small static provider catalog (provider id -> command + credential schema + tool list) so the UI/CLI can render a curated 'Connect' flow instead of the generic 'add MCP server' form",
+]
+inherits = ["discord-connector", "integrations-foundation"]
+notes    = "LOW blast radius: mostly client-side curation over existing RPCs. Reuses ui/src/components/tools/ConnectionsPanel.tsx + use-connections/use-secrets + crates/kx-cli/src/verbs/{connections,secrets}.rs. Off-journal; digest 7d22d4bd invariant. Shared UI/CLI/SDK files ⇒ serialize on the shared lane (after RC4c-2b)."
+
+[[feature]]
+id       = "app-pointer-run-resolution"
+lane     = "oss"
+state    = "planned"
+covers   = [
+  "G2 — carry the App envelope's references.connections + guards.secret_scope through the bind/run path so a running App resolves its connection-pointers to the caller's OWN registered connection (by name) and narrows the run warrant's SecretScope::AllowList to the App's secret_scope names",
+  "RecipeBinder::bind gains an app-references parameter (gateway-core seam bump + HostRecipeBinder + mocks); a connection-by-name lookup seam; bind-time warrant secret_scope intersection",
+]
+inherits = ["first-class-integrations", "gmail-integration"]
+notes    = "MEDIUM blast radius: touches the hot bind path (every Invoke) + the app-run handler + an additive proto field. Off-journal + digest 7d22d4bd invariant (connections/secrets off-DAG; the resolved warrant must produce identical journal bytes — recovery-tested). The load-bearing gap for 'an App uses its integration pointer'. Shared CORE lane ⇒ serialize with RC4c-2b."
+
+[[feature]]
+id       = "cross-instance-app-import"
+lane     = "oss"
+state    = "planned"
+covers   = [
+  "G3 — `kx app import <file>` + an additive import RPC (proto currently states 'NO cross-instance import') that re-binds a shared kortecx.app/v1 envelope against the IMPORTER's own by-name connections/secrets, with a 'missing integration' UX listing what the importer must configure",
+  "import validation: authority-leak already prevented by AppEnvelope::validate + secret_leak.rs; credential-namespace collision (importer's secret wins); warrant/principal spoofing (importer's warrant must cover the App's requested grants, server-side, before bind)",
+]
+inherits = ["app-pointer-run-resolution"]
+notes    = "MEDIUM blast radius + a real security surface (security review required). The 'share an App to others; the runtime uses THEIR own integration details by pointer' story. Off-journal + additive (no journal fact); digest 7d22d4bd invariant. Per-INSTANCE model (each person runs their own kx serve) is the OSS path; multiple users on ONE instance with isolated per-person credentials = Cloud (D129)."

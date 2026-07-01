@@ -65,6 +65,7 @@ members = [
     # dependency, kept under `integrations/` (not `crates/`) to separate the
     # extension surface from the core library crates. See `integrations/README.md`.
     "integrations/kx-connector-gmail",
+    "integrations/kx-connector-discord",
 ]
 exclude = [
     "kx-cloud",
