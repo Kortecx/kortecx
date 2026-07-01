@@ -16,8 +16,18 @@ const noopMutation = { mutate: vi.fn(), isPending: false, isError: false, data: 
 vi.mock("../../src/kx/use-memory", () => ({
   useMemories: () => ({
     data: [
-      { memoryId: "aa".repeat(32), kind: "episodic", text: "the user asked about pricing", isDecayed: false },
-      { memoryId: "bb".repeat(32), kind: "semantic", text: "an old, decayed fact", isDecayed: true },
+      {
+        memoryId: "aa".repeat(32),
+        kind: "episodic",
+        text: "the user asked about pricing",
+        isDecayed: false,
+      },
+      {
+        memoryId: "bb".repeat(32),
+        kind: "semantic",
+        text: "an old, decayed fact",
+        isDecayed: true,
+      },
     ],
     isError: false,
   }),
