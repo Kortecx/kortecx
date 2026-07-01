@@ -91,6 +91,7 @@ mod tests {
             grounded_in: vec![],
             rerank_best_index: best_index,
             rerank_top_k: top_k,
+            memory_must_recall: vec![],
             ideal_turns: 2,
             ideal_tool_calls: 1,
         }

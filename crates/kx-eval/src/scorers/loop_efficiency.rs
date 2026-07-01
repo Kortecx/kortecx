@@ -80,6 +80,7 @@ mod tests {
             grounded_in: vec![],
             rerank_best_index: None,
             rerank_top_k: 0,
+            memory_must_recall: vec![],
             ideal_turns,
             ideal_tool_calls,
         }

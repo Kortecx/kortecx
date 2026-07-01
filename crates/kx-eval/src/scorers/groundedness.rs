@@ -67,6 +67,7 @@ mod tests {
             grounded_in: tokens.iter().map(|s| (*s).to_string()).collect(),
             rerank_best_index: None,
             rerank_top_k: 0,
+            memory_must_recall: vec![],
             ideal_turns: 2,
             ideal_tool_calls: 1,
         }
