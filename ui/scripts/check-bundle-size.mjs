@@ -16,6 +16,10 @@
  *     for the secrets (PutSecret/ListSecretNames/DeleteSecret) + triggers
  *     (Register/List/Deregister/Submit/TestTrigger) RPC surface, plus the
  *     `client.secrets`/`client.triggers` methods + result types (~6 KiB eager).
+ *   - 624 KiB → 640 KiB (RC5b durable-memory decay/consolidation): +6 proto messages
+ *     (DecayMemory/MemoryStats/RestoreMemory req+resp) + MemorySummary salience/
+ *     tombstone fields, plus the `client.memory.{decay,stats,restore,consolidate}`
+ *     methods + DecayReport/MemoryStats/DecayCandidate result types (~2 KiB eager).
  *
  * Exit 1 over budget. The printed table doubles as the GR10 evidence blob.
  */
@@ -26,7 +30,7 @@ import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(UI_ROOT, "dist");
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 638_976);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 655_360);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {
