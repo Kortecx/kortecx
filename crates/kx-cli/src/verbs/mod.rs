@@ -28,6 +28,7 @@ pub mod projection;
 pub mod react;
 pub mod recipe;
 pub mod replan;
+pub mod rerank;
 pub mod runs;
 pub mod secrets;
 pub mod signatures;

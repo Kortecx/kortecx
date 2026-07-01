@@ -49,6 +49,25 @@ pub fn encode_context_items(items: &[ContextItemRef]) -> Vec<u8> {
     out
 }
 
+/// Encode context items PRESERVING their input order (RC4c-2b) — the SAME wire format
+/// as [`encode_context_items`] (`u32-le(name.len()) ‖ name ‖ content_ref[32]` per item)
+/// but WITHOUT the canonical sort/dedup, so a RERANKED order survives round-trip
+/// ([`decode_context_items`] returns items in encoded order, and the serve assembler
+/// renders in that order). Used ONLY for the off-digest, OUT-OF-BAND reranked-delivery
+/// bundle (the RC4c-2b chat-rag suppression gate) — NEVER for an identity-bearing entry
+/// config, which must stay canonical (a different order must not change a `MoteId`).
+#[must_use]
+pub fn encode_context_items_ordered(items: &[ContextItemRef]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for it in items {
+        let name = it.name.as_bytes();
+        out.extend_from_slice(&u32::try_from(name.len()).unwrap_or(u32::MAX).to_le_bytes());
+        out.extend_from_slice(name);
+        out.extend_from_slice(&it.content_ref);
+    }
+    out
+}
+
 /// Decode the canonical value back into items, in canonical (encoded) order. A
 /// malformed / truncated buffer decodes the items it can and stops (total +
 /// panic-free); the assembler treats the result as advisory context (the

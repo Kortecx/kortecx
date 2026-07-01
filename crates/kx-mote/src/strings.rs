@@ -188,6 +188,39 @@ pub const IMAGE_REF_KEY: &str = "image_ref";
 /// no prior Mote carries this key, so adding the constant moves no existing digest.
 pub const RETRIEVAL_MODE_KEY: &str = "kx.retrieval.mode";
 
+/// RC4c-2b: the single canonical [`ConfigKey`] *name* marking a Mote as a live LLM
+/// listwise RERANK TURN — the coordinator-materialized, off-DAG Mote that reorders a
+/// RAG retrieval's candidate passages by relevance (permutation output). The value is
+/// the run-salt (`instance_id`), mirroring [`REACT_TURN_KEY`]; the gateway routes on
+/// key PRESENCE to the rerank decode arm (checked BEFORE the react arm, so a rerank
+/// turn is never mistaken for a react turn — off-budget by construction).
+///
+/// Inserted ONLY by `react_shape::build_rerank_turn`; no prior Mote carries this key,
+/// so adding the constant moves no existing digest. Like every routing marker it lives
+/// in `config_subset` ⇒ folds into [`crate::MoteDef::hash`] → `MoteId` (D53), so it
+/// cannot be dropped in transit without changing the identity the coordinator
+/// re-derives (structurally fail-closed). SN-8: the marker alone fires nothing — the
+/// coordinator's `settle_rerank_rounds` keys only off its own `ReRankRound` facts and
+/// re-decodes the permutation on the sole writer.
+pub const RERANK_TURN_KEY: &str = "kx.rerank.turn";
+
+/// RC4c-2b: the [`ConfigKey`] *name* under which a live rerank turn carries the
+/// content-store ref (a 32-byte [`crate::MoteId`]-style [`ContentRef`]) of the QUERY
+/// its candidates are scored against. Identity-bearing (a different query ⇒ a distinct
+/// rerank `MoteId`) and recovery-stable: the worker resolves the query text from this
+/// ref at dispatch, and the value equals the `ReRankRound` anchor's `query_ref` so a
+/// recovered turn re-derives byte-identically. Present ONLY on a rerank turn.
+pub const RERANK_QUERY_KEY: &str = "kx.rerank.query";
+
+/// RC4c-2b: the [`ConfigKey`] *name* under which a live rerank turn carries the
+/// content-store ref (32 bytes) of the BASE retrieval results whose passages are
+/// reranked (the committed `retrieve@1` observation for react-rag, or the grounded
+/// context bundle for chat-rag). Identity-bearing + recovery-stable (equals the
+/// `ReRankRound` anchor's `base_results_ref`); the worker resolves the candidate
+/// passages from it to render the rerank prompt. Present ONLY on a rerank turn, so
+/// adding the constant moves no existing digest.
+pub const RERANK_CANDIDATES_KEY: &str = "kx.rerank.candidates";
+
 /// The stable position of a Mote in its DAG.
 ///
 /// Assigned at DAG-compile time (workflow SDK) or derived from a topology

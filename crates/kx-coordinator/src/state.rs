@@ -22,16 +22,18 @@ use std::sync::Arc;
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
 use kx_journal::{
     approval_request_id, ApprovalState, FailureReason, IdempotencyClassTag, Journal, JournalEntry,
-    ReactBranch, RepudiationReason, ResolvedCapabilityRecord, ResolvedKindTag, INSTANCE_ID_LEN,
+    ReRankOutcome, ReactBranch, RepudiationReason, ResolvedCapabilityRecord, ResolvedKindTag,
+    INSTANCE_ID_LEN,
 };
 use kx_mote::{
     ConfigKey, EdgeKind, EffectPattern, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName,
     ToolVersion, CONTEXT_ITEMS_KEY, IMAGE_REF_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY,
     REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY, REACT_REQUIRE_APPROVAL_KEY, REACT_TURN_KEY,
-    TOOL_ARGS_KEY,
+    RERANK_CANDIDATES_KEY, RERANK_TURN_KEY, TOOL_ARGS_KEY,
 };
 use kx_projection::{
-    ContentStoreVerdicts, MoteState, Projection, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
+    ContentStoreVerdicts, MoteState, Projection, ReRankRoundRecord, ReactRoundRecord, RegisterMote,
+    ReplanRoundRecord,
 };
 use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
@@ -773,6 +775,13 @@ fn lease_ready(
             if is_agentic_launch(mote) {
                 continue;
             }
+            // RC4c-2b: HOLD a grounded chat-rag/vision-rag answer until its durable
+            // rerank settles (the suppression gate) — it is edge-free + ready-at-submit,
+            // so without this it would dispatch on the base order before the rerank.
+            // Un-held (settled or not-eligible) answers fall through unchanged.
+            if chat_rag_rerank_holds(mote, warrant, projection, store) {
+                continue;
+            }
             if warrant.executor_class == executor_class {
                 if placement.place(&mote_id) == worker {
                     preferred.push(mote_id);
@@ -788,7 +797,8 @@ fn lease_ready(
         .take(max)
         .filter_map(|id| {
             submitted_defs.get(&id).and_then(|(mote, warrant)| {
-                let parent_results = resolve_parent_context(mote, projection, submitted_defs);
+                let parent_results =
+                    resolve_parent_context(mote, projection, submitted_defs, store);
                 // PR-2d-2: a ReAct OBSERVATION leases WITH its coordinator-
                 // validated args or NOT AT ALL — a transient resolution fault
                 // (store I/O) skips the item this poll (fail-safe retry, the
@@ -829,7 +839,11 @@ fn lease_ready(
                 // ReAct turn from the chain's turn-0 anchor (pure over committed facts,
                 // edge-free). `None` for turn 0 / a non-react leaf (which carries its
                 // bundle inline) ⇒ the wire payload is byte-identical to pre-PR-9d.
-                let context_items = resolve_react_context_items(mote, projection);
+                // RC4c-2b: a settled-Reranked chat-rag/vision-rag answer delivers its
+                // RERANKED bundle out-of-band (replacing the inline base order via the
+                // dispatch double-prepend fix); every other Mote is unchanged.
+                let context_items = chat_rag_delivered_context(mote, warrant, projection, store)
+                    .or_else(|| resolve_react_context_items(mote, projection));
                 // AGENTIC-VISION: re-derive the run's grounding-image ref for a SUCCESSOR
                 // ReAct turn from the chain's turn-0 anchor (pure over committed facts,
                 // edge-free). `None` for turn 0 / a non-vision leaf (which carries its
@@ -1278,6 +1292,7 @@ fn resolve_parent_context(
     mote: &Mote,
     projection: &Projection,
     submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
+    store: Option<&LocalFsContentStore>,
 ) -> Vec<(MoteId, ContentRef)> {
     // PR-2c-3 critic-live (B1): a native deterministic critic evaluates its declared
     // check over EXACTLY its producer's committed bytes (`critic_for`) — byte-for-byte
@@ -1373,7 +1388,14 @@ fn resolve_parent_context(
                             r.turn_mote_id,
                         );
                         if let Some(obs_ref) = projection.result_ref_of(&obs.id) {
-                            out.push((obs.id, obs_ref));
+                            // RC4c-2b: deliver the RERANKED passage order for a retrieve
+                            // observation (when durably reranked); else the base order.
+                            // Off-DAG/off-digest — a presentation-only reorder of the
+                            // committed observation (the identity/obs.id is unchanged).
+                            let delivered =
+                                rerank_delivered_ref(projection, store, &instance_id, obs_ref)
+                                    .unwrap_or(obs_ref);
+                            out.push((obs.id, delivered));
                         }
                     }
                 }
@@ -1718,7 +1740,7 @@ struct Dispatch {
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
 /// commands until every sender drops (the channel closes on coordinator shutdown).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn core_loop<J: Journal>(
     journal: &J,
     store: Option<&LocalFsContentStore>,
@@ -1754,6 +1776,27 @@ fn core_loop<J: Journal>(
     // PR-2d-1: re-derive the live ReAct chains from committed facts (re-insert the
     // in-flight turn, re-decode + settle the committed tail). A no-op when no run
     // has anchored a chain (the has_react_turn sentinel) — the demo is untouched.
+    // RC4c-2b: re-insert any in-flight rerank Mote lost on restart (rebuilt from its
+    // durable `ReRankRound` anchor), then settle any that committed before the crash.
+    // A no-op when no run has anchored a rerank. Runs BEFORE the react recovery so a
+    // reranked observation's frozen order is ready when the react chain re-drives.
+    recover_rerank_chain(
+        journal,
+        store,
+        &mut projection,
+        &mut folded_through,
+        &mut dispatch,
+    );
+    // RC4c-2b: re-anchor + re-stage held chat-rag reranks after a restart (idempotent;
+    // a held answer re-inserted into `dispatch.defs` re-drives its rerank). No-op when
+    // the flag is off / no eligible answer.
+    settle_chat_rag_reranks(
+        journal,
+        store,
+        &mut projection,
+        &mut folded_through,
+        &mut dispatch,
+    );
     let mut react_cache = ReactSettleCache::default();
     recover_react_chain(
         journal,
@@ -3149,6 +3192,14 @@ fn run_settle_passes<J: Journal>(
 ) {
     settle_replan_rounds(journal, store, projection, folded_through, dispatch);
     settle_agentic_launches(journal, store, projection, folded_through, dispatch);
+    // RC4c-2b: freeze any COMMITTED rerank BEFORE the react settle, so the react-rag
+    // gate sees the frozen outcome and advances in the SAME drain (mirrors the
+    // agentic-launch pass running before the react settle). Zero-cost when idle.
+    settle_rerank_rounds(journal, store, projection, folded_through);
+    // RC4c-2b: anchor + materialize the rerank for any held chat-rag/vision-rag answer,
+    // and stage its reordered bundle once settled (runs AFTER the generic settle freezes
+    // a committed chat-rag rerank). Zero-cost when the flag is off / no eligible answer.
+    settle_chat_rag_reranks(journal, store, projection, folded_through, dispatch);
     settle_react_rounds(
         journal,
         store,
@@ -4088,6 +4139,23 @@ fn progress_tool_batch<J: Journal>(
         all_committed = false;
     }
     if all_committed {
+        // RC4c-2b react-rag gate: durably rerank the retrieved passages (if enabled)
+        // BEFORE advancing, so the next turn reasons over the reranked order. In flight
+        // ⇒ Active (re-check next pass); settled / not-applicable ⇒ fall through. The
+        // rerank is OFF-BUDGET (a `ReRankRound` fact, never a `ReactRound`).
+        if let Some(status) = maybe_gate_on_rerank(
+            journal,
+            store,
+            projection,
+            folded_through,
+            dispatch,
+            anchor,
+            turn,
+            turn_mote_id,
+            calls,
+        ) {
+            return status;
+        }
         // BACK-PRESSURE: every observation in the batch has committed ⇒ advance to
         // the next turn under the budget gate (re-prompt ONCE with all N results).
         return advance_react_chain(
@@ -4747,6 +4815,768 @@ fn recover_react_chain<J: Journal>(
         cache,
         tool_registry,
     );
+}
+
+// ===========================================================================
+// RC4c-2b — the live LLM RERANK-turn coordinator drivers.
+//
+// A faithful, OFF-BUDGET mirror of the ReAct-turn sole-writer lifecycle for a
+// SINGLE bounded rerank per retrieval: write a durable `ReRankRound` anchor
+// (Pending) BEFORE materializing the edge-free rerank Mote (fact-before-materialize
+// crash order), settle it by re-decoding the COMMITTED permutation ON THE SOLE
+// WRITER (the `parse_permutation` authority), and recover an in-flight rerank by
+// re-inserting the byte-identical Mote from its anchor (R49). The rerank never
+// touches a `ReactRound` fact ⇒ it consumes NO `max_turns`/`max_tool_calls`, and its
+// distinct `RERANK_TURN_KEY` namespace keeps it off the react settle/recover paths.
+// ===========================================================================
+
+/// Write the durable turn-0 `ReRankRound` anchor (`Pending`) for a rerank Mote —
+/// fact-BEFORE-materialize, so a crash between anchor and commit re-derives the
+/// in-flight Mote from committed facts on recovery. Idempotent: an existing anchor
+/// (any outcome) for this `rerank_mote_id` is a no-op (replay / re-drive). The
+/// `base_results_ref` / `query_ref` / `warrant_ref` are already content-store refs
+/// (the caller staged them); `candidate_count` is the `Permutation(n)` bound.
+#[allow(clippy::too_many_arguments)]
+fn write_rerank_anchor<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    rerank_mote: &Mote,
+    instance_id: [u8; INSTANCE_ID_LEN],
+    base_results_ref: ContentRef,
+    query_ref: ContentRef,
+    warrant_ref: ContentRef,
+    candidate_count: u32,
+) -> Result<(), CoordinatorError> {
+    if projection.latest_rerank_round(&rerank_mote.id).is_some() {
+        return Ok(()); // already anchored (idempotent re-drive / replay)
+    }
+    let entry = JournalEntry::ReRankRound {
+        round: 0,
+        rerank_mote_id: rerank_mote.id,
+        instance_id,
+        base_results_ref,
+        query_ref,
+        warrant_ref,
+        model_id: rerank_mote.def.model_id.0.clone(),
+        candidate_count,
+        outcome: ReRankOutcome::Pending,
+        seq: 0,
+    };
+    let durable = journal.append(entry)?;
+    let seq = durable.seq();
+    if seq > *folded_through {
+        projection.fold(&durable)?;
+        *folded_through = seq;
+    }
+    Ok(())
+}
+
+/// Append the FROZEN settled outcome for a rerank round (idempotent: a non-`Pending`
+/// outcome already recorded for this `rerank_mote_id` is a no-op — a recovery
+/// re-drive re-reads the decision, never re-samples). The settle is the SOLE
+/// authority: the worker committed the RAW permutation; the coordinator re-decodes.
+fn append_rerank_outcome<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    anchor: &ReRankRoundRecord,
+    outcome: ReRankOutcome,
+) {
+    if projection
+        .latest_rerank_round(&anchor.rerank_mote_id)
+        .is_some_and(|r| !matches!(r.outcome, ReRankOutcome::Pending))
+    {
+        return; // already settled (recovery re-drive)
+    }
+    let entry = JournalEntry::ReRankRound {
+        round: anchor.round,
+        rerank_mote_id: anchor.rerank_mote_id,
+        instance_id: anchor.instance_id,
+        base_results_ref: anchor.base_results_ref,
+        query_ref: anchor.query_ref,
+        warrant_ref: anchor.warrant_ref,
+        model_id: anchor.model_id.clone(),
+        candidate_count: anchor.candidate_count,
+        outcome,
+        seq: 0,
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                *folded_through = seq;
+            }
+        }
+        Err(error) => tracing::error!(%error, "failed to append ReRankRound outcome fact"),
+    }
+}
+
+/// The distinct Pending frontier: one `ReRankRoundRecord` per `rerank_mote_id` whose
+/// LATEST outcome is still `Pending` (the work not yet settled). Bounded + cheap
+/// (reranks are opt-in + off by default; a run writes at most a few).
+fn pending_rerank_frontier(projection: &Projection) -> Vec<ReRankRoundRecord> {
+    let mut seen: BTreeSet<MoteId> = BTreeSet::new();
+    let mut out = Vec::new();
+    for r in projection.rerank_rounds() {
+        if !seen.insert(r.rerank_mote_id) {
+            continue;
+        }
+        if let Some(latest) = projection.latest_rerank_round(&r.rerank_mote_id) {
+            if matches!(latest.outcome, ReRankOutcome::Pending) {
+                out.push(latest.clone());
+            }
+        }
+    }
+    out
+}
+
+/// Settle every Pending rerank round whose Mote reached a TERMINAL state: decode a
+/// COMMITTED permutation on the sole writer (`parse_permutation`) → freeze
+/// `Reranked`/`FailedClosed`; a FAILED Mote (crash OR permanent) freezes
+/// `FailedClosed` (best-effort — a rerank is never worth wedging an answerable RAG
+/// turn, unlike a react observation whose permanent failure dead-letters the chain).
+/// In-flight Motes stay `Pending` (re-checked next pass; recovery re-inserts them).
+/// Zero-cost when no rerank is pending.
+fn settle_rerank_rounds<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+) {
+    let pending = pending_rerank_frontier(projection);
+    if pending.is_empty() {
+        return;
+    }
+    let Some(store) = store else {
+        return;
+    };
+    for anchor in pending {
+        let state = projection.state_of(&anchor.rerank_mote_id);
+        let outcome = if state == MoteState::Committed {
+            match projection
+                .result_ref_of(&anchor.rerank_mote_id)
+                .and_then(|r| store.get(&r).ok())
+            {
+                Some(bytes) => {
+                    let text = String::from_utf8_lossy(bytes.as_ref());
+                    match kx_toolcall::parse_permutation(&text, anchor.candidate_count as usize) {
+                        Some(perm) => ReRankOutcome::Reranked {
+                            permutation: perm
+                                .into_iter()
+                                .map(|i| u32::try_from(i).unwrap_or(u32::MAX))
+                                .collect(),
+                        },
+                        None => ReRankOutcome::FailedClosed, // fail-closed to upstream order
+                    }
+                }
+                None => continue, // transient store fault ⇒ re-check next pass
+            }
+        } else if is_terminal(state) {
+            // A failed rerank Mote (crash flavor OR permanent) ⇒ fail-closed. A rerank
+            // is best-effort + off-budget, so it never dead-letters the RAG chain.
+            ReRankOutcome::FailedClosed
+        } else {
+            continue; // Pending / Scheduled / in-flight ⇒ re-check next pass
+        };
+        // On a successful rerank, PRE-STAGE the reordered delivery blob so the read-path
+        // `resolve_parent_context` (which recomputes the SAME deterministic
+        // content-addressed ref) finds the content. `base_results_ref` = the retrieve
+        // observation itself; a shape/parse fault silently leaves the base order. Pure
+        // content-store put (off-DAG, off-digest); idempotent (content-addressed).
+        if let ReRankOutcome::Reranked { permutation } = &outcome {
+            if let Ok(obs_bytes) = store.get(&anchor.base_results_ref) {
+                if let Some(reordered) =
+                    reorder_retrieval_observation(obs_bytes.as_ref(), permutation)
+                {
+                    let _ = store.put(&reordered);
+                }
+            }
+        }
+        append_rerank_outcome(journal, projection, folded_through, &anchor, outcome);
+    }
+}
+
+/// Recover the live rerank chains after a restart: re-insert each in-flight rerank
+/// Mote (its anchor is `Pending` and its Mote is not yet terminal) so a worker
+/// re-leases it, rebuilt byte-identically from the anchor (R49 — the id is derived
+/// from the committed `(instance_id, base_results_ref, query_ref)`; a divergence
+/// fail-closes). Then settle any that committed before the crash. Zero-cost when no
+/// rerank is pending. Reuses [`materialize_react_turn`] — a generic edge-free
+/// register+admit (the rerank Mote is edge-free like a react turn).
+fn recover_rerank_chain<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+) {
+    let Some(store) = store else {
+        return;
+    };
+    let pending = pending_rerank_frontier(projection);
+    if pending.is_empty() {
+        return;
+    }
+    for anchor in &pending {
+        if is_terminal(projection.state_of(&anchor.rerank_mote_id)) {
+            continue; // committed/failed ⇒ settle (below) decodes/freezes it
+        }
+        let Ok(warrant_bytes) = store.get(&anchor.warrant_ref) else {
+            continue;
+        };
+        let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
+            continue;
+        };
+        let rebuilt = crate::react_shape::build_rerank_turn(
+            &ModelId(anchor.model_id.clone()),
+            &anchor.instance_id,
+            &anchor.base_results_ref,
+            &anchor.query_ref,
+            warrant.model_route.max_output_tokens,
+        );
+        if rebuilt.id != anchor.rerank_mote_id {
+            tracing::error!(
+                expected = ?anchor.rerank_mote_id,
+                rebuilt = ?rebuilt.id,
+                "rerank turn rebuild diverged from the durable fact — not re-inserting (fail-closed)"
+            );
+            continue;
+        }
+        materialize_react_turn(
+            projection,
+            dispatch,
+            Some(store),
+            &rebuilt,
+            anchor.warrant_ref,
+            warrant,
+        );
+    }
+    // Complete any rerank that committed before the crash (idempotent).
+    settle_rerank_rounds(journal, Some(store), projection, folded_through);
+}
+
+/// RC4c-2b: the serve-wide LLM-rerank enable flag — `KX_SERVE_RAG_LLM_RERANK` truthy
+/// (`1`/`true`/`yes`/`on`, case-insensitive) ⇒ the react-rag / chat-rag paths insert a
+/// DURABLE LLM rerank of the retrieved passages before the model reasons. A host-config
+/// read OFF the identity/digest path (checked ONLY when a rerank is first anchored; a
+/// committed rerank always completes on recovery regardless of the flag). Default-off
+/// ⇒ byte-identical to today (the canonical demo writes no rerank). Mirrors
+/// [`serve_require_approval_default`].
+fn serve_llm_rerank_enabled() -> bool {
+    std::env::var("KX_SERVE_RAG_LLM_RERANK")
+        .ok()
+        .is_some_and(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+/// Parse a committed `retrieve@1` observation JSON for the rerank inputs: the query
+/// text + the candidate count. The ONE coupling to the retrieve observation's JSON
+/// shape (gated strictly on the `retrieve@1` tool id at the call site); generic
+/// `serde_json` so it never depends on the gateway's private `Observation` struct.
+/// `None` on any parse fault (the caller fails open to a base-order advance).
+fn parse_retrieve_query_and_count(obs_bytes: &[u8]) -> Option<(String, usize)> {
+    let v: serde_json::Value = serde_json::from_slice(obs_bytes).ok()?;
+    let query = v.get("query")?.as_str()?.to_string();
+    let n = v.get("passages")?.as_array()?.len();
+    Some((query, n))
+}
+
+/// Apply a rerank `permutation` to a `retrieve@1` observation's `passages` array,
+/// re-serialized deterministically. Produced by `settle_rerank_rounds` (sole writer,
+/// stores the bytes) and re-derived byte-identically by the read-path
+/// `resolve_parent_context` (content-addressed, so the same ref resolves). `None` on
+/// a shape drift / parse fault (the caller falls back to the base order).
+fn reorder_retrieval_observation(obs_bytes: &[u8], permutation: &[u32]) -> Option<Vec<u8>> {
+    let mut v: serde_json::Value = serde_json::from_slice(obs_bytes).ok()?;
+    let passages = v.get("passages")?.as_array()?;
+    if passages.len() != permutation.len() {
+        return None; // shape drift ⇒ leave the base order
+    }
+    let reordered: Vec<serde_json::Value> = permutation
+        .iter()
+        .map(|&i| passages.get(i as usize).cloned())
+        .collect::<Option<Vec<_>>>()?;
+    v["passages"] = serde_json::Value::Array(reordered);
+    serde_json::to_vec(&v).ok()
+}
+
+/// The reranked delivery ref for a retrieve observation (read path): if a `Reranked`
+/// `ReRankRound` exists for `obs_ref` (= its `base_results_ref`), the content-addressed
+/// ref of its reordered passages (already staged by `settle_rerank_rounds`), else
+/// `None` (base order). Cheap early-out when the run wrote no rerank.
+fn rerank_delivered_ref(
+    projection: &Projection,
+    store: Option<&LocalFsContentStore>,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    obs_ref: ContentRef,
+) -> Option<ContentRef> {
+    let store = store?;
+    // Zero-cost early-out: a run that wrote no rerank fact returns immediately.
+    projection.rerank_rounds_of(instance_id).next()?;
+    let rr = projection.latest_rerank_round_by_base(instance_id, &obs_ref)?;
+    let ReRankOutcome::Reranked { permutation } = &rr.outcome else {
+        return None; // Pending / FailedClosed ⇒ base order
+    };
+    let obs_bytes = store.get(&obs_ref).ok()?;
+    let reordered = reorder_retrieval_observation(obs_bytes.as_ref(), permutation)?;
+    Some(ContentRef::of(&reordered))
+}
+
+/// RC4c-2b react-rag gate: if LLM rerank is enabled and this batch committed a
+/// `retrieve@1` observation, ensure its passages are DURABLY reranked before the chain
+/// advances. Returns `Some(Active)` while the rerank is in flight (re-check next pass),
+/// or `None` when no rerank applies OR it has settled (proceed to advance — a settled
+/// `Reranked` reorders the next turn's trajectory via `resolve_parent_context`; a
+/// `FailedClosed` leaves the base order). OFF-BUDGET + best-effort: every error path
+/// falls through to `None` (advance with the base order — never wedge an answerable
+/// RAG turn). Only the FIRST retrieve call in a batch is reranked (react-rag proposes
+/// `retrieve` alone; a rare multi-retrieve batch reranks the first, the rest base order).
+#[allow(clippy::too_many_arguments)]
+fn maybe_gate_on_rerank<J: Journal>(
+    journal: &J,
+    store: &LocalFsContentStore,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    anchor: &ReactRoundRecord,
+    turn: u32,
+    turn_mote_id: MoteId,
+    calls: &[(String, String)],
+) -> Option<ReactChainStatus> {
+    if !serve_llm_rerank_enabled() {
+        return None;
+    }
+    let call_index = calls
+        .iter()
+        .position(|(id, ver)| id == "retrieve" && ver == "1")?;
+    let obs = crate::react_shape::build_chain_tool(
+        &ModelId(anchor.model_id.clone()),
+        &ToolName("retrieve".to_string()),
+        &ToolVersion("1".to_string()),
+        turn,
+        &anchor.instance_id,
+        anchor.step_salt,
+        u32::try_from(call_index).unwrap_or(u32::MAX),
+        turn_mote_id,
+    );
+    let obs_ref = projection.result_ref_of(&obs.id)?; // committed retrieve observation
+    let obs_bytes = store.get(&obs_ref).ok()?;
+    let (query, n) = parse_retrieve_query_and_count(obs_bytes.as_ref())?;
+    if n < 2 {
+        return None; // 0/1 passages ⇒ nothing to reorder
+    }
+    let Ok(query_ref) = store.put(query.as_bytes()) else {
+        return None; // store fault ⇒ fail-open to base-order advance
+    };
+    let warrant = {
+        let bytes = store.get(&anchor.warrant_ref).ok()?;
+        decode_warrant(bytes.as_ref()).ok()?
+    };
+    // base_results_ref = the committed retrieve observation itself (the passages the
+    // model reorders — no scores, SN-8); the worker + settle read it back.
+    let rerank_mote = crate::react_shape::build_rerank_turn(
+        &ModelId(anchor.model_id.clone()),
+        &anchor.instance_id,
+        &obs_ref,
+        &query_ref,
+        warrant.model_route.max_output_tokens,
+    );
+    match projection
+        .latest_rerank_round(&rerank_mote.id)
+        .map(|r| r.outcome.clone())
+    {
+        None => {
+            // First sighting: fact BEFORE materialize (crash-safety order). A fault ⇒
+            // fail-open (advance with the base order — the rerank is best-effort).
+            if write_rerank_anchor(
+                journal,
+                projection,
+                folded_through,
+                &rerank_mote,
+                anchor.instance_id,
+                obs_ref,
+                query_ref,
+                anchor.warrant_ref,
+                u32::try_from(n).unwrap_or(u32::MAX),
+            )
+            .is_err()
+            {
+                return None;
+            }
+            materialize_react_turn(
+                projection,
+                dispatch,
+                Some(store),
+                &rerank_mote,
+                anchor.warrant_ref,
+                warrant,
+            );
+            Some(ReactChainStatus::Active) // wait for the rerank to commit + settle
+        }
+        Some(ReRankOutcome::Pending) => Some(ReactChainStatus::Active), // in flight
+        Some(ReRankOutcome::Reranked { .. } | ReRankOutcome::FailedClosed) => None, // settled ⇒ advance
+    }
+}
+
+// ===========================================================================
+// RC4c-2b — the chat-rag / vision-rag SUPPRESSION GATE (durable LLM rerank of a
+// grounded single-step answer's context bundle, BEFORE it dispatches).
+//
+// A chat-rag / vision-rag answer is an EDGE-FREE model step grounded INLINE at bind
+// (`config_subset[CONTEXT_ITEMS_KEY]`) — ready-at-submit, no react chain to gate on.
+// So the coordinator HOLDS it from lease (mirroring the agentic-launch park) until a
+// durable `ReRankRound` over its grounded passages settles, then delivers the
+// reranked bundle OUT-OF-BAND (`WorkItem.context_items`, the successor-turn rail) —
+// the answer Mote's IDENTITY is untouched (its inline base-order bundle is the
+// fallback), so this is fully digest-invariant even for the answer. Reuses the SAME
+// `build_rerank_turn` + `settle_rerank_rounds` machinery; the query is the answer's
+// `PROMPT`, the candidates its grounded context items.
+// ===========================================================================
+
+/// `true` iff `mote` is a rerank-eligible grounded answer — an EDGE-FREE model step
+/// (chat-rag / vision-rag) carrying a grounding bundle + a prompt, and NOT a
+/// react / rerank / authored-tool / critic / shaper Mote. (The serve rerank flag +
+/// the settled-outcome check are applied by the callers.)
+fn is_chat_rag_rerank_answer(mote: &Mote) -> bool {
+    mote.parents.is_empty()
+        && mote.def.critic_check.is_none()
+        && !mote.def.is_topology_shaper
+        && mote.def.tool_contract.is_empty()
+        && mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(PROMPT_KEY.to_string()))
+        && mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+        && !mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(REACT_TURN_KEY.to_string()))
+        && !mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(RERANK_TURN_KEY.to_string()))
+        && !mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(RERANK_CANDIDATES_KEY.to_string()))
+}
+
+/// Prepare a chat-rag answer's rerank inputs from its INLINE grounding bundle: build a
+/// synthetic `{query, passages:[{ref,text}]}` observation (so the worker + settle reuse
+/// the react-rag rerank path VERBATIM) + the query ref. `None` when the bundle has < 2
+/// items (nothing to reorder) or a store fault. `query` = the answer's `PROMPT`.
+fn chat_rag_rerank_prep(
+    mote: &Mote,
+    store: &LocalFsContentStore,
+) -> Option<(ContentRef, ContentRef, u32)> {
+    let bundle = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))?;
+    let items = kx_mote::decode_context_items(&bundle.0);
+    if items.len() < 2 {
+        return None;
+    }
+    let query = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(PROMPT_KEY.to_string()))
+        .map(|v| String::from_utf8_lossy(&v.0).into_owned())?;
+    let passages: Vec<serde_json::Value> = items
+        .iter()
+        .map(|it| {
+            let cref = ContentRef::from_bytes(it.content_ref);
+            let text = store
+                .get(&cref)
+                .ok()
+                .map(|b| String::from_utf8_lossy(b.as_ref()).into_owned())
+                .unwrap_or_default();
+            serde_json::json!({ "ref": cref.to_hex(), "text": text })
+        })
+        .collect();
+    let obs = serde_json::json!({ "query": query, "passages": passages });
+    let obs_bytes = serde_json::to_vec(&obs).ok()?;
+    let base_results_ref = store.put(&obs_bytes).ok()?;
+    let query_ref = store.put(query.as_bytes()).ok()?;
+    Some((
+        base_results_ref,
+        query_ref,
+        u32::try_from(items.len()).unwrap_or(u32::MAX),
+    ))
+}
+
+/// Apply a rerank `permutation` to a grounding `CONTEXT_ITEMS` bundle — decode →
+/// reorder the items → re-encode. Produced by `settle_chat_rag_reranks` (stores the
+/// bytes) + re-derived byte-identically on the read path (content-addressed). `None`
+/// on a length mismatch (the caller falls back to the base order).
+fn reorder_context_items_bundle(bundle_bytes: &[u8], permutation: &[u32]) -> Option<Vec<u8>> {
+    let items = kx_mote::decode_context_items(bundle_bytes);
+    if items.len() != permutation.len() {
+        return None;
+    }
+    let reordered: Vec<kx_mote::ContextItemRef> = permutation
+        .iter()
+        .map(|&i| items.get(i as usize).cloned())
+        .collect::<Option<Vec<_>>>()?;
+    // ORDER-PRESERVING encode: `encode_context_items` canonically SORTS (which would
+    // discard the rerank); the reranked bundle is off-digest out-of-band delivery, so
+    // it uses the ordered variant, and the serve assembler renders in decoded order.
+    Some(kx_mote::encode_context_items_ordered(&reordered))
+}
+
+/// The rerank `MoteId` for a chat-rag answer (its salt = the run instance ‖ its
+/// synthetic base-results ref ‖ its query ref). `None` when not eligible / no run
+/// registered / < 2 items. Shared by the lease hold, the delivery, and the settle pass
+/// so all three agree by construction (the `max_output_tokens` MUST be the answer's
+/// warrant cap in every caller).
+fn chat_rag_rerank_id(
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    projection: &Projection,
+    store: &LocalFsContentStore,
+) -> Option<(MoteId, ContentRef, ContentRef, u32, [u8; INSTANCE_ID_LEN])> {
+    let (instance_id, _) = projection.run_registration()?;
+    let (base_ref, query_ref, n) = chat_rag_rerank_prep(mote, store)?;
+    let id = crate::react_shape::build_rerank_turn(
+        &mote.def.model_id,
+        &instance_id,
+        &base_ref,
+        &query_ref,
+        warrant.model_route.max_output_tokens,
+    )
+    .id;
+    Some((id, base_ref, query_ref, n, instance_id))
+}
+
+/// Whether to HOLD a chat-rag answer from lease this poll: eligible + serve rerank
+/// enabled + its `ReRankRound` has not reached a terminal outcome. Holds even BEFORE
+/// the rerank is anchored (`None`), so a lease that races ahead of the settle pass
+/// never dispatches the answer on the base order.
+fn chat_rag_rerank_holds(
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    projection: &Projection,
+    store: Option<&LocalFsContentStore>,
+) -> bool {
+    if !serve_llm_rerank_enabled() || !is_chat_rag_rerank_answer(mote) {
+        return false;
+    }
+    let Some(store) = store else {
+        return false;
+    };
+    let Some((id, ..)) = chat_rag_rerank_id(mote, warrant, projection, store) else {
+        return false; // < 2 items / no run ⇒ nothing to hold for
+    };
+    !matches!(
+        projection.latest_rerank_round(&id).map(|r| &r.outcome),
+        Some(ReRankOutcome::Reranked { .. } | ReRankOutcome::FailedClosed)
+    )
+}
+
+/// The reranked `CONTEXT_ITEMS` bundle ref to deliver OUT-OF-BAND for a chat-rag answer
+/// (read path): `Some(reordered_ref)` when its rerank settled `Reranked` (the bytes
+/// were staged by `settle_chat_rag_reranks`; the ref is recomputed deterministically),
+/// else `None` (deliver nothing ⇒ the worker uses the INLINE base-order bundle —
+/// `FailedClosed` or not-eligible).
+fn chat_rag_delivered_context(
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    projection: &Projection,
+    store: Option<&LocalFsContentStore>,
+) -> Option<ContentRef> {
+    if !serve_llm_rerank_enabled() || !is_chat_rag_rerank_answer(mote) {
+        return None;
+    }
+    let store = store?;
+    let (id, ..) = chat_rag_rerank_id(mote, warrant, projection, store)?;
+    let rr = projection.latest_rerank_round(&id)?;
+    let ReRankOutcome::Reranked { permutation } = &rr.outcome else {
+        return None;
+    };
+    let bundle = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))?;
+    let reordered = reorder_context_items_bundle(&bundle.0, permutation)?;
+    Some(ContentRef::of(&reordered))
+}
+
+/// Settle pass: for every ADMITTED (not-yet-committed) chat-rag answer whose rerank is
+/// enabled, ANCHOR + materialize its rerank Mote (first sighting) and STAGE the reordered
+/// bundle once it settles `Reranked`. Zero-cost when the flag is off / no eligible answer
+/// is admitted. Idempotent (anchor + stage dedup on the durable fact).
+fn settle_chat_rag_reranks<J: Journal>(
+    journal: &J,
+    store: Option<&LocalFsContentStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+) {
+    if !serve_llm_rerank_enabled() {
+        return;
+    }
+    let Some(store) = store else {
+        return;
+    };
+    if projection.run_registration().is_none() {
+        return;
+    }
+    // Snapshot the eligible answers (clone out to avoid borrowing `dispatch` while we
+    // mutate `projection`/`dispatch` below).
+    let answers: Vec<(Mote, WarrantSpec)> = dispatch
+        .defs
+        .values()
+        .filter(|(m, _)| is_chat_rag_rerank_answer(m) && !is_terminal(projection.state_of(&m.id)))
+        .cloned()
+        .collect();
+    for (answer, warrant) in answers {
+        let Some((id, base_ref, query_ref, n, instance_id)) =
+            chat_rag_rerank_id(&answer, &warrant, projection, store)
+        else {
+            continue;
+        };
+        match projection
+            .latest_rerank_round(&id)
+            .map(|r| r.outcome.clone())
+        {
+            None => {
+                // First sighting: encode the answer's warrant + anchor (fact BEFORE
+                // materialize) + admit the rerank Mote. Fail-open on a fault (the answer
+                // stays held; a later pass retries — or the hold's own eligibility lapses).
+                let Ok(warrant_ref) = store.put(&encode_warrant(&warrant)) else {
+                    continue;
+                };
+                let rerank_mote = crate::react_shape::build_rerank_turn(
+                    &answer.def.model_id,
+                    &instance_id,
+                    &base_ref,
+                    &query_ref,
+                    warrant.model_route.max_output_tokens,
+                );
+                if write_rerank_anchor(
+                    journal,
+                    projection,
+                    folded_through,
+                    &rerank_mote,
+                    instance_id,
+                    base_ref,
+                    query_ref,
+                    warrant_ref,
+                    n,
+                )
+                .is_ok()
+                {
+                    materialize_react_turn(
+                        projection,
+                        dispatch,
+                        Some(store),
+                        &rerank_mote,
+                        warrant_ref,
+                        warrant,
+                    );
+                }
+            }
+            Some(ReRankOutcome::Reranked { permutation }) => {
+                // Stage the reordered bundle so the lease read path's deterministic ref
+                // resolves. Idempotent (content-addressed put).
+                if let Some(bundle) = answer
+                    .def
+                    .config_subset
+                    .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+                {
+                    if let Some(reordered) = reorder_context_items_bundle(&bundle.0, &permutation) {
+                        let _ = store.put(&reordered);
+                    }
+                }
+            }
+            Some(ReRankOutcome::Pending | ReRankOutcome::FailedClosed) => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod rerank_delivery_tests {
+    use super::*;
+
+    #[test]
+    fn parse_and_reorder_retrieval_observation() {
+        let obs = br#"{"dataset":"kb","query":"how does recovery work?","passages":[{"ref":"a","text":"zero"},{"ref":"b","text":"one"},{"ref":"c","text":"two"}]}"#;
+        let (q, n) = parse_retrieve_query_and_count(obs).expect("parses");
+        assert_eq!(q, "how does recovery work?");
+        assert_eq!(n, 3);
+        // Reorder by [2,0,1] ⇒ passages become [two, zero, one]; query + dataset preserved.
+        let reordered = reorder_retrieval_observation(obs, &[2, 0, 1]).expect("reorders");
+        let v: serde_json::Value = serde_json::from_slice(&reordered).unwrap();
+        let texts: Vec<&str> = v["passages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(texts, ["two", "zero", "one"]);
+        assert_eq!(v["query"], "how does recovery work?");
+        assert_eq!(v["dataset"], "kb");
+        // Identity permutation is order-preserving.
+        let same = reorder_retrieval_observation(obs, &[0, 1, 2]).expect("identity");
+        let v2: serde_json::Value = serde_json::from_slice(&same).unwrap();
+        let t2: Vec<&str> = v2["passages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(t2, ["zero", "one", "two"]);
+    }
+
+    #[test]
+    fn reorder_retrieval_observation_fails_closed_on_shape_drift() {
+        let obs = br#"{"query":"q","passages":[{"text":"a"},{"text":"b"}]}"#;
+        // A permutation whose length differs from the passage count ⇒ None (base order).
+        assert!(reorder_retrieval_observation(obs, &[0]).is_none());
+        assert!(reorder_retrieval_observation(obs, &[0, 1, 2]).is_none());
+        // Non-JSON / missing fields ⇒ None (never panics on a malformed observation).
+        assert!(reorder_retrieval_observation(b"not json", &[0, 1]).is_none());
+        assert!(parse_retrieve_query_and_count(b"not json").is_none());
+        assert!(parse_retrieve_query_and_count(br#"{"passages":[]}"#).is_none());
+        // no query
+    }
+
+    #[test]
+    fn reorder_context_items_bundle_permutes_and_fails_closed() {
+        use kx_mote::{decode_context_items, encode_context_items, ContextItemRef};
+        let items = vec![
+            ContextItemRef {
+                name: "a".into(),
+                content_ref: [1; 32],
+            },
+            ContextItemRef {
+                name: "b".into(),
+                content_ref: [2; 32],
+            },
+            ContextItemRef {
+                name: "c".into(),
+                content_ref: [3; 32],
+            },
+        ];
+        let bundle = encode_context_items(&items);
+        // Reorder [2,0,1] ⇒ c, a, b.
+        let reordered = reorder_context_items_bundle(&bundle, &[2, 0, 1]).expect("reorders");
+        let out = decode_context_items(&reordered);
+        assert_eq!(
+            out.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(),
+            ["c", "a", "b"]
+        );
+        // A length mismatch fails closed to the base order.
+        assert!(reorder_context_items_bundle(&bundle, &[0, 1]).is_none());
+    }
 }
 
 /// Resolve the warrant's tool grants ONCE per fresh submit (canonical

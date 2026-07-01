@@ -81,7 +81,9 @@ mod topology;
 pub use attempt::{
     is_legal_transition, transition, AttemptState, IllegalTransition, ALL_ATTEMPT_STATES,
 };
-pub use context_items::{decode_context_items, encode_context_items, ContextItemRef};
+pub use context_items::{
+    decode_context_items, encode_context_items, encode_context_items_ordered, ContextItemRef,
+};
 pub use def::{canonical_config, derive_mote_id, MoteDef, MOTE_DEF_SCHEMA_VERSION};
 pub use edge::{EdgeKind, EdgeMeta, ParentRef};
 pub use effect::EffectPattern;
@@ -94,7 +96,7 @@ pub use strings::{
     ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, ToolVersion, CONTEXT_ITEMS_KEY,
     IMAGE_REF_KEY, JUDGE_RUBRIC_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY, REACT_MAX_TOOL_CALLS_KEY,
     REACT_MAX_TURNS_KEY, REACT_REQUIRE_APPROVAL_KEY, REACT_TURN_KEY, REACT_UNCONSTRAINED_KEY,
-    RETRIEVAL_MODE_KEY, TOOL_ARGS_KEY,
+    RERANK_CANDIDATES_KEY, RERANK_QUERY_KEY, RERANK_TURN_KEY, RETRIEVAL_MODE_KEY, TOOL_ARGS_KEY,
 };
 pub use topology::{ChildDescriptor, RoleId, TopologyDecision};
 

@@ -2,15 +2,18 @@ import {
   AlertSummary,
   CaptureRecord,
   MoteTelemetryRow,
+  ReRankTurn,
   ReactTurn,
   ReplanRound,
 } from "@kortecx/sdk/web";
 import { describe, expect, it } from "vitest";
 import {
+  rerankPermutationLabel,
   summarizeAlerts,
   summarizeCaptures,
   summarizeReact,
   summarizeReplan,
+  summarizeRerank,
   summarizeRuns,
   summarizeTelemetryByModel,
   tallyRows,
@@ -79,6 +82,43 @@ describe("summarizeReact", () => {
     expect(s.byBranch.tool).toBe(2);
     expect(s.byBranch.answer).toBe(1);
     expect(s.byModel.qwen3).toBe(3);
+  });
+});
+
+describe("summarizeRerank", () => {
+  it("counts outcomes, models, and enforced reorderings", () => {
+    const turns = [
+      new ReRankTurn(0, "aa", "i0", "qwen3", "reranked", 3, [2, 0, 1], 30),
+      new ReRankTurn(0, "bb", "i0", "qwen3", "pending", 3, [], 28),
+      new ReRankTurn(0, "cc", "i1", "gemma3", "failed_closed", 4, [], 26),
+    ];
+    const s = summarizeRerank(turns);
+    expect(s.total).toBe(3);
+    expect(s.reranked).toBe(1);
+    expect(s.byOutcome.reranked).toBe(1);
+    expect(s.byOutcome.pending).toBe(1);
+    expect(s.byOutcome.failed_closed).toBe(1);
+    expect(s.byModel.qwen3).toBe(2);
+    expect(s.byModel.gemma3).toBe(1);
+  });
+
+  it("empty → zeroed rollup", () => {
+    const s = summarizeRerank([]);
+    expect(s.total).toBe(0);
+    expect(s.reranked).toBe(0);
+    expect(tallyRows(s.byOutcome)).toEqual([]);
+  });
+});
+
+describe("rerankPermutationLabel", () => {
+  it("an empty permutation (non-reranked outcome) → '—'", () => {
+    expect(rerankPermutationLabel([])).toBe("—");
+  });
+  it("a short permutation renders space-joined", () => {
+    expect(rerankPermutationLabel([2, 0, 1])).toBe("2 0 1");
+  });
+  it("a long permutation is elided with its length", () => {
+    expect(rerankPermutationLabel([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])).toBe("0 1 2 3 4 5 6 7 … (10)");
   });
 });
 

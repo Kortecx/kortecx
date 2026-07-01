@@ -22,6 +22,7 @@ export interface MockClientImpl {
   listAssetGrants?: (...args: unknown[]) => Promise<unknown>;
   listReplanRounds?: (...args: unknown[]) => Promise<unknown>;
   listReactTurns?: (...args: unknown[]) => Promise<unknown>;
+  listRerankTurns?: (...args: unknown[]) => Promise<unknown>;
   listCaptureRecords?: (...args: unknown[]) => Promise<unknown>;
   getMoteDetail?: (...args: unknown[]) => Promise<unknown>;
   getContentBatch?: (...args: unknown[]) => Promise<unknown>;
@@ -89,6 +90,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   );
   const listReactTurns = vi.fn(
     impl.listReactTurns ?? (async () => ({ turns: [], hasMore: false })),
+  );
+  const listRerankTurns = vi.fn(
+    impl.listRerankTurns ?? (async () => ({ turns: [], hasMore: false })),
   );
   const listCaptureRecords = vi.fn(
     impl.listCaptureRecords ?? (async () => ({ records: [], hasMore: false })),
@@ -174,6 +178,7 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listAssetGrants,
     listReplanRounds,
     listReactTurns,
+    listRerankTurns,
     listCaptureRecords,
     getMoteDetail,
     getContentBatch,
@@ -220,6 +225,7 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listAssetGrants,
     listReplanRounds,
     listReactTurns,
+    listRerankTurns,
     listCaptureRecords,
     getMoteDetail,
     getContentBatch,

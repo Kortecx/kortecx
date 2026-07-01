@@ -58,6 +58,9 @@ export { TokenChunk } from "./tokens.js";
 export { ReplanRound } from "./replan.js";
 export type { ReplanRoundPage } from "./replan.js";
 
+export { ReRankTurn } from "./rerank.js";
+export type { ReRankTurnPage } from "./rerank.js";
+
 export { CaptureRecord } from "./capture.js";
 export type { CaptureRecordPage } from "./capture.js";
 

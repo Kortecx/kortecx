@@ -79,6 +79,7 @@ import { MoteDetail } from "./motes.js";
 import { ReactTurn, type ReactTurnPage } from "./react.js";
 import { RecipeForm, RecipeInfo, ScoredRecipe } from "./recipes.js";
 import { ReplanRound, type ReplanRoundPage } from "./replan.js";
+import { ReRankTurn, type ReRankTurnPage } from "./rerank.js";
 import { Result, Run } from "./run.js";
 import { RunInputs, type RunPage, RunSummary } from "./runs.js";
 import { SecretNameRow, type SecretNamesPage } from "./secrets.js";
@@ -1289,6 +1290,22 @@ export abstract class KxClientBase {
   async listReplanRounds(opts: { limit?: number } = {}): Promise<ReplanRoundPage> {
     const resp = await rpc(this.grpc.listReplanRounds({ limit: opts.limit }));
     return { rounds: resp.rounds.map((r) => ReplanRound.fromProto(r)), hasMore: resp.hasMore };
+  }
+
+  /**
+   * Enumerate a live listwise LLM re-rank loop's durable turn facts (newest-first,
+   * paginated; RC4c-2) — the queryable re-rank history with the enforced
+   * permutation per settled turn. `instanceId` (hex) scopes to one run; absent
+   * enumerates every run. The server clamps `limit` to its max page. An old
+   * gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async listRerankTurns(
+    opts: { instanceId?: string; limit?: number } = {},
+  ): Promise<ReRankTurnPage> {
+    const instanceId =
+      opts.instanceId === undefined ? undefined : asBytes(opts.instanceId, INSTANCE_LEN);
+    const resp = await rpc(this.grpc.listReRankTurns({ instanceId, limit: opts.limit }));
+    return { turns: resp.turns.map((t) => ReRankTurn.fromProto(t)), hasMore: resp.hasMore };
   }
 
   /**

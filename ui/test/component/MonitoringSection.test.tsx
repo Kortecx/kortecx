@@ -1,4 +1,4 @@
-import { MoteTelemetryRow, ReplanRound } from "@kortecx/sdk/web";
+import { MoteTelemetryRow, ReRankTurn, ReplanRound } from "@kortecx/sdk/web";
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MonitoringSection } from "../../src/components/sections/MonitoringSection";
@@ -27,6 +27,26 @@ describe("MonitoringSection", () => {
     // The replan model rolls up into a real tally row + a trail-table row (not a
     // placeholder) — both surface the resolved model id.
     await waitFor(() => expect(screen.getAllByText("qwen3").length).toBeGreaterThan(0));
+  });
+
+  it("folds the live re-rank trail into a real ReRank rounds panel", async () => {
+    const mock = makeMockClient({
+      listRerankTurns: async () => ({
+        turns: [new ReRankTurn(0, "aabb", "i1", "gemma3", "reranked", 3, [2, 0, 1], 41)],
+        hasMore: false,
+      }),
+    });
+    render(<MonitoringSection />, { wrapper: connectedWrapper(mock.client) });
+    // The re-rank turn rolls up into the outcome tally AND a trail-table row (not a
+    // placeholder) — both surface the resolved model + settled outcome. ("ReRank
+    // rounds" is BOTH the metric-card label and the panel heading, so target the h2.)
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "ReRank rounds" })).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getAllByText("gemma3").length).toBeGreaterThan(0));
+    expect(screen.getAllByText("reranked").length).toBeGreaterThan(0);
+    // The enforced permutation is rendered honestly (the reordered source indices).
+    expect(screen.getByText("2 0 1")).toBeInTheDocument();
   });
 
   it("exposes the Runs tab (POC-5c: run history moved here from Workflows)", async () => {

@@ -133,15 +133,17 @@ Two reranking layers improve precision after the BM25 + dense fusion:
   while preserving the fused relevance order. It runs on every live retrieval path (the Data Lab
   query, `chat-rag`, and the agentic `retrieve` tool) and is controllable per query
   (`--rerank on|off`; see [Data Lab → Hybrid retrieval](./datasets.md#hybrid-retrieval--chunking)).
-- **LLM listwise rerank (model-graded, authored RAG pipelines).** A model reorders the retrieved
+- **LLM listwise rerank (model-graded, LIVE in `kx serve`).** A model reorders the retrieved
   candidates by emitting a **permutation** of their indices (Ollama applies a strict whole-response
   JSON `format`; llama.cpp relies on the model + parser — see
   [engine notes](./local-inference-engines.md)). It is **fail-closed**: any non-permutation output
   keeps the deterministic order, so a rerank can never reorder into garbage (the model proposes, the
-  runtime enforces — SN-8). It completes the authored
-  RAG quartet **rewrite → retrieve (hybrid) → rerank → assemble**. Reaching the LLM rerank from the
-  live `kx serve` chat / agentic loop (a durable, replayable coordinator rerank-turn) is the next
-  step on the roadmap; the live paths use the deterministic MMR rerank today.
+  runtime enforces — SN-8). It completes the RAG quartet **rewrite → retrieve (hybrid) → rerank →
+  assemble**. As of RC4c-2b it runs **live in `kx serve`** as a **durable, replayable coordinator
+  rerank-turn** — enabled with `KX_SERVE_RAG_LLM_RERANK=1`, applied to both the agentic `retrieve`
+  loop (react-rag) and the grounded `chat-rag`/`vision-rag` answer, and recorded as an auditable
+  `ReRankRound` fact. See **[LLM rerank](./llm-rerank.md)** for the full contract + the
+  CLI/SDK/UI chaining. The deterministic MMR rerank remains the always-on default.
 
 See also: [Data Lab](./datasets.md) · [Agents & reasoning](./agent-runner.md) ·
 [Tools](./tools.md) · [Local inference engines](./local-inference-engines.md).

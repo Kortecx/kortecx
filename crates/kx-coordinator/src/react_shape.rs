@@ -28,7 +28,8 @@ use kx_journal::INSTANCE_ID_LEN;
 use kx_mote::{
     ConfigKey, ConfigVal, EdgeMeta, EffectPattern, GraphPosition, InferenceParams, InputDataId,
     LogicRef, ModelId, Mote, MoteDef, MoteId, NdClass, ParentRef, PromptTemplateHash, ToolName,
-    ToolVersion, MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY, REACT_TURN_KEY,
+    ToolVersion, MOTE_DEF_SCHEMA_VERSION, PROMPT_KEY, REACT_TURN_KEY, RERANK_CANDIDATES_KEY,
+    RERANK_QUERY_KEY, RERANK_TURN_KEY,
 };
 use smallvec::SmallVec;
 
@@ -282,6 +283,108 @@ pub(crate) fn build_react_tool(
             edge: EdgeMeta::data(),
         })
         .collect::<SmallVec<[ParentRef; 4]>>(),
+    )
+}
+
+// ===========================================================================
+// RC4c-2b — the live LLM RERANK turn builder.
+//
+// A rerank turn is a coordinator-materialized, OFF-DAG, OFF-BUDGET Mote that
+// reorders a RAG retrieval's candidate passages by relevance (a permutation).
+// It mirrors the ReAct-turn SHAPE (ROND, edge-free, worker-sampled →
+// coordinator-decoded) but is a SINGLE bounded turn per retrieval (no successor
+// chain, no `max_turns`/`max_tool_calls` consumption). Its identity namespace is
+// cryptographically distinct (`b"kx-rerank-turn"`), salted by the content-addressed
+// base results + query so each distinct retrieval reranks under a distinct identity.
+// ===========================================================================
+
+/// The 32-byte identity material for a live LLM RERANK turn (RC4c-2b):
+/// `blake3(b"kx-rerank-turn" ‖ instance_id ‖ base_results_ref ‖ query_ref)`.
+/// Cryptographically distinct from every react/agentic/shaper namespace (different
+/// domain tag). Salted by the (content-addressed) base results + query, so each
+/// distinct retrieval reranks under a distinct identity and two byte-identical
+/// retrievals in one run dedup to ONE rerank (idempotent — identical inputs yield the
+/// identical order). Both salts are recorded on the `ReRankRound` anchor, so recovery
+/// re-derives this material byte-identically (R49).
+#[must_use]
+pub(crate) fn rerank_turn_id_material(
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    base_results_ref: &ContentRef,
+    query_ref: &ContentRef,
+) -> [u8; 32] {
+    let mut material = b"kx-rerank-turn".to_vec();
+    material.extend_from_slice(instance_id);
+    material.extend_from_slice(base_results_ref.as_bytes());
+    material.extend_from_slice(query_ref.as_bytes());
+    *ContentRef::of(&material).as_bytes()
+}
+
+/// Build a live LLM RERANK turn `Mote` (RC4c-2b) — the coordinator-materialized,
+/// off-DAG Mote that reorders a RAG retrieval's candidate passages by relevance.
+///
+/// Shape mirrors [`build_react_turn`]: ROND (the model samples a permutation; the
+/// COMMITTED output is the served fact, re-decoded — never re-sampled — on replay),
+/// **EDGE-FREE** (empty parents — the candidates travel via `config_subset` refs, so
+/// the turn never moves the canonical digest via `encode_state` edges), NOT a topology
+/// shaper, no `tool_contract` (a rerank fires nothing; it PROPOSES an order the
+/// coordinator settle enforces). Three identity-bearing config values: the
+/// [`RERANK_TURN_KEY`] routing marker (value = `instance_id`, mirroring
+/// [`REACT_TURN_KEY`]), the [`RERANK_QUERY_KEY`] query ref, and the
+/// [`RERANK_CANDIDATES_KEY`] base-results ref. The worker's `run_rerank_turn` resolves
+/// both refs, renders the shared rerank prompt, arms `Grammar::Permutation(n)`
+/// OFF-MoteDef (digest-neutral, like the RC2 react grammar), and commits the RAW
+/// permutation; the coordinator's `settle_rerank_rounds` is the sole
+/// `parse_permutation` authority.
+///
+/// `max_output_tokens` is the warrant's output ceiling (identity-bearing, mirrors
+/// [`build_react_turn`]); the worker additionally bounds the decode by
+/// `kx_context_assembler::rerank_output_cap(n)` at dispatch.
+#[must_use]
+pub(crate) fn build_rerank_turn(
+    model_id: &ModelId,
+    instance_id: &[u8; INSTANCE_ID_LEN],
+    base_results_ref: &ContentRef,
+    query_ref: &ContentRef,
+    max_output_tokens: u32,
+) -> Mote {
+    let id_bytes = rerank_turn_id_material(instance_id, base_results_ref, query_ref);
+
+    let mut config_subset = BTreeMap::new();
+    config_subset.insert(
+        ConfigKey(RERANK_TURN_KEY.to_string()),
+        ConfigVal(instance_id.to_vec()),
+    );
+    config_subset.insert(
+        ConfigKey(RERANK_QUERY_KEY.to_string()),
+        ConfigVal(query_ref.as_bytes().to_vec()),
+    );
+    config_subset.insert(
+        ConfigKey(RERANK_CANDIDATES_KEY.to_string()),
+        ConfigVal(base_results_ref.as_bytes().to_vec()),
+    );
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(id_bytes),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes(id_bytes),
+        // No tool_contract: the rerank PROPOSES an order; it fires nothing.
+        tool_contract: BTreeMap::new(),
+        nd_class: NdClass::ReadOnlyNondet,
+        config_subset,
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams {
+            max_output_tokens,
+            ..InferenceParams::default()
+        },
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes(id_bytes),
+        GraphPosition(id_bytes.to_vec()),
+        SmallVec::new(),
     )
 }
 
@@ -618,6 +721,82 @@ mod tests {
         assert_ne!(build_react_turn(&model, "p2", 1, &[1; 16], 64).id, x.id);
         assert_ne!(build_react_turn(&model, "p", 2, &[1; 16], 64).id, x.id);
         assert_ne!(build_react_turn(&model, "p", 1, &[1; 16], 65).id, x.id);
+    }
+
+    // -----------------------------------------------------------------------
+    // RC4c-2b — live LLM rerank turn builder.
+    // -----------------------------------------------------------------------
+
+    /// The frozen golden `MoteId` for a rerank turn built from fixed inputs — a
+    /// regression pin (the rerank turn is serve-only, so there is NO harness twin;
+    /// this guards against accidental identity drift). Inputs: model
+    /// `kx-test:q8:deadbeef`, salt `[0x4d; 16]`, `base_results_ref =
+    /// ContentRef::of(b"base")`, `query_ref = ContentRef::of(b"query")`,
+    /// `max_output_tokens` 512.
+    const RERANK_TURN0_GOLDEN: &str =
+        "c2bc06a8f71290b6325a3214a68f44092f3aec25bb8c8ed6e29d5949bfac7565";
+
+    #[test]
+    fn rerank_turn_is_deterministic_edge_free_and_isolated() {
+        let model = ModelId("kx-test:q8:deadbeef".to_string());
+        let salt = [0x4d_u8; 16];
+        let base = ContentRef::of(b"base");
+        let query = ContentRef::of(b"query");
+        let turn = build_rerank_turn(&model, &salt, &base, &query, 512);
+        // Frozen identity.
+        assert_eq!(hex(turn.id.as_bytes()), RERANK_TURN0_GOLDEN);
+        // Off-DAG contract: edge-free, ROND, not a shaper, no tool_contract (fires nothing).
+        assert!(turn.parents.is_empty(), "a rerank turn MUST be edge-free");
+        assert!(!turn.def.is_topology_shaper);
+        assert!(turn.def.tool_contract.is_empty());
+        assert_eq!(turn.def.nd_class, NdClass::ReadOnlyNondet);
+        // The routing marker + the two candidate/query refs.
+        assert_eq!(
+            turn.def
+                .config_subset
+                .get(&ConfigKey(RERANK_TURN_KEY.to_string()))
+                .map(|v| v.0.clone()),
+            Some(salt.to_vec())
+        );
+        assert_eq!(
+            turn.def
+                .config_subset
+                .get(&ConfigKey(RERANK_QUERY_KEY.to_string()))
+                .map(|v| v.0.clone()),
+            Some(query.as_bytes().to_vec())
+        );
+        assert_eq!(
+            turn.def
+                .config_subset
+                .get(&ConfigKey(RERANK_CANDIDATES_KEY.to_string()))
+                .map(|v| v.0.clone()),
+            Some(base.as_bytes().to_vec())
+        );
+        // Deterministic + salted by (run, base_results, query).
+        assert_eq!(
+            build_rerank_turn(&model, &salt, &base, &query, 512).id,
+            turn.id
+        );
+        assert_ne!(
+            build_rerank_turn(&model, &[0x01; 16], &base, &query, 512).id,
+            turn.id,
+            "run-isolated"
+        );
+        assert_ne!(
+            build_rerank_turn(&model, &salt, &ContentRef::of(b"other"), &query, 512).id,
+            turn.id,
+            "base-results-salted"
+        );
+        assert_ne!(
+            build_rerank_turn(&model, &salt, &base, &ContentRef::of(b"other"), 512).id,
+            turn.id,
+            "query-salted"
+        );
+        // Cryptographically distinct namespace from the react turn at the same run-salt.
+        assert_ne!(
+            rerank_turn_id_material(&salt, &base, &query),
+            react_turn_id_material(&salt, 0)
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -1,8 +1,9 @@
 /**
  * Monitoring — the gateway-WIDE telemetry dashboard. Distinct from Activity (which is
  * run-scoped): this folds cross-run signals the gateway already exposes — run counts,
- * the self-correction trails (`ListReplanRounds` / `ListReactTurns`), the Morphic
- * action-capture stream (`ListCaptureRecords`), and liveness. Pure renderer: every
+ * the self-correction trails (`ListReplanRounds` / `ListReactTurns`), the listwise
+ * LLM re-rank trail (`ListReRankTurns`), the Morphic action-capture stream
+ * (`ListCaptureRecords`), and liveness. Pure renderer: every
  * number comes from `lib/monitoring.ts` over the hooks; each panel degrades to an
  * honest "not wired here" note when its RPC is unimplemented (never a hollow placeholder).
  *
@@ -22,6 +23,7 @@ import { type RunScopedRef, useResultMapMulti } from "../../kx/use-content-batch
 import { useEvalScore } from "../../kx/use-eval-score";
 import { useReactTurns } from "../../kx/use-react-turns";
 import { useReplanRounds } from "../../kx/use-replan-rounds";
+import { useRerankTurns } from "../../kx/use-rerank-turns";
 import { useRuns } from "../../kx/use-runs";
 import { useTelemetry } from "../../kx/use-telemetry";
 import { useTelemetrySummary } from "../../kx/use-telemetry-summary";
@@ -29,10 +31,12 @@ import { failureReasonLabel } from "../../lib/event-format";
 import { shortHex } from "../../lib/format";
 import {
   type Tally,
+  rerankPermutationLabel,
   summarizeAlerts,
   summarizeCaptures,
   summarizeReact,
   summarizeReplan,
+  summarizeRerank,
   summarizeRuns,
   summarizeTelemetryByModel,
   tallyRows,
@@ -602,12 +606,14 @@ function OverviewView() {
   const runs = useRuns();
   const replan = useReplanRounds();
   const react = useReactTurns();
+  const rerank = useRerankTurns();
   const capture = useCaptureRecords();
   const telemetry = useTelemetry({ pageSize: 1 });
 
   const runRollup = summarizeRuns(runs.runs);
   const replanSummary = summarizeReplan(replan.rounds);
   const reactSummary = summarizeReact(react.turns);
+  const rerankSummary = summarizeRerank(rerank.turns);
   const captureSummary = summarizeCaptures(capture.records);
   // Resolve the (bounded, 10-row) capture table's results to TEXT, grouped by
   // run (the records span runs; GetContentBatch is run-scoped). Telemetry stays
@@ -627,6 +633,7 @@ function OverviewView() {
     runs.refresh();
     void replan.refetch();
     void react.refetch();
+    void rerank.refetch();
     void capture.refetch();
     telemetry.refetch();
   }
@@ -644,6 +651,7 @@ function OverviewView() {
         <MetricCard label="Re-plan rounds" value={replanSummary.total} tone="scheduled" />
         <MetricCard label="ReAct turns" value={reactSummary.total} />
         <MetricCard label="Tool calls" value={reactSummary.toolCalls} />
+        <MetricCard label="ReRank rounds" value={rerankSummary.total} tone="info" />
         <MetricCard label="Captured actions" value={captureSummary.total} />
         <MetricCard
           label="Last mote wall ms"
@@ -711,6 +719,38 @@ function OverviewView() {
                     <td className="mono">{t.turn}</td>
                     <td>{t.branch || "—"}</td>
                     <td className="mono">{t.toolId ? `${t.toolId}@${t.toolVersion}` : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
+        </Panel>
+
+        <Panel
+          title="ReRank rounds"
+          hint={`${rerankSummary.total} turns · ${rerankSummary.reranked} reranked`}
+          notWired={rerank.notWired}
+        >
+          <TallyList tally={rerankSummary.byOutcome} empty="No re-rank turns yet." />
+          {rerank.turns.length > 0 ? (
+            <table className="trail-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Outcome</th>
+                  <th>Model</th>
+                  <th>Candidates</th>
+                  <th>Permutation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rerank.turns.slice(0, 8).map((t) => (
+                  <tr key={`${t.seq}-${t.round}`}>
+                    <td className="mono">{t.round}</td>
+                    <td className="mono">{t.outcome || "—"}</td>
+                    <td className="mono">{t.modelId || "—"}</td>
+                    <td className="mono">{t.candidateCount}</td>
+                    <td className="mono">{rerankPermutationLabel(t.permutation)}</td>
                   </tr>
                 ))}
               </tbody>

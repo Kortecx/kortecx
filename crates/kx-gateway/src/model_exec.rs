@@ -150,6 +150,37 @@ fn build_tool_grammar(warrant: &WarrantSpec) -> Option<Grammar> {
     ToolEnvelopeSpec::new(tools).to_raw().ok().map(Grammar::new)
 }
 
+/// RC4c-2b: read a 32-byte `ContentRef` from a Mote's `config_subset` at `key` — the
+/// rerank turn's base-results / query refs are stored as raw 32-byte values by
+/// `react_shape::build_rerank_turn`. `None` on a missing key / bad length.
+fn config_ref(mote: &Mote, key: &str) -> Option<ContentRef> {
+    mote.def
+        .config_subset
+        .get(&ConfigKey(key.to_string()))
+        .and_then(|v| <[u8; 32]>::try_from(v.0.as_slice()).ok())
+        .map(ContentRef::from_bytes)
+}
+
+/// RC4c-2b: parse a committed `retrieve@1` observation JSON for its passage TEXTS
+/// (the rerank candidates), in retrieval order — one entry per passage (a
+/// text-less passage yields `""`, so the count MATCHES the coordinator's
+/// `candidate_count`, avoiding a length-mismatch fail-closed). Generic `serde_json`
+/// (no coupling to the gateway's private `Observation` struct); `None` on a parse fault.
+fn parse_retrieve_passages(obs_bytes: &[u8]) -> Option<Vec<String>> {
+    let v: serde_json::Value = serde_json::from_slice(obs_bytes).ok()?;
+    let arr = v.get("passages")?.as_array()?;
+    Some(
+        arr.iter()
+            .map(|p| {
+                p.get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect(),
+    )
+}
+
 /// Build the shaper runtime from the resolved serve backend. The `worker` role maps
 /// (in the recipe allowlist) to a PURE model step and (in the role registry) to the
 /// shaper's own warrant — so a lowered child inherits the model route and runs its
@@ -1259,39 +1290,34 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             }
             _ => instruction,
         };
-        // PR-7: prepend a run's ATTACHED context-bundle items (the entry Mote's
-        // identity-bearing `config_subset[CONTEXT_ITEMS_KEY]`), AHEAD of the F-7
-        // parent context. Absent ⇒ byte-identical to pre-PR-7 (the canonical run
-        // attaches no bundle); a missing ref / overflow fails closed.
-        let instruction = match mote
-            .def
-            .config_subset
-            .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
-        {
-            Some(encoded) => {
-                let items = decode_context_items(&encoded.0);
-                let context = crate::assemble_serve::assemble_context_items(&items, &self.store)
-                    .map_err(|e| internal(&format!("assemble context items: {e}")))?;
-                format!("{context}{instruction}")
-            }
-            None => instruction,
-        };
-        // PR-9d (per-turn context-carry): a SUCCESSOR ReAct turn carries NO inline
-        // CONTEXT_ITEMS_KEY (the seed-swap drops it), so its grounding context arrives
-        // OUT-OF-BAND via the ContextSink — the run's turn-0 anchor bundle ref, re-
-        // derived edge-free by the coordinator. Prepend it in the SAME slot the inline
-        // bundle occupies (ahead of the F-7 trajectory). Turn 0 / a leaf returns `None`
-        // here (it used the inline path above) ⇒ never double-prepended; absent ⇒
-        // byte-identical to pre-PR-9d. A missing / oversized bundle fails closed.
-        let instruction = match self.take_context_items(mote.id) {
-            Some(items_ref) => {
-                let encoded = self
-                    .store
+        // PR-7 / PR-9d / RC4c-2b: prepend the run's grounding context bundle AHEAD of the
+        // F-7 trajectory, from EXACTLY ONE source. The OUT-OF-BAND bundle (ContextSink)
+        // takes PRECEDENCE over the inline `config_subset[CONTEXT_ITEMS_KEY]`:
+        // - a SUCCESSOR ReAct turn carries only out-of-band (the seed-swap drops inline);
+        // - a leaf / turn-0 carries only inline;
+        // - a RC4c-2b RERANKED chat-rag/vision-rag answer carries BOTH — the out-of-band
+        //   REORDERED bundle REPLACES its inline base order (the double-prepend fix: the
+        //   inline is the identity/fallback, delivered only when NO out-of-band arrives).
+        // Absent both ⇒ byte-identical to pre-PR-7; a missing / oversized bundle fails closed.
+        let carried_bundle: Option<Vec<u8>> = match self.take_context_items(mote.id) {
+            Some(items_ref) => Some(
+                self.store
                     .get(&items_ref)
-                    .map_err(|e| internal(&format!("fetch carried context bundle: {e}")))?;
+                    .map_err(|e| internal(&format!("fetch carried context bundle: {e}")))?
+                    .as_ref()
+                    .to_vec(),
+            ),
+            None => mote
+                .def
+                .config_subset
+                .get(&ConfigKey(CONTEXT_ITEMS_KEY.to_string()))
+                .map(|encoded| encoded.0.clone()),
+        };
+        let instruction = match carried_bundle {
+            Some(encoded) => {
                 let items = decode_context_items(&encoded);
                 let context = crate::assemble_serve::assemble_context_items(&items, &self.store)
-                    .map_err(|e| internal(&format!("assemble carried context items: {e}")))?;
+                    .map_err(|e| internal(&format!("assemble context items: {e}")))?;
                 format!("{context}{instruction}")
             }
             None => instruction,
@@ -1421,6 +1447,18 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             .contains_key(&kx_mote::ConfigKey(kx_mote::REACT_TURN_KEY.to_string()))
     }
 
+    /// `true` iff `mote` is a coordinator-materialized live LLM RERANK turn (RC4c-2b)
+    /// — the [`kx_mote::RERANK_TURN_KEY`] routing marker. A rerank turn carries NO
+    /// `PROMPT_KEY` (its prompt is rendered at dispatch from `config_subset` refs), so
+    /// the `run` router checks this BEFORE the `has_prompt` gate; the marker is
+    /// identity-bearing (`config_subset` → `MoteId`), so it can never be dropped in
+    /// transit (structurally fail-closed, like [`Self::is_react_turn`]).
+    fn is_rerank_turn(mote: &Mote) -> bool {
+        mote.def
+            .config_subset
+            .contains_key(&kx_mote::ConfigKey(kx_mote::RERANK_TURN_KEY.to_string()))
+    }
+
     /// `true` iff this Mote opts OUT of RC2 grammar-constrained tool-calling via
     /// `config_subset[REACT_UNCONSTRAINED_KEY] = true` (the SDK `.unconstrained()`
     /// / CLI `--unconstrained` escape hatch). Absent ⇒ `false` ⇒ grammar is armed
@@ -1532,6 +1570,68 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         let result_ref = self
             .store
             .put(&bytes)
+            .map_err(|e| internal(&format!("content store put: {e}")))?;
+        Ok(MoteExecutionResult {
+            result_ref,
+            started_at_epoch_ms: 0,
+            finished_at_epoch_ms: 0,
+        })
+    }
+
+    /// Run a live LLM RERANK turn (RC4c-2b): resolve the candidate passages + query
+    /// from the turn's `config_subset` refs, render the SHARED rerank prompt, arm
+    /// `Grammar::Permutation(n)` OFF-MoteDef (Ollama strict whole-response `format` /
+    /// llama.cpp fail-closed parser degrade — T-RERANK-GBNF-CRASH), greedy-decode
+    /// (a permutation is a decision, not creative output), and commit the RAW model
+    /// output. The coordinator's `settle_rerank_rounds` is the SOLE `parse_permutation`
+    /// authority — a malformed permutation there freezes `FailedClosed` (base order;
+    /// a rerank NEVER dead-letters the RAG chain), and a dispatch/store fault here
+    /// fails the Mote (→ settle `FailedClosed`). Nothing is ever pre-applied here
+    /// (the sole-writer contract: the worker PROPOSES the order, the coordinator owns
+    /// the decision — mirroring `run_react_turn`).
+    fn run_rerank_turn(
+        &self,
+        mote: &Mote,
+        warrant: &WarrantSpec,
+    ) -> Result<MoteExecutionResult, MoteExecutorError> {
+        let base_ref = config_ref(mote, kx_mote::RERANK_CANDIDATES_KEY)
+            .ok_or_else(|| internal("rerank turn missing base_results_ref"))?;
+        let query_ref = config_ref(mote, kx_mote::RERANK_QUERY_KEY)
+            .ok_or_else(|| internal("rerank turn missing query_ref"))?;
+        let query = {
+            let bytes = self
+                .store
+                .get(&query_ref)
+                .map_err(|e| internal(&format!("rerank query fetch: {e}")))?;
+            String::from_utf8_lossy(bytes.as_ref()).into_owned()
+        };
+        let obs_bytes = self
+            .store
+            .get(&base_ref)
+            .map_err(|e| internal(&format!("rerank candidates fetch: {e}")))?;
+        let texts = parse_retrieve_passages(obs_bytes.as_ref())
+            .ok_or_else(|| internal("rerank: unreadable base results"))?;
+        let n = texts.len();
+        let carrier = kx_grammar::GrammarSpec::Permutation(kx_grammar::PermutationSpec::new(
+            u32::try_from(n).unwrap_or(u32::MAX),
+        ))
+        .to_raw()
+        .map_err(|e| internal(&format!("rerank grammar carrier: {e}")))?;
+        let params = InferenceParams {
+            grammar: Some(Grammar::new(carrier)),
+            temperature_bps: 0,
+            max_output_tokens: kx_context_assembler::rerank_output_cap(n),
+            ..InferenceParams::default()
+        };
+        let input =
+            InferenceInput::text(kx_context_assembler::render_rerank_prompt(&query, &texts));
+        let out = self
+            .backend
+            .dispatch(&mote.def.model_id, &input, &params, warrant)
+            .map_err(|e| internal(&format!("rerank dispatch: {e}")))?;
+        let result_ref = self
+            .store
+            .put(&out.bytes)
             .map_err(|e| internal(&format!("content store put: {e}")))?;
         Ok(MoteExecutionResult {
             result_ref,
@@ -1801,6 +1901,20 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
             } else {
                 self.run_critic(mote)
             };
+        }
+        // RC4c-2b: a live LLM RERANK turn is a model Mote WITHOUT a `PROMPT_KEY` (its
+        // prompt is rendered at dispatch from `config_subset` refs), so it must route
+        // BEFORE the `has_prompt` gate — else it would fall to the inner PURE/demo
+        // router and commit the wrong bytes. Fail closed on an unserved model (never
+        // the demo executor); the coordinator settle owns the permutation decode.
+        if Self::is_rerank_turn(mote) {
+            if !self.backend.supports(&mote.def.model_id) {
+                return Err(internal(&format!(
+                    "rerank turn {:?} routes to an unserved model {:?} (fail-closed)",
+                    mote.id, mote.def.model_id
+                )));
+            }
+            return self.run_rerank_turn(mote, warrant);
         }
         // A prompt-bearing Mote is a MODEL step. If the backend does NOT serve its
         // model_id, FAIL CLOSED — never delegate to the inner demo/echo executor.
