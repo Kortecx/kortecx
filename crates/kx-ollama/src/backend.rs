@@ -590,12 +590,15 @@ fn backend_failure(err: OllamaError) -> InferenceError {
 /// RC4c: choose the Ollama whole-response `format` for a grammar carrier. A
 /// `Permutation` (listwise-rerank) carrier → its JSON-schema (the entire output is
 /// the permutation, so a strict format is correct — closing `T-OLLAMA-GRAMMAR-FORMAT`
-/// for that turn). A `ToolEnvelope` carrier OR a malformed carrier → `None` (honest
-/// degrade to parser-based tool-calling; NEVER fail the dispatch closed, which would
-/// dead-letter every Ollama tool turn). The fail-closed parser remains the authority.
+/// for that turn). A `ToolEnvelope` carrier is applied as a strict format ONLY when the
+/// operator opted in (`strict == true`, the RC4c-2c `T-OLLAMA-GRAMMAR-FORMAT` tool-required
+/// mode); otherwise → `None` (honest degrade to parser-based tool-calling; NEVER fail the
+/// dispatch closed, which would dead-letter every Ollama tool turn AND break the free-form
+/// answer path). The fail-closed parser remains the authority.
 fn response_format(grammar: Option<&kx_mote::Grammar>) -> Option<serde_json::Value> {
     match grammar.and_then(|g| kx_grammar::GrammarSpec::from_raw(&g.raw).ok()) {
         Some(kx_grammar::GrammarSpec::Permutation(p)) => Some(p.to_ollama_format()),
+        Some(kx_grammar::GrammarSpec::ToolEnvelope(e)) if e.strict => Some(e.to_ollama_format()),
         _ => None,
     }
 }
@@ -605,7 +608,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn response_format_applies_only_to_a_permutation_carrier() {
+    fn response_format_permutation_and_opt_in_strict_envelope() {
         // A permutation (rerank) carrier ⇒ a fixed-length int-array whole-response schema.
         let perm = kx_mote::Grammar::new(
             kx_grammar::GrammarSpec::Permutation(kx_grammar::PermutationSpec::new(4))
@@ -617,13 +620,26 @@ mod tests {
         assert_eq!(fmt["minItems"], 4);
         assert_eq!(fmt["maxItems"], 4);
 
-        // A tool-envelope carrier honest-degrades (no whole-response format).
+        // A DEFAULT (non-strict) tool-envelope carrier honest-degrades (no whole-response
+        // format) — the free-form answer path is preserved.
         let envelope = kx_mote::Grammar::new(
             kx_grammar::ToolEnvelopeSpec::new(vec![kx_grammar::ToolSpec::new("retrieve", "1")])
                 .to_raw()
                 .unwrap(),
         );
         assert!(response_format(Some(&envelope)).is_none());
+
+        // RC4c-2c: an OPT-IN `strict` tool-envelope carrier ⇒ a whole-response tool-call
+        // format (`T-OLLAMA-GRAMMAR-FORMAT` tool-required mode).
+        let strict = kx_mote::Grammar::new(
+            kx_grammar::ToolEnvelopeSpec::new(vec![kx_grammar::ToolSpec::new("retrieve", "1")])
+                .with_strict(true)
+                .to_raw()
+                .unwrap(),
+        );
+        let fmt = response_format(Some(&strict)).expect("strict tool-envelope ⇒ a format");
+        assert_eq!(fmt["type"], "object");
+        assert!(fmt["properties"]["tool_call"].is_object());
 
         // A malformed carrier never fails closed (the parser is the authority).
         assert!(response_format(Some(&kx_mote::Grammar::new("not json"))).is_none());

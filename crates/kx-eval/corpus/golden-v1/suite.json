@@ -168,6 +168,35 @@
         "max_turns": 8,
         "max_tool_calls": 20
       }
+    },
+    {
+      "id": "rag_rerank_on_topic_last",
+      "description": "The most-relevant passage is retrieved LAST; the listwise rerank must move it to the top (the RC4c-2c fail-closed regression guard).",
+      "instruction": "How do plants make energy from sunlight? Answer briefly using the dataset.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["sugar"],
+        "expected_tools": [],
+        "grounded_in": ["sugar"],
+        "rerank_best_index": 3,
+        "rerank_top_k": 1,
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      },
+      "scripted_transcript": {
+        "task_id": "rag_rerank_on_topic_last",
+        "turns": [{ "turn": 0, "branch": "answer" }],
+        "final_answer": "Plants turn sunlight, water, and carbon dioxide into sugar and oxygen (photosynthesis).",
+        "retrieved_docs": [
+          "Tectonic plates drift over the mantle, causing earthquakes at their boundaries.",
+          "The Great Barrier Reef is the world's largest coral reef system off Australia.",
+          "The mitochondria is the powerhouse of the cell, producing ATP from glucose.",
+          "Plants turn sunlight, water, and carbon dioxide into sugar and oxygen inside their leaves."
+        ],
+        "rerank": { "candidate_count": 4, "permutation": [3, 0, 1, 2], "outcome": "reranked" },
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
     }
   ]
 }

@@ -153,7 +153,16 @@ pub fn render_tool_menu(grants: &BTreeSet<ToolGrant>, registry: &dyn ToolRegistr
 /// `render_tool_menu` precedent). Pure + FFI-free.
 #[must_use]
 pub fn rerank_output_cap(n: usize) -> u32 {
-    const REASONING_HEADROOM: usize = 256;
+    // RC4c-2c: raised 256 → 512. A 12B instruct model (Gemma-4 on llama.cpp, which
+    // runs the permutation turn GRAMMAR-FREE — the char-level GBNF crashes on digit
+    // tokens, T-RERANK-GBNF-CRASH, so only `parse_permutation` enforces the shape)
+    // can emit a short reasoning/`<|channel>` preamble before the array; too tight a
+    // cap truncated the decode mid-preamble so the close tag never arrived and the
+    // strip yielded `""` → fail-closed to input order (the GR24 llama.cpp parity gap).
+    // 512 covers a brief preamble + the array while staying bounded (a runaway decode
+    // still can't burn the budget). Paired with the array-FIRST prompt + the
+    // trailing-tolerant parser so the array is reached well within the cap.
+    const REASONING_HEADROOM: usize = 512;
     u32::try_from(n.saturating_mul(6).saturating_add(REASONING_HEADROOM)).unwrap_or(u32::MAX)
 }
 
@@ -170,9 +179,11 @@ pub fn render_rerank_prompt(query: &str, texts: &[String]) -> String {
     let mut p = String::with_capacity(128 + n * SNIPPET_MAX);
     let _ = write!(
         p,
-        "Rank the passages by how well each answers the query. Respond with ONLY a JSON \
-         array of the passage indices, most relevant first — a permutation of 0..{n} with no \
-         duplicates (example: [2,0,1]).\n\nQuery: {query}\n\nPassages:\n"
+        "Rank the passages by how well each answers the query. Your entire response must be \
+         a single JSON array of the passage indices, most relevant first — a permutation of \
+         0..{n} with no duplicates (example: [2,0,1]). Output the array FIRST and nothing \
+         else: no reasoning, no explanation, no text before or after it.\n\n\
+         Query: {query}\n\nPassages:\n"
     );
     for (i, t) in texts.iter().enumerate() {
         let snippet: String = t.chars().take(SNIPPET_MAX).collect();

@@ -54,6 +54,7 @@ pub(crate) fn score_run(
         turns,
         final_answer: None, // expectation-free: ScoreRun needs no answer content.
         retrieved_docs: Vec::new(),
+        rerank: None, // ScoreRun is expectation-free ⇒ the rerank-quality scorer is N/A.
         max_turns,
         max_tool_calls,
     };

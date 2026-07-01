@@ -76,6 +76,7 @@ mod tests {
             turns,
             final_answer: Some("ok".to_string()),
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         }
@@ -93,6 +94,8 @@ mod tests {
                 })
                 .collect(),
             grounded_in: vec![],
+            rerank_best_index: None,
+            rerank_top_k: 0,
             ideal_turns: 2,
             ideal_tool_calls: 1,
         }

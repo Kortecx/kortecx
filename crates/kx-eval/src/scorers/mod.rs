@@ -12,6 +12,7 @@
 mod format_coverage;
 mod groundedness;
 mod loop_efficiency;
+mod rerank_quality;
 mod task_success;
 mod tool_calls;
 
@@ -27,11 +28,12 @@ pub(crate) const PER_MILLE: u32 = 1000;
 
 /// The stable ids of the per-transcript scorers, in the order [`score_transcript`]
 /// emits them. Kept public so the report aggregator and tests can enumerate them.
-pub const TRANSCRIPT_SCORER_IDS: [&str; 4] = [
+pub const TRANSCRIPT_SCORER_IDS: [&str; 5] = [
     "task_success",
     "tool_call_f1",
     "groundedness",
     "loop_efficiency",
+    "rerank_quality",
 ];
 
 /// The value a scorer produced: an integer Gate (the decision path) or an absolute
@@ -119,5 +121,6 @@ pub fn score_transcript(input: &ScoreInput) -> Vec<ScoreOutput> {
         tool_calls::score(input),
         groundedness::score(input),
         loop_efficiency::score(input),
+        rerank_quality::score(input),
     ]
 }

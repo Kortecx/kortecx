@@ -102,6 +102,7 @@ mod tests {
             turns: vec![turn(0, Branch::Tool), turn(1, Branch::Answer)],
             final_answer: Some("ok".into()),
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         };
@@ -125,6 +126,7 @@ mod tests {
             ],
             final_answer: None,
             retrieved_docs: vec![],
+            rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
         };

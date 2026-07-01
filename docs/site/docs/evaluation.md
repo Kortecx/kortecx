@@ -32,6 +32,7 @@ The golden suite scores five Gate metrics:
 | `tool_call_f1` | Did it call the right tools (order-tolerant, ToolBatch-aware)? |
 | `groundedness` | Are the answer's claims traceable to retrieved docs? |
 | `loop_efficiency` | How economically did it reach the terminal (turns + tool-calls vs ideal)? |
+| `rerank_quality` | Did the [LLM listwise rerank](./llm-rerank.md) actually improve ranking — did the most-relevant passage (placed last) move into the top? A fail-closed rerank scores 0. |
 | `format_coverage` | Does the runtime's parser decode tool calls across the shapes different models emit (JSON-envelope, Gemma brace/paren, Llama tag, Qwen XML, markerless, OpenAI array, …)? |
 
 ## CLI
