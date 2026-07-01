@@ -1418,6 +1418,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-connector-discord"
+version = "0.1.0"
+dependencies = [
+ "kx-extension-sdk",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
+
+[[package]]
 name = "kx-connector-gmail"
 version = "0.1.0"
 dependencies = [
