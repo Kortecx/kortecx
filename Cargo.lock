@@ -1418,6 +1418,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-connector-gmail"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "kx-extension-sdk",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
+
+[[package]]
 name = "kx-content"
 version = "0.1.1"
 dependencies = [

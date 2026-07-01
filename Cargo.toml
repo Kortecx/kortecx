@@ -60,6 +60,11 @@ members = [
     "crates/kx-extension-sdk",
     "crates/kx-pricing",
     "crates/kx-eval",
+    # Integrations — bundled app connectors (external MCP-server processes the
+    # runtime dials). Each is a self-contained leaf with NO kx-* runtime
+    # dependency, kept under `integrations/` (not `crates/`) to separate the
+    # extension surface from the core library crates. See `integrations/README.md`.
+    "integrations/kx-connector-gmail",
 ]
 exclude = [
     "kx-cloud",

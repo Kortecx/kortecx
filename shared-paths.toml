@@ -30,6 +30,7 @@ schema = 1
 # The public code surface + shared config. Everything here is Apache-2.0 OSS.
 include = [
   "crates/**",
+  "integrations/**",
   "bindings/**",
   "ui/**",
   "scripts/**",

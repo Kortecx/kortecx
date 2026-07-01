@@ -148,3 +148,16 @@ covers   = [
 ]
 inherits = ["rc4c-2a-rerank-substrate"]
 notes    = "RC4c-2 SPLIT (RC4c-2b): the LIVE coordinator rerank-turn (both react-rag + chat-rag), building on rc4c-2a's ReRankRound fact + ListReRankTurns. A sole-writer-spine change ⇒ its own focused, recovery-tested, dual-engine-validated PR. Fully MAPPED (materialize/settle/recover mirror of the ReAct lifecycle) — a direct build, not a re-exploration."
+
+[[feature]]
+id       = "gmail-integration"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/gmail-connector-sidecar"
+covers   = [
+  "crates/kx-connector-gmail: a bundled Gmail MCP connector — a standalone [[bin]] stdio JSON-RPC 2.0 server (initialize -> tools/list -> tools/call) exposing gmail/{search,read,draft,send}; FFI-free (serde_json/ureq/base64/thiserror only), NO kx-* runtime dependency (not in the gateway or frozen-trio closure)",
+  "credential-by-reference (D81): OAuth {client_id,client_secret,refresh_token} injected as KX_GMAIL_CREDENTIAL, refresh->access exchanged INSIDE the sidecar; secret never in a reply/log/error; header-injection guard on to/subject",
+  "offline KX_GMAIL_FAKE mode (canned responses) → deterministic unit tests + the run_conformance gate (Extension Acceptance Gate items 3/5/7/10) with a live-#[ignore] dual-engine witness deferred to registration",
+]
+inherits = ["connector-extension-sdk", "integrations-foundation"]
+notes    = "PR-G0 (extension lane, isolated per the user's core/extension split): the FIRST bundled app-connector sidecar. Digest 7d22d4bd invariant (a0_guard PASS — the crate is an external process, outside the projection workspace); frozen-trio untouched; no proto/journal change; Cargo.lock += only the crate node (no new external crate; serde_json `raw_value` feature adds no dep); cargo-deny clean. Runtime behaviour = a dialed external MCP process (bucket i). NEXT (separate sessions, core changes): G1 first-class Gmail Integration UI/CLI/SDK, G2 App-pointer->run wiring (references.connections + guards.secret_scope), G3 cross-instance import."
