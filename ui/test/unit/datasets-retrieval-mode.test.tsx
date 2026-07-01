@@ -50,4 +50,25 @@ describe("QueryPanel — RC4a retrieval mode + chunk provenance", () => {
     // A chunked hit (chunkCount > 1) shows its 1-based passage position.
     expect(screen.getByTestId("dataset-hit-chunk").textContent).toContain("chunk 2/3");
   });
+
+  it("offers an Auto/Rerank/Off MMR chip (RC4c), Auto default, button-controlled", () => {
+    render(<QueryPanel dataset="corpus" />);
+
+    const auto = screen.getByTestId("dataset-rerank-auto");
+    const on = screen.getByTestId("dataset-rerank-on");
+    const off = screen.getByTestId("dataset-rerank-off");
+    // Auto (the server's configured default) is selected initially.
+    expect(auto).toHaveAttribute("aria-pressed", "true");
+    expect(on).toHaveAttribute("aria-pressed", "false");
+    expect(off).toHaveAttribute("aria-pressed", "false");
+
+    // Button chips (never a controlled <select> — the Playwright gotcha).
+    fireEvent.click(off);
+    expect(off).toHaveAttribute("aria-pressed", "true");
+    expect(auto).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(on);
+    expect(on).toHaveAttribute("aria-pressed", "true");
+    expect(off).toHaveAttribute("aria-pressed", "false");
+  });
 });

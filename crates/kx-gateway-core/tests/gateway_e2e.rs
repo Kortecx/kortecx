@@ -1069,6 +1069,7 @@ async fn dataset_rpcs_unimplemented_without_a_seam() {
                 query_embedding: vec![1.0, 0.0],
                 k: 1,
                 retrieval_mode: 0,
+                rerank: None,
             })
             .await
             .unwrap_err()

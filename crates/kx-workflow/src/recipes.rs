@@ -31,12 +31,16 @@ use std::collections::BTreeMap;
 
 use kx_content::ContentRef;
 use kx_critic_types::CheckSpec;
-use kx_mote::{ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, ToolVersion};
+use kx_mote::{
+    ConfigKey, ConfigVal, EdgeMeta, LogicRef, ModelId, ToolName, ToolVersion, RETRIEVAL_MODE_KEY,
+};
 
 use crate::def::WorkflowDef;
 use crate::error::CompileError;
 use crate::retrieval::retrieval;
-use crate::synthesis::{deterministic_critic, generator, permissive_warrant, transform};
+use crate::synthesis::{
+    deterministic_critic, generator, permissive_warrant, rewrite_query, transform,
+};
 
 /// Which builder a fan-out leaf step uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,6 +218,111 @@ pub fn rag_pipeline(
     // The PURE assemble step — grounds an answer in the retrieved top-k (exact refs).
     let assemble = wf.add_step(transform(assemble_logic, model_id, warrant, capability));
     wf.add_edge(query, assemble, EdgeMeta::data())?;
+    Ok(wf)
+}
+
+/// **Hybrid RAG (RC4c).** The retrieval-quality sibling of [`rag_pipeline`],
+/// completing the authored RAG quartet:
+///
+/// ```text
+/// rewrite (ROND) ─┐
+///                 ├─data─> query[hybrid] (ROND) ─data─> [rerank (ROND)] ─data─> assemble (PURE)
+/// ingest_i (ROND)─┘
+/// ```
+///
+/// Three additions over [`rag_pipeline`]:
+/// 1. a **`rewrite_query`** step the model uses to expand/rephrase the query before
+///    retrieval (catches paraphrase gaps a single embedding misses);
+/// 2. the `query` step bakes `config_subset[RETRIEVAL_MODE_KEY]="hybrid"` so its
+///    `MoteId` is DISTINCT from the dense `rag_pipeline`'s query (a different
+///    retrieval is a different fact — the dense recipe's golden `MoteId`s are
+///    untouched), and the harness routes it to `query_corpus_hybrid` (BM25+dense
+///    RRF + MMR) instead of `query_corpus`;
+/// 3. an OPTIONAL **LLM listwise rerank** step (`rerank_logic = Some(_)`) between
+///    `query` and `assemble` — a ROND turn whose model output is a grammar-constrained
+///    permutation of the retrieved candidates (executed by `kx-model-harness::rerank_hits`,
+///    fail-closed to the upstream order). `None` keeps the deterministic RRF+MMR order.
+///
+/// The execution glue (embed + dual-index + fuse + rerank) lives in
+/// `kx-model-harness::rag`; this builder is the pure-data structure.
+///
+/// # Errors
+///
+/// [`CompileError::EmptyRecipe`] if `doc_logics` is empty; propagates any edge error
+/// from [`WorkflowDef::add_edge`](crate::WorkflowDef::add_edge).
+#[allow(clippy::too_many_arguments)] // the authored RAG quartet's logic refs are each meaningful
+pub fn rag_pipeline_hybrid(
+    seed: u32,
+    model_id: ModelId,
+    capability: ToolName,
+    doc_logics: &[LogicRef],
+    rewrite_logic: LogicRef,
+    query_logic: LogicRef,
+    rerank_logic: Option<LogicRef>,
+    assemble_logic: LogicRef,
+) -> Result<WorkflowDef, CompileError> {
+    if doc_logics.is_empty() {
+        return Err(CompileError::EmptyRecipe);
+    }
+    let warrant = permissive_warrant(model_id.clone());
+    let mut wf = WorkflowDef::new(seed);
+
+    // N ingest/embed steps — ROND (read the world/model, StageThenCommit, cached).
+    let mut ingests = Vec::with_capacity(doc_logics.len());
+    for logic in doc_logics {
+        ingests.push(wf.add_step(generator(
+            *logic,
+            model_id.clone(),
+            warrant.clone(),
+            capability.clone(),
+        )));
+    }
+    // The query-rewrite step — ROND (committed: sampled once, served on replay).
+    let rewrite = wf.add_step(rewrite_query(
+        rewrite_logic,
+        model_id.clone(),
+        warrant.clone(),
+        capability.clone(),
+    ));
+    // The HYBRID retrieval query step — ROND; the SN-8 boundary. The retrieval-mode
+    // marker makes its MoteId distinct from the dense `rag_pipeline`'s query step.
+    let mut query_step = retrieval(
+        query_logic,
+        model_id.clone(),
+        warrant.clone(),
+        capability.clone(),
+    );
+    query_step.config_subset.insert(
+        ConfigKey(RETRIEVAL_MODE_KEY.to_string()),
+        ConfigVal(b"hybrid".to_vec()),
+    );
+    let query = wf.add_step(query_step);
+    // Each ingest feeds the query (its index is populated from the committed ingest facts).
+    for &ingest in &ingests {
+        wf.add_edge(ingest, query, EdgeMeta::data())?;
+    }
+    // The rewritten query feeds the retrieval step.
+    wf.add_edge(rewrite, query, EdgeMeta::data())?;
+
+    // Optional LLM listwise rerank between retrieval and assembly — a ROND model
+    // turn (the harness `rerank_hits` dispatches it grammar-constrained; its distinct
+    // `rerank_logic` keeps its MoteId separate from the rewrite/query steps).
+    let grounded_by = if let Some(rerank_logic) = rerank_logic {
+        let rerank = wf.add_step(generator(
+            rerank_logic,
+            model_id.clone(),
+            warrant.clone(),
+            capability.clone(),
+        ));
+        wf.add_edge(query, rerank, EdgeMeta::data())?;
+        rerank
+    } else {
+        query
+    };
+
+    // The PURE assemble step — grounds an answer in the (re)ranked top-k (exact refs).
+    let assemble = wf.add_step(transform(assemble_logic, model_id, warrant, capability));
+    wf.add_edge(grounded_by, assemble, EdgeMeta::data())?;
     Ok(wf)
 }
 

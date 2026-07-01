@@ -33,11 +33,13 @@ export function useDatasetQuery(
   text: string,
   k = 10,
   mode: RetrievalMode = RetrievalMode.UNSPECIFIED,
+  rerank?: boolean,
 ) {
   const { client, endpoint, status } = useConnection();
   return useQuery({
-    // RC4a: the retrieval mode is part of the cache key (dense vs hybrid differ).
-    queryKey: [...queryKeys.datasetQuery(endpoint, dataset ?? "", text, k), mode],
+    // RC4a/RC4c: the retrieval mode AND the rerank override are part of the cache key
+    // (dense vs hybrid, and MMR on/off/default, all differ).
+    queryKey: [...queryKeys.datasetQuery(endpoint, dataset ?? "", text, k), mode, rerank ?? "auto"],
     enabled:
       status === "connected" && client !== null && Boolean(dataset) && text.trim().length > 0,
     retry: false,
@@ -45,7 +47,7 @@ export function useDatasetQuery(
       if (!client || !dataset) {
         throw new Error("not connected");
       }
-      return client.queryDataset(dataset, { text, k, mode });
+      return client.queryDataset(dataset, { text, k, mode, rerank });
     },
   });
 }

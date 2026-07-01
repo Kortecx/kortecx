@@ -157,7 +157,9 @@ pub trait DatasetView: Send + Sync {
     /// Query `dataset` for the top-`k` nearest chunks. `query_embedding`
     /// (`Some`) is the client-vector path; `None` falls back to embedding
     /// `query_text` (needs an embedder). `mode` selects dense vs hybrid (RC4a;
-    /// hybrid needs `query_text`). Ordered score-desc, ascending-ref.
+    /// hybrid needs `query_text`). `rerank` (RC4c) overrides the operator's MMR
+    /// diversity-rerank default per query (`None` ⇒ the server default). Ordered
+    /// score-desc, ascending-ref.
     ///
     /// # Errors
     /// [`DatasetError::NotFound`] for an unknown dataset; otherwise as `ingest`.
@@ -168,6 +170,7 @@ pub trait DatasetView: Send + Sync {
         query_text: &str,
         k: usize,
         mode: RetrievalMode,
+        rerank: Option<bool>,
     ) -> Result<Vec<DatasetHitEntry>, DatasetError>;
 }
 

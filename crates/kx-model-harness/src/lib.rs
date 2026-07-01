@@ -72,7 +72,10 @@ pub mod workflows;
 pub use broker::{BrokerObserver, ModelBroker};
 pub use executor::ModelExecutor;
 pub use metered::MeteredBackend;
-pub use rag::{encode_vector_le, ingest_corpus, query_corpus, Embedder, RagError};
+pub use rag::{
+    encode_vector_le, ingest_corpus, ingest_corpus_hybrid, query_corpus, query_corpus_hybrid,
+    rerank_hits, Embedder, RagError,
+};
 pub use react::{run_react_loop, ReactBudget, ReactLoopOutcome, ReactStop};
 pub use registration::{register_kortecx, RegistrationError};
 pub use topology_provider::{

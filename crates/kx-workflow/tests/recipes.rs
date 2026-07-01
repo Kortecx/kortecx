@@ -20,7 +20,8 @@ use kx_critic_types::{CheckSpec, SchemaSpec, SchemaTag};
 use kx_mote::{ConfigKey, LogicRef, ModelId, NdClass, ToolName, ToolVersion};
 use kx_workflow::{
     compile, fan_out_gather, image_batch_describe_reduce, map_reduce, rag_pipeline,
-    react_tool_loop, retry_until_critic, CompileError, WorkerKind, IMAGE_REF_KEY,
+    rag_pipeline_hybrid, react_tool_loop, retry_until_critic, CompileError, WorkerKind,
+    IMAGE_REF_KEY,
 };
 
 fn model() -> ModelId {
@@ -367,6 +368,142 @@ fn rag_pipeline_seed_changes_identity() {
 fn rag_pipeline_empty_corpus_is_empty_recipe() {
     assert_eq!(
         rag_pipeline(0, model(), cap(), &[], logic(50), logic(60)).unwrap_err(),
+        CompileError::EmptyRecipe
+    );
+}
+
+// ── rag_pipeline_hybrid (RC4c — hybrid + rewrite + optional LLM rerank) ──────
+
+#[test]
+fn rag_pipeline_hybrid_wires_rewrite_then_query_then_assemble() {
+    let docs = [logic(1), logic(2)];
+    // rewrite(10) → query(50) → assemble(60); no rerank.
+    let wf = rag_pipeline_hybrid(
+        7,
+        model(),
+        cap(),
+        &docs,
+        logic(10),
+        logic(50),
+        None,
+        logic(60),
+    )
+    .unwrap();
+    let out = compile(&wf).unwrap();
+    // N ingest + rewrite + query + assemble.
+    assert_eq!(out.motes.len(), docs.len() + 3);
+
+    let rewrite = out
+        .motes
+        .iter()
+        .find(|m| m.mote.def.logic_ref == logic(10))
+        .expect("rewrite present");
+    assert_eq!(rewrite.mote.def.nd_class, NdClass::ReadOnlyNondet);
+
+    let q = out
+        .motes
+        .iter()
+        .find(|m| m.mote.def.logic_ref == logic(50))
+        .expect("query present");
+    // the query reads EVERY ingest + the rewrite.
+    assert_eq!(q.mote.parents.len(), docs.len() + 1);
+    // and bakes the hybrid retrieval-mode marker.
+    assert_eq!(
+        q.mote
+            .def
+            .config_subset
+            .get(&ConfigKey("kx.retrieval.mode".into())),
+        Some(&kx_mote::ConfigVal(b"hybrid".to_vec())),
+        "the hybrid query step carries the retrieval-mode marker"
+    );
+}
+
+#[test]
+fn rag_pipeline_hybrid_query_moteid_differs_from_dense_rag_pipeline() {
+    let docs = [logic(1), logic(2)];
+    // The dense `rag_pipeline` query step (no rewrite, no marker).
+    let dense =
+        compile(&rag_pipeline(7, model(), cap(), &docs, logic(50), logic(60)).unwrap()).unwrap();
+    let dense_q = dense
+        .motes
+        .iter()
+        .find(|m| m.mote.def.logic_ref == logic(50))
+        .unwrap();
+    // The hybrid query step (same logic ref + seed) — the retrieval-mode marker MUST
+    // shift its MoteId (a different retrieval is a different fact); the dense recipe's
+    // golden identities are untouched.
+    let hybrid = compile(
+        &rag_pipeline_hybrid(
+            7,
+            model(),
+            cap(),
+            &docs,
+            logic(10),
+            logic(50),
+            None,
+            logic(60),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let hybrid_q = hybrid
+        .motes
+        .iter()
+        .find(|m| m.mote.def.logic_ref == logic(50))
+        .unwrap();
+    assert_ne!(
+        dense_q.mote.id, hybrid_q.mote.id,
+        "the hybrid retrieval-mode marker yields a distinct query MoteId"
+    );
+}
+
+#[test]
+fn rag_pipeline_hybrid_with_rerank_adds_a_step_before_assemble() {
+    let docs = [logic(1)];
+    let wf = rag_pipeline_hybrid(
+        0,
+        model(),
+        cap(),
+        &docs,
+        logic(10),
+        logic(50),
+        Some(logic(55)),
+        logic(60),
+    )
+    .unwrap();
+    let out = compile(&wf).unwrap();
+    // 1 ingest + rewrite + query + rerank + assemble.
+    assert_eq!(out.motes.len(), 5);
+    let rerank = out
+        .motes
+        .iter()
+        .find(|m| m.mote.def.logic_ref == logic(55))
+        .expect("rerank present");
+    assert_eq!(rerank.mote.def.nd_class, NdClass::ReadOnlyNondet);
+    // assemble's sole parent is the rerank step (it grounds on the reranked order).
+    let a = out
+        .motes
+        .iter()
+        .find(|m| m.mote.def.logic_ref == logic(60))
+        .unwrap();
+    assert_eq!(a.mote.parents.len(), 1);
+    assert_eq!(a.mote.parents[0].parent_id, rerank.mote.id);
+}
+
+#[test]
+fn rag_pipeline_hybrid_empty_corpus_is_empty_recipe() {
+    assert_eq!(
+        rag_pipeline_hybrid(
+            0,
+            model(),
+            cap(),
+            &[],
+            logic(10),
+            logic(50),
+            None,
+            logic(60)
+        )
+        .unwrap_err(),
         CompileError::EmptyRecipe
     );
 }

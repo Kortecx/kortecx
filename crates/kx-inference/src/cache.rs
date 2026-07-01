@@ -38,7 +38,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kx_content::ContentRef;
-use kx_grammar::ToolEnvelopeSpec;
+use kx_grammar::GrammarSpec;
 use kx_llamacpp::{
     Bitmap, ChatMessage, Context, ContextParams, Generator, LlamaBackend, LlamaError, Model,
     ModelWithProjector, Mtmd, PoolingType, Sampler, Vocab,
@@ -658,12 +658,24 @@ const TOOL_CALL_TRIGGERS: [&str; 1] = [r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#];
 /// when `temperature_bps == 0`, else top-k/top-p/temp/dist) — byte-identical to
 /// the prior `Sampler::greedy`/`Sampler::typical` shapes when no grammar is set.
 ///
-/// RC2: when `params.grammar` is present (a serialized [`ToolEnvelopeSpec`] in the
-/// off-digest carrier), prepend a LAZY GBNF stage FIRST in the chain. The grammar
-/// only MASKS logits (to grammar-valid tokens); the selection stage still picks
-/// within that masked set, so greedy + grammar = argmax over valid tokens (no
-/// extra `dist` stage needed). A malformed carrier fails CLOSED (the dispatch
-/// errors) rather than silently dropping the constraint.
+/// RC2/RC4c: when `params.grammar` is present (a serialized [`GrammarSpec`] in the
+/// off-digest carrier), prepend a GBNF stage FIRST in the chain. The grammar only
+/// MASKS logits (to grammar-valid tokens); the selection stage still picks within
+/// that masked set, so greedy + grammar = argmax over valid tokens (no extra `dist`
+/// stage needed). A malformed carrier fails CLOSED (the dispatch errors) rather than
+/// silently dropping the constraint.
+///
+/// Two arming modes by carrier variant:
+/// - [`GrammarSpec::ToolEnvelope`] (RC2 tool-calling) → LAZY/triggered: prose answers
+///   flow free until the model emits the `{"tool_call"` opener.
+/// - [`GrammarSpec::Permutation`] (RC4c listwise rerank) → DEGRADES to the fail-closed
+///   parser (no GBNF armed). The pinned llama.cpp grammar sampler crashes the owner
+///   thread mid-decode when constraining a digit-array permutation against some
+///   tokenizers (Gemma's digit/punctuation tokens span the char-level grammar's
+///   boundaries — `T-RERANK-GBNF-CRASH`). The model emits a clean array after its
+///   reasoning anyway, and `kx_toolcall::parse_permutation` strips the preamble +
+///   enforces a valid permutation (SN-8). (Ollama, which has no such sampler, applies
+///   the permutation as a strict whole-response `format`.)
 fn build_sampler<'b>(
     backend: &'b LlamaBackend,
     vocab: &Vocab<'_, '_>,
@@ -672,16 +684,23 @@ fn build_sampler<'b>(
     let mut chain = Sampler::chain(backend);
 
     if let Some(grammar) = &params.grammar {
-        let spec = ToolEnvelopeSpec::from_raw(&grammar.raw).map_err(|e| {
-            InferenceError::BackendFailure {
+        let spec =
+            GrammarSpec::from_raw(&grammar.raw).map_err(|e| InferenceError::BackendFailure {
                 backend: BACKEND_NAME,
                 message: format!("grammar spec carrier: {e}"),
-            }
-        })?;
-        let gbnf = spec.to_gbnf();
-        chain = chain
-            .add_grammar_lazy(vocab, &gbnf, GRAMMAR_ROOT, &TOOL_CALL_TRIGGERS)
-            .map_err(map_llama_err)?;
+            })?;
+        chain = match spec {
+            GrammarSpec::ToolEnvelope(envelope) => chain
+                .add_grammar_lazy(
+                    vocab,
+                    &envelope.to_gbnf(),
+                    GRAMMAR_ROOT,
+                    &TOOL_CALL_TRIGGERS,
+                )
+                .map_err(map_llama_err)?,
+            // Degrade to the fail-closed parser (see the fn doc — T-RERANK-GBNF-CRASH).
+            GrammarSpec::Permutation(_) => chain,
+        };
     }
 
     let chain = if params.temperature_bps == 0 {

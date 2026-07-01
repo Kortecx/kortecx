@@ -46,3 +46,22 @@ pub(crate) fn render(spec: &ToolEnvelopeSpec) -> Value {
         "required": ["tool_call"]
     })
 }
+
+/// Render an Ollama `format` JSON Schema (RC4c) for a listwise-rerank turn: the
+/// WHOLE response is an integer array of length `n` with each item in `[0, n)`.
+///
+/// Unlike RC2's tool-call envelope (which can appear mid-prose, so Ollama's
+/// whole-response `format` honestly degrades — `T-OLLAMA-GRAMMAR-FORMAT`), a rerank
+/// turn's ENTIRE output is the permutation, so a strict whole-response schema is
+/// exactly right here. `uniqueItems`/range are advisory — the fail-closed
+/// `kx_toolcall::parse_permutation` is the authority on permutation validity (SN-8).
+pub(crate) fn render_permutation(n: u32) -> Value {
+    let max = n.saturating_sub(1);
+    json!({
+        "type": "array",
+        "items": { "type": "integer", "minimum": 0, "maximum": max },
+        "minItems": n,
+        "maxItems": n,
+        "uniqueItems": true
+    })
+}

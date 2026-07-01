@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use kx_grammar::{ToolEnvelopeSpec, ToolSpec};
+use kx_grammar::{GrammarSpec, PermutationSpec, ToolEnvelopeSpec, ToolSpec};
 use kx_tool_registry::{InputSchema, ParamSpec, ParamType};
 use kx_toolcall::parse_tool_call;
 use kx_warrant::{
@@ -283,4 +283,37 @@ fn gbnf_golden_for_bundled_oracles() {
         expected,
         "GBNF golden drift — re-sync the smoke test"
     );
+}
+
+// ── RC4c: the listwise-rerank PermutationSpec (Ollama `format` only) ─────────
+
+#[test]
+fn permutation_ollama_schema_is_a_fixed_length_int_array() {
+    let schema = PermutationSpec::new(5).to_ollama_format();
+    assert_eq!(schema["type"], "array");
+    assert_eq!(schema["minItems"], 5);
+    assert_eq!(schema["maxItems"], 5);
+    assert_eq!(schema["uniqueItems"], true);
+    assert_eq!(schema["items"]["type"], "integer");
+    assert_eq!(schema["items"]["minimum"], 0);
+    assert_eq!(schema["items"]["maximum"], 4); // [0, n) ⇒ max == n-1
+}
+
+#[test]
+fn permutation_carrier_round_trips_and_is_distinct_from_tool_envelope() {
+    let raw = GrammarSpec::Permutation(PermutationSpec::new(8))
+        .to_raw()
+        .unwrap();
+    match GrammarSpec::from_raw(&raw).unwrap() {
+        GrammarSpec::Permutation(p) => assert_eq!(p.n, 8),
+        GrammarSpec::ToolEnvelope(_) => panic!("permutation raw must not decode as tool-envelope"),
+    }
+    // An existing tool-envelope raw still decodes as ToolEnvelope (back-compat).
+    let tool_raw = ToolEnvelopeSpec::new(vec![ToolSpec::new("retrieve", "1")])
+        .to_raw()
+        .unwrap();
+    assert!(matches!(
+        GrammarSpec::from_raw(&tool_raw).unwrap(),
+        GrammarSpec::ToolEnvelope(_)
+    ));
 }

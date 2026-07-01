@@ -280,6 +280,7 @@ impl OllamaClient {
     /// # Errors
     /// [`OllamaError::Timeout`] on budget expiry, plus the transport / status /
     /// protocol classes.
+    #[allow(clippy::too_many_arguments)] // an `/api/generate` request builder — each field is meaningful
     pub fn generate(
         &self,
         model: &str,
@@ -287,6 +288,7 @@ impl OllamaClient {
         options: &serde_json::Value,
         wall_clock_ms: u64,
         images: &[String],
+        format: Option<&serde_json::Value>,
         sink: Option<TokenSink>,
     ) -> Result<GenOutcome, OllamaError> {
         let budget_ms = if wall_clock_ms == 0 {
@@ -316,6 +318,12 @@ impl OllamaClient {
         });
         if !images.is_empty() {
             body["images"] = serde_json::json!(images);
+        }
+        // RC4c: a whole-response JSON-schema `format` (a rerank turn's permutation).
+        // Constrains the entire output to valid JSON — the one structured-output case
+        // where Ollama's lack of a lazy/triggered mode is not a limitation.
+        if let Some(format) = format {
+            body["format"] = format.clone();
         }
         let url = format!("{}/api/generate", self.base);
         let agent = self.agent.clone();

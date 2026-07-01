@@ -1928,12 +1928,20 @@ export abstract class KxClientBase {
   /**
    * Query `dataset` for the top-`k` nearest documents. Pass `embedding` (the
    * FFI-free client-vector path, takes precedence) or `text` (server-embed, needs
-   * the `inference` feature). Hits are ordered by the DISPLAY-ONLY score (SN-8). An
-   * unknown dataset throws {@link KxNotFound}.
+   * the `inference` feature). `mode` (RC4a) selects dense vs hybrid; `rerank` (RC4c)
+   * overrides the operator's MMR diversity-rerank default per query (omitted ⇒ the
+   * server default). Hits are ordered by the DISPLAY-ONLY score (SN-8). An unknown
+   * dataset throws {@link KxNotFound}.
    */
   async queryDataset(
     dataset: string,
-    opts: { text?: string; embedding?: readonly number[]; k?: number; mode?: RetrievalMode } = {},
+    opts: {
+      text?: string;
+      embedding?: readonly number[];
+      k?: number;
+      mode?: RetrievalMode;
+      rerank?: boolean;
+    } = {},
   ): Promise<DatasetHit[]> {
     const resp = await rpc(
       this.grpc.queryDataset({
@@ -1942,6 +1950,7 @@ export abstract class KxClientBase {
         queryEmbedding: opts.embedding ? Array.from(opts.embedding) : [],
         k: opts.k ?? 10,
         retrievalMode: opts.mode ?? RetrievalMode.UNSPECIFIED,
+        rerank: opts.rerank,
       }),
     );
     return resp.hits.map((h) => DatasetHit.fromProto(h));

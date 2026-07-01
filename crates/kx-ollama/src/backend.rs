@@ -375,18 +375,17 @@ impl OllamaBackend {
         warrant: &WarrantSpec,
         sink: Option<TokenSink>,
     ) -> Result<InferenceOutput, InferenceError> {
-        // ---- Grammar (RC2): HONEST-DEGRADE — see the module doc (GR24). -------
-        // A grammar carrier is NOT applied as an Ollama whole-response `format`
-        // (no lazy/triggered mode; forcing JSON would break the answer path). We
-        // must NOT fail closed: the live serve loop sets a grammar on EVERY
-        // tool-eligible turn, so erroring here would dead-letter every Ollama tool
-        // turn. So we let it fall through to parser-based tool-calling.
-        if params.grammar.is_some() {
-            tracing::debug!(
-                "ollama: grammar carrier present; honest-degrading to parser-based \
-                 tool-calling (no whole-response format on an answer-eligible turn)"
-            );
-        }
+        // ---- Grammar carrier → Ollama `format` (RC2 honest-degrade / RC4c rerank) ----
+        // A `ToolEnvelope` carrier (RC2) is NOT applied as a whole-response `format`:
+        // a tool turn is answer-eligible (prose OR a tool call) and Ollama has no
+        // lazy/triggered mode, so forcing JSON would break the answer path. We must
+        // NOT fail closed (the live loop sets a grammar on EVERY tool turn), so it
+        // falls through to parser-based tool-calling.
+        //
+        // A `Permutation` carrier (RC4c listwise rerank) is the opposite: the ENTIRE
+        // response is the permutation, so a strict whole-response `format` is exactly
+        // right — this closes `T-OLLAMA-GRAMMAR-FORMAT` for the one-valid-shape turn.
+        let response_format = response_format(params.grammar.as_ref());
         // ---- Warrant gates (D30 + D35) — authorize BEFORE any egress ---------
         if model_id != &warrant.model_route.model_id {
             return Err(InferenceError::WarrantDeniesModel {
@@ -432,6 +431,7 @@ impl OllamaBackend {
                 &options,
                 warrant.resource_ceiling.wall_clock_ms,
                 &images,
+                response_format.as_ref(),
                 sink,
             )
             .map_err(map_dispatch_err)?;
@@ -587,9 +587,48 @@ fn backend_failure(err: OllamaError) -> InferenceError {
     }
 }
 
+/// RC4c: choose the Ollama whole-response `format` for a grammar carrier. A
+/// `Permutation` (listwise-rerank) carrier → its JSON-schema (the entire output is
+/// the permutation, so a strict format is correct — closing `T-OLLAMA-GRAMMAR-FORMAT`
+/// for that turn). A `ToolEnvelope` carrier OR a malformed carrier → `None` (honest
+/// degrade to parser-based tool-calling; NEVER fail the dispatch closed, which would
+/// dead-letter every Ollama tool turn). The fail-closed parser remains the authority.
+fn response_format(grammar: Option<&kx_mote::Grammar>) -> Option<serde_json::Value> {
+    match grammar.and_then(|g| kx_grammar::GrammarSpec::from_raw(&g.raw).ok()) {
+        Some(kx_grammar::GrammarSpec::Permutation(p)) => Some(p.to_ollama_format()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn response_format_applies_only_to_a_permutation_carrier() {
+        // A permutation (rerank) carrier ⇒ a fixed-length int-array whole-response schema.
+        let perm = kx_mote::Grammar::new(
+            kx_grammar::GrammarSpec::Permutation(kx_grammar::PermutationSpec::new(4))
+                .to_raw()
+                .unwrap(),
+        );
+        let fmt = response_format(Some(&perm)).expect("permutation ⇒ a format");
+        assert_eq!(fmt["type"], "array");
+        assert_eq!(fmt["minItems"], 4);
+        assert_eq!(fmt["maxItems"], 4);
+
+        // A tool-envelope carrier honest-degrades (no whole-response format).
+        let envelope = kx_mote::Grammar::new(
+            kx_grammar::ToolEnvelopeSpec::new(vec![kx_grammar::ToolSpec::new("retrieve", "1")])
+                .to_raw()
+                .unwrap(),
+        );
+        assert!(response_format(Some(&envelope)).is_none());
+
+        // A malformed carrier never fails closed (the parser is the authority).
+        assert!(response_format(Some(&kx_mote::Grammar::new("not json"))).is_none());
+        assert!(response_format(None).is_none());
+    }
 
     #[test]
     fn options_always_carry_the_turn_end_stops() {

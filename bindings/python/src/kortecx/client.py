@@ -2149,11 +2149,13 @@ class KxClient:
         embedding: Optional[Sequence[float]] = None,
         k: int = 10,
         mode: RetrievalMode = RetrievalMode.DEFAULT,
+        rerank: Optional[bool] = None,
     ) -> List[DatasetHit]:
         """Query ``dataset`` for the top-``k`` nearest chunks. Pass ``embedding``
         (the FFI-free client-vector path, takes precedence) or ``text`` (server-embed,
         needs the ``inference`` feature). ``mode`` (RC4a) selects dense vs hybrid
-        (BM25 + dense); ``DEFAULT`` uses the server default. Hits are ordered by the
+        (BM25 + dense); ``rerank`` (RC4c) overrides the operator's MMR diversity-rerank
+        default per query (``None`` ⇒ the server default). Hits are ordered by the
         DISPLAY-ONLY score (SN-8). An unknown dataset raises ``KxNotFound``."""
         req = _g.QueryDatasetRequest(
             dataset=dataset,
@@ -2161,6 +2163,8 @@ class KxClient:
             k=k,
             retrieval_mode=cast("_g.RetrievalMode", int(mode)),
         )
+        if rerank is not None:
+            req.rerank = rerank
         if embedding:
             req.query_embedding.extend(embedding)
         resp = self._call(lambda: self._stub.QueryDataset(req, metadata=self._md))
@@ -2881,15 +2885,18 @@ class AsyncKxClient:
         embedding: Optional[Sequence[float]] = None,
         k: int = 10,
         mode: RetrievalMode = RetrievalMode.DEFAULT,
+        rerank: Optional[bool] = None,
     ) -> List[DatasetHit]:
         """Async twin of :meth:`KxClient.query_dataset` (RC4a ``mode`` selects dense
-        vs hybrid)."""
+        vs hybrid; RC4c ``rerank`` overrides the MMR default per query)."""
         req = _g.QueryDatasetRequest(
             dataset=dataset,
             query_text=text or "",
             k=k,
             retrieval_mode=cast("_g.RetrievalMode", int(mode)),
         )
+        if rerank is not None:
+            req.rerank = rerank
         if embedding:
             req.query_embedding.extend(embedding)
         resp = await self._acall(self._stub.QueryDataset(req, metadata=self._md))

@@ -46,6 +46,19 @@ runs vectors only. The SDKs take a `mode` argument (`RetrievalMode.HYBRID` / `.D
 the Data Lab search panel exposes a **Hybrid / Dense** chip. Hybrid silently falls
 back to dense when there is no query text (the FFI-free client-vector path).
 
+**Per-query rerank override.** MMR diversity rerank follows the operator's
+`KX_SERVE_RAG_RERANK` default; override it for a single query with `--rerank on|off`
+(CLI), `rerank=True/False` (Py), `{ rerank: true }` (TS), or the **Auto / Rerank / Off**
+chip in the Data Lab:
+
+```bash
+kx datasets query my-corpus --text "what did we decide?" --mode hybrid --rerank off
+```
+
+```python
+hits = client.query_dataset("my-corpus", text="…", mode=RetrievalMode.HYBRID, rerank=True)
+```
+
 **Chunking.** Server-embedded documents are split into overlapping **passages**
 (default ~1000 chars, 200 overlap) before embedding, so a hit is the relevant
 *passage*, not a whole document. Each hit carries chunk **provenance** — its parent

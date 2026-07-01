@@ -547,6 +547,7 @@ message QueryDatasetRequest {
   repeated float query_embedding = 3;    // client-vector path (FFI-free); takes precedence when non-empty
   uint32 k                       = 4;    // top-k (server-clamped to a sane max)
   RetrievalMode retrieval_mode   = 5;    // RC4a: UNSPECIFIED ⇒ server default; HYBRID needs query_text (else falls back to dense)
+  optional bool rerank           = 6;    // RC4c: per-query MMR diversity-rerank override; absent ⇒ server default (KX_SERVE_RAG_RERANK)
 }
 message DatasetHit {
   bytes content_ref = 1;                 // 32B content-addressed id of the retrieved CHUNK (RC4a: a chunk, not the whole doc)

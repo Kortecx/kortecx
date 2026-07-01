@@ -41,6 +41,11 @@ kx-planner.workspace = true
 kx-model-store.workspace = true
 kx-model-validator.workspace = true
 kx-dataset.workspace = true
+# RC4c: hybrid RAG (BM25 sparse leg) + the LLM-rerank grammar carrier. Both are
+# FFI-free leaves; the BM25 edge gives the harness the same hybrid retrieval the
+# live serve `HostDatasetView` already runs (`query_corpus_hybrid`).
+kx-dataset-bm25.workspace = true
+kx-grammar.workspace = true
 kx-critic-types.workspace = true
 kx-capture.workspace = true
 blake3.workspace = true
@@ -68,6 +73,10 @@ kx-critic.workspace = true
 # register on a LocalCapabilityBroker. A DEV-dependency only — the harness lib stays
 # decoupled from the MCP client (it routes through `dyn CapabilityBroker`).
 kx-mcp.workspace = true
+# RC4c: the second inference engine for the gated dual-engine `rerank_live` e2e
+# (Ollama ∥ llama.cpp, GR24). A DEV-dependency only — the harness lib uses the
+# `dyn InferenceBackend` seam, never the concrete Ollama backend.
+kx-ollama.workspace = true
 
 [features]
 # Gates the GGUF download (build.rs) + the real-model integration tests. Off by

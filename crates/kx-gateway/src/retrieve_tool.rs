@@ -134,10 +134,16 @@ impl Capability for RetrieveCapability {
         let k = args.k.map_or(DEFAULT_K, |k| (k as usize).clamp(1, MAX_K));
 
         // HYBRID (RC4a): query_embedding = None ⇒ the host embeds `query` internally.
-        match self
-            .datasets
-            .query(&args.dataset, None, &args.query, k, RetrievalMode::Hybrid)
-        {
+        // rerank = None ⇒ the operator's MMR default (the agentic loop reasons over
+        // the passages itself; LLM rerank is the RC4c-2 live coordinator turn).
+        match self.datasets.query(
+            &args.dataset,
+            None,
+            &args.query,
+            k,
+            RetrievalMode::Hybrid,
+            None,
+        ) {
             Ok(hits) => {
                 let passages = hits
                     .into_iter()
@@ -301,6 +307,7 @@ mod tests {
             _query_text: &str,
             _k: usize,
             _mode: RetrievalMode,
+            _rerank: Option<bool>,
         ) -> Result<Vec<DatasetHitEntry>, DatasetError> {
             match &self.err {
                 Some(DatasetError::NotFound) => Err(DatasetError::NotFound),

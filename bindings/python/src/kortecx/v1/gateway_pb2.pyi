@@ -646,18 +646,20 @@ class IngestDocumentsResponse(_message.Message):
     def __init__(self, dataset_id: _Optional[str] = ..., doc_count: _Optional[int] = ..., inserted: _Optional[int] = ..., dim: _Optional[int] = ...) -> None: ...
 
 class QueryDatasetRequest(_message.Message):
-    __slots__ = ("dataset", "query_text", "query_embedding", "k", "retrieval_mode")
+    __slots__ = ("dataset", "query_text", "query_embedding", "k", "retrieval_mode", "rerank")
     DATASET_FIELD_NUMBER: _ClassVar[int]
     QUERY_TEXT_FIELD_NUMBER: _ClassVar[int]
     QUERY_EMBEDDING_FIELD_NUMBER: _ClassVar[int]
     K_FIELD_NUMBER: _ClassVar[int]
     RETRIEVAL_MODE_FIELD_NUMBER: _ClassVar[int]
+    RERANK_FIELD_NUMBER: _ClassVar[int]
     dataset: str
     query_text: str
     query_embedding: _containers.RepeatedScalarFieldContainer[float]
     k: int
     retrieval_mode: RetrievalMode
-    def __init__(self, dataset: _Optional[str] = ..., query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ..., retrieval_mode: _Optional[_Union[RetrievalMode, str]] = ...) -> None: ...
+    rerank: bool
+    def __init__(self, dataset: _Optional[str] = ..., query_text: _Optional[str] = ..., query_embedding: _Optional[_Iterable[float]] = ..., k: _Optional[int] = ..., retrieval_mode: _Optional[_Union[RetrievalMode, str]] = ..., rerank: bool = ...) -> None: ...
 
 class DatasetHit(_message.Message):
     __slots__ = ("content_ref", "content", "score", "parent_ref", "chunk_index", "chunk_count")

@@ -179,6 +179,15 @@ pub const CONTEXT_ITEMS_KEY: &str = "kx.context.items";
 /// key, so adding the constant moves no existing digest).
 pub const IMAGE_REF_KEY: &str = "image_ref";
 
+/// RC4c: the `config_subset` key under which an authored RAG `query` step records
+/// its retrieval MODE (`"dense"` vs `"hybrid"`). The `rag_pipeline_hybrid` recipe
+/// sets `"hybrid"` so its query Mote's `MoteId` is DISTINCT from the dense
+/// `rag_pipeline`'s (a different retrieval is a different fact); the harness reads it
+/// to choose `query_corpus` vs `query_corpus_hybrid`. Present ONLY on a hybrid query
+/// step, so every existing Mote (incl. the dense `rag_pipeline`) is byte-identical —
+/// no prior Mote carries this key, so adding the constant moves no existing digest.
+pub const RETRIEVAL_MODE_KEY: &str = "kx.retrieval.mode";
+
 /// The stable position of a Mote in its DAG.
 ///
 /// Assigned at DAG-compile time (workflow SDK) or derived from a topology

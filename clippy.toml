@@ -8,3 +8,8 @@ cognitive-complexity-threshold = 20
 
 # Documentation discipline (CLAUDE.md: "Public API documented with `///`").
 missing-docs-in-crate-items = true
+
+# OSS-RC milestone labels are valid prose, not code identifiers — without this
+# `doc_markdown` flags `RC4c`/`RC5a`/… (uppercase prefix + lowercase suffix looks
+# like a type). `..` extends clippy's built-in valid-idents list (GitHub, OAuth, …).
+doc-valid-idents = ["RC4a", "RC4b", "RC4c", "RC5a", "RC5b", "RC6a", "RC6b", ".."]
