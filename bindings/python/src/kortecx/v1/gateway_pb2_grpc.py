@@ -144,6 +144,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsResponse.FromString,
                 _registered_method=True)
+        self.ListReRankTurns = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListReRankTurns',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsResponse.FromString,
+                _registered_method=True)
         self.ListCaptureRecords = channel.unary_unary(
                 '/kortecx.v1.KxGateway/ListCaptureRecords',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListCaptureRecordsRequest.SerializeToString,
@@ -592,6 +597,13 @@ class KxGatewayServicer(object):
 
     def ListReactTurns(self, request, context):
         """PR-2d-1 additive (D120.6): ReAct-turn observability (read-only).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListReRankTurns(self, request, context):
+        """RC4c-2: enumerate the durable `ReRankRound` facts (live LLM listwise rerank).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1186,6 +1198,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.ListReactTurns,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsResponse.SerializeToString,
+            ),
+            'ListReRankTurns': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListReRankTurns,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsResponse.SerializeToString,
             ),
             'ListCaptureRecords': grpc.unary_unary_rpc_method_handler(
                     servicer.ListCaptureRecords,
@@ -2087,6 +2104,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/ListReactTurns',
             kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.ListReactTurnsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListReRankTurns(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListReRankTurns',
+            kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListReRankTurnsResponse.FromString,
             options,
             channel_credentials,
             insecure,

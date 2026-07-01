@@ -231,6 +231,38 @@ pub struct ReactRoundRecord {
     pub seq: u64,
 }
 
+/// One LLM-rerank-turn run-metadata record (v16, RC4c-2), folded from a
+/// `ReRankRound` entry. **Audit/lineage + recovery metadata, never identity** — no
+/// scheduling/identity/digest decision reads it. Off the Mote-DAG. The coordinator's
+/// `settle_rerank_rounds` / `recover_rerank_chain` read these to settle a committed
+/// rerank and rebuild an in-flight rerank Mote deterministically from committed
+/// facts. Surfaced by [`crate::Projection::rerank_rounds`] /
+/// [`crate::Projection::latest_rerank_round`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReRankRoundRecord {
+    /// The rerank round index (`0` today; kept for symmetry + future multi-pass).
+    pub round: u32,
+    /// The rerank Mote's (run-salted) `MoteId`.
+    pub rerank_mote_id: MoteId,
+    /// The registered run identity (the run-salt) — keys every settle/recover query
+    /// in serve's shared journal.
+    pub instance_id: [u8; kx_journal::INSTANCE_ID_LEN],
+    /// `ContentRef` of the encoded ordered pre-rerank candidate refs.
+    pub base_results_ref: ContentRef,
+    /// `ContentRef` of the query text the rerank ranks against.
+    pub query_ref: ContentRef,
+    /// The run-fixed rerank `warrant_ref`.
+    pub warrant_ref: ContentRef,
+    /// The resolved model id the rerank runs.
+    pub model_id: String,
+    /// The number of candidates reranked (the `Permutation(n)` bound).
+    pub candidate_count: u32,
+    /// The round's settled outcome, frozen at append.
+    pub outcome: kx_journal::ReRankOutcome,
+    /// The entry's journal seq (audit/order).
+    pub seq: u64,
+}
+
 /// One pre-action approval handshake's LATEST folded state (D114). The fold appends
 /// one [`ApprovalRecord`] per handshake step (`Requested → Granted / Denied /
 /// Expired`); the derived `approval_index` keeps the latest per `request_id`. Off-DAG
@@ -329,6 +361,13 @@ pub(crate) struct State {
     /// checkpoint load — NEVER serialized (not in `CheckpointState`), so
     /// `encode_state` + the `state_content_digest` carry only the `approvals` Vec.
     pub(crate) approval_index: BTreeMap<[u8; kx_journal::APPROVAL_REQUEST_ID_LEN], usize>,
+    /// RC4c-2 — LLM-rerank-turn metadata, appended as each `ReRankRound` entry
+    /// folds. Off-DAG; O(1) per append. Recovery + audit only — never an
+    /// identity/scheduling/digest input. Emptiness is the zero-cost sentinel for
+    /// rerank-free runs (and the demo). No derived index: a rerank is a single
+    /// bounded fact per retrieval, so the coordinator filters this Vec by
+    /// `instance_id` directly.
+    pub(crate) rerank_rounds: Vec<ReRankRoundRecord>,
 }
 
 impl State {

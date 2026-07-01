@@ -2732,6 +2732,21 @@ impl KxGateway for GatewayService {
         Ok(Response::new(resp))
     }
 
+    async fn list_re_rank_turns(
+        &self,
+        request: Request<proto::ListReRankTurnsRequest>,
+    ) -> Result<Response<proto::ListReRankTurnsResponse>, Status> {
+        let req = request.into_inner();
+        // RC4c-2: a read-only fold over the off-DAG ReRankRound facts (the live LLM
+        // listwise rerank turn's anchor + frozen outcome). Always available (no seam).
+        let resp = crate::rerank::list_rerank_turns(
+            self.reader.as_ref(),
+            req.limit,
+            req.instance_id.as_deref(),
+        )?;
+        Ok(Response::new(resp))
+    }
+
     async fn score_run(
         &self,
         request: Request<proto::ScoreRunRequest>,

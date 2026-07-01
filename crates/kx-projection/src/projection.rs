@@ -549,7 +549,10 @@ impl Projection {
             | JournalEntry::ReactRound { .. }
             // D114: the HITL approval handshake is the ReAct chain's off-DAG sibling
             // — same never-a-digest-input law (folds into `approvals`, names no Mote).
-            | JournalEntry::Approval { .. } => {
+            | JournalEntry::Approval { .. }
+            // RC4c-2: the live LLM rerank turn is the RAG chain's off-DAG sibling —
+            // same never-a-digest-input law (folds into `rerank_rounds`, names no Mote).
+            | JournalEntry::ReRankRound { .. } => {
                 self.fold_run_metadata(entry);
             }
         }
@@ -643,6 +646,39 @@ impl Projection {
             // facts; extracted to keep this fold under the line budget.
             JournalEntry::ReactRound { .. } | JournalEntry::Approval { .. } => {
                 self.fold_react_metadata(entry);
+            }
+            // RC4c-2 (ReRankRound) — the live LLM rerank turn's off-DAG record.
+            // Append-many: one record per rerank round. Replay rebuilds the same Vec
+            // from scratch (each journaled entry folds exactly once). Off-DAG: names a
+            // rerank Mote but registers NO `MoteInfo` and touches NO children index —
+            // pure recovery/audit metadata, never an identity/scheduling/digest input.
+            JournalEntry::ReRankRound {
+                round,
+                rerank_mote_id,
+                instance_id,
+                base_results_ref,
+                query_ref,
+                warrant_ref,
+                model_id,
+                candidate_count,
+                outcome,
+                seq,
+            } => {
+                self.state
+                    .rerank_rounds
+                    .push(crate::state::ReRankRoundRecord {
+                        round: *round,
+                        rerank_mote_id: *rerank_mote_id,
+                        instance_id: *instance_id,
+                        base_results_ref: *base_results_ref,
+                        query_ref: *query_ref,
+                        warrant_ref: *warrant_ref,
+                        model_id: model_id.clone(),
+                        candidate_count: *candidate_count,
+                        outcome: outcome.clone(),
+                        seq: *seq,
+                    });
+                self.state.last_seq = self.state.last_seq.max(*seq);
             }
             _ => unreachable!("fold_run_metadata called with a non-run-metadata kind"),
         }
@@ -1111,6 +1147,49 @@ impl Projection {
             .replan_rounds
             .iter()
             .max_by(|a, b| a.round.cmp(&b.round).then(b.seq.cmp(&a.seq)))
+    }
+
+    /// The LLM-rerank-turn metadata (RC4c-2) folded so far — one record per
+    /// `ReRankRound` entry, in journal (seq) order.
+    ///
+    /// **Recovery + audit metadata, never identity.** Off the Mote-DAG: no
+    /// scheduling/identity/digest decision reads it, so it can never move the
+    /// projection digest. Reconstructed verbatim on replay. The coordinator's
+    /// `settle_rerank_rounds` / `recover_rerank_chain` read these to settle a
+    /// committed rerank and rebuild an in-flight rerank Mote deterministically from
+    /// committed facts; the gateway's `list_rerank_turns` surfaces them for audit.
+    #[must_use]
+    pub fn rerank_rounds(&self) -> &[crate::state::ReRankRoundRecord] {
+        &self.state.rerank_rounds
+    }
+
+    /// The `ReRankRound` records of ONE run (`instance_id`), newest-`seq` first — the
+    /// coordinator's per-run settle/recover lookup + the audit view. A rerank is a
+    /// single bounded fact per retrieval, so the Vec is filtered directly (no derived
+    /// index).
+    pub fn rerank_rounds_of<'a>(
+        &'a self,
+        instance_id: &'a [u8; kx_journal::INSTANCE_ID_LEN],
+    ) -> impl Iterator<Item = &'a crate::state::ReRankRoundRecord> + 'a {
+        self.state
+            .rerank_rounds
+            .iter()
+            .filter(move |r| &r.instance_id == instance_id)
+    }
+
+    /// The latest (highest-`seq`) `ReRankRound` record for one run's rerank Mote, or
+    /// `None`. On a tie the highest `seq` wins (last-write = the settled outcome
+    /// supersedes the `Pending` anchor), so the coordinator reads the frozen outcome.
+    #[must_use]
+    pub fn latest_rerank_round(
+        &self,
+        rerank_mote_id: &MoteId,
+    ) -> Option<&crate::state::ReRankRoundRecord> {
+        self.state
+            .rerank_rounds
+            .iter()
+            .filter(|r| &r.rerank_mote_id == rerank_mote_id)
+            .max_by(|a, b| a.seq.cmp(&b.seq))
     }
 
     /// The ReAct-turn metadata (PR-2d-1) folded so far — one record per

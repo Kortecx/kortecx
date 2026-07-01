@@ -235,6 +235,7 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::DigestSealed { seq, .. }
         | JournalEntry::ReplanRound { seq, .. }
         | JournalEntry::ReactRound { seq, .. }
-        | JournalEntry::Approval { seq, .. } => *seq = new_seq,
+        | JournalEntry::Approval { seq, .. }
+        | JournalEntry::ReRankRound { seq, .. } => *seq = new_seq,
     }
 }

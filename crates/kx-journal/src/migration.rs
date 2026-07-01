@@ -97,8 +97,14 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v15 (current): no transform, the single source of truth for decode.
+        // v16 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v15 → v16: a PURE pass-through. The lone v15→v16 delta is the brand-new
+        // `ReRankRound` kind (11) — no v15 journal can contain a kind-11 body — so
+        // every existing kind (0..=10) is byte-identical and v15 bytes decode
+        // correctly under v16 unchanged. An OLD (v15) binary still refuses a v16
+        // journal loudly.
+        15 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
         // v14 → v15: a PURE pass-through. The v14→v15 deltas are (a) the trailing
         // `require_approval` byte on a `ReactRound` (kind 9) body — a v14 body lacks
         // it and the canonical decoder up-converts a byte-absent body to
@@ -223,8 +229,9 @@ fn v5_run_versions_has_capability(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entry::{encode_entry, ResolvedCapabilityRecord, ResolvedKindTag};
+    use crate::entry::{encode_entry, ReRankOutcome, ResolvedCapabilityRecord, ResolvedKindTag};
     use kx_content::ContentRef;
+    use kx_mote::MoteId;
 
     // Build a current-version (v6) RunVersionsResolved entry with a capability,
     // using the given idempotency class.
@@ -292,6 +299,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(migrated, entry);
+    }
+
+    #[test]
+    fn v15_to_v16_is_pure_passthrough() {
+        // v15 → v16 adds only the brand-new `ReRankRound` kind (11); every
+        // pre-existing kind is byte-identical, so migrating a v15-shaped entry from
+        // 15 equals decoding it directly (no transform).
+        let sealed = JournalEntry::DigestSealed {
+            through_seq: 42,
+            state_digest: [0x7d; 32],
+            seq: 9,
+        };
+        let bytes = encode_entry(&sealed).unwrap();
+        let migrated = migrate_entry(&bytes, 15, MoteDefHash::from_bytes([0u8; 32])).unwrap();
+        assert_eq!(migrated, sealed);
+
+        // A v16 `ReRankRound` round-trips through migrate at the current version.
+        let rerank = JournalEntry::ReRankRound {
+            round: 0,
+            rerank_mote_id: MoteId::from_bytes([0x5a; 32]),
+            instance_id: [0x3c; INSTANCE_ID_LEN],
+            base_results_ref: ContentRef::from_bytes([0x11; 32]),
+            query_ref: ContentRef::from_bytes([0x22; 32]),
+            warrant_ref: ContentRef::from_bytes([0x33; 32]),
+            model_id: "gemma-4".to_string(),
+            candidate_count: 2,
+            outcome: ReRankOutcome::Reranked {
+                permutation: vec![1, 0],
+            },
+            seq: 11,
+        };
+        let rbytes = encode_entry(&rerank).unwrap();
+        let rmigrated = migrate_entry(
+            &rbytes,
+            JOURNAL_SCHEMA_VERSION,
+            MoteDefHash::from_bytes([0u8; 32]),
+        )
+        .unwrap();
+        assert_eq!(rmigrated, rerank);
     }
 
     #[test]
