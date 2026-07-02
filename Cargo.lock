@@ -1316,6 +1316,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-blueprint"
+version = "0.1.0"
+dependencies = [
+ "kx-proto",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kx-bundle"
 version = "0.1.1"
 dependencies = [
@@ -1401,6 +1410,7 @@ name = "kx-cli"
 version = "0.1.1"
 dependencies = [
  "kx-app",
+ "kx-blueprint",
  "kx-critic-types",
  "kx-eval",
  "kx-gateway",
@@ -1661,6 +1671,7 @@ dependencies = [
  "keyring",
  "kx-app",
  "kx-audit",
+ "kx-blueprint",
  "kx-bundle",
  "kx-capability",
  "kx-capture",

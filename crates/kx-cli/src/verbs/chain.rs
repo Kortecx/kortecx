@@ -644,7 +644,7 @@ fn build_request(
     context_bundles: Vec<String>,
 ) -> Result<kx_proto::proto::SubmitWorkflowRequest, CliError> {
     let spec = build_dagspec(lowered, tasks, seed, context_bundles)?;
-    crate::verbs::blueprint::to_request(spec)
+    crate::verbs::blueprint::to_request(spec).map_err(CliError::from)
 }
 
 /// Execute `chain run`.

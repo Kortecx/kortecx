@@ -53,6 +53,9 @@ pub enum AppSub {
         output: Option<PathBuf>,
     },
     /// Compile the App's blueprint and run it (exactly-once; the server warrants).
+    /// Prefers the server-side `RunApp` (G2 — honors the envelope's
+    /// `references.connections` + `guards.secret_scope`); falls back to the legacy
+    /// client-orchestrated `GetApp` → `SubmitWorkflow` on an older server.
     Run {
         /// The catalog handle.
         handle: String,
@@ -62,6 +65,9 @@ pub enum AppSub {
         timeout_secs: u64,
         /// Write the terminal result body here.
         out: Option<PathBuf>,
+        /// Optional `--arg k=v` entry inputs, folded server-side into the App's entry
+        /// model step prompt (an "Inputs" block). Requires a RunApp-capable server.
+        args: Vec<(String, String)>,
     },
     /// Write one App's pretty envelope JSON to `--output` (the round-trip artifact).
     Export {
@@ -193,12 +199,20 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
     let mut branch: Option<String> = None;
     let mut wait_flag = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
+    let mut app_args: Vec<(String, String)> = Vec::new();
 
     while let Some(flag) = args.next() {
         if common.try_consume(&flag, &mut args)? {
             continue;
         }
         match flag.as_str() {
+            "--arg" => {
+                let kv = next_value(&mut args, "--arg")?;
+                let (k, v) = kv
+                    .split_once('=')
+                    .ok_or_else(|| CliError::Usage(format!("--arg expects k=v, got {kv:?}")))?;
+                app_args.push((k.to_string(), v.to_string()));
+            }
             "--from-blueprint" => {
                 from_blueprint = Some(PathBuf::from(next_value(&mut args, "--from-blueprint")?));
             }
@@ -258,6 +272,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             branch,
             wait_flag,
             timeout_secs,
+            app_args,
         },
     )?;
     Ok(AppArgs { sub, common })
@@ -281,6 +296,7 @@ struct Flags {
     branch: Option<String>,
     wait_flag: bool,
     timeout_secs: u64,
+    app_args: Vec<(String, String)>,
 }
 
 /// Validate the accumulated flags against the verb and build the subcommand.
@@ -317,6 +333,7 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             wait: f.wait_flag,
             timeout_secs: f.timeout_secs,
             out: f.out,
+            args: f.app_args,
         }),
         "export" => Ok(AppSub::Export {
             handle: require_pos(f.positional, "a <handle>")?,
@@ -504,23 +521,57 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
             wait: do_wait,
             timeout_secs,
             out,
+            args,
         } => {
-            let resp = fetch_app(&mut client, &resolved, &handle).await?;
-            if !resp.found {
-                return Err(CliError::Usage(format!("app {handle:?} not found")));
-            }
-            let env = AppEnvelope::from_json_slice(&resp.envelope_json)
-                .map_err(|e| CliError::Usage(format!("stored envelope is invalid: {e}")))?;
-            // The blueprint is authoritative; compile it through the ONE canonical
-            // path. The server re-resolves every warrant from the caller's grants.
-            let dag: DagSpec = serde_json::from_value(env.blueprint)
-                .map_err(|e| CliError::Usage(format!("app blueprint is not a DagSpec: {e}")))?;
-            let req = to_request(dag)?;
-            let submitted = client
-                .submit_workflow(resolved.request(req)?)
+            // `--arg k=v` → a canonical JSON object the server folds into the entry
+            // model step (empty ⇒ no args). Sorted by BTreeMap for a stable payload.
+            let args_bytes = if args.is_empty() {
+                Vec::new()
+            } else {
+                let map: std::collections::BTreeMap<String, String> = args.into_iter().collect();
+                serde_json::to_vec(&map)
+                    .map_err(|e| CliError::Usage(format!("encode --arg: {e}")))?
+            };
+            // Prefer the server-side RunApp (G2 — honors references.connections +
+            // guards.secret_scope so a credentialed connector can be dialed). Fall back
+            // to the legacy client-orchestrated GetApp -> SubmitWorkflow on an older
+            // server (UNIMPLEMENTED) — that path drops the references (no secret_scope).
+            let submitted = match client
+                .run_app(resolved.request(proto::RunAppRequest {
+                    handle: handle.clone(),
+                    args: args_bytes.clone(),
+                })?)
                 .await
-                .map_err(CliError::from_status)?
-                .into_inner();
+            {
+                Ok(resp) => resp.into_inner(),
+                Err(status) if status.code() == tonic::Code::Unimplemented => {
+                    if !args_bytes.is_empty() {
+                        return Err(CliError::Usage(
+                            "this server does not support `kx app run --arg` (RunApp \
+                             unavailable); upgrade the server, or run without --arg"
+                                .into(),
+                        ));
+                    }
+                    let resp = fetch_app(&mut client, &resolved, &handle).await?;
+                    if !resp.found {
+                        return Err(CliError::Usage(format!("app {handle:?} not found")));
+                    }
+                    let env = AppEnvelope::from_json_slice(&resp.envelope_json)
+                        .map_err(|e| CliError::Usage(format!("stored envelope is invalid: {e}")))?;
+                    // Compile the blueprint through the ONE canonical path; the server
+                    // re-resolves every warrant from the caller's grants (SN-8).
+                    let dag: DagSpec = serde_json::from_value(env.blueprint).map_err(|e| {
+                        CliError::Usage(format!("app blueprint is not a DagSpec: {e}"))
+                    })?;
+                    let req = to_request(dag)?;
+                    client
+                        .submit_workflow(resolved.request(req)?)
+                        .await
+                        .map_err(CliError::from_status)?
+                        .into_inner()
+                }
+                Err(status) => return Err(CliError::from_status(status)),
+            };
             if do_wait {
                 let outcome = wait::await_any_result(
                     &mut client,

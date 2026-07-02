@@ -94,6 +94,29 @@ fn resolve_session_mode(stateful_flag: bool, mode: Option<&str>) -> Result<Strin
     }
 }
 
+/// G1: a curated first-class Integration provider — the defaults `kx connections add
+/// --provider <id>` fills in (connection name, stdio command, credential-ref name) so
+/// the operator gets a one-click "Connect" flow over the EXISTING RegisterMcpServer +
+/// PutSecret RPCs (no new proto). Mirrors the UI/SDK provider catalog.
+struct ProviderDefaults {
+    name: &'static str,
+    command: &'static str,
+    credential_ref: &'static str,
+}
+
+/// The static provider catalog. Gmail is the first curated provider (the bundled
+/// `kx-connector-gmail` sidecar); Discord/Slack/Notion clone this row when curated.
+fn provider_defaults(id: &str) -> Option<ProviderDefaults> {
+    match id {
+        "gmail" => Some(ProviderDefaults {
+            name: "gmail",
+            command: "kx-connector-gmail",
+            credential_ref: "KX_GMAIL_CREDENTIAL",
+        }),
+        _ => None,
+    }
+}
+
 /// Parse `connections` args (the verb already consumed). The first token selects
 /// the subcommand (`add` / `list` / `test` / `remove` / `discover` / `fire`).
 #[allow(clippy::too_many_lines)] // a flat flag-parsing dispatcher (the verbs' convention)
@@ -122,6 +145,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
     // `fire` selectors: the tool's remote name + the JSON args body.
     let mut tool: Option<String> = None;
     let mut args_json: Option<String> = None;
+    // G1: a curated first-class provider (e.g. `--provider gmail`) fills the
+    // command + credential-ref (+ name) from a small static catalog.
+    let mut provider: Option<String> = None;
     let mut common = ClientCommon::default();
 
     while let Some(flag) = args.next() {
@@ -140,6 +166,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
             "--stateful" => stateful_flag = true,
             "--tool" => tool = Some(next_value(&mut args, "--tool")?),
             "--args" => args_json = Some(next_value(&mut args, "--args")?),
+            "--provider" => provider = Some(next_value(&mut args, "--provider")?),
             other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
         }
     }
@@ -169,6 +196,23 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
             args_json: args_json.filter(|s| !s.is_empty()).unwrap_or_else(|| "{}".to_string()),
         },
         "add" => {
+            // G1: a curated provider shortcut fills the connection name + stdio command
+            // + credential-ref from the static catalog so `kx connections add --provider
+            // gmail` is enough. Explicit flags still override each field.
+            if let Some(pid) = &provider {
+                let p = provider_defaults(pid).ok_or_else(|| {
+                    CliError::Usage(format!("unknown --provider {pid:?} (known: gmail)"))
+                })?;
+                if name.is_none() {
+                    name = Some(p.name.to_string());
+                }
+                if command.is_none() && url.is_none() {
+                    command = Some(p.command.to_string());
+                }
+                if credential_ref.is_empty() {
+                    credential_ref = p.credential_ref.to_string();
+                }
+            }
             let name = require_name(name, "add")?;
             // Infer the transport from the endpoint flag given, unless pinned.
             let transport = match transport {

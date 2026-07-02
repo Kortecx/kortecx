@@ -45,6 +45,12 @@ export function AppsSection() {
   }
 
   const runError = runApp.error ? toUiError(runApp.error) : null;
+  // G2: a RunApp `missing integration: <name>` refusal is actionable — offer to open
+  // the Connections panel to register the connection the App references.
+  const missingIntegration = runError !== null && /missing integration/i.test(runError.message);
+  const runAction = missingIntegration
+    ? { label: "Set up integration", onClick: () => void navigate({ to: "/tools" }) }
+    : undefined;
 
   return (
     <section className="screen" data-testid="apps-section">
@@ -111,7 +117,9 @@ export function AppsSection() {
         </m.div>
       ) : null}
 
-      {runError ? <ErrorNotice error={runError} onRetry={() => runApp.reset()} /> : null}
+      {runError ? (
+        <ErrorNotice error={runError} onRetry={() => runApp.reset()} action={runAction} />
+      ) : null}
 
       {summaryFor ? (
         <AppViewPopover handle={summaryFor} onClose={() => setSummaryFor(null)} />

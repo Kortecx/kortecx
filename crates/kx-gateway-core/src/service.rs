@@ -808,6 +808,11 @@ pub struct GatewayService {
     /// Caller-scoped, off-journal, off-digest, rebuildable-to-empty. The envelope
     /// carries NO authority (the host validates it); `app run` re-resolves warrants.
     apps: Option<Arc<dyn crate::apps_view::AppCatalog>>,
+    /// G2: the optional App-RUN seam (the host injects an `apps.db` + connection-store
+    /// backed resolver). `None` ⇒ `RunApp` returns `unimplemented` and clients fall
+    /// back to the legacy `GetApp` → `SubmitWorkflow` path. Server-minted warrants
+    /// (SN-8); connection/secret resolution is caller-scoped, off-journal, off-digest.
+    app_runner: Option<Arc<dyn crate::apps_run::AppAuthor>>,
     /// The optional per-App lock store seam (POC-5b — the host injects a `locks.db`
     /// sidecar). `None` ⇒ `LockApp` / `UnlockApp` are `unimplemented` AND the
     /// `AdvanceBranch` chokepoint degrades OPEN (an additive feature never tightens
@@ -908,6 +913,7 @@ impl GatewayService {
             bundles: None,
             branches: None,
             apps: None,
+            app_runner: None,
             locks: None,
             scaffolder: None,
             model_puller: None,
@@ -1345,6 +1351,18 @@ impl GatewayService {
         self
     }
 
+    /// G2: wire the App-RUN seam (the `RunApp` path). Without it `RunApp` returns
+    /// `unimplemented` and clients fall back to the legacy `GetApp` → `SubmitWorkflow`
+    /// path. The host impl (`kx-gateway`) reads the validated envelope, lowers its
+    /// blueprint, resolves `references.connections` against the caller's own registry,
+    /// and narrows the run warrant's secret scope to the App's declared secrets;
+    /// warrants are server-minted (SN-8).
+    #[must_use]
+    pub fn with_app_runner(mut self, runner: Arc<dyn crate::apps_run::AppAuthor>) -> Self {
+        self.app_runner = Some(runner);
+        self
+    }
+
     /// Wire the POC-5b per-App lock store (the host's `locks.db` sidecar). Without it
     /// `LockApp`/`UnlockApp` return `unimplemented` AND the `AdvanceBranch` chokepoint
     /// degrades OPEN (an additive feature never tightens an existing serve).
@@ -1391,6 +1409,80 @@ fn submit_status(err: SubmitterError) -> Status {
         }
         SubmitterError::Transport(detail) => Status::unavailable(detail),
     }
+}
+
+/// Map the wire palette (`WorkflowStep` / `WorkflowEdge` + execution mode) into
+/// gateway-core's authoring vocabulary. The SINGLE shared parse that both
+/// `SubmitWorkflow` and the G2 `RunApp` path (via the host, after lowering a stored
+/// App's blueprint through `kx-blueprint::to_request`) funnel through, so a blueprint
+/// lowers to identical `AuthorStep`s regardless of caller. UNSPECIFIED step/edge kinds
+/// are refused (`invalid_argument`); UNSPECIFIED + DYNAMIC execution modes collapse to
+/// `Frozen` / `Dynamic` (the host refuses `Dynamic` fail-closed downstream).
+///
+/// # Errors
+/// [`Status::invalid_argument`] on an UNSPECIFIED step kind, an UNSPECIFIED edge kind,
+/// or a `body_signature_id` that is present but not 32 bytes.
+// `Status` is large; boxing it would force every caller (the RPC handlers) to unbox —
+// the same crate-wide rationale as the streaming seams above.
+#[allow(clippy::result_large_err)]
+pub fn author_steps_from_proto(
+    steps: Vec<proto::WorkflowStep>,
+    edges: Vec<proto::WorkflowEdge>,
+    execution_mode: i32,
+) -> Result<(Vec<AuthorStep>, Vec<AuthorEdge>, AuthorExecutionMode), Status> {
+    let mut out_steps: Vec<AuthorStep> = Vec::with_capacity(steps.len());
+    for s in steps {
+        let kind = match proto::WorkflowStepKind::try_from(s.kind) {
+            Ok(proto::WorkflowStepKind::Pure) => AuthorStepKind::Pure,
+            Ok(proto::WorkflowStepKind::Model) => AuthorStepKind::Model,
+            Ok(proto::WorkflowStepKind::Exec) => AuthorStepKind::Exec,
+            Ok(proto::WorkflowStepKind::Tool) => AuthorStepKind::Tool,
+            _ => {
+                return Err(Status::invalid_argument(
+                    "WorkflowStep.kind must be PURE, MODEL, EXEC, or TOOL",
+                ));
+            }
+        };
+        let body_signature_id = if s.body_signature_id.is_empty() {
+            None
+        } else {
+            Some(hash_32(
+                &s.body_signature_id,
+                "WorkflowStep.body_signature_id must be 32 bytes",
+            )?)
+        };
+        out_steps.push(AuthorStep {
+            kind,
+            model_id: s.model_id,
+            prompt: s.prompt,
+            body_signature_id,
+            tool_contract: s.tool_contract.into_iter().collect(),
+            params: s.params.into_iter().collect(),
+        });
+    }
+    let mut out_edges: Vec<AuthorEdge> = Vec::with_capacity(edges.len());
+    for e in edges {
+        let data = match proto::EdgeKind::try_from(e.edge_kind) {
+            Ok(proto::EdgeKind::Data) => true,
+            Ok(proto::EdgeKind::Control) => false,
+            _ => {
+                return Err(Status::invalid_argument(
+                    "WorkflowEdge.edge_kind must be DATA or CONTROL",
+                ));
+            }
+        };
+        out_edges.push(AuthorEdge {
+            parent: e.parent,
+            child: e.child,
+            data,
+            non_cascade: e.non_cascade,
+        });
+    }
+    let mode = match proto::WorkflowExecutionMode::try_from(execution_mode) {
+        Ok(proto::WorkflowExecutionMode::Dynamic) => AuthorExecutionMode::Dynamic,
+        _ => AuthorExecutionMode::Frozen,
+    };
+    Ok((out_steps, out_edges, mode))
 }
 
 /// Map an optional wire `bytes` field to a fixed `[u8; N]` — all-zero when
@@ -1939,62 +2031,12 @@ impl KxGateway for GatewayService {
             .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
         let req = request.into_inner();
 
-        // Map the wire palette → gateway-core's vocabulary. The client supplies
-        // TOPOLOGY + PARAMS only; UNSPECIFIED kinds are refused at the boundary.
-        let mut steps: Vec<AuthorStep> = Vec::with_capacity(req.steps.len());
-        for s in req.steps {
-            let kind = match proto::WorkflowStepKind::try_from(s.kind) {
-                Ok(proto::WorkflowStepKind::Pure) => AuthorStepKind::Pure,
-                Ok(proto::WorkflowStepKind::Model) => AuthorStepKind::Model,
-                Ok(proto::WorkflowStepKind::Exec) => AuthorStepKind::Exec,
-                Ok(proto::WorkflowStepKind::Tool) => AuthorStepKind::Tool,
-                _ => {
-                    return Err(Status::invalid_argument(
-                        "WorkflowStep.kind must be PURE, MODEL, EXEC, or TOOL",
-                    ));
-                }
-            };
-            let body_signature_id = if s.body_signature_id.is_empty() {
-                None
-            } else {
-                Some(hash_32(
-                    &s.body_signature_id,
-                    "WorkflowStep.body_signature_id must be 32 bytes",
-                )?)
-            };
-            steps.push(AuthorStep {
-                kind,
-                model_id: s.model_id,
-                prompt: s.prompt,
-                body_signature_id,
-                tool_contract: s.tool_contract.into_iter().collect(),
-                params: s.params.into_iter().collect(),
-            });
-        }
-        let mut edges: Vec<AuthorEdge> = Vec::with_capacity(req.edges.len());
-        for e in req.edges {
-            let data = match proto::EdgeKind::try_from(e.edge_kind) {
-                Ok(proto::EdgeKind::Data) => true,
-                Ok(proto::EdgeKind::Control) => false,
-                _ => {
-                    return Err(Status::invalid_argument(
-                        "WorkflowEdge.edge_kind must be DATA or CONTROL",
-                    ));
-                }
-            };
-            edges.push(AuthorEdge {
-                parent: e.parent,
-                child: e.child,
-                data,
-                non_cascade: e.non_cascade,
-            });
-        }
-        // UNSPECIFIED + FROZEN → Frozen (default-safe); DYNAMIC is reserved and the
-        // host refuses it fail-closed (PR-1 frozen-only).
-        let mode = match proto::WorkflowExecutionMode::try_from(req.execution_mode) {
-            Ok(proto::WorkflowExecutionMode::Dynamic) => AuthorExecutionMode::Dynamic,
-            _ => AuthorExecutionMode::Frozen,
-        };
+        // Map the wire palette → gateway-core's vocabulary via the SHARED parse the G2
+        // `RunApp` path reuses (through the host). The client supplies TOPOLOGY +
+        // PARAMS only; UNSPECIFIED kinds are refused; DYNAMIC is reserved (the host
+        // refuses it fail-closed, PR-1 frozen-only).
+        let (steps, edges, mode) =
+            author_steps_from_proto(req.steps, req.edges, req.execution_mode)?;
 
         // Compile + warrant-resolve SERVER-SIDE (identity + warrants derived from the
         // party's grants, never the client — the BLOCKER #5 fix). `BoundRecipe`
@@ -2030,6 +2072,89 @@ impl KxGateway for GatewayService {
 
         // The SAME propose-proxy as Invoke/SubmitRun: register first, then submit each
         // compiled Mote (react_seed always false — no react kind in the Tier-1 palette).
+        let instance_id = self
+            .submitter
+            .register_run(bound.recipe_fingerprint)
+            .await
+            .map_err(submit_status)?;
+        for (mote, warrant) in bound.motes {
+            self.submitter
+                .submit_mote(mote, warrant, false, false)
+                .await
+                .map_err(submit_status)?;
+        }
+
+        Ok(Response::new(proto::RunHandle {
+            instance_id: instance_id.to_vec(),
+            recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
+        }))
+    }
+
+    async fn run_app(
+        &self,
+        request: Request<proto::RunAppRequest>,
+    ) -> Result<Response<proto::RunHandle>, Status> {
+        // G2: run a caller-owned App SERVER-SIDE so its `references.connections` +
+        // `guards.secret_scope` are honored (the client-orchestrated `GetApp` →
+        // `SubmitWorkflow` path drops them). `None` seam ⇒ `unimplemented` (clients
+        // fall back to that legacy path — no regression).
+        let runner = self.app_runner.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "RunApp: no app-run seam wired on this gateway \
+                 (falls back to GetApp -> SubmitWorkflow)",
+            )
+        })?;
+        // SERVER-DERIVED identity (SN-8): the party the auth interceptor resolved.
+        let party = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        let req = request.into_inner();
+
+        // The host reads the validated stored envelope, lowers its blueprint through
+        // the canonical `kx-blueprint` path, resolves `references.connections` against
+        // the caller's OWN registry, and sets the run warrant's secret scope from the
+        // App's declared `guards.secret_scope`. Server-minted warrants (SN-8): the
+        // envelope carries NO authority.
+        let bound = runner
+            .author_app(&party, &req.handle, &req.args)
+            .await
+            .map_err(|e| match e {
+                crate::apps_run::AppRunError::NotAuthorized => {
+                    Status::permission_denied("not authorized")
+                }
+                crate::apps_run::AppRunError::InvalidArgs(detail) => {
+                    Status::invalid_argument(detail)
+                }
+                crate::apps_run::AppRunError::MissingIntegration(name) => {
+                    Status::failed_precondition(format!(
+                        "missing integration: {name} (register it with `kx connections add`)"
+                    ))
+                }
+                crate::apps_run::AppRunError::Internal(detail) => Status::internal(detail),
+            })?;
+
+        // The SAME fireable-grant backstop as Invoke/SubmitWorkflow: every server-built
+        // warrant's grants must name a capability the host ACTUALLY registered on the
+        // broker (fail-closed against provisioning drift).
+        let fireable = self.fireable_grants();
+        for (_, warrant) in &bound.motes {
+            if let Some(grant) = warrant
+                .tool_grants
+                .iter()
+                .find(|g| !fireable.contains(&(g.tool_id.0.clone(), g.tool_version.0.clone())))
+            {
+                return Err(Status::failed_precondition(format!(
+                    "app step grants tool {}@{} but this serve registered no such capability",
+                    grant.tool_id.0, grant.tool_version.0
+                )));
+            }
+        }
+
+        // The SAME propose-proxy as Invoke/SubmitWorkflow: register first, then submit
+        // each compiled Mote (react_seed always false — an agentic MODEL step drives
+        // its own bounded loop via its Mote def, exactly as SubmitWorkflow authors it).
         let instance_id = self
             .submitter
             .register_run(bound.recipe_fingerprint)

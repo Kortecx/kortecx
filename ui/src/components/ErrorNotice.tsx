@@ -4,10 +4,13 @@ export interface ErrorNoticeProps {
   error: UiError;
   onRetry?: () => void;
   onReauth?: () => void;
+  /** An optional caller-supplied remediation (e.g. G2 "Set up integration" → open the
+   * Connections panel). Rendered as a primary action button alongside Retry/Re-auth. */
+  action?: { label: string; onClick: () => void };
 }
 
 /** Render a {@link UiError} with the affordance its kind implies. */
-export function ErrorNotice({ error, onRetry, onReauth }: ErrorNoticeProps) {
+export function ErrorNotice({ error, onRetry, onReauth, action }: ErrorNoticeProps) {
   return (
     <div
       className={`notice notice--${error.kind}`}
@@ -30,6 +33,11 @@ export function ErrorNotice({ error, onRetry, onReauth }: ErrorNoticeProps) {
       </div>
       <p className="notice__message">{error.message}</p>
       <div className="notice__actions">
+        {action ? (
+          <button type="button" data-testid="error-notice-action" onClick={action.onClick}>
+            {action.label}
+          </button>
+        ) : null}
         {error.kind === "reauth" && onReauth ? (
           <button type="button" onClick={onReauth}>
             Re-enter token

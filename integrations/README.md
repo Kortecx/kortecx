@@ -79,46 +79,67 @@ network, no credential) — used by the unit tests and the conformance gate. A l
 GR15/GR24 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real bot token +
 `KX_DISCORD_TEST_GUILD_ID`).
 
+### App-pointer run — build an App that USES the connection (G1 + G2, landed)
+
+An App can now carry a *pointer* to a connection and dial it inside its agentic loop.
+Connect Gmail first-class, then run an App that references it:
+
+```sh
+# G1: one-click connect (fills command + credential-ref from the curated catalog)
+kx connections add --provider gmail          # ≡ --name gmail --command kx-connector-gmail
+                                              #    --credential-ref KX_GMAIL_CREDENTIAL
+kx secrets set --name KX_GMAIL_CREDENTIAL --value '{"client_id":"…","client_secret":"…","refresh_token":"…"}'
+
+# author an App that REFERENCES the connection + scopes its credential (Py SDK)
+python - <<'PY'
+import kortecx as kx
+app = (kx.app("gmail-agent")
+       .blueprint(kx.flow().agent("Search my unread Gmail and summarise it.", tools=["gmail/search"]))
+       .with_gmail()          # declare the connection + add KX_GMAIL_CREDENTIAL to secret_scope
+       .steer(max_turns=4, max_tool_calls=2))
+app.save(handle="apps/local/gmail-agent")
+PY
+
+# G2: run it SERVER-SIDE (RunApp) — honors references.connections + guards.secret_scope
+kx app run apps/local/gmail-agent --wait
+```
+
+At run time `RunApp` reads the validated stored envelope, resolves the `ConnectionRef`
+against the **caller's own** registered connection (by credential-ref name), and sets
+the run warrant's `SecretScope::AllowList` to the App's `guards.secret_scope` — so the
+broker precheck lets the agent dial the credentialed connector. Because the pointer is
+a bare *name*, a shared App resolves **each operator's own** credentials. Set
+`KX_GMAIL_FAKE=1` for a deterministic, network-free witness (a real MCP subprocess with
+canned upstream responses). See `docs/site/docs/apps.md` for the full chaining guide.
+
 ---
 
-## Core wiring still needed (the "make integrations first-class" roadmap)
+## Core wiring — status
 
-The connector above is complete and dialable **today** — an operator can register it
-and an agent granted its tools can call Gmail. What is **not yet wired in the core**
-is the ergonomic, by-pointer app experience: a first-class "Gmail" entry in the
-Integrations UI, and Apps that carry a *pointer* to the integration and resolve the
-caller's own credentials at run time. These are **core changes** (gateway /
-provision / UI / proto) taken up in their own sessions **after RC4c-2b**, each
-off-journal + additive (digest `7d22d4bd…` invariant, frozen trio untouched).
+**G1 (first-class Connect Gmail) + G2 (App-pointer → run resolution) are LANDED.** An
+operator connects Gmail in one step and an App that references it dials the connector
+inside its agentic loop (above). Both are off-journal + additive (digest `7d22d4bd…`
+invariant, frozen trio untouched). **G3 (cross-instance import) is the remaining piece.**
 
-### G1 — first-class Gmail Integration across UI / CLI / SDK
-- **What:** a curated "Gmail" provider in the Integrations section ("Connect Gmail"
-  → store the OAuth secret → register the connection), instead of the generic
-  "add MCP server" form. Cross-surface: UI + `kx` + Py/TS SDK + a docs page.
-- **How:** pure client-side curation over the **existing** RPCs — no new proto.
-  Reuses `RegisterMcpServer` + `PutSecret`, `ui/src/components/tools/ConnectionsPanel.tsx`
-  + `ui/src/kx/use-connections.ts`, and `crates/kx-cli/src/verbs/{connections,secrets}.rs`.
-- **Effort:** S–M. **Blast radius:** low; off-journal; shared UI files ⇒ serialize on
-  the shared lane.
+### G1 — first-class Gmail Integration across UI / CLI / SDK ✅
+- Curated "Gmail" provider: `kx connections add --provider gmail`, a "Connect Gmail"
+  prefill chip in `ConnectionsPanel`, and `.with_gmail()` on the Py/TS App builders —
+  all over the **existing** `RegisterMcpServer` + `PutSecret` RPCs (no new proto). A
+  small static provider catalog (id → command + credential-ref) mirrored across
+  CLI/SDK/UI; Discord/Slack/Notion clone the Gmail row when curated.
 
-### G2 — App-pointer → run resolution (the load-bearing gap)
-- **What:** make an App actually *use* its integration pointer. Today at run time
-  only the App **blueprint** is submitted; the envelope's
-  `references.connections` and `guards.secret_scope` are dropped
-  (`crates/kx-gateway/tests/app_live_serve.rs` submits `blueprint`, not `references`;
-  `RecipeBinder::bind` in `crates/kx-gateway/src/provision.rs` has no app-references
-  parameter). Wire it so that, at bind/run, the App's `ConnectionRef`s resolve the
-  **caller's own** registered connection by name and the App's `secret_scope` names
-  are injected into the run warrant's `SecretScope::AllowList`
-  (`crates/kx-warrant/src/secret.rs`) so the broker precheck gates the Gmail secret.
-- **Why it matters:** this is what makes "build an App that uses the Gmail pointer to
-  consume/generate/publish" fire — and, because the pointer is a bare *name*, what
-  makes a shared App resolve **each user's own** credentials.
-- **How:** `crates/kx-gateway/src/provision.rs` (`RecipeBinder::bind`) + a
-  gateway-core seam (`crates/kx-gateway-core/src/mcp_gateway_admin.rs`) + possibly one
-  additive field on the app-run path. Off-journal, additive; the coordinator is
-  editable (not frozen) but on the RC lane, so serialize.
-- **Effort:** M. **Blast radius:** medium (touches the bind path; digest-invariant).
+### G2 — App-pointer → run resolution ✅
+- A server-side **`RunApp(handle, args)`** RPC + a host `AppAuthor` seam
+  (`crates/kx-gateway/src/app_run.rs`): the gateway reads the validated stored envelope
+  (server-owned — no client-forged references, SN-8), lowers its blueprint through the
+  shared FFI-free `kx-blueprint` crate (byte-identical to the client path), resolves
+  `references.connections` against the caller's own registry (missing → a clear
+  `failed_precondition("missing integration: <name>")`), and sets the tool-firing
+  warrant's `SecretScope::AllowList` to the App's `guards.secret_scope`
+  (`crates/kx-warrant/src/secret.rs`). CLI/Py/TS `run_app` prefer `RunApp` and fall
+  back to the legacy `GetApp` → `SubmitWorkflow` on an older server. Off-journal,
+  additive, digest `7d22d4bd…` invariant (the new path defaults to `SecretScope::None`
+  ⇒ existing runs byte-identical; recovery replays the journaled `warrant_ref`).
 
 ### G3 — cross-instance App import + rebind (the "share to others" story)
 - **What:** the deferred cross-instance import entrypoint (today

@@ -469,6 +469,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
                 _registered_method=True)
+        self.RunApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RunApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RunAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
+                _registered_method=True)
         self.ScaffoldApp = channel.unary_unary(
                 '/kortecx.v1.KxGateway/ScaffoldApp',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ScaffoldAppRequest.SerializeToString,
@@ -1134,6 +1139,20 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RunApp(self, request, context):
+        """G2 (App-pointer -> run resolution) — run a caller-owned App server-side so its
+        references.connections + guards.secret_scope are honored (they are dropped by the
+        client-orchestrated GetApp -> SubmitWorkflow path). The server reads the validated
+        envelope, lowers its blueprint through the canonical path, resolves connections
+        against the caller's own registry, and narrows the run warrant's secret scope to
+        the App's declared secrets. Server-minted warrants (SN-8). Authenticated caller
+        required; unimplemented when the app-run seam (apps.db + MCP gateway) is absent
+        (clients then fall back to the legacy GetApp -> SubmitWorkflow path).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ScaffoldApp(self, request, context):
         """POC-5a (Apps "scaffold") — drive a server-side async scaffold of the App's
         fixed skeleton into a fresh CoW-on-CAS branch (plan -> N writes -> N
@@ -1605,6 +1624,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetApp,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.SerializeToString,
+            ),
+            'RunApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.RunApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.SerializeToString,
             ),
             'ScaffoldApp': grpc.unary_unary_rpc_method_handler(
                     servicer.ScaffoldApp,
@@ -3976,6 +4000,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetApp',
             kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RunApp',
+            kortecx_dot_v1_dot_gateway__pb2.RunAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
             options,
             channel_credentials,
             insecure,

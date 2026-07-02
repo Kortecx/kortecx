@@ -357,6 +357,11 @@ collide. Connections live in an off-journal, rebuildable `connections.db` sideca
 (never a `MoteId`/digest input); the `connection_id` is server-derived (SN-8).
 
 ```bash
+# A curated first-class provider (G1) — one step fills the command + credential-ref
+# from the bundled catalog (then set its secret in Secrets):
+kx connections add --provider gmail   # ≡ --name gmail --command kx-connector-gmail
+                                       #    --credential-ref KX_GMAIL_CREDENTIAL
+kx secrets set --name KX_GMAIL_CREDENTIAL --value '{"client_id":"…",…}'
 # A local stdio MCP server:
 kx connections add --name local --command /usr/local/bin/my-mcp-server --arg --stdio
 # A remote HTTP MCP gateway (e.g. one you exposed from the Python/TS SDK):

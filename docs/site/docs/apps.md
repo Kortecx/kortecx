@@ -158,6 +158,55 @@ otherwise it runs in one click. The run routes to its live DAG. OSS runs **one A
 time** — multi-app chaining and scheduling are Cloud capabilities. The CLI equivalent is
 `kx app run <handle>` (`--arg k=v` per input).
 
+`kx app run` prefers the server-side **`RunApp`** RPC (below); on an older gateway it
+falls back to the legacy client-orchestrated `GetApp` → `SubmitWorkflow` (which does not
+honor the App's connection/secret references).
+
+## Integrations — an App that USES a connection (G2)
+
+An App can carry a *pointer* to an [integration connection](./tools.md) and dial it
+inside its agentic loop. Declare the connection (a bare **credential-ref name**, never a
+secret) with `.with_connection(...)` / `.with_gmail()`; the credential is added to the
+App's `guards.secret_scope`:
+
+```python
+import kortecx as kx
+
+app = (kx.app("gmail-agent")
+       .blueprint(kx.flow().agent("Search my unread Gmail and summarise it.",
+                                  tools=["gmail/search"]))
+       .with_gmail()                      # declare the connection + scope KX_GMAIL_CREDENTIAL
+       .steer(max_turns=4, max_tool_calls=2))
+app.save(handle="apps/local/gmail-agent")
+
+kx.run_app("apps/local/gmail-agent", wait=True)   # server-side RunApp — honors the pointer
+```
+
+```typescript
+import { app } from "@kortecx/sdk";
+
+await app("gmail-agent")
+  .blueprint(flow().agent("Search my unread Gmail and summarise it.", { tools: ["gmail/search"] }))
+  .withGmail()
+  .steer({ maxTurns: 4, maxToolCalls: 2 })
+  .save({ handle: "apps/local/gmail-agent" });
+
+await client.runApp("apps/local/gmail-agent", { wait: true });
+```
+
+At run time **`RunApp`** reads the *validated stored envelope* server-side (the client
+cannot forge references — SN-8), resolves each `references.connections` entry against
+**your own** registered connection by name, and sets the run warrant's
+`SecretScope::AllowList` to the App's `guards.secret_scope`. That is what lets the agent
+dial a *credentialed* connector (e.g. Gmail): the broker precheck requires the tool's
+credential to be in the warrant's secret scope. Register the connection first with
+`kx connections add --provider gmail` (see [Tools & connections](./tools.md)); a
+referenced-but-unregistered connection fails fast with `missing integration: <name>`.
+Because the pointer is a bare *name*, a shared App resolves **each operator's own**
+credentials — the OSS single-instance sharing model (multi-party on one instance is
+Cloud). `guards.secret_scope` may only name a credential one of the App's referenced
+connections provides (least-privilege).
+
 ## Lock an App (POC-5b)
 
 `kx app lock <handle>` (or the **Security › Policies** section) **fully freezes** an
