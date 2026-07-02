@@ -21,7 +21,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use kx_app::AppEnvelope;
+use kx_app::{AppEnvelope, SkillRef};
 use kx_proto::proto;
 
 use crate::client::{next_value, ClientCommon};
@@ -154,6 +154,10 @@ pub struct NewSpec {
     pub branch: Option<String>,
     /// Write the pretty envelope JSON here (else stdout).
     pub output: Option<PathBuf>,
+    /// RC-SW1: catalog skill names to attach (`--skill`, repeatable). Non-empty
+    /// makes `new` CONDITIONALLY ONLINE (each name resolves via `GetSkillForm`
+    /// to a `SkillRef` — instructions_ref is server-derived, never hand-typed).
+    pub skills: Vec<String>,
 }
 
 /// Parsed `app` arguments.
@@ -174,6 +178,7 @@ fn parse_u32(raw: &str, flag: &str) -> Result<u32, CliError> {
 ///
 /// # Errors
 /// [`CliError::Usage`] on an unknown subcommand / flag or a missing required argument.
+#[allow(clippy::too_many_lines)] // a flat flag-parsing dispatcher (the verbs' convention)
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
         CliError::Usage(
@@ -195,6 +200,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
     let mut max_turns: Option<u32> = None;
     let mut max_tool_calls: Option<u32> = None;
     let mut tags: Vec<String> = Vec::new();
+    let mut skills: Vec<String> = Vec::new();
     let mut description: Option<String> = None;
     let mut branch: Option<String> = None;
     let mut wait_flag = false;
@@ -234,6 +240,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
                 )?);
             }
             "--tag" => tags.push(next_value(&mut args, "--tag")?),
+            "--skill" => skills.push(next_value(&mut args, "--skill")?),
             "--description" => description = Some(next_value(&mut args, "--description")?),
             "--branch" => branch = Some(next_value(&mut args, "--branch")?),
             "--goal" => goal = Some(next_value(&mut args, "--goal")?),
@@ -273,6 +280,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             wait_flag,
             timeout_secs,
             app_args,
+            skills,
         },
     )?;
     Ok(AppArgs { sub, common })
@@ -297,6 +305,7 @@ struct Flags {
     wait_flag: bool,
     timeout_secs: u64,
     app_args: Vec<(String, String)>,
+    skills: Vec<String>,
 }
 
 /// Validate the accumulated flags against the verb and build the subcommand.
@@ -318,6 +327,7 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             description: f.description,
             branch: f.branch,
             output: f.output,
+            skills: f.skills,
         })),
         "save" => Ok(AppSub::Save {
             file: PathBuf::from(require_pos(f.positional, "a <file> (the envelope JSON)")?),
@@ -407,7 +417,7 @@ fn default_handle(name: &str) -> String {
 }
 
 /// Author an envelope offline from `--from-blueprint` + steering, write it out.
-fn execute_new(spec: NewSpec) -> Result<(), CliError> {
+fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError> {
     let raw = std::fs::read(&spec.from_blueprint).map_err(|e| {
         CliError::Usage(format!(
             "cannot read blueprint {}: {e}",
@@ -435,6 +445,7 @@ fn execute_new(spec: NewSpec) -> Result<(), CliError> {
     if let Some(b) = spec.branch {
         env.branch_handle = b;
     }
+    env.references.skills = skill_refs;
     env.validate()
         .map_err(|e| CliError::Usage(format!("authored envelope is invalid: {e}")))?;
     let pretty = env
@@ -456,9 +467,50 @@ fn execute_new(spec: NewSpec) -> Result<(), CliError> {
 /// [`CliError`] on a transport / status / usage failure.
 #[allow(clippy::too_many_lines)]
 pub async fn execute(args: AppArgs) -> Result<(), CliError> {
-    // `new` is offline — no gateway contact.
+    // `new` is offline — no gateway contact — UNLESS `--skill` names catalog
+    // skills to attach (RC-SW1): each resolves via `GetSkillForm` to a SkillRef
+    // (instructions_ref is server-derived; hand-typing 64-hex is hostile). An
+    // old server without the catalog answers UNIMPLEMENTED — surfaced clearly,
+    // never silently dropped.
     if let AppSub::New(spec) = args.sub {
-        return execute_new(spec);
+        if spec.skills.is_empty() {
+            return execute_new(spec, Vec::new());
+        }
+        let resolved = args.common.resolve()?;
+        let mut client = resolved.connect().await?;
+        let mut refs = Vec::with_capacity(spec.skills.len());
+        for name in &spec.skills {
+            let resp = client
+                .get_skill_form(
+                    resolved.request(proto::GetSkillFormRequest { name: name.clone() })?,
+                )
+                .await
+                .map_err(|s| {
+                    if s.code() == tonic::Code::Unimplemented {
+                        CliError::Usage(format!(
+                            "--skill {name:?}: this server has no skill catalog \
+                             (RC-SW1+ required); author the SkillRef in the envelope \
+                             JSON instead, or upgrade the serve"
+                        ))
+                    } else {
+                        CliError::from_status(s)
+                    }
+                })?
+                .into_inner();
+            if !resp.found {
+                return Err(CliError::Usage(format!(
+                    "--skill {name:?}: not in your skill catalog (add it with \
+                     `kx skills add`, or `kx skills list` to see what's there)"
+                )));
+            }
+            let summary = resp.summary.unwrap_or_default();
+            refs.push(SkillRef {
+                name: summary.name,
+                instructions_ref: summary.instructions_ref,
+                tools: summary.tools.into_iter().collect(),
+            });
+        }
+        return execute_new(spec, refs);
     }
     let json = args.common.json;
     let resolved = args.common.resolve()?;

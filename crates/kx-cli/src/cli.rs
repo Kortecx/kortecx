@@ -72,6 +72,8 @@ usage: kx <command> [args]
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
     kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
+    kx skills add (--dir <pack> | --manifest <file> [--instructions <md>]) | list | show --name <n> | remove --name <n>   (kortecx.skill/v1 catalog)
+    kx new skill <name> [--dir <parent>]   (scaffold a skill pack, offline)
     kx secrets set --name <N> --value <V> | list | rm --name <N>   (MM-3/D110 local keychain; values write-only)
     kx triggers add --name <N> --kind <webhook|cron|grpc> --recipe <h> [--auth <a>] [--secret-ref <N>] [--schedule <secs>] [--enabled] | list | test | fire | rm   (D113 event ingress)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
@@ -147,6 +149,10 @@ pub enum Cli {
     Tools(verbs::tools::ToolsArgs),
     /// External MCP gateway connections (PR-6b-1 — add/list/test/remove/discover).
     Connections(verbs::connections::ConnectionsArgs),
+    /// Skills (RC-SW1 — add/list/show/remove kortecx.skill/v1 catalog entries).
+    Skills(verbs::skills::SkillsArgs),
+    /// Offline scaffolders (RC-SW1 — `kx new skill <name>`).
+    New(verbs::new::NewArgs),
     /// Context bundles (PR-7 — add/list/get/remove; attach via `invoke --context`).
     Context(verbs::context::ContextArgs),
     /// Apps (POC-4 — new/save/list/get/run/export a kortecx.app/v1 envelope).
@@ -227,6 +233,8 @@ impl Cli {
             Some("signatures") => Ok(Cli::Signatures(verbs::signatures::parse(args)?)),
             Some("tools") => Ok(Cli::Tools(verbs::tools::parse(args)?)),
             Some("connections") => Ok(Cli::Connections(verbs::connections::parse(args)?)),
+            Some("skills") => Ok(Cli::Skills(verbs::skills::parse(args)?)),
+            Some("new") => Ok(Cli::New(verbs::new::parse(args)?)),
             Some("context") => Ok(Cli::Context(verbs::context::parse(args)?)),
             Some("app") => Ok(Cli::App(verbs::app::parse(args)?)),
             Some("branch") => Ok(Cli::Branch(verbs::branch::parse(args)?)),
@@ -311,6 +319,8 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Signatures(a) => verbs::signatures::execute(a).await,
         Cli::Tools(a) => verbs::tools::execute(a).await,
         Cli::Connections(a) => verbs::connections::execute(a).await,
+        Cli::Skills(a) => verbs::skills::execute(a).await,
+        Cli::New(a) => verbs::new::execute(a),
         Cli::Context(a) => verbs::context::execute(a).await,
         Cli::App(a) => verbs::app::execute(a).await,
         Cli::Branch(a) => verbs::branch::execute(a).await,
@@ -734,6 +744,30 @@ kx connections discover --name <n> [client flags]
   that require it. `test` checks reachability; `discover` re-dials + re-registers;
   `remove` deregisters the server + its tools. Server ids are server-derived
   (SN-8). OAuth/device-flow + a credential marketplace are Cloud."
+            .into(),
+        "skills" => "\
+kx skills add (--dir <pack-dir> | --manifest <file> [--instructions <md>]) [client flags]
+kx skills list [client flags]
+kx skills show --name <n> [client flags]
+kx skills remove --name <n> [client flags]
+  Govern the per-principal skill catalog (RC-SW1). A skill is a DECLARATIVE
+  kortecx.skill/v1 bundle — instructions + a tool grant-WISH set; adding one
+  grants NOTHING (at `kx app run` the server intersects the wish against your
+  grants and the live broker: wish ∩ grants ∩ fireable). `add --dir` loads a
+  pack (skill.json + instructions.md; the body is stored content-addressed and
+  the server derives instructions_ref + skill_ref — SN-8); `add --manifest`
+  sends a manifest file (with `--instructions` for the body, or a stored-form
+  manifest already naming a 64-hex instructions_ref). `show` prints the wish
+  set with an ADVISORY `registered` bit (can this serve currently fire it?) +
+  the instructions preview. Attach a skill to an App with
+  `kx app new … --skill <n>` or the SDK `.skill(...)` builders."
+            .into(),
+        "new" => "\
+kx new skill <name> [--dir <parent>]
+  Scaffold a kortecx.skill/v1 pack (OFFLINE — no gateway): <dir>/<name>/ gains
+  skill.json (fill in the tool wishes) + instructions.md (the skill's know-how)
+  + README.md (a next-steps checklist: `just test-skill`, `kx skills add`,
+  attach with `kx app new --skill`). Refuses a non-empty target directory."
             .into(),
         "recipe" => "\
 kx recipe list [client flags]

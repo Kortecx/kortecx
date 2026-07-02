@@ -1654,6 +1654,167 @@ pub fn render_app_lock(handle: &str, locked: bool, json: bool) -> String {
     }
 }
 
+/// Render `skills add` — the server-derived identity (SN-8).
+#[must_use]
+pub fn render_add_skill(resp: &proto::AddSkillResponse, json: bool) -> String {
+    if json {
+        json!({
+            "skill_ref": hex::encode(&resp.skill_ref),
+            "name": resp.name,
+            "instructions_ref": resp.instructions_ref,
+            "deduplicated": resp.deduplicated,
+        })
+        .to_string()
+    } else {
+        format!(
+            "added skill {} skill_ref={} instructions_ref={}…{}",
+            resp.name,
+            hex::encode(&resp.skill_ref),
+            &resp.instructions_ref[..resp.instructions_ref.len().min(12)],
+            if resp.deduplicated {
+                " (unchanged — identical manifest already bound)"
+            } else {
+                ""
+            }
+        )
+    }
+}
+
+/// Render `skills list` — the caller's skill catalog (deterministic name order).
+#[must_use]
+pub fn render_skills_list(resp: &proto::ListSkillsResponse, json: bool) -> String {
+    if json {
+        let skills: Vec<Value> = resp
+            .skills
+            .iter()
+            .map(|s| {
+                json!({
+                    "skill_ref": hex::encode(&s.skill_ref),
+                    "name": s.name,
+                    "version": s.version,
+                    "description": s.description,
+                    "instructions_ref": s.instructions_ref,
+                    "tools": s.tools,
+                    "tags": s.tags,
+                })
+            })
+            .collect();
+        json!({ "skills": skills, "has_more": resp.has_more }).to_string()
+    } else if resp.skills.is_empty() {
+        "(no skills in the catalog — `kx skills add --dir <pack>` or `kx new skill <name>`)"
+            .to_string()
+    } else {
+        resp.skills
+            .iter()
+            .map(|s| {
+                format!(
+                    "{}@{}  {} tool wish(es)  {}",
+                    s.name,
+                    s.version,
+                    s.tools.len(),
+                    s.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Render `skills show` — the skill form: summary + the wish set (with the
+/// ADVISORY `registered` bit) + the instructions preview.
+#[must_use]
+pub fn render_skill_form(resp: &proto::GetSkillFormResponse, json: bool) -> String {
+    if json {
+        let wishes: Vec<Value> = resp
+            .wishes
+            .iter()
+            .map(|w| {
+                json!({
+                    "tool_id": w.tool_id,
+                    "tool_version": w.tool_version,
+                    "registered": w.registered,
+                })
+            })
+            .collect();
+        let summary = resp.summary.as_ref().map(|s| {
+            json!({
+                "skill_ref": hex::encode(&s.skill_ref),
+                "name": s.name,
+                "version": s.version,
+                "description": s.description,
+                "instructions_ref": s.instructions_ref,
+                "tags": s.tags,
+            })
+        });
+        json!({
+            "found": resp.found,
+            "summary": summary,
+            "wishes": wishes,
+            "instructions_preview": resp.instructions_preview,
+            "preview_truncated": resp.preview_truncated,
+        })
+        .to_string()
+    } else if !resp.found {
+        "not found".to_string()
+    } else {
+        let s = resp.summary.as_ref();
+        let mut out = format!(
+            "skill {}@{}  {}\n  instructions_ref={}",
+            s.map_or("?", |s| s.name.as_str()),
+            s.map_or("?", |s| s.version.as_str()),
+            s.map_or("", |s| s.description.as_str()),
+            s.map_or_else(String::new, |s| s.instructions_ref.clone()),
+        );
+        if resp.wishes.is_empty() {
+            out.push_str("\n  (no tool wishes — an instructions-only skill)");
+        } else {
+            out.push_str(
+                "\n  tool wishes (a wish, never a grant; `registered` = this serve could fire it):",
+            );
+            for w in &resp.wishes {
+                use std::fmt::Write as _;
+                let _ = write!(
+                    out,
+                    "\n    {}@{}  {}",
+                    w.tool_id,
+                    w.tool_version,
+                    if w.registered {
+                        "registered"
+                    } else {
+                        "UNREGISTERED"
+                    }
+                );
+            }
+        }
+        if !resp.instructions_preview.is_empty() {
+            use std::fmt::Write as _;
+            let _ = write!(
+                out,
+                "\n  instructions{}:\n    {}",
+                if resp.preview_truncated {
+                    " (truncated preview)"
+                } else {
+                    ""
+                },
+                resp.instructions_preview.replace('\n', "\n    ")
+            );
+        }
+        out
+    }
+}
+
+/// Render `skills remove`.
+#[must_use]
+pub fn render_remove_skill(resp: &proto::RemoveSkillResponse, json: bool) -> String {
+    if json {
+        json!({ "removed": resp.removed }).to_string()
+    } else if resp.removed {
+        "removed".to_string()
+    } else {
+        "not removed (no such skill)".to_string()
+    }
+}
+
 /// Render `app list` — the caller's App catalog (deterministic handle order).
 #[must_use]
 pub fn render_apps_list(resp: &proto::ListAppsResponse, json: bool) -> String {
