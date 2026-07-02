@@ -54,6 +54,11 @@ export const queryKeys = {
   /** This party's POC-4 Apps (`ListApps`) — durable kortecx.app/v1 envelopes.
    *  Caller-scoped; `appRef` is server-derived (SN-8). */
   apps: (endpoint: string) => ["kx", endpoint, "apps"] as const,
+  /** This party's RC-SW1 skills (`ListSkills`) — declarative kortecx.skill/v1
+   *  bundles (instructions + tool grant-WISHES; a wish is never a grant). */
+  skills: (endpoint: string) => ["kx", endpoint, "skills"] as const,
+  /** One skill's form (`GetSkillForm`) — wishes + the ADVISORY registered bit. */
+  skillForm: (endpoint: string, name: string) => ["kx", endpoint, "skill", name] as const,
   /** One App's full envelope (`GetApp`), keyed by handle. */
   app: (endpoint: string, handle: string) => ["kx", endpoint, "app", handle] as const,
   /** One App's project branch manifest (`GetBranch`, POC-5d), keyed by handle
