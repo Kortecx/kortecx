@@ -108,6 +108,7 @@ from .run_agent import run_agent, run_agent_async
 from .runs import RunInputs, RunPage, RunSummary
 from .secrets import SecretName, SecretNamesPage
 from .server_info import ServerInfo
+from .skills import AddSkillResult, SkillForm, SkillSummary, SkillWish
 from .teams import TeamMember, TeamMembers, TeamSummary, WarrantView
 from .telemetry import ModelTokenRollup, MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from .tools import LocalToolDef, ToolError, tool
@@ -167,6 +168,10 @@ __all__ = [
     "app",
     "App",
     "Skill",
+    "SkillForm",
+    "SkillSummary",
+    "SkillWish",
+    "AddSkillResult",
     "AppSummary",
     "SaveAppResult",
     "StoredApp",

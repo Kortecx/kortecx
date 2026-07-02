@@ -75,6 +75,7 @@ from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
 from .secrets import SecretName, SecretNamesPage
 from .server_info import ServerInfo
+from .skills import AddSkillResult, SkillForm, SkillSummary
 from .teams import TeamMembers, TeamSummary
 from .telemetry import MoteTelemetryRow, TelemetryPage, TelemetrySummary
 from .toolscout import (
@@ -339,6 +340,34 @@ class _Connections:
     def fire(self, name: str, tool: str, args: Optional[str] = None) -> "CallToolResult":
         """Operator diagnostic: fire ONE registered tool live. See ``call_mcp_tool``."""
         return self._c.call_mcp_tool(name=name, tool=tool, args=args)
+
+
+class _Skills:
+    """The ``kx.skills`` namespace — the skill catalog (RC-SW1), with a verb
+    vocabulary matching the ``kx skills`` CLI (``add`` / ``list`` / ``show`` /
+    ``remove``). Each method delegates 1:1 to the flat ``add_skill`` etc. A skill
+    is a declarative ``kortecx.skill/v1`` bundle (instructions + tool grant-
+    WISHES) an App attaches via ``kx.app(...).skill(...)``; attaching grants
+    nothing — the server intersects the wish at run."""
+
+    def __init__(self, client: "KxClient") -> None:
+        self._c = client
+
+    def add(self, manifest: "Mapping[str, object]", *, instructions: str = "") -> "AddSkillResult":
+        """Add (upsert) a skill. See ``add_skill``."""
+        return self._c.add_skill(manifest, instructions=instructions)
+
+    def list(self) -> "List[SkillSummary]":
+        """List the caller's skills. See ``list_skills``."""
+        return self._c.list_skills()
+
+    def show(self, name: str) -> "Optional[SkillForm]":
+        """One skill's form (wishes + preview), or ``None``. See ``get_skill_form``."""
+        return self._c.get_skill_form(name)
+
+    def remove(self, name: str) -> bool:
+        """Remove a skill. See ``remove_skill``."""
+        return self._c.remove_skill(name)
 
 
 def _consolidate_cutoff(window_hours: Optional[int]) -> Optional[int]:
@@ -1026,6 +1055,53 @@ class KxClient:
             lambda: self._stub.GetApp(_g.GetAppRequest(handle=handle), metadata=self._md)
         )
         return StoredApp.from_proto(resp) if resp.found else None
+
+    # ----- RC-SW1 skills (add / list / show / remove; off-journal skills.db) -----
+
+    def add_skill(
+        self, manifest: "Mapping[str, object]", *, instructions: str = ""
+    ) -> AddSkillResult:
+        """Add (upsert) a ``kortecx.skill/v1`` skill to the caller-scoped catalog.
+        The server validates the manifest fail-closed (authority deny-keys), stores
+        the ``instructions`` body content-addressed, and derives ``skill_ref`` +
+        ``instructions_ref`` (SN-8). Omit ``instructions`` iff the manifest already
+        names a 64-hex ``instructions_ref`` (stored form). A skill is a WISH bundle
+        — adding one grants nothing. An old gateway raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.AddSkill(
+                _g.AddSkillRequest(
+                    manifest_json=canonical_json(manifest),
+                    instructions_body=instructions.encode("utf-8"),
+                ),
+                metadata=self._md,
+            )
+        )
+        return AddSkillResult.from_proto(resp)
+
+    def list_skills(self) -> List[SkillSummary]:
+        """List the caller's skill catalog (deterministic name order)."""
+        resp = self._call(
+            lambda: self._stub.ListSkills(
+                _g.ListSkillsRequest(limit=0, after_name=""), metadata=self._md
+            )
+        )
+        return [SkillSummary.from_proto(s) for s in resp.skills]
+
+    def get_skill_form(self, name: str) -> Optional[SkillForm]:
+        """Fetch one skill's form (summary + wishes with the ADVISORY ``registered``
+        bit + the instructions preview), or ``None`` if not found / not owned
+        (uniform — no cross-party existence oracle)."""
+        resp = self._call(
+            lambda: self._stub.GetSkillForm(_g.GetSkillFormRequest(name=name), metadata=self._md)
+        )
+        return SkillForm.from_proto(resp) if resp.found else None
+
+    def remove_skill(self, name: str) -> bool:
+        """Remove a skill from the catalog. ``True`` iff a row was removed."""
+        resp = self._call(
+            lambda: self._stub.RemoveSkill(_g.RemoveSkillRequest(name=name), metadata=self._md)
+        )
+        return bool(resp.removed)
 
     def run_app(
         self,
@@ -1952,6 +2028,15 @@ class KxClient:
         ``kx-extension-sdk``); chain one straight into a flow with
         ``kx.flow().with_mcp(...)``."""
         return _Connections(self)
+
+    @property
+    def skills(self) -> _Skills:
+        """The skill-catalog namespace (RC-SW1) — ``kx.skills.add / list / show /
+        remove`` (the verb vocabulary of the ``kx skills`` CLI). A skill is a
+        declarative ``kortecx.skill/v1`` bundle (instructions + tool grant-WISHES);
+        attach one to an App with ``kx.app(...).skill(...)`` — the server grants
+        only ``wish ∩ caller grants ∩ fireable`` at run."""
+        return _Skills(self)
 
     @property
     def memory(self) -> _Memory:

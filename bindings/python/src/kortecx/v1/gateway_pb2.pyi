@@ -1542,6 +1542,109 @@ class UnlockAppResponse(_message.Message):
     unlocked: bool
     def __init__(self, unlocked: bool = ...) -> None: ...
 
+class SkillSummary(_message.Message):
+    __slots__ = ("skill_ref", "name", "version", "description", "instructions_ref", "tools", "tags")
+    class ToolsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    SKILL_REF_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    INSTRUCTIONS_REF_FIELD_NUMBER: _ClassVar[int]
+    TOOLS_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
+    skill_ref: bytes
+    name: str
+    version: str
+    description: str
+    instructions_ref: str
+    tools: _containers.ScalarMap[str, str]
+    tags: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, skill_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., instructions_ref: _Optional[str] = ..., tools: _Optional[_Mapping[str, str]] = ..., tags: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class AddSkillRequest(_message.Message):
+    __slots__ = ("manifest_json", "instructions_body")
+    MANIFEST_JSON_FIELD_NUMBER: _ClassVar[int]
+    INSTRUCTIONS_BODY_FIELD_NUMBER: _ClassVar[int]
+    manifest_json: bytes
+    instructions_body: bytes
+    def __init__(self, manifest_json: _Optional[bytes] = ..., instructions_body: _Optional[bytes] = ...) -> None: ...
+
+class AddSkillResponse(_message.Message):
+    __slots__ = ("skill_ref", "name", "instructions_ref", "deduplicated")
+    SKILL_REF_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    INSTRUCTIONS_REF_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    skill_ref: bytes
+    name: str
+    instructions_ref: str
+    deduplicated: bool
+    def __init__(self, skill_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., instructions_ref: _Optional[str] = ..., deduplicated: bool = ...) -> None: ...
+
+class ListSkillsRequest(_message.Message):
+    __slots__ = ("limit", "after_name")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_NAME_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_name: str
+    def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ...) -> None: ...
+
+class ListSkillsResponse(_message.Message):
+    __slots__ = ("skills", "has_more")
+    SKILLS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    skills: _containers.RepeatedCompositeFieldContainer[SkillSummary]
+    has_more: bool
+    def __init__(self, skills: _Optional[_Iterable[_Union[SkillSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class GetSkillFormRequest(_message.Message):
+    __slots__ = ("name",)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
+
+class SkillWish(_message.Message):
+    __slots__ = ("tool_id", "tool_version", "registered")
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    REGISTERED_FIELD_NUMBER: _ClassVar[int]
+    tool_id: str
+    tool_version: str
+    registered: bool
+    def __init__(self, tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., registered: bool = ...) -> None: ...
+
+class GetSkillFormResponse(_message.Message):
+    __slots__ = ("found", "summary", "wishes", "instructions_preview", "preview_truncated")
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    WISHES_FIELD_NUMBER: _ClassVar[int]
+    INSTRUCTIONS_PREVIEW_FIELD_NUMBER: _ClassVar[int]
+    PREVIEW_TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    found: bool
+    summary: SkillSummary
+    wishes: _containers.RepeatedCompositeFieldContainer[SkillWish]
+    instructions_preview: str
+    preview_truncated: bool
+    def __init__(self, found: bool = ..., summary: _Optional[_Union[SkillSummary, _Mapping]] = ..., wishes: _Optional[_Iterable[_Union[SkillWish, _Mapping]]] = ..., instructions_preview: _Optional[str] = ..., preview_truncated: bool = ...) -> None: ...
+
+class RemoveSkillRequest(_message.Message):
+    __slots__ = ("name",)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
+
+class RemoveSkillResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...
+
 class GetMoteDetailRequest(_message.Message):
     __slots__ = ("instance_id", "mote_id")
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]

@@ -141,6 +141,9 @@ export {
   scaffoldPhaseName,
 } from "./apps.js";
 export type { Skill, ScaffoldPhase, ScaffoldStatus } from "./apps.js";
+// RC-SW1: the skill-catalog views (declarative kortecx.skill/v1 bundles).
+export { AddSkillResult, SkillForm, SkillSummary, SKILL_SCHEMA } from "./skills.js";
+export type { AddSkillInput, SkillWish } from "./skills.js";
 export { Agent, REACT_RECIPE_HANDLE, REACT_AUTO_RECIPE_HANDLE } from "./agent.js";
 export type { AgentOptions, AgentClient } from "./agent.js";
 // V2b — local function tools (localTool → a governed stdio MCP tool the runtime dials).

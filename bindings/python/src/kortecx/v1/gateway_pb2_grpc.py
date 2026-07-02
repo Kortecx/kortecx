@@ -494,6 +494,26 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.UnlockAppRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.UnlockAppResponse.FromString,
                 _registered_method=True)
+        self.ListSkills = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListSkills',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListSkillsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListSkillsResponse.FromString,
+                _registered_method=True)
+        self.GetSkillForm = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetSkillForm',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetSkillFormRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetSkillFormResponse.FromString,
+                _registered_method=True)
+        self.AddSkill = channel.unary_unary(
+                '/kortecx.v1.KxGateway/AddSkill',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.AddSkillRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.AddSkillResponse.FromString,
+                _registered_method=True)
+        self.RemoveSkill = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RemoveSkill',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RemoveSkillRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RemoveSkillResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -1187,6 +1207,37 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListSkills(self, request, context):
+        """RC-SW1 additive (D120.6/D175) — the per-principal skill catalog (skills.db).
+        AddSkill validates the manifest fail-closed (kortecx.skill/v1 closed shape +
+        authority deny-keys) and stores the instructions body via the content-write
+        seam; skill_ref is server-derived over the canonical bytes (SN-8). A skill
+        is a WISH bundle — attaching one grants nothing; the bind intersects its
+        tool wishes against the caller's grants and the live broker. Authenticated
+        caller required; UNIMPLEMENTED when the catalog seam is absent.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetSkillForm(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AddSkill(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RemoveSkill(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1649,6 +1700,26 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.UnlockApp,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.UnlockAppRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.UnlockAppResponse.SerializeToString,
+            ),
+            'ListSkills': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListSkills,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListSkillsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListSkillsResponse.SerializeToString,
+            ),
+            'GetSkillForm': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetSkillForm,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetSkillFormRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetSkillFormResponse.SerializeToString,
+            ),
+            'AddSkill': grpc.unary_unary_rpc_method_handler(
+                    servicer.AddSkill,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.AddSkillRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.AddSkillResponse.SerializeToString,
+            ),
+            'RemoveSkill': grpc.unary_unary_rpc_method_handler(
+                    servicer.RemoveSkill,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RemoveSkillRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RemoveSkillResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -4135,6 +4206,114 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/UnlockApp',
             kortecx_dot_v1_dot_gateway__pb2.UnlockAppRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.UnlockAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListSkills(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListSkills',
+            kortecx_dot_v1_dot_gateway__pb2.ListSkillsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListSkillsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetSkillForm(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetSkillForm',
+            kortecx_dot_v1_dot_gateway__pb2.GetSkillFormRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetSkillFormResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AddSkill(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/AddSkill',
+            kortecx_dot_v1_dot_gateway__pb2.AddSkillRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.AddSkillResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RemoveSkill(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RemoveSkill',
+            kortecx_dot_v1_dot_gateway__pb2.RemoveSkillRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RemoveSkillResponse.FromString,
             options,
             channel_credentials,
             insecure,
