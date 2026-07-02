@@ -153,6 +153,11 @@ mod consolidate_tool;
 // PR-6b-2 (a dialed tool is registered + fireable through a granting warrant).
 #[cfg(feature = "mcp-gateway")]
 mod mcp_gateway;
+// G2: the App-pointer → run resolver (HostAppAuthor behind `RunApp`). Behind
+// `mcp-gateway` because it resolves references.connections against the connections
+// store; without it RunApp is unimplemented (clients fall back to GetApp -> SubmitWorkflow).
+#[cfg(feature = "mcp-gateway")]
+mod app_run;
 // AL1: the in-process model executor for `kx serve` (live LLM dispatch). FFI-FREE
 // (the generic loop), so it's behind the off-by-default `serve-engine` feature; the
 // llama.cpp-specific bits inside are additionally `inference`-gated.

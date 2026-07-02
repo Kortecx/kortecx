@@ -1460,6 +1460,14 @@ class GetAppResponse(_message.Message):
     summary: AppSummary
     def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[AppSummary, _Mapping]] = ...) -> None: ...
 
+class RunAppRequest(_message.Message):
+    __slots__ = ("handle", "args")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    ARGS_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    args: bytes
+    def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ...) -> None: ...
+
 class ScaffoldAppRequest(_message.Message):
     __slots__ = ("handle", "branch_handle", "instruction")
     HANDLE_FIELD_NUMBER: _ClassVar[int]

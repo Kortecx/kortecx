@@ -59,6 +59,14 @@ type ArtifactEntry = { name: string; content_ref: string };
 type SkillEntry = { name: string; instructions_ref: string; tools?: Record<string, string> };
 type ContextEntry = { name: string; content_ref: string; media_type?: string };
 type ToolEntry = { tool_id: string; tool_version: string };
+/** G2: a by-reference connection — the MCP endpoint descriptor + the bare credential
+ * NAME (never the secret value; the runtime resolves it at dial). */
+type ConnectionEntry = { descriptor: string; credential_ref: string };
+
+/** G1: the curated Gmail provider defaults (the bundled `kx-connector-gmail` sidecar).
+ * Mirrors the CLI `kx connections add --provider gmail` + the Python SDK. */
+const GMAIL_CONNECTOR_COMMAND = "kx-connector-gmail";
+const GMAIL_CREDENTIAL_REF = "KX_GMAIL_CREDENTIAL";
 type Pending = { rail: string; name: string; body: string; skill?: Skill };
 
 /** A fluent App builder. Each method returns `this`; terminate with
@@ -70,6 +78,8 @@ export class AppBuilder {
   private readonly _tags: string[] = [];
   private readonly _context: ContextEntry[] = [];
   private readonly _tools: ToolEntry[] = [];
+  private readonly _connections: ConnectionEntry[] = [];
+  private readonly _secretScope: string[] = [];
   private readonly _prompts: ArtifactEntry[] = [];
   private readonly _rules: ArtifactEntry[] = [];
   private readonly _memory: ArtifactEntry[] = [];
@@ -157,6 +167,32 @@ export class AppBuilder {
     return this;
   }
 
+  /** G2: declare a by-reference connection the App uses. `descriptor` is the MCP
+   * endpoint (a stdio command or an `http(s)` URL, no userinfo); `credentialRef` is the
+   * bare secret NAME the runtime resolves at DIAL time (never the value). By default the
+   * credential is added to `guards.secret_scope` so the run warrant permits dialing it
+   * (`RunApp` narrows `SecretScope::AllowList` to these); pass `{ scopeSecret: false }`
+   * for a credential-less connection. The pointer is a bare name, so a shared App
+   * resolves each operator's OWN credentials — register it with `kx connections add`. */
+  withConnection(
+    descriptor: string,
+    credentialRef = "",
+    opts: { scopeSecret?: boolean } = {},
+  ): this {
+    this._connections.push({ descriptor, credential_ref: credentialRef });
+    if ((opts.scopeSecret ?? true) && credentialRef && !this._secretScope.includes(credentialRef)) {
+      this._secretScope.push(credentialRef);
+    }
+    return this;
+  }
+
+  /** G1: declare the bundled Gmail connector (the curated provider default) — equivalent
+   * to `withConnection("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")`. Register it on the
+   * runtime with `kx connections add --provider gmail`. */
+  withGmail(): this {
+    return this.withConnection(GMAIL_CONNECTOR_COMMAND, GMAIL_CREDENTIAL_REF);
+  }
+
   /** Set steering knobs (a WISH the server re-resolves at bind — never authority). */
   steer(opts: {
     model?: string;
@@ -195,6 +231,7 @@ export class AppBuilder {
     const refs: Record<string, unknown> = {};
     if (this._context.length) refs.context = this._context;
     if (this._tools.length) refs.tools = this._tools;
+    if (this._connections.length) refs.connections = this._connections;
     if (this._prompts.length) refs.prompts = this._prompts;
     if (this._rules.length) refs.rules = this._rules;
     if (this._memory.length) refs.memory = this._memory;
@@ -214,6 +251,7 @@ export class AppBuilder {
     const guards: Record<string, unknown> = {};
     if (this._maxTurns !== undefined) guards.max_turns = this._maxTurns;
     if (this._maxToolCalls !== undefined) guards.max_tool_calls = this._maxToolCalls;
+    if (this._secretScope.length) guards.secret_scope = [...new Set(this._secretScope)];
     if (Object.keys(guards).length) steer.guards = guards;
     return steer;
   }

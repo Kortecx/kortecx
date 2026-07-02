@@ -676,21 +676,46 @@ export abstract class KxClientBase {
   }
 
   /**
-   * Compile a saved App's blueprint and run it (exactly-once). Client-compose over
-   * `GetApp` → `submitWorkflow` — the server re-resolves EVERY warrant from the
-   * caller's grants (SN-8 / BLOCKER #5). Throws {@link KxUsage} if not found.
+   * Run a saved App (exactly-once). G2: prefers the server-side `RunApp` — the gateway
+   * reads the validated stored envelope and honors its `references.connections` +
+   * `guards.secret_scope` (so a credentialed connector, e.g. Gmail, can be dialed inside
+   * the agentic loop) — and re-resolves EVERY warrant from the caller's grants (SN-8).
+   * On an older server without the seam (`UNIMPLEMENTED`) it falls back to the legacy
+   * client-orchestrated `GetApp` → `submitWorkflow` (which drops the references). Throws
+   * {@link KxUsage} if the App is not found. `args` fold server-side into the entry model
+   * step's prompt; empty/absent ⇒ byte-identical to a no-args compile.
    */
   async runApp(
     handle: string,
     opts: { wait?: boolean; timeoutMs?: number; args?: Record<string, string> } = {},
   ): Promise<Run | Result> {
-    const stored = await this.getApp(handle);
-    if (stored === null) throw new KxUsage(`app ${handle} not found`);
-    // POC-5d: fold the App's input_schema args into the entry model step's prompt.
-    // No-op when args is empty/absent ⇒ byte-identical to the pre-POC-5d compile.
-    const blueprint = injectAppArgs(stored.envelope.blueprint as DagSpecJson, opts.args);
-    const request = Chain.fromBlueprint(blueprint);
-    return this.submitWorkflow(request, opts);
+    const hasArgs = opts.args !== undefined && Object.keys(opts.args).length > 0;
+    const argsBytes = hasArgs
+      ? new TextEncoder().encode(JSON.stringify(opts.args))
+      : new Uint8Array(0);
+    try {
+      const h = await rpc(this.grpc.runApp({ handle, args: argsBytes }));
+      if (!opts.wait) {
+        return new Run(this, h.instanceId, new Uint8Array(0), h.recipeFingerprint);
+      }
+      const outcome = await pollAny(this.grpc, h.instanceId, opts.timeoutMs ?? 120_000);
+      return this._finish(outcome);
+    } catch (e) {
+      if (e instanceof KxUnimplemented) {
+        if (hasArgs) {
+          throw new KxUsage(
+            "this server does not support runApp(args) (RunApp unavailable); upgrade the " +
+              "server, or run without args",
+          );
+        }
+        // Legacy client-orchestrated fallback (references dropped; no secret_scope).
+        const stored = await this.getApp(handle);
+        if (stored === null) throw new KxUsage(`app ${handle} not found`);
+        const request = Chain.fromBlueprint(stored.envelope.blueprint as DagSpecJson);
+        return this.submitWorkflow(request, opts);
+      }
+      throw e;
+    }
   }
 
   /**

@@ -184,7 +184,8 @@ notes    = "Durable multi-tier memory (semantic recall + episodic store). Digest
 [[feature]]
 id       = "rc5b-consolidation-decay-memory-ui"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "281"
 branch   = "feat/rc5b-consolidation-decay-memory-ui"
 covers   = [
   "kx-memory: bundle (recency + semantic, kind/window-filtered, SN-8 score-dropped) + reversible TTL+salience decay (memory_decay off-digest sidecar table; soft-tombstone + restore; decay_all) + stats + list(include_tombstoned) + best-effort recall salience upsert",
@@ -246,24 +247,27 @@ notes    = "Extension lane, same template as discord-connector. Zero core blast 
 [[feature]]
 id       = "first-class-integrations"
 lane     = "oss"
-state    = "planned"
+state    = "in-progress"
+branch   = "feat/g2-g1-app-pointer-run-and-first-class-gmail"
 covers   = [
-  "G1 — curated first-class Integration providers (Gmail/Discord/Slack/Notion) in the Integrations UI section + `kx integrations` CLI + Py/TS SDK helpers, over the EXISTING RegisterMcpServer + PutSecret RPCs (no new proto): a 'Connect <provider>' form that stores the secret by name + registers the connection",
-  "optional small static provider catalog (provider id -> command + credential schema + tool list) so the UI/CLI can render a curated 'Connect' flow instead of the generic 'add MCP server' form",
+  "G1 (Gmail slice) — a curated 'Connect Gmail' provider shortcut: `kx connections add --provider gmail` (static provider catalog id -> command + credential-ref) + a ConnectionsPanel 'Connect Gmail' prefill chip + the App-builder `.with_gmail()` (Py+TS), all over the EXISTING RegisterMcpServer + PutSecret RPCs (no new proto)",
+  "the static provider catalog (provider id -> stdio command + credential-ref name) mirrored across CLI/SDK/UI; Discord/Slack/Notion clone the Gmail row when curated",
 ]
 inherits = ["discord-connector", "integrations-foundation"]
-notes    = "LOW blast radius: mostly client-side curation over existing RPCs. Reuses ui/src/components/tools/ConnectionsPanel.tsx + use-connections/use-secrets + crates/kx-cli/src/verbs/{connections,secrets}.rs. Off-journal; digest 7d22d4bd invariant. Shared UI/CLI/SDK files ⇒ serialize on the shared lane (after RC4c-2b)."
+notes    = "LOW blast radius: client-side curation over existing RPCs. Reuses ui/src/components/tools/ConnectionsPanel.tsx + crates/kx-cli/src/verbs/connections.rs + the SDK App builders. Off-journal; digest 7d22d4bd invariant. Bundled WITH G2 (app-pointer-run-resolution) in one PR (the connect -> build App -> run vertical). Flips to merged in the NEXT shared PR."
 
 [[feature]]
 id       = "app-pointer-run-resolution"
 lane     = "oss"
-state    = "planned"
+state    = "in-progress"
+branch   = "feat/g2-g1-app-pointer-run-and-first-class-gmail"
 covers   = [
-  "G2 — carry the App envelope's references.connections + guards.secret_scope through the bind/run path so a running App resolves its connection-pointers to the caller's OWN registered connection (by name) and narrows the run warrant's SecretScope::AllowList to the App's secret_scope names",
-  "RecipeBinder::bind gains an app-references parameter (gateway-core seam bump + HostRecipeBinder + mocks); a connection-by-name lookup seam; bind-time warrant secret_scope intersection",
+  "G2 — carry the App envelope's references.connections + guards.secret_scope through the RUN path so a running App resolves its connection-pointers to the caller's OWN registered connection (by credential-ref name) and sets the run warrant's SecretScope::AllowList to the App's secret_scope names (so a credentialed connector can be dialed inside the agentic loop)",
+  "an additive server-side RunApp(handle,args) RPC + a host AppAuthor seam (HostAppAuthor) — NOT RecipeBinder::bind: verified in code that Apps run via SubmitWorkflow -> WorkflowAuthor::author, so the server owns the validated envelope (SN-8, no client-forged refs) and lowers its blueprint through the SHARED kx-blueprint path; the tool-firing warrant's secret_scope is set post-author (a fresh grant, no WorkflowAuthor signature change)",
+  "a new FFI-free kx-blueprint crate (DagSpec + lowering extracted from kx-cli so the server can lower a stored blueprint identically); connection-by-name resolution over the connections store (own read handle, WAL) with missing-integration + loud-mis-authoring guards; CLI/Py/TS run_app -> RunApp with a legacy GetApp->SubmitWorkflow fallback on UNIMPLEMENTED; UI missing-integration action",
 ]
 inherits = ["first-class-integrations", "gmail-integration"]
-notes    = "MEDIUM blast radius: touches the hot bind path (every Invoke) + the app-run handler + an additive proto field. Off-journal + digest 7d22d4bd invariant (connections/secrets off-DAG; the resolved warrant must produce identical journal bytes — recovery-tested). The load-bearing gap for 'an App uses its integration pointer'. Shared CORE lane ⇒ serialize with RC4c-2b."
+notes    = "MEDIUM blast radius: additive RunApp RPC + a host seam + the shared author_steps_from_proto extraction (submit_workflow refactor is behaviour-preserving). Off-journal + digest 7d22d4bd invariant (connections/secrets off-DAG; secret_scope IS content-addressed into the warrant_ref but the new path defaults to None ⇒ existing runs byte-identical + the kill-and-replay fixture untouched; recovery replays the journaled warrant_ref). Frozen-trio EMPTY. Cargo.lock += only the kx-blueprint node. Bundled with G1 (first-class-integrations). Flips to merged in the NEXT shared PR."
 
 [[feature]]
 id       = "cross-instance-app-import"

@@ -103,6 +103,15 @@ impl From<HexError> for CliError {
     }
 }
 
+impl From<kx_blueprint::BlueprintError> for CliError {
+    /// A blueprint lowering/validation failure is a client-side authoring error
+    /// (bad kind / edge / conflicting fields / bad hex) — the same `Usage` (exit `2`)
+    /// class the lowering produced before it was extracted to `kx-blueprint`.
+    fn from(e: kx_blueprint::BlueprintError) -> Self {
+        CliError::Usage(e.to_string())
+    }
+}
+
 /// The ` (refusal R-n)` Display suffix when a structured code is present.
 fn refusal_suffix(code: Option<&str>) -> String {
     code.map_or_else(String::new, |c| format!(" (refusal {c})"))

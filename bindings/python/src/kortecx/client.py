@@ -1035,19 +1035,41 @@ class KxClient:
         wait: bool = False,
         timeout: float = 120.0,
     ) -> Union[Run, Result]:
-        """Compile a saved App's blueprint and run it (exactly-once). Client-compose
-        over ``GetApp`` → ``SubmitWorkflow`` — the server re-resolves EVERY warrant
-        from the caller's grants (SN-8 / BLOCKER #5). Raises :class:`KxUsage` if the
-        App is not found. POC-5d: ``args`` (the App's ``input_schema`` inputs) fold
-        into the entry model step's prompt; empty/absent ⇒ byte-identical compile."""
-        from .chains import Chain
+        """Run a saved App (exactly-once). G2: prefers the server-side ``RunApp`` — the
+        gateway reads the validated stored envelope and honors its
+        ``references.connections`` + ``guards.secret_scope`` (so a credentialed
+        connector, e.g. Gmail, can be dialed inside the agentic loop) — and re-resolves
+        EVERY warrant from the caller's grants (SN-8). On an older server without the
+        seam (``UNIMPLEMENTED``) it falls back to the legacy client-orchestrated
+        ``GetApp`` → ``SubmitWorkflow`` (which drops the references). Raises
+        :class:`KxUsage` if the App is not found. ``args`` (the App's ``input_schema``
+        inputs) fold server-side into the entry model step's prompt; empty/absent ⇒
+        byte-identical to a no-args compile."""
+        args_bytes = _encode_args(args) if args else b""
+        try:
+            resp = self._stub.RunApp(
+                _g.RunAppRequest(handle=handle, args=args_bytes), metadata=self._md
+            )
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.UNIMPLEMENTED:
+                if args:
+                    raise KxUsage(
+                        "this server does not support run_app(args=...) (RunApp "
+                        "unavailable); upgrade the server, or run without args"
+                    ) from e
+                # Legacy client-orchestrated fallback (references dropped; no secret_scope).
+                from .chains import Chain
 
-        stored = self.get_app(handle)
-        if stored is None:
-            raise KxUsage(f"app {handle!r} not found")
-        blueprint = _inject_app_args(stored.envelope["blueprint"], args)
-        request = Chain.from_blueprint(blueprint)
-        return self.submit_workflow(request, wait=wait, timeout=timeout)
+                stored = self.get_app(handle)
+                if stored is None:
+                    raise KxUsage(f"app {handle!r} not found") from e
+                request = Chain.from_blueprint(stored.envelope["blueprint"])
+                return self.submit_workflow(request, wait=wait, timeout=timeout)
+            raise from_rpc_error(e) from e
+        if not wait:
+            return Run(self, resp.instance_id, b"", resp.recipe_fingerprint)
+        outcome = _wait.poll_any(self._stub, self._md, resp.instance_id, timeout)
+        return self._finish(outcome)
 
     def get_app_structure(self, handle: str) -> Optional[dict]:
         """POC-5d: the App's portable blueprint (the agentic step structure the

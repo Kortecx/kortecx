@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-blueprint"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "The author-side Tier-1 DAG blueprint shape (DagSpec/StepSpec/EdgeSpec) + the ONE canonical lowering to a proto SubmitWorkflowRequest. A pure FFI-free leaf (kx-proto + serde only) so BOTH the `kx` CLI (blueprint/chain/app run) AND the gateway host (App-pointer run resolution, G2) lower a blueprint through the identical path — a byte-identical SubmitWorkflowRequest regardless of caller."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The FROZEN wire types the blueprint lowers into (WorkflowStep/Edge/SubmitWorkflowRequest).
+kx-proto   = { workspace = true }
+# Derive + parse/serialize the author-side DAG JSON (a workspace edge, no new node —
+# kx-proto/kx-cli already pull serde + serde_json).
+serde      = { workspace = true }
+serde_json = { workspace = true }

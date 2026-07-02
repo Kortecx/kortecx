@@ -47,6 +47,7 @@
 
 mod active_model;
 mod alerts_view;
+mod apps_run;
 mod apps_view;
 mod branches_view;
 mod bundles_view;
@@ -100,6 +101,7 @@ mod view;
 mod writer;
 
 pub use alerts_view::{AlertEntry, AlertView};
+pub use apps_run::{AppAuthor, AppRunError};
 pub use apps_view::{AppCatalog, AppRecord, MAX_APP_ENVELOPE_BYTES};
 pub use branches_view::{
     BranchItemRecord, BranchManifest, BranchStore, MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
@@ -152,15 +154,15 @@ pub use run_inputs_view::{RunInputsEntry, RunInputsRecord, RunInputsStore};
 pub use secret_admin::{SecretAdmin, SecretAdminError, SecretNameView};
 pub use server_info::ServerInfoFacts;
 pub use service::{
-    AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError,
-    BoundRecipe, CatalogSeamError, EventStream, EventTailer, GatewayService, GlobalEventStream,
-    GlobalEventTailer, GrantEntry, GrantView, MembershipView, NoTokenTailer, RecipeBinder,
-    RecipeCatalog, RecipeFormFieldEntry, RecipeMetadataEntry, RecipeParamKind, RegisteredSignature,
-    RegisteredToolsView, ScoredRecipeEntry, SignatureCatalog, SignatureSummaryEntry,
-    SnapshotGlobalTailer, SnapshotTailer, TeamMemberEntry, TeamMembersView, TeamSummaryEntry,
-    TokenStream, TokenTailer, WarrantProjection, WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES,
-    DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS, MAX_FEEDBACK_COMMENT_BYTES, REFUSAL_CODE_METADATA_KEY,
-    SEARCH_RECIPES_DEFAULT_LIMIT, SEARCH_RECIPES_MAX_LIMIT,
+    author_steps_from_proto, AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep,
+    AuthorStepKind, BinderError, BoundRecipe, CatalogSeamError, EventStream, EventTailer,
+    GatewayService, GlobalEventStream, GlobalEventTailer, GrantEntry, GrantView, MembershipView,
+    NoTokenTailer, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeMetadataEntry,
+    RecipeParamKind, RegisteredSignature, RegisteredToolsView, ScoredRecipeEntry, SignatureCatalog,
+    SignatureSummaryEntry, SnapshotGlobalTailer, SnapshotTailer, TeamMemberEntry, TeamMembersView,
+    TeamSummaryEntry, TokenStream, TokenTailer, WarrantProjection, WorkflowAuthor,
+    BATCH_ITEM_CLAMP_BYTES, DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS, MAX_FEEDBACK_COMMENT_BYTES,
+    REFUSAL_CODE_METADATA_KEY, SEARCH_RECIPES_DEFAULT_LIMIT, SEARCH_RECIPES_MAX_LIMIT,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,

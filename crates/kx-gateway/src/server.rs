@@ -1499,7 +1499,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let mut gateway = GatewayService::new(reader.clone(), submitter, content.clone())
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
-        .with_workflow_author(author)
+        .with_workflow_author(author.clone())
         .with_recipe_catalog(recipe_catalog)
         .with_membership_view(membership_view)
         .with_grant_view(grant_view)
@@ -1517,7 +1517,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_run_inputs_store(run_inputs_db)
         .with_alerts_view(alerts_db)
         .with_bundles_store(bundles_db)
-        .with_apps_catalog(apps_db)
+        .with_apps_catalog(apps_db.clone())
         .with_branches_store(branches_db)
         .with_lock_store(locks_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
@@ -1653,6 +1653,25 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             }
             Err(error) => {
                 tracing::warn!(%error, "external MCP gateway disabled (connections.db unavailable)");
+            }
+        }
+        // G2: wire the App-pointer → run resolver (RunApp) over its OWN read handle to
+        // connections.db + the App catalog + the live workflow author. Independent of
+        // the admin wiring above (the resolver only READS connections). A store-open
+        // failure leaves RunApp `unimplemented` (clients fall back to GetApp ->
+        // SubmitWorkflow). Server-minted warrants; off-journal, off-digest.
+        match kx_mcp_gateway::SqliteConnectionStore::open(catalog_dir.join("connections.db")) {
+            Ok(conn_store) => {
+                let app_runner = crate::app_run::HostAppAuthor::new(
+                    apps_db.clone(),
+                    Arc::new(conn_store),
+                    author.clone(),
+                );
+                gateway = gateway.with_app_runner(Arc::new(app_runner));
+                tracing::info!("G2: App-pointer run resolver wired (RunApp)");
+            }
+            Err(error) => {
+                tracing::warn!(%error, "G2: App-run resolver disabled (connections.db unavailable)");
             }
         }
     }

@@ -37,6 +37,12 @@ def _is_hex_ref(s: str) -> bool:
     return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
 
 
+#: G1: the curated Gmail provider defaults (the bundled ``kx-connector-gmail`` sidecar).
+#: Mirrors the CLI ``kx connections add --provider gmail`` + the UI provider catalog.
+GMAIL_CONNECTOR_COMMAND = "kx-connector-gmail"
+GMAIL_CREDENTIAL_REF = "KX_GMAIL_CREDENTIAL"
+
+
 class App:
     """A fluent App builder. Each method returns ``self``; terminate with
     :meth:`to_envelope` / :meth:`export` / :meth:`save` / :meth:`run`."""
@@ -67,6 +73,10 @@ class App:
         self._requested_grants: Dict[str, str] = {}
         self._max_turns: Optional[int] = None
         self._max_tool_calls: Optional[int] = None
+        # G2: secret NAMES to expose at run (guards.secret_scope). Populated by
+        # with_connection(scope_secret=True); the server narrows the run warrant's
+        # SecretScope::AllowList to these (bounded by the referenced connections).
+        self._secret_scope: List[str] = []
         self._branch_handle = ""
         self._replay: Dict[str, str] = {}
 
@@ -134,6 +144,30 @@ class App:
         self._rails["tools"].append({"tool_id": tool_id, "tool_version": tool_version})
         return self
 
+    def with_connection(
+        self, descriptor: str, credential_ref: str = "", *, scope_secret: bool = True
+    ) -> "App":
+        """G2: declare a by-reference connection the App uses. ``descriptor`` is the MCP
+        endpoint (a stdio command or an ``http(s)`` URL, no userinfo); ``credential_ref``
+        is the bare secret NAME the runtime resolves at DIAL time (never the value). By
+        default the credential is also added to ``guards.secret_scope`` so the run
+        warrant permits dialing it (``RunApp`` narrows ``SecretScope::AllowList`` to
+        these); pass ``scope_secret=False`` for a credential-less connection. The
+        pointer is a bare name, so a shared App resolves each operator's OWN
+        credentials — register the connection with ``kx connections add`` first."""
+        self._rails["connections"].append(
+            {"descriptor": descriptor, "credential_ref": credential_ref}
+        )
+        if scope_secret and credential_ref and credential_ref not in self._secret_scope:
+            self._secret_scope.append(credential_ref)
+        return self
+
+    def with_gmail(self) -> "App":
+        """G1: declare the bundled Gmail connector (the curated provider default) —
+        equivalent to ``with_connection("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")``.
+        Register it on the runtime with ``kx connections add --provider gmail``."""
+        return self.with_connection(GMAIL_CONNECTOR_COMMAND, GMAIL_CREDENTIAL_REF)
+
     # -- steering (4 axes; the server RE-RESOLVES each at bind) --
 
     def steer(
@@ -194,6 +228,9 @@ class App:
             guards["max_turns"] = self._max_turns
         if self._max_tool_calls is not None:
             guards["max_tool_calls"] = self._max_tool_calls
+        if self._secret_scope:
+            # Dedup, preserve declaration order (the server sorts into a BTreeSet).
+            guards["secret_scope"] = list(dict.fromkeys(self._secret_scope))
         if guards:
             steer["guards"] = guards
         return steer

@@ -182,6 +182,9 @@ kx-toolscout       = { workspace = true }
 # validate + canonicalize an envelope and derive its summary + app_ref. The
 # dep-wall subtree check pins it.
 kx-app             = { workspace = true }
+# G2: lower a stored App's blueprint through the SAME canonical path the CLI uses, so
+# a server-side App run and a client-authored workflow produce identical wire bytes.
+kx-blueprint       = { workspace = true }
 # rusqlite is NON-optional: the always-on Morphic Data Engine capture.db sidecar
 # (campaign Batch 2) needs it unconditionally, and it is ALREADY in the default
 # closure (kx-catalog/kx-fleet pull it for the durable ledgers). Pure-Rust C

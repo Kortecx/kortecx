@@ -129,6 +129,18 @@ function healthDot(health: string): { cls: string; label: string } {
   }
 }
 
+/** G1: curated first-class Integration providers — a one-click prefill of the "Add a
+ * server" form (over the EXISTING RegisterMcpServer + PutSecret RPCs; no new proto).
+ * Mirrors the CLI `kx connections add --provider gmail` + the SDK provider catalog. */
+const PROVIDERS = [
+  {
+    id: "gmail",
+    label: "Gmail",
+    command: "kx-connector-gmail",
+    credentialRef: "KX_GMAIL_CREDENTIAL",
+  },
+] as const;
+
 export function ConnectionsPanel() {
   const list = useListMcpServers();
   const register = useRegisterMcpServer();
@@ -147,6 +159,17 @@ export function ConnectionsPanel() {
   const [sessionMode, setSessionMode] = useState<SessionMode>("stateless");
 
   const canSubmit = name.trim().length > 0 && endpoint.trim().length > 0;
+
+  // G1: prefill the form from a curated provider (the operator reviews + submits, then
+  // sets its credential secret in the Secrets panel). No hidden authority — the same
+  // RegisterMcpServer the manual form uses.
+  const connectProvider = (p: (typeof PROVIDERS)[number]) => {
+    setName(p.id);
+    setTransport("stdio");
+    setEndpoint(p.command);
+    setCredentialRef(p.credentialRef);
+    setSessionMode("stateless");
+  };
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -319,6 +342,23 @@ export function ConnectionsPanel() {
 
       <form onSubmit={onSubmit} className="register-tool-form" data-testid="connections-add-form">
         <h3>Add a server</h3>
+        <fieldset className="register-tool-form__idempotency">
+          <legend className="muted">Connect an integration</legend>
+          <div className="chip-row">
+            {PROVIDERS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className="chip"
+                data-testid={`connection-provider-${p.id}`}
+                title={`Prefill the form for the bundled ${p.label} connector (${p.command}); set ${p.credentialRef} in Secrets`}
+                onClick={() => connectProvider(p)}
+              >
+                <span className="chip__label">Connect {p.label}</span>
+              </button>
+            ))}
+          </div>
+        </fieldset>
         <fieldset className="register-tool-form__idempotency">
           <legend className="muted">Transport</legend>
           <div className="chip-row">

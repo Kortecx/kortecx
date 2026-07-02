@@ -1189,6 +1189,24 @@ message GetAppResponse {
   AppSummary summary       = 3;  // the derived summary (absent when not found)
 }
 
+// G2 (App-pointer -> run resolution). Run a caller-owned App SERVER-SIDE: the
+// gateway reads the validated stored envelope from apps.db, lowers its blueprint
+// through the SAME canonical path the client uses (kx-blueprint::to_request),
+// resolves references.connections against the caller's OWN registered connections
+// by name, and narrows the run warrant's SecretScope::AllowList to guards.secret_scope
+// (bounded by the declared connections) so a credentialed connector (e.g. Gmail) can
+// actually be dialed inside the agentic loop. The envelope carries NO authority (it is
+// server-owned + validated; the client cannot forge references or run arbitrary steps
+// under the App's credentials — SN-8). Returns the same RunHandle as SubmitWorkflow.
+// Off-journal / off-digest for connection/secret resolution; the resolved warrant is
+// deterministic (recovery replays it byte-identically). `args` (optional) merge into
+// the blueprint's entry params (server-side, the same shape the CLI injected). A
+// missing referenced connection -> FAILED_PRECONDITION("missing integration: <name>").
+message RunAppRequest {
+  string handle = 1;  // an existing saved App handle (caller-scoped)
+  bytes  args   = 2;   // optional entry-arg JSON object (empty = none); merged server-side
+}
+
 // ---------------------------------------------------------------------------
 // POC-5a — App scaffold + POC-5b — per-App lock. Additive, off-journal,
 // off-digest. ScaffoldApp drives a server-side async orchestration (plan step
@@ -2306,6 +2324,16 @@ service KxGateway {
   rpc SaveApp(SaveAppRequest) returns (SaveAppResponse);
   rpc ListApps(ListAppsRequest) returns (ListAppsResponse);
   rpc GetApp(GetAppRequest) returns (GetAppResponse);
+
+  // G2 (App-pointer -> run resolution) — run a caller-owned App server-side so its
+  // references.connections + guards.secret_scope are honored (they are dropped by the
+  // client-orchestrated GetApp -> SubmitWorkflow path). The server reads the validated
+  // envelope, lowers its blueprint through the canonical path, resolves connections
+  // against the caller's own registry, and narrows the run warrant's secret scope to
+  // the App's declared secrets. Server-minted warrants (SN-8). Authenticated caller
+  // required; unimplemented when the app-run seam (apps.db + MCP gateway) is absent
+  // (clients then fall back to the legacy GetApp -> SubmitWorkflow path).
+  rpc RunApp(RunAppRequest) returns (RunHandle);
 
   // POC-5a (Apps "scaffold") — drive a server-side async scaffold of the App's
   // fixed skeleton into a fresh CoW-on-CAS branch (plan -> N writes -> N

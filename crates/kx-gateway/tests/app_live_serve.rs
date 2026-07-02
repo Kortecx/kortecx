@@ -225,3 +225,172 @@ async fn app_catalog_round_trips_and_runs_on_a_live_model() {
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
 }
+
+/// Resolve the bundled `kx-connector-gmail` sidecar binary (release preferred), if built.
+fn gmail_connector_bin() -> Option<PathBuf> {
+    for profile in ["release", "debug"] {
+        let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../target/{profile}/kx-connector-gmail"));
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// The `kortecx.app/v1` envelope for a Gmail-integration App: an agentic MODEL step
+/// granting the registered `gmail/search` tool, a by-reference connection pointer, and
+/// (when `scope_secret`) the connection's credential in `guards.secret_scope`. G2's
+/// load-bearing bit: with the secret in scope the run warrant permits dialing the
+/// credentialed connector; without it the dial fails closed at the broker.
+fn gmail_app_envelope(connector_path: &str, scope_secret: bool) -> Vec<u8> {
+    let blueprint = serde_json::json!({
+        "seed": 0,
+        "steps": [{
+            "kind": "model",
+            "prompt": "Search my Gmail for unread messages using the gmail/search tool, \
+                       then briefly answer with what you found.",
+            "tool_contract": { "gmail/search": "1" },
+            // A tight budget so the loop converges to an answer quickly (one search →
+            // answer): max_tool_calls=1 forces an answer turn after the single dial.
+            "params": { "max_turns": "3", "max_tool_calls": "1" }
+        }]
+    });
+    let mut env = kx_app::AppEnvelope::new("Gmail Agent", blueprint);
+    env.description = "an agentic App that dials the bundled Gmail connector".to_string();
+    env.references.connections.push(kx_app::ConnectionRef {
+        descriptor: connector_path.to_string(),
+        credential_ref: "KX_GMAIL_CREDENTIAL".to_string(),
+    });
+    if scope_secret {
+        env.steering_config.guards.secret_scope = vec!["KX_GMAIL_CREDENTIAL".to_string()];
+    }
+    env.to_canonical_json().unwrap()
+}
+
+/// G2 LIVE witness (GR15/GR24): an App that references the bundled Gmail connector +
+/// declares its credential in `secret_scope`, RUN via the new server-side `RunApp`, on
+/// a live model. Proves the whole vertical: RunApp reads the stored envelope, resolves
+/// the connection against the caller's own registry, grants the declared secret scope
+/// to the agentic warrant, and the agent can dial the credentialed connector (FAKE
+/// mode — a real MCP subprocess + real JSON-RPC round-trip, canned upstream). The
+/// non-flaky invariant is settlement; whether `gmail/search` fired is LOGGED (model-
+/// nondeterministic). Drive on Gemma-4 locally (never Qwen3).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-gmail; opt in with --ignored"]
+async fn runapp_gmail_connection_and_secret_scope_live() {
+    let Some(gguf) = serve_model() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF (Gemma-4 locally)");
+        return;
+    };
+    let Some(connector) = gmail_connector_bin() else {
+        eprintln!("skipping: kx-connector-gmail not built — `cargo build -p kx-connector-gmail`");
+        return;
+    };
+    std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+    std::env::set_var("KX_SERVE_AUTOGRANT", "1");
+    // FAKE mode: the connector answers with canned data (no network, no real creds) —
+    // inherited by the sidecar the gateway spawns.
+    std::env::set_var("KX_GMAIL_FAKE", "1");
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // Register the Gmail connection (the connector namespaces its tools under `gmail/*`).
+    let reg = c
+        .register_mcp_server(proto::RegisterMcpServerRequest {
+            server_name: "gmail".to_string(),
+            transport: "stdio".to_string(),
+            endpoint: connector.to_string_lossy().into_owned(),
+            args: vec![],
+            tls_required: false,
+            credential_ref: "KX_GMAIL_CREDENTIAL".to_string(),
+            session_mode: String::new(),
+        })
+        .await
+        .expect("RegisterMcpServer")
+        .into_inner();
+    eprintln!("gmail connection: health={} discovered={}", reg.health, reg.discovered);
+    // Set the credential secret (FAKE mode ignores its value; the scope must resolve).
+    let _ = c
+        .put_secret(proto::PutSecretRequest {
+            name: "KX_GMAIL_CREDENTIAL".to_string(),
+            value: r#"{"client_id":"x","client_secret":"y","refresh_token":"z"}"#.to_string(),
+        })
+        .await;
+
+    // Save the App (references the connection + scopes its credential) and RUN it via
+    // the NEW RunApp (which honors references.connections + guards.secret_scope).
+    let envelope = gmail_app_envelope(&connector.to_string_lossy(), true);
+    c.save_app(proto::SaveAppRequest {
+        handle: "apps/local/gmail-agent".to_string(),
+        envelope_json: envelope,
+    })
+    .await
+    .expect("SaveApp")
+    .into_inner();
+
+    if !c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .recipes
+        .iter()
+        .any(|r| r.handle == REACT_RECIPE_HANDLE)
+    {
+        eprintln!("skipping the run leg: kx/recipes/react not provisioned");
+        running.shutdown().await.unwrap();
+        std::env::remove_var("KX_SERVE_AUTOGRANT");
+        std::env::remove_var("KX_GMAIL_FAKE");
+        return;
+    }
+
+    let handle = c
+        .run_app(proto::RunAppRequest {
+            handle: "apps/local/gmail-agent".to_string(),
+            args: Vec::new(),
+        })
+        .await
+        .expect("RunApp of the Gmail App")
+        .into_inner();
+    assert_eq!(handle.instance_id.len(), 16, "RunApp returns a run handle");
+
+    // A generous window: a 12B model on Metal takes seconds per turn, and a
+    // reason→tool→observe→answer chain is a few turns. The invariant is settlement,
+    // not latency (LOGGED below).
+    let mut tool_fired = false;
+    let mut settled = false;
+    for _ in 0..3000 {
+        let turns = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(handle.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        if turns.turns.iter().any(|t| t.branch == "tool") {
+            tool_fired = true;
+        }
+        if turns
+            .turns
+            .iter()
+            .any(|t| t.branch == "answer" || t.branch == "dead_letter")
+        {
+            settled = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    eprintln!("LIVE RunApp Gmail: tool_fired={tool_fired} settled={settled}");
+    assert!(settled, "the Gmail App settled to a terminal via RunApp on the live model");
+
+    running.shutdown().await.unwrap();
+    std::env::remove_var("KX_SERVE_AUTOGRANT");
+    std::env::remove_var("KX_GMAIL_FAKE");
+}

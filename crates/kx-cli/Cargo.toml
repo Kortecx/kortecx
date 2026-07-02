@@ -24,6 +24,10 @@ kx-runtime = { workspace = true }
 kx-gateway = { workspace = true }
 # The FROZEN KxGateway client stubs + request/response messages.
 kx-proto   = { workspace = true }
+# G2: the author-side blueprint shape (DagSpec/StepSpec/EdgeSpec) + the ONE canonical
+# lowering to a SubmitWorkflowRequest, extracted so `chain`/`app` and the gateway host
+# share the identical path (a pure FFI-free leaf: kx-proto + serde).
+kx-blueprint = { workspace = true }
 # POC-4: the App envelope type (kortecx.app/v1) — author / validate / canonicalize
 # an envelope for `kx app new|save|run` (a pure leaf, serde/serde_json/thiserror).
 kx-app     = { workspace = true }

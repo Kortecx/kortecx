@@ -41,4 +41,17 @@ describe("ErrorNotice", () => {
     expect(screen.getByTestId("error-notice")).toHaveAttribute("data-kind", "bad-input");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("G2: an action prop renders a remediation button that fires onClick", () => {
+    const onClick = vi.fn();
+    render(
+      <ErrorNotice
+        error={toUiError(new KxInvalidArgument("missing integration: KX_GMAIL_CREDENTIAL"))}
+        action={{ label: "Set up integration", onClick }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("error-notice-action"));
+    expect(onClick).toHaveBeenCalledOnce();
+    expect(screen.getByTestId("error-notice-action")).toHaveTextContent("Set up integration");
+  });
 });
