@@ -79,6 +79,7 @@ mod tests {
             rerank_top_k: 0,
             memory_must_recall: vec![],
             consolidation_must_capture: facts.iter().map(|s| (*s).to_string()).collect(),
+            skill_wish_tools: vec![],
             ideal_turns: 1,
             ideal_tool_calls: 0,
         }

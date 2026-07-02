@@ -21,6 +21,39 @@ pub fn score_golden_v1(env_label: String, git_sha: String) -> Result<EvalReport,
     Ok(score_corpus(&corpus, env_label, git_sha))
 }
 
+/// Load + score ONE capability family of the embedded corpus (`--suite`).
+/// Report-only iteration aid: the suite id is labeled `golden-v1:<family>` so a
+/// family report can never be mistaken for (or compared against) the aggregate
+/// baseline by accident.
+///
+/// # Errors
+/// [`EvalError::Malformed`] if the corpus fails to load or the family is unknown.
+pub fn score_golden_v1_family(
+    family: &str,
+    env_label: String,
+    git_sha: String,
+) -> Result<EvalReport, EvalError> {
+    let mut corpus = load_golden_v1()?;
+    let known: std::collections::BTreeSet<String> = corpus
+        .suite
+        .tasks
+        .iter()
+        .map(|t| t.family.clone())
+        .collect();
+    if !known.contains(family) {
+        return Err(EvalError::Malformed {
+            what: "suite family",
+            detail: format!(
+                "unknown family {family:?} (known: {})",
+                known.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+        });
+    }
+    corpus.suite.tasks.retain(|t| t.family == family);
+    corpus.suite.id = format!("{}:{family}", corpus.suite.id);
+    Ok(score_corpus(&corpus, env_label, git_sha))
+}
+
 /// Score an already-loaded corpus (Tier A — scripted transcripts).
 #[must_use]
 pub fn score_corpus(corpus: &GoldenCorpus, env_label: String, git_sha: String) -> EvalReport {

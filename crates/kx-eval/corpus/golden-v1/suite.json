@@ -7,8 +7,15 @@
       "instruction": "Echo the word 'ping' using the echo tool, then tell me exactly what it echoed.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["ping"],
-        "expected_tools": [{ "tool_id": "mcp-echo/echo", "tool_version": "1" }],
+        "answer_must_contain": [
+          "ping"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-echo/echo",
+            "tool_version": "1"
+          }
+        ],
         "grounded_in": [],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
@@ -16,8 +23,16 @@
       "scripted_transcript": {
         "task_id": "single_tool",
         "turns": [
-          { "turn": 0, "branch": "tool", "tool_id": "mcp-echo/echo", "tool_version": "1" },
-          { "turn": 1, "branch": "answer" }
+          {
+            "turn": 0,
+            "branch": "tool",
+            "tool_id": "mcp-echo/echo",
+            "tool_version": "1"
+          },
+          {
+            "turn": 1,
+            "branch": "answer"
+          }
         ],
         "final_answer": "The tool echoed: ping",
         "max_turns": 8,
@@ -30,10 +45,18 @@
       "instruction": "Look up the value for key 'x' with the kv tool, add 10 to it with the calc tool, and report the sum.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["52"],
+        "answer_must_contain": [
+          "52"
+        ],
         "expected_tools": [
-          { "tool_id": "kv/get", "tool_version": "1" },
-          { "tool_id": "calc/add", "tool_version": "1" }
+          {
+            "tool_id": "kv/get",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "calc/add",
+            "tool_version": "1"
+          }
         ],
         "grounded_in": [],
         "ideal_turns": 3,
@@ -42,9 +65,22 @@
       "scripted_transcript": {
         "task_id": "multi_tool_sequential",
         "turns": [
-          { "turn": 0, "branch": "tool", "tool_id": "kv/get", "tool_version": "1" },
-          { "turn": 1, "branch": "tool", "tool_id": "calc/add", "tool_version": "1" },
-          { "turn": 2, "branch": "answer" }
+          {
+            "turn": 0,
+            "branch": "tool",
+            "tool_id": "kv/get",
+            "tool_version": "1"
+          },
+          {
+            "turn": 1,
+            "branch": "tool",
+            "tool_id": "calc/add",
+            "tool_version": "1"
+          },
+          {
+            "turn": 2,
+            "branch": "answer"
+          }
         ],
         "final_answer": "Key x was 42; 42 + 10 = 52. The sum is 52.",
         "max_turns": 8,
@@ -57,10 +93,19 @@
       "instruction": "In one step, look up keys 'a' and 'b' with the kv tool, then report both values.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["alpha", "beta"],
+        "answer_must_contain": [
+          "alpha",
+          "beta"
+        ],
         "expected_tools": [
-          { "tool_id": "kv/get", "tool_version": "1" },
-          { "tool_id": "kv/get", "tool_version": "1" }
+          {
+            "tool_id": "kv/get",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "kv/get",
+            "tool_version": "1"
+          }
         ],
         "grounded_in": [],
         "ideal_turns": 2,
@@ -69,9 +114,24 @@
       "scripted_transcript": {
         "task_id": "multi_element_toolbatch",
         "turns": [
-          { "turn": 0, "branch": "tool", "tool_id": "kv/get", "tool_version": "1", "call_index": 0 },
-          { "turn": 0, "branch": "tool", "tool_id": "kv/get", "tool_version": "1", "call_index": 1 },
-          { "turn": 1, "branch": "answer" }
+          {
+            "turn": 0,
+            "branch": "tool",
+            "tool_id": "kv/get",
+            "tool_version": "1",
+            "call_index": 0
+          },
+          {
+            "turn": 0,
+            "branch": "tool",
+            "tool_id": "kv/get",
+            "tool_version": "1",
+            "call_index": 1
+          },
+          {
+            "turn": 1,
+            "branch": "answer"
+          }
         ],
         "final_answer": "a = alpha, b = beta",
         "max_turns": 8,
@@ -84,8 +144,15 @@
       "instruction": "Use the echo tool to echo the word 'recover'.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["recover"],
-        "expected_tools": [{ "tool_id": "mcp-echo/echo", "tool_version": "1" }],
+        "answer_must_contain": [
+          "recover"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-echo/echo",
+            "tool_version": "1"
+          }
+        ],
         "grounded_in": [],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
@@ -93,9 +160,21 @@
       "scripted_transcript": {
         "task_id": "tool_rejection_recovery",
         "turns": [
-          { "turn": 0, "branch": "rejected", "rejection_reason": "proposed an ungranted tool" },
-          { "turn": 1, "branch": "tool", "tool_id": "mcp-echo/echo", "tool_version": "1" },
-          { "turn": 2, "branch": "answer" }
+          {
+            "turn": 0,
+            "branch": "rejected",
+            "rejection_reason": "proposed an ungranted tool"
+          },
+          {
+            "turn": 1,
+            "branch": "tool",
+            "tool_id": "mcp-echo/echo",
+            "tool_version": "1"
+          },
+          {
+            "turn": 2,
+            "branch": "answer"
+          }
         ],
         "final_answer": "Echoed: recover",
         "max_turns": 8,
@@ -117,9 +196,21 @@
       "scripted_transcript": {
         "task_id": "budget_exhaustion_deadletter",
         "turns": [
-          { "turn": 0, "branch": "rejected", "rejection_reason": "malformed tool arguments" },
-          { "turn": 1, "branch": "rejected", "rejection_reason": "malformed tool arguments" },
-          { "turn": 2, "branch": "dead_lettered", "rejection_reason": "tool-call budget exhausted" }
+          {
+            "turn": 0,
+            "branch": "rejected",
+            "rejection_reason": "malformed tool arguments"
+          },
+          {
+            "turn": 1,
+            "branch": "rejected",
+            "rejection_reason": "malformed tool arguments"
+          },
+          {
+            "turn": 2,
+            "branch": "dead_lettered",
+            "rejection_reason": "tool-call budget exhausted"
+          }
         ],
         "max_turns": 8,
         "max_tool_calls": 20
@@ -131,15 +222,24 @@
       "instruction": "Using the knowledge base, what is the capital of France?",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["Paris"],
+        "answer_must_contain": [
+          "Paris"
+        ],
         "expected_tools": [],
-        "grounded_in": ["Paris"],
+        "grounded_in": [
+          "Paris"
+        ],
         "ideal_turns": 1,
         "ideal_tool_calls": 0
       },
       "scripted_transcript": {
         "task_id": "rag_grounded",
-        "turns": [{ "turn": 0, "branch": "answer" }],
+        "turns": [
+          {
+            "turn": 0,
+            "branch": "answer"
+          }
+        ],
         "final_answer": "According to the knowledge base, the capital of France is Paris.",
         "retrieved_docs": [
           "France is a country in Western Europe. Its capital and largest city is Paris.",
@@ -155,7 +255,9 @@
       "instruction": "What is 2 + 2? Answer directly without using any tools.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["4"],
+        "answer_must_contain": [
+          "4"
+        ],
         "expected_tools": [],
         "grounded_in": [],
         "ideal_turns": 1,
@@ -163,7 +265,12 @@
       },
       "scripted_transcript": {
         "task_id": "answer_only",
-        "turns": [{ "turn": 0, "branch": "answer" }],
+        "turns": [
+          {
+            "turn": 0,
+            "branch": "answer"
+          }
+        ],
         "final_answer": "2 + 2 = 4.",
         "max_turns": 8,
         "max_tool_calls": 20
@@ -175,9 +282,13 @@
       "instruction": "How do plants make energy from sunlight? Answer briefly using the dataset.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["sugar"],
+        "answer_must_contain": [
+          "sugar"
+        ],
         "expected_tools": [],
-        "grounded_in": ["sugar"],
+        "grounded_in": [
+          "sugar"
+        ],
         "rerank_best_index": 3,
         "rerank_top_k": 1,
         "ideal_turns": 1,
@@ -185,7 +296,12 @@
       },
       "scripted_transcript": {
         "task_id": "rag_rerank_on_topic_last",
-        "turns": [{ "turn": 0, "branch": "answer" }],
+        "turns": [
+          {
+            "turn": 0,
+            "branch": "answer"
+          }
+        ],
         "final_answer": "Plants turn sunlight, water, and carbon dioxide into sugar and oxygen (photosynthesis).",
         "retrieved_docs": [
           "Tectonic plates drift over the mantle, causing earthquakes at their boundaries.",
@@ -193,29 +309,49 @@
           "The mitochondria is the powerhouse of the cell, producing ATP from glucose.",
           "Plants turn sunlight, water, and carbon dioxide into sugar and oxygen inside their leaves."
         ],
-        "rerank": { "candidate_count": 4, "permutation": [3, 0, 1, 2], "outcome": "reranked" },
+        "rerank": {
+          "candidate_count": 4,
+          "permutation": [
+            3,
+            0,
+            1,
+            2
+          ],
+          "outcome": "reranked"
+        },
         "max_turns": 8,
         "max_tool_calls": 20
       }
     },
     {
       "id": "memory_remember_then_recall",
-      "description": "RC5a: the agent recalls a fact it learned in an earlier run and grounds its answer on it. The fail-closed guard — a recall that returned nothing scores 0.",
+      "description": "RC5a: the agent recalls a fact it learned in an earlier run and grounds its answer on it. The fail-closed guard \u2014 a recall that returned nothing scores 0.",
       "instruction": "Remember that my project deadline is March 3rd, then tell me my deadline.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["March 3rd"],
+        "answer_must_contain": [
+          "March 3rd"
+        ],
         "expected_tools": [],
         "grounded_in": [],
-        "memory_must_recall": ["March 3rd"],
+        "memory_must_recall": [
+          "March 3rd"
+        ],
         "ideal_turns": 1,
         "ideal_tool_calls": 0
       },
       "scripted_transcript": {
         "task_id": "memory_remember_then_recall",
-        "turns": [{ "turn": 0, "branch": "answer" }],
+        "turns": [
+          {
+            "turn": 0,
+            "branch": "answer"
+          }
+        ],
         "final_answer": "You told me earlier: your project deadline is March 3rd.",
-        "retrieved_docs": ["the project deadline is March 3rd"],
+        "retrieved_docs": [
+          "the project deadline is March 3rd"
+        ],
         "max_turns": 8,
         "max_tool_calls": 20
       }
@@ -226,19 +362,110 @@
       "instruction": "Consolidate your recent notes about the Q3 launch, then tell me the plan.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["March 3rd", "email", "Fridays"],
+        "answer_must_contain": [
+          "March 3rd",
+          "email",
+          "Fridays"
+        ],
         "expected_tools": [],
         "grounded_in": [],
-        "memory_must_recall": ["March 3rd"],
-        "consolidation_must_capture": ["March 3rd", "email", "Fridays"],
+        "memory_must_recall": [
+          "March 3rd"
+        ],
+        "consolidation_must_capture": [
+          "March 3rd",
+          "email",
+          "Fridays"
+        ],
         "ideal_turns": 1,
         "ideal_tool_calls": 0
       },
       "scripted_transcript": {
         "task_id": "memory_consolidate_episodics",
-        "turns": [{ "turn": 0, "branch": "answer" }],
+        "turns": [
+          {
+            "turn": 0,
+            "branch": "answer"
+          }
+        ],
         "final_answer": "Consolidated: the deadline is March 3rd, the client prefers email, plants are watered Fridays.",
-        "retrieved_docs": ["deadline March 3rd; client prefers email; plants watered Fridays"],
+        "retrieved_docs": [
+          "deadline March 3rd; client prefers email; plants watered Fridays"
+        ],
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    },
+    {
+      "id": "skill_email_triage",
+      "family": "skills",
+      "description": "RC-SW1: a skill-bearing run stays INSIDE its wish set (search/read/draft; never send) and actually uses it. Fail-closed: a wished run that never fires a tool scores 0; an out-of-wish call is a fold/warrant boundary leak.",
+      "instruction": "Use the email-triage skill: find actionable unread mail and draft a reply for anything urgent.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "draft"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "gmail/search",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "gmail/read",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "gmail/draft",
+            "tool_version": "1"
+          }
+        ],
+        "grounded_in": [],
+        "skill_wish_tools": [
+          {
+            "tool_id": "gmail/search",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "gmail/read",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "gmail/draft",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 4,
+        "ideal_tool_calls": 3
+      },
+      "scripted_transcript": {
+        "task_id": "skill_email_triage",
+        "turns": [
+          {
+            "turn": 0,
+            "branch": "tool",
+            "tool_id": "gmail/search",
+            "tool_version": "1"
+          },
+          {
+            "turn": 1,
+            "branch": "tool",
+            "tool_id": "gmail/read",
+            "tool_version": "1"
+          },
+          {
+            "turn": 2,
+            "branch": "tool",
+            "tool_id": "gmail/draft",
+            "tool_version": "1"
+          },
+          {
+            "turn": 3,
+            "branch": "answer"
+          }
+        ],
+        "final_answer": "Triage: 1 urgent message from alice (deadline question) \u2014 draft reply created (draft id d-42). 2 FYI messages, no action.",
+        "retrieved_docs": [],
         "max_turns": 8,
         "max_tool_calls": 20
       }

@@ -79,6 +79,13 @@ pub struct Expectation {
     /// consolidation that produced/recalled nothing scores 0.
     #[serde(default)]
     pub consolidation_must_capture: Vec<String>,
+    /// RC-SW1: the SKILL's tool WISH set for a skill-bearing task. The skill_quality
+    /// gate: every Tool turn must stay WITHIN this set (an out-of-wish call is a
+    /// fold/warrant boundary leak) and the run must actually fire a tool + answer
+    /// (fail-closed: a wished skill whose run never touched a tool scores 0). Empty
+    /// ⇒ the skill_quality scorer is N/A for this task.
+    #[serde(default)]
+    pub skill_wish_tools: Vec<ExpectedToolCall>,
     /// The ideal number of turns to solve the task (the loop-efficiency denominator).
     pub ideal_turns: u32,
     /// The ideal number of tool calls to solve the task.
@@ -91,6 +98,11 @@ pub struct Expectation {
 pub struct GoldenTask {
     /// The task id (stable; labels every metric).
     pub id: String,
+    /// The capability FAMILY this task exercises (`core` when omitted) — the
+    /// `kx-eval --suite <family>` selector (RC-SW1: per-family iteration; the
+    /// committed baseline stays the aggregate gate).
+    #[serde(default = "default_family")]
+    pub family: String,
     /// A one-line description of what the task exercises.
     pub description: String,
     /// The instruction the Tier-B live lane sends to a real model.
@@ -99,6 +111,10 @@ pub struct GoldenTask {
     pub expect: Expectation,
     /// The deterministic Tier-A fixture (a scripted run that meets the expectation).
     pub scripted_transcript: Transcript,
+}
+
+fn default_family() -> String {
+    "core".to_string()
 }
 
 /// A named, versioned set of golden tasks.

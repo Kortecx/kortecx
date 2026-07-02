@@ -80,6 +80,7 @@ mod tests {
             rerank_top_k: 0,
             memory_must_recall: vec![],
             consolidation_must_capture: vec![],
+            skill_wish_tools: vec![],
             ideal_turns: 1,
             ideal_tool_calls: 0,
         }
@@ -134,6 +135,7 @@ mod tests {
             rerank_top_k: 0,
             memory_must_recall: vec![],
             consolidation_must_capture: vec![],
+            skill_wish_tools: vec![],
             ideal_turns: 8,
             ideal_tool_calls: 20,
         };
