@@ -196,7 +196,10 @@ message HostAllowlist {
   repeated string hosts = 1;            // reconstructs into BTreeSet<Host>
 }
 
-// Mirrors kx_warrant::WarrantSpec (10 axes).
+// Mirrors kx_warrant::WarrantSpec. 11 of 13 axes are on the wire; `cost_ceiling`
+// and `tls_required` are deliberately NOT carried yet (their live enforcement +
+// digest handling land with PR-8/cost-expansion — see convert.rs) and decode to
+// their fail-closed defaults.
 message WarrantSpec {
   MoteClass mote_class = 1;
   MoteClass nd_class = 2;
@@ -208,6 +211,28 @@ message WarrantSpec {
   ResourceCeiling resource_ceiling = 8;
   optional bytes environment_ref = 9;   // 32B when present
   ExecutorClass executor_class = 10;
+  // D110.3: which secret refs this warrant may resolve. Additive (field 11).
+  // Absent (a pre-fix peer) decodes to SecretScope::None (fail-closed) for
+  // back-compat. Must survive the wire so a RunApp-stamped AllowList reaches the
+  // react OBSERVATION dispatch (fixes T-RUNAPP-SECRET-SCOPE-OBSERVATION).
+  SecretScope secret_scope = 11;
+}
+
+// kx_warrant::SecretScope (D110.3): None (no secret resolution) or an exact
+// allowlist of secret NAMES/refs. Values NEVER cross this (or any) wire — refs
+// only (SN-8/D81), the same ref-not-value discipline as NetScope's hosts.
+message SecretScope {
+  oneof scope {
+    SecretScopeNone none = 1;
+    SecretRefAllowlist allowlist = 2;
+  }
+}
+
+// Presence marker for SecretScope::None (a message-typed oneof arm needs a type).
+message SecretScopeNone {}
+
+message SecretRefAllowlist {
+  repeated string names = 1;            // reconstructs into BTreeSet<SecretRef>
 }
 
 // ---------------------------------------------------------------------------

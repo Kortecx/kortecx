@@ -13,6 +13,8 @@ function vm(over: Partial<ReactTurnVM>): ReactTurnVM {
     maxTurns: 8,
     rejectionReason: "",
     callIndex: 0,
+    grantedTools: [],
+    secretScopeNames: [],
     ...over,
   };
 }
@@ -74,5 +76,33 @@ describe("ReactProgress (PR-3/A2 rejected disclosure)", () => {
     ];
     render(<ReactProgress turns={turns} />);
     expect(screen.queryByTestId("react-deadletter-hint")).toBeNull();
+  });
+
+  it("surfaces the chain's warrant grants (governance observability, names/refs only)", () => {
+    const turns = [
+      vm({
+        turn: 0,
+        branch: "tool",
+        toolId: "gmail/search",
+        toolVersion: "1",
+        grantedTools: ["gmail/search@1"],
+        secretScopeNames: ["KX_GMAIL_CREDENTIAL"],
+      }),
+      vm({
+        turn: 1,
+        branch: "answer",
+        grantedTools: ["gmail/search@1"],
+        secretScopeNames: ["KX_GMAIL_CREDENTIAL"],
+      }),
+    ];
+    render(<ReactProgress turns={turns} />);
+    const grants = screen.getByTestId("react-grants");
+    expect(grants).toHaveTextContent(/tools \[gmail\/search@1\]/);
+    expect(grants).toHaveTextContent(/secrets \[KX_GMAIL_CREDENTIAL\]/);
+  });
+
+  it("shows no governance line when the chain carries no grants (old server / empty)", () => {
+    render(<ReactProgress turns={[vm({ turn: 0, branch: "answer" })]} />);
+    expect(screen.queryByTestId("react-grants")).toBeNull();
   });
 });

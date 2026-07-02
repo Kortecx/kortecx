@@ -319,6 +319,53 @@ fn obligation_3_net_scope_none_round_trips() {
     assert_eq!(warrant_ref_of(&w), warrant_ref_of(&back));
 }
 
+/// Regression guard for `T-RUNAPP-SECRET-SCOPE-OBSERVATION` (HIGH): the
+/// `secret_scope` axis (D110.3) must survive the gateway→coordinator
+/// `proto::WarrantSpec` round-trip. It is stamped POST-author on a RunApp launch
+/// warrant (`kx-gateway/src/app_run.rs`), crosses the SubmitMote wire (even for the
+/// embedded single-node coordinator, via `TonicCoordinatorSubmitter` over loopback),
+/// and must reach the react OBSERVATION dispatch intact — else the broker rejects the
+/// credentialed dial on axis `SecretScope`. Before the fix the wire schema omitted the
+/// field and `TryFrom` re-defaulted it to `None`, silently dropping the grant.
+#[test]
+fn secret_scope_allowlist_survives_the_coordinator_wire() {
+    let w = kx_warrant::WarrantSpec {
+        secret_scope: kx_warrant::SecretScope::AllowList(
+            [
+                kx_warrant::SecretRef("KX_GMAIL_CREDENTIAL".to_string()),
+                kx_warrant::SecretRef("KX_SEARCH_API_KEY".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+        ..sample_warrant()
+    };
+    let wire: proto::WarrantSpec = w.clone().into();
+    let back: kx_warrant::WarrantSpec = wire.try_into().expect("convert");
+    assert_eq!(
+        w, back,
+        "secret_scope AllowList must survive the coordinator proto round-trip"
+    );
+    // warrant_ref is content-addressed into the journal; equality proves the durable
+    // identity is preserved (recovery re-decodes the same anchor warrant).
+    assert_eq!(warrant_ref_of(&w), warrant_ref_of(&back));
+}
+
+/// The `None` (fail-closed default) `secret_scope` also round-trips — proves the fix
+/// keeps the deny-all base byte-identical (the digest-`7d22d4bd`-invariant case: every
+/// existing run journals `secret_scope = None`).
+#[test]
+fn secret_scope_none_round_trips() {
+    let w = kx_warrant::WarrantSpec {
+        secret_scope: kx_warrant::SecretScope::None,
+        ..sample_warrant()
+    };
+    let wire: proto::WarrantSpec = w.clone().into();
+    let back: kx_warrant::WarrantSpec = wire.try_into().expect("convert");
+    assert_eq!(w, back);
+    assert_eq!(warrant_ref_of(&w), warrant_ref_of(&back));
+}
+
 // --- Obligation 4: boundary rejections -------------------------------------
 
 #[test]

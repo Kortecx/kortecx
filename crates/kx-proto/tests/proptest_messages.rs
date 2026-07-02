@@ -14,7 +14,7 @@ use kx_mote::{
 use kx_proto::proto;
 use kx_warrant::{
     warrant_ref_of, ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope,
-    ResourceCeiling, ToolGrant, WarrantSpec,
+    ResourceCeiling, SecretRef, SecretScope, ToolGrant, WarrantSpec,
 };
 use proptest::prelude::*;
 use prost::Message;
@@ -215,6 +215,21 @@ fn arb_tool_grants() -> impl Strategy<Value = std::collections::BTreeSet<ToolGra
     )
 }
 
+/// `SecretScope::None` or an `AllowList` of secret NAMES (0..4, incl. the empty-set
+/// edge). Varying this axis is what turns `prop_warrant_round_trips` into a real guard
+/// for `T-RUNAPP-SECRET-SCOPE-OBSERVATION` — before the fix, `..Default::default()`
+/// pinned it to `None`, so the wire drop was never exercised.
+fn arb_secret_scope() -> impl Strategy<Value = SecretScope> {
+    prop_oneof![
+        Just(SecretScope::None),
+        prop::collection::btree_set(
+            proptest::string::string_regex("[A-Z_]{1,12}").unwrap(),
+            0..4,
+        )
+        .prop_map(|names| SecretScope::AllowList(names.into_iter().map(SecretRef).collect())),
+    ]
+}
+
 fn arb_warrant() -> impl Strategy<Value = WarrantSpec> {
     (
         (
@@ -229,9 +244,10 @@ fn arb_warrant() -> impl Strategy<Value = WarrantSpec> {
         arb_tool_grants(),
         arb_model_route(),
         arb_resource_ceiling(),
+        arb_secret_scope(),
     )
         .prop_map(
-            |((mc, nd, syscall, env, exec), fs, net, tools, mr, rc)| WarrantSpec {
+            |((mc, nd, syscall, env, exec), fs, net, tools, mr, rc, ss)| WarrantSpec {
                 mote_class: mc,
                 nd_class: nd,
                 fs_scope: fs,
@@ -242,6 +258,7 @@ fn arb_warrant() -> impl Strategy<Value = WarrantSpec> {
                 resource_ceiling: rc,
                 environment_ref: env.map(ContentRef::from_bytes),
                 executor_class: exec,
+                secret_scope: ss,
                 ..Default::default()
             },
         )

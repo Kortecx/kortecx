@@ -34,6 +34,12 @@ export class ReactTurn {
      *  it into N `tool` rows sharing `turn`/`turnMoteId`/`seq`, distinguished by
      *  `callIndex` (0..N-1, emission order). 0 for a single call + every non-tool branch. */
     readonly callIndex: number = 0,
+    /** Governance observability: the chain's run-fixed warrant axes decoded from its
+     *  anchor — the tool ids it may fire (`toolId@version`) and the secret refs it may
+     *  resolve (D110.3). NAMES/REFS ONLY, never a value (SN-8/D81). Repeated on every row
+     *  of a chain (the warrant is run-fixed); empty when the warrant blob is absent. */
+    readonly grantedTools: readonly string[] = [],
+    readonly secretScopeNames: readonly string[] = [],
   ) {}
 
   static fromProto(t: PbReactTurnSummary): ReactTurn {
@@ -51,6 +57,8 @@ export class ReactTurn {
       t.rejectionReason,
       t.stepSalt.length > 0 ? encode(t.stepSalt) : "",
       t.callIndex,
+      t.grantedTools,
+      t.secretScopeNames,
     );
   }
 
@@ -70,6 +78,8 @@ export class ReactTurn {
       rejection_reason: this.rejectionReason,
       step_salt: this.stepSalt,
       call_index: this.callIndex,
+      granted_tools: this.grantedTools,
+      secret_scope_names: this.secretScopeNames,
     };
   }
 }

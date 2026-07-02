@@ -675,6 +675,16 @@ message ReactTurnSummary {
   // (turn N.0, N.1, …). Additive (D120.6): an old client ignores it (sees N correctly-
   // typed "tool" rows); a new client reads 0 from an old server.
   uint32 call_index = 13;                // 0 for a single-call turn; 0..N-1 for a ToolBatch turn's N calls
+  // Governance observability (additive): the chain's run-fixed warrant axes, decoded
+  // from the anchor `ReactRound.warrant_ref` — the tool ids the chain may fire and the
+  // secret refs it may resolve (D110.3). NAMES/REFS ONLY — never a secret value
+  // (SN-8/D81), the same discipline as ListSecretNames. Every row of a chain repeats
+  // its chain-level grants (the warrant is run-fixed); EMPTY when the warrant blob is
+  // absent. Makes a dropped capability axis VISIBLE instead of silent (the class behind
+  // T-RUNAPP-SECRET-SCOPE-OBSERVATION). Additive (D120.6): an old client ignores them; a
+  // new client reads empty from an old server.
+  repeated string granted_tools      = 14;   // sorted tool ids from warrant.tool_grants
+  repeated string secret_scope_names = 15;    // sorted secret refs from warrant.secret_scope (empty = None)
 }
 message ListReactTurnsResponse {
   repeated ReactTurnSummary turns = 1;   // newest-first (descending seq)

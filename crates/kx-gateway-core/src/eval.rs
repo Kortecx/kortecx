@@ -30,7 +30,8 @@ pub(crate) fn score_run(
     }
     // Reuse the existing read-fold (newest-first); re-order oldest-first for the
     // transcript so terminal_branch / turn counting are correct.
-    let listing = crate::react::list_react_turns(reader, None, Some(instance_id), None)?;
+    // Scoring needs only branch/turn/caps — not the warrant axes — so no content reader.
+    let listing = crate::react::list_react_turns(reader, None, None, Some(instance_id), None)?;
     let mut rows = listing.turns;
     rows.sort_by(|a, b| a.seq.cmp(&b.seq).then(a.call_index.cmp(&b.call_index)));
 

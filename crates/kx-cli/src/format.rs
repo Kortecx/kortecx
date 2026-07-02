@@ -2746,6 +2746,9 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
                     "seq": t.seq,
                     "rejection_reason": t.rejection_reason,
                     "call_index": t.call_index,
+                    // Governance axes (names/refs only) — the chain's run-fixed warrant.
+                    "granted_tools": t.granted_tools,
+                    "secret_scope_names": t.secret_scope_names,
                 })
             })
             .collect();
@@ -2779,6 +2782,25 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
                 t.max_tool_calls,
                 t.seq,
             );
+            // Governance axes: show the chain's run-fixed warrant grants (names/refs
+            // only) so a dropped capability axis is visible, not silent. Shown only when
+            // non-empty (a No-secret / no-tool chain stays uncluttered).
+            if !t.granted_tools.is_empty() || !t.secret_scope_names.is_empty() {
+                let _ = write!(
+                    out,
+                    "  grants[tools: {}; secrets: {}]",
+                    if t.granted_tools.is_empty() {
+                        "-".to_string()
+                    } else {
+                        t.granted_tools.join(", ")
+                    },
+                    if t.secret_scope_names.is_empty() {
+                        "-".to_string()
+                    } else {
+                        t.secret_scope_names.join(", ")
+                    },
+                );
+            }
         }
         if resp.has_more {
             out.push_str("\n(more — raise --limit)");
@@ -3392,6 +3414,8 @@ mod tests {
                     rejection_reason: String::new(),
                     step_salt: Vec::new(),
                     call_index: 0,
+                    granted_tools: vec!["mcp-echo@1".into()],
+                    secret_scope_names: vec!["KX_API_KEY".into()],
                 },
                 // PR-3 (A2): a rejected turn carries its reason on both surfaces.
                 proto::ReactTurnSummary {
@@ -3408,6 +3432,8 @@ mod tests {
                     rejection_reason: "args do not match inputSchema".into(),
                     step_salt: Vec::new(),
                     call_index: 0,
+                    granted_tools: vec!["mcp-echo@1".into()],
+                    secret_scope_names: vec!["KX_API_KEY".into()],
                 },
             ],
             has_more: true,
@@ -3430,6 +3456,14 @@ mod tests {
         assert!(
             human.contains("branch rejected") && human.contains("reason args do not match"),
             "the rejected turn shows its reason in human output: {human}"
+        );
+        // Governance axes: the chain's run-fixed warrant grants surface on both surfaces
+        // (names/refs only) — a dropped capability axis is now visible, not silent.
+        assert_eq!(v["turns"][0]["granted_tools"][0], "mcp-echo@1");
+        assert_eq!(v["turns"][0]["secret_scope_names"][0], "KX_API_KEY");
+        assert!(
+            human.contains("grants[tools: mcp-echo@1; secrets: KX_API_KEY]"),
+            "the run trace shows the warrant grants in human output: {human}"
         );
 
         let capture = proto::ListCaptureRecordsResponse {

@@ -41,6 +41,12 @@ class ReactTurn:
     # distinguished by ``call_index`` (0..N-1, emission order). 0 for a single-call
     # turn and every non-tool branch.
     call_index: int = 0
+    # Governance observability: the chain's run-fixed warrant axes decoded from its
+    # anchor — the tool ids it may fire (``tool_id@version``) and the secret refs it may
+    # resolve (D110.3). NAMES/REFS ONLY, never a value (SN-8/D81). Repeated on every row
+    # of a chain (the warrant is run-fixed); empty when the warrant blob is absent.
+    granted_tools: tuple[str, ...] = ()
+    secret_scope_names: tuple[str, ...] = ()
 
     @classmethod
     def from_proto(cls, r: "_g.ReactTurnSummary") -> "ReactTurn":
@@ -58,6 +64,8 @@ class ReactTurn:
             rejection_reason=r.rejection_reason,
             step_salt=hexids.encode(r.step_salt) if r.step_salt else "",
             call_index=r.call_index,
+            granted_tools=tuple(r.granted_tools),
+            secret_scope_names=tuple(r.secret_scope_names),
         )
 
 
