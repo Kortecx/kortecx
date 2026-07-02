@@ -93,6 +93,18 @@ describe("Skills — the catalog panel (RC-SW1)", () => {
     // No add form on a gateway without the catalog (don't fake gaps).
     expect(screen.queryByTestId("skill-add-form")).toBeNull();
   });
+
+  it("surfaces a malformed-manifest JSON parse error instead of silently no-op'ing", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    listState = catalog;
+    render(<SkillsPanel />);
+    fireEvent.change(screen.getByTestId("skill-add-manifest"), {
+      target: { value: "{ not valid json" },
+    });
+    fireEvent.click(screen.getByTestId("skill-add-submit"));
+    // The local parse error shows (D142: every state designed) — the button is not dead.
+    expect(screen.getByTestId("skill-add-error")).toHaveTextContent(/not valid JSON/i);
+  });
 });
 
 describe("Apps — the SkillsRail attach control (RC-SW1)", () => {

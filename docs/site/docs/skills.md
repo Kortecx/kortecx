@@ -26,11 +26,13 @@ server intersects the skill's wishes against *your* grants and the live broker:
 granted = wish ∩ your grants ∩ fireable-on-this-serve
 ```
 
-The survivors fold into the App's entry agentic step (they appear in the tool
-menu and are fireable under the server-minted warrant); an unfulfillable wish is
-dropped with a warning — the run proceeds honestly with what could be granted,
-and a skill on its own can never mint authority. The instructions bind as
-labeled context (`skill:<name>`) on the same step, durably and replayably.
+The survivors fold into the App's **entry agentic step** — the first model step
+that is a graph root — and the skill's instructions bind as labeled context
+(`skill:<name>`) on that **same** step, so the model always sees both together,
+durably and replayably. They appear in the tool menu and are fireable under the
+server-minted warrant; an unfulfillable wish is dropped with a warning — the run
+proceeds honestly with what could be granted, and a skill on its own can never
+mint authority.
 
 ## A skill pack
 

@@ -39,11 +39,14 @@
 //! - **Tool wishes** — the deduped wish union is intersected
 //!   (`wish ∩ caller-authority ∩ fireable ∩ registry ∩ compat`,
 //!   [`crate::provision::skill_union_grants`] — FAIL-SOFT: an unfulfillable wish drops
-//!   with a warning, never bricks the App) and the survivors FOLD into the FIRST MODEL
-//!   step's `tool_contract` (declared entries win; empty ⇒ no fold ⇒ the step stays a
-//!   plain transform — a skill on its own grants NOTHING). The folded contract then
-//!   rides the existing fail-closed `agentic_step_warrant` path, and step 5's secret
-//!   scope covers the now-tool-firing mote automatically.
+//!   with a warning, never bricks the App) and the survivors FOLD into the ENTRY
+//!   AGENTIC step — the first model step that is a DAG ROOT, the SAME step the
+//!   instructions bind to (so tools + instructions co-locate; a chained
+//!   `pure → model` blueprint whose model step is not a root gets NO fold rather
+//!   than tools-without-instructions). Declared entries win; empty ⇒ no fold ⇒ the
+//!   step stays a plain transform — a skill on its own grants NOTHING. The folded
+//!   contract then rides the existing fail-closed `agentic_step_warrant` path, and
+//!   step 5's secret scope covers the now-tool-firing mote automatically.
 //!
 //! No skills ⇒ the whole block is skipped (a structural no-op — the digest-invariance
 //! proof) and `author_with_context_items` receives an empty slice, byte-identical to
@@ -263,23 +266,47 @@ fn skill_wish_union(skills: &[SkillRef]) -> BTreeMap<String, String> {
     wish
 }
 
-/// RC-SW1: fold the GRANTED (already-intersected) skill tools into the FIRST
-/// MODEL step's `tool_contract` — the same target `inject_app_args` steers. The
-/// fold decides LOOP EXISTENCE at author time (a non-empty contract compiles the
-/// step as a generator; the coordinator parks it as an agentic launch); an
-/// author-declared `(id → version)` pin always wins (`or_insert`). Empty
-/// `granted` ⇒ NO fold — the step stays a plain transform, which IS the
-/// conformance "binds-empty-grants-to-zero" behavior. A pure function.
+/// RC-SW1: the ENTRY agentic step — the first MODEL step that is a DAG ROOT (no
+/// incoming edge). This is EXACTLY where `author_with_context_items` →
+/// `inject_entry_config` places the skill instructions (it targets DAG roots),
+/// so the tool fold and the instruction inject MUST co-locate on it — otherwise
+/// a chained `pure → model` blueprint would grant the model step tools while the
+/// instructions land on the pure root the model never reads (a silent split).
+/// `None` ⇒ no root model step: the fold is skipped (granting a non-root model
+/// step tools its instructions can't reach is the split we refuse to create;
+/// instructions still bind to the root per the PR-7 context semantics).
+fn entry_agentic_step_index(dag: &DagSpec) -> Option<usize> {
+    let has_incoming: BTreeSet<u32> = dag.edges.iter().map(|e| e.child).collect();
+    dag.steps
+        .iter()
+        .enumerate()
+        .find(|(i, s)| {
+            is_model_step(s) && !has_incoming.contains(&u32::try_from(*i).unwrap_or(u32::MAX))
+        })
+        .map(|(i, _)| i)
+}
+
+/// RC-SW1: fold the GRANTED (already-intersected) skill tools into the ENTRY
+/// AGENTIC step's `tool_contract` — the SAME root model step the instructions
+/// bind to ([`entry_agentic_step_index`]). The fold decides LOOP EXISTENCE at
+/// author time (a non-empty contract compiles the step as a generator; the
+/// coordinator parks it as an agentic launch); an author-declared `(id →
+/// version)` pin always wins (`or_insert`). Empty `granted` ⇒ NO fold — the step
+/// stays a plain transform, which IS the conformance "binds-empty-grants-to-
+/// zero" behavior. A pure function.
 fn fold_skill_tools(dag: &mut DagSpec, granted: &BTreeMap<String, String>) {
     if granted.is_empty() {
         return;
     }
-    let Some(step) = dag.steps.iter_mut().find(|s| is_model_step(s)) else {
+    let Some(idx) = entry_agentic_step_index(dag) else {
         tracing::warn!(
-            "skill tool wishes dropped: the blueprint has no model step (instructions still bind)"
+            "skill tool wishes dropped: the blueprint has no ROOT model step to fold them onto \
+             (a non-root model step's instructions would be unreachable — refusing the split; \
+             instructions still bind to the entry root)"
         );
         return;
     };
+    let step = &mut dag.steps[idx];
     for (id, version) in granted {
         step.tool_contract
             .entry(id.clone())
@@ -384,11 +411,11 @@ impl AppAuthor for HostAppAuthor {
                     BinderError::Internal(d) => AppRunError::Internal(d),
                 })?;
                 let fireable = self.registered.registered_grants();
-                let declared = dag
-                    .steps
-                    .iter()
-                    .find(|s| is_model_step(s))
-                    .map(|s| s.tool_contract.clone())
+                // The declared contract seed is read from the SAME entry agentic
+                // step the fold targets (the root model step), so an author pin on
+                // that step wins + the fs/net compat union is seeded correctly.
+                let declared = entry_agentic_step_index(&dag)
+                    .map(|i| dag.steps[i].tool_contract.clone())
                     .unwrap_or_default();
                 let granted = skill_union_grants(
                     &declared,
@@ -454,6 +481,16 @@ mod tests {
     fn model_step(prompt: &str) -> StepSpec {
         serde_json::from_value(serde_json::json!({ "kind": "model", "prompt": prompt }))
             .expect("a StepSpec")
+    }
+
+    fn pure_step() -> StepSpec {
+        serde_json::from_value(serde_json::json!({ "kind": "pure", "params": { "x": "y" } }))
+            .expect("a StepSpec")
+    }
+
+    fn edge(parent: u32, child: u32) -> kx_blueprint::EdgeSpec {
+        serde_json::from_value(serde_json::json!({ "parent": parent, "child": child }))
+            .expect("an EdgeSpec")
     }
 
     fn dag(steps: Vec<StepSpec>) -> DagSpec {
@@ -630,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn fold_skill_tools_targets_first_model_step_and_declared_version_wins() {
+    fn fold_skill_tools_targets_the_entry_root_model_step_and_declared_version_wins() {
         let mut declared_step = model_step("go");
         declared_step
             .tool_contract
@@ -646,8 +683,30 @@ mod tests {
         // The author-declared pin survives; the wish addition folds in.
         assert_eq!(d.steps[0].tool_contract["gmail/search"], "9");
         assert_eq!(d.steps[0].tool_contract["retrieve"], "1");
-        // Only the FIRST model step receives the fold.
+        // Only the entry (root) model step receives the fold.
         assert!(d.steps[1].tool_contract.is_empty());
+    }
+
+    #[test]
+    fn fold_skill_tools_refuses_the_split_when_the_model_step_is_not_a_root() {
+        // A chained pure → model blueprint: instructions inject_entry_config only
+        // on the pure ROOT, so folding tools into the (non-root) model step would
+        // grant tools the instructions can never reach. The fold must SKIP —
+        // never create tools-without-instructions on the model step.
+        let mut d = dag(vec![pure_step(), model_step("go")]);
+        d.edges = vec![edge(0, 1)];
+        let granted: BTreeMap<String, String> = [("retrieve".to_string(), "1".to_string())]
+            .into_iter()
+            .collect();
+        fold_skill_tools(&mut d, &granted);
+        assert!(
+            d.steps[1].tool_contract.is_empty(),
+            "no root model step ⇒ no fold ⇒ no split"
+        );
+        assert_eq!(entry_agentic_step_index(&d), None);
+        // A single model step IS a root ⇒ it is the entry agentic step.
+        let single = dag(vec![model_step("go")]);
+        assert_eq!(entry_agentic_step_index(&single), Some(0));
     }
 
     #[test]

@@ -126,6 +126,18 @@ fn run() -> Result<bool, String> {
                 .to_string(),
         );
     }
+    // A family report scores only a SUBSET of the corpus, but the aggregate
+    // baseline carries the corpus suite_digest — so a naive compare passes the
+    // drift gate and then flags every family-absent gate as a phantom 0<1000
+    // regression. There is no family baseline yet, so --suite is report-only:
+    // refuse an explicit --baseline rather than emit false regressions.
+    if args.suite.is_some() && args.baseline.is_some() {
+        return Err(
+            "--suite is report-only; it cannot be compared against a baseline \
+                    (the corpus subset differs from any committed baseline — drop --baseline)"
+                .to_string(),
+        );
+    }
     let report = match &args.suite {
         Some(family) => kx_eval::score_golden_v1_family(family, env_label(), git_sha())
             .map_err(|e| format!("scoring failed: {e}"))?,

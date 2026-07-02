@@ -81,17 +81,24 @@ function AddSkillForm() {
   const add = useAddSkill();
   const [manifest, setManifest] = useState("");
   const [instructions, setInstructions] = useState("");
-  const err = add.error ? toUiError(add.error) : null;
+  // A LOCAL parse error surfaces the malformed-JSON state (D142: every state
+  // designed) — the server never sees it, so without this the button looked dead.
+  const [parseError, setParseError] = useState<string | null>(null);
+  const serverErr = add.error ? toUiError(add.error) : null;
+  const err = parseError ?? serverErr?.message ?? null;
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(manifest) as Record<string, unknown>;
-    } catch {
-      return; // the browser's required-field UX has the empty case; a JSON parse
-      // failure keeps the server-side error path for everything else.
+    } catch (parseEx) {
+      setParseError(
+        `Manifest is not valid JSON: ${parseEx instanceof Error ? parseEx.message : "parse error"}`,
+      );
+      return;
     }
+    setParseError(null);
     add.mutate(
       { manifest: parsed, instructions: instructions || undefined },
       { onSuccess: () => setManifest("") },
@@ -138,7 +145,7 @@ function AddSkillForm() {
       </button>
       {err ? (
         <p className="field-error" data-testid="skill-add-error">
-          {err.message}
+          {err}
         </p>
       ) : add.isSuccess ? (
         <p className="muted" data-testid="skill-add-result">
