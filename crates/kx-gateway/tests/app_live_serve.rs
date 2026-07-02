@@ -209,7 +209,7 @@ async fn app_catalog_round_trips_and_runs_on_a_live_model() {
         if turns
             .turns
             .iter()
-            .any(|t| t.branch == "answer" || t.branch == "dead_letter")
+            .any(|t| t.branch == "answer" || t.branch == "dead_lettered")
         {
             settled = true;
             break;
@@ -383,7 +383,7 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
         if turns
             .turns
             .iter()
-            .any(|t| t.branch == "answer" || t.branch == "dead_letter")
+            .any(|t| t.branch == "answer" || t.branch == "dead_lettered")
         {
             settled = true;
             break;
