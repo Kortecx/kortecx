@@ -53,4 +53,7 @@ fn corpus_covers_the_required_shapes() {
     // the full case proves a multi-modal media_type ref is carried at the envelope layer.
     let full = cases.iter().find(|c| c.name == "full").unwrap();
     assert!(full.canonical.contains("\"media_type\":\"image/png\""));
+    // …and the skills rail (RC-SW1): a SkillRef with instructions_ref + a tool wish.
+    assert!(full.canonical.contains("\"instructions_ref\""));
+    assert!(full.canonical.contains("\"skills\""));
 }

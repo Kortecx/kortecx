@@ -39,8 +39,9 @@ separators, number format, or escaping fails the gate.
 - `minimal` — only the required fields (`schema`/`name`/`version`/`blueprint`).
 - `agentic` — an authored agentic `@`-step (model step + `tool_contract` + budget
   params) round-tripped inside the blueprint, plus `description` + `tags`.
-- `full` — `references` (a multi-modal `media_type` context ref + a tool ref) +
-  `steering_config` (model route + a guard) + `branch_handle`.
+- `full` — `references` (a multi-modal `media_type` context ref + a tool ref +
+  a `skills` SkillRef with `instructions_ref` + a tool wish) + `steering_config`
+  (model route + a guard) + `branch_handle`.
 
 Regenerate by constructing the envelopes via the typed `kx-app` API and printing
 `to_canonical_json()`; never hand-edit the `canonical` strings.

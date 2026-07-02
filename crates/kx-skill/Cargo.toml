@@ -1,0 +1,23 @@
+[package]
+name         = "kx-skill"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx skill manifest (kortecx.skill/v1) — a thin, leaf TYPE crate for the declarative skill bundle: instructions (content-addressed by ref) + a tool grant-WISH set (id → version) + catalog metadata. A skill carries NO code and NO authority (no warrant, grant, secret, or credential — the server re-resolves every wish at bind: wish ∩ caller grants ∩ fireable). Canonical JSON (sorted keys, no floats, SN-8). Pure leaf: serde/serde_json/thiserror only; never the journal, the gateway service, or the frozen trio."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
