@@ -1053,6 +1053,57 @@ shared-lane-status:
     echo "shared lane clear"
 
 # ============================================================================
+# Parallel lanes (D175) — isolated git worktrees so concurrent sessions never
+# contend on the build lock or clobber target/. Each worktree gets its own
+# default target dir; the printed CARGO_TARGET_DIR export makes that explicit
+# (and lets a lane point at a faster disk). sccache is suggested as a DEV-LOCAL
+# opt-in only — never wired into .cargo/config.toml or CI, so the I1.c
+# byte-determinism / check-reproducible path is untouched.
+# ============================================================================
+
+# Create an isolated work lane: a git worktree at ../kortecx-lane-<name> on a
+# fresh local branch lane/<name> (rename to feat/... before pushing).
+lane-new name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="$(git rev-parse --show-toplevel)"
+    LANE_DIR="$(dirname "$ROOT")/kortecx-lane-{{name}}"
+    git worktree add "$LANE_DIR" -b "lane/{{name}}"
+    echo ""
+    echo "lane '{{name}}' ready: $LANE_DIR"
+    echo "run these in the lane shell:"
+    echo "    cd $LANE_DIR"
+    echo "    export CARGO_TARGET_DIR=$LANE_DIR/target"
+    if command -v sccache >/dev/null 2>&1; then
+        echo "    export RUSTC_WRAPPER=sccache   # optional dev-local compiler cache (shared across lanes)"
+    else
+        echo "    # tip: 'cargo install sccache' to share compiled deps across lanes (dev-local only)"
+    fi
+    echo "claim your feature-ledger.toml row (state -> in-progress, set branch) in the lane's FIRST commit."
+
+# Remove a lane created by lane-new (worktree + its local branch when merged).
+lane-drop name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="$(git rev-parse --show-toplevel)"
+    LANE_DIR="$(dirname "$ROOT")/kortecx-lane-{{name}}"
+    git worktree remove "$LANE_DIR"
+    git branch -d "lane/{{name}}" 2>/dev/null || echo "branch lane/{{name}} kept (unmerged) — delete manually with -D if abandoned"
+    echo "lane '{{name}}' dropped"
+
+# Fast local test runner: cargo-nextest when installed (per-test process
+# isolation + better parallelism), plain cargo test otherwise. CI is unchanged.
+test-fast:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v cargo-nextest >/dev/null 2>&1; then
+        cargo nextest run --workspace
+    else
+        echo "cargo-nextest not installed (cargo install cargo-nextest) — falling back to cargo test"
+        cargo test --workspace
+    fi
+
+# ============================================================================
 # Cleanup
 # ============================================================================
 

@@ -214,7 +214,8 @@ notes    = "PR-G0 (extension lane, isolated per the user's core/extension split)
 [[feature]]
 id       = "discord-connector"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "277"
 branch   = "feat/connector-discord"
 covers   = [
   "integrations/kx-connector-discord: a bundled Discord MCP connector — a standalone [[bin]] stdio JSON-RPC 2.0 server (initialize -> tools/list -> tools/call) exposing discord/{send_message,read_channel,list_channels}; FFI-free (serde/serde_json/ureq/thiserror only, no base64), NO kx-* runtime dependency (not in the gateway or frozen-trio closure)",
@@ -247,19 +248,21 @@ notes    = "Extension lane, same template as discord-connector. Zero core blast 
 [[feature]]
 id       = "first-class-integrations"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "282"
 branch   = "feat/g2-g1-app-pointer-run-and-first-class-gmail"
 covers   = [
   "G1 (Gmail slice) — a curated 'Connect Gmail' provider shortcut: `kx connections add --provider gmail` (static provider catalog id -> command + credential-ref) + a ConnectionsPanel 'Connect Gmail' prefill chip + the App-builder `.with_gmail()` (Py+TS), all over the EXISTING RegisterMcpServer + PutSecret RPCs (no new proto)",
   "the static provider catalog (provider id -> stdio command + credential-ref name) mirrored across CLI/SDK/UI; Discord/Slack/Notion clone the Gmail row when curated",
 ]
 inherits = ["discord-connector", "integrations-foundation"]
-notes    = "LOW blast radius: client-side curation over existing RPCs. Reuses ui/src/components/tools/ConnectionsPanel.tsx + crates/kx-cli/src/verbs/connections.rs + the SDK App builders. Off-journal; digest 7d22d4bd invariant. Bundled WITH G2 (app-pointer-run-resolution) in one PR (the connect -> build App -> run vertical). Flips to merged in the NEXT shared PR."
+notes    = "LOW blast radius: client-side curation over existing RPCs. Reuses ui/src/components/tools/ConnectionsPanel.tsx + crates/kx-cli/src/verbs/connections.rs + the SDK App builders. Off-journal; digest 7d22d4bd invariant. Bundled WITH G2 (app-pointer-run-resolution) in one PR (the connect -> build App -> run vertical). Merged OSS #282 fb3dc484 (2026-07-02)."
 
 [[feature]]
 id       = "app-pointer-run-resolution"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "282"
 branch   = "feat/g2-g1-app-pointer-run-and-first-class-gmail"
 covers   = [
   "G2 — carry the App envelope's references.connections + guards.secret_scope through the RUN path so a running App resolves its connection-pointers to the caller's OWN registered connection (by credential-ref name) and sets the run warrant's SecretScope::AllowList to the App's secret_scope names (so a credentialed connector can be dialed inside the agentic loop)",
@@ -267,7 +270,7 @@ covers   = [
   "a new FFI-free kx-blueprint crate (DagSpec + lowering extracted from kx-cli so the server can lower a stored blueprint identically); connection-by-name resolution over the connections store (own read handle, WAL) with missing-integration + loud-mis-authoring guards; CLI/Py/TS run_app -> RunApp with a legacy GetApp->SubmitWorkflow fallback on UNIMPLEMENTED; UI missing-integration action",
 ]
 inherits = ["first-class-integrations", "gmail-integration"]
-notes    = "MEDIUM blast radius: additive RunApp RPC + a host seam + the shared author_steps_from_proto extraction (submit_workflow refactor is behaviour-preserving). Off-journal + digest 7d22d4bd invariant (connections/secrets off-DAG; secret_scope IS content-addressed into the warrant_ref but the new path defaults to None ⇒ existing runs byte-identical + the kill-and-replay fixture untouched; recovery replays the journaled warrant_ref). Frozen-trio EMPTY. Cargo.lock += only the kx-blueprint node. Bundled with G1 (first-class-integrations). Flips to merged in the NEXT shared PR."
+notes    = "MEDIUM blast radius: additive RunApp RPC + a host seam + the shared author_steps_from_proto extraction (submit_workflow refactor is behaviour-preserving). Off-journal + digest 7d22d4bd invariant (connections/secrets off-DAG; secret_scope IS content-addressed into the warrant_ref but the new path defaults to None ⇒ existing runs byte-identical + the kill-and-replay fixture untouched; recovery replays the journaled warrant_ref). Frozen-trio EMPTY. Cargo.lock += only the kx-blueprint node. Bundled with G1 (first-class-integrations). Merged OSS #282 fb3dc484 (2026-07-02)."
 
 [[feature]]
 id       = "cross-instance-app-import"
@@ -279,3 +282,16 @@ covers   = [
 ]
 inherits = ["app-pointer-run-resolution"]
 notes    = "MEDIUM blast radius + a real security surface (security review required). The 'share an App to others; the runtime uses THEIR own integration details by pointer' story. Off-journal + additive (no journal fact); digest 7d22d4bd invariant. Per-INSTANCE model (each person runs their own kx serve) is the OSS path; multiple users on ONE instance with isolated per-person credentials = Cloud (D129)."
+
+[[feature]]
+id       = "rc-sw1-skills"
+lane     = "oss"
+state    = "planned"
+covers   = [
+  "kortecx.skill/v1 declarative skill bundles (instructions + tool grant-WISHES + context; NO code — the executable leg is always an out-of-process MCP connector/broker capability, D159/D174.4): a NEW FFI-free kx-skill format crate (manifest type + validate() with authority deny-keys + pack loader; the apps.db/kx-blueprint leaf posture)",
+  "the shipped-but-inert SkillRef (kx-app envelope references.skills) binds in HostAppAuthor::author_app — instructions_ref -> entry-step context + a skill_union_warrant from wish INTERSECT caller-Use-grants INTERSECT fireable_grants() applied POST-author (the exact G2 secret_scope pattern; the intersection MUST include the caller's own Use grants — SN-8)",
+  "skills.db per-principal rebuildable catalog (apps.db posture) + a SkillCatalog gateway-core seam + additive ListSkills/GetSkillForm/AddSkill/RemoveSkill RPCs; cross-surface kx skills CLI + Py/TS + UI attach + docs/site/docs/skills.md",
+  "run_skill_conformance harness (kx-extension-sdk sibling of run_conformance: declarative/no-authority/wish-resolvable/binds-empty-grants-to-zero) + just test-skill + 2-3 reference skill packs (skills/**) + a skill_quality kx-eval scorer + registry/index.json v1 (family/name/version/source/conformance)",
+]
+inherits = ["rc5b-consolidation-decay-memory-ui", "app-pointer-run-resolution", "gmail-integration", "connector-extension-sdk"]
+notes    = "The NEXT shared-lane PR (D174.3 sequencing; D175 program). B-spec: private docs/plans/2026-07-02-capability-families-skills-tools-integrations-program.md SECTION 4 (start there — D143). CORRECTED naming per D175.2: dedicated kx-skill crate + skills.db, NOT kx-bundle/bundles.db (those are TaskBundle + the PR-7 context-bundle store). Auto-mode (skill menu + KX_SERVE_AUTOSKILL) DEFERRED to its own PR or RC-SW4. Honest digest note: skill-BEARING runs legitimately produce different bytes (warrant_ref content-addressed + identity-bearing context); canonical 7d22d4bd invariance holds via the default-empty no-op (a0_guard + frozen-trio-EMPTY prove in-PR). Unblocks RC-SW2 personas."
