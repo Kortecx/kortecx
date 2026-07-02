@@ -83,6 +83,12 @@ mod bundles;
 // the kx-app leaf type); off-journal, off-digest, rebuildable-to-empty (like
 // bundles, no broker dep — kx_content::ContentRef::of derives app_ref).
 mod apps;
+// RC-SW1: the skills.db sidecar (the SkillCatalog seam) — ListSkills / GetSkillForm /
+// AddSkill / RemoveSkill. Stores a caller's kortecx.skill/v1 manifests (validated
+// fail-closed + canonicalized via the kx-skill leaf type — authority deny-keys,
+// declarative-only); off-journal, off-digest, rebuildable-to-empty. A skill is a
+// WISH bundle: the bind grants only wish ∩ caller grants ∩ fireable.
+mod skills;
 // POC-5b: the locks.db sidecar (the LockStore seam) — per-App lock toggled by
 // LockApp/UnlockApp + enforced at the AdvanceBranch chokepoint. Off-journal,
 // off-digest, rebuildable-to-empty (FAILS OPEN on loss — an availability gate).

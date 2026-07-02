@@ -182,6 +182,10 @@ kx-toolscout       = { workspace = true }
 # validate + canonicalize an envelope and derive its summary + app_ref. The
 # dep-wall subtree check pins it.
 kx-app             = { workspace = true }
+# RC-SW1: the skill manifest type (kortecx.skill/v1) — a pure leaf (serde/serde_json/
+# thiserror only), used by the skills.db host store to validate + canonicalize a
+# manifest fail-closed (authority deny-keys) and derive its skill_ref.
+kx-skill           = { workspace = true }
 # G2: lower a stored App's blueprint through the SAME canonical path the CLI uses, so
 # a server-side App run and a client-authored workflow produce identical wire bytes.
 kx-blueprint       = { workspace = true }
