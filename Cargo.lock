@@ -1630,11 +1630,13 @@ dependencies = [
  "kx-mcp",
  "kx-mcp-gateway",
  "kx-mote",
+ "kx-skill",
  "kx-tool-registry",
  "kx-warrant",
  "serde",
  "serde_json",
  "smallvec",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 

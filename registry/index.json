@@ -1,0 +1,59 @@
+{
+  "schema": "kortecx.registry/v1",
+  "entries": [
+    {
+      "family": "skill",
+      "name": "channel-digest",
+      "version": "1",
+      "source": "skills/channel-digest",
+      "description": "Digest recent Discord channel activity into a short brief (read-only wishes, never posts).",
+      "conformance": "just test-skill skills/channel-digest",
+      "ledger": "rc-sw1-skills"
+    },
+    {
+      "family": "skill",
+      "name": "email-triage",
+      "version": "1",
+      "source": "skills/email-triage",
+      "description": "Triage a Gmail inbox: search, read, and DRAFT replies for human review (never wishes for send).",
+      "conformance": "just test-skill skills/email-triage",
+      "ledger": "rc-sw1-skills"
+    },
+    {
+      "family": "skill",
+      "name": "research-summarize",
+      "version": "1",
+      "source": "skills/research-summarize",
+      "description": "Ground a written summary in retrieve@1 passages + confined fs-read sources.",
+      "conformance": "just test-skill skills/research-summarize",
+      "ledger": "rc-sw1-skills"
+    },
+    {
+      "family": "integration",
+      "name": "kx-connector-gmail",
+      "version": "0.1.0",
+      "source": "integrations/kx-connector-gmail",
+      "description": "Bundled Gmail MCP connector (search/read/draft/send; credential by ref, no OAuth dance in-runtime).",
+      "conformance": "just test-connector target/debug/kx-connector-gmail",
+      "ledger": "gmail-integration"
+    },
+    {
+      "family": "integration",
+      "name": "kx-connector-discord",
+      "version": "0.1.0",
+      "source": "integrations/kx-connector-discord",
+      "description": "Bundled Discord MCP connector (send_message/read_channel/list_channels; bot token by ref).",
+      "conformance": "just test-connector target/debug/kx-connector-discord",
+      "ledger": "discord-connector"
+    },
+    {
+      "family": "tool",
+      "name": "kx-mcp-echo",
+      "version": "1",
+      "source": "crates/kx-mcp",
+      "description": "Bundled reference MCP echo tool (mcp-echo@1, deterministic, no egress) — the live ReAct loop's first Act.",
+      "conformance": "just test-connector",
+      "ledger": "connector-extension-sdk"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "schema": "kortecx.skill/v1",
+  "name": "research-summarize",
+  "version": "1",
+  "description": "Ground a written summary in retrieved dataset passages and confined file reads: retrieve first, cite what was read, never invent sources.",
+  "tags": ["research", "rag", "summarize"],
+  "tools": {
+    "fs-read": "1",
+    "retrieve": "1"
+  }
+}

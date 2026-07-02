@@ -1,0 +1,12 @@
+{
+  "schema": "kortecx.skill/v1",
+  "name": "email-triage",
+  "version": "1",
+  "description": "Triage a Gmail inbox: search for actionable mail, read what matters, and DRAFT replies for human review — this skill deliberately never wishes for send.",
+  "tags": ["email", "gmail", "triage"],
+  "tools": {
+    "gmail/draft": "1",
+    "gmail/read": "1",
+    "gmail/search": "1"
+  }
+}

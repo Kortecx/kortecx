@@ -21,7 +21,7 @@ check: fmt-check clippy test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test eval deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke test-connector-real
+ci: fmt-check clippy test eval deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke test-connector-real test-skill registry-check
 
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
@@ -83,6 +83,18 @@ test-connector-real:
 # the real-model-e2e job (Qwen3-0.6B). #[ignore]'d; needs a GGUF.
 test-connector-live: fetch-gemma-model
     cargo test -p kx-gateway --features inference react_serve_connector -- --ignored --nocapture
+
+# RC-SW1: the DECLARATIVE-family conformance gate over kortecx.skill/v1 packs.
+# No args ⇒ every in-tree skills/** reference pack; pass dirs to gate your own
+# (external authors run this before submitting). Offline, no model, <1s.
+test-skill *packs:
+    cargo run -q -p kx-extension-sdk --example skill_conformance -- {{packs}}
+
+# RC-SW1: the registry-consistency check — registry/index.json entries must
+# agree with the tree (skills/** ⟷ skill entries, integrations/kx-connector-*
+# ⟷ integration entries, sources exist, ledger ids real). Pure file reads.
+registry-check:
+    bash scripts/registry-check.sh
 
 # ============================================================================
 # Onboarding / install automation (sudo-free, opt-in)
