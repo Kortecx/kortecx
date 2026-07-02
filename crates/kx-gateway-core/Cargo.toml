@@ -59,6 +59,10 @@ smallvec      = { workspace = true }
 # TEST-ONLY (PR-2c-3 critic-live): the `CheckSpec` to build a native-critic Mote in
 # the SubmitRun B3/H5 admission tests.
 kx-critic-types = { workspace = true }
+# TEST-ONLY (RC-SW1): the skills_batch in-memory SkillCatalog fake reads the opaque
+# manifest bytes as JSON (the LIBRARY boundary stands — gateway-core itself never
+# links a manifest view; only this test harness does).
+serde_json    = { workspace = true }
 
 [lints]
 workspace = true

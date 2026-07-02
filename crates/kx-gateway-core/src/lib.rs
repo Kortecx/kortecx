@@ -91,6 +91,7 @@ mod runs;
 mod scaffold;
 mod server_info;
 mod service;
+mod skills_view;
 mod submit;
 mod telemetry_view;
 mod tool_registry_admin;
@@ -163,6 +164,10 @@ pub use service::{
     TeamSummaryEntry, TokenStream, TokenTailer, WarrantProjection, WorkflowAuthor,
     BATCH_ITEM_CLAMP_BYTES, DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS, MAX_FEEDBACK_COMMENT_BYTES,
     REFUSAL_CODE_METADATA_KEY, SEARCH_RECIPES_DEFAULT_LIMIT, SEARCH_RECIPES_MAX_LIMIT,
+};
+pub use skills_view::{
+    AddedInstructions, SkillCatalog, SkillRecord, MAX_SKILL_INSTRUCTIONS_BODY_BYTES,
+    MAX_SKILL_MANIFEST_BYTES, SKILL_PREVIEW_CAP_BYTES,
 };
 pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,
