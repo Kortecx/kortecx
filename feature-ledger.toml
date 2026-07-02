@@ -286,7 +286,8 @@ notes    = "MEDIUM blast radius + a real security surface (security review requi
 [[feature]]
 id       = "rc-sw1-skills"
 lane     = "oss"
-state    = "planned"
+state    = "in-progress"
+branch   = "feat/rc-sw1-skills"
 covers   = [
   "kortecx.skill/v1 declarative skill bundles (instructions + tool grant-WISHES + context; NO code — the executable leg is always an out-of-process MCP connector/broker capability, D159/D174.4): a NEW FFI-free kx-skill format crate (manifest type + validate() with authority deny-keys + pack loader; the apps.db/kx-blueprint leaf posture)",
   "the shipped-but-inert SkillRef (kx-app envelope references.skills) binds in HostAppAuthor::author_app — instructions_ref -> entry-step context + a skill_union_warrant from wish INTERSECT caller-Use-grants INTERSECT fireable_grants() applied POST-author (the exact G2 secret_scope pattern; the intersection MUST include the caller's own Use grants — SN-8)",

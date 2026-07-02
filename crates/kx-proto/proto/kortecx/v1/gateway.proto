@@ -1246,6 +1246,60 @@ message UnlockAppRequest { string branch_handle = 1; }
 message UnlockAppResponse{ bool unlocked = 1; }
 
 // ---------------------------------------------------------------------------
+// RC-SW1 additive (D120.6/D175) — the per-principal SKILL catalog (skills.db,
+// the apps.db posture: off-journal, off-digest, rebuildable-to-empty). A skill
+// is a kortecx.skill/v1 manifest — instructions (content-store, by ref) plus a
+// tool grant-WISH set (id -> version) the server re-resolves at bind
+// (wish ∩ caller grants ∩ fireable). NO code, NO authority (deny-key
+// validated); the executable leg is always an out-of-process connector or a
+// bundled broker capability (D159/D174.4). UNIMPLEMENTED when the catalog
+// seam is absent (an old gateway) — clients degrade honestly.
+// ---------------------------------------------------------------------------
+
+message SkillSummary {
+  bytes  skill_ref          = 1;  // 16B SERVER-DERIVED canonical-manifest hash (display/dedup, never client-supplied)
+  string name               = 2;  // catalog key within the caller's scope ([a-z0-9._-])
+  string version            = 3;  // manifest version (integer string)
+  string description        = 4;  // advisory (never parsed for enforcement)
+  string instructions_ref   = 5;  // 64-hex content-store ref to the instructions body
+  map<string, string> tools = 6;  // the grant-WISH set (id -> version); a wish, never a grant
+  repeated string tags      = 7;  // catalog tags
+}
+message AddSkillRequest {
+  bytes manifest_json     = 1;  // kortecx.skill/v1 JSON; the server validates (authority deny-keys, closed shape) + canonicalizes + derives skill_ref
+  bytes instructions_body = 2;  // instructions markdown, stored via the content-write seam; empty iff the manifest already names instructions_ref
+}
+message AddSkillResponse {
+  bytes  skill_ref        = 1;  // 16B server-derived (SN-8)
+  string name             = 2;  // echoed canonical name
+  string instructions_ref = 3;  // 64-hex — the stored (or echoed) instructions ref
+  bool   deduplicated     = 4;  // true iff an identical canonical manifest was already bound to this name
+}
+message ListSkillsRequest {
+  uint32 limit      = 1;  // 0 => server default (100); clamped (256)
+  string after_name = 2;  // exclusive cursor (deterministic name order)
+}
+message ListSkillsResponse {
+  repeated SkillSummary skills = 1;
+  bool has_more                = 2;
+}
+message GetSkillFormRequest { string name = 1; }
+message SkillWish {
+  string tool_id      = 1;
+  string tool_version = 2;
+  bool   registered   = 3;  // ADVISORY display: currently resolvable in the tool registry (never a grant)
+}
+message GetSkillFormResponse {
+  bool found                  = 1;  // uniform not-found for absent OR not-owned (no existence oracle)
+  SkillSummary summary        = 2;  // absent when not found
+  repeated SkillWish wishes   = 3;  // canonical (tool_id) order
+  string instructions_preview = 4;  // server-capped display excerpt ('' when the skill was added by ref)
+  bool   preview_truncated    = 5;
+}
+message RemoveSkillRequest  { string name = 1; }
+message RemoveSkillResponse { bool removed = 1; }  // false: absent OR not-owned (uniform)
+
+// ---------------------------------------------------------------------------
 // Batch B — Mote definition inspection (PR-2). Additive RPC (D120.6).
 // GetMoteDetail is a per-mote unary DISPLAY read: it resolves a committed
 // Mote's `mote_def_hash` to the definition bytes the coordinator persisted
@@ -2350,4 +2404,16 @@ service KxGateway {
   // unimplemented when the locks sidecar is absent (degrade-open). Off-journal.
   rpc LockApp(LockAppRequest) returns (LockAppResponse);
   rpc UnlockApp(UnlockAppRequest) returns (UnlockAppResponse);
+
+  // RC-SW1 additive (D120.6/D175) — the per-principal skill catalog (skills.db).
+  // AddSkill validates the manifest fail-closed (kortecx.skill/v1 closed shape +
+  // authority deny-keys) and stores the instructions body via the content-write
+  // seam; skill_ref is server-derived over the canonical bytes (SN-8). A skill
+  // is a WISH bundle — attaching one grants nothing; the bind intersects its
+  // tool wishes against the caller's grants and the live broker. Authenticated
+  // caller required; UNIMPLEMENTED when the catalog seam is absent.
+  rpc ListSkills(ListSkillsRequest) returns (ListSkillsResponse);
+  rpc GetSkillForm(GetSkillFormRequest) returns (GetSkillFormResponse);
+  rpc AddSkill(AddSkillRequest) returns (AddSkillResponse);
+  rpc RemoveSkill(RemoveSkillRequest) returns (RemoveSkillResponse);
 }

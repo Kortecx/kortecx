@@ -2261,7 +2261,7 @@ fn resolve_context_items(
 /// non-hex / wrong-length input). Lives in `provision` (always compiled) — NOT
 /// behind the `inference`-gated `model_exec` (the BUG-30 cfg-leak class: a binder
 /// helper must resolve `context_refs` on the no-inference CI binary too).
-fn decode_hex32(s: &str) -> Option<[u8; 32]> {
+pub(crate) fn decode_hex32(s: &str) -> Option<[u8; 32]> {
     let b = s.as_bytes();
     if b.len() != 64 {
         return None;
@@ -2563,9 +2563,21 @@ impl HostWorkflowAuthor {
     }
 }
 
-#[tonic::async_trait]
-impl WorkflowAuthor for HostWorkflowAuthor {
-    async fn author(
+impl HostWorkflowAuthor {
+    /// The full authoring body, with EXTRA caller-resolved [`ContextItemRef`]s
+    /// merged into the entry-step context bundle (RC-SW1: an App's skill
+    /// instructions ride here, labeled `skill:<name>`). The merge happens BEFORE
+    /// `encode_context_items` canonicalizes (sort + dedup), so bundle items and
+    /// extra items coexist deterministically in ONE inject — no overwrite hazard
+    /// (`inject_entry_config` would OVERWRITE on a second call). `extra_items`
+    /// empty ⇒ byte-identical to the plain [`WorkflowAuthor::author`] path (the
+    /// digest no-op the a0 guard + the byte-identity test pin).
+    //
+    // The arg list mirrors the trait signature + the one extra slice (bundling
+    // them would obscure the delegate equivalence); `async` for call-shape
+    // parity with the trait (the body is currently synchronous).
+    #[allow(clippy::too_many_arguments, clippy::unused_async)]
+    pub(crate) async fn author_with_context_items(
         &self,
         party: &str,
         seed: u32,
@@ -2573,6 +2585,7 @@ impl WorkflowAuthor for HostWorkflowAuthor {
         edges: &[AuthorEdge],
         mode: AuthorExecutionMode,
         context_bundles: &[String],
+        extra_items: &[ContextItemRef],
     ) -> Result<BoundRecipe, BinderError> {
         // DYNAMIC is reserved (PR-1 frozen-only); refuse rather than silently treat
         // it as frozen so the contract never misleads.
@@ -2639,9 +2652,12 @@ impl WorkflowAuthor for HostWorkflowAuthor {
         // identity-bearing config BEFORE compile (fail-closed on an unknown handle;
         // empty ⇒ byte-identical to pre-PR-7). Resolution is caller-scoped. The
         // author/SubmitWorkflow path carries no direct `context_refs` (those are an
-        // Invoke-only field) ⇒ pass an empty ref set.
-        let context_items =
+        // Invoke-only field) ⇒ pass an empty ref set. RC-SW1: the caller-resolved
+        // `extra_items` (skill instructions) merge into the SAME bundle before the
+        // canonical encode, so ONE inject carries both.
+        let mut context_items =
             resolve_context_items(self.bundles.as_deref(), party, context_bundles, &[])?;
+        context_items.extend_from_slice(extra_items);
         if !context_items.is_empty() {
             let encoded = ConfigVal(encode_context_items(&context_items));
             wf.inject_entry_config(CONTEXT_ITEMS_KEY, &encoded);
@@ -2694,6 +2710,22 @@ impl WorkflowAuthor for HostWorkflowAuthor {
             terminal_mote_id,
             react_seed: false,
         })
+    }
+}
+
+#[tonic::async_trait]
+impl WorkflowAuthor for HostWorkflowAuthor {
+    async fn author(
+        &self,
+        party: &str,
+        seed: u32,
+        steps: &[AuthorStep],
+        edges: &[AuthorEdge],
+        mode: AuthorExecutionMode,
+        context_bundles: &[String],
+    ) -> Result<BoundRecipe, BinderError> {
+        self.author_with_context_items(party, seed, steps, edges, mode, context_bundles, &[])
+            .await
     }
 }
 
@@ -3666,6 +3698,145 @@ pub(crate) fn tool_union_warrant(
         executor_class: base.executor_class,
         ..Default::default()
     }
+}
+
+/// RC-SW1: a party's per-tool Use AUTHORITY for the skill-wish intersection,
+/// resolved from the authoritative grant ledger (never a client warrant — SN-8).
+///
+/// Semantics (D175 + the user-approved "Use-gate + conditional narrowing"):
+/// - No Use grant on the authoring asset ⇒ `NotAuthorized` — nothing binds at all
+///   (the same gate `author()` enforces; surfaced here so a skill wish never even
+///   computes for an unauthorized party).
+/// - The effective role carries EXPLICIT `tool_grants` ⇒ `Some(allowlist)` — the
+///   wish is STRICTLY intersected against it (a restricted role genuinely
+///   constrains; SN-8 narrowing).
+/// - The effective role's tool set is EMPTY (today's universal seed —
+///   `blueprint_base` grants no tools to anyone) ⇒ `None` = "no per-tool
+///   narrowing expressed"; the wish is bounded by registration + broker
+///   fireability instead. This is the shipped `tool()`/agentic-path posture
+///   ("the per-party gate is 'can author at all'") — a DELIBERATE, documented
+///   deviation from strict fail-closed set algebra on this one axis; the day
+///   roles carry explicit tool grants, the narrowing activates with no code
+///   change.
+pub(crate) fn party_tool_authority(
+    lib: &DemoLibrary,
+    party: &str,
+) -> Result<Option<BTreeSet<(String, String)>>, BinderError> {
+    let party_id = PartyId::new(party);
+    let handle = blueprint_author_handle().map_err(|e| BinderError::Internal(e.to_string()))?;
+    let resolver = HostUseResolver {
+        grants: &lib.grants,
+        owner_root: lib.blueprint_base.clone(),
+    };
+    let effective = resolver
+        .resolve_use(&party_id, &AssetRef::Path(handle))
+        .ok_or(BinderError::NotAuthorized)?;
+    if effective.tool_grants.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(
+            effective
+                .tool_grants
+                .iter()
+                .map(|g| (g.tool_id.0.clone(), g.tool_version.0.clone()))
+                .collect(),
+        ))
+    }
+}
+
+/// RC-SW1: intersect a multi-skill tool WISH into the set actually grantable on
+/// the App's entry agentic step — `wish ∩ caller-allowlist ∩ fireable ∩ registry
+/// ∩ union-compat` — returning ONLY the additions to fold into the step's
+/// `tool_contract` (the author-declared entries always win and are never
+/// evicted).
+///
+/// FAIL-SOFT by design (a wish is a wish, never authority — GR8 honest degrade;
+/// a portable skill pack must never brick an App): an unfulfillable wish tool is
+/// DROPPED with a warning, and the run proceeds. Contrast the author-DECLARED
+/// contract, which stays fail-closed in [`agentic_step_warrant`]. The compat
+/// union (empty-syscall + fs-LUB, the [`tool_union_warrant`] filter) is SEEDED
+/// from the declared contract's defs first, so a wish tool can never render the
+/// declared set uncompilable. The TOTAL folded contract is capped at
+/// [`AUTOGRANT_MAX_TOOLS`] (deterministic `BTreeMap` prefix — the same bound
+/// that keeps the live ReAct menu/prompt tractable; the rest stay reachable via
+/// an explicit `tool()` node).
+pub(crate) fn skill_union_grants(
+    declared: &std::collections::BTreeMap<String, String>,
+    wish: &std::collections::BTreeMap<String, String>,
+    caller_allowlist: Option<&BTreeSet<(String, String)>>,
+    tools: &dyn ToolRegistry,
+    fireable: &BTreeSet<(String, String)>,
+) -> std::collections::BTreeMap<String, String> {
+    // Seed the fs-compat union from the DECLARED tools (best-effort — a declared
+    // tool that fails resolution is agentic_step_warrant's fail-closed problem,
+    // not ours; here it only tightens what a wish may add).
+    let mut fs_scope = FsScope::empty();
+    for (name, version) in declared {
+        if let Some(def) = tools.lookup(&ToolName(name.clone()), &ToolVersion(version.clone())) {
+            if let Some(merged) =
+                fs_scope_union(&fs_scope, &def.required_capability.fs_scope_required)
+            {
+                fs_scope = merged;
+            }
+        }
+    }
+    let mut granted = std::collections::BTreeMap::new();
+    let mut total = declared.len();
+    for (name, version) in wish {
+        if total >= AUTOGRANT_MAX_TOOLS {
+            tracing::warn!(
+                tool = %name,
+                cap = AUTOGRANT_MAX_TOOLS,
+                "skill wish dropped: the folded tool contract is at the cap"
+            );
+            continue;
+        }
+        if declared.contains_key(name) {
+            continue; // the explicit blueprint pin wins over any skill wish.
+        }
+        if let Some(allow) = caller_allowlist {
+            if !allow.contains(&(name.clone(), version.clone())) {
+                tracing::warn!(
+                    tool = %name, version = %version,
+                    "skill wish dropped: outside the caller's granted tool set"
+                );
+                continue;
+            }
+        }
+        if !fireable.contains(&(name.clone(), version.clone())) {
+            tracing::warn!(
+                tool = %name, version = %version,
+                "skill wish dropped: not fireable on this serve (unregistered or undialed)"
+            );
+            continue;
+        }
+        let Some(def) = tools.lookup(&ToolName(name.clone()), &ToolVersion(version.clone())) else {
+            tracing::warn!(
+                tool = %name, version = %version,
+                "skill wish dropped: no registry definition"
+            );
+            continue;
+        };
+        let cap = &def.required_capability;
+        if cap.syscall_profile_ref != ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE) {
+            tracing::warn!(
+                tool = %name, version = %version,
+                "skill wish dropped: sandboxed syscall profile cannot share the union warrant (BUG-24)"
+            );
+            continue;
+        }
+        let Some(merged_fs) = fs_scope_union(&fs_scope, &cap.fs_scope_required) else {
+            tracing::warn!(
+                tool = %name, version = %version,
+                "skill wish dropped: fs scope incomparable with the step's other tools"
+            );
+            continue;
+        };
+        fs_scope = merged_fs;
+        granted.insert(name.clone(), version.clone());
+        total += 1;
+    }
+    granted
 }
 
 /// PR-9b-2b: the SERVER-built UNION warrant for a deterministic-AGENTIC step — a
@@ -6274,5 +6445,301 @@ mod tests {
         let binder = HostRecipeBinder::from_shared(lib);
         // (bind is async; the form/bind agreement is what we assert structurally here)
         let _ = &binder;
+    }
+
+    // ----- RC-SW1: skill_union_grants / party_tool_authority / context merge -----
+
+    /// A registry over explicit `(id, version, syscall_profile, fs_scope)` defs —
+    /// the skill-wish compat-filter fixtures need per-tool capability control.
+    fn registry_of(defs: &[(&str, &str, [u8; 32], FsScope)]) -> std::sync::Arc<dyn ToolRegistry> {
+        use kx_tool_registry::{IdempotencyClass, InMemoryToolRegistry, ToolKind, ToolProvenance};
+        let mut reg = InMemoryToolRegistry::new();
+        for (id, version, profile, fs) in defs {
+            let def = ToolDef {
+                tool_id: ToolName((*id).into()),
+                tool_version: ToolVersion((*version).into()),
+                kind: ToolKind::Builtin,
+                required_capability: kx_warrant::ToolRequirement {
+                    net_scope_required: NetScope::None,
+                    fs_scope_required: fs.clone(),
+                    syscall_profile_ref: ContentRef::from_bytes(*profile),
+                    min_resource_ceiling: ResourceCeiling {
+                        cpu_milli: 0,
+                        mem_bytes: 0,
+                        wall_clock_ms: 0,
+                        fd_count: 0,
+                        disk_bytes: 0,
+                    },
+                },
+                description: String::new(),
+                idempotency_class: IdempotencyClass::Staged,
+                input_schema: None,
+            };
+            let _ = reg.register(def, ToolProvenance::HumanAuthored { author: "t".into() });
+        }
+        std::sync::Arc::new(reg)
+    }
+
+    fn pairs(items: &[(&str, &str)]) -> BTreeSet<(String, String)> {
+        items
+            .iter()
+            .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
+            .collect()
+    }
+
+    fn wish_of(items: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        items
+            .iter()
+            .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn skill_union_grants_intersects_wish_with_fireable_and_registry() {
+        // wish {a,b,c}; fireable {a,b}; registry {a} ⇒ granted {a} (fail-soft drops).
+        let reg = registry_of(&[("a", "1", [0u8; 32], FsScope::empty())]);
+        let granted = skill_union_grants(
+            &std::collections::BTreeMap::new(),
+            &wish_of(&[("a", "1"), ("b", "1"), ("c", "1")]),
+            None,
+            reg.as_ref(),
+            &pairs(&[("a", "1"), ("b", "1")]),
+        );
+        assert_eq!(granted.len(), 1);
+        assert_eq!(granted["a"], "1");
+        // The conformance pin: an EMPTY fireable set grants NOTHING (a skill on
+        // its own can never mint authority).
+        let none = skill_union_grants(
+            &std::collections::BTreeMap::new(),
+            &wish_of(&[("a", "1")]),
+            None,
+            reg.as_ref(),
+            &BTreeSet::new(),
+        );
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn skill_union_grants_drops_sandboxed_and_fs_incompatible_wishes() {
+        let ro = |path: &str| {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert(std::path::PathBuf::from(path), FsMode::ReadOnly);
+            FsScope { mounts: m }
+        };
+        let rw = |path: &str| {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert(std::path::PathBuf::from(path), FsMode::ReadWrite);
+            FsScope { mounts: m }
+        };
+        let exec_only = |path: &str| {
+            let mut m = std::collections::BTreeMap::new();
+            m.insert(std::path::PathBuf::from(path), FsMode::ExecOnly);
+            FsScope { mounts: m }
+        };
+        let reg = registry_of(&[
+            ("sandboxed", "1", [7u8; 32], FsScope::empty()), // non-empty syscall profile (BUG-24)
+            ("declared-rw", "1", [0u8; 32], rw("/data")),
+            ("incompat", "1", [0u8; 32], exec_only("/data")), // incomparable with ReadWrite at /data
+            ("fine", "1", [0u8; 32], ro("/docs")),
+        ]);
+        let fireable = pairs(&[
+            ("sandboxed", "1"),
+            ("incompat", "1"),
+            ("fine", "1"),
+            ("declared-rw", "1"),
+        ]);
+        // The union is SEEDED from the DECLARED contract (declared-rw holds /data
+        // ReadWrite), so the incomparable wish drops and can never poison it.
+        let granted = skill_union_grants(
+            &wish_of(&[("declared-rw", "1")]),
+            &wish_of(&[("sandboxed", "1"), ("incompat", "1"), ("fine", "1")]),
+            None,
+            reg.as_ref(),
+            &fireable,
+        );
+        assert_eq!(
+            granted.keys().collect::<Vec<_>>(),
+            ["fine"],
+            "sandboxed (BUG-24) and fs-incomparable wishes drop; the compatible one folds"
+        );
+    }
+
+    #[test]
+    fn skill_union_grants_respects_a_restricted_role_allowlist() {
+        // SN-8 narrowing: a caller whose effective role carries EXPLICIT tool
+        // grants is STRICTLY intersected — the wish outside it drops even though
+        // the serve could fire it.
+        let reg = registry_of(&[
+            ("a", "1", [0u8; 32], FsScope::empty()),
+            ("b", "1", [0u8; 32], FsScope::empty()),
+        ]);
+        let fireable = pairs(&[("a", "1"), ("b", "1")]);
+        let allow = pairs(&[("a", "1")]);
+        let granted = skill_union_grants(
+            &std::collections::BTreeMap::new(),
+            &wish_of(&[("a", "1"), ("b", "1")]),
+            Some(&allow),
+            reg.as_ref(),
+            &fireable,
+        );
+        assert_eq!(granted.keys().collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn skill_union_grants_never_evicts_declared_and_caps_deterministically() {
+        // 15 declared + 3 wished ⇒ only 1 wish addition fits under the 16 cap,
+        // and it is the deterministic BTreeMap prefix (w-a < w-b < w-c).
+        let mut defs: Vec<(String, String)> = Vec::new();
+        for i in 0..15 {
+            defs.push((format!("d-{i:02}"), "1".to_string()));
+        }
+        for w in ["w-a", "w-b", "w-c"] {
+            defs.push((w.to_string(), "1".to_string()));
+        }
+        let reg_defs: Vec<(&str, &str, [u8; 32], FsScope)> = defs
+            .iter()
+            .map(|(id, v)| (id.as_str(), v.as_str(), [0u8; 32], FsScope::empty()))
+            .collect();
+        let reg = registry_of(&reg_defs);
+        let fireable: BTreeSet<(String, String)> = defs.iter().cloned().collect();
+        let declared: std::collections::BTreeMap<String, String> =
+            defs[..15].iter().cloned().collect();
+        let granted = skill_union_grants(
+            &declared,
+            &wish_of(&[("w-a", "1"), ("w-b", "1"), ("w-c", "1")]),
+            None,
+            reg.as_ref(),
+            &fireable,
+        );
+        assert_eq!(
+            granted.keys().collect::<Vec<_>>(),
+            ["w-a"],
+            "declared entries are never evicted; wish additions stop at the cap prefix"
+        );
+    }
+
+    #[test]
+    fn party_tool_authority_is_none_for_the_seeded_role_and_not_authorized_without_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        // The seeded owner-wide role carries an EMPTY tool set ⇒ None ("no
+        // per-tool narrowing expressed" — the documented tool()-path posture).
+        // The Some(allowlist) arm is pinned by
+        // skill_union_grants_respects_a_restricted_role_allowlist.
+        assert!(party_tool_authority(&lib, "alice@acme").unwrap().is_none());
+        // A party with NO Use grant fails closed before any wish computes.
+        assert!(matches!(
+            party_tool_authority(&lib, "mallory@evil"),
+            Err(BinderError::NotAuthorized)
+        ));
+    }
+
+    /// RC-SW1: the extra-items merge — bundle items and skill instructions land
+    /// in ONE canonical entry-step bundle; an empty extra slice is byte-identical
+    /// to the plain trait path (the digest no-op pin at the author layer).
+    #[tokio::test]
+    async fn author_with_context_items_merges_and_empty_extra_is_byte_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+        )
+        .unwrap();
+        let bundles = std::sync::Arc::new(crate::bundles::BundlesDb::open(dir.path()).unwrap());
+        bundles
+            .upsert(
+                "alice@acme",
+                "team/ctx/notes",
+                "notes",
+                &[kx_gateway_core::BundleItemRecord {
+                    name: "doc".into(),
+                    content_ref: [0xab; 32],
+                    media_type: String::new(),
+                }],
+            )
+            .unwrap();
+        let author = HostWorkflowAuthor::from_shared_with_tools(
+            std::sync::Arc::new(lib),
+            tool_registry_with("echo-tool", "1"),
+        )
+        .with_bundles(bundles);
+        // PURE step: the test library serves no model, and the entry-context
+        // merge is kind-independent (inject_entry_config targets DAG roots).
+        let step = AuthorStep {
+            kind: AuthorStepKind::Pure,
+            model_id: String::new(),
+            prompt: String::new(),
+            body_signature_id: None,
+            tool_contract: std::collections::BTreeMap::new(),
+            params: std::collections::BTreeMap::new(),
+        };
+        let run = |bundles: Vec<String>, extra: Vec<ContextItemRef>| {
+            let a = &author;
+            let s = step.clone();
+            async move {
+                a.author_with_context_items(
+                    "alice@acme",
+                    0,
+                    std::slice::from_ref(&s),
+                    &[],
+                    AuthorExecutionMode::Frozen,
+                    &bundles,
+                    &extra,
+                )
+                .await
+                .expect("authors")
+            }
+        };
+        let skill_item = ContextItemRef {
+            name: "skill:triage".into(),
+            content_ref: [0xcd; 32],
+        };
+
+        // (1) empty extra ⇒ byte-identical to the trait path (mote-for-mote).
+        let plain = run(vec![], vec![]).await;
+        let via_trait = author
+            .author(
+                "alice@acme",
+                0,
+                std::slice::from_ref(&step),
+                &[],
+                AuthorExecutionMode::Frozen,
+                &[],
+            )
+            .await
+            .expect("trait path authors");
+        assert_eq!(plain.motes.len(), via_trait.motes.len(), "same mote count");
+        for ((m1, w1), (m2, w2)) in plain.motes.iter().zip(via_trait.motes.iter()) {
+            assert_eq!(m1.id, m2.id, "byte-identical MoteIds on the no-extra path");
+            assert_eq!(w1, w2, "byte-identical warrants on the no-extra path");
+        }
+
+        // (2) extra items are identity-bearing + idempotent.
+        let with_skill = run(vec![], vec![skill_item.clone()]).await;
+        assert_ne!(plain.terminal_mote_id, with_skill.terminal_mote_id);
+        let with_skill2 = run(vec![], vec![skill_item.clone()]).await;
+        assert_eq!(with_skill.terminal_mote_id, with_skill2.terminal_mote_id);
+
+        // (3) bundle + extra merge into ONE canonical bundle carrying BOTH items.
+        let merged = run(vec!["team/ctx/notes".into()], vec![skill_item.clone()]).await;
+        let entry = &merged.motes[0].0;
+        let encoded = entry
+            .def
+            .config_subset
+            .get(&ConfigKey(CONTEXT_ITEMS_KEY.into()))
+            .expect("the entry mote carries CONTEXT_ITEMS");
+        let items = kx_mote::decode_context_items(&encoded.0);
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert!(names.contains(&"doc"), "bundle item present: {names:?}");
+        assert!(
+            names.contains(&"skill:triage"),
+            "skill item present: {names:?}"
+        );
     }
 }

@@ -981,6 +981,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // the SaveApp/ListApps/GetApp RPCs. Off-journal, off-digest, rebuildable-to-empty
     // (no broker dep — app_ref is a pure content hash, the bundles.db posture).
     let apps_db = Arc::new(crate::apps::AppsDb::open(&catalog_dir)?);
+    // RC-SW1: the skill catalog (skills.db) — caller-scoped kortecx.skill/v1
+    // manifests for the ListSkills/GetSkillForm/AddSkill/RemoveSkill RPCs.
+    // Off-journal, off-digest, rebuildable-to-empty (skill_ref is a pure content
+    // hash — the apps.db posture). A skill is a WISH bundle; the bind intersects.
+    let skills_db = Arc::new(crate::skills::SkillsDb::open(&catalog_dir)?);
     // POC-5b: the per-App lock store (locks.db) — caller-scoped branch locks toggled
     // by LockApp/UnlockApp + enforced at the AdvanceBranch chokepoint. Off-journal,
     // off-digest, rebuildable-to-empty (FAILS OPEN on loss — an availability gate).
@@ -1133,10 +1138,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // coordinator + broker hold) so a `tool()` step resolves its def + builds a
     // tool-aware authoring ceiling, and a runtime-dialed tool is authorable the
     // moment it registers.
-    let author: Arc<dyn WorkflowAuthor> = Arc::new(
+    // RC-SW1: kept as the CONCRETE type too — HostAppAuthor calls the inherent
+    // `author_with_context_items` (skill instructions merge into the entry-step
+    // bundle) that the `WorkflowAuthor` trait deliberately does not carry.
+    let host_author: Arc<HostWorkflowAuthor> = Arc::new(
         HostWorkflowAuthor::from_shared_with_tools(demo.clone(), tool_registry.clone())
             .with_bundles(bundles_db.clone()),
     );
+    let author: Arc<dyn WorkflowAuthor> = host_author.clone();
     // (3d) UI-3: a durable membership ledger (teams) under the SAME catalog dir,
     //      idempotently seeded with one workspace team (owner = the gateway principal;
     //      members = each --auth-token party + the dev principal, one a Delegate) +
@@ -1518,6 +1527,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_alerts_view(alerts_db)
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db.clone())
+        .with_skill_catalog(skills_db)
         .with_branches_store(branches_db)
         .with_lock_store(locks_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
@@ -1665,7 +1675,16 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 let app_runner = crate::app_run::HostAppAuthor::new(
                     apps_db.clone(),
                     Arc::new(conn_store),
-                    author.clone(),
+                    host_author.clone(),
+                    demo.clone(),
+                    tool_registry.clone(),
+                    // The SAME live-broker truth the service's fireable backstop
+                    // uses (a skill wish that is not fireable is dropped at bind,
+                    // never authored into a warrant the backstop would refuse).
+                    Arc::new(HostRegisteredTools {
+                        broker: local_broker.clone(),
+                    }),
+                    content.clone(),
                 );
                 gateway = gateway.with_app_runner(Arc::new(app_runner));
                 tracing::info!("G2: App-pointer run resolver wired (RunApp)");

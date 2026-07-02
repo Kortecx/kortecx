@@ -29,6 +29,7 @@ import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { FileTree } from "../apps/FileTree";
+import { SkillsRail } from "../apps/SkillsRail";
 import { AppChat } from "../chat/AppChat";
 import { CodeViewer } from "../editor/CodeViewer";
 import { DiffViewer } from "../editor/DiffViewer";
@@ -103,6 +104,10 @@ export function AppDetailSection({
           </button>
         </div>
       </div>
+
+      {app.data ? (
+        <SkillsRail handle={handle} envelope={app.data.envelope} locked={locked} />
+      ) : null}
 
       <fieldset className="view-toggle" aria-label="App view" data-testid="app-detail-tabs">
         {TABS.map((t) => (

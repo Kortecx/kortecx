@@ -739,3 +739,74 @@ describe("Batch C: global event tail + telemetry", () => {
     expect([...seqs].sort((a, b) => b - a)).toEqual(seqs);
   });
 });
+
+// --- RC-SW1 skills catalog (declarative kortecx.skill/v1 bundles) --------------
+
+describe("RC-SW1 skills catalog", () => {
+  it("add → list → show → remove round-trips with server-derived identity (SN-8)", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const added = await kx.skills.add({
+      manifest: {
+        schema: "kortecx.skill/v1",
+        name: "triage",
+        version: "1",
+        description: "test skill",
+        tools: { "mcp-echo/echo": "1", "gmail/search": "1" },
+      },
+      instructions: "# Triage\nSearch first.",
+    });
+    expect(added.name).toBe("triage");
+    expect(added.skillRef).toHaveLength(32); // 16 bytes hex
+    expect(added.instructionsRef).toHaveLength(64);
+    expect(added.deduplicated).toBe(false);
+
+    // Identical re-add dedups to the SAME server-derived identity.
+    const again = await kx.skills.add({
+      manifest: {
+        schema: "kortecx.skill/v1",
+        name: "triage",
+        version: "1",
+        description: "test skill",
+        tools: { "mcp-echo/echo": "1", "gmail/search": "1" },
+      },
+      instructions: "# Triage\nSearch first.",
+    });
+    expect(again.deduplicated).toBe(true);
+    expect(again.skillRef).toBe(added.skillRef);
+
+    const list = await kx.skills.list();
+    expect(list.map((s) => s.name)).toContain("triage");
+
+    // The form carries the wish set with the ADVISORY registered bit: the
+    // bundled echo tool is fireable on a dev serve; the gmail wish is not.
+    const form = await kx.skills.show("triage");
+    expect(form).not.toBeNull();
+    expect(form?.summary.instructionsRef).toBe(added.instructionsRef);
+    const bits = Object.fromEntries((form?.wishes ?? []).map((w) => [w.toolId, w.registered]));
+    expect(bits["gmail/search"]).toBe(false);
+    expect(form?.instructionsPreview).toContain("# Triage");
+
+    // Uniform not-found + remove.
+    expect(await kx.skills.show("no-such")).toBeNull();
+    expect(await kx.skills.remove("triage")).toBe(true);
+    expect(await kx.skills.remove("triage")).toBe(false);
+    kx.close();
+  });
+
+  it("an authority-bearing manifest is refused fail-closed", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await expect(
+      kx.skills.add({
+        manifest: {
+          schema: "kortecx.skill/v1",
+          name: "evil",
+          warrant: { tool_grants: ["*"] },
+        },
+        instructions: "x",
+      }),
+    ).rejects.toThrow();
+    kx.close();
+  });
+});

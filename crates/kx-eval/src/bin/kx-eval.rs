@@ -24,6 +24,9 @@ struct Args {
     update: bool,
     json: bool,
     tolerance: u32,
+    // RC-SW1: score ONE capability family (report-only iteration; the committed
+    // baseline stays the aggregate gate — --suite + --update-baseline is refused).
+    suite: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -32,6 +35,7 @@ fn parse_args() -> Result<Args, String> {
         update: false,
         json: false,
         tolerance: 0,
+        suite: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -46,17 +50,18 @@ fn parse_args() -> Result<Args, String> {
                         .ok_or("--baseline needs a path")?,
                 );
             }
+            "--suite" => {
+                a.suite = Some(it.next().ok_or("--suite needs a family name")?);
+            }
             "--tolerance" => {
                 let v = it.next().ok_or("--tolerance needs a number")?;
                 a.tolerance = v.parse().map_err(|_| format!("invalid tolerance: {v}"))?;
             }
-            "-h" | "--help" => {
-                return Err(
-                    "usage: kx-eval run [--baseline <path>] [--update-baseline] [--json] \
-                     [--tolerance <per_mille>]"
-                        .to_string(),
-                )
-            }
+            "-h" | "--help" => return Err(
+                "usage: kx-eval run [--suite <family>] [--baseline <path>] [--update-baseline] \
+                     [--json] [--tolerance <per_mille>]"
+                    .to_string(),
+            ),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -114,7 +119,30 @@ fn print_gates(report: &EvalReport) {
 
 fn run() -> Result<bool, String> {
     let args = parse_args()?;
-    let report = build_report()?;
+    if args.suite.is_some() && args.update {
+        return Err(
+            "--suite is report-only; the committed baseline is aggregate-only \
+                    (drop --update-baseline)"
+                .to_string(),
+        );
+    }
+    // A family report scores only a SUBSET of the corpus, but the aggregate
+    // baseline carries the corpus suite_digest — so a naive compare passes the
+    // drift gate and then flags every family-absent gate as a phantom 0<1000
+    // regression. There is no family baseline yet, so --suite is report-only:
+    // refuse an explicit --baseline rather than emit false regressions.
+    if args.suite.is_some() && args.baseline.is_some() {
+        return Err(
+            "--suite is report-only; it cannot be compared against a baseline \
+                    (the corpus subset differs from any committed baseline — drop --baseline)"
+                .to_string(),
+        );
+    }
+    let report = match &args.suite {
+        Some(family) => kx_eval::score_golden_v1_family(family, env_label(), git_sha())
+            .map_err(|e| format!("scoring failed: {e}"))?,
+        None => build_report()?,
+    };
 
     if args.json {
         let json = report
@@ -135,6 +163,13 @@ fn run() -> Result<bool, String> {
         return Ok(true);
     }
 
+    if args.suite.is_some() && args.baseline.is_none() {
+        // Family iteration: print the gates, no baseline compare (the aggregate
+        // baseline covers a different task set — comparing would be dishonest).
+        print_gates(&report);
+        println!("\neval: report-only (--suite; no baseline compare)");
+        return Ok(true);
+    }
     let baseline = match &args.baseline {
         Some(path) => load_baseline(path)?,
         None => embedded_baseline().map_err(|e| e.to_string())?,

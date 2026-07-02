@@ -85,6 +85,7 @@ import { Result, Run } from "./run.js";
 import { RunInputs, type RunPage, RunSummary } from "./runs.js";
 import { SecretNameRow, type SecretNamesPage } from "./secrets.js";
 import { ServerInfo } from "./serverinfo.js";
+import { type AddSkillInput, AddSkillResult, SkillForm, SkillSummary } from "./skills.js";
 import { TeamMembers, type TeamSummary, teamsFromProto } from "./teams.js";
 import { type MoteTelemetryPage, MoteTelemetryRow, TelemetrySummary } from "./telemetry.js";
 import type { TokenChunk } from "./tokens.js";
@@ -673,6 +674,46 @@ export abstract class KxClientBase {
   async getApp(handle: string): Promise<StoredApp | null> {
     const resp = await rpc(this.grpc.getApp({ handle }));
     return resp.found ? StoredApp.fromProto(resp) : null;
+  }
+
+  // ----- RC-SW1 skills (add / list / show / remove; off-journal skills.db catalog) -----
+
+  /**
+   * Add (upsert) a `kortecx.skill/v1` skill to the caller-scoped catalog. The
+   * server validates the manifest fail-closed (authority deny-keys), stores the
+   * instructions body content-addressed, and derives `skillRef` +
+   * `instructionsRef` (SN-8). A skill is a WISH bundle — adding one grants
+   * nothing. An old gateway throws {@link KxUnimplemented}.
+   */
+  async addSkill(input: AddSkillInput): Promise<AddSkillResult> {
+    const manifestJson = new TextEncoder().encode(canonicalJson(input.manifest));
+    const instructionsBody = input.instructions
+      ? new TextEncoder().encode(input.instructions)
+      : new Uint8Array(0);
+    const resp = await rpc(this.grpc.addSkill({ manifestJson, instructionsBody }));
+    return AddSkillResult.fromProto(resp);
+  }
+
+  /** List the caller's skill catalog (deterministic name order). */
+  async listSkills(): Promise<SkillSummary[]> {
+    const resp = await rpc(this.grpc.listSkills({ limit: 0, afterName: "" }));
+    return resp.skills.map((s) => SkillSummary.fromProto(s));
+  }
+
+  /**
+   * Fetch one skill's form (summary + wishes with the ADVISORY `registered`
+   * bit + the instructions preview), or `null` if not found / not owned
+   * (uniform — no cross-party existence oracle).
+   */
+  async getSkillForm(name: string): Promise<SkillForm | null> {
+    const resp = await rpc(this.grpc.getSkillForm({ name }));
+    return SkillForm.fromProto(resp);
+  }
+
+  /** Remove a skill from the catalog. Returns `true` iff a row was removed. */
+  async removeSkill(name: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.removeSkill({ name }));
+    return resp.removed;
   }
 
   /**
@@ -1589,6 +1630,22 @@ export abstract class KxClientBase {
       discover: (name: string): Promise<RegisteredToolsPage> => this.discoverServerTools(name),
       fire: (name: string, tool: string, args?: string): Promise<CallToolResult> =>
         this.callMcpTool(name, tool, args),
+    };
+  }
+
+  /**
+   * RC-SW1: the grouped SKILLS surface — `kx.skills.add / list / show / remove`
+   * (the verb vocabulary of the `kx skills` CLI). Each method delegates 1:1 to
+   * the flat `addSkill` etc. A skill is a declarative `kortecx.skill/v1` bundle
+   * (instructions + tool grant-WISHES) an App attaches via the builder's
+   * `.skill(...)`; attaching grants nothing — the server intersects at run.
+   */
+  get skills() {
+    return {
+      add: (input: AddSkillInput): Promise<AddSkillResult> => this.addSkill(input),
+      list: (): Promise<SkillSummary[]> => this.listSkills(),
+      show: (name: string): Promise<SkillForm | null> => this.getSkillForm(name),
+      remove: (name: string): Promise<boolean> => this.removeSkill(name),
     };
   }
 

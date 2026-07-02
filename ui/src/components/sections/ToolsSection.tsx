@@ -12,11 +12,13 @@ import { RegisterToolForm } from "../tools/RegisterToolForm";
 import { RegisteredToolsPanel } from "../tools/RegisteredToolsPanel";
 import { ScoreLadder } from "../tools/ScoreLadder";
 import { SecretsPanel } from "../tools/SecretsPanel";
+import { SkillsPanel } from "../tools/SkillsPanel";
 import { TriggersPanel } from "../tools/TriggersPanel";
 
 const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
   { id: "tools", label: "Tools" },
   { id: "connections", label: "Connections" },
+  { id: "skills", label: "Skills" },
   { id: "triggers", label: "Triggers" },
   { id: "secrets", label: "Secrets" },
 ];
@@ -74,6 +76,8 @@ export function ToolsSection({
 
       {tab === "connections" ? (
         <ConnectionsTab />
+      ) : tab === "skills" ? (
+        <SkillsPanel />
       ) : tab === "triggers" ? (
         <TriggersPanel />
       ) : tab === "secrets" ? (

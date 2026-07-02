@@ -1,6 +1,6 @@
 {
   "suite_id": "golden-v1",
-  "suite_digest": "3c4852ec28a2e0bd8132d2e4ab9811c76a5f0ee578955fb0b7c900623c2752a3",
+  "suite_digest": "d8403a24eecb7fb3f417291e3bc0e7dd4a604140072bb3f470834a37ce06dedb",
   "gates": [
     {
       "id": "task_success",
@@ -16,7 +16,7 @@
     },
     {
       "id": "loop_efficiency",
-      "per_mille": 975
+      "per_mille": 977
     },
     {
       "id": "rerank_quality",
@@ -28,6 +28,10 @@
     },
     {
       "id": "consolidation_quality",
+      "per_mille": 1000
+    },
+    {
+      "id": "skill_quality",
       "per_mille": 1000
     },
     {

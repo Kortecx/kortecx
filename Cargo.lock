@@ -1416,6 +1416,7 @@ dependencies = [
  "kx-gateway",
  "kx-proto",
  "kx-runtime",
+ "kx-skill",
  "serde",
  "serde_json",
  "tempfile",
@@ -1630,11 +1631,13 @@ dependencies = [
  "kx-mcp",
  "kx-mcp-gateway",
  "kx-mote",
+ "kx-skill",
  "kx-tool-registry",
  "kx-warrant",
  "serde",
  "serde_json",
  "smallvec",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 
@@ -1703,6 +1706,7 @@ dependencies = [
  "kx-pricing",
  "kx-proto",
  "kx-refusal",
+ "kx-skill",
  "kx-tool-registry",
  "kx-toolcall",
  "kx-toolscout",
@@ -1745,6 +1749,7 @@ dependencies = [
  "kx-refusal",
  "kx-warrant",
  "proptest",
+ "serde_json",
  "smallvec",
  "thiserror 1.0.69",
  "tokio",
@@ -2184,6 +2189,16 @@ dependencies = [
  "smallvec",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "kx-skill"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

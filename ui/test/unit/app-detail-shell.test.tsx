@@ -31,6 +31,19 @@ vi.mock("../../src/kx/use-apps", () => ({
     reset: vi.fn(),
   }),
 }));
+
+// RC-SW1: the SkillsRail rides the detail shell; an empty catalog keeps these
+// shell tests focused on the IDE affordances.
+vi.mock("../../src/kx/use-skills", () => ({
+  useListSkills: () => ({
+    skills: [],
+    notWired: false,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
 vi.mock("../../src/kx/use-app-files", () => ({
   useAppBranch: () => ({
     data: { items: [{ path: "README.md", contentRef: "ab".repeat(32) }] },

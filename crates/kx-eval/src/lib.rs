@@ -69,7 +69,7 @@ pub use crate::report::{
     Regression, SpikeMetric, TaskScore, GATE_UNIT, SCHEMA_VERSION,
 };
 pub use crate::run_quality::{analyze_run, RunQuality};
-pub use crate::runner::{score_corpus, score_golden_v1};
+pub use crate::runner::{score_corpus, score_golden_v1, score_golden_v1_family};
 pub use crate::scorers::{
     score_format_coverage, score_transcript, FormatCase, FormatExpectation, ScoreInput,
     ScoreOutput, ScoreValue, TRANSCRIPT_SCORER_IDS,

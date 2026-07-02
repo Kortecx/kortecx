@@ -808,6 +808,12 @@ pub struct GatewayService {
     /// Caller-scoped, off-journal, off-digest, rebuildable-to-empty. The envelope
     /// carries NO authority (the host validates it); `app run` re-resolves warrants.
     apps: Option<Arc<dyn crate::apps_view::AppCatalog>>,
+    /// The optional skill-catalog store seam (RC-SW1 — the host injects a
+    /// `skills.db`-backed sidecar). `None` ⇒ the 4 skill RPCs return
+    /// `unimplemented`. Caller-scoped, off-journal, off-digest, rebuildable-to-
+    /// empty. A skill is a WISH bundle (the host refuses authority deny-keys);
+    /// the bind grants only `wish ∩ caller grants ∩ fireable`.
+    skills: Option<Arc<dyn crate::skills_view::SkillCatalog>>,
     /// G2: the optional App-RUN seam (the host injects an `apps.db` + connection-store
     /// backed resolver). `None` ⇒ `RunApp` returns `unimplemented` and clients fall
     /// back to the legacy `GetApp` → `SubmitWorkflow` path. Server-minted warrants
@@ -913,6 +919,7 @@ impl GatewayService {
             bundles: None,
             branches: None,
             apps: None,
+            skills: None,
             app_runner: None,
             locks: None,
             scaffolder: None,
@@ -1351,6 +1358,15 @@ impl GatewayService {
         self
     }
 
+    /// Wire the RC-SW1 skill-catalog store (the host's `skills.db` sidecar).
+    /// Without it the four skill RPCs (`ListSkills`/`GetSkillForm`/`AddSkill`/
+    /// `RemoveSkill`) return `unimplemented`.
+    #[must_use]
+    pub fn with_skill_catalog(mut self, skills: Arc<dyn crate::skills_view::SkillCatalog>) -> Self {
+        self.skills = Some(skills);
+        self
+    }
+
     /// G2: wire the App-RUN seam (the `RunApp` path). Without it `RunApp` returns
     /// `unimplemented` and clients fall back to the legacy `GetApp` → `SubmitWorkflow`
     /// path. The host impl (`kx-gateway`) reads the validated envelope, lowers its
@@ -1729,6 +1745,34 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // from the wired LockStore; `false` here = unlocked / no branch / unwired.
         locked: false,
     }
+}
+
+/// RC-SW1: map a host [`crate::SkillRecord`] (manifest-derived) to the wire view.
+fn skill_record_to_proto(r: crate::skills_view::SkillRecord) -> proto::SkillSummary {
+    proto::SkillSummary {
+        skill_ref: r.skill_ref.to_vec(),
+        name: r.name,
+        version: r.version,
+        description: r.description,
+        instructions_ref: r.instructions_ref,
+        tools: r.tools.into_iter().collect(),
+        tags: r.tags,
+    }
+}
+
+/// RC-SW1: the display excerpt stored beside a skill row at `AddSkill` time
+/// (UTF-8 lossy, cut at a char boundary within [`crate::SKILL_PREVIEW_CAP_BYTES`]).
+fn skill_preview(body: &[u8]) -> (String, bool) {
+    let text = String::from_utf8_lossy(body);
+    let cap = crate::skills_view::SKILL_PREVIEW_CAP_BYTES;
+    if text.len() <= cap {
+        return (text.into_owned(), false);
+    }
+    let mut cut = cap;
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    (text[..cut].to_string(), true)
 }
 
 /// Map the host scaffold phase to the wire enum (POC-5a).
@@ -2667,6 +2711,146 @@ impl KxGateway for GatewayService {
                 summary: None,
             })),
         }
+    }
+
+    // ----- RC-SW1 — skill catalog (add / list / form / remove; off-journal skills.db) -----
+
+    async fn add_skill(
+        &self,
+        request: Request<proto::AddSkillRequest>,
+    ) -> Result<Response<proto::AddSkillResponse>, Status> {
+        let skills = self.skills.as_ref().ok_or_else(|| {
+            Status::unimplemented("AddSkill: no skill catalog wired (skills.db absent)")
+        })?;
+        // SERVER-DERIVED identity (SN-8): skills are scoped to the auth-resolved party.
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.manifest_json.is_empty() {
+            return Err(Status::invalid_argument("manifest_json must not be empty"));
+        }
+        // Fail-closed caps BEFORE any store touch (mirrors kx-skill's own parse caps;
+        // the host pins the equality).
+        if req.manifest_json.len() > crate::skills_view::MAX_SKILL_MANIFEST_BYTES {
+            return Err(Status::invalid_argument(
+                "skill manifest exceeds the server cap (64 KiB)",
+            ));
+        }
+        if req.instructions_body.len() > crate::skills_view::MAX_SKILL_INSTRUCTIONS_BODY_BYTES {
+            return Err(Status::invalid_argument(
+                "skill instructions exceed the server cap (256 KiB)",
+            ));
+        }
+        // PACK form: a body rides the request — store it via the ONE content-write
+        // seam (SN-8: the ref is server-derived; no uploads-ledger coupling — a
+        // server-authored skill body is not a client upload). STORED form: an empty
+        // body means the manifest must already name instructions_ref (host-enforced).
+        let instructions = if req.instructions_body.is_empty() {
+            None
+        } else {
+            let writer = self.content_writer.as_ref().ok_or_else(|| {
+                Status::unimplemented("AddSkill: no content-write seam wired on this gateway")
+            })?;
+            let (content_ref, _dedup) = writer.put(&req.instructions_body)?;
+            let (preview, truncated) = skill_preview(&req.instructions_body);
+            Some(crate::skills_view::AddedInstructions {
+                content_ref,
+                preview,
+                truncated,
+            })
+        };
+        // The host validates + canonicalizes the manifest (authority deny-keys fail
+        // closed) and derives skill_ref + the record.
+        let (record, deduplicated) = skills.add(&principal, &req.manifest_json, instructions)?;
+        Ok(Response::new(proto::AddSkillResponse {
+            skill_ref: record.skill_ref.to_vec(),
+            name: record.name,
+            instructions_ref: record.instructions_ref,
+            deduplicated,
+        }))
+    }
+
+    async fn list_skills(
+        &self,
+        request: Request<proto::ListSkillsRequest>,
+    ) -> Result<Response<proto::ListSkillsResponse>, Status> {
+        let skills = self.skills.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListSkills: no skill catalog wired (skills.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100
+        } else {
+            (req.limit as usize).min(256)
+        };
+        let after = if req.after_name.is_empty() {
+            None
+        } else {
+            Some(req.after_name.as_str())
+        };
+        let (records, has_more) = skills.list(&principal, limit, after)?;
+        Ok(Response::new(proto::ListSkillsResponse {
+            skills: records.into_iter().map(skill_record_to_proto).collect(),
+            has_more,
+        }))
+    }
+
+    async fn get_skill_form(
+        &self,
+        request: Request<proto::GetSkillFormRequest>,
+    ) -> Result<Response<proto::GetSkillFormResponse>, Status> {
+        let skills = self.skills.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetSkillForm: no skill catalog wired (skills.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
+        match skills.get(&principal, &req.name)? {
+            Some(record) => {
+                // ADVISORY display enrichment (never a grant): a wish is "registered"
+                // iff the serve could currently fire it — the same live-broker /
+                // static-snapshot truth the admission backstops intersect against.
+                let fireable = self.fireable_grants();
+                let wishes = record
+                    .tools
+                    .iter()
+                    .map(|(id, version)| proto::SkillWish {
+                        tool_id: id.clone(),
+                        tool_version: version.clone(),
+                        registered: fireable.contains(&(id.clone(), version.clone())),
+                    })
+                    .collect();
+                let preview = record.instructions_preview.clone();
+                let truncated = record.preview_truncated;
+                Ok(Response::new(proto::GetSkillFormResponse {
+                    found: true,
+                    summary: Some(skill_record_to_proto(record)),
+                    wishes,
+                    instructions_preview: preview,
+                    preview_truncated: truncated,
+                }))
+            }
+            None => Ok(Response::new(proto::GetSkillFormResponse {
+                found: false,
+                summary: None,
+                wishes: Vec::new(),
+                instructions_preview: String::new(),
+                preview_truncated: false,
+            })),
+        }
+    }
+
+    async fn remove_skill(
+        &self,
+        request: Request<proto::RemoveSkillRequest>,
+    ) -> Result<Response<proto::RemoveSkillResponse>, Status> {
+        let skills = self.skills.as_ref().ok_or_else(|| {
+            Status::unimplemented("RemoveSkill: no skill catalog wired (skills.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let removed = skills.remove(&principal, &req.name)?;
+        Ok(Response::new(proto::RemoveSkillResponse { removed }))
     }
 
     async fn get_mote_detail(

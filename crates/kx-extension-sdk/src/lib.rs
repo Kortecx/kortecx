@@ -120,6 +120,7 @@
 
 pub mod conformance;
 pub mod prelude;
+pub mod skill_conformance;
 
 /// The HOST admin seams (`McpGatewayAdmin` / `ToolRegistryAdmin`) — the surface a
 /// custom gateway host implements, NOT a connector author. Gated behind the

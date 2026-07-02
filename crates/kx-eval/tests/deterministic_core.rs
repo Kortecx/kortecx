@@ -52,9 +52,10 @@ fn aggregate_gate_values_are_pinned() {
     assert_eq!(gate("tool_call_f1"), Some(1000));
     assert_eq!(gate("groundedness"), Some(1000));
     // The rejection-recovery task spends one extra turn ⇒ the aggregate is below perfect.
-    // RC5b added the `memory_consolidate_episodics` task (loop_efficiency 1000), so 10 tasks:
-    // (1000×9 + 750) / 10 = 975 per-mille (integer floor; was 972 over 9 tasks).
-    assert_eq!(gate("loop_efficiency"), Some(975));
+    // RC-SW1 added the `skill_email_triage` task (loop_efficiency 1000), so 11 tasks:
+    // (1000×10 + 750) / 11 = 977 per-mille (integer floor; was 975 over 10 tasks —
+    // the deliberate re-baseline recorded with the suite_digest move).
+    assert_eq!(gate("loop_efficiency"), Some(977));
     // RC4c-2c: the LLM rerank moves the most-relevant passage (placed last) to the top.
     assert_eq!(gate("rerank_quality"), Some(1000));
     // RC5a: the agent recalled the fact it learned earlier AND grounded its answer on it
@@ -63,6 +64,10 @@ fn aggregate_gate_values_are_pinned() {
     // RC5b: the agent DISTILLED its episodic memories into ONE recalled entry AND grounded
     // its answer on it (the fail-closed guard — nothing consolidated would score 0).
     assert_eq!(gate("consolidation_quality"), Some(1000));
+    // RC-SW1: the skill-bearing run stayed INSIDE its wish set (search/read/draft;
+    // never send) and actually fired tools (the fail-closed guard — a wished run
+    // that never touched a tool, or an out-of-wish call, would score 0).
+    assert_eq!(gate("skill_quality"), Some(1000));
     // Every model-output format decodes as intended — the 13 RC1 "before" formats
     // PLUS the RC2 grammar-shaped multi-tool envelopes (mcp-calc/calc, mcp-kv/get):
     // the canonical envelope the grammar enforces is the parser's strongest path.

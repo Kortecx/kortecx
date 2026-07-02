@@ -1,0 +1,11 @@
+{
+  "schema": "kortecx.skill/v1",
+  "name": "channel-digest",
+  "version": "1",
+  "description": "Digest recent Discord channel activity into a short brief: list channels, read recent messages, summarize threads and decisions — read-only wishes, never posts.",
+  "tags": ["discord", "digest", "chat"],
+  "tools": {
+    "discord/list_channels": "1",
+    "discord/read_channel": "1"
+  }
+}

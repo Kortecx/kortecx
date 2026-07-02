@@ -13,3 +13,6 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+# Local uv resolver lock — the bindings are a library (pyproject.toml is the
+# contract); a pinned environment lock is a dev-machine artifact, not shipped.
+uv.lock

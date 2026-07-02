@@ -8,7 +8,7 @@
     "name": "agentic"
   },
   {
-    "canonical": "{\"blueprint\":{\"steps\":[{\"kind\":\"model\",\"prompt\":\"Describe the image.\"}]},\"branch_handle\":\"team/apps/vision\",\"name\":\"vision-app\",\"references\":{\"context\":[{\"content_ref\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"media_type\":\"image/png\",\"name\":\"diagram\"}],\"tools\":[{\"tool_id\":\"mcp-echo/echo\",\"tool_version\":\"1\"}]},\"schema\":\"kortecx.app/v1\",\"steering_config\":{\"guards\":{\"max_turns\":8},\"model\":{\"model_route\":\"kx-serve:gemma\"}},\"version\":\"1\"}",
+    "canonical": "{\"blueprint\":{\"steps\":[{\"kind\":\"model\",\"prompt\":\"Describe the image.\"}]},\"branch_handle\":\"team/apps/vision\",\"name\":\"vision-app\",\"references\":{\"context\":[{\"content_ref\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"media_type\":\"image/png\",\"name\":\"diagram\"}],\"skills\":[{\"instructions_ref\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"name\":\"summarize\",\"tools\":{\"mcp-echo/echo\":\"1\"}}],\"tools\":[{\"tool_id\":\"mcp-echo/echo\",\"tool_version\":\"1\"}]},\"schema\":\"kortecx.app/v1\",\"steering_config\":{\"guards\":{\"max_turns\":8},\"model\":{\"model_route\":\"kx-serve:gemma\"}},\"version\":\"1\"}",
     "name": "full"
   }
 ]
