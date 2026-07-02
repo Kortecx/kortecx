@@ -313,7 +313,10 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
         .await
         .expect("RegisterMcpServer")
         .into_inner();
-    eprintln!("gmail connection: health={} discovered={}", reg.health, reg.discovered);
+    eprintln!(
+        "gmail connection: health={} discovered={}",
+        reg.health, reg.discovered
+    );
     // Set the credential secret (FAKE mode ignores its value; the scope must resolve).
     let _ = c
         .put_secret(proto::PutSecretRequest {
@@ -388,7 +391,10 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     eprintln!("LIVE RunApp Gmail: tool_fired={tool_fired} settled={settled}");
-    assert!(settled, "the Gmail App settled to a terminal via RunApp on the live model");
+    assert!(
+        settled,
+        "the Gmail App settled to a terminal via RunApp on the live model"
+    );
 
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
