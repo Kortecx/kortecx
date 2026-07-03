@@ -2757,6 +2757,11 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
         "(no react turns)".to_string()
     } else {
         let mut out = String::new();
+        // Governance axes are run-fixed (repeated on every row of a chain), so show them
+        // ONCE per chain — keyed by (instance_id, step_salt) — instead of flooding every
+        // turn line (matches the UI, which renders one chain-level "Governed by:" line).
+        let mut grants_shown: std::collections::HashSet<(Vec<u8>, Vec<u8>)> =
+            std::collections::HashSet::new();
         for t in &resp.turns {
             let detail = if !t.tool_id.is_empty() {
                 // T-MULTI-ELEMENT-TOOLCALLS: show the call_index so a multi-tool turn's
@@ -2782,10 +2787,12 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
                 t.max_tool_calls,
                 t.seq,
             );
-            // Governance axes: show the chain's run-fixed warrant grants (names/refs
-            // only) so a dropped capability axis is visible, not silent. Shown only when
-            // non-empty (a No-secret / no-tool chain stays uncluttered).
-            if !t.granted_tools.is_empty() || !t.secret_scope_names.is_empty() {
+            // Governance axes: show the chain's run-fixed warrant grants (names/refs only)
+            // so a dropped capability axis is visible, not silent — ONCE per chain, only
+            // when non-empty (a no-secret / no-tool chain stays uncluttered).
+            if (!t.granted_tools.is_empty() || !t.secret_scope_names.is_empty())
+                && grants_shown.insert((t.instance_id.clone(), t.step_salt.clone()))
+            {
                 let _ = write!(
                     out,
                     "  grants[tools: {}; secrets: {}]",

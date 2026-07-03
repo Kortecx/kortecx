@@ -179,7 +179,8 @@ app = (kx.app("gmail-agent")
        .steer(max_turns=4, max_tool_calls=2))
 app.save(handle="apps/local/gmail-agent")
 
-kx.run_app("apps/local/gmail-agent", wait=True)   # server-side RunApp — honors the pointer
+# server-side RunApp — honors the pointer (`run_app` is a client method).
+kx.default_client().run_app("apps/local/gmail-agent", wait=True)
 ```
 
 ```typescript

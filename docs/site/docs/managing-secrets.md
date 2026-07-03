@@ -136,8 +136,9 @@ app = (kx.app("gmail-triage")
        .with_gmail())
 app.save(handle="apps/local/gmail-triage")
 
-# Running it dials the credentialed connector inside the agentic loop.
-handle = kx.run_app("apps/local/gmail-triage")
+# Running it via RunApp reads the STORED envelope (its connection + secret_scope) and
+# dials the credentialed connector inside the agentic loop. `run_app` is a client method.
+kx.default_client().run_app("apps/local/gmail-triage")
 ```
 
 ```ts title="TypeScript"
