@@ -572,7 +572,6 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // off-digest; the hot-path sink is bounded + fail-open (drop-on-full), so it
     // can never block, slow, or fail a run.
     let telemetry_ledger = Arc::new(crate::telemetry::TelemetryLedger::open(&catalog_dir)?);
-    let client = connect_worker(&coord_endpoint).await?;
     // No real body is provisioned in the OSS serve path (script/tool execution is
     // OSS-scoped-out, D141.4), so the sandbox-routing seam is wired with no body ref:
     // every PURE Mote takes the honest passthrough fallback. The `RouterExecutor`
@@ -715,27 +714,67 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(not(feature = "serve-engine"))]
     let react_oracle_tools: Vec<(kx_mote::ToolName, kx_mote::ToolVersion)> = Vec::new();
     let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
-    let worker = Worker::register(
-        client,
-        default_executor_class(),
-        "inproc://kx-gateway-worker",
-        executor,
-        LocalResourceManager::dev_defaults(),
-        content.clone(),
-        broker,
-        cfg.max_lease,
-    )
-    .await
-    .map_err(|e| GatewayError::Coordinator(e.to_string()))?;
-    // F-7: attach the model executor as the worker's context sink (if wired).
-    let worker = match context_sink {
-        Some(sink) => worker.with_context_sink(sink),
-        None => worker,
+    // RC-SW3 (parallel-local-exec): the bounded embedded-worker POOL. Resolve the size
+    // from `--workers` / `KX_WORKERS` / `KX_SERVE_WORKER_POOL` (default 1 = the
+    // historical single worker ⇒ byte-identical serve). Each worker registers
+    // INDEPENDENTLY — the coordinator assigns a distinct `WorkerId`, load-balances via
+    // D56 placement, and the `is_leased` admission gate (state.rs) partitions the ready
+    // set so two workers never redundantly run the same Mote. Every worker shares the
+    // ONE model `executor` Arc, so model Motes still funnel to the single `ModelCache`
+    // owner thread (llama.cpp `!Send`); Pure/IO/tool Motes run truly concurrently, and
+    // Ollama swarms get real concurrent inference over independent HTTP. The coordinator
+    // stays the sole journal writer ⇒ no journal/checkpoint/digest change.
+    let worker_pool = crate::env_caps::resolve_worker_pool(cfg.worker_pool);
+    // RC-SW3 back-pressure (small fold-in; the full resource-aware admission layer is
+    // RC-SW3.1): under a pool, SPREAD the lease budget so a single worker cannot hoard
+    // `max_lease` leases while running them serially (the `is_leased` gate would then
+    // block idle workers from stealing that queued work). Dividing `max_lease` across
+    // the pool keeps the operator's total in-flight-lease budget while letting whoever
+    // is free pick up the next Mote → better balance + finer-grained pull back-pressure.
+    // pool=1 uses `max_lease` verbatim ⇒ byte-identical.
+    let per_worker_lease = if worker_pool > 1 {
+        cfg.max_lease
+            .div_ceil(u32::try_from(worker_pool).unwrap_or(u32::MAX))
+            .max(1)
+    } else {
+        cfg.max_lease
     };
-    // Keep the idle worker live in the registry (background heartbeat) so a run
-    // submitted after an idle period leases promptly (no false-death/reschedule).
-    let heartbeat_task = worker.spawn_heartbeat(DEFAULT_HEARTBEAT_CADENCE);
-    let worker_task = spawn_worker_loop(worker);
+    let mut worker_tasks: Vec<JoinHandle<()>> = Vec::with_capacity(worker_pool);
+    let mut heartbeat_tasks: Vec<JoinHandle<()>> = Vec::with_capacity(worker_pool);
+    for i in 0..worker_pool {
+        let client = connect_worker(&coord_endpoint).await?;
+        let worker = Worker::register(
+            client,
+            default_executor_class(),
+            format!("inproc://kx-gateway-worker-{i}"),
+            executor.clone(),
+            LocalResourceManager::dev_defaults(),
+            content.clone(),
+            broker.clone(),
+            per_worker_lease,
+        )
+        .await
+        .map_err(|e| GatewayError::Coordinator(e.to_string()))?;
+        // F-7: attach the model executor as the worker's context sink (if wired).
+        let worker = match &context_sink {
+            Some(sink) => worker.with_context_sink(sink.clone()),
+            None => worker,
+        };
+        // RC-SW3: bound a hung tool/MCP/IO dispatch (opt-in `KX_SERVE_TOOL_DEADLINE_SECS`,
+        // default OFF ⇒ None ⇒ byte-identical) so a stuck external tool cannot pin this
+        // pool worker's slot forever.
+        let worker = worker.with_tool_deadline(crate::env_caps::tool_deadline());
+        // Keep each idle worker live in the registry (background heartbeat) so a run
+        // submitted after an idle period leases promptly (no false-death/reschedule).
+        heartbeat_tasks.push(worker.spawn_heartbeat(DEFAULT_HEARTBEAT_CADENCE));
+        worker_tasks.push(spawn_worker_loop(worker));
+    }
+    if worker_pool > 1 {
+        tracing::info!(
+            workers = worker_pool,
+            "RC-SW3: embedded worker pool spawned"
+        );
+    }
 
     // (3) Gateway read seams: a SECOND (read-only) journal handle on the SAME
     //     path observes the coordinator's commits (WAL: one writer, many readers),
@@ -1402,6 +1441,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             // default; never possible on a non-serve-engine build). Read once here so
             // GetServerInfo / the UI render honestly.
             allow_model_pull: model_pull_allowed(),
+            // RC-SW3: the resolved embedded-worker pool size (from `resolve_worker_pool`
+            // above) so Settings/Monitoring show the configured concurrency.
+            worker_pool: worker_pool as u64,
         }
     };
     // Batch A: the content WRITE seam shares the same store Arc the read seam
@@ -1960,13 +2002,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     )]
     let mut aux = vec![
         coord_task,
-        worker_task,
-        heartbeat_task,
         ws_task,
         capture_task,
         telemetry_task,
         alerts_task,
     ];
+    // RC-SW3: the pooled worker + heartbeat tasks (one pair per pool member; default
+    // pool=1 ⇒ exactly one pair, same as before). All join the shutdown-abort set.
+    aux.extend(worker_tasks);
+    aux.extend(heartbeat_tasks);
     #[cfg(feature = "serve-engine")]
     aux.push(token_evict_task);
     #[cfg(feature = "console")]

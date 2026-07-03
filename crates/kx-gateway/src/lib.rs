@@ -265,7 +265,7 @@ mod ws;
 pub use auth::{DenyAll, DevAllowLocal, Principal, PrincipalResolver, TokenResolver};
 pub use config::{
     Cli, ConsoleMode, GatewayConfig, TlsPaths, DEFAULT_CONSOLE_LISTEN, DEFAULT_CONTENT_MAX_BYTES,
-    DEFAULT_MAX_LEASE, DEFAULT_WS_LISTEN, USAGE,
+    DEFAULT_MAX_LEASE, DEFAULT_WORKER_POOL, DEFAULT_WS_LISTEN, USAGE,
 };
 #[cfg(feature = "hnsw")]
 pub use datasets::HostDatasetView;

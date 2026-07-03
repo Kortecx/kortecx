@@ -33,6 +33,7 @@ pub fn gateway_config(
         journal_path: dir.path().join("kx.db"),
         content_root: dir.path().join("blobs"),
         max_lease: 16,
+        worker_pool: None,
         dev_allow_local,
         auth_tokens,
         catalog_dir: None,

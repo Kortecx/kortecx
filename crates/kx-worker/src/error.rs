@@ -66,6 +66,16 @@ pub enum WorkerError {
     /// — a dropped/absent args field must fail closed, not fire a wrong effect.
     #[error("mote {0:?} grants a tool but carried no coordinator-validated tool_args")]
     MissingToolArgs(kx_mote::MoteId),
+
+    /// RC-SW3: a leased WORLD-MUTATING / READ-ONLY-NONDET effect (tool / MCP / IO)
+    /// exceeded the operator-set per-Mote wall-clock deadline (`KX_SERVE_TOOL_DEADLINE_SECS`,
+    /// default OFF). The in-flight dispatch future is cancelled — equivalent to a
+    /// mini-crash of that one Mote, made safe by the broker's idempotency-key dedup +
+    /// the R-13 re-dispatch guard on any retry. Classified TRANSIENT so it retries
+    /// within the F4 budget, then dead-letters (a persistently-hung tool never pins a
+    /// pool worker's slot forever). Off-journal: a live wall-clock check, never a fact.
+    #[error("mote {0:?} exceeded the per-Mote execution deadline")]
+    ExecutionTimedOut(kx_mote::MoteId),
 }
 
 impl From<kx_capability::BrokerError> for WorkerError {
@@ -127,6 +137,7 @@ pub(crate) fn classify_worker_failure(err: &WorkerError) -> FailureClass {
         WorkerError::Dispatch(_)
         | WorkerError::EffectStagedRejected(_)
         | WorkerError::ContentMissing(_)
+        | WorkerError::ExecutionTimedOut(_)
         | WorkerError::Transport(_)
         | WorkerError::Rpc(_) => TransientInfra,
         // Everything else is deterministic — a malformed lease item, an unresolvable
