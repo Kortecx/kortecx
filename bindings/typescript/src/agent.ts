@@ -20,6 +20,7 @@ import type { ImageInput } from "./client.js";
 import { getDefaultClient } from "./default-client.js";
 import { KxNotFound, KxUsage } from "./errors.js";
 import { type FlowClient, flow } from "./flow.js";
+import { PERSONAS } from "./personas.js";
 import type { Result, Run } from "./run.js";
 import { KxToolError, type LocalToolDef, registerLocalTools } from "./tools.js";
 
@@ -39,6 +40,10 @@ export interface AgentOptions {
   reasoning?: ReasoningMode;
   /** `false` (default) = the deterministic/frozen lane; `true` = the steered react recipe. */
   dynamic?: boolean;
+  /** RC-SW2: a curated persona name (from {@link import("./personas.js").PERSONAS}) whose
+   * role instructions become this agent's base instructions. Any explicit `instructions`
+   * layer on top. Throws for an unknown name. */
+  persona?: string;
 }
 
 /** The client surface {@link Agent.run} needs: `runChain` (frozen) + `invoke` (dynamic)
@@ -87,10 +92,23 @@ function hasTools(tools: AgentOptions["tools"]): boolean {
 
 /** A reusable agent: instructions + an optional tool set + model/loop config. */
 export class Agent {
+  readonly instructions: string;
+
   constructor(
-    readonly instructions = "",
+    instructions = "",
     readonly opts: AgentOptions = {},
-  ) {}
+  ) {
+    let resolved = instructions;
+    if (opts.persona !== undefined) {
+      const base = PERSONAS[opts.persona];
+      if (base === undefined) {
+        throw new KxUsage(`unknown persona ${JSON.stringify(opts.persona)}`);
+      }
+      // A curated role; explicit `instructions` (if any) layer on top of it.
+      resolved = instructions ? `${base}\n\n${instructions}`.trim() : base;
+    }
+    this.instructions = resolved;
+  }
 
   private prompt(task: string): string {
     return this.instructions ? `${this.instructions}\n\n${task}`.trim() : task;
@@ -105,6 +123,12 @@ export class Agent {
       maxToolCalls: this.opts.maxToolCalls,
       reasoning: this.opts.reasoning,
     });
+  }
+
+  /** Bind this agent to `task` → a {@link import("./flow.js").Flow} (a thin alias of
+   * {@link Agent.asFlow}; reads as `researcher.on("topic A")`). */
+  on(task: string) {
+    return this.asFlow(task);
   }
 
   /**
