@@ -95,6 +95,24 @@ def test_skill_by_ref() -> None:
     assert env["references"]["skills"][0]["tools"] == {"mcp-echo/echo": "1"}
 
 
+def test_dataset_grounding_by_ref() -> None:
+    # RAG-on-App (T-RUNAPP-CONTEXT-RAIL): .dataset()/.rag() populate references.datasets.
+    a = (
+        kx.app("analyst")
+        .blueprint(kx.flow().agent("Answer grounded."))
+        .dataset("research")
+        .rag("archive", cas_refs=["c" * 64])
+    )
+    datasets = a.to_envelope()["references"]["datasets"]
+    assert datasets[0] == {"dataset_ref": "research"}  # no cas_refs ⇒ omitted
+    assert datasets[1] == {"dataset_ref": "archive", "cas_refs": ["c" * 64]}
+
+
+def test_dataset_rejects_non_hex_cas_ref() -> None:
+    with pytest.raises(ChainError):
+        kx.app("x").blueprint(kx.flow().step(topic="hi")).dataset("d", cas_refs=["not-hex"])
+
+
 # ---- golden corpus parity (the cross-surface byte-shape gate) ----
 
 
@@ -107,7 +125,7 @@ def test_golden_corpus_round_trips_byte_identically(case) -> None:
 
 def test_corpus_covers_required_shapes() -> None:
     names = {c["name"] for c in _CORPUS}
-    assert {"minimal", "agentic", "full"} <= names
+    assert {"minimal", "agentic", "full", "grounded"} <= names
 
 
 # ---- server-backed (a real kx serve) ----

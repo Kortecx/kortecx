@@ -40,7 +40,7 @@ fn corpus_round_trips_byte_identically() {
 fn corpus_covers_the_required_shapes() {
     let cases: Vec<Case> = serde_json::from_str(CORPUS).unwrap();
     let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
-    for want in ["minimal", "agentic", "full"] {
+    for want in ["minimal", "agentic", "full", "grounded"] {
         assert!(
             names.contains(&want),
             "corpus must cover the {want:?} shape"
@@ -56,4 +56,11 @@ fn corpus_covers_the_required_shapes() {
     // …and the skills rail (RC-SW1): a SkillRef with instructions_ref + a tool wish.
     assert!(full.canonical.contains("\"instructions_ref\""));
     assert!(full.canonical.contains("\"skills\""));
+    // the grounded case (T-RUNAPP-CONTEXT-RAIL) carries the datasets rail (dataset_ref +
+    // cas_refs) + steering_config.tools.requested_grants + steering_config.context.dataset_refs.
+    let grounded = cases.iter().find(|c| c.name == "grounded").unwrap();
+    assert!(grounded.canonical.contains("\"datasets\""));
+    assert!(grounded.canonical.contains("\"dataset_ref\":\"research\""));
+    assert!(grounded.canonical.contains("\"requested_grants\":{\"retrieve\":\"1\"}"));
+    assert!(grounded.canonical.contains("\"dataset_refs\":[\"research\"]"));
 }

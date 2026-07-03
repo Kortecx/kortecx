@@ -156,6 +156,28 @@ class App:
         self._rails["tools"].append({"tool_id": tool_id, "tool_version": tool_version})
         return self
 
+    def dataset(self, dataset_ref: str, *, cas_refs: Optional[List[str]] = None) -> "App":
+        """Ground the App on a dataset (declarative RAG-on-App). At run, ``RunApp`` grants
+        the entry step the read-only ``retrieve`` tool and steers it to search
+        ``dataset_ref`` live in the loop — the App self-grounds instead of needing a
+        hand-authored blueprint. INGEST the corpus first with ``kx datasets ingest
+        <dataset_ref> …`` (the "reference-existing" model; a named dataset absent from the
+        server fails closed at run). ``cas_refs`` (64-hex content refs the dataset spans)
+        are recorded for a future self-contained ingest; today grounding uses the
+        pre-ingested named dataset."""
+        entry: Dict[str, Any] = {"dataset_ref": dataset_ref}
+        if cas_refs:
+            for r in cas_refs:
+                if not _is_hex_ref(r):
+                    raise ChainError(f"dataset cas_ref must be 64-char lowercase hex, got {r!r}")
+            entry["cas_refs"] = list(cas_refs)
+        self._rails["datasets"].append(entry)
+        return self
+
+    def rag(self, dataset_ref: str, *, cas_refs: Optional[List[str]] = None) -> "App":
+        """Alias for :meth:`dataset` — ground the App on a dataset (RAG-on-App)."""
+        return self.dataset(dataset_ref, cas_refs=cas_refs)
+
     def with_connection(
         self, descriptor: str, credential_ref: str = "", *, scope_secret: bool = True
     ) -> "App":
