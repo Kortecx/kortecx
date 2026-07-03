@@ -155,3 +155,13 @@ export function run(
 export function invoke(handle: string, args: Args, opts?: InvokeOptions): Promise<Run | Result> {
   return defaultClient().invoke(handle, args, opts);
 }
+
+/** Module-level convenience — a grounded chat via the default client (the TS mirror of
+ * Python's `kx.chat`). Pass `dataset` (+ optional `k`) to auto-RAG the answer over a
+ * dataset's retrieved text; returns the answer text. */
+export function chat(
+  prompt: string,
+  opts: { dataset?: string; k?: number; timeoutMs?: number } = {},
+): Promise<string> {
+  return defaultClient().chat(prompt, opts);
+}

@@ -239,7 +239,7 @@ export const task = {
    * `{ name: version }` map) to make it a **deterministic-agentic step** — the model
    * runs a bounded reason→tool→observe loop over the granted tool SET (the same step
    * the string DSL authors as `handle@tool@tool`). `opts.maxTurns` / `maxToolCalls`
-   * bound the loop (default 8 / 6; ignored with no tools).
+   * bound the loop (default 8 / 20 — decoupled, a turn may fire N tools; ignored with no tools).
    */
   model(
     modelId = "",

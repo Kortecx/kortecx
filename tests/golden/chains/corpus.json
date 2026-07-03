@@ -611,5 +611,26 @@
       ],
       "edges": [{ "parent": 0, "child": 1, "edge": "data" }]
     }
+  },
+  {
+    "name": "swarm_agentic_gather",
+    "dsl": "[a@echo & b@echo] > g",
+    "seed": 0,
+    "tasks": {
+      "a": { "kind": "model", "prompt": "Research angle A." },
+      "b": { "kind": "model", "prompt": "Research angle B." },
+      "g": { "kind": "model", "prompt": "Synthesize the findings." }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "", "prompt": "Research angle A.", "body_signature_id": null, "tool_contract": { "echo": "1" }, "params": {} },
+        { "kind": "model", "model_id": "", "prompt": "Research angle B.", "body_signature_id": null, "tool_contract": { "echo": "1" }, "params": {} },
+        { "kind": "model", "model_id": "", "prompt": "Synthesize the findings.", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 2, "edge": "data" },
+        { "parent": 1, "child": 2, "edge": "data" }
+      ]
+    }
   }
 ]

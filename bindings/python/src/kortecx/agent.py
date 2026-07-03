@@ -51,6 +51,7 @@ class Agent:
         self,
         instructions: str = "",
         *,
+        persona: Optional[str] = None,
         tools: "Optional[Union[Sequence[object], Mapping[str, str]]]" = None,
         model: str = "",
         max_turns: Optional[int] = None,
@@ -58,6 +59,17 @@ class Agent:
         reasoning: Optional[str] = None,
         dynamic: bool = False,
     ) -> None:
+        if persona is not None:
+            from .personas import PERSONAS
+
+            if persona not in PERSONAS:
+                raise KeyError(f"unknown persona {persona!r} — known: {sorted(PERSONAS)}")
+            # A curated role; explicit `instructions` (if any) layer on top of it.
+            instructions = (
+                f"{PERSONAS[persona]}\n\n{instructions}".strip()
+                if instructions
+                else PERSONAS[persona]
+            )
         self.instructions = instructions
         self.tools = tools
         self.model = model
@@ -81,6 +93,12 @@ class Agent:
             max_tool_calls=self.max_tool_calls,
             reasoning=self.reasoning,
         )
+
+    def on(self, task: str) -> "Flow":
+        """Bind this agent to ``task`` → a :class:`~kortecx.flow.Flow` (a thin alias of
+        :meth:`as_flow`; reads as ``researcher.on("topic A")``). Compose bound agents in
+        a swarm: ``kx.flow().parallel(a.on("A"), a.on("B")).then("Merge").run()``."""
+        return self.as_flow(task)
 
     def run(
         self,
@@ -122,12 +140,13 @@ class Agent:
             return kx.invoke(handle, args, wait=wait, timeout=timeout)
         if self.dynamic:
             # The react / react-auto recipes REQUIRE the bounded-loop budget (the
-            # `react_contract` slots; the UI's planReactArgs mirrors this) — default
-            # to the recipe's anchored 8 / 6 when the agent didn't set them.
+            # `react_contract` slots; the UI's planReactArgs mirrors this) — default to
+            # the recipe's anchored 8 / 20 when the agent didn't set them (decoupled:
+            # a turn may fire N tools; REACT_DEFAULT_MAX_TOOL_CALLS=20 — matches the TS SDK).
             args = {
                 "instruction": self._prompt(task),
                 "max_turns": self.max_turns if self.max_turns is not None else 8,
-                "max_tool_calls": self.max_tool_calls if self.max_tool_calls is not None else 6,
+                "max_tool_calls": self.max_tool_calls if self.max_tool_calls is not None else 20,
             }
             if not has_tools:
                 return kx.invoke(REACT_RECIPE_HANDLE, args, wait=wait, timeout=timeout)

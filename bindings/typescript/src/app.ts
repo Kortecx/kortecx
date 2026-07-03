@@ -24,10 +24,10 @@
 
 import { APP_SCHEMA, type SaveAppResult, type Skill, prettyJson } from "./apps.js";
 import type { DagSpecJson } from "./chains.js";
-import { Chain } from "./chains.js";
 import { getDefaultClient } from "./default-client.js";
 import { KxUsage } from "./errors.js";
 import { flow } from "./flow.js";
+import type { RegisterMcpServerInput } from "./toolscout.js";
 
 /** Anything that can produce a portable blueprint (a Flow or a Chain). */
 export interface BlueprintSource {
@@ -38,7 +38,16 @@ export interface BlueprintSource {
 export interface AppClient {
   putContent(payload: Uint8Array, opts?: { mediaType?: string }): Promise<{ contentRef: string }>;
   saveApp(envelope: unknown, opts?: { handle?: string }): Promise<SaveAppResult>;
-  submitWorkflow(request: unknown, opts?: { wait?: boolean; timeoutMs?: number }): Promise<unknown>;
+  /** RC-SW2: the App run path — SaveApp + RunApp so `references.connections` +
+   * `guards.secret_scope` reach the server (a credentialed connector can be dialed). */
+  runApp(
+    handle: string,
+    opts?: { wait?: boolean; timeoutMs?: number; args?: Record<string, string> },
+  ): Promise<unknown>;
+  /** OPTIONAL — used only when a promoting Flow (`asApp`) carried `withMcp` connectors. */
+  registerMcpServer?(input: RegisterMcpServerInput): Promise<unknown>;
+  /** OPTIONAL — used only when a promoting Flow (`asApp`) carried `withMemory` facts. */
+  storeMemory?(content: string | Uint8Array, opts?: { kind?: number }): Promise<unknown>;
 }
 
 function resolveClient(explicit?: AppClient): AppClient {
@@ -67,6 +76,10 @@ type ConnectionEntry = { descriptor: string; credential_ref: string };
  * Mirrors the CLI `kx connections add --provider gmail` + the Python SDK. */
 const GMAIL_CONNECTOR_COMMAND = "kx-connector-gmail";
 const GMAIL_CREDENTIAL_REF = "KX_GMAIL_CREDENTIAL";
+/** RC-SW2: the curated Discord provider defaults (the bundled `kx-connector-discord`
+ * sidecar, #277). Mirrors `withGmail` + the Python SDK. */
+const DISCORD_CONNECTOR_COMMAND = "kx-connector-discord";
+const DISCORD_CREDENTIAL_REF = "KX_DISCORD_CREDENTIAL";
 type Pending = { rail: string; name: string; body: string; skill?: Skill };
 
 /** A fluent App builder. Each method returns `this`; terminate with
@@ -91,6 +104,11 @@ export class AppBuilder {
   private _maxTurns?: number;
   private _maxToolCalls?: number;
   private _branchHandle = "";
+  /** RC-SW2: imperative pre-run registrations carried from a Flow via {@link Flow.asApp}
+   * (with_mcp connectors / with_memory facts). {@link run} executes them before RunApp.
+   * Never part of the envelope (off the golden digest). */
+  private _flowMcp: RegisterMcpServerInput[] = [];
+  private _flowMemory: string[] = [];
 
   constructor(
     private readonly _name: string,
@@ -191,6 +209,35 @@ export class AppBuilder {
    * runtime with `kx connections add --provider gmail`. */
   withGmail(): this {
     return this.withConnection(GMAIL_CONNECTOR_COMMAND, GMAIL_CREDENTIAL_REF);
+  }
+
+  /** RC-SW2: declare the bundled Discord connector (the curated provider default) —
+   * equivalent to `withConnection("kx-connector-discord", "KX_DISCORD_CREDENTIAL")`.
+   * Register with `kx connections add --command kx-connector-discord --credential-ref
+   * KX_DISCORD_CREDENTIAL`. */
+  withDiscord(): this {
+    return this.withConnection(DISCORD_CONNECTOR_COMMAND, DISCORD_CREDENTIAL_REF);
+  }
+
+  /** Add secret NAMES to `guards.secret_scope` — the run warrant's
+   * `SecretScope::AllowList` narrows to these so a granted connector may be dialed inside
+   * the agentic loop (G2/#285). The VALUE never travels (D81). A scope name is bounded
+   * server-side by the referenced connections — pair it with the matching
+   * {@link withConnection} / {@link withGmail} / {@link withDiscord}, or the entry is
+   * inert (fails closed). Usually implicit via `withConnection(..., { scopeSecret: true })`. */
+  secrets(names: string | string[]): this {
+    for (const name of typeof names === "string" ? [names] : names) {
+      if (name && !this._secretScope.includes(name)) this._secretScope.push(name);
+    }
+    return this;
+  }
+
+  /** Carry a promoting Flow's imperative side-channels (with_mcp connectors + with_memory
+   * facts) so {@link run} registers them before RunApp. Set by {@link Flow.asApp}; never
+   * part of the envelope. */
+  carryFlowSideChannels(mcp: readonly RegisterMcpServerInput[], memory: readonly string[]): void {
+    this._flowMcp = [...mcp];
+    this._flowMemory = [...memory];
   }
 
   /** Set steering knobs (a WISH the server re-resolves at bind — never authority). */
@@ -318,17 +365,37 @@ export class AppBuilder {
     return client.saveApp(this.toEnvelope(), { handle: opts.handle });
   }
 
-  /** Compile this App's blueprint and run it (exactly-once). The server re-resolves
-   * every warrant from the caller's grants (SN-8). */
+  /** Save this App and run it via `RunApp` (exactly-once). `args` (the App's input schema)
+   * fold server-side into the entry step's prompt.
+   *
+   * RC-SW2 fix: routes through `SaveApp` + `RunApp` instead of a local `submitWorkflow`
+   * recompile — so the App's `references.connections` + `guards.secret_scope` reach the
+   * server and a credentialed connector (Gmail / Discord) actually fires inside the
+   * agentic loop (the G2/#285 path). Saving is expected: an App is an explicitly-named
+   * durable object; the save is idempotent (content-addressed envelope + handle upsert).
+   * The server re-resolves every warrant from the caller's grants (SN-8). */
   async run(
-    _args: Readonly<Record<string, unknown>> = {},
+    args: Readonly<Record<string, unknown>> = {},
     opts: { wait?: boolean; timeoutMs?: number; client?: AppClient } = {},
   ): Promise<unknown> {
     const client = resolveClient(opts.client);
     await this.resolvePending(client);
-    const blueprint = this.toEnvelope().blueprint as DagSpecJson;
-    const request = Chain.fromBlueprint(blueprint);
-    return client.submitWorkflow(request, { wait: opts.wait ?? true, timeoutMs: opts.timeoutMs });
+    // Imperative side-channels carried from a promoting Flow (Flow.asApp).
+    if (this._flowMcp.length > 0 && typeof client.registerMcpServer === "function") {
+      for (const spec of this._flowMcp) await client.registerMcpServer(spec);
+    }
+    if (this._flowMemory.length > 0 && typeof client.storeMemory === "function") {
+      for (const fact of this._flowMemory) await client.storeMemory(fact);
+    }
+    const saved = await client.saveApp(this.toEnvelope());
+    const entries = Object.entries(args);
+    const strArgs =
+      entries.length > 0 ? Object.fromEntries(entries.map(([k, v]) => [k, String(v)])) : undefined;
+    return client.runApp(saved.handle, {
+      args: strArgs,
+      wait: opts.wait ?? true,
+      timeoutMs: opts.timeoutMs,
+    });
   }
 }
 

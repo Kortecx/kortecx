@@ -139,6 +139,12 @@ const PROVIDERS = [
     command: "kx-connector-gmail",
     credentialRef: "KX_GMAIL_CREDENTIAL",
   },
+  {
+    id: "discord",
+    label: "Discord",
+    command: "kx-connector-discord",
+    credentialRef: "KX_DISCORD_CREDENTIAL",
+  },
 ] as const;
 
 export function ConnectionsPanel() {

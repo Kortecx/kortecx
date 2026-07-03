@@ -286,7 +286,8 @@ notes    = "MEDIUM blast radius + a real security surface (security review requi
 [[feature]]
 id       = "rc-sw1-skills"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "284"
 branch   = "feat/rc-sw1-skills"
 covers   = [
   "kortecx.skill/v1 declarative skill bundles (instructions + tool grant-WISHES + context; NO code — the executable leg is always an out-of-process MCP connector/broker capability, D159/D174.4): a NEW FFI-free kx-skill format crate (manifest type + validate() with authority deny-keys + pack loader; the apps.db/kx-blueprint leaf posture)",
@@ -295,4 +296,20 @@ covers   = [
   "run_skill_conformance harness (kx-extension-sdk sibling of run_conformance: declarative/no-authority/wish-resolvable/binds-empty-grants-to-zero) + just test-skill + 2-3 reference skill packs (skills/**) + a skill_quality kx-eval scorer + registry/index.json v1 (family/name/version/source/conformance)",
 ]
 inherits = ["rc5b-consolidation-decay-memory-ui", "app-pointer-run-resolution", "gmail-integration", "connector-extension-sdk"]
-notes    = "The NEXT shared-lane PR (D174.3 sequencing; D175 program). B-spec: private docs/plans/2026-07-02-capability-families-skills-tools-integrations-program.md SECTION 4 (start there — D143). CORRECTED naming per D175.2: dedicated kx-skill crate + skills.db, NOT kx-bundle/bundles.db (those are TaskBundle + the PR-7 context-bundle store). Auto-mode (skill menu + KX_SERVE_AUTOSKILL) DEFERRED to its own PR or RC-SW4. Honest digest note: skill-BEARING runs legitimately produce different bytes (warrant_ref content-addressed + identity-bearing context); canonical 7d22d4bd invariance holds via the default-empty no-op (a0_guard + frozen-trio-EMPTY prove in-PR). Unblocks RC-SW2 personas."
+notes    = "The NEXT shared-lane PR (D174.3 sequencing; D175 program). B-spec: private docs/plans/2026-07-02-capability-families-skills-tools-integrations-program.md SECTION 4 (start there — D143). CORRECTED naming per D175.2: dedicated kx-skill crate + skills.db, NOT kx-bundle/bundles.db (those are TaskBundle + the PR-7 context-bundle store). Auto-mode (skill menu + KX_SERVE_AUTOSKILL) DEFERRED to its own PR or RC-SW4. Honest digest note: skill-BEARING runs legitimately produce different bytes (warrant_ref content-addressed + identity-bearing context); canonical 7d22d4bd invariance holds via the default-empty no-op (a0_guard + frozen-trio-EMPTY prove in-PR). Unblocks RC-SW2 personas. Merged OSS #284 42ff3853 (2026-07-02); ledger flipped in-progress->merged during rc-sw2."
+
+[[feature]]
+id       = "rc-sw2-swarm-personas"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/rc-sw2-swarm-authoring-personas"
+covers   = [
+  "swarm()/team() authoring — first-class Py/TS SDK factories (kx.swarm/kx.team) that lower PURE CLIENT-SIDE to N parallel deterministic-agentic MODEL leaves (each a model step with a tool_contract + prompt = the is_agentic_launch shape the coordinator already drives as an isolated salt-2 chain, state.rs) fanned into one gather sink (PURE fold by default; a MODEL synthesizer when synthesize=True / team()). No new WorkflowStepKind, no coordinator/compile/proto change — the same (steps, edges) the string DSL '[a@t & b@t] > g' already lowers (agentic_multi_tool + fanin_group corpus rows); byte-identical across Py/TS/CLI via tests/golden/chains/corpus.json",
+  "persona library — a curated {name: instructions} map (personas.py/personas.ts: researcher/critic/planner/writer/...) folded into an agent's PROMPT_KEY (identity-bearing, opt-in, new-motes-only => digest-invariant; presentation-only rejected as a dedup/replay hazard); consumed via kx.persona(name)->Agent, Agent(persona=name), and the .on(task) alias of Agent.as_flow/run",
+  "fan_out_gather()/map_reduce() surfaced as client-side Flow compositions (the same fan-in family as swarm, plain generator/transform leaves)",
+  "App.run() -> SaveApp + RunApp delegation fix (Py app.py + TS app.ts both locally recompiled via submit_workflow, DROPPING references.connections + guards.secret_scope and ignoring args) + an explicit Flow.as_app(name) persist boundary (no hidden catalog write; a bare .run() on an integration-bearing unsaved envelope is a clear error) => credentialed connectors now actually fire from the SDK path",
+  "integration reach for parallel-session testing: App.with_discord() curated shortcut (kx-connector-discord exists, #277) + .secrets() sugar; a GENERIC connector RunApp live-harness (parametrize app_live_serve.rs runapp_gmail_... into runapp_connection_live(cmd,cred,probe) so any sidecar is testable); a `kx new connector` scaffold (verbs/new.rs, mirrors kx-connector-gmail; only `kx new skill` existed)",
+  "Py<->TS parity fixes: Python Agent dynamic-lane max_tool_calls 6->20 (match TS + server default REACT_DEFAULT_MAX_TOOL_CALLS=20); TS module-level chat(); TS barrel export of REACT_RAG/VISION_RAG/react-vision recipe handles; stale chains.py docstring fix",
+]
+inherits = ["rc-sw1-skills", "app-pointer-run-resolution", "gmail-integration", "discord-connector", "first-class-integrations"]
+notes    = "RC-SW2 (D174.3/D176/D177). PURELY ADDITIVE client-side composition + ONE runtime-behavior fix (App.run delegation). Digest 7d22d4bd INVARIANT BY CONSTRUCTION (swarm/personas touch only NEW motes; connections/skills/secrets ride OFF the lowered graph) + frozen-trio EMPTY + no proto/journal/WorkflowStepKind change; proven in-PR by a0_guard (8/8) + tri-surface golden parity. DEFERRED (own follow-ups, recorded so not re-litigated): .retry_until() critic-gated best-of-N -> RC-SW4 (needs a server kx/recipes/retry-until binder + free-param slots; critic kind is not in the client palette; natural home = supervisor/consensus); branch() -> RC-SW3 (dynamic topology-shaper + EdgeKind::Control cascade, NOT pure composition); effect=/idempotency= override hatch -> own D-number (effect_pattern is a MoteDef identity + executor double-effect/refusal gate; a client override is an SN-8 + un-deduped-double-effect risk); full Flow-level .connect()/.skill()/.secrets()/.use()/.context() sugar -> own D177 ergonomics PR; supervisor()/consensus()/handoff() -> RC-SW4; .with_slack() -> when kx-connector-slack lands (GR25 extension lane); T-SWARM-CHILD-SECRET-SCOPE-NARROW (narrow.rs, dynamic child secret_scope) -> RC-SW4."

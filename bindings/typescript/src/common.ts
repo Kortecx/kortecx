@@ -127,6 +127,17 @@ export type {
 // Batch V2 — the fluent builder + first-class Agent (the headline authoring surface).
 export { Flow, flow } from "./flow.js";
 export type { FlowItem, AgentStepOptions, FlowClient } from "./flow.js";
+// RC-SW2 — multi-agent swarm authoring + a curated persona library (pure client
+// composition: N parallel agentic leaves → gather; personas fold into the step prompt).
+export { swarm, team, fanOutGather, mapReduce } from "./flow.js";
+export type {
+  SwarmParticipant,
+  SwarmOptions,
+  TeamOptions,
+  FanOptions,
+  ReduceOptions,
+} from "./flow.js";
+export { PERSONAS, persona, personaNames } from "./personas.js";
 // POC-4 — the App builder + envelope (kortecx.app/v1) + catalog views.
 export { app, AppBuilder, minimalAppEnvelope } from "./app.js";
 export type { BlueprintSource, AppClient } from "./app.js";
@@ -245,7 +256,14 @@ export type {
 export { WaitState } from "./wait.js";
 export type { WaitOutcome, WaitMode } from "./wait.js";
 
-export { KxClientBase, VISION_RECIPE_HANDLE } from "./client.js";
+export {
+  KxClientBase,
+  VISION_RECIPE_HANDLE,
+  // RC4b: the agentic-RAG / vision recipe handles (parity with the Python SDK barrel).
+  REACT_RAG_RECIPE_HANDLE,
+  VISION_RAG_RECIPE_HANDLE,
+  REACT_VISION_RECIPE_HANDLE,
+} from "./client.js";
 export type { KxClientOptions, InvokeOptions, Id, ImageInput } from "./client.js";
 
 export { DEFAULT_ENDPOINT, isNonloopbackPlaintext } from "./transport.js";

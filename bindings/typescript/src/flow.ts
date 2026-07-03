@@ -18,6 +18,7 @@
  */
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
+import { type AppBuilder, app } from "./app.js";
 import {
   type Chain,
   ChainParseError,
@@ -55,6 +56,79 @@ const IMAGE_REF_KEY = "image_ref";
 function toFrag(item: FlowItem): Frag {
   // A bare string is an agent (MODEL) step with all-default config (the common case).
   return typeof item === "string" ? task.model("", item) : item;
+}
+
+/** The default synthesizer prompt for {@link Flow.swarm} / {@link Flow.team} — a MODEL
+ * gather reads every participant's committed output (its Data-edge parents, F-7). */
+const DEFAULT_SWARM_GATHER =
+  "You are the lead. Synthesize the parallel agents' results above into one coherent, " +
+  "complete answer. Reconcile disagreements, keep what is well-supported, and drop redundancy.";
+const DEFAULT_FAN_GATHER = "Combine the parallel results above into one coherent answer.";
+const DEFAULT_REDUCE = "Reduce the mapper results above into one consolidated result.";
+
+/** A swarm/team participant (RC-SW2): a prompt, a `[prompt, tools]` tuple, an Agent /
+ * persona (duck-typed), a {@link Flow} (already task-bound), or a Frag. */
+export type SwarmParticipant =
+  | string
+  | readonly [string, AgentStepOptions["tools"]?]
+  | Frag
+  | Flow
+  | AgentLike;
+
+/** The minimal Agent shape a participant can be (duck-typed to avoid the flow↔agent
+ * import cycle): public `instructions` + an `opts` config bag. */
+interface AgentLike {
+  instructions: string;
+  opts: AgentStepOptions & { dynamic?: boolean; persona?: string };
+}
+
+function isAgentLike(x: unknown): x is AgentLike {
+  return (
+    typeof x === "object" &&
+    x !== null &&
+    typeof (x as AgentLike).instructions === "string" &&
+    typeof (x as AgentLike).opts === "object"
+  );
+}
+
+/** Options for {@link Flow.swarm} / the top-level {@link swarm}. */
+export interface SwarmOptions {
+  /** The shared task each participant works on (appended to its role/prompt). */
+  goal?: string;
+  /** The gather sink: a synthesis prompt (a MODEL step) or an explicit Frag. Default = a
+   * MODEL synthesizer with a sensible prompt. */
+  gather?: string | Frag;
+  /** `true` (default) = a MODEL synthesizer gather; `false` = a PURE deterministic fold. */
+  synthesize?: boolean;
+}
+/** Options for {@link Flow.team} (a swarm that always synthesizes). */
+export type TeamOptions = Omit<SwarmOptions, "synthesize">;
+/** Options for {@link Flow.fanOutGather}. */
+export interface FanOptions {
+  gather?: string | Frag;
+  synthesize?: boolean;
+}
+/** Options for {@link Flow.mapReduce}. */
+export interface ReduceOptions {
+  reduce?: string | Frag;
+  synthesize?: boolean;
+}
+
+function joinGoal(text: string, goal: string): string {
+  return goal ? `${text}\n\n${goal}`.trim() : text;
+}
+
+/** Build the fan-in sink: a MODEL synthesizer (`gather` a prompt string, or the
+ * `defaultPrompt` when `synthesize`), an explicit sink Frag, or a PURE fold. */
+function sinkFrag(
+  gather: string | Frag | undefined,
+  synthesize: boolean,
+  defaultPrompt: string,
+): Frag {
+  if (typeof gather === "string") return task.model("", gather);
+  if (gather !== undefined) return gather;
+  if (synthesize) return task.model("", defaultPrompt);
+  return task.pure({});
 }
 
 /** A minimal client surface the Flow terminals need (avoids a node/web import cycle).
@@ -265,6 +339,106 @@ export class Flow {
     for (const fact of this.memoryFacts) await client.storeMemory(fact);
   }
 
+  // -- orchestration (RC-SW2: parallel agentic patterns; pure client composition) --
+
+  /** Resolve ONE swarm participant to an agentic-leaf Frag (mirrors Python
+   * `_participant_to_node`; Agents duck-typed to avoid the flow↔agent cycle). */
+  private resolveParticipant(item: SwarmParticipant, goal: string): Frag {
+    if (typeof item === "string") return task.model("", joinGoal(item, goal));
+    if (Array.isArray(item)) {
+      const [prompt, tools] = item as readonly [string, AgentStepOptions["tools"]?];
+      return task.model("", joinGoal(String(prompt), goal), {}, { tools });
+    }
+    if (item instanceof Flow) {
+      if (item.node === undefined) throw new ChainParseError("empty flow participant");
+      return item.node;
+    }
+    if (isAgentLike(item)) {
+      const base = item.instructions;
+      return task.model(
+        "",
+        base ? joinGoal(base, goal) : goal,
+        {},
+        {
+          tools: item.opts.tools,
+          maxTurns: item.opts.maxTurns,
+          maxToolCalls: item.opts.maxToolCalls,
+          reasoning: item.opts.reasoning,
+        },
+      );
+    }
+    return item as Frag;
+  }
+
+  /** Fan out to N parallel agents, then gather (a **swarm**). Each participant is a
+   * prompt, a `[prompt, tools]` tuple, an Agent / persona, or a Flow; they run
+   * CONCURRENTLY as independent deterministic-agentic steps (each its own crash-safe
+   * salt-2 chain), then a gather step merges their committed outputs:
+   *
+   * ```ts
+   * await kx.flow()
+   *   .swarm([kx.persona("researcher"), kx.persona("critic"), kx.persona("writer")],
+   *          { goal: "Write a briefing on durable execution" })
+   *   .run();
+   * ```
+   *
+   * `opts.goal` is the shared task each participant works on. By default
+   * (`synthesize: true`) the gather is a MODEL step that reads every participant's output
+   * (its Data-edge parents, F-7) and writes one answer; `opts.gather: "<prompt>"` steers
+   * it, a Frag gives a custom sink, and `synthesize: false` folds deterministically
+   * (PURE). Pure client composition — byte-identical to the equivalent `[a & b] > g`
+   * chain; no new step kind. */
+  swarm(participants: SwarmParticipant[], opts: SwarmOptions = {}): this {
+    if (participants.length === 0) throw new ChainParseError("swarm() needs at least one agent");
+    const goal = opts.goal ?? "";
+    this.parallel(...participants.map((a) => this.resolveParticipant(a, goal)));
+    return this.then(sinkFrag(opts.gather, opts.synthesize ?? true, DEFAULT_SWARM_GATHER));
+  }
+
+  /** A **team**: the same topology as {@link Flow.swarm} with a lead that synthesizes.
+   * `team(a, { goal })` ≡ `swarm(a, { goal, synthesize: true })`. */
+  team(participants: SwarmParticipant[], opts: TeamOptions = {}): this {
+    return this.swarm(participants, { ...opts, synthesize: true });
+  }
+
+  /** Fan out to N parallel `branches` (each a prompt / Frag), then gather —
+   * sample-N-ways-and-combine. `opts.gather` steers the sink; `synthesize: false` folds
+   * deterministically (PURE). */
+  fanOutGather(branches: FlowItem[], opts: FanOptions = {}): this {
+    if (branches.length === 0)
+      throw new ChainParseError("fanOutGather() needs at least one branch");
+    this.parallel(...branches);
+    return this.then(sinkFrag(opts.gather, opts.synthesize ?? true, DEFAULT_FAN_GATHER));
+  }
+
+  /** Map N `mappers` in parallel, then reduce. `opts.reduce` steers the reducer;
+   * `synthesize: false` reduces deterministically (PURE). */
+  mapReduce(mappers: FlowItem[], opts: ReduceOptions = {}): this {
+    if (mappers.length === 0) throw new ChainParseError("mapReduce() needs at least one mapper");
+    this.parallel(...mappers);
+    return this.then(sinkFrag(opts.reduce, opts.synthesize ?? true, DEFAULT_REDUCE));
+  }
+
+  /** Promote this Flow to a durable, named {@link import("./app.js").AppBuilder} — the
+   * EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
+   * `RunApp` (server-resolved connections + secret_scope + skills). Chain the App rails
+   * on the result:
+   *
+   * ```ts
+   * await kx.flow().agent("Draft and send a reply", { tools: ["kx-connector-gmail/send"] })
+   *   .asApp("mailer").withGmail().secrets(["KX_GMAIL_CREDENTIAL"])
+   *   .run({ to: "x@y.com" });
+   * ```
+   *
+   * Naming is deliberate: connections / skills / secret scope ride the App envelope
+   * (not the byte-identical lowered graph), so a bare `Flow.run()` has no place for them.
+   * Any `withMcp` / `withMemory` side-channels carry over as pre-run registrations. */
+  asApp(name: string, opts: { version?: string } = {}): AppBuilder {
+    const built = app(name, opts).blueprint(this);
+    built.carryFlowSideChannels(this.mcp, this.memoryFacts);
+    return built;
+  }
+
   /** Lower this flow to a {@link Chain}. */
   toChain(): Chain {
     if (this.node === undefined) {
@@ -318,4 +492,37 @@ export class Flow {
  * authoring surface — reads top-to-bottom, IDE-discoverable, defaults filled in. */
 export function flow(opts: { seed?: number } = {}): Flow {
   return new Flow(opts);
+}
+
+// -- top-level orchestration factories (a swarm is usually the whole flow) --
+
+/** `swarm(participants, opts)` — N parallel agents → gather, as a whole flow (RC-SW2).
+ * Sugar for `flow(seed).swarm(...)`; see {@link Flow.swarm}. */
+export function swarm(
+  participants: SwarmParticipant[],
+  opts: SwarmOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).swarm(participants, opts);
+}
+
+/** `team(participants, opts)` — a swarm with a lead that synthesizes; see {@link Flow.team}. */
+export function team(
+  participants: SwarmParticipant[],
+  opts: TeamOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).team(participants, opts);
+}
+
+/** `fanOutGather(branches, opts)` — sample N ways, combine; see {@link Flow.fanOutGather}. */
+export function fanOutGather(
+  branches: FlowItem[],
+  opts: FanOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).fanOutGather(branches, opts);
+}
+
+/** `mapReduce(mappers, opts)` — map N mappers in parallel, then reduce; see
+ * {@link Flow.mapReduce}. */
+export function mapReduce(mappers: FlowItem[], opts: ReduceOptions & { seed?: number } = {}): Flow {
+  return flow({ seed: opts.seed }).mapReduce(mappers, opts);
 }

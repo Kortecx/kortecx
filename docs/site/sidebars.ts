@@ -32,6 +32,7 @@ const sidebars: SidebarsConfig = {
         "workflows",
         "blueprint-builder",
         "agent-runner",
+        "swarms",
         "security",
         "tools",
         "agentic-prompts",
