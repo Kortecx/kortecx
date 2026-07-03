@@ -34,12 +34,12 @@ describe("swarm / team / fanOutGather / mapReduce lowering", () => {
     ).lower();
     expect(low.steps).toHaveLength(3); // 2 agentic leaves + 1 synthesizer
     for (const i of [0, 1]) {
-      expect(low.steps[i].kind).toBe("model");
-      expect(low.steps[i].tool_contract).toEqual({ "mcp-echo/echo": "1" });
-      expect(low.steps[i].prompt.endsWith("the Q3 plan")).toBe(true);
+      expect(low.steps[i]?.kind).toBe("model");
+      expect(low.steps[i]?.tool_contract).toEqual({ "mcp-echo/echo": "1" });
+      expect(low.steps[i]?.prompt?.endsWith("the Q3 plan")).toBe(true);
     }
-    expect(low.steps[2].kind).toBe("model");
-    expect(low.steps[2].tool_contract).toEqual({});
+    expect(low.steps[2]?.kind).toBe("model");
+    expect(low.steps[2]?.tool_contract).toEqual({});
     expect(low.edges).toEqual([
       { parent: 0, child: 2, edge: "data" },
       { parent: 1, child: 2, edge: "data" },
@@ -67,9 +67,9 @@ describe("swarm / team / fanOutGather / mapReduce lowering", () => {
   it("team defaults to a model synthesizer; synthesize:false uses a pure gather", () => {
     const t = team([persona("researcher"), persona("critic")], { goal: "write a brief" }).lower();
     expect(t.steps).toHaveLength(3);
-    expect(t.steps[2].kind).toBe("model");
+    expect(t.steps[2]?.kind).toBe("model");
     const pure = swarm(["sample A", "sample B"], { synthesize: false }).lower();
-    expect(pure.steps[2].kind).toBe("pure");
+    expect(pure.steps[2]?.kind).toBe("pure");
   });
 
   it("fanOutGather and mapReduce lower to fan-in", () => {
@@ -89,7 +89,7 @@ describe("swarm / team / fanOutGather / mapReduce lowering", () => {
       })
       .lower();
     expect(low.steps).toHaveLength(5); // 4 leaves + synthesizer
-    expect(low.steps[0].tool_contract).toEqual({ "mcp-echo/echo": "1" });
+    expect(low.steps[0]?.tool_contract).toEqual({ "mcp-echo/echo": "1" });
   });
 
   it("an empty swarm is an error", () => {
@@ -108,7 +108,7 @@ describe("personas", () => {
     const a = new Agent("", { persona: "critic" });
     expect(a.instructions).toBe(PERSONAS.critic);
     const a2 = new Agent("Focus on security.", { persona: "critic" });
-    expect(a2.instructions.startsWith(PERSONAS.critic)).toBe(true);
+    expect(a2.instructions.startsWith(PERSONAS.critic ?? "")).toBe(true);
     expect(a2.instructions.endsWith("Focus on security.")).toBe(true);
     // .on(task) is an alias of .asFlow(task).
     expect(a.on("review X").lower()).toEqual(a.asFlow("review X").lower());
@@ -209,6 +209,6 @@ describe("App.run → SaveApp + RunApp (the integration-in-app fix)", () => {
     expect(calls.saved).toHaveLength(1);
     expect(calls.registered).toHaveLength(1);
     expect((calls.registered[0] as { name: string }).name).toBe("fs");
-    expect(calls.ran[0][0]).toBe("apps/local/mailer");
+    expect(calls.ran[0]?.[0]).toBe("apps/local/mailer");
   });
 });

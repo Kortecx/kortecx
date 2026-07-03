@@ -67,11 +67,12 @@ const DEFAULT_FAN_GATHER = "Combine the parallel results above into one coherent
 const DEFAULT_REDUCE = "Reduce the mapper results above into one consolidated result.";
 
 /** A swarm/team participant (RC-SW2): a prompt, a `[prompt, tools]` tuple, an Agent /
- * persona (duck-typed), or a Frag. */
+ * persona (duck-typed), a {@link Flow} (already task-bound), or a Frag. */
 export type SwarmParticipant =
   | string
   | readonly [string, AgentStepOptions["tools"]?]
   | Frag
+  | Flow
   | AgentLike;
 
 /** The minimal Agent shape a participant can be (duck-typed to avoid the flow↔agent
