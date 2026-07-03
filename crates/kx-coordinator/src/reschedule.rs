@@ -82,6 +82,21 @@ impl LeaseTracker {
         self.holders.contains_key(&mote)
     }
 
+    /// Whether `mote` is currently leased by a live worker OTHER than `worker` — the
+    /// RC-SW3 pool admission gate. `lease_ready` skips such a Mote so two pool workers
+    /// never redundantly run the same one, WHILE a worker may always re-lease its OWN
+    /// outstanding holds (the mid-batch-error self-heal). This makes a single-worker
+    /// serve byte-identical: a lone worker is never an "other" holder, so the gate
+    /// never fires. Dead workers' holds are dropped by `reap_dead_workers` BEFORE
+    /// `lease_ready` runs, so this reflects only LIVE holds — a crashed worker's Mote
+    /// is re-offered via `record_crash`/`rescheduleable` after the liveness window, not
+    /// stranded. O(holders of `mote`).
+    pub(crate) fn is_leased_by_other(&self, mote: MoteId, worker: WorkerId) -> bool {
+        self.holders
+            .get(&mote)
+            .is_some_and(|workers| workers.iter().any(|w| *w != worker))
+    }
+
     /// Remove and return `worker`'s outstanding leases (used when reaping a dead
     /// worker), keeping the reverse index consistent.
     pub(crate) fn take_leases(&mut self, worker: WorkerId) -> BTreeSet<MoteId> {
@@ -198,5 +213,35 @@ mod tests {
     fn take_leases_of_unknown_worker_is_empty() {
         let mut t = LeaseTracker::default();
         assert!(t.take_leases(WorkerId(42)).is_empty());
+    }
+
+    #[test]
+    fn is_leased_by_other_is_the_pool_admission_gate() {
+        // RC-SW3: the lease_ready gate. A lone holder never sees an "other" holder
+        // (pool=1 byte-identical); a second worker's hold makes it true for the first.
+        let mut t = LeaseTracker::default();
+        let m = mote(5);
+        assert!(
+            !t.is_leased_by_other(m, WorkerId(1)),
+            "unheld: no other holder"
+        );
+        t.record_lease(WorkerId(1), [m]);
+        // Held ONLY by worker 1 → not "leased by other" for worker 1 (self-heal), but
+        // IS for any other worker (the partitioning that makes pool>1 real).
+        assert!(
+            !t.is_leased_by_other(m, WorkerId(1)),
+            "a worker may re-lease its OWN hold (mid-batch-error self-heal)"
+        );
+        assert!(
+            t.is_leased_by_other(m, WorkerId(2)),
+            "worker 2 must skip a Mote worker 1 already holds"
+        );
+        // After worker 1 crashes + is reaped (take_leases), the hold clears → the Mote
+        // becomes available again (re-offered via rescheduleable), not stranded.
+        t.take_leases(WorkerId(1));
+        assert!(
+            !t.is_leased_by_other(m, WorkerId(2)),
+            "a reaped worker's hold is cleared → the Mote is leasable again"
+        );
     }
 }

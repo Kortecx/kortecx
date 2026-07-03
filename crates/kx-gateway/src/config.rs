@@ -12,6 +12,15 @@ use crate::error::GatewayError;
 /// pulls per `run_once`. Modest by default; tune with `--max-lease`.
 pub const DEFAULT_MAX_LEASE: u32 = 16;
 
+/// Default embedded-worker POOL size — how many concurrent lease→run→propose
+/// worker loops the serve spawns (RC-SW3). `1` (the default) is byte-identical to
+/// the historical single embedded worker. `>1` runs Pure/IO/tool Motes concurrently
+/// (model Motes still funnel to the one `ModelCache` owner thread; Ollama swarms get
+/// real concurrent inference over independent HTTP). Tune with `--workers` or the
+/// `KX_WORKERS` / `KX_SERVE_WORKER_POOL` env. Distinct from `--max-lease` (batch size
+/// PER worker, per `run_once`). Resolution + clamp live in the `env_caps` module.
+pub const DEFAULT_WORKER_POOL: usize = 1;
+
 /// Default address for the R5 WebSocket `StreamEvents` bridge (the browser live-
 /// tail surface). Loopback by default (like the gRPC port); override with
 /// `--ws-listen`. A `:0` port asks the OS for an ephemeral one (used by tests).
@@ -76,6 +85,12 @@ pub struct GatewayConfig {
     pub content_root: PathBuf,
     /// Worker lease batch size (see [`DEFAULT_MAX_LEASE`]).
     pub max_lease: u32,
+    /// Embedded-worker POOL size from `--workers` (RC-SW3). `None` ⇒ not set on the
+    /// CLI; the serve resolves it via `KX_WORKERS` / `KX_SERVE_WORKER_POOL` else the
+    /// [`DEFAULT_WORKER_POOL`] (see `env_caps::resolve_worker_pool`). Kept as the raw
+    /// flag (not pre-resolved) so `parse_serve` stays pure/hermetic — env is read once
+    /// at spawn, matching the `KX_SERVE_*` point-of-use convention.
+    pub worker_pool: Option<usize>,
     /// Install the dev `local-allow` auth resolver instead of deny-all. Refuses a
     /// non-loopback `listen` (loopback-only dev access). Mutually exclusive with
     /// `auth_tokens`.
@@ -158,7 +173,7 @@ pub enum Cli {
 pub const USAGE: &str =
     "usage: kx-gateway serve --listen <addr:port> --journal <path> --content <dir> \
 [--ws-listen <addr:port>] [--console-listen <addr:port> | --no-console] \
-[--max-lease <N>] [--dev-allow-local | --allow-local-dev] \
+[--max-lease <N>] [--workers <N>] [--dev-allow-local | --allow-local-dev] \
 [--auth-token <token>=<party>]... [--auth-token-file <path>] [--catalog-dir <dir>] \
 [--tls-cert <path> --tls-key <path>] [--cors-origin <scheme://host[:port]>]... \
 [--content-max-bytes <BYTES>] [--metrics-listen <addr:port>] \
@@ -197,6 +212,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let mut journal_path: Option<PathBuf> = None;
     let mut content_root: Option<PathBuf> = None;
     let mut max_lease: u32 = DEFAULT_MAX_LEASE;
+    let mut worker_pool: Option<usize> = None;
     let mut dev_allow_local = false;
     let mut auth_tokens: HashMap<String, String> = HashMap::new();
     let mut catalog_dir: Option<PathBuf> = None;
@@ -227,6 +243,16 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                         "--max-lease expects a positive integer, got {v:?}"
                     ))
                 })?;
+            }
+            // RC-SW3: bounded embedded-worker pool size (default 1 = single worker,
+            // byte-identical). A positive integer; the env fallback + clamp live in
+            // `env_caps::resolve_worker_pool` (read once at spawn).
+            "--workers" => {
+                let v = take_value("--workers")?;
+                let n = v.parse::<usize>().ok().filter(|n| *n > 0).ok_or_else(|| {
+                    GatewayError::Config(format!("--workers expects a positive integer, got {v:?}"))
+                })?;
+                worker_pool = Some(n);
             }
             // `--allow-local-dev` is an accepted alias (same loopback dev
             // posture); a single parse site keeps the two spellings in sync.
@@ -308,6 +334,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
         journal_path,
         content_root,
         max_lease,
+        worker_pool,
         dev_allow_local,
         auth_tokens,
         catalog_dir,
@@ -496,6 +523,60 @@ mod tests {
         assert_eq!(c.content_root, PathBuf::from("/tmp/blobs"));
         assert_eq!(c.max_lease, 8);
         assert!(c.dev_allow_local);
+    }
+
+    #[test]
+    fn workers_flag_parses_and_defaults_to_none() {
+        // RC-SW3: `--workers N` records the raw flag (env/default resolution happens at
+        // spawn in `env_caps::resolve_worker_pool`, so `parse_serve` stays pure).
+        let with = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--workers",
+                "4",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(with.worker_pool, Some(4), "the --workers flag is captured");
+        // Omitted ⇒ None (resolves to KX_WORKERS / KX_SERVE_WORKER_POOL / default 1 at spawn).
+        let without = serve(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+            ])
+            .unwrap(),
+        );
+        assert_eq!(
+            without.worker_pool, None,
+            "omitted --workers stays None (byte-identical)"
+        );
+        // A non-positive value is a loud config error (never a silent 0-worker serve).
+        assert!(
+            Cli::from_args([
+                "serve",
+                "--listen",
+                "127.0.0.1:0",
+                "--journal",
+                "/tmp/j",
+                "--content",
+                "/tmp/c",
+                "--workers",
+                "0",
+            ])
+            .is_err(),
+            "--workers 0 is refused"
+        );
     }
 
     #[test]

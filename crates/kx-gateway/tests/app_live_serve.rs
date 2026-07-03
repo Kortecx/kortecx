@@ -639,3 +639,150 @@ async fn swarm_runs_parallel_agents_and_gathers_live() {
 
     running.shutdown().await.unwrap();
 }
+
+/// A WIDER swarm: `n_leaves` INDEPENDENT parallel MODEL leaves fanned into one MODEL gather
+/// (a Data edge from every leaf). More parallel leaves ⇒ the worker pool has real
+/// wall-clock room to overlap them.
+fn wide_swarm_request(n_leaves: u32) -> proto::SubmitWorkflowRequest {
+    let model = |prompt: String| proto::WorkflowStep {
+        kind: proto::WorkflowStepKind::Model as i32,
+        model_id: String::new(),
+        prompt,
+        body_signature_id: Vec::new(),
+        tool_contract: Default::default(),
+        params: Default::default(),
+    };
+    let mut steps: Vec<proto::WorkflowStep> = (0..n_leaves)
+        .map(|i| {
+            model(format!(
+                "In ONE short sentence, state distinct fact #{} about durable agentic \
+                 execution. Be concise.",
+                i + 1
+            ))
+        })
+        .collect();
+    steps.push(model(
+        "In two sentences, synthesize the points above.".to_string(),
+    ));
+    let gather = n_leaves; // the gather is the last step
+    let edges = (0..n_leaves)
+        .map(|parent| proto::WorkflowEdge {
+            parent,
+            child: gather,
+            edge_kind: proto::EdgeKind::Data as i32,
+            non_cascade: false,
+        })
+        .collect();
+    proto::SubmitWorkflowRequest {
+        seed: 0,
+        steps,
+        edges,
+        execution_mode: proto::WorkflowExecutionMode::Frozen as i32,
+        context_bundles: vec![],
+    }
+}
+
+/// Run a `wide_swarm_request(n_leaves)` on a fresh gateway configured with `pool` embedded
+/// workers; return `(wall_clock, committed_count, gather_text)`.
+async fn run_wide_swarm(dir_tag: &str, pool: usize, n_leaves: u32) -> (Duration, usize, String) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let _ = dir_tag;
+    let mut cfg = common::gateway_config(&dir, true, HashMap::new());
+    cfg.worker_pool = Some(pool);
+    let running = start(cfg).await.unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let total = (n_leaves + 1) as usize;
+    let started = std::time::Instant::now();
+    let handle = c
+        .submit_workflow(wide_swarm_request(n_leaves))
+        .await
+        .expect("SubmitWorkflow of the wide swarm")
+        .into_inner();
+
+    let mut committed = 0usize;
+    let mut gather_ref: Option<[u8; 32]> = None;
+    for _ in 0..4800 {
+        let view = c
+            .get_projection(proto::GetProjectionRequest {
+                instance_id: handle.instance_id.clone(),
+                at_seq: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        committed = view
+            .motes
+            .iter()
+            .filter(|m| m.state == proto::MoteSnapshotState::Committed as i32)
+            .count();
+        if let Some(g) = view.motes.iter().find(|m| {
+            m.parents.len() == n_leaves as usize
+                && m.state == proto::MoteSnapshotState::Committed as i32
+        }) {
+            gather_ref = g.result_ref.clone().and_then(|r| r.try_into().ok());
+        }
+        if committed >= total && gather_ref.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let elapsed = started.elapsed();
+
+    let text = if let Some(gr) = gather_ref {
+        let content = c
+            .get_content(proto::GetContentRequest {
+                content_ref: gr.to_vec(),
+                instance_id: handle.instance_id.clone(),
+            })
+            .await
+            .expect("GetContent of the gather output")
+            .into_inner();
+        String::from_utf8_lossy(&content.payload).trim().to_string()
+    } else {
+        String::new()
+    };
+    running.shutdown().await.unwrap();
+    (elapsed, committed, text)
+}
+
+/// RC-SW3 LIVE pool witness (GR15/GR24): the SAME wide swarm run under a single worker
+/// (`--workers 1`, the historical serial drain) vs. a pool of 4, on a live model. Proves the
+/// pool executes an authored fan-out end-to-end and produces REAL output at both sizes, and
+/// LOGS the wall-clock speedup. The speedup is OBSERVED (logged), not asserted: a single live
+/// inference sample is too noisy for a non-flaky timing assertion (GR12 — flakes are fixed,
+/// not tolerated), and the true concurrent-inference gain depends on the operator's
+/// `OLLAMA_NUM_PARALLEL`. The deterministic proof that pool>1 partitions work + stays
+/// digest-invariant lives in `kx-coordinator/tests/pool_determinism.rs`; the measured speedup
+/// is recorded via `just profile` + the manual GR24 drive.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally) or KX_SERVE_OLLAMA=on"]
+async fn swarm_pool_parallel_speedup_live() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    const N_LEAVES: u32 = 4;
+    let total = (N_LEAVES + 1) as usize;
+
+    // Control: one embedded worker (byte-identical to a serve with no pool).
+    let (t1, c1, txt1) = run_wide_swarm("pool1", 1, N_LEAVES).await;
+    // Pool of 4 leasers over the same coordinator.
+    let (t4, c4, txt4) = run_wide_swarm("pool4", 4, N_LEAVES).await;
+
+    let ratio = t1.as_secs_f64() / t4.as_secs_f64().max(f64::MIN_POSITIVE);
+    eprintln!(
+        "LIVE pool-speedup [{engine}] leaves={N_LEAVES}: pool1={t1:?} (committed {c1}/{total}) \
+         pool4={t4:?} (committed {c4}/{total}) speedup={ratio:.2}x"
+    );
+    eprintln!("  pool1 synthesis: {txt1}");
+    eprintln!("  pool4 synthesis: {txt4}");
+
+    // GR15 (non-flaky): both pool sizes commit the FULL swarm and produce real output.
+    assert_eq!(c1, total, "pool=1 committed the full swarm on [{engine}]");
+    assert_eq!(c4, total, "pool=4 committed the full swarm on [{engine}]");
+    assert!(
+        !txt4.is_empty(),
+        "pool=4 produced a non-empty synthesis on [{engine}]"
+    );
+}

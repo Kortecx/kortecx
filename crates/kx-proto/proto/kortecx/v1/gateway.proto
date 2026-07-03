@@ -1999,6 +1999,12 @@ message GetServerInfoResponse {
   // embeddings (paraphrase mis-rank). The CLI/UI/Settings surface an honest
   // "recommend a dedicated embed model" advisory from this single flag. Display only.
   bool   embed_model_is_decoder = 25;
+  // RC-SW3 (additive): the resolved embedded-worker POOL size (--workers / KX_WORKERS /
+  // KX_SERVE_WORKER_POOL; 1 = the historical single worker). >1 runs Pure/IO/tool Motes
+  // concurrently (model Motes still serialize on the one ModelCache owner thread; Ollama
+  // swarms get real concurrent inference). Display/Settings + Monitoring only; an old
+  // server sends 0 ⇒ the client renders "1 (default)". Never identity/digest.
+  uint64 worker_pool = 26;
 }
 
 // ===========================================================================

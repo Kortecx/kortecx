@@ -81,6 +81,50 @@ pub async fn measure(iterations: usize) -> Result<LatencySamples, ProfileError> 
     })
 }
 
+/// RC-SW3 regression guard: the FFI-free echo demo's submit→Committed latency under an
+/// embedded worker pool of each size in `pools`. **pool=1 must match the no-pool baseline**
+/// (the byte-identical RC-SW3 default) and pool>1's per-run overhead must stay bounded. This
+/// deliberately measures a SINGLE run per iteration (not a fan-out): the pool's *throughput*
+/// gain only materializes when execution has real cost (real inference/tool/IO) — OSS Pure
+/// motes are a near-free passthrough stub (D141.4), so a Pure fan-out here would measure lease
+/// contention, not parallelism. The real throughput story is the live swarm witness
+/// (`kx-gateway/tests/app_live_serve.rs::swarm_pool_parallel_speedup_live`). Returns
+/// `(pool_size, submit_ms samples)` per pool.
+///
+/// # Errors
+/// Returns [`ProfileError`] on start/serve/submit/commit/shutdown failure or timeout.
+pub async fn measure_pool(
+    iterations: usize,
+    pools: &[usize],
+) -> Result<Vec<(usize, Vec<f64>)>, ProfileError> {
+    let mut out = Vec::with_capacity(pools.len());
+    for &pool in pools {
+        let mut submit_ms = Vec::with_capacity(iterations);
+        for _ in 0..iterations {
+            let dir = TempDir::new().map_err(|e| ProfileError::Gateway(e.to_string()))?;
+            let mut cfg = config(dir.path())?;
+            cfg.worker_pool = Some(pool);
+            let running = start(cfg)
+                .await
+                .map_err(|e| ProfileError::Gateway(e.to_string()))?;
+            let channel = connect(running.local_addr()).await?;
+            wait_for_serving(&channel).await?;
+
+            let t = Instant::now();
+            let instance = submit_demo(&channel).await?;
+            wait_for_committed(&channel, &instance).await?;
+            submit_ms.push(elapsed_ms(t));
+
+            running
+                .shutdown()
+                .await
+                .map_err(|e| ProfileError::Gateway(e.to_string()))?;
+        }
+        out.push((pool, submit_ms));
+    }
+    Ok(out)
+}
+
 /// An ephemeral loopback, dev-auth gateway config rooted at `dir`.
 pub(crate) fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
     let parse = |s: &str| -> Result<SocketAddr, ProfileError> {
@@ -93,6 +137,7 @@ pub(crate) fn config(dir: &Path) -> Result<GatewayConfig, ProfileError> {
         journal_path: dir.join("kx.db"),
         content_root: dir.join("blobs"),
         max_lease: 16,
+        worker_pool: None,
         dev_allow_local: true,
         auth_tokens: HashMap::new(),
         catalog_dir: None,

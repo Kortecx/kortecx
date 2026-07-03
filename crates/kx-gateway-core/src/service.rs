@@ -2422,6 +2422,8 @@ impl KxGateway for GatewayService {
             allow_model_pull: facts.allow_model_pull,
             // RC4a (T-RAG-EMBED-QUALITY): honest decoder-as-embedder advisory flag.
             embed_model_is_decoder: facts.embed_model_is_decoder,
+            // RC-SW3: the resolved embedded-worker pool size (1 = single worker).
+            worker_pool: facts.worker_pool,
         }))
     }
 

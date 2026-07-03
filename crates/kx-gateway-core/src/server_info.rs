@@ -78,4 +78,9 @@ pub struct ServerInfoFacts {
     /// (`KX_SERVE_ALLOW_MODEL_PULL`). `false` ⇒ `PullModel` refuses (deny-by-default);
     /// the UI renders an honest-disabled Pull panel. Posture only (never a URL/secret).
     pub allow_model_pull: bool,
+    /// RC-SW3: the resolved embedded-worker POOL size (`--workers` / `KX_WORKERS` /
+    /// `KX_SERVE_WORKER_POOL`; `1` = the historical single worker). `>1` runs
+    /// Pure/IO/tool Motes concurrently. Display/Settings + Monitoring only; `0` on an
+    /// old server ⇒ the client renders `1 (default)`.
+    pub worker_pool: u64,
 }

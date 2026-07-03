@@ -101,6 +101,14 @@ export function SettingsSection() {
                 up to {info.data.reactMaxTurns} model turns · {info.data.reactMaxToolCalls} tool
                 calls <span className="muted">(default; per-run overridable)</span>
               </dd>
+              <dt>Worker pool</dt>
+              <dd data-testid="settings-worker-pool">
+                {info.data.effectiveWorkerPool}{" "}
+                {info.data.effectiveWorkerPool === 1 ? "worker" : "concurrent workers"}{" "}
+                <span className="muted">
+                  (parallel Pure/IO/tool execution; model inference serializes)
+                </span>
+              </dd>
             </dl>
           )}
           <span className="muted">

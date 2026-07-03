@@ -112,8 +112,10 @@ fn print_human(info: &proto::GetServerInfoResponse) {
         or_dash(&info.catalog_dir),
     );
     println!(
-        "  limits     max_lease {} · content_max_bytes {}",
-        info.max_lease, info.content_max_bytes,
+        "  limits     workers {} · max_lease {} · content_max_bytes {}",
+        info.worker_pool.max(1),
+        info.max_lease,
+        info.content_max_bytes,
     );
     println!(
         "  security   auth {} · tls {} · cors {cors}",
@@ -147,6 +149,7 @@ fn render_json(info: &proto::GetServerInfoResponse) -> String {
         "content_root": info.content_root,
         "journal_path": info.journal_path,
         "catalog_dir": info.catalog_dir,
+        "worker_pool": info.worker_pool.max(1),
         "max_lease": info.max_lease,
         "content_max_bytes": info.content_max_bytes,
         "cors_origins": info.cors_origins,

@@ -112,6 +112,20 @@ async fn inproc_metrics(iterations: usize) -> Result<Vec<Metric>, ProfileError> 
         ],
     );
 
+    // RC-SW3 — the embedded worker pool: submit→Committed at pool ∈ {1, 2, 4}. The
+    // regression guard is `pool1 == the no-pool baseline` (byte-identical default) with
+    // bounded pool>1 per-run overhead. (Throughput-under-real-work is the live swarm
+    // witness, not this free-execution stub — see `measure_pool` docs.)
+    let pool = spikes::measure_pool(iterations, &[1, 2, 4]).await?;
+    push_spikes(
+        &mut metrics,
+        &[
+            ("pool1_submit_to_committed_p50", percentile(&pool[0].1, 50)),
+            ("pool2_submit_to_committed_p50", percentile(&pool[1].1, 50)),
+            ("pool4_submit_to_committed_p50", percentile(&pool[2].1, 50)),
+        ],
+    );
+
     // PR-2d-2 — M7a/M7b: the live react chain's settle machinery, model-free at
     // the coordinator layer (M7b fires the REAL bundled stdio tool; skipped —
     // empty samples — when the bin is absent).

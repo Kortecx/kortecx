@@ -69,6 +69,7 @@ describe("ServerInfo.fromProto", () => {
       active_model_id: "",
       allow_model_pull: false,
       embed_model_is_decoder: false,
+      worker_pool: 0,
     });
   });
 

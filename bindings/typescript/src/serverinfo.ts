@@ -66,7 +66,16 @@ export class ServerInfo {
     readonly allowModelPull: boolean = false,
     /** RC4a: the configured embedder is a decoder LLM (weak embeddings) — advisory. */
     readonly embedModelIsDecoder: boolean = false,
+    /** RC-SW3: the resolved embedded-worker POOL size (`--workers` / `KX_WORKERS` /
+     *  `KX_SERVE_WORKER_POOL`; `1` = single worker, `>1` runs Pure/IO/tool Motes
+     *  concurrently). `0` from an old server ⇒ treat as `1` (see {@link effectiveWorkerPool}). */
+    readonly workerPool: number = 0,
   ) {}
+
+  /** The pool size to display: `max(1, workerPool)` (an old server sends 0). */
+  get effectiveWorkerPool(): number {
+    return Math.max(1, this.workerPool);
+  }
 
   static fromProto(r: PbGetServerInfoResponse): ServerInfo {
     return new ServerInfo(
@@ -95,6 +104,7 @@ export class ServerInfo {
       r.activeModelId,
       r.allowModelPull,
       r.embedModelIsDecoder,
+      Number(r.workerPool),
     );
   }
 
@@ -126,6 +136,7 @@ export class ServerInfo {
       active_model_id: this.activeModelId,
       allow_model_pull: this.allowModelPull,
       embed_model_is_decoder: this.embedModelIsDecoder,
+      worker_pool: this.workerPool,
     };
   }
 }

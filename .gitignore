@@ -62,6 +62,10 @@ kx-cloud/
 # Internal warning/debug log — kept in the private kortecx-core repo only.
 /WARNINGS.md
 
+# Local code-review tooling runtime data (a throwaway review journal + catalog +
+# content store); never a committed artifact.
+/.kx-review-data/
+
 # ---- Docker compose dev secrets ----
 # Only the *.example templates are committed. A developer may copy them to the
 # un-suffixed names below (or replace them) for local customization; the real

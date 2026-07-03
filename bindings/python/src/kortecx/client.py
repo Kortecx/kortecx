@@ -1133,13 +1133,31 @@ class KxClient:
                         "this server does not support run_app(args=...) (RunApp "
                         "unavailable); upgrade the server, or run without args"
                     ) from e
-                # Legacy client-orchestrated fallback (references dropped; no secret_scope).
+                # Legacy client-orchestrated fallback. It compiles the blueprint locally
+                # and DROPS references.connections + guards.secret_scope. RC-SW3: if the
+                # App actually declares integrations, refuse LOUDLY rather than silently
+                # run a de-integrated workflow (the credentialed connector would never
+                # fire, and the secret_scope narrowing would be lost). Only a truly
+                # integration-free App may take the legacy path.
                 from .chains import Chain
 
                 stored = self.get_app(handle)
                 if stored is None:
                     raise KxUsage(f"app {handle!r} not found") from e
-                request = Chain.from_blueprint(stored.envelope["blueprint"])
+                envelope = stored.envelope
+                connections = (envelope.get("references") or {}).get("connections") or []
+                secret_scope = ((envelope.get("steering_config") or {}).get("guards") or {}).get(
+                    "secret_scope"
+                ) or []
+                if connections or secret_scope:
+                    raise KxUsage(
+                        f"app {handle!r} declares integrations "
+                        "(references.connections / guards.secret_scope) but this server "
+                        "lacks RunApp — refusing to run it de-integrated (the credentialed "
+                        "connector + secret_scope would be silently dropped). Upgrade the "
+                        "server (build with the mcp-gateway feature)."
+                    ) from e
+                request = Chain.from_blueprint(envelope["blueprint"])
                 return self.submit_workflow(request, wait=wait, timeout=timeout)
             raise from_rpc_error(e) from e
         if not wait:

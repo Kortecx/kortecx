@@ -610,6 +610,22 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                     }
                     let env = AppEnvelope::from_json_slice(&resp.envelope_json)
                         .map_err(|e| CliError::Usage(format!("stored envelope is invalid: {e}")))?;
+                    // RC-SW3: the legacy fallback DROPS references.connections +
+                    // guards.secret_scope. If this App actually declares integrations,
+                    // refuse LOUDLY rather than silently run a de-integrated workflow (the
+                    // credentialed connector would never fire; the secret_scope narrowing
+                    // would be lost). Only an integration-free App may take the legacy path.
+                    if !env.references.connections.is_empty()
+                        || !env.steering_config.guards.secret_scope.is_empty()
+                    {
+                        return Err(CliError::Usage(format!(
+                            "app {handle:?} declares integrations (references.connections / \
+                             guards.secret_scope) but this server lacks RunApp — refusing to \
+                             run it de-integrated (the credentialed connector + secret_scope \
+                             would be silently dropped). Upgrade the server (build with the \
+                             mcp-gateway feature)."
+                        )));
+                    }
                     // Compile the blueprint through the ONE canonical path; the server
                     // re-resolves every warrant from the caller's grants (SN-8).
                     let dag: DagSpec = serde_json::from_value(env.blueprint).map_err(|e| {

@@ -92,6 +92,52 @@ pub(crate) fn chat_rag_max_k() -> usize {
     )
 }
 
+/// RC-SW3: the maximum embedded-worker pool size an operator may request. A
+/// garbage-large value clamps here rather than spawning thousands of loops.
+#[cfg(feature = "embedded-worker")]
+const MAX_WORKER_POOL: usize = 64;
+
+/// RC-SW3: the maximum per-Mote effect deadline (seconds) an operator may set.
+#[cfg(feature = "embedded-worker")]
+const MAX_TOOL_DEADLINE_SECS: u64 = 3_600;
+
+/// Resolve the embedded-worker POOL size (RC-SW3). Precedence: the `--workers` flag
+/// wins; else `KX_WORKERS`; else `KX_SERVE_WORKER_POOL`; else [`DEFAULT_WORKER_POOL`]
+/// (1). Clamped to `1..=MAX_WORKER_POOL` (a `0` or unparseable value falls back to the
+/// default — never silent garbage). Read once at spawn (the process env is constant for
+/// a serve's lifetime). **Flag-none + env-unset ⇒ 1 = the historical single worker =
+/// byte-identical serve.** `parse_serve` stays pure; the env is read only here.
+#[cfg(feature = "embedded-worker")]
+pub(crate) fn resolve_worker_pool(flag: Option<usize>) -> usize {
+    if let Some(n) = flag {
+        return n.clamp(1, MAX_WORKER_POOL);
+    }
+    let raw = std::env::var("KX_WORKERS")
+        .ok()
+        .or_else(|| std::env::var("KX_SERVE_WORKER_POOL").ok());
+    parse_cap(
+        raw.as_deref(),
+        crate::config::DEFAULT_WORKER_POOL,
+        1,
+        MAX_WORKER_POOL,
+    )
+}
+
+/// RC-SW3: the optional per-Mote effect (tool/MCP/IO) wall-clock deadline
+/// (`KX_SERVE_TOOL_DEADLINE_SECS`). Unset (the default) ⇒ `None` ⇒ no timeout wrap ⇒
+/// byte-identical serve. A positive integer number of seconds (clamped to
+/// `1..=MAX_TOOL_DEADLINE_SECS`) ⇒ a hung tool dispatch is cancelled + retried within
+/// the F4 budget, then dead-lettered — so a stuck external tool never pins a pool
+/// worker's slot forever. Off the truth path (a live wall-clock bound, never a fact).
+#[cfg(feature = "embedded-worker")]
+pub(crate) fn tool_deadline() -> Option<std::time::Duration> {
+    std::env::var("KX_SERVE_TOOL_DEADLINE_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|&secs| (1..=MAX_TOOL_DEADLINE_SECS).contains(&secs))
+        .map(std::time::Duration::from_secs)
+}
+
 /// Defensive bounds on the RC4a RAG knobs (chars / chunks-per-doc). Generous; an
 /// out-of-range value falls back to the default (never silent garbage).
 #[cfg(feature = "hnsw")]

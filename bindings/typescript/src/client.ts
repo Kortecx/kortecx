@@ -749,10 +749,27 @@ export abstract class KxClientBase {
               "server, or run without args",
           );
         }
-        // Legacy client-orchestrated fallback (references dropped; no secret_scope).
+        // Legacy client-orchestrated fallback. It compiles the blueprint locally and
+        // DROPS references.connections + guards.secret_scope. RC-SW3: if the App
+        // actually declares integrations, refuse LOUDLY rather than silently run a
+        // de-integrated workflow (the credentialed connector would never fire, and the
+        // secret_scope narrowing would be lost). Only an integration-free App may take
+        // the legacy path.
         const stored = await this.getApp(handle);
         if (stored === null) throw new KxUsage(`app ${handle} not found`);
-        const request = Chain.fromBlueprint(stored.envelope.blueprint as DagSpecJson);
+        const env = stored.envelope as {
+          blueprint: DagSpecJson;
+          references?: { connections?: unknown[] };
+          steering_config?: { guards?: { secret_scope?: unknown[] } };
+        };
+        const connections = env.references?.connections ?? [];
+        const secretScope = env.steering_config?.guards?.secret_scope ?? [];
+        if (connections.length > 0 || secretScope.length > 0) {
+          throw new KxUsage(
+            `app ${handle} declares integrations (references.connections / guards.secret_scope) but this server lacks runApp — refusing to run it de-integrated (the credentialed connector + secret_scope would be silently dropped). Upgrade the server (build with the mcp-gateway feature).`,
+          );
+        }
+        const request = Chain.fromBlueprint(env.blueprint);
         return this.submitWorkflow(request, opts);
       }
       throw e;
