@@ -1,21 +1,27 @@
 /**
  * POC-5a "New App" — an inline collapsible authoring panel (the NewBranchForm
- * precedent; NOT a dialog). It saves a MINIMAL App envelope (a single agentic
- * step over the goal) then launches the server-side agentic scaffold, handing off
- * to the honest {@link ScaffoldProgress} poller.
+ * precedent; NOT a dialog). It saves an App envelope (a single agentic step over
+ * the goal) then launches the server-side agentic scaffold, handing off to the
+ * honest {@link ScaffoldProgress} poller.
  *
- * The envelope carries NO authority (the server re-resolves warrants at run);
- * the optional model rides as a steering hint only. By convention the App's
- * project branch handle IS the saved App handle (one-App-one-branch), so the
- * scaffold + progress poll key on it.
+ * The envelope carries NO authority (the server re-resolves warrants at run); the
+ * optional model rides as a steering hint only. T-RUNAPP-CONTEXT-RAIL adds the
+ * declarative knowledge rail: "Ground on dataset" chips (references.datasets → a
+ * live `retrieve@1` grant at run, the App self-grounds) + a guidance rule
+ * (references.rules → an entry-step context item). Both resolve server-side at
+ * RunApp — the same rails the SDK `.dataset()` / `.rule()` authoring emits.
+ *
+ * By convention the App's project branch handle IS the saved App handle
+ * (one-App-one-branch), so the scaffold + progress poll key on it.
  */
 
-import { minimalAppEnvelope } from "@kortecx/sdk/web";
+import { app, flow } from "@kortecx/sdk/web";
 import { useMutation } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
+import { useDatasets } from "../../kx/use-datasets";
 import { useScaffoldApp } from "../../kx/use-scaffold-app";
 import { GlowCard } from "../ds/GlowCard";
 import { ScaffoldProgress } from "./ScaffoldProgress";
@@ -23,10 +29,14 @@ import { ScaffoldProgress } from "./ScaffoldProgress";
 export function NewAppForm({ onClose }: { onClose: () => void }) {
   const { client } = useConnection();
   const scaffold = useScaffoldApp();
+  const datasets = useDatasets();
   const [name, setName] = useState("");
   const [goal, setGoal] = useState("");
   const [model, setModel] = useState("");
   const [handle, setHandle] = useState("");
+  // T-RUNAPP-CONTEXT-RAIL authoring state (the declarative rail).
+  const [grounding, setGrounding] = useState<string[]>([]);
+  const [rule, setRule] = useState("");
   // Set once the scaffold has launched — switches the panel to the progress view.
   const [scaffolding, setScaffolding] = useState<{
     appHandle: string;
@@ -38,14 +48,26 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
       if (!client) {
         throw new Error("not connected");
       }
-      const envelope = minimalAppEnvelope(name.trim(), goal.trim(), {
-        model: model.trim() || undefined,
-      });
+      // Build via the App builder so the declarative rail (datasets + a guidance
+      // rule) rides the saved envelope; `.save()` uploads any pending rule body
+      // first. With no rail selected this is byte-identical to `minimalAppEnvelope`.
+      let builder = app(name.trim()).describe(goal.trim()).blueprint(flow().agent(goal.trim()));
+      const trimmedModel = model.trim();
+      if (trimmedModel !== "") {
+        builder = builder.steer({ model: trimmedModel });
+      }
+      for (const ds of grounding) {
+        builder = builder.dataset(ds);
+      }
+      const trimmedRule = rule.trim();
+      if (trimmedRule !== "") {
+        builder = builder.rule("guidance", { body: trimmedRule });
+      }
       const trimmedHandle = handle.trim();
-      const result = await client.saveApp(
-        envelope,
-        trimmedHandle !== "" ? { handle: trimmedHandle } : {},
-      );
+      const result = await builder.save({
+        client,
+        ...(trimmedHandle !== "" ? { handle: trimmedHandle } : {}),
+      });
       return result.handle;
     },
   });
@@ -54,6 +76,19 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
   const goalOk = goal.trim().length > 0;
   const busy = save.isPending || scaffold.isPending;
   const canSubmit = nameOk && goalOk && !busy && scaffolding === null;
+
+  // Only datasets with an indexed document can ground (honest: grounding turns on
+  // AFTER you ingest). No dataset view (hnsw off) / none ingested ⇒ render nothing
+  // (don't-fake-gaps, the DatasetPicker precedent).
+  const groundable = (datasets.data ?? []).filter((d) => d.docCount > 0);
+
+  function toggleDataset(nameOfDataset: string): void {
+    setGrounding((cur) =>
+      cur.includes(nameOfDataset)
+        ? cur.filter((d) => d !== nameOfDataset)
+        : [...cur, nameOfDataset],
+    );
+  }
 
   function onSubmit(e: FormEvent): void {
     e.preventDefault();
@@ -140,6 +175,45 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
               disabled={busy}
             />
           </div>
+
+          {/* T-RUNAPP-CONTEXT-RAIL: "Ground on dataset" — chip toggles (a controlled
+              <select> can't be Playwright-driven; chips are the standing pattern). Only
+              shown when a non-empty dataset exists (don't-fake-gaps). */}
+          {groundable.length > 0 ? (
+            <fieldset className="new-app-form__rail" data-testid="new-app-datasets">
+              <legend className="muted">Ground on dataset (RAG)</legend>
+              <div className="chips">
+                {groundable.map((d) => {
+                  const on = grounding.includes(d.name);
+                  return (
+                    <button
+                      key={d.datasetId}
+                      type="button"
+                      className={on ? "chip chip--active" : "chip"}
+                      aria-pressed={on}
+                      data-testid={`new-app-dataset-${d.name}`}
+                      onClick={() => toggleDataset(d.name)}
+                      disabled={busy}
+                    >
+                      {d.name} ({d.docCount})
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ) : null}
+
+          <textarea
+            className="input"
+            data-testid="new-app-rule"
+            placeholder="Guidance rule (optional) — a behavior note the agent must follow (e.g. 'Always cite sources.')"
+            rows={2}
+            value={rule}
+            onChange={(e) => setRule(e.target.value)}
+            aria-label="Guidance rule (optional)"
+            disabled={busy}
+          />
+
           <div className="register-tool-form__row">
             <button type="submit" data-testid="new-app-submit" disabled={!canSubmit}>
               {busy ? "Scaffolding…" : "Create & scaffold"}
