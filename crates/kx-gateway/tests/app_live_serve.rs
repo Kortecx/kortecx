@@ -511,6 +511,179 @@ async fn runapp_discord_connection_and_secret_scope_live() {
     .await;
 }
 
+/// One server-embed document (empty embedding ⇒ the host embeds `content` with the
+/// served model). Mirrors `react_rag_serve::doc`.
+fn doc(content: &[u8]) -> proto::IngestDocument {
+    proto::IngestDocument {
+        content: content.to_vec(),
+        embedding: Vec::new(),
+        ..Default::default()
+    }
+}
+
+/// A `kortecx.app/v1` envelope for a GROUNDED App (T-RUNAPP-CONTEXT-RAIL): a PLAIN model
+/// step (NO `tool_contract`) + `references.datasets` (the dataset rail folds `retrieve@1`
+/// at RunApp — declarative RAG-on-App) + `references.rules` (a guidance note that rides the
+/// entry-step context). The App declares WHAT to ground on; the server grants the tool.
+fn grounded_app_envelope(dataset: &str, rule_ref: &[u8], prompt: &str) -> Vec<u8> {
+    let blueprint = serde_json::json!({
+        "seed": 0,
+        "steps": [{
+            "kind": "model",
+            "prompt": prompt,
+            "params": { "max_turns": "4", "max_tool_calls": "3" }
+        }]
+    });
+    let mut env = kx_app::AppEnvelope::new("Grounded Analyst", blueprint);
+    env.description = "an App that self-grounds on its declared dataset + rule".to_string();
+    env.references.datasets.push(kx_app::DatasetRef {
+        dataset_ref: dataset.to_string(),
+        cas_refs: vec![],
+    });
+    let hex: String = rule_ref.iter().map(|b| format!("{b:02x}")).collect();
+    env.references.rules.push(kx_app::ArtifactRef {
+        name: "brief".to_string(),
+        content_ref: hex,
+    });
+    env.to_canonical_json().unwrap()
+}
+
+/// GR15/GR24 LIVE witness — the T-RUNAPP-CONTEXT-RAIL "come alive" proof: an App that
+/// declares a dataset + a rule (NO hand-authored tool grant) SELF-GROUNDS at RunApp — the
+/// dataset rail folds `retrieve@1` onto the entry step + steers it, and the rule rides the
+/// entry context. Runs the agentic loop on a REAL model over BOTH engines (Gemma, restart
+/// per engine). Needs `--features inference,hnsw` + an embedder; runtime-skips otherwise.
+/// Asserts only ROBUST invariants (settles to a terminal; if a tool fired it was `retrieve`
+/// — SN-8) and LOGS the trajectory; the deterministic fold/inject proofs live in the
+/// `app_run` unit tests + the `grounded` golden case.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real LLM inference + dataset embedding; needs a served Gemma + --features inference,hnsw; opt in with --ignored"]
+async fn runapp_grounded_app_self_grounds_live() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // Ingest a tiny paraphrase corpus (server-embed). The target doc never says
+    // "photosynthesis" — only the agent's own retrieve query surfaces it. Skip if the
+    // dataset view/embedder is absent (a `--features inference` build without `hnsw`).
+    let ingest = c
+        .ingest_documents(proto::IngestDocumentsRequest {
+            dataset: "science".to_string(),
+            documents: vec![
+                doc(b"Plants turn sunlight, water, and carbon dioxide into sugar and oxygen inside their leaves."),
+                doc(b"The mitochondria is the powerhouse of the cell, producing ATP from glucose."),
+                doc(b"Tectonic plates drift over the mantle, causing earthquakes at their boundaries."),
+            ],
+        })
+        .await;
+    if ingest.is_err() {
+        eprintln!("skipping: ingest unavailable (needs --features hnsw + an embedder)");
+        running.shutdown().await.unwrap();
+        return;
+    }
+
+    // Upload a guidance rule → a CAS ref (the context-rail leg).
+    let rule = c
+        .put_content(proto::PutContentRequest {
+            payload: b"Answer in ONE sentence, grounded in the retrieved passages.".to_vec(),
+            media_type: "text/plain".to_string(),
+            filename: String::new(),
+        })
+        .await
+        .expect("PutContent")
+        .into_inner();
+
+    let handle_str = "apps/local/grounded-analyst".to_string();
+    let envelope = grounded_app_envelope(
+        "science",
+        &rule.content_ref,
+        "How do plants make energy from the sun? Use the dataset to answer.",
+    );
+    c.save_app(proto::SaveAppRequest {
+        handle: handle_str.clone(),
+        envelope_json: envelope,
+    })
+    .await
+    .expect("SaveApp")
+    .into_inner();
+
+    let handle = match c
+        .run_app(proto::RunAppRequest {
+            handle: handle_str,
+            args: Vec::new(),
+        })
+        .await
+    {
+        Ok(h) => h.into_inner(),
+        Err(e) => {
+            eprintln!("skipping run leg: RunApp unavailable ({e})");
+            running.shutdown().await.unwrap();
+            return;
+        }
+    };
+    assert_eq!(handle.instance_id.len(), 16, "RunApp returns a run handle");
+
+    let (mut answered, mut dead, mut retrieved) = (false, false, false);
+    let mut fired: Vec<String> = Vec::new();
+    let mut branches: Vec<String> = Vec::new();
+    let mut dl_reasons: Vec<String> = Vec::new();
+    for _ in 0..3000 {
+        let turns = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(handle.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        branches = turns.turns.iter().map(|t| t.branch.clone()).collect();
+        for t in &turns.turns {
+            if t.branch == "tool" && !t.tool_id.is_empty() && !fired.contains(&t.tool_id) {
+                fired.push(t.tool_id.clone());
+            }
+            if t.branch == "tool" && t.tool_id == "retrieve" {
+                retrieved = true;
+            }
+        }
+        answered = turns.turns.iter().any(|t| t.branch == "answer");
+        dead = turns.turns.iter().any(|t| t.branch == "dead_lettered");
+        if dead {
+            dl_reasons = turns
+                .turns
+                .iter()
+                .filter(|t| t.branch == "dead_lettered" && !t.rejection_reason.is_empty())
+                .map(|t| t.rejection_reason.clone())
+                .collect();
+        }
+        if answered || dead {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    eprintln!(
+        "LIVE grounded RunApp [{engine}]: retrieved={retrieved} fired={fired:?} \
+         answered={answered} dead_lettered={dead} dl_reasons={dl_reasons:?} branches={branches:?}"
+    );
+    assert!(
+        answered || dead,
+        "the grounded App self-grounds + settles to a terminal on the live model [{engine}]"
+    );
+    // SN-8: the dataset rail folds EXACTLY retrieve@1 — no other tool can fire.
+    assert!(
+        fired.iter().all(|id| id.is_empty() || id == "retrieve"),
+        "only retrieve fires from the dataset rail; fired={fired:?}"
+    );
+
+    running.shutdown().await.unwrap();
+}
+
 /// The RC-SW2 swarm request `kx.swarm(...)` / `flow().swarm(...)` lowers to: N parallel MODEL
 /// leaves (no inter-edges) fanned into one MODEL gather that reads every leaf's committed
 /// output (its Data-edge parents, F-7). Built here as the raw proto the SDK produces.

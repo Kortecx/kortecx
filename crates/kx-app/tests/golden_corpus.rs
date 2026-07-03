@@ -61,6 +61,10 @@ fn corpus_covers_the_required_shapes() {
     let grounded = cases.iter().find(|c| c.name == "grounded").unwrap();
     assert!(grounded.canonical.contains("\"datasets\""));
     assert!(grounded.canonical.contains("\"dataset_ref\":\"research\""));
-    assert!(grounded.canonical.contains("\"requested_grants\":{\"retrieve\":\"1\"}"));
-    assert!(grounded.canonical.contains("\"dataset_refs\":[\"research\"]"));
+    assert!(grounded
+        .canonical
+        .contains("\"requested_grants\":{\"retrieve\":\"1\"}"));
+    assert!(grounded
+        .canonical
+        .contains("\"dataset_refs\":[\"research\"]"));
 }

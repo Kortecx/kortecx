@@ -128,7 +128,7 @@ impl HostAppAuthor {
     /// live registry + fireable view + content presence).
     #[must_use]
     #[allow(clippy::too_many_arguments)] // distinct Arc deps for one host resolver; a
-    // config struct would only move the arity to the caller (Rule 1: no churn for churn).
+                                         // config struct would only move the arity to the caller (Rule 1: no churn for churn).
     pub(crate) fn new(
         apps: Arc<dyn AppCatalog>,
         connections: Arc<SqliteConnectionStore>,
@@ -196,8 +196,9 @@ impl HostAppAuthor {
         }
         // Grant retrieve@1 on the entry root model step (agentic_step_warrant mints the
         // grant from the folded contract ∩ registry). `or_insert` ⇒ an author pin wins.
-        let granted: BTreeMap<String, String> =
-            [("retrieve".to_string(), "1".to_string())].into_iter().collect();
+        let granted: BTreeMap<String, String> = [("retrieve".to_string(), "1".to_string())]
+            .into_iter()
+            .collect();
         fold_skill_tools(dag, &granted);
         // Steer the entry step to USE retrieve on the named dataset(s) — steer-only DATA,
         // never a grant (SN-8; the same class as `inject_app_args` / `fold_react_rag_dataset`).
@@ -490,7 +491,9 @@ fn decode_present_ref(
 ) -> Result<[u8; 32], AppRunError> {
     let bytes = crate::provision::decode_hex32(content_ref).ok_or_else(|| {
         // Defense-in-depth: already impossible past AppEnvelope::validate (check_ref).
-        AppRunError::InvalidArgs(format!("{field} is not a 64-hex content ref: {content_ref:?}"))
+        AppRunError::InvalidArgs(format!(
+            "{field} is not a 64-hex content ref: {content_ref:?}"
+        ))
     })?;
     if !content.contains_ref(&ContentRef::from_bytes(bytes)) {
         return Err(AppRunError::InvalidArgs(format!(
@@ -1310,9 +1313,10 @@ mod tests {
     async fn author_app_with_a_context_rail_injects_labeled_items() {
         let dir = tempfile::tempdir().unwrap();
         let (host, content, _) = rig(dir.path(), &[]);
-        let rule = kx_content::ContentStore::put(content.as_ref(), b"# Cite your sources.").unwrap();
-        let note =
-            kx_content::ContentStore::put(content.as_ref(), b"Prior finding: whales sing.").unwrap();
+        let rule =
+            kx_content::ContentStore::put(content.as_ref(), b"# Cite your sources.").unwrap();
+        let note = kx_content::ContentStore::put(content.as_ref(), b"Prior finding: whales sing.")
+            .unwrap();
 
         let mut env = AppEnvelope::new(
             "grounded",
@@ -1406,7 +1410,10 @@ mod tests {
         .into_iter()
         .collect();
         let wish = combined_tool_wish(&skills, &steering);
-        assert_eq!(wish["echo-tool"], "1", "skill wins the cross-source conflict");
+        assert_eq!(
+            wish["echo-tool"], "1",
+            "skill wins the cross-source conflict"
+        );
         assert_eq!(wish["retrieve"], "1");
         assert_eq!(wish["fs-read"], "1", "steering-only wish included");
         assert_eq!(wish.len(), 3);
@@ -1455,7 +1462,11 @@ mod tests {
     fn steer_dataset_prompt_appends_a_grounding_directive_naming_datasets() {
         let mut d = dag(vec![model_step("Answer the question.")]);
         steer_dataset_prompt(&mut d, &["science".to_string(), "history".to_string()]);
-        assert!(d.steps[0].prompt.contains("retrieve"), "{}", d.steps[0].prompt);
+        assert!(
+            d.steps[0].prompt.contains("retrieve"),
+            "{}",
+            d.steps[0].prompt
+        );
         assert!(
             d.steps[0].prompt.contains("science, history"),
             "names the datasets: {}",
