@@ -355,8 +355,10 @@ export class Flow {
     }
     if (isAgentLike(item)) {
       const base = item.instructions;
+      // Forward the Agent's pinned model as model_id (Py↔TS parity); instructions+goal
+      // are the PROMPT.
       return task.model(
-        "",
+        item.opts.model ?? "",
         base ? joinGoal(base, goal) : goal,
         {},
         {
