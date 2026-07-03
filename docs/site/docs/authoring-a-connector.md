@@ -115,6 +115,18 @@ The SDK ships a minimal, complete **reference connector** to copy from —
 `kx-connector-example` (`crates/kx-extension-sdk/src/bin/reference_connector.rs`): two
 pure tools (`echo`, `reverse`), full handshake, no environment echo.
 
+**Scaffold your own with `kx new connector`.** It emits a self-contained, buildable
+sidecar crate (a `ping` starter tool + the credential-by-reference discipline + an offline
+`FAKE` mode + a passing conformance test) modelled on the bundled connectors — no `kx-*`
+dependency, so it cannot move the projection digest:
+
+```bash
+kx new connector slack           # → integrations/kx-connector-slack/ (default --dir integrations)
+cargo test -p kx-connector-slack # the emitted unit + conformance tests pass out of the box
+# implement your tools in src/lib.rs, add the crate to the workspace members, then:
+kx connections add --command kx-connector-slack --credential-ref KX_SLACK_CREDENTIAL
+```
+
 :::tip Security contract
 - **Never echo your environment.** An injected credential (see below) must reach no
   reply, so it never lands in a journal/content/telemetry sink (D81).
