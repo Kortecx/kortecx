@@ -142,7 +142,20 @@ export function StepConfigDrawer({
                     data-testid={`step-config-persona-${name}`}
                     onClick={() => {
                       const role = PERSONAS[name] ?? "";
-                      const body = step.prompt.trim();
+                      // Strip a leading persona (any known role) first, so re-picking a
+                      // persona SWAPS the role rather than stacking it.
+                      let body = step.prompt;
+                      for (const known of Object.values(PERSONAS)) {
+                        if (body === known) {
+                          body = "";
+                          break;
+                        }
+                        if (body.startsWith(`${known}\n\n`)) {
+                          body = body.slice(known.length + 2);
+                          break;
+                        }
+                      }
+                      body = body.trim();
                       onChange({ ...step, prompt: body ? `${role}\n\n${body}` : role });
                     }}
                   >

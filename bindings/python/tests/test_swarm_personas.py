@@ -86,6 +86,22 @@ def test_swarm_accepts_agents_flows_and_personas() -> None:
     assert low["steps"][0]["tool_contract"] == {"mcp-echo/echo": "1"}
 
 
+def test_persona_and_agent_leaves_lower_prompt_not_model_id() -> None:
+    # Regression for F1: a persona/Agent participant's instructions are the PROMPT, never
+    # the model_id, and `model` must not leak into params.
+    leaf = kx.flow().swarm(kx.persona("researcher"), goal="the topic").lowering()["steps"][0]
+    assert leaf["model_id"] == "", "instructions must NOT land in model_id"
+    assert leaf["prompt"] == f"{kx.PERSONAS['researcher']}\n\nthe topic"
+    assert leaf["params"] == {}, "no leaked `model` param"
+    # An Agent with a pinned model forwards it as model_id (Py↔TS parity).
+    a = kx.Agent("You are an analyst.", model="gemma-4", tools=["mcp-echo/echo"])
+    aleaf = kx.flow().swarm(a, goal="X").lowering()["steps"][0]
+    assert aleaf["model_id"] == "gemma-4"
+    assert aleaf["prompt"] == "You are an analyst.\n\nX"
+    assert aleaf["tool_contract"] == {"mcp-echo/echo": "1"}
+    assert aleaf["params"] == {}
+
+
 def test_empty_swarm_is_an_error() -> None:
     with pytest.raises(ChainError):
         kx.swarm()

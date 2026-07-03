@@ -92,6 +92,22 @@ describe("swarm / team / fanOutGather / mapReduce lowering", () => {
     expect(low.steps[0]?.tool_contract).toEqual({ "mcp-echo/echo": "1" });
   });
 
+  it("persona/Agent leaves lower prompt (not model_id); an Agent's model forwards", () => {
+    // Regression for F1/F2 (Py↔TS parity): instructions are the PROMPT, model_id="".
+    const leaf = flow()
+      .swarm([persona("researcher")], { goal: "the topic" })
+      .lower().steps[0];
+    expect(leaf?.model_id).toBe("");
+    expect(leaf?.prompt).toBe(`${PERSONAS.researcher}\n\nthe topic`);
+    expect(leaf?.params).toEqual({});
+    const a = new Agent("You are an analyst.", { model: "gemma-4", tools: ["mcp-echo/echo"] });
+    const aleaf = flow().swarm([a], { goal: "X" }).lower().steps[0];
+    expect(aleaf?.model_id).toBe("gemma-4");
+    expect(aleaf?.prompt).toBe("You are an analyst.\n\nX");
+    expect(aleaf?.tool_contract).toEqual({ "mcp-echo/echo": "1" });
+    expect(aleaf?.params).toEqual({});
+  });
+
   it("an empty swarm is an error", () => {
     expect(() => swarm([])).toThrow();
     expect(() => flow().fanOutGather([])).toThrow();

@@ -95,10 +95,14 @@ def _participant_to_node(item: "object", goal: str) -> "_Node":
         return _model(prompt=_join_goal(item, goal))
     prompt_fn = getattr(item, "_prompt", None)
     if callable(prompt_fn):  # duck-typed Agent / persona
+        # model_id is the FIRST positional arg of chains.model, prompt the SECOND — pass
+        # them positionally (as Flow.agent does); a keyword `model=` would leak into
+        # **params (chains.model has no `model` kwarg). The persona/Agent instructions +
+        # goal are the PROMPT, never the model_id.
         return _model(
+            getattr(item, "model", "") or "",
             prompt_fn(goal),
             tools=getattr(item, "tools", None),
-            model=getattr(item, "model", "") or "",
             max_turns=getattr(item, "max_turns", None),
             max_tool_calls=getattr(item, "max_tool_calls", None),
             reasoning=getattr(item, "reasoning", None),
