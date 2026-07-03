@@ -1643,7 +1643,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     {
         gateway = gateway
             .with_dataset_view(dataset_view.clone())
-            .with_fuzzy_discovery(dataset_view);
+            // T-RUNAPP-CONTEXT-RAIL: clone (not move) — the RunApp resolver below also
+            // takes a handle for its RAG-on-App dataset presence check.
+            .with_fuzzy_discovery(dataset_view.clone());
         // RC5a: wire the memory RPCs only when KX_SERVE_MEMORY is on (else they honestly
         // return `unimplemented`). The client-vector StoreMemory/RecallMemory path works
         // under `hnsw` alone; server-embed needs `serve-engine` + a model.
@@ -1714,6 +1716,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         // SubmitWorkflow). Server-minted warrants; off-journal, off-digest.
         match kx_mcp_gateway::SqliteConnectionStore::open(catalog_dir.join("connections.db")) {
             Ok(conn_store) => {
+                // T-RUNAPP-CONTEXT-RAIL: the live dataset view for RAG-on-App presence
+                // checks — Some ONLY where retrieve@1 is both registered AND fireable
+                // (serve-engine + hnsw, matching register_retrieve_capability above); else
+                // None ⇒ a declared App dataset honest-degrades to an ungrounded run.
+                #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+                let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> =
+                    Some(dataset_view.clone() as Arc<dyn kx_gateway_core::DatasetView>);
+                #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
+                let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> = None;
                 let app_runner = crate::app_run::HostAppAuthor::new(
                     apps_db.clone(),
                     Arc::new(conn_store),
@@ -1727,6 +1738,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                         broker: local_broker.clone(),
                     }),
                     content.clone(),
+                    app_datasets,
                 );
                 gateway = gateway.with_app_runner(Arc::new(app_runner));
                 tracing::info!("G2: App-pointer run resolver wired (RunApp)");
