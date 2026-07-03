@@ -3051,6 +3051,7 @@ impl KxGateway for GatewayService {
         // ReAct chain's anchor + settled branches). Always available (no seam).
         let resp = crate::react::list_react_turns(
             self.reader.as_ref(),
+            Some(self.content.as_ref()), // decode the anchor warrant for the governance axes
             req.limit,
             req.instance_id.as_deref(),
             req.step_salt.as_deref(), // PR-R1: optional per-chain scope

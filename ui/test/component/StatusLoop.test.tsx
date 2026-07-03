@@ -21,6 +21,8 @@ function turn(partial: Partial<ReactTurnVM>): ReactTurnVM {
     maxTurns: 8,
     rejectionReason: "",
     callIndex: 0,
+    grantedTools: [],
+    secretScopeNames: [],
     ...partial,
   };
 }

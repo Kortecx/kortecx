@@ -35,7 +35,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file kortecx/v1/coordinator.proto.
  */
 export const file_kortecx_v1_coordinator: GenFile = /*@__PURE__*/
-  fileDesc("Chxrb3J0ZWN4L3YxL2Nvb3JkaW5hdG9yLnByb3RvEgprb3J0ZWN4LnYxIqwBCg9JbmZlcmVuY2VQYXJhbXMSGQoRbWF4X291dHB1dF90b2tlbnMYASABKA0SFwoPdGVtcGVyYXR1cmVfYnBzGAIgASgNEhEKCXRvcF9wX2JwcxgDIAEoDRINCgV0b3BfaxgEIAEoDRIMCgRzZWVkGAUgASgNEhMKC3N0b3BfdG9rZW5zGAYgAygJEhQKB2dyYW1tYXIYByABKAlIAIgBAUIKCghfZ3JhbW1hciLLBAoHTW90ZURlZhIRCglsb2dpY19yZWYYASABKAwSEAoIbW9kZWxfaWQYAiABKAkSHAoUcHJvbXB0X3RlbXBsYXRlX2hhc2gYAyABKAwSPAoNdG9vbF9jb250cmFjdBgEIAMoCzIlLmtvcnRlY3gudjEuTW90ZURlZi5Ub29sQ29udHJhY3RFbnRyeRIlCghuZF9jbGFzcxgFIAEoDjITLmtvcnRlY3gudjEuTmRDbGFzcxI8Cg1jb25maWdfc3Vic2V0GAYgAygLMiUua29ydGVjeC52MS5Nb3RlRGVmLkNvbmZpZ1N1YnNldEVudHJ5EjEKDmVmZmVjdF9wYXR0ZXJuGAcgASgOMhkua29ydGVjeC52MS5FZmZlY3RQYXR0ZXJuEhcKCmNyaXRpY19mb3IYCCABKAxIAIgBARIaChJpc190b3BvbG9neV9zaGFwZXIYCSABKAgSNQoQaW5mZXJlbmNlX3BhcmFtcxgKIAEoCzIbLmtvcnRlY3gudjEuSW5mZXJlbmNlUGFyYW1zEhYKDnNjaGVtYV92ZXJzaW9uGAsgASgNEhkKDGNyaXRpY19jaGVjaxgMIAEoDEgBiAEBGjMKEVRvb2xDb250cmFjdEVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaMwoRQ29uZmlnU3Vic2V0RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgMOgI4AUINCgtfY3JpdGljX2ZvckIPCg1fY3JpdGljX2NoZWNrIlwKCVBhcmVudFJlZhIRCglwYXJlbnRfaWQYASABKAwSJwoJZWRnZV9raW5kGAIgASgOMhQua29ydGVjeC52MS5FZGdlS2luZBITCgtub25fY2FzY2FkZRgDIAEoCCKQAQoETW90ZRIPCgdtb3RlX2lkGAEgASgMEiAKA2RlZhgCIAEoCzITLmtvcnRlY3gudjEuTW90ZURlZhIVCg1pbnB1dF9kYXRhX2lkGAMgASgMEhYKDmdyYXBoX3Bvc2l0aW9uGAQgASgMEiYKB3BhcmVudHMYBSADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZiIyCglUb29sR3JhbnQSDwoHdG9vbF9pZBgBIAEoCRIUCgx0b29sX3ZlcnNpb24YAiABKAkiZgoKTW9kZWxSb3V0ZRIQCghtb2RlbF9pZBgBIAEoCRIYChBtYXhfaW5wdXRfdG9rZW5zGAIgASgNEhkKEW1heF9vdXRwdXRfdG9rZW5zGAMgASgNEhEKCW1heF9jYWxscxgEIAEoDSJ0Cg9SZXNvdXJjZUNlaWxpbmcSEQoJY3B1X21pbGxpGAEgASgNEhEKCW1lbV9ieXRlcxgCIAEoBBIVCg13YWxsX2Nsb2NrX21zGAMgASgEEhAKCGZkX2NvdW50GAQgASgNEhIKCmRpc2tfYnl0ZXMYBSABKAQiOQoHRnNNb3VudBIMCgRwYXRoGAEgASgJEiAKBG1vZGUYAiABKA4yEi5rb3J0ZWN4LnYxLkZzTW9kZSIuCgdGc1Njb3BlEiMKBm1vdW50cxgBIAMoCzITLmtvcnRlY3gudjEuRnNNb3VudCJtCghOZXRTY29wZRIoCgRub25lGAEgASgLMhgua29ydGVjeC52MS5OZXRTY29wZU5vbmVIABIuCglhbGxvd2xpc3QYAiABKAsyGS5rb3J0ZWN4LnYxLkhvc3RBbGxvd2xpc3RIAEIHCgVzY29wZSIOCgxOZXRTY29wZU5vbmUiHgoNSG9zdEFsbG93bGlzdBINCgVob3N0cxgBIAMoCSLDAwoLV2FycmFudFNwZWMSKQoKbW90ZV9jbGFzcxgBIAEoDjIVLmtvcnRlY3gudjEuTW90ZUNsYXNzEicKCG5kX2NsYXNzGAIgASgOMhUua29ydGVjeC52MS5Nb3RlQ2xhc3MSJQoIZnNfc2NvcGUYAyABKAsyEy5rb3J0ZWN4LnYxLkZzU2NvcGUSJwoJbmV0X3Njb3BlGAQgASgLMhQua29ydGVjeC52MS5OZXRTY29wZRIbChNzeXNjYWxsX3Byb2ZpbGVfcmVmGAUgASgMEioKC3Rvb2xfZ3JhbnRzGAYgAygLMhUua29ydGVjeC52MS5Ub29sR3JhbnQSKwoLbW9kZWxfcm91dGUYByABKAsyFi5rb3J0ZWN4LnYxLk1vZGVsUm91dGUSNQoQcmVzb3VyY2VfY2VpbGluZxgIIAEoCzIbLmtvcnRlY3gudjEuUmVzb3VyY2VDZWlsaW5nEhwKD2Vudmlyb25tZW50X3JlZhgJIAEoDEgAiAEBEjEKDmV4ZWN1dG9yX2NsYXNzGAogASgOMhkua29ydGVjeC52MS5FeGVjdXRvckNsYXNzQhIKEF9lbnZpcm9ubWVudF9yZWYijwEKEVN1Ym1pdE1vdGVSZXF1ZXN0Eh4KBG1vdGUYASABKAsyEC5rb3J0ZWN4LnYxLk1vdGUSKAoHd2FycmFudBgCIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFNwZWMSHAoUYWNjZXB0X2F0X2xlYXN0X29uY2UYAyABKAgSEgoKcmVhY3Rfc2VlZBgEIAEoCCKKAQoSU3VibWl0TW90ZVJlc3BvbnNlEg8KB21vdGVfaWQYASABKAwSKAoGc3RhdHVzGAIgASgOMhgua29ydGVjeC52MS5TdWJtaXRTdGF0dXMSDgoGZGV0YWlsGAMgASgJEhMKC2luc3RhbmNlX2lkGAQgASgMEhQKDHJlZnVzYWxfY29kZRgFIAEoCSLhAQoTUmVwb3J0Q29tbWl0UmVxdWVzdBIPCgdtb3RlX2lkGAEgASgMEhcKD2lkZW1wb3RlbmN5X2tleRgCIAEoDBISCgpyZXN1bHRfcmVmGAMgASgMEhMKC3dhcnJhbnRfcmVmGAQgASgMEhUKDW1vdGVfZGVmX2hhc2gYBSABKAwSJQoIbmRfY2xhc3MYBiABKA4yEy5rb3J0ZWN4LnYxLk5kQ2xhc3MSJgoHcGFyZW50cxgHIAMoCzIVLmtvcnRlY3gudjEuUGFyZW50UmVmEhEKCXdvcmtlcl9pZBgIIAEoBCJpChRSZXBvcnRDb21taXRSZXNwb25zZRIVCg1jb21taXR0ZWRfc2VxGAEgASgEEioKB291dGNvbWUYAiABKA4yGS5rb3J0ZWN4LnYxLkNvbW1pdE91dGNvbWUSDgoGZGV0YWlsGAMgASgJIlgKGVJlcG9ydEVmZmVjdFN0YWdlZFJlcXVlc3QSDwoHbW90ZV9pZBgBIAEoDBIXCg9pZGVtcG90ZW5jeV9rZXkYAiABKAwSEQoJd29ya2VyX2lkGAMgASgEIj0KGlJlcG9ydEVmZmVjdFN0YWdlZFJlc3BvbnNlEhIKCnN0YWdlZF9zZXEYASABKAQSCwoDYWNrGAIgASgIIoQBChRSZXBvcnRGYWlsdXJlUmVxdWVzdBIPCgdtb3RlX2lkGAEgASgMEhcKD2lkZW1wb3RlbmN5X2tleRgCIAEoDBIvCgxyZWFzb25fY2xhc3MYAyABKA4yGS5rb3J0ZWN4LnYxLkZhaWx1cmVSZWFzb24SEQoJd29ya2VyX2lkGAQgASgEIjgKFVJlcG9ydEZhaWx1cmVSZXNwb25zZRISCgpmYWlsZWRfc2VxGAEgASgEEgsKA2FjaxgCIAEoCCJOChBIZWFydGJlYXRSZXF1ZXN0EhEKCXdvcmtlcl9pZBgBIAEoBBIUCgx0aW1lc3RhbXBfbXMYAiABKAQSEQoJaW5fZmxpZ2h0GAMgASgNIiAKEUhlYXJ0YmVhdFJlc3BvbnNlEgsKA2FjaxgBIAEoCCJcChVSZWdpc3RlcldvcmtlclJlcXVlc3QSMQoOZXhlY3V0b3JfY2xhc3MYASABKA4yGS5rb3J0ZWN4LnYxLkV4ZWN1dG9yQ2xhc3MSEAoIZW5kcG9pbnQYAiABKAkiKwoWUmVnaXN0ZXJXb3JrZXJSZXNwb25zZRIRCgl3b3JrZXJfaWQYASABKAQiawoQTGVhc2VXb3JrUmVxdWVzdBIRCgl3b3JrZXJfaWQYASABKAQSMQoOZXhlY3V0b3JfY2xhc3MYAiABKA4yGS5rb3J0ZWN4LnYxLkV4ZWN1dG9yQ2xhc3MSEQoJbWF4X21vdGVzGAMgASgNIjoKDFBhcmVudFJlc3VsdBIWCg5wYXJlbnRfbW90ZV9pZBgBIAEoDBISCgpyZXN1bHRfcmVmGAIgASgMIm4KCFRvb2xBcmdzEhIKCmFyZ3NfYnl0ZXMYASABKAwSJwoJbmV0X3Njb3BlGAIgASgLMhQua29ydGVjeC52MS5OZXRTY29wZRIlCghmc19zY29wZRgDIAEoCzITLmtvcnRlY3gudjEuRnNTY29wZSLZAQoIV29ya0l0ZW0SHgoEbW90ZRgBIAEoCzIQLmtvcnRlY3gudjEuTW90ZRIoCgd3YXJyYW50GAIgASgLMhcua29ydGVjeC52MS5XYXJyYW50U3BlYxIwCg5wYXJlbnRfcmVzdWx0cxgDIAMoCzIYLmtvcnRlY3gudjEuUGFyZW50UmVzdWx0EicKCXRvb2xfYXJncxgEIAEoCzIULmtvcnRlY3gudjEuVG9vbEFyZ3MSFQoNY29udGV4dF9pdGVtcxgFIAEoDBIRCglpbWFnZV9yZWYYBiABKAwiTQoRTGVhc2VXb3JrUmVzcG9uc2USIwoFaXRlbXMYASADKAsyFC5rb3J0ZWN4LnYxLldvcmtJdGVtEhMKC2luc3RhbmNlX2lkGAIgASgMIjQKElJlYWRFbnRyaWVzUmVxdWVzdBIRCglzaW5jZV9zZXEYASABKAQSCwoDbWF4GAIgASgNItYBCg5Db21taXR0ZWRFbnRyeRIPCgdtb3RlX2lkGAEgASgMEhcKD2lkZW1wb3RlbmN5X2tleRgCIAEoDBILCgNzZXEYAyABKAQSJQoIbmRfY2xhc3MYBCABKA4yEy5rb3J0ZWN4LnYxLk5kQ2xhc3MSEgoKcmVzdWx0X3JlZhgFIAEoDBImCgdwYXJlbnRzGAYgAygLMhUua29ydGVjeC52MS5QYXJlbnRSZWYSEwoLd2FycmFudF9yZWYYByABKAwSFQoNbW90ZV9kZWZfaGFzaBgIIAEoDCJUCgxKb3VybmFsRW50cnkSCwoDc2VxGAEgASgEEi8KCWNvbW1pdHRlZBgCIAEoCzIaLmtvcnRlY3gudjEuQ29tbWl0dGVkRW50cnlIAEIGCgRraW5kIlIKE1JlYWRFbnRyaWVzUmVzcG9uc2USKQoHZW50cmllcxgBIAMoCzIYLmtvcnRlY3gudjEuSm91cm5hbEVudHJ5EhAKCG5leHRfc2VxGAIgASgEIjAKElJlZ2lzdGVyUnVuUmVxdWVzdBIaChJyZWNpcGVfZmluZ2VycHJpbnQYASABKAwiKgoTUmVnaXN0ZXJSdW5SZXNwb25zZRITCgtpbnN0YW5jZV9pZBgBIAEoDCpyCgdOZENsYXNzEhgKFE5EX0NMQVNTX1VOU1BFQ0lGSUVEEAASEQoNTkRfQ0xBU1NfUFVSRRABEh0KGU5EX0NMQVNTX1JFQURfT05MWV9OT05ERVQQAhIbChdORF9DTEFTU19XT1JMRF9NVVRBVElORxADKq0BCg1FZmZlY3RQYXR0ZXJuEh4KGkVGRkVDVF9QQVRURVJOX1VOU1BFQ0lGSUVEEAASLQopRUZGRUNUX1BBVFRFUk5fSURFTVBPVEVOVF9CWV9DT05TVFJVQ1RJT04QARIkCiBFRkZFQ1RfUEFUVEVSTl9TVEFHRV9USEVOX0NPTU1JVBACEicKI0VGRkVDVF9QQVRURVJOX1ZBTElEQVRFX1RIRU5fQ09NTUlUEAMqUAoIRWRnZUtpbmQSGQoVRURHRV9LSU5EX1VOU1BFQ0lGSUVEEAASEgoORURHRV9LSU5EX0RBVEEQARIVChFFREdFX0tJTkRfQ09OVFJPTBACKnwKCU1vdGVDbGFzcxIaChZNT1RFX0NMQVNTX1VOU1BFQ0lGSUVEEAASEwoPTU9URV9DTEFTU19QVVJFEAESHwobTU9URV9DTEFTU19SRUFEX09OTFlfTk9OREVUEAISHQoZTU9URV9DTEFTU19XT1JMRF9NVVRBVElORxADKmcKBkZzTW9kZRIXChNGU19NT0RFX1VOU1BFQ0lGSUVEEAASFQoRRlNfTU9ERV9SRUFEX09OTFkQARIWChJGU19NT0RFX1JFQURfV1JJVEUQAhIVChFGU19NT0RFX0VYRUNfT05MWRADKpkDCg1GYWlsdXJlUmVhc29uEh4KGkZBSUxVUkVfUkVBU09OX1VOU1BFQ0lGSUVEEAASHAoYRkFJTFVSRV9SRUFTT05fVElNRURfT1VUEAESIwofRkFJTFVSRV9SRUFTT05fRVhFQ1VUT1JfUkVGVVNFRBACEiUKIUZBSUxVUkVfUkVBU09OX1ZBTElEQVRPUl9SRUpFQ1RFRBADEiEKHUZBSUxVUkVfUkVBU09OX1dPUktFUl9DUkFTSEVEEAQSJgoiRkFJTFVSRV9SRUFTT05fVVBTVFJFQU1fUkVQVURJQVRFRBAFEjUKMUZBSUxVUkVfUkVBU09OX1VOU0FGRV9XT1JMRF9NVVRBVElOR19DT05TVFJVQ1RJT04QBhIsCihGQUlMVVJFX1JFQVNPTl9DT01QRU5TQVRFRF9BVF9MRUFTVF9PTkNFEAcSLAooRkFJTFVSRV9SRUFTT05fUVVBUkFOVElORURfQVRfTEVBU1RfT05DRRAIEiAKHEZBSUxVUkVfUkVBU09OX0RFQURfTEVUVEVSRUQQCSqtAQoNRXhlY3V0b3JDbGFzcxIeChpFWEVDVVRPUl9DTEFTU19VTlNQRUNJRklFRBAAEhgKFEVYRUNVVE9SX0NMQVNTX0JXUkFQEAESHQoZRVhFQ1VUT1JfQ0xBU1NfT0NJX0RBRU1PThACEiEKHUVYRUNVVE9SX0NMQVNTX0NMT1VEX01JQ1JPX1ZNEAMSIAocRVhFQ1VUT1JfQ0xBU1NfTUFDT1NfU0FOREJPWBAEKoIBCgxTdWJtaXRTdGF0dXMSHQoZU1VCTUlUX1NUQVRVU19VTlNQRUNJRklFRBAAEhoKFlNVQk1JVF9TVEFUVVNfQUNDRVBURUQQARIbChdTVUJNSVRfU1RBVFVTX0RVUExJQ0FURRACEhoKFlNVQk1JVF9TVEFUVVNfUkVKRUNURUQQAyqQAQoNQ29tbWl0T3V0Y29tZRIeChpDT01NSVRfT1VUQ09NRV9VTlNQRUNJRklFRBAAEhwKGENPTU1JVF9PVVRDT01FX0NPTU1JVFRFRBABEiQKIENPTU1JVF9PVVRDT01FX0FMUkVBRFlfQ09NTUlUVEVEEAISGwoXQ09NTUlUX09VVENPTUVfUkVKRUNURUQQAzL1BQoLQ29vcmRpbmF0b3ISVwoOUmVnaXN0ZXJXb3JrZXISIS5rb3J0ZWN4LnYxLlJlZ2lzdGVyV29ya2VyUmVxdWVzdBoiLmtvcnRlY3gudjEuUmVnaXN0ZXJXb3JrZXJSZXNwb25zZRJICglIZWFydGJlYXQSHC5rb3J0ZWN4LnYxLkhlYXJ0YmVhdFJlcXVlc3QaHS5rb3J0ZWN4LnYxLkhlYXJ0YmVhdFJlc3BvbnNlEksKClN1Ym1pdE1vdGUSHS5rb3J0ZWN4LnYxLlN1Ym1pdE1vdGVSZXF1ZXN0Gh4ua29ydGVjeC52MS5TdWJtaXRNb3RlUmVzcG9uc2USUQoMUmVwb3J0Q29tbWl0Eh8ua29ydGVjeC52MS5SZXBvcnRDb21taXRSZXF1ZXN0GiAua29ydGVjeC52MS5SZXBvcnRDb21taXRSZXNwb25zZRJICglMZWFzZVdvcmsSHC5rb3J0ZWN4LnYxLkxlYXNlV29ya1JlcXVlc3QaHS5rb3J0ZWN4LnYxLkxlYXNlV29ya1Jlc3BvbnNlEk4KC1JlYWRFbnRyaWVzEh4ua29ydGVjeC52MS5SZWFkRW50cmllc1JlcXVlc3QaHy5rb3J0ZWN4LnYxLlJlYWRFbnRyaWVzUmVzcG9uc2USYwoSUmVwb3J0RWZmZWN0U3RhZ2VkEiUua29ydGVjeC52MS5SZXBvcnRFZmZlY3RTdGFnZWRSZXF1ZXN0GiYua29ydGVjeC52MS5SZXBvcnRFZmZlY3RTdGFnZWRSZXNwb25zZRJOCgtSZWdpc3RlclJ1bhIeLmtvcnRlY3gudjEuUmVnaXN0ZXJSdW5SZXF1ZXN0Gh8ua29ydGVjeC52MS5SZWdpc3RlclJ1blJlc3BvbnNlElQKDVJlcG9ydEZhaWx1cmUSIC5rb3J0ZWN4LnYxLlJlcG9ydEZhaWx1cmVSZXF1ZXN0GiEua29ydGVjeC52MS5SZXBvcnRGYWlsdXJlUmVzcG9uc2ViBnByb3RvMw");
+  fileDesc("Chxrb3J0ZWN4L3YxL2Nvb3JkaW5hdG9yLnByb3RvEgprb3J0ZWN4LnYxIqwBCg9JbmZlcmVuY2VQYXJhbXMSGQoRbWF4X291dHB1dF90b2tlbnMYASABKA0SFwoPdGVtcGVyYXR1cmVfYnBzGAIgASgNEhEKCXRvcF9wX2JwcxgDIAEoDRINCgV0b3BfaxgEIAEoDRIMCgRzZWVkGAUgASgNEhMKC3N0b3BfdG9rZW5zGAYgAygJEhQKB2dyYW1tYXIYByABKAlIAIgBAUIKCghfZ3JhbW1hciLLBAoHTW90ZURlZhIRCglsb2dpY19yZWYYASABKAwSEAoIbW9kZWxfaWQYAiABKAkSHAoUcHJvbXB0X3RlbXBsYXRlX2hhc2gYAyABKAwSPAoNdG9vbF9jb250cmFjdBgEIAMoCzIlLmtvcnRlY3gudjEuTW90ZURlZi5Ub29sQ29udHJhY3RFbnRyeRIlCghuZF9jbGFzcxgFIAEoDjITLmtvcnRlY3gudjEuTmRDbGFzcxI8Cg1jb25maWdfc3Vic2V0GAYgAygLMiUua29ydGVjeC52MS5Nb3RlRGVmLkNvbmZpZ1N1YnNldEVudHJ5EjEKDmVmZmVjdF9wYXR0ZXJuGAcgASgOMhkua29ydGVjeC52MS5FZmZlY3RQYXR0ZXJuEhcKCmNyaXRpY19mb3IYCCABKAxIAIgBARIaChJpc190b3BvbG9neV9zaGFwZXIYCSABKAgSNQoQaW5mZXJlbmNlX3BhcmFtcxgKIAEoCzIbLmtvcnRlY3gudjEuSW5mZXJlbmNlUGFyYW1zEhYKDnNjaGVtYV92ZXJzaW9uGAsgASgNEhkKDGNyaXRpY19jaGVjaxgMIAEoDEgBiAEBGjMKEVRvb2xDb250cmFjdEVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaMwoRQ29uZmlnU3Vic2V0RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgMOgI4AUINCgtfY3JpdGljX2ZvckIPCg1fY3JpdGljX2NoZWNrIlwKCVBhcmVudFJlZhIRCglwYXJlbnRfaWQYASABKAwSJwoJZWRnZV9raW5kGAIgASgOMhQua29ydGVjeC52MS5FZGdlS2luZBITCgtub25fY2FzY2FkZRgDIAEoCCKQAQoETW90ZRIPCgdtb3RlX2lkGAEgASgMEiAKA2RlZhgCIAEoCzITLmtvcnRlY3gudjEuTW90ZURlZhIVCg1pbnB1dF9kYXRhX2lkGAMgASgMEhYKDmdyYXBoX3Bvc2l0aW9uGAQgASgMEiYKB3BhcmVudHMYBSADKAsyFS5rb3J0ZWN4LnYxLlBhcmVudFJlZiIyCglUb29sR3JhbnQSDwoHdG9vbF9pZBgBIAEoCRIUCgx0b29sX3ZlcnNpb24YAiABKAkiZgoKTW9kZWxSb3V0ZRIQCghtb2RlbF9pZBgBIAEoCRIYChBtYXhfaW5wdXRfdG9rZW5zGAIgASgNEhkKEW1heF9vdXRwdXRfdG9rZW5zGAMgASgNEhEKCW1heF9jYWxscxgEIAEoDSJ0Cg9SZXNvdXJjZUNlaWxpbmcSEQoJY3B1X21pbGxpGAEgASgNEhEKCW1lbV9ieXRlcxgCIAEoBBIVCg13YWxsX2Nsb2NrX21zGAMgASgEEhAKCGZkX2NvdW50GAQgASgNEhIKCmRpc2tfYnl0ZXMYBSABKAQiOQoHRnNNb3VudBIMCgRwYXRoGAEgASgJEiAKBG1vZGUYAiABKA4yEi5rb3J0ZWN4LnYxLkZzTW9kZSIuCgdGc1Njb3BlEiMKBm1vdW50cxgBIAMoCzITLmtvcnRlY3gudjEuRnNNb3VudCJtCghOZXRTY29wZRIoCgRub25lGAEgASgLMhgua29ydGVjeC52MS5OZXRTY29wZU5vbmVIABIuCglhbGxvd2xpc3QYAiABKAsyGS5rb3J0ZWN4LnYxLkhvc3RBbGxvd2xpc3RIAEIHCgVzY29wZSIOCgxOZXRTY29wZU5vbmUiHgoNSG9zdEFsbG93bGlzdBINCgVob3N0cxgBIAMoCSLyAwoLV2FycmFudFNwZWMSKQoKbW90ZV9jbGFzcxgBIAEoDjIVLmtvcnRlY3gudjEuTW90ZUNsYXNzEicKCG5kX2NsYXNzGAIgASgOMhUua29ydGVjeC52MS5Nb3RlQ2xhc3MSJQoIZnNfc2NvcGUYAyABKAsyEy5rb3J0ZWN4LnYxLkZzU2NvcGUSJwoJbmV0X3Njb3BlGAQgASgLMhQua29ydGVjeC52MS5OZXRTY29wZRIbChNzeXNjYWxsX3Byb2ZpbGVfcmVmGAUgASgMEioKC3Rvb2xfZ3JhbnRzGAYgAygLMhUua29ydGVjeC52MS5Ub29sR3JhbnQSKwoLbW9kZWxfcm91dGUYByABKAsyFi5rb3J0ZWN4LnYxLk1vZGVsUm91dGUSNQoQcmVzb3VyY2VfY2VpbGluZxgIIAEoCzIbLmtvcnRlY3gudjEuUmVzb3VyY2VDZWlsaW5nEhwKD2Vudmlyb25tZW50X3JlZhgJIAEoDEgAiAEBEjEKDmV4ZWN1dG9yX2NsYXNzGAogASgOMhkua29ydGVjeC52MS5FeGVjdXRvckNsYXNzEi0KDHNlY3JldF9zY29wZRgLIAEoCzIXLmtvcnRlY3gudjEuU2VjcmV0U2NvcGVCEgoQX2Vudmlyb25tZW50X3JlZiJ4CgtTZWNyZXRTY29wZRIrCgRub25lGAEgASgLMhsua29ydGVjeC52MS5TZWNyZXRTY29wZU5vbmVIABIzCglhbGxvd2xpc3QYAiABKAsyHi5rb3J0ZWN4LnYxLlNlY3JldFJlZkFsbG93bGlzdEgAQgcKBXNjb3BlIhEKD1NlY3JldFNjb3BlTm9uZSIjChJTZWNyZXRSZWZBbGxvd2xpc3QSDQoFbmFtZXMYASADKAkijwEKEVN1Ym1pdE1vdGVSZXF1ZXN0Eh4KBG1vdGUYASABKAsyEC5rb3J0ZWN4LnYxLk1vdGUSKAoHd2FycmFudBgCIAEoCzIXLmtvcnRlY3gudjEuV2FycmFudFNwZWMSHAoUYWNjZXB0X2F0X2xlYXN0X29uY2UYAyABKAgSEgoKcmVhY3Rfc2VlZBgEIAEoCCKKAQoSU3VibWl0TW90ZVJlc3BvbnNlEg8KB21vdGVfaWQYASABKAwSKAoGc3RhdHVzGAIgASgOMhgua29ydGVjeC52MS5TdWJtaXRTdGF0dXMSDgoGZGV0YWlsGAMgASgJEhMKC2luc3RhbmNlX2lkGAQgASgMEhQKDHJlZnVzYWxfY29kZRgFIAEoCSLhAQoTUmVwb3J0Q29tbWl0UmVxdWVzdBIPCgdtb3RlX2lkGAEgASgMEhcKD2lkZW1wb3RlbmN5X2tleRgCIAEoDBISCgpyZXN1bHRfcmVmGAMgASgMEhMKC3dhcnJhbnRfcmVmGAQgASgMEhUKDW1vdGVfZGVmX2hhc2gYBSABKAwSJQoIbmRfY2xhc3MYBiABKA4yEy5rb3J0ZWN4LnYxLk5kQ2xhc3MSJgoHcGFyZW50cxgHIAMoCzIVLmtvcnRlY3gudjEuUGFyZW50UmVmEhEKCXdvcmtlcl9pZBgIIAEoBCJpChRSZXBvcnRDb21taXRSZXNwb25zZRIVCg1jb21taXR0ZWRfc2VxGAEgASgEEioKB291dGNvbWUYAiABKA4yGS5rb3J0ZWN4LnYxLkNvbW1pdE91dGNvbWUSDgoGZGV0YWlsGAMgASgJIlgKGVJlcG9ydEVmZmVjdFN0YWdlZFJlcXVlc3QSDwoHbW90ZV9pZBgBIAEoDBIXCg9pZGVtcG90ZW5jeV9rZXkYAiABKAwSEQoJd29ya2VyX2lkGAMgASgEIj0KGlJlcG9ydEVmZmVjdFN0YWdlZFJlc3BvbnNlEhIKCnN0YWdlZF9zZXEYASABKAQSCwoDYWNrGAIgASgIIoQBChRSZXBvcnRGYWlsdXJlUmVxdWVzdBIPCgdtb3RlX2lkGAEgASgMEhcKD2lkZW1wb3RlbmN5X2tleRgCIAEoDBIvCgxyZWFzb25fY2xhc3MYAyABKA4yGS5rb3J0ZWN4LnYxLkZhaWx1cmVSZWFzb24SEQoJd29ya2VyX2lkGAQgASgEIjgKFVJlcG9ydEZhaWx1cmVSZXNwb25zZRISCgpmYWlsZWRfc2VxGAEgASgEEgsKA2FjaxgCIAEoCCJOChBIZWFydGJlYXRSZXF1ZXN0EhEKCXdvcmtlcl9pZBgBIAEoBBIUCgx0aW1lc3RhbXBfbXMYAiABKAQSEQoJaW5fZmxpZ2h0GAMgASgNIiAKEUhlYXJ0YmVhdFJlc3BvbnNlEgsKA2FjaxgBIAEoCCJcChVSZWdpc3RlcldvcmtlclJlcXVlc3QSMQoOZXhlY3V0b3JfY2xhc3MYASABKA4yGS5rb3J0ZWN4LnYxLkV4ZWN1dG9yQ2xhc3MSEAoIZW5kcG9pbnQYAiABKAkiKwoWUmVnaXN0ZXJXb3JrZXJSZXNwb25zZRIRCgl3b3JrZXJfaWQYASABKAQiawoQTGVhc2VXb3JrUmVxdWVzdBIRCgl3b3JrZXJfaWQYASABKAQSMQoOZXhlY3V0b3JfY2xhc3MYAiABKA4yGS5rb3J0ZWN4LnYxLkV4ZWN1dG9yQ2xhc3MSEQoJbWF4X21vdGVzGAMgASgNIjoKDFBhcmVudFJlc3VsdBIWCg5wYXJlbnRfbW90ZV9pZBgBIAEoDBISCgpyZXN1bHRfcmVmGAIgASgMIm4KCFRvb2xBcmdzEhIKCmFyZ3NfYnl0ZXMYASABKAwSJwoJbmV0X3Njb3BlGAIgASgLMhQua29ydGVjeC52MS5OZXRTY29wZRIlCghmc19zY29wZRgDIAEoCzITLmtvcnRlY3gudjEuRnNTY29wZSLZAQoIV29ya0l0ZW0SHgoEbW90ZRgBIAEoCzIQLmtvcnRlY3gudjEuTW90ZRIoCgd3YXJyYW50GAIgASgLMhcua29ydGVjeC52MS5XYXJyYW50U3BlYxIwCg5wYXJlbnRfcmVzdWx0cxgDIAMoCzIYLmtvcnRlY3gudjEuUGFyZW50UmVzdWx0EicKCXRvb2xfYXJncxgEIAEoCzIULmtvcnRlY3gudjEuVG9vbEFyZ3MSFQoNY29udGV4dF9pdGVtcxgFIAEoDBIRCglpbWFnZV9yZWYYBiABKAwiTQoRTGVhc2VXb3JrUmVzcG9uc2USIwoFaXRlbXMYASADKAsyFC5rb3J0ZWN4LnYxLldvcmtJdGVtEhMKC2luc3RhbmNlX2lkGAIgASgMIjQKElJlYWRFbnRyaWVzUmVxdWVzdBIRCglzaW5jZV9zZXEYASABKAQSCwoDbWF4GAIgASgNItYBCg5Db21taXR0ZWRFbnRyeRIPCgdtb3RlX2lkGAEgASgMEhcKD2lkZW1wb3RlbmN5X2tleRgCIAEoDBILCgNzZXEYAyABKAQSJQoIbmRfY2xhc3MYBCABKA4yEy5rb3J0ZWN4LnYxLk5kQ2xhc3MSEgoKcmVzdWx0X3JlZhgFIAEoDBImCgdwYXJlbnRzGAYgAygLMhUua29ydGVjeC52MS5QYXJlbnRSZWYSEwoLd2FycmFudF9yZWYYByABKAwSFQoNbW90ZV9kZWZfaGFzaBgIIAEoDCJUCgxKb3VybmFsRW50cnkSCwoDc2VxGAEgASgEEi8KCWNvbW1pdHRlZBgCIAEoCzIaLmtvcnRlY3gudjEuQ29tbWl0dGVkRW50cnlIAEIGCgRraW5kIlIKE1JlYWRFbnRyaWVzUmVzcG9uc2USKQoHZW50cmllcxgBIAMoCzIYLmtvcnRlY3gudjEuSm91cm5hbEVudHJ5EhAKCG5leHRfc2VxGAIgASgEIjAKElJlZ2lzdGVyUnVuUmVxdWVzdBIaChJyZWNpcGVfZmluZ2VycHJpbnQYASABKAwiKgoTUmVnaXN0ZXJSdW5SZXNwb25zZRITCgtpbnN0YW5jZV9pZBgBIAEoDCpyCgdOZENsYXNzEhgKFE5EX0NMQVNTX1VOU1BFQ0lGSUVEEAASEQoNTkRfQ0xBU1NfUFVSRRABEh0KGU5EX0NMQVNTX1JFQURfT05MWV9OT05ERVQQAhIbChdORF9DTEFTU19XT1JMRF9NVVRBVElORxADKq0BCg1FZmZlY3RQYXR0ZXJuEh4KGkVGRkVDVF9QQVRURVJOX1VOU1BFQ0lGSUVEEAASLQopRUZGRUNUX1BBVFRFUk5fSURFTVBPVEVOVF9CWV9DT05TVFJVQ1RJT04QARIkCiBFRkZFQ1RfUEFUVEVSTl9TVEFHRV9USEVOX0NPTU1JVBACEicKI0VGRkVDVF9QQVRURVJOX1ZBTElEQVRFX1RIRU5fQ09NTUlUEAMqUAoIRWRnZUtpbmQSGQoVRURHRV9LSU5EX1VOU1BFQ0lGSUVEEAASEgoORURHRV9LSU5EX0RBVEEQARIVChFFREdFX0tJTkRfQ09OVFJPTBACKnwKCU1vdGVDbGFzcxIaChZNT1RFX0NMQVNTX1VOU1BFQ0lGSUVEEAASEwoPTU9URV9DTEFTU19QVVJFEAESHwobTU9URV9DTEFTU19SRUFEX09OTFlfTk9OREVUEAISHQoZTU9URV9DTEFTU19XT1JMRF9NVVRBVElORxADKmcKBkZzTW9kZRIXChNGU19NT0RFX1VOU1BFQ0lGSUVEEAASFQoRRlNfTU9ERV9SRUFEX09OTFkQARIWChJGU19NT0RFX1JFQURfV1JJVEUQAhIVChFGU19NT0RFX0VYRUNfT05MWRADKpkDCg1GYWlsdXJlUmVhc29uEh4KGkZBSUxVUkVfUkVBU09OX1VOU1BFQ0lGSUVEEAASHAoYRkFJTFVSRV9SRUFTT05fVElNRURfT1VUEAESIwofRkFJTFVSRV9SRUFTT05fRVhFQ1VUT1JfUkVGVVNFRBACEiUKIUZBSUxVUkVfUkVBU09OX1ZBTElEQVRPUl9SRUpFQ1RFRBADEiEKHUZBSUxVUkVfUkVBU09OX1dPUktFUl9DUkFTSEVEEAQSJgoiRkFJTFVSRV9SRUFTT05fVVBTVFJFQU1fUkVQVURJQVRFRBAFEjUKMUZBSUxVUkVfUkVBU09OX1VOU0FGRV9XT1JMRF9NVVRBVElOR19DT05TVFJVQ1RJT04QBhIsCihGQUlMVVJFX1JFQVNPTl9DT01QRU5TQVRFRF9BVF9MRUFTVF9PTkNFEAcSLAooRkFJTFVSRV9SRUFTT05fUVVBUkFOVElORURfQVRfTEVBU1RfT05DRRAIEiAKHEZBSUxVUkVfUkVBU09OX0RFQURfTEVUVEVSRUQQCSqtAQoNRXhlY3V0b3JDbGFzcxIeChpFWEVDVVRPUl9DTEFTU19VTlNQRUNJRklFRBAAEhgKFEVYRUNVVE9SX0NMQVNTX0JXUkFQEAESHQoZRVhFQ1VUT1JfQ0xBU1NfT0NJX0RBRU1PThACEiEKHUVYRUNVVE9SX0NMQVNTX0NMT1VEX01JQ1JPX1ZNEAMSIAocRVhFQ1VUT1JfQ0xBU1NfTUFDT1NfU0FOREJPWBAEKoIBCgxTdWJtaXRTdGF0dXMSHQoZU1VCTUlUX1NUQVRVU19VTlNQRUNJRklFRBAAEhoKFlNVQk1JVF9TVEFUVVNfQUNDRVBURUQQARIbChdTVUJNSVRfU1RBVFVTX0RVUExJQ0FURRACEhoKFlNVQk1JVF9TVEFUVVNfUkVKRUNURUQQAyqQAQoNQ29tbWl0T3V0Y29tZRIeChpDT01NSVRfT1VUQ09NRV9VTlNQRUNJRklFRBAAEhwKGENPTU1JVF9PVVRDT01FX0NPTU1JVFRFRBABEiQKIENPTU1JVF9PVVRDT01FX0FMUkVBRFlfQ09NTUlUVEVEEAISGwoXQ09NTUlUX09VVENPTUVfUkVKRUNURUQQAzL1BQoLQ29vcmRpbmF0b3ISVwoOUmVnaXN0ZXJXb3JrZXISIS5rb3J0ZWN4LnYxLlJlZ2lzdGVyV29ya2VyUmVxdWVzdBoiLmtvcnRlY3gudjEuUmVnaXN0ZXJXb3JrZXJSZXNwb25zZRJICglIZWFydGJlYXQSHC5rb3J0ZWN4LnYxLkhlYXJ0YmVhdFJlcXVlc3QaHS5rb3J0ZWN4LnYxLkhlYXJ0YmVhdFJlc3BvbnNlEksKClN1Ym1pdE1vdGUSHS5rb3J0ZWN4LnYxLlN1Ym1pdE1vdGVSZXF1ZXN0Gh4ua29ydGVjeC52MS5TdWJtaXRNb3RlUmVzcG9uc2USUQoMUmVwb3J0Q29tbWl0Eh8ua29ydGVjeC52MS5SZXBvcnRDb21taXRSZXF1ZXN0GiAua29ydGVjeC52MS5SZXBvcnRDb21taXRSZXNwb25zZRJICglMZWFzZVdvcmsSHC5rb3J0ZWN4LnYxLkxlYXNlV29ya1JlcXVlc3QaHS5rb3J0ZWN4LnYxLkxlYXNlV29ya1Jlc3BvbnNlEk4KC1JlYWRFbnRyaWVzEh4ua29ydGVjeC52MS5SZWFkRW50cmllc1JlcXVlc3QaHy5rb3J0ZWN4LnYxLlJlYWRFbnRyaWVzUmVzcG9uc2USYwoSUmVwb3J0RWZmZWN0U3RhZ2VkEiUua29ydGVjeC52MS5SZXBvcnRFZmZlY3RTdGFnZWRSZXF1ZXN0GiYua29ydGVjeC52MS5SZXBvcnRFZmZlY3RTdGFnZWRSZXNwb25zZRJOCgtSZWdpc3RlclJ1bhIeLmtvcnRlY3gudjEuUmVnaXN0ZXJSdW5SZXF1ZXN0Gh8ua29ydGVjeC52MS5SZWdpc3RlclJ1blJlc3BvbnNlElQKDVJlcG9ydEZhaWx1cmUSIC5rb3J0ZWN4LnYxLlJlcG9ydEZhaWx1cmVSZXF1ZXN0GiEua29ydGVjeC52MS5SZXBvcnRGYWlsdXJlUmVzcG9uc2ViBnByb3RvMw");
 
 /**
  * Mirrors kx_mote::InferenceParams (D50 decoding params; identity-bearing).
@@ -453,7 +453,10 @@ export const HostAllowlistSchema: GenMessage<HostAllowlist> = /*@__PURE__*/
   messageDesc(file_kortecx_v1_coordinator, 11);
 
 /**
- * Mirrors kx_warrant::WarrantSpec (10 axes).
+ * Mirrors kx_warrant::WarrantSpec. 11 of 13 axes are on the wire; `cost_ceiling`
+ * and `tls_required` are deliberately NOT carried yet (their live enforcement +
+ * digest handling land with PR-8/cost-expansion — see convert.rs) and decode to
+ * their fail-closed defaults.
  *
  * @generated from message kortecx.v1.WarrantSpec
  */
@@ -511,6 +514,16 @@ export type WarrantSpec = Message<"kortecx.v1.WarrantSpec"> & {
    * @generated from field: kortecx.v1.ExecutorClass executor_class = 10;
    */
   executorClass: ExecutorClass;
+
+  /**
+   * D110.3: which secret refs this warrant may resolve. Additive (field 11).
+   * Absent (a pre-fix peer) decodes to SecretScope::None (fail-closed) for
+   * back-compat. Must survive the wire so a RunApp-stamped AllowList reaches the
+   * react OBSERVATION dispatch (fixes T-RUNAPP-SECRET-SCOPE-OBSERVATION).
+   *
+   * @generated from field: kortecx.v1.SecretScope secret_scope = 11;
+   */
+  secretScope?: SecretScope | undefined;
 };
 
 /**
@@ -519,6 +532,73 @@ export type WarrantSpec = Message<"kortecx.v1.WarrantSpec"> & {
  */
 export const WarrantSpecSchema: GenMessage<WarrantSpec> = /*@__PURE__*/
   messageDesc(file_kortecx_v1_coordinator, 12);
+
+/**
+ * kx_warrant::SecretScope (D110.3): None (no secret resolution) or an exact
+ * allowlist of secret NAMES/refs. Values NEVER cross this (or any) wire — refs
+ * only (SN-8/D81), the same ref-not-value discipline as NetScope's hosts.
+ *
+ * @generated from message kortecx.v1.SecretScope
+ */
+export type SecretScope = Message<"kortecx.v1.SecretScope"> & {
+  /**
+   * @generated from oneof kortecx.v1.SecretScope.scope
+   */
+  scope: {
+    /**
+     * @generated from field: kortecx.v1.SecretScopeNone none = 1;
+     */
+    value: SecretScopeNone;
+    case: "none";
+  } | {
+    /**
+     * @generated from field: kortecx.v1.SecretRefAllowlist allowlist = 2;
+     */
+    value: SecretRefAllowlist;
+    case: "allowlist";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message kortecx.v1.SecretScope.
+ * Use `create(SecretScopeSchema)` to create a new message.
+ */
+export const SecretScopeSchema: GenMessage<SecretScope> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_coordinator, 13);
+
+/**
+ * Presence marker for SecretScope::None (a message-typed oneof arm needs a type).
+ *
+ * @generated from message kortecx.v1.SecretScopeNone
+ */
+export type SecretScopeNone = Message<"kortecx.v1.SecretScopeNone"> & {
+};
+
+/**
+ * Describes the message kortecx.v1.SecretScopeNone.
+ * Use `create(SecretScopeNoneSchema)` to create a new message.
+ */
+export const SecretScopeNoneSchema: GenMessage<SecretScopeNone> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_coordinator, 14);
+
+/**
+ * @generated from message kortecx.v1.SecretRefAllowlist
+ */
+export type SecretRefAllowlist = Message<"kortecx.v1.SecretRefAllowlist"> & {
+  /**
+   * reconstructs into BTreeSet<SecretRef>
+   *
+   * @generated from field: repeated string names = 1;
+   */
+  names: string[];
+};
+
+/**
+ * Describes the message kortecx.v1.SecretRefAllowlist.
+ * Use `create(SecretRefAllowlistSchema)` to create a new message.
+ */
+export const SecretRefAllowlistSchema: GenMessage<SecretRefAllowlist> = /*@__PURE__*/
+  messageDesc(file_kortecx_v1_coordinator, 15);
 
 /**
  * @generated from message kortecx.v1.SubmitMoteRequest
@@ -554,7 +634,7 @@ export type SubmitMoteRequest = Message<"kortecx.v1.SubmitMoteRequest"> & {
  * Use `create(SubmitMoteRequestSchema)` to create a new message.
  */
 export const SubmitMoteRequestSchema: GenMessage<SubmitMoteRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 13);
+  messageDesc(file_kortecx_v1_coordinator, 16);
 
 /**
  * @generated from message kortecx.v1.SubmitMoteResponse
@@ -599,7 +679,7 @@ export type SubmitMoteResponse = Message<"kortecx.v1.SubmitMoteResponse"> & {
  * Use `create(SubmitMoteResponseSchema)` to create a new message.
  */
 export const SubmitMoteResponseSchema: GenMessage<SubmitMoteResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 14);
+  messageDesc(file_kortecx_v1_coordinator, 17);
 
 /**
  * @generated from message kortecx.v1.ReportCommitRequest
@@ -663,7 +743,7 @@ export type ReportCommitRequest = Message<"kortecx.v1.ReportCommitRequest"> & {
  * Use `create(ReportCommitRequestSchema)` to create a new message.
  */
 export const ReportCommitRequestSchema: GenMessage<ReportCommitRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 15);
+  messageDesc(file_kortecx_v1_coordinator, 18);
 
 /**
  * @generated from message kortecx.v1.ReportCommitResponse
@@ -692,7 +772,7 @@ export type ReportCommitResponse = Message<"kortecx.v1.ReportCommitResponse"> & 
  * Use `create(ReportCommitResponseSchema)` to create a new message.
  */
 export const ReportCommitResponseSchema: GenMessage<ReportCommitResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 16);
+  messageDesc(file_kortecx_v1_coordinator, 19);
 
 /**
  * @generated from message kortecx.v1.ReportEffectStagedRequest
@@ -725,7 +805,7 @@ export type ReportEffectStagedRequest = Message<"kortecx.v1.ReportEffectStagedRe
  * Use `create(ReportEffectStagedRequestSchema)` to create a new message.
  */
 export const ReportEffectStagedRequestSchema: GenMessage<ReportEffectStagedRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 17);
+  messageDesc(file_kortecx_v1_coordinator, 20);
 
 /**
  * @generated from message kortecx.v1.ReportEffectStagedResponse
@@ -751,7 +831,7 @@ export type ReportEffectStagedResponse = Message<"kortecx.v1.ReportEffectStagedR
  * Use `create(ReportEffectStagedResponseSchema)` to create a new message.
  */
 export const ReportEffectStagedResponseSchema: GenMessage<ReportEffectStagedResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 18);
+  messageDesc(file_kortecx_v1_coordinator, 21);
 
 /**
  * @generated from message kortecx.v1.ReportFailureRequest
@@ -791,7 +871,7 @@ export type ReportFailureRequest = Message<"kortecx.v1.ReportFailureRequest"> & 
  * Use `create(ReportFailureRequestSchema)` to create a new message.
  */
 export const ReportFailureRequestSchema: GenMessage<ReportFailureRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 19);
+  messageDesc(file_kortecx_v1_coordinator, 22);
 
 /**
  * @generated from message kortecx.v1.ReportFailureResponse
@@ -817,7 +897,7 @@ export type ReportFailureResponse = Message<"kortecx.v1.ReportFailureResponse"> 
  * Use `create(ReportFailureResponseSchema)` to create a new message.
  */
 export const ReportFailureResponseSchema: GenMessage<ReportFailureResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 20);
+  messageDesc(file_kortecx_v1_coordinator, 23);
 
 /**
  * @generated from message kortecx.v1.HeartbeatRequest
@@ -848,7 +928,7 @@ export type HeartbeatRequest = Message<"kortecx.v1.HeartbeatRequest"> & {
  * Use `create(HeartbeatRequestSchema)` to create a new message.
  */
 export const HeartbeatRequestSchema: GenMessage<HeartbeatRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 21);
+  messageDesc(file_kortecx_v1_coordinator, 24);
 
 /**
  * @generated from message kortecx.v1.HeartbeatResponse
@@ -865,7 +945,7 @@ export type HeartbeatResponse = Message<"kortecx.v1.HeartbeatResponse"> & {
  * Use `create(HeartbeatResponseSchema)` to create a new message.
  */
 export const HeartbeatResponseSchema: GenMessage<HeartbeatResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 22);
+  messageDesc(file_kortecx_v1_coordinator, 25);
 
 /**
  * @generated from message kortecx.v1.RegisterWorkerRequest
@@ -891,7 +971,7 @@ export type RegisterWorkerRequest = Message<"kortecx.v1.RegisterWorkerRequest"> 
  * Use `create(RegisterWorkerRequestSchema)` to create a new message.
  */
 export const RegisterWorkerRequestSchema: GenMessage<RegisterWorkerRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 23);
+  messageDesc(file_kortecx_v1_coordinator, 26);
 
 /**
  * @generated from message kortecx.v1.RegisterWorkerResponse
@@ -910,7 +990,7 @@ export type RegisterWorkerResponse = Message<"kortecx.v1.RegisterWorkerResponse"
  * Use `create(RegisterWorkerResponseSchema)` to create a new message.
  */
 export const RegisterWorkerResponseSchema: GenMessage<RegisterWorkerResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 24);
+  messageDesc(file_kortecx_v1_coordinator, 27);
 
 /**
  * @generated from message kortecx.v1.LeaseWorkRequest
@@ -943,7 +1023,7 @@ export type LeaseWorkRequest = Message<"kortecx.v1.LeaseWorkRequest"> & {
  * Use `create(LeaseWorkRequestSchema)` to create a new message.
  */
 export const LeaseWorkRequestSchema: GenMessage<LeaseWorkRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 25);
+  messageDesc(file_kortecx_v1_coordinator, 28);
 
 /**
  * One committed Data-edge parent of a leased Mote: the parent's identity plus the
@@ -979,7 +1059,7 @@ export type ParentResult = Message<"kortecx.v1.ParentResult"> & {
  * Use `create(ParentResultSchema)` to create a new message.
  */
 export const ParentResultSchema: GenMessage<ParentResult> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 26);
+  messageDesc(file_kortecx_v1_coordinator, 29);
 
 /**
  * The model-PROPOSED, coordinator-VALIDATED tool arguments for a leased ReAct
@@ -1023,7 +1103,7 @@ export type ToolArgs = Message<"kortecx.v1.ToolArgs"> & {
  * Use `create(ToolArgsSchema)` to create a new message.
  */
 export const ToolArgsSchema: GenMessage<ToolArgs> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 27);
+  messageDesc(file_kortecx_v1_coordinator, 30);
 
 /**
  * One unit of work: the Mote to run plus the warrant it runs under. `parent_results`
@@ -1088,7 +1168,7 @@ export type WorkItem = Message<"kortecx.v1.WorkItem"> & {
  * Use `create(WorkItemSchema)` to create a new message.
  */
 export const WorkItemSchema: GenMessage<WorkItem> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 28);
+  messageDesc(file_kortecx_v1_coordinator, 31);
 
 /**
  * @generated from message kortecx.v1.LeaseWorkResponse
@@ -1114,7 +1194,7 @@ export type LeaseWorkResponse = Message<"kortecx.v1.LeaseWorkResponse"> & {
  * Use `create(LeaseWorkResponseSchema)` to create a new message.
  */
 export const LeaseWorkResponseSchema: GenMessage<LeaseWorkResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 29);
+  messageDesc(file_kortecx_v1_coordinator, 32);
 
 /**
  * @generated from message kortecx.v1.ReadEntriesRequest
@@ -1140,7 +1220,7 @@ export type ReadEntriesRequest = Message<"kortecx.v1.ReadEntriesRequest"> & {
  * Use `create(ReadEntriesRequestSchema)` to create a new message.
  */
 export const ReadEntriesRequestSchema: GenMessage<ReadEntriesRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 30);
+  messageDesc(file_kortecx_v1_coordinator, 33);
 
 /**
  * Mirrors kx_journal::JournalEntry::Committed (field-for-field; the identity
@@ -1207,7 +1287,7 @@ export type CommittedEntry = Message<"kortecx.v1.CommittedEntry"> & {
  * Use `create(CommittedEntrySchema)` to create a new message.
  */
 export const CommittedEntrySchema: GenMessage<CommittedEntry> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 31);
+  messageDesc(file_kortecx_v1_coordinator, 34);
 
 /**
  * One journal entry on the wire. EXTENSIBLE: P2.4 carries only `Committed`;
@@ -1240,7 +1320,7 @@ export type JournalEntry = Message<"kortecx.v1.JournalEntry"> & {
  * Use `create(JournalEntrySchema)` to create a new message.
  */
 export const JournalEntrySchema: GenMessage<JournalEntry> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 32);
+  messageDesc(file_kortecx_v1_coordinator, 35);
 
 /**
  * @generated from message kortecx.v1.ReadEntriesResponse
@@ -1266,7 +1346,7 @@ export type ReadEntriesResponse = Message<"kortecx.v1.ReadEntriesResponse"> & {
  * Use `create(ReadEntriesResponseSchema)` to create a new message.
  */
 export const ReadEntriesResponseSchema: GenMessage<ReadEntriesResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 33);
+  messageDesc(file_kortecx_v1_coordinator, 36);
 
 /**
  * @generated from message kortecx.v1.RegisterRunRequest
@@ -1285,7 +1365,7 @@ export type RegisterRunRequest = Message<"kortecx.v1.RegisterRunRequest"> & {
  * Use `create(RegisterRunRequestSchema)` to create a new message.
  */
 export const RegisterRunRequestSchema: GenMessage<RegisterRunRequest> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 34);
+  messageDesc(file_kortecx_v1_coordinator, 37);
 
 /**
  * @generated from message kortecx.v1.RegisterRunResponse
@@ -1304,7 +1384,7 @@ export type RegisterRunResponse = Message<"kortecx.v1.RegisterRunResponse"> & {
  * Use `create(RegisterRunResponseSchema)` to create a new message.
  */
 export const RegisterRunResponseSchema: GenMessage<RegisterRunResponse> = /*@__PURE__*/
-  messageDesc(file_kortecx_v1_coordinator, 35);
+  messageDesc(file_kortecx_v1_coordinator, 38);
 
 /**
  * Mirrors kx_mote::NdClass (Pure / ReadOnlyNondet / WorldMutating).

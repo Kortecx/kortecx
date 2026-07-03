@@ -32,7 +32,7 @@ use kx_mote::{
 };
 use kx_warrant::{
     warrant_ref_of, ExecutorClass, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling,
-    ToolGrant, WarrantSpec,
+    SecretRef, SecretScope, ToolGrant, WarrantSpec,
 };
 use smallvec::SmallVec;
 use tempfile::TempDir;
@@ -745,6 +745,56 @@ async fn tool_branch_advances_the_chain_with_trajectory() {
         ))
         .unwrap();
     assert_eq!(served_obs.as_ref(), br#"{"echoed":{"q":"x"}}"#);
+}
+
+/// `T-RUNAPP-SECRET-SCOPE-OBSERVATION` regression pin (model-free + deterministic):
+/// a react warrant carrying `secret_scope = AllowList` must reach the OBSERVATION
+/// dispatch with the scope INTACT. The whole submit → anchor → materialize → lease
+/// path runs through the SubmitMote proto wire (`submit_react` serializes the warrant
+/// via `w.into()`) — which is EXACTLY where the scope used to be silently dropped
+/// (`proto::WarrantSpec` omitted the axis, so `TryFrom` re-defaulted it to `None`).
+/// The leased observation then carried `SecretScope::None`, and a credentialed
+/// connector dial dead-lettered at the broker: `capability dispatch exceeds warrant on
+/// axis SecretScope`. This asserts the leased observation WorkItem's dispatch warrant
+/// preserves the AllowList (the broker's `required_secret_scope() ⊆ warrant.secret_scope`
+/// check, D110.3, needs it). Complements the `kx-proto` wire round-trip guard.
+#[tokio::test]
+async fn observation_dispatch_preserves_the_chain_secret_scope() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let mut w = warrant(true); // mcp-echo@1 GRANTED
+    let cred = SecretRef("KX_TEST_CRED".to_string());
+    w.secret_scope = SecretScope::AllowList([cred.clone()].into_iter().collect());
+
+    let (_turn0_id, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    // Sanity: even the leased TURN carries the scope (the whole chain runs under it).
+    let turn0_warrant: WarrantSpec = leased[0].warrant.clone().unwrap().try_into().unwrap();
+    assert_eq!(
+        turn0_warrant.secret_scope,
+        SecretScope::AllowList([cred.clone()].into_iter().collect()),
+        "the react turn dispatch warrant preserves secret_scope across the submit wire"
+    );
+    commit_raw(&svc, &store, &turn0, &w, TOOL_ENVELOPE, worker).await;
+
+    // The OBSERVATION leases under the chain's anchor warrant — the dispatch that the
+    // broker gates for the credentialed dial. It MUST still carry the AllowList.
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(leased.len(), 1, "the observation is leasable");
+    let obs_warrant: WarrantSpec = leased[0]
+        .warrant
+        .clone()
+        .expect("the observation leases WITH its dispatch warrant")
+        .try_into()
+        .unwrap();
+    assert_eq!(
+        obs_warrant.secret_scope,
+        SecretScope::AllowList([cred].into_iter().collect()),
+        "the observation dispatch warrant preserves the chain's secret_scope \
+         (T-RUNAPP-SECRET-SCOPE-OBSERVATION) — a dropped scope dead-letters the dial"
+    );
 }
 
 /// PR-9a (the BUG-28 regression pin, model-free + deterministic): the SAME

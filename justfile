@@ -695,6 +695,18 @@ real-model-e2e: fetch-agent-model
     # RC1 (D172): the real-model eval witness — score a live ReAct chain via ScoreRun
     # (advisory Tier-B floors over the Qwen3 stand-in; the flake-proof gate is `just eval`).
     cargo test -p kx-gateway --features inference --test eval_real_model -- --ignored --nocapture --test-threads=1
+    # T-RUNAPP-SECRET-SCOPE-OBSERVATION: the RunApp credentialed-connector live gate.
+    # Build the bundled Gmail connector, then drive it via RunApp under the served model.
+    # KX_GMAIL_FAKE lives in the ENVIRONMENT (never a racy runtime `set_var` — that
+    # intermittently spawned the connector without FAKE, wedging register on a real dial),
+    # so the connector reliably answers canned data (no egress). On Qwen3-0.6B the model
+    # typically answers without dialing (the observation-commit oracle passes vacuously);
+    # the DETERMINISTIC proof of the fix is `kx-proto` (wire round-trip) +
+    # `kx-coordinator::observation_dispatch_preserves_the_chain_secret_scope`, always run
+    # by `cargo test`. Locally, drive on BOTH engines with Gemma-4 (GR24) — llama.cpp fires
+    # `gmail/search` → observation commits → answer.
+    cargo build -p kx-connector-gmail
+    KX_GMAIL_FAKE=1 cargo test -p kx-gateway --features inference --test app_live_serve runapp_gmail_connection_and_secret_scope_live -- --ignored --nocapture --test-threads=1
 
 # RC1 (D172) — the real-model eval witness, LOCAL Gemma deep-test (Tier-B, ADVISORY).
 # Drives a live ReAct chain on a real OSS model and scores it through ScoreRun (the

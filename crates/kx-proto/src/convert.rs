@@ -30,7 +30,7 @@ use kx_mote::{
 };
 use kx_warrant::{
     ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling,
-    ToolGrant, WarrantSpec,
+    SecretRef, SecretScope, ToolGrant, WarrantSpec,
 };
 use smallvec::SmallVec;
 
@@ -534,6 +534,34 @@ impl TryFrom<proto::NetScope> for NetScope {
     }
 }
 
+impl From<SecretScope> for proto::SecretScope {
+    fn from(d: SecretScope) -> Self {
+        let scope = match d {
+            SecretScope::None => proto::secret_scope::Scope::None(proto::SecretScopeNone {}),
+            SecretScope::AllowList(refs) => {
+                proto::secret_scope::Scope::Allowlist(proto::SecretRefAllowlist {
+                    names: refs.into_iter().map(|r| r.0).collect(),
+                })
+            }
+        };
+        Self { scope: Some(scope) }
+    }
+}
+
+impl TryFrom<proto::SecretScope> for SecretScope {
+    type Error = ConvertError;
+    fn try_from(p: proto::SecretScope) -> Result<Self, Self::Error> {
+        match p.scope.ok_or(ConvertError::MissingField {
+            field: "SecretScope.scope",
+        })? {
+            proto::secret_scope::Scope::None(_) => Ok(Self::None),
+            proto::secret_scope::Scope::Allowlist(a) => Ok(Self::AllowList(
+                a.names.into_iter().map(SecretRef).collect(),
+            )),
+        }
+    }
+}
+
 impl From<WarrantSpec> for proto::WarrantSpec {
     fn from(d: WarrantSpec) -> Self {
         Self {
@@ -547,6 +575,10 @@ impl From<WarrantSpec> for proto::WarrantSpec {
             resource_ceiling: Some(d.resource_ceiling.into()),
             environment_ref: d.environment_ref.map(|r| r.as_bytes().to_vec()),
             executor_class: proto::ExecutorClass::from(d.executor_class) as i32,
+            secret_scope: Some(d.secret_scope.into()),
+            // `cost_ceiling` / `tls_required` are intentionally not written yet — the
+            // proto omits them (see the WarrantSpec message doc): their live
+            // enforcement + digest handling land with PR-8/cost-expansion.
         }
     }
 }
@@ -599,10 +631,20 @@ impl TryFrom<proto::WarrantSpec> for WarrantSpec {
                 p.executor_class,
                 "ExecutorClass",
             )?,
-            // The proto schema does not yet carry the M5.3 axes (secret_scope /
-            // cost_ceiling / tls_required); they decode to the fail-closed
-            // deny-all default. Distributed enforcement of these axes extends
-            // the proto wire format in M10 (single-node M5.3 does not use proto).
+            // secret_scope (D110.3) is carried on the wire (field 11). An absent
+            // field — a pre-fix peer that never encoded it — decodes to the
+            // fail-closed `SecretScope::None`, preserving back-compat. NOTE: the
+            // embedded single-node coordinator DOES round-trip through this proto
+            // (via TonicCoordinatorSubmitter over loopback), so this axis MUST
+            // survive here for a RunApp-stamped AllowList to reach the react
+            // OBSERVATION dispatch (T-RUNAPP-SECRET-SCOPE-OBSERVATION).
+            secret_scope: match p.secret_scope {
+                Some(s) => s.try_into()?,
+                None => SecretScope::None,
+            },
+            // `cost_ceiling` / `tls_required` remain intentionally wire-absent and
+            // decode to their fail-closed defaults via `..Default::default()`
+            // (tracked for PR-8/cost-expansion).
             ..Default::default()
         })
     }

@@ -25,6 +25,8 @@ function turn(
     maxTurns: 8,
     rejectionReason: "",
     callIndex,
+    grantedTools: [],
+    secretScopeNames: [],
   };
 }
 

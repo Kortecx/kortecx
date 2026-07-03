@@ -31,6 +31,11 @@ export interface ReactTurnVM {
    *  into N `tool` rows sharing `turn`, distinguished by `callIndex` (0..N-1). 0 for a
    *  single call + every non-tool branch. */
   readonly callIndex: number;
+  /** Governance observability: the chain's run-fixed warrant axes (names/refs only,
+   *  SN-8/D81) — the tools it may fire and the secret refs it may resolve. Repeated on
+   *  every row of a chain; empty when the warrant blob is absent. */
+  readonly grantedTools: readonly string[];
+  readonly secretScopeNames: readonly string[];
 }
 
 export interface ReactProgress {
@@ -87,6 +92,8 @@ export function useReactProgress(instanceId: string | undefined, chainSalt?: str
           maxTurns: t.maxTurns,
           rejectionReason: t.rejectionReason,
           callIndex: t.callIndex,
+          grantedTools: t.grantedTools,
+          secretScopeNames: t.secretScopeNames,
         })),
       );
     },

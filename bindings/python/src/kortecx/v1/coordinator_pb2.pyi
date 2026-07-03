@@ -267,7 +267,7 @@ class HostAllowlist(_message.Message):
     def __init__(self, hosts: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class WarrantSpec(_message.Message):
-    __slots__ = ("mote_class", "nd_class", "fs_scope", "net_scope", "syscall_profile_ref", "tool_grants", "model_route", "resource_ceiling", "environment_ref", "executor_class")
+    __slots__ = ("mote_class", "nd_class", "fs_scope", "net_scope", "syscall_profile_ref", "tool_grants", "model_route", "resource_ceiling", "environment_ref", "executor_class", "secret_scope")
     MOTE_CLASS_FIELD_NUMBER: _ClassVar[int]
     ND_CLASS_FIELD_NUMBER: _ClassVar[int]
     FS_SCOPE_FIELD_NUMBER: _ClassVar[int]
@@ -278,6 +278,7 @@ class WarrantSpec(_message.Message):
     RESOURCE_CEILING_FIELD_NUMBER: _ClassVar[int]
     ENVIRONMENT_REF_FIELD_NUMBER: _ClassVar[int]
     EXECUTOR_CLASS_FIELD_NUMBER: _ClassVar[int]
+    SECRET_SCOPE_FIELD_NUMBER: _ClassVar[int]
     mote_class: MoteClass
     nd_class: MoteClass
     fs_scope: FsScope
@@ -288,7 +289,26 @@ class WarrantSpec(_message.Message):
     resource_ceiling: ResourceCeiling
     environment_ref: bytes
     executor_class: ExecutorClass
-    def __init__(self, mote_class: _Optional[_Union[MoteClass, str]] = ..., nd_class: _Optional[_Union[MoteClass, str]] = ..., fs_scope: _Optional[_Union[FsScope, _Mapping]] = ..., net_scope: _Optional[_Union[NetScope, _Mapping]] = ..., syscall_profile_ref: _Optional[bytes] = ..., tool_grants: _Optional[_Iterable[_Union[ToolGrant, _Mapping]]] = ..., model_route: _Optional[_Union[ModelRoute, _Mapping]] = ..., resource_ceiling: _Optional[_Union[ResourceCeiling, _Mapping]] = ..., environment_ref: _Optional[bytes] = ..., executor_class: _Optional[_Union[ExecutorClass, str]] = ...) -> None: ...
+    secret_scope: SecretScope
+    def __init__(self, mote_class: _Optional[_Union[MoteClass, str]] = ..., nd_class: _Optional[_Union[MoteClass, str]] = ..., fs_scope: _Optional[_Union[FsScope, _Mapping]] = ..., net_scope: _Optional[_Union[NetScope, _Mapping]] = ..., syscall_profile_ref: _Optional[bytes] = ..., tool_grants: _Optional[_Iterable[_Union[ToolGrant, _Mapping]]] = ..., model_route: _Optional[_Union[ModelRoute, _Mapping]] = ..., resource_ceiling: _Optional[_Union[ResourceCeiling, _Mapping]] = ..., environment_ref: _Optional[bytes] = ..., executor_class: _Optional[_Union[ExecutorClass, str]] = ..., secret_scope: _Optional[_Union[SecretScope, _Mapping]] = ...) -> None: ...
+
+class SecretScope(_message.Message):
+    __slots__ = ("none", "allowlist")
+    NONE_FIELD_NUMBER: _ClassVar[int]
+    ALLOWLIST_FIELD_NUMBER: _ClassVar[int]
+    none: SecretScopeNone
+    allowlist: SecretRefAllowlist
+    def __init__(self, none: _Optional[_Union[SecretScopeNone, _Mapping]] = ..., allowlist: _Optional[_Union[SecretRefAllowlist, _Mapping]] = ...) -> None: ...
+
+class SecretScopeNone(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class SecretRefAllowlist(_message.Message):
+    __slots__ = ("names",)
+    NAMES_FIELD_NUMBER: _ClassVar[int]
+    names: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, names: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class SubmitMoteRequest(_message.Message):
     __slots__ = ("mote", "warrant", "accept_at_least_once", "react_seed")

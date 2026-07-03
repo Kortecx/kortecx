@@ -108,6 +108,75 @@ kx connections add --name gh --command "npx -y @some/github-mcp" --credential-re
 The connector itself must never echo this value back — see the connector
 [security contract](./authoring-a-connector.md#what-a-connector-must-implement).
 
+## Scoping a secret to an App's agentic loop
+
+A [connector](./authoring-a-connector.md) dial you trigger yourself resolves its
+`credential_ref` directly. When an **[App](./apps.md)** dials a credentialed
+connector *inside its agentic loop* — the model proposes the tool, and the runtime
+dials it on the model's behalf — the App must first **scope** which secrets that run
+is allowed to resolve. An App declares this once, in its envelope:
+
+- `references.connections` — a by-reference pointer to the connection the App uses.
+- `guards.secret_scope` — the secret names the run's tool-firing warrant may resolve.
+
+Running the App resolves the pointer against your own connection registry and grants
+exactly that scope to the agentic warrant, so the model can dial the credentialed
+connector — and **nothing else**. The scope is a least-privilege bound: a run can
+only resolve the secrets it declared, enforced at the capability broker (D110.3).
+
+```python title="Python — build, save, and run an App that dials a credentialed connector"
+import kortecx as kx
+
+# The blueprint is an agentic step granting gmail/search; with_gmail() points the App
+# at the bundled Gmail connection AND adds KX_GMAIL_CREDENTIAL to guards.secret_scope.
+app = (kx.app("gmail-triage")
+       .blueprint(kx.flow().agent(
+           "Search my unread mail with gmail/search, then summarize it.",
+           tools=["gmail/search"]))
+       .with_gmail())
+app.save(handle="apps/local/gmail-triage")
+
+# Running it via RunApp reads the STORED envelope (its connection + secret_scope) and
+# dials the credentialed connector inside the agentic loop. `run_app` is a client method.
+kx.default_client().run_app("apps/local/gmail-triage")
+```
+
+```ts title="TypeScript"
+const app = kx.app("gmail-triage")
+  .blueprint(kx.flow().agent(
+    "Search my unread mail with gmail/search, then summarize it.",
+    { tools: ["gmail/search"] }))
+  .withGmail();
+await app.save({ handle: "apps/local/gmail-triage" });
+
+const handle = await kx.runApp("apps/local/gmail-triage");
+```
+
+```bash title="CLI"
+# Register the bundled Gmail connection once, then run the App.
+kx connections add --provider gmail
+kx app run apps/local/gmail-triage
+```
+
+For a custom (non-bundled) connector, use `.with_connection(descriptor,
+credential_ref)` / `.withConnection(...)` instead of `.with_gmail()` — the credential
+is scoped automatically (pass `scope_secret=False` for a credential-less connection).
+
+### Seeing what a run may resolve
+
+Because the scope is a governance decision, it is **visible** in the run trace — the
+tools a chain may fire and the secret **names** it may resolve travel with every
+ReAct turn (names/refs only, never a value). Inspect them from any surface:
+
+```bash title="CLI — the run trace shows the chain's grants"
+kx react list --instance <run-id>
+# turn 0  branch pending  …  grants[tools: gmail/search@1; secrets: KX_GMAIL_CREDENTIAL]
+```
+
+The Console renders the same as a **"Governed by:"** line on the agent-loop strip, so
+an operator can confirm at a glance what a run was authorized to do — a dropped
+capability axis is visible, never silent.
+
 ## OSS / Cloud line
 
 OSS keeps secrets in the **local, single-node** keychain store for a runtime you

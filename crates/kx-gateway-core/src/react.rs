@@ -17,11 +17,15 @@
 //! is at most [`MAX_PAGE`] turns; turns are sparse (≤ `max_turns` facts per run
 //! plus settles), so a single default page covers any realistic chain.
 
+use std::collections::HashMap;
+
+use kx_content::ContentRef;
 use kx_journal::{JournalEntry, ReactBranch, INSTANCE_ID_LEN};
 use kx_proto::proto;
+use kx_warrant::{decode_warrant, SecretScope};
 
 use crate::error::{internal, GatewayError};
-use crate::reader::JournalReader;
+use crate::reader::{ContentReader, JournalReader};
 
 /// The server cap on a `ListReactTurns` page. Bounds the response (and the
 /// per-call allocation) regardless of journal size.
@@ -134,17 +138,54 @@ fn synthesize_dead_letter_reason(
         .to_string()
 }
 
+/// Governance observability: decode a chain's run-fixed warrant axes from its anchor
+/// `warrant_ref` — the sorted granted tool ids (`tool_id@version`) it may fire and the
+/// sorted secret refs it may resolve (D110.3; empty for `SecretScope::None`). NAMES/REFS
+/// ONLY, never a secret value (SN-8/D81). A pure read-only projection: absent `content`,
+/// an absent blob, or an undecodable warrant all yield empty vecs (display degrades,
+/// never errors; digest-neutral). Makes a dropped capability axis VISIBLE (the class
+/// behind `T-RUNAPP-SECRET-SCOPE-OBSERVATION`).
+fn warrant_axes(
+    content: Option<&dyn ContentReader>,
+    warrant_ref: &ContentRef,
+) -> (Vec<String>, Vec<String>) {
+    let Some(w) = content
+        .and_then(|c| c.get(warrant_ref))
+        .and_then(|blob| decode_warrant(&blob).ok())
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut granted_tools: Vec<String> = w
+        .tool_grants
+        .iter()
+        .map(|g| format!("{}@{}", g.tool_id.0, g.tool_version.0))
+        .collect();
+    granted_tools.sort();
+    let mut secret_scope_names: Vec<String> = match &w.secret_scope {
+        SecretScope::None => Vec::new(),
+        SecretScope::AllowList(names) => names.iter().map(|r| r.0.clone()).collect(),
+    };
+    secret_scope_names.sort();
+    (granted_tools, secret_scope_names)
+}
+
 /// Fold the journal's `ReactRound` facts and return one newest-first page of
 /// turn summaries, optionally scoped to one run's `instance_id`. `limit` is
 /// clamped to `[1, MAX_PAGE]` (or [`DEFAULT_PAGE`] when absent). A present-but-
 /// malformed `instance_id` (wrong length) is refused loudly rather than
 /// silently matching nothing.
 ///
+/// `content` (optional) decodes each chain's run-fixed warrant for the governance
+/// axes (`granted_tools` / `secret_scope_names`); `None` leaves them empty. The decode
+/// is memoized per `warrant_ref` (a chain shares one warrant), so it is at most one
+/// content read per distinct chain regardless of turn count.
+///
 /// # Errors
 /// [`GatewayError::Internal`] on a journal read failure;
 /// [`GatewayError::InvalidArgument`] on a malformed `instance_id` filter.
 pub(crate) fn list_react_turns(
     reader: &dyn JournalReader,
+    content: Option<&dyn ContentReader>,
     limit: Option<u32>,
     instance_filter: Option<&[u8]>,
     step_salt_filter: Option<&[u8]>,
@@ -170,6 +211,9 @@ pub(crate) fn list_react_turns(
     // Collect ReactRound facts in ascending journal order, then reverse for
     // newest-first (turns are budget-bounded per run, so this never
     // materializes a large vec).
+    // Memoize the decoded warrant axes per `warrant_ref` — a chain shares one run-fixed
+    // warrant, so this is at most one content read per distinct chain (not per turn).
+    let mut axes_memo: HashMap<[u8; 32], (Vec<String>, Vec<String>)> = HashMap::new();
     let mut all: Vec<proto::ReactTurnSummary> = reader
         .read_entries_by_seq(0..head.saturating_add(1))
         .map_err(internal)?
@@ -183,6 +227,7 @@ pub(crate) fn list_react_turns(
                 max_turns,
                 max_tool_calls,
                 step_salt,
+                warrant_ref,
                 seq,
                 ..
             } if filter.is_none_or(|f| f == instance_id)
@@ -191,6 +236,11 @@ pub(crate) fn list_react_turns(
                 // One row per branch — EXCEPT a ToolBatch, which fans into N "tool"
                 // rows sharing this turn's coordinates (T-MULTI-ELEMENT-TOOLCALLS).
                 let step_salt_wire = step_salt.map(|s| s.to_vec()).unwrap_or_default();
+                // Governance axes (names/refs only, SN-8/D81) — decoded once per chain.
+                let (granted_tools, secret_scope_names) = axes_memo
+                    .entry(*warrant_ref.as_bytes())
+                    .or_insert_with(|| warrant_axes(content, &warrant_ref))
+                    .clone();
                 branch_wire(&branch)
                     .into_iter()
                     .map(|row| proto::ReactTurnSummary {
@@ -209,6 +259,9 @@ pub(crate) fn list_react_turns(
                         step_salt: step_salt_wire.clone(),
                         // T-MULTI-ELEMENT-TOOLCALLS: 0 for one-row branches; 0..N-1 for a batch.
                         call_index: row.call_index,
+                        // Governance observability: the chain's run-fixed warrant axes.
+                        granted_tools: granted_tools.clone(),
+                        secret_scope_names: secret_scope_names.clone(),
                     })
                     .collect::<Vec<_>>()
             }
@@ -303,7 +356,7 @@ mod tests {
         j.append(turn_fact(1, 0xb0, ReactBranch::Answer)).unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None, None).unwrap();
         let rejected = resp
             .turns
             .iter()
@@ -361,7 +414,7 @@ mod tests {
             .unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None, None).unwrap();
         let dead = resp
             .turns
             .iter()
@@ -396,7 +449,7 @@ mod tests {
             .unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None, None).unwrap();
         let dead = resp
             .turns
             .iter()
@@ -419,7 +472,7 @@ mod tests {
             .unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None, None).unwrap();
         let dead = &resp.turns[0];
         assert_eq!(dead.branch, "dead_lettered");
         assert!(
@@ -433,7 +486,7 @@ mod tests {
     #[test]
     fn empty_journal_lists_nothing() {
         let r = ReadOnly::new(InMemoryJournal::new());
-        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None, None).unwrap();
         assert!(resp.turns.is_empty());
         assert!(!resp.has_more);
     }
@@ -454,7 +507,7 @@ mod tests {
         j.append(turn_fact(1, 0xa0, ReactBranch::Answer)).unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None, None).unwrap();
         assert_eq!(resp.turns.len(), 3);
         assert!(!resp.has_more);
         // Newest-first: the turn-1 Answer settle (highest seq) leads.
@@ -495,7 +548,7 @@ mod tests {
         j.append(turn_fact(1, 0xc0, ReactBranch::Answer)).unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None, None).unwrap();
         // 1 Pending + 2 fanned tool rows + 1 Answer = 4 wire rows from 3 facts.
         assert_eq!(resp.turns.len(), 4, "the batch fact fans into 2 tool rows");
         let tool_rows: Vec<_> = resp.turns.iter().filter(|t| t.branch == "tool").collect();
@@ -526,7 +579,7 @@ mod tests {
         j.append(turn_fact(1, 0xa1, ReactBranch::Answer)).unwrap();
         let r = ReadOnly::new(j);
 
-        let resp = list_react_turns(&r, None, Some(&[0xa1; INSTANCE_ID_LEN]), None).unwrap();
+        let resp = list_react_turns(&r, None, None, Some(&[0xa1; INSTANCE_ID_LEN]), None).unwrap();
         assert_eq!(resp.turns.len(), 2, "only run 0xa1's facts");
         assert!(resp
             .turns
@@ -553,28 +606,34 @@ mod tests {
         let r = ReadOnly::new(j);
 
         // Scope to chain A: its anchor + answer only.
-        let resp =
-            list_react_turns(&r, None, Some(&[0xd0; INSTANCE_ID_LEN]), Some(&salt_a)).unwrap();
+        let resp = list_react_turns(
+            &r,
+            None,
+            None,
+            Some(&[0xd0; INSTANCE_ID_LEN]),
+            Some(&salt_a),
+        )
+        .unwrap();
         assert_eq!(resp.turns.len(), 2, "only chain A's two facts");
         assert!(resp.turns.iter().all(|t| t.step_salt == salt_a.to_vec()));
         // Empty step_salt scopes to the legacy run-level (None) chain only.
         let run_level =
-            list_react_turns(&r, None, Some(&[0xd0; INSTANCE_ID_LEN]), Some(&[])).unwrap();
+            list_react_turns(&r, None, None, Some(&[0xd0; INSTANCE_ID_LEN]), Some(&[])).unwrap();
         assert_eq!(run_level.turns.len(), 1, "only the None-salt chain");
         assert!(run_level.turns[0].step_salt.is_empty());
         // Absent step_salt = every chain under the run (4 facts).
-        let all = list_react_turns(&r, None, Some(&[0xd0; INSTANCE_ID_LEN]), None).unwrap();
+        let all = list_react_turns(&r, None, None, Some(&[0xd0; INSTANCE_ID_LEN]), None).unwrap();
         assert_eq!(all.turns.len(), 4);
     }
 
     #[test]
     fn malformed_instance_filter_is_refused_loudly() {
         let r = ReadOnly::new(InMemoryJournal::new());
-        let err = list_react_turns(&r, None, Some(&[1, 2, 3]), None).unwrap_err();
+        let err = list_react_turns(&r, None, None, Some(&[1, 2, 3]), None).unwrap_err();
         assert!(matches!(err, GatewayError::InvalidArgument(_)));
         // PR-R1: a non-empty, non-32-byte step_salt filter is refused loudly too.
         let r2 = ReadOnly::new(InMemoryJournal::new());
-        let err2 = list_react_turns(&r2, None, None, Some(&[9, 9, 9])).unwrap_err();
+        let err2 = list_react_turns(&r2, None, None, None, Some(&[9, 9, 9])).unwrap_err();
         assert!(matches!(err2, GatewayError::InvalidArgument(_)));
     }
 
@@ -585,7 +644,7 @@ mod tests {
             j.append(turn_fact(i, 0xb0, ReactBranch::Pending)).unwrap();
         }
         let r = ReadOnly::new(j);
-        let resp = list_react_turns(&r, Some(2), None, None).unwrap();
+        let resp = list_react_turns(&r, None, Some(2), None, None).unwrap();
         assert_eq!(resp.turns.len(), 2);
         assert!(resp.has_more, "3 turns remain beyond a page of 2");
     }
@@ -602,8 +661,82 @@ mod tests {
         .unwrap();
         j.append(turn_fact(0, 0xc0, ReactBranch::Pending)).unwrap();
         let r = ReadOnly::new(j);
-        let resp = list_react_turns(&r, None, None, None).unwrap();
+        let resp = list_react_turns(&r, None, None, None, None).unwrap();
         assert_eq!(resp.turns.len(), 1, "only ReactRound facts are enumerated");
         assert_eq!(resp.turns[0].turn, 0);
+    }
+
+    /// A minimal in-memory content reader for the warrant-axes decode test.
+    struct MapContent(std::collections::HashMap<[u8; 32], Vec<u8>>);
+    impl crate::reader::ContentReader for MapContent {
+        fn get(&self, r: &ContentRef) -> Option<Vec<u8>> {
+            self.0.get(r.as_bytes()).cloned()
+        }
+        fn contains(&self, r: &ContentRef) -> bool {
+            self.0.contains_key(r.as_bytes())
+        }
+    }
+
+    /// A ReactRound anchor carrying an explicit `warrant_ref` (so the fold can decode
+    /// its axes) — the RunApp Gmail shape (grants `gmail/search`, scopes its credential).
+    fn anchor_with_warrant(warrant_ref: ContentRef) -> JournalEntry {
+        JournalEntry::ReactRound {
+            turn: 0,
+            turn_mote_id: MoteId::from_bytes([0x11; 32]),
+            instance_id: [0x11; INSTANCE_ID_LEN],
+            base_prompt_ref: ContentRef::from_bytes([0u8; 32]),
+            warrant_ref,
+            model_id: "m".to_string(),
+            branch: ReactBranch::Pending,
+            max_turns: 8,
+            max_tool_calls: 8,
+            step_salt: None,
+            is_agentic_launch: false,
+            context_items_ref: None,
+            image_ref: None,
+            require_approval: false,
+            seq: 0,
+        }
+    }
+
+    #[test]
+    fn anchor_warrant_axes_surface_granted_tools_and_secret_scope() {
+        use kx_warrant::{encode_warrant, warrant_ref_of, SecretRef, ToolGrant, WarrantSpec};
+
+        // The RunApp Gmail warrant: grants `gmail/search@1`, scopes its credential.
+        let mut w = WarrantSpec::default();
+        w.tool_grants.insert(ToolGrant {
+            tool_id: kx_mote::ToolName("gmail/search".into()),
+            tool_version: kx_mote::ToolVersion("1".into()),
+        });
+        w.secret_scope = SecretScope::AllowList(
+            [SecretRef("KX_GMAIL_CREDENTIAL".into())]
+                .into_iter()
+                .collect(),
+        );
+        let wr = warrant_ref_of(&w);
+
+        let j = InMemoryJournal::new();
+        j.append(anchor_with_warrant(wr)).unwrap();
+        let r = ReadOnly::new(j);
+        let mut map = std::collections::HashMap::new();
+        map.insert(*wr.as_bytes(), encode_warrant(&w));
+        let content = MapContent(map);
+
+        // WITH content: the anchor row surfaces the governance axes (names/refs only).
+        let resp = list_react_turns(&r, Some(&content), None, None, None).unwrap();
+        let anchor = resp.turns.iter().find(|t| t.turn == 0).expect("anchor row");
+        assert_eq!(anchor.granted_tools, vec!["gmail/search@1".to_string()]);
+        assert_eq!(
+            anchor.secret_scope_names,
+            vec!["KX_GMAIL_CREDENTIAL".to_string()]
+        );
+
+        // WITHOUT content: the axes degrade to empty — never an error (D142 don't-fake;
+        // a display-only projection).
+        let resp_none = list_react_turns(&r, None, None, None, None).unwrap();
+        let anchor_none = resp_none.turns.iter().find(|t| t.turn == 0).unwrap();
+        assert!(anchor_none.granted_tools.is_empty());
+        assert!(anchor_none.secret_scope_names.is_empty());
     }
 }

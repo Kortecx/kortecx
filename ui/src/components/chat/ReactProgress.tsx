@@ -42,6 +42,10 @@ export function ReactProgress({ turns }: { turns: readonly ReactTurnVM[] }) {
   // without ever settling on an answer (vs an all-rejected dead-letter, whose
   // per-turn reasons already explain it). A pure derivation over the same facts.
   const loopedOnTools = turns.some((t) => t.branch === "dead_lettered") && actions.length > 0;
+  // Governance observability: the chain's run-fixed warrant axes (names/refs only) —
+  // what this run may fire + which secrets it may resolve. Chain-level, so the first row
+  // carrying them is representative. Makes a dropped capability axis visible, not silent.
+  const grants = turns.find((t) => t.grantedTools.length > 0 || t.secretScopeNames.length > 0);
   return (
     <div className="react-progress" data-testid="react-progress">
       <span className="muted">
@@ -78,6 +82,17 @@ export function ReactProgress({ turns }: { turns: readonly ReactTurnVM[] }) {
       {actions.length > 0 && (
         <span className="muted react-actions" data-testid="react-actions">
           Actions taken: {actions.length} ({distinctTools.join(", ")})
+        </span>
+      )}
+      {grants && (
+        <span className="muted react-grants" data-testid="react-grants">
+          Governed by:{" "}
+          {grants.grantedTools.length > 0
+            ? `tools [${grants.grantedTools.join(", ")}]`
+            : "no tools"}
+          {grants.secretScopeNames.length > 0
+            ? `, secrets [${grants.secretScopeNames.join(", ")}]`
+            : ""}
         </span>
       )}
       {loopedOnTools && (
