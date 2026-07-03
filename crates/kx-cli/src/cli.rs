@@ -73,7 +73,7 @@ usage: kx <command> [args]
     kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
     kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
     kx skills add (--dir <pack> | --manifest <file> [--instructions <md>]) | list | show --name <n> | remove --name <n>   (kortecx.skill/v1 catalog)
-    kx new skill <name> [--dir <parent>]   (scaffold a skill pack, offline)
+    kx new (skill | connector) <name> [--dir <parent>]   (scaffold a skill pack / MCP connector crate, offline)
     kx secrets set --name <N> --value <V> | list | rm --name <N>   (MM-3/D110 local keychain; values write-only)
     kx triggers add --name <N> --kind <webhook|cron|grpc> --recipe <h> [--auth <a>] [--secret-ref <N>] [--schedule <secs>] [--enabled] | list | test | fire | rm   (D113 event ingress)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
@@ -767,7 +767,14 @@ kx new skill <name> [--dir <parent>]
   Scaffold a kortecx.skill/v1 pack (OFFLINE — no gateway): <dir>/<name>/ gains
   skill.json (fill in the tool wishes) + instructions.md (the skill's know-how)
   + README.md (a next-steps checklist: `just test-skill`, `kx skills add`,
-  attach with `kx app new --skill`). Refuses a non-empty target directory."
+  attach with `kx app new --skill`). Refuses a non-empty target directory.
+kx new connector <name> [--dir <parent>]   (default --dir integrations)
+  Scaffold a bundled MCP connector sidecar crate (OFFLINE) at
+  <dir>/kx-connector-<name>/: Cargo.toml + src/{main,lib}.rs (a stdio JSON-RPC 2.0
+  server with a `ping` starter tool + credential-by-ref D81 + a FAKE mode) +
+  tests/conformance.rs + README.md. No kx-* runtime dep (cannot move the digest).
+  Next: implement your tools, `cargo test -p kx-connector-<name>`, add it to the
+  workspace members, then `kx connections add --command kx-connector-<name>`."
             .into(),
         "recipe" => "\
 kx recipe list [client flags]
