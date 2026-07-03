@@ -154,6 +154,19 @@ describe("ConnectionsPanel", () => {
     });
   });
 
+  it("RC-SW2: 'Connect Discord' prefills the bundled discord connector defaults", () => {
+    render(<ConnectionsPanel />);
+    fireEvent.click(screen.getByTestId("connection-provider-discord"));
+    fireEvent.submit(screen.getByTestId("connections-add-form"));
+    expect(registerM.mutate).toHaveBeenCalledTimes(1);
+    expect(registerM.mutate.mock.calls[0]?.[0]).toMatchObject({
+      name: "discord",
+      transport: "stdio",
+      endpoint: "kx-connector-discord",
+      credentialRef: "KX_DISCORD_CREDENTIAL",
+    });
+  });
+
   it("switches to http transport and shows the TLS toggle", () => {
     render(<ConnectionsPanel />);
     fireEvent.click(screen.getByTestId("connection-transport-http"));

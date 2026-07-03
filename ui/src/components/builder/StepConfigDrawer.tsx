@@ -7,7 +7,7 @@
  * appears only where the wire enforces it (don't-fake-gaps, D142).
  */
 
-import type { ModelSummary } from "@kortecx/sdk/web";
+import { type ModelSummary, PERSONAS, personaNames } from "@kortecx/sdk/web";
 import { m } from "framer-motion";
 import { useEffect } from "react";
 import { useDiscoverTools } from "../../kx/use-tool-registry";
@@ -129,6 +129,31 @@ export function StepConfigDrawer({
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="builder-field">
+              <span className="builder-field__label">Persona</span>
+              <div className="builder-chips" data-testid="step-config-persona">
+                {personaNames().map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className="chip"
+                    data-testid={`step-config-persona-${name}`}
+                    onClick={() => {
+                      const role = PERSONAS[name] ?? "";
+                      const body = step.prompt.trim();
+                      onChange({ ...step, prompt: body ? `${role}\n\n${body}` : role });
+                    }}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+              <span className="builder-field__hint">
+                RC-SW2: a curated role. Clicking prepends its instructions to the prompt (an
+                editable template); the same as the SDK <code>kx.persona("…")</code>.
+              </span>
             </div>
 
             <div className="builder-field">
