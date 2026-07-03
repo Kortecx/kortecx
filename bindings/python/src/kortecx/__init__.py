@@ -77,7 +77,7 @@ from .errors import (
 )
 from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
-from .flow import Flow, flow
+from .flow import Flow, fan_out_gather, flow, map_reduce, swarm, team
 from .grants import AssetGrants, GrantView
 from .memory import (
     DecayCandidate,
@@ -90,6 +90,7 @@ from .memory import (
 )
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
+from .personas import PERSONAS, persona, persona_names
 from .react import ReactTurn, ReactTurnPage
 from .recipes import (
     BlueprintForm,
@@ -229,6 +230,15 @@ __all__ = [
     "Flow",
     "flow",
     "Agent",
+    # RC-SW2 — multi-agent swarm authoring + a curated persona library (pure client
+    # composition: N parallel agentic leaves → gather; personas fold into PROMPT_KEY).
+    "swarm",
+    "team",
+    "fan_out_gather",
+    "map_reduce",
+    "persona",
+    "persona_names",
+    "PERSONAS",
     # PR-9c-1 — the embeddable agent-runner (goal → answer + audited actions).
     "run_agent",
     "run_agent_async",

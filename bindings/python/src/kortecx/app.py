@@ -42,6 +42,12 @@ def _is_hex_ref(s: str) -> bool:
 GMAIL_CONNECTOR_COMMAND = "kx-connector-gmail"
 GMAIL_CREDENTIAL_REF = "KX_GMAIL_CREDENTIAL"
 
+#: RC-SW2: the curated Discord provider defaults (the bundled ``kx-connector-discord``
+#: sidecar, #277). Mirrors ``with_gmail`` — register with
+#: ``kx connections add --command kx-connector-discord --credential-ref KX_DISCORD_CREDENTIAL``.
+DISCORD_CONNECTOR_COMMAND = "kx-connector-discord"
+DISCORD_CREDENTIAL_REF = "KX_DISCORD_CREDENTIAL"
+
 
 class App:
     """A fluent App builder. Each method returns ``self``; terminate with
@@ -79,6 +85,12 @@ class App:
         self._secret_scope: List[str] = []
         self._branch_handle = ""
         self._replay: Dict[str, str] = {}
+        # RC-SW2: imperative pre-run registrations carried from a Flow via
+        # :meth:`Flow.as_app` (with_mcp connectors / with_memory facts). Run() executes
+        # them before RunApp so a `flow().with_mcp(...).as_app(...).run()` chain still
+        # registers its connector. Never part of the envelope (off the golden digest).
+        self._flow_mcp: List[Dict[str, Any]] = []
+        self._flow_memory: List[Dict[str, Any]] = []
 
     # -- composition --
 
@@ -167,6 +179,35 @@ class App:
         equivalent to ``with_connection("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")``.
         Register it on the runtime with ``kx connections add --provider gmail``."""
         return self.with_connection(GMAIL_CONNECTOR_COMMAND, GMAIL_CREDENTIAL_REF)
+
+    def with_discord(self) -> "App":
+        """RC-SW2: declare the bundled Discord connector (the curated provider default) —
+        equivalent to ``with_connection("kx-connector-discord", "KX_DISCORD_CREDENTIAL")``.
+        Register it on the runtime with ``kx connections add --command kx-connector-discord
+        --credential-ref KX_DISCORD_CREDENTIAL`` (the sidecar reads a bot token by name)."""
+        return self.with_connection(DISCORD_CONNECTOR_COMMAND, DISCORD_CREDENTIAL_REF)
+
+    def secrets(self, names: "Union[str, List[str]]") -> "App":
+        """Add secret NAMES to ``guards.secret_scope`` — the run warrant's
+        ``SecretScope::AllowList`` narrows to these so a granted connector may be dialed
+        inside the agentic loop (G2/#285). The VALUE never travels (D81). A scope name is
+        **bounded server-side by the referenced connections** — pair it with the matching
+        :meth:`with_connection` / :meth:`with_gmail` / :meth:`with_discord`, or the entry
+        is inert (fails closed). Usually implicit via ``with_connection(scope_secret=True)``;
+        use this to declare scope explicitly."""
+        for name in [names] if isinstance(names, str) else names:
+            if name and name not in self._secret_scope:
+                self._secret_scope.append(name)
+        return self
+
+    def _carry_flow_side_channels(
+        self, mcp: "List[Dict[str, Any]]", memory: "List[Dict[str, Any]]"
+    ) -> None:
+        """Carry a promoting Flow's imperative side-channels (``with_mcp`` connectors +
+        ``with_memory`` facts) so :meth:`run` registers them before ``RunApp``. Set by
+        :meth:`Flow.as_app`; never part of the envelope."""
+        self._flow_mcp = list(mcp)
+        self._flow_memory = list(memory)
 
     # -- steering (4 axes; the server RE-RESOLVES each at bind) --
 
@@ -306,15 +347,29 @@ class App:
         timeout: float = 120.0,
         client=None,
     ) -> "Union[Run, Result]":
-        """Compile this App's blueprint and run it (exactly-once). ``args`` overrides
-        the entry step's free-params (reserved; ignored when empty). The server
-        re-resolves every warrant from the caller's grants (SN-8)."""
+        """Save this App and run it via ``RunApp`` (exactly-once). ``args`` (the App's
+        input schema) fold server-side into the entry step's prompt.
+
+        RC-SW2 fix: this now routes through ``SaveApp`` + ``RunApp`` instead of a local
+        ``submit_workflow`` recompile — so the App's ``references.connections`` +
+        ``guards.secret_scope`` reach the server and a credentialed connector (Gmail /
+        Discord) actually fires inside the agentic loop (the G2/#285 path). Saving is
+        expected: an ``App`` is an explicitly-named durable object (``kx.app(name)`` /
+        ``flow().as_app(name)``); the save is idempotent (content-addressed envelope +
+        handle upsert). The server re-resolves every warrant from the caller's grants
+        (SN-8)."""
         from .defaults import default_client
 
         kx = client if client is not None else default_client()
         self._resolve_pending(kx)
-        request = Chain.from_blueprint(self.to_envelope()["blueprint"])
-        return kx.submit_workflow(request, wait=wait, timeout=timeout)
+        # Imperative side-channels carried from a promoting Flow (Flow.as_app).
+        for spec in self._flow_mcp:
+            kx.register_mcp_server(**spec)
+        for fact in self._flow_memory:
+            kx.store_memory(**fact)
+        saved = kx.save_app(self.to_envelope())
+        str_args = {str(k): str(v) for k, v in dict(args).items()} if args else None
+        return kx.run_app(saved.handle, args=str_args, wait=wait, timeout=timeout)
 
 
 def app(name: str, *, version: str = "1", seed: int = 0) -> App:

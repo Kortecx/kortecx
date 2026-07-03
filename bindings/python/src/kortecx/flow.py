@@ -14,7 +14,7 @@ A thin, discoverable veneer over the operator AST in :mod:`kortecx.chains`: ever
 method appends to the SAME ``_Seq`` / ``_Par`` node graph the ``>>`` / ``&`` / ``|``
 operators build, so a :class:`Flow` lowers **byte-identically** to the equivalent
 chain (the golden-corpus tri-surface contract holds by construction — a Flow is sugar,
-never a new wire shape). Defaults are filled in (served model, budget 8/6, wait) so the
+never a new wire shape). Defaults are filled in (served model, budget 8/20, wait) so the
 common case is one line; every knob stays optional. SN-8: a Flow describes TOPOLOGY
 only — the server compiles + warrants every step.
 """
@@ -56,6 +56,72 @@ def _to_node(item: "FlowItem") -> "_Node":
     if isinstance(item, str):
         return _model(prompt=item)
     return _as_node(item)
+
+
+#: The default synthesizer prompt for :meth:`Flow.swarm` / :meth:`Flow.team` — a MODEL
+#: gather step reads every parallel participant's committed output (injected as its
+#: Data-edge parents, F-7) and merges them.
+_DEFAULT_SWARM_GATHER = (
+    "You are the lead. Synthesize the parallel agents' results above into one "
+    "coherent, complete answer. Reconcile disagreements, keep what is well-supported, "
+    "and drop redundancy."
+)
+_DEFAULT_FAN_GATHER = "Combine the parallel results above into one coherent answer."
+_DEFAULT_REDUCE = "Reduce the mapper results above into one consolidated result."
+
+
+def _join_goal(text: str, goal: str) -> str:
+    """Compose a participant prompt = its role/prompt + the shared ``goal`` (if any)."""
+    return f"{text}\n\n{goal}".strip() if goal else text
+
+
+def _participant_to_node(item: "object", goal: str) -> "_Node":
+    """Resolve ONE swarm/team participant to an agentic-leaf AST node.
+
+    Accepts a prompt ``str``, a ``(prompt, tools)`` tuple, a :class:`Flow` /
+    :class:`~kortecx.chains.Task` (already task-bound — ``goal`` ignored), or an
+    :class:`~kortecx.agent.Agent` / :func:`~kortecx.personas.persona` (duck-typed on
+    ``_prompt`` to avoid the ``agent → flow`` import cycle). A persona/Agent with a
+    tool set lowers to a bounded reason→tool→observe leaf."""
+    if isinstance(item, Flow):
+        return item._require_node()
+    if isinstance(item, (Task, _Seq, _Par)):
+        return item
+    if isinstance(item, tuple):
+        prompt = str(item[0])
+        tools = item[1] if len(item) > 1 else None
+        return _model(prompt=_join_goal(prompt, goal), tools=tools)
+    if isinstance(item, str):
+        return _model(prompt=_join_goal(item, goal))
+    prompt_fn = getattr(item, "_prompt", None)
+    if callable(prompt_fn):  # duck-typed Agent / persona
+        return _model(
+            prompt_fn(goal),
+            tools=getattr(item, "tools", None),
+            model=getattr(item, "model", "") or "",
+            max_turns=getattr(item, "max_turns", None),
+            max_tool_calls=getattr(item, "max_tool_calls", None),
+            reasoning=getattr(item, "reasoning", None),
+        )
+    raise ChainError(
+        f"not a swarm participant: {item!r} — pass a prompt, (prompt, tools), an "
+        "Agent/persona, or a Flow"
+    )
+
+
+def _sink_node(
+    gather: "Optional[Union[str, FlowItem]]", synthesize: bool, default_prompt: str
+) -> "_Node":
+    """Build the fan-in sink: a MODEL synthesizer (``gather`` is a prompt string, or the
+    ``default_prompt`` when ``synthesize`` and no explicit sink), an explicit sink node
+    (a Task/Flow ``gather``), or a PURE deterministic fold (``synthesize=False``)."""
+    if isinstance(gather, str):
+        return _model(prompt=gather)
+    if gather is not None:
+        return _to_node(gather)
+    if synthesize:
+        return _model(prompt=default_prompt)
+    return _as_node(_pure())
 
 
 class Flow:
@@ -247,6 +313,105 @@ class Flow:
         for spec in self._memory:
             kx.store_memory(**spec)
 
+    # -- orchestration (RC-SW2: parallel agentic patterns; pure client composition) --
+
+    def swarm(
+        self,
+        *agents: "object",
+        goal: str = "",
+        gather: "Optional[Union[str, FlowItem]]" = None,
+        synthesize: bool = True,
+    ) -> "Flow":
+        """Fan out to N parallel agents, then gather (a **swarm**). Each ``agent`` is a
+        prompt, a ``(prompt, tools)`` tuple, an :class:`~kortecx.agent.Agent` /
+        :func:`~kortecx.personas.persona`, or a :class:`Flow`; they run **concurrently**
+        as independent deterministic-agentic steps (each its own crash-safe, replayable
+        salt-2 chain), then a gather step merges their committed outputs::
+
+            (kx.flow()
+               .swarm(kx.persona("researcher"), kx.persona("critic"), kx.persona("writer"),
+                      goal="Write a briefing on durable execution")
+               .run())
+
+        ``goal`` is the shared task each participant works on (appended to its
+        role/instructions). By default (``synthesize=True``) the gather is a MODEL step
+        that reads every participant's output (injected as its Data-edge parents) and
+        writes one coherent answer; pass ``gather="<prompt>"`` to steer that synthesis,
+        a Task/Flow for a custom sink, or ``synthesize=False`` for a PURE deterministic
+        fold. Pure client-side composition (parallel MODEL leaves → one sink) — no new
+        step kind, byte-identical to the equivalent ``[a & b] > g`` chain; the SERVER
+        drives + warrants each agent (SN-8)."""
+        if not agents:
+            raise ChainError("swarm() needs at least one agent")
+        leaves = [_participant_to_node(a, goal) for a in agents]
+        self.parallel(*leaves)
+        return self.then(_sink_node(gather, synthesize, _DEFAULT_SWARM_GATHER))
+
+    def team(
+        self,
+        *agents: "object",
+        goal: str = "",
+        gather: "Optional[Union[str, FlowItem]]" = None,
+    ) -> "Flow":
+        """A **team**: the same topology as :meth:`swarm` with a lead that synthesizes
+        (``synthesize=True``). Reads naturally for role-based personas working a shared
+        ``goal``. ``team(*a, goal=g)`` ≡ ``swarm(*a, goal=g, synthesize=True)``."""
+        return self.swarm(*agents, goal=goal, gather=gather, synthesize=True)
+
+    def fan_out_gather(
+        self,
+        *branches: "FlowItem",
+        gather: "Optional[Union[str, FlowItem]]" = None,
+        synthesize: bool = True,
+    ) -> "Flow":
+        """Fan out to N parallel ``branches`` (each a prompt / Task / Flow), then gather
+        their outputs — sample-N-ways-and-combine. Default gather = a MODEL combine
+        step; ``gather="<prompt>"`` steers it, a Task/Flow gives a custom sink, and
+        ``synthesize=False`` folds deterministically (PURE). Surfaces the recipe
+        builder's ``fan_out_gather`` topology as first-class client composition."""
+        if not branches:
+            raise ChainError("fan_out_gather() needs at least one branch")
+        leaves = [_to_node(b) for b in branches]
+        self.parallel(*leaves)
+        return self.then(_sink_node(gather, synthesize, _DEFAULT_FAN_GATHER))
+
+    def map_reduce(
+        self,
+        *mappers: "FlowItem",
+        reduce: "Optional[Union[str, FlowItem]]" = None,
+        synthesize: bool = True,
+    ) -> "Flow":
+        """Map N ``mappers`` in parallel, then reduce their outputs. Default reduce = a
+        MODEL consolidation step; ``reduce="<prompt>"`` steers it, a Task/Flow gives a
+        custom reducer, and ``synthesize=False`` reduces deterministically (PURE).
+        Surfaces the recipe builder's ``map_reduce`` topology as client composition."""
+        if not mappers:
+            raise ChainError("map_reduce() needs at least one mapper")
+        leaves = [_to_node(m) for m in mappers]
+        self.parallel(*leaves)
+        return self.then(_sink_node(reduce, synthesize, _DEFAULT_REDUCE))
+
+    def as_app(self, name: str, *, version: str = "1"):
+        """Promote this Flow to a durable, named :class:`~kortecx.app.App` — the
+        EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
+        ``RunApp`` (server-resolved connections + ``secret_scope`` + skills). Chain the
+        App rails on the result::
+
+            (kx.flow().agent("Draft and send a reply", tools=["kx-connector-gmail/send"])
+               .as_app("mailer").with_gmail().secrets(["KX_GMAIL_CREDENTIAL"])
+               .run(args={"to": "x@y.com"}))
+
+        Naming the App is deliberate: connections / skills / secret scope ride the App
+        envelope (not the lowered graph, which stays byte-identical), so a bare
+        ``Flow.run()`` — which submits a plain workflow — has no place for them. Any
+        :meth:`with_mcp` / :meth:`with_memory` side-channels carry over as pre-run
+        registrations."""
+        from .app import app as _app
+
+        built = _app(name, version=version, seed=self._seed).blueprint(self)
+        built._carry_flow_side_channels(list(self._mcp), list(self._memory))
+        return built
+
     # -- terminals --
 
     def _require_node(self) -> "_Node":
@@ -303,3 +468,49 @@ def flow(*, seed: int = 0) -> Flow:
     """Start a fluent chain: ``kx.flow().agent(...).then(...).run()``. The headline
     authoring surface — reads top-to-bottom, IDE-discoverable, defaults filled in."""
     return Flow(seed=seed)
+
+
+# -- top-level orchestration factories (a swarm is usually the whole flow) --
+
+
+def swarm(
+    *agents: "object",
+    goal: str = "",
+    gather: "Optional[Union[str, FlowItem]]" = None,
+    synthesize: bool = True,
+    seed: int = 0,
+) -> Flow:
+    """``kx.swarm(...)`` — N parallel agents → gather, as a whole flow (RC-SW2). Sugar
+    for ``kx.flow(seed=seed).swarm(...)``; see :meth:`Flow.swarm`."""
+    return flow(seed=seed).swarm(*agents, goal=goal, gather=gather, synthesize=synthesize)
+
+
+def team(
+    *agents: "object",
+    goal: str = "",
+    gather: "Optional[Union[str, FlowItem]]" = None,
+    seed: int = 0,
+) -> Flow:
+    """``kx.team(...)`` — a swarm with a lead that synthesizes; see :meth:`Flow.team`."""
+    return flow(seed=seed).team(*agents, goal=goal, gather=gather)
+
+
+def fan_out_gather(
+    *branches: "FlowItem",
+    gather: "Optional[Union[str, FlowItem]]" = None,
+    synthesize: bool = True,
+    seed: int = 0,
+) -> Flow:
+    """``kx.fan_out_gather(...)`` — sample N ways, combine; see :meth:`Flow.fan_out_gather`."""
+    return flow(seed=seed).fan_out_gather(*branches, gather=gather, synthesize=synthesize)
+
+
+def map_reduce(
+    *mappers: "FlowItem",
+    reduce: "Optional[Union[str, FlowItem]]" = None,
+    synthesize: bool = True,
+    seed: int = 0,
+) -> Flow:
+    """``kx.map_reduce(...)`` — map N mappers in parallel, then reduce; see
+    :meth:`Flow.map_reduce`."""
+    return flow(seed=seed).map_reduce(*mappers, reduce=reduce, synthesize=synthesize)
