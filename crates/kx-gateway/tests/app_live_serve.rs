@@ -239,11 +239,11 @@ async fn app_catalog_round_trips_and_runs_on_a_live_model() {
     std::env::remove_var("KX_SERVE_AUTOGRANT");
 }
 
-/// Resolve the bundled `kx-connector-gmail` sidecar binary (release preferred), if built.
-fn gmail_connector_bin() -> Option<PathBuf> {
+/// Resolve a bundled connector sidecar binary by crate name (release preferred), if built.
+fn connector_bin(bin_name: &str) -> Option<PathBuf> {
     for profile in ["release", "debug"] {
         let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("../../target/{profile}/kx-connector-gmail"));
+            .join(format!("../../target/{profile}/{bin_name}"));
         if p.is_file() {
             return Some(p);
         }
@@ -251,87 +251,95 @@ fn gmail_connector_bin() -> Option<PathBuf> {
     None
 }
 
-/// The `kortecx.app/v1` envelope for a Gmail-integration App: an agentic MODEL step
-/// granting the registered `gmail/search` tool, a by-reference connection pointer, and
-/// (when `scope_secret`) the connection's credential in `guards.secret_scope`. G2's
-/// load-bearing bit: with the secret in scope the run warrant permits dialing the
-/// credentialed connector; without it the dial fails closed at the broker.
-fn gmail_app_envelope(connector_path: &str, scope_secret: bool) -> Vec<u8> {
+/// Resolve the serve engine (GR24): the Ollama opt-in FIRST (a served GGUF standin would
+/// otherwise register as PRIMARY and mask `KX_SERVE_OLLAMA`), else a GGUF drives llama.cpp
+/// (Gemma-4 locally / Qwen3 in CI). Sets `KX_SERVE_MODEL_GGUF` for the llama.cpp arm.
+fn resolve_engine() -> Option<&'static str> {
+    if ollama_opted_in() {
+        Some("ollama")
+    } else if let Some(gguf) = serve_model() {
+        std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
+        Some("llama.cpp")
+    } else {
+        None
+    }
+}
+
+/// A `kortecx.app/v1` envelope for a connector-integration App: one agentic MODEL step
+/// granting the registered `<server>/<tool>`, a by-reference connection pointer, and (when
+/// `scope_secret`) the connection's credential in `guards.secret_scope` — the load-bearing
+/// bit that lets the run warrant dial the credentialed connector (G2/#285).
+fn connector_app_envelope(
+    connector_path: &str,
+    granted_tool: &str,
+    credential_ref: &str,
+    prompt: &str,
+    scope_secret: bool,
+) -> Vec<u8> {
     let blueprint = serde_json::json!({
         "seed": 0,
         "steps": [{
             "kind": "model",
-            "prompt": "Search my Gmail for unread messages using the gmail/search tool, \
-                       then briefly answer with what you found.",
-            "tool_contract": { "gmail/search": "1" },
-            // A GENEROUS budget so the model has room to dial the credentialed connector AND
-            // then answer over the tool result — on Gemma-4 the log then shows the full
-            // vertical (fires gmail/search → observation commits → answers). The live test
-            // OBSERVES; it does not gate on whether an answer lands (the deterministic proofs
-            // do), so the budget only affects how far the logged trajectory gets.
+            "prompt": prompt,
+            "tool_contract": { granted_tool: "1" },
             "params": { "max_turns": "8", "max_tool_calls": "2" }
         }]
     });
-    let mut env = kx_app::AppEnvelope::new("Gmail Agent", blueprint);
-    env.description = "an agentic App that dials the bundled Gmail connector".to_string();
+    let mut env = kx_app::AppEnvelope::new("Connector Agent", blueprint);
+    env.description = format!("an agentic App that dials the {granted_tool} connector");
     env.references.connections.push(kx_app::ConnectionRef {
         descriptor: connector_path.to_string(),
-        credential_ref: "KX_GMAIL_CREDENTIAL".to_string(),
+        credential_ref: credential_ref.to_string(),
     });
     if scope_secret {
-        env.steering_config.guards.secret_scope = vec!["KX_GMAIL_CREDENTIAL".to_string()];
+        env.steering_config.guards.secret_scope = vec![credential_ref.to_string()];
     }
     env.to_canonical_json().unwrap()
 }
 
-/// G2 LIVE witness (GR15/GR24) + `T-RUNAPP-SECRET-SCOPE-OBSERVATION` regression:
-/// an App that references the bundled Gmail connector + declares its credential in
-/// `secret_scope`, RUN via the new server-side `RunApp`, on a live model. Proves the
-/// whole vertical: RunApp reads the stored envelope, resolves the connection against the
-/// caller's own registry, grants the declared secret scope to the agentic warrant, and
-/// the agent can dial the credentialed connector (FAKE mode — a real MCP subprocess +
-/// real JSON-RPC round-trip, canned upstream).
-///
-/// A GR16 OBSERVE-witness (mirroring `react_serve_connector.rs`): it asserts only ROBUST
-/// invariants — the chain SETTLES to a terminal, and if a tool fired it was the granted
-/// `gmail/search` (SN-8) — and LOGS the trajectory (which engine, whether it dialed vs
-/// answered directly is model-nondeterministic). It deliberately does NOT gate on the fix:
-/// a committed observation that then hits the tool-call budget dead-letters AT the tool
-/// turn, indistinguishable at the ListReactTurns level from a SecretScope dead-letter
-/// (whose reason is synthesized and never names the axis). The fix's REGRESSION PROOF is
-/// deterministic + always in CI: `kx-proto::secret_scope_allowlist_survives_the_coordinator_wire`
-/// (the wire round-trip) + `kx-coordinator::observation_dispatch_preserves_the_chain_secret_scope`
-/// (the leased observation warrant carries the AllowList). Drive on Gemma-4 locally (the
-/// log then shows the full vertical: fires gmail/search → observation commits → answers).
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "real in-process LLM inference + the built kx-connector-gmail; opt in with --ignored"]
-async fn runapp_gmail_connection_and_secret_scope_live() {
-    // GR24 dual-engine: the Ollama opt-in (`KX_SERVE_OLLAMA=on
-    // KX_SERVE_OLLAMA_MODELS=gemma3:12b`) drives Ollama; otherwise a GGUF drives llama.cpp
-    // (Gemma-4 locally / Qwen3 in CI). Check the Ollama opt-in FIRST — else the GGUF standin
-    // (present in CI) would always win and silently ignore `KX_SERVE_OLLAMA` (a served GGUF
-    // registers as the PRIMARY chat route, model_exec.rs), making the Ollama arm unreachable.
-    let engine = if ollama_opted_in() {
-        // Leave KX_SERVE_MODEL_GGUF unset so serve routes to the Ollama backend.
-        "ollama"
-    } else if let Some(gguf) = serve_model() {
-        std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
-        "llama.cpp"
-    } else {
+/// One connector under a live RunApp witness (parametrized over any bundled sidecar).
+struct ConnectorCase {
+    /// The MCP server name (namespaces the tools as `<server>/<tool>`).
+    server_name: &'static str,
+    /// The bundled sidecar binary crate name (`kx-connector-gmail` / `-discord` / …).
+    bin_name: &'static str,
+    /// The credential-ref NAME (D81) the sidecar reads out-of-band.
+    credential_ref: &'static str,
+    /// A canned credential value (FAKE mode ignores it; the scope must still resolve).
+    credential_value: &'static str,
+    /// The FAKE env switch (offline canned responses).
+    fake_env: &'static str,
+    /// The single granted tool the agent may fire (SN-8).
+    granted_tool: &'static str,
+    /// The task prompt.
+    prompt: &'static str,
+}
+
+/// GR15/GR24 LIVE witness + the `T-RUNAPP-SECRET-SCOPE-OBSERVATION` regression, generalized
+/// over ANY bundled connector (the parallel-session enabler): register the connection, scope
+/// its credential, save the App, RUN via `RunApp`, and OBSERVE the agentic loop on a live
+/// model. A GR16 OBSERVE-witness (mirroring `react_serve_connector.rs`) — asserts only ROBUST
+/// invariants (settles to a terminal; a fired tool is the granted one, SN-8) and LOGS the
+/// trajectory. The fix's deterministic REGRESSION PROOFS live in CI:
+/// `kx-proto::secret_scope_allowlist_survives_the_coordinator_wire` +
+/// `kx-coordinator::observation_dispatch_preserves_the_chain_secret_scope`.
+async fn runapp_connection_live(case: &ConnectorCase) {
+    let Some(engine) = resolve_engine() else {
         eprintln!(
             "skipping: no serve model — set KX_SERVE_MODEL_GGUF (Gemma-4/Qwen3) or \
              KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b"
         );
         return;
     };
-    let Some(connector) = gmail_connector_bin() else {
-        eprintln!("skipping: kx-connector-gmail not built — `cargo build -p kx-connector-gmail`");
+    let Some(connector) = connector_bin(case.bin_name) else {
+        eprintln!(
+            "skipping: {} not built — `cargo build -p {}`",
+            case.bin_name, case.bin_name
+        );
         return;
     };
     std::env::set_var("KX_SERVE_AUTOGRANT", "1");
-    // FAKE mode: the connector answers with canned data (no network, no real creds) —
-    // inherited by the sidecar the gateway spawns.
-    std::env::set_var("KX_GMAIL_FAKE", "1");
+    std::env::set_var(case.fake_env, "1");
 
     let dir = tempfile::TempDir::new().unwrap();
     let running = start(common::gateway_config(&dir, true, HashMap::new()))
@@ -339,37 +347,40 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
         .unwrap();
     let mut c = client(running.local_addr()).await;
 
-    // Register the Gmail connection (the connector namespaces its tools under `gmail/*`).
     let reg = c
         .register_mcp_server(proto::RegisterMcpServerRequest {
-            server_name: "gmail".to_string(),
+            server_name: case.server_name.to_string(),
             transport: "stdio".to_string(),
             endpoint: connector.to_string_lossy().into_owned(),
             args: vec![],
             tls_required: false,
-            credential_ref: "KX_GMAIL_CREDENTIAL".to_string(),
+            credential_ref: case.credential_ref.to_string(),
             session_mode: String::new(),
         })
         .await
         .expect("RegisterMcpServer")
         .into_inner();
     eprintln!(
-        "gmail connection: health={} discovered={}",
-        reg.health, reg.discovered
+        "{} connection: health={} discovered={}",
+        case.server_name, reg.health, reg.discovered
     );
-    // Set the credential secret (FAKE mode ignores its value; the scope must resolve).
     let _ = c
         .put_secret(proto::PutSecretRequest {
-            name: "KX_GMAIL_CREDENTIAL".to_string(),
-            value: r#"{"client_id":"x","client_secret":"y","refresh_token":"z"}"#.to_string(),
+            name: case.credential_ref.to_string(),
+            value: case.credential_value.to_string(),
         })
         .await;
 
-    // Save the App (references the connection + scopes its credential) and RUN it via
-    // the NEW RunApp (which honors references.connections + guards.secret_scope).
-    let envelope = gmail_app_envelope(&connector.to_string_lossy(), true);
+    let handle_str = format!("apps/local/{}-agent", case.server_name);
+    let envelope = connector_app_envelope(
+        &connector.to_string_lossy(),
+        case.granted_tool,
+        case.credential_ref,
+        case.prompt,
+        true,
+    );
     c.save_app(proto::SaveAppRequest {
-        handle: "apps/local/gmail-agent".to_string(),
+        handle: handle_str.clone(),
         envelope_json: envelope,
     })
     .await
@@ -388,40 +399,25 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
         eprintln!("skipping the run leg: kx/recipes/react not provisioned");
         running.shutdown().await.unwrap();
         std::env::remove_var("KX_SERVE_AUTOGRANT");
-        std::env::remove_var("KX_GMAIL_FAKE");
+        std::env::remove_var(case.fake_env);
         return;
     }
 
     let handle = c
         .run_app(proto::RunAppRequest {
-            handle: "apps/local/gmail-agent".to_string(),
+            handle: handle_str,
             args: Vec::new(),
         })
         .await
-        .expect("RunApp of the Gmail App")
+        .expect("RunApp of the connector App")
         .into_inner();
     assert_eq!(handle.instance_id.len(), 16, "RunApp returns a run handle");
 
-    // Poll the chain to a terminal and capture its STRUCTURE for the log. This live test is
-    // a GR16 OBSERVE-witness (like `react_serve_connector.rs`): whether a model dials vs
-    // answers directly is model+engine behavior, so it asserts only ROBUST invariants
-    // (settlement + the fired tool is the granted one) and LOGS the rest for inspection.
-    //
-    // The fix's REGRESSION PROOF is deterministic + always in CI, NOT here:
-    // kx-proto `secret_scope_allowlist_survives_the_coordinator_wire` (the wire round-trip)
-    // + kx-coordinator `observation_dispatch_preserves_the_chain_secret_scope` (the leased
-    // observation warrant carries the AllowList). A live oracle CANNOT prove the fix on its
-    // own: a committed observation that then hits the tool-call budget dead-letters AT the
-    // tool turn (cumulative `tool_calls`, coordinator `advance_react_chain`) —
-    // indistinguishable at the ListReactTurns level from the SecretScope dead-letter, whose
-    // reason is synthesized and never names the axis. So we OBSERVE + log; on Gemma-4 the log
-    // shows the full vertical (fires gmail/search → observation commits → answers).
     let mut tool_fired = false;
     let mut fired_tool_ids: Vec<String> = Vec::new();
     let mut answered = false;
     let mut dead_lettered = false;
-    let mut dead_letter_reasons: Vec<String> = Vec::new();
-    let mut final_turns: Vec<(u32, String)> = Vec::new();
+    let mut dl_reasons: Vec<String> = Vec::new();
     for _ in 0..3000 {
         let turns = c
             .list_react_turns(proto::ListReactTurnsRequest {
@@ -443,7 +439,7 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
         answered = turns.turns.iter().any(|t| t.branch == "answer");
         dead_lettered = turns.turns.iter().any(|t| t.branch == "dead_lettered");
         if dead_lettered {
-            dead_letter_reasons = turns
+            dl_reasons = turns
                 .turns
                 .iter()
                 .filter(|t| t.branch == "dead_lettered" && !t.rejection_reason.is_empty())
@@ -451,47 +447,195 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
                 .collect();
         }
         if answered || dead_lettered {
-            final_turns = turns
-                .turns
-                .iter()
-                .map(|t| (t.turn, t.branch.clone()))
-                .collect();
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    final_turns.sort();
     eprintln!(
-        "LIVE RunApp Gmail [{engine}]: tool_fired={tool_fired} fired_tools={fired_tool_ids:?} \
-         answered={answered} dead_lettered={dead_lettered} dl_reasons={dead_letter_reasons:?} \
-         turns={final_turns:?}"
+        "LIVE RunApp {} [{engine}]: tool_fired={tool_fired} fired_tools={fired_tool_ids:?} \
+         answered={answered} dead_lettered={dead_lettered} dl_reasons={dl_reasons:?}",
+        case.server_name
     );
-    // Robust invariant: the chain SETTLED to a terminal (a bounded chain never wedges
-    // silently) — the RunApp vertical (envelope → connection resolve → agentic loop) ran.
     assert!(
         answered || dead_lettered,
-        "the Gmail App settled to a terminal via RunApp on the live model [{engine}]"
+        "the {} App settled to a terminal via RunApp on the live model [{engine}]",
+        case.server_name
     );
-    // SN-8: if a tool fired it was the granted `gmail/search` — never a hallucinated id.
     if tool_fired {
         assert!(
             fired_tool_ids
                 .iter()
-                .all(|id| id.is_empty() || id == "gmail/search"),
-            "if a tool fired it was the granted gmail/search. fired_tools={fired_tool_ids:?}"
-        );
-    }
-    // SN-8: if a tool fired it was the granted `gmail/search` — never a hallucinated id.
-    if tool_fired {
-        assert!(
-            fired_tool_ids
-                .iter()
-                .all(|id| id.is_empty() || id == "gmail/search"),
-            "if a tool fired it was the granted gmail/search. fired_tools={fired_tool_ids:?}"
+                .all(|id| id.is_empty() || id == case.granted_tool),
+            "if a tool fired it was the granted {}. fired_tools={fired_tool_ids:?}",
+            case.granted_tool
         );
     }
 
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
-    std::env::remove_var("KX_GMAIL_FAKE");
+    std::env::remove_var(case.fake_env);
+}
+
+/// G2/#285 Gmail witness — the thin caller over the generic connector harness.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-gmail; opt in with --ignored"]
+async fn runapp_gmail_connection_and_secret_scope_live() {
+    runapp_connection_live(&ConnectorCase {
+        server_name: "gmail",
+        bin_name: "kx-connector-gmail",
+        credential_ref: "KX_GMAIL_CREDENTIAL",
+        credential_value: r#"{"client_id":"x","client_secret":"y","refresh_token":"z"}"#,
+        fake_env: "KX_GMAIL_FAKE",
+        granted_tool: "gmail/search",
+        prompt: "Search my Gmail for unread messages using the gmail/search tool, then \
+                 briefly answer with what you found.",
+    })
+    .await;
+}
+
+/// RC-SW2 Discord witness — the same generic harness pointed at the bundled Discord sidecar
+/// (#277), so a parallel session can test ANY connector-in-App path without new harness code.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-discord; opt in with --ignored"]
+async fn runapp_discord_connection_and_secret_scope_live() {
+    runapp_connection_live(&ConnectorCase {
+        server_name: "discord",
+        bin_name: "kx-connector-discord",
+        credential_ref: "KX_DISCORD_CREDENTIAL",
+        credential_value: r#"{"bot_token":"x"}"#,
+        fake_env: "KX_DISCORD_FAKE",
+        granted_tool: "discord/read_channel",
+        prompt: "Read the most recent messages from channel 123 using the \
+                 discord/read_channel tool, then briefly summarize them.",
+    })
+    .await;
+}
+
+/// The RC-SW2 swarm request `kx.swarm(...)` / `flow().swarm(...)` lowers to: N parallel MODEL
+/// leaves (no inter-edges) fanned into one MODEL gather that reads every leaf's committed
+/// output (its Data-edge parents, F-7). Built here as the raw proto the SDK produces.
+fn swarm_request() -> proto::SubmitWorkflowRequest {
+    let model = |prompt: &str| proto::WorkflowStep {
+        kind: proto::WorkflowStepKind::Model as i32,
+        model_id: String::new(),
+        prompt: prompt.to_string(),
+        body_signature_id: Vec::new(),
+        tool_contract: Default::default(),
+        params: Default::default(),
+    };
+    proto::SubmitWorkflowRequest {
+        seed: 0,
+        steps: vec![
+            model("In one sentence, give a concrete BENEFIT of durable agentic execution."),
+            model(
+                "In one sentence, give a concrete RISK or limitation of durable agentic execution.",
+            ),
+            model("Combine the two points above into a two-sentence summary."),
+        ],
+        edges: vec![
+            proto::WorkflowEdge {
+                parent: 0,
+                child: 2,
+                edge_kind: proto::EdgeKind::Data as i32,
+                non_cascade: false,
+            },
+            proto::WorkflowEdge {
+                parent: 1,
+                child: 2,
+                edge_kind: proto::EdgeKind::Data as i32,
+                non_cascade: false,
+            },
+        ],
+        execution_mode: proto::WorkflowExecutionMode::Frozen as i32,
+        context_bundles: vec![],
+    }
+}
+
+/// RC-SW2 LIVE swarm witness (GR15/GR24): a 2-agent swarm → gather runs end-to-end on a live
+/// model, both engines. Proves the multi-agent vertical: two INDEPENDENT parallel model
+/// chains commit, then the gather synthesizes over BOTH committed outputs (F-7). A GR16
+/// OBSERVE-witness — asserts the swarm settled with all three motes committed and the gather
+/// produced REAL non-empty output (GR15), and LOGS the synthesis. Pure composition of
+/// existing step kinds (no new wire shape); the deterministic shape is pinned by the golden
+/// `swarm_agentic_gather` corpus row + the SDK unit tests.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally); opt in with --ignored"]
+async fn swarm_runs_parallel_agents_and_gathers_live() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let handle = c
+        .submit_workflow(swarm_request())
+        .await
+        .expect("SubmitWorkflow of the swarm")
+        .into_inner();
+    assert_eq!(handle.instance_id.len(), 16);
+
+    // Poll the projection: the swarm settles when all 3 motes (2 leaves + gather) commit.
+    let mut committed: Vec<[u8; 32]> = Vec::new();
+    let mut terminal_ref: Option<[u8; 32]> = None;
+    for _ in 0..2400 {
+        let view = c
+            .get_projection(proto::GetProjectionRequest {
+                instance_id: handle.instance_id.clone(),
+                at_seq: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        committed = view
+            .motes
+            .iter()
+            .filter(|m| m.state == proto::MoteSnapshotState::Committed as i32)
+            .filter_map(|m| m.result_ref.clone().and_then(|r| r.try_into().ok()))
+            .collect();
+        // The gather is the child of both leaves — the mote with two parents.
+        if let Some(g) = view
+            .motes
+            .iter()
+            .find(|m| m.parents.len() == 2 && m.state == proto::MoteSnapshotState::Committed as i32)
+        {
+            terminal_ref = g.result_ref.clone().and_then(|r| r.try_into().ok());
+        }
+        if committed.len() >= 3 && terminal_ref.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+
+    eprintln!(
+        "LIVE swarm [{engine}]: committed={} terminal_committed={}",
+        committed.len(),
+        terminal_ref.is_some()
+    );
+    assert!(
+        committed.len() >= 3,
+        "the 2-agent swarm + gather all committed on the live model [{engine}] (got {})",
+        committed.len()
+    );
+    let gather_ref = terminal_ref.expect("the gather (fan-in sink) committed");
+    let content = c
+        .get_content(proto::GetContentRequest {
+            content_ref: gather_ref.to_vec(),
+            instance_id: handle.instance_id.clone(),
+        })
+        .await
+        .expect("GetContent of the gather output")
+        .into_inner();
+    let text = String::from_utf8_lossy(&content.payload);
+    eprintln!("LIVE swarm [{engine}] synthesis: {}", text.trim());
+    // GR15: the gather produced REAL model output over the two agents' committed results.
+    assert!(
+        !text.trim().is_empty(),
+        "the swarm gather produced a non-empty synthesis on the live model [{engine}]"
+    );
+
+    running.shutdown().await.unwrap();
 }
