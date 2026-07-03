@@ -67,6 +67,7 @@ paths = [
   "docs/HANDOFF.md",
   "docs/HISTORY.md",
   "docs/bug-ledger.md",
+  "docs/learning-ledger.md",
   "docs/VISION.md",
   "CLAUDE.md",
   "MEMORY.md",
