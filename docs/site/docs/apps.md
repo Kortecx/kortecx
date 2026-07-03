@@ -208,6 +208,67 @@ credentials — the OSS single-instance sharing model (multi-party on one instan
 Cloud). `guards.secret_scope` may only name a credential one of the App's referenced
 connections provides (least-privilege).
 
+## Grounded Apps — context, rules & datasets (RAG-on-App)
+
+An App carries a **declarative knowledge rail** — the instructions, rules, and corpora it
+reasons over — and `RunApp` wires that rail into the run server-side, so the App
+**self-grounds** instead of needing a hand-authored blueprint. Every entry is by-reference
+(a bare name or a content ref, never inline authority):
+
+- **`.rule(name, body=…)` / `.prompt(...)` / `.memory(...)` / `.context(name, ref=…)`** —
+  text the agent must follow. Each becomes a labeled context item on the entry step
+  (`rule:<name>`, `prompt:<name>`, …), fail-closed if the body is missing from the content
+  store.
+- **`.dataset(dataset_ref)` (alias `.rag(...)`)** — a corpus to ground over. At run the
+  entry step is granted the read-only **`retrieve`** tool and steered to search
+  `dataset_ref` live in the loop (exactly how [`react-rag`](./agentic-rag.md) grounds).
+  **Ingest the corpus first** with `kx datasets ingest <dataset_ref> …` (the
+  *reference-existing* model); a named dataset absent from the server fails fast with
+  `app grounds on dataset "…" but no such dataset is ingested`.
+
+```python
+import kortecx as kx
+
+# 1) ingest the corpus once (operator step)
+#    $ kx datasets ingest research --file corpus.md
+
+# 2) author an App that grounds on it
+app = (kx.app("analyst")
+       .blueprint(kx.flow().agent("Answer the question, grounded in the corpus."))
+       .dataset("research")                       # references.datasets → retrieve@1 at run
+       .rule("cite", body="Always cite the retrieved passages."))
+app.save(handle="apps/local/analyst")
+
+# 3) run — the agent retrieves from `research` and follows the rule
+kx.default_client().run_app("apps/local/analyst", {"q": "…"}, wait=True)
+```
+
+```typescript
+import { app, flow } from "@kortecx/sdk";
+
+await app("analyst")
+  .blueprint(flow().agent("Answer the question, grounded in the corpus."))
+  .dataset("research")
+  .rule("cite", { body: "Always cite the retrieved passages." })
+  .save({ handle: "apps/local/analyst" });
+
+await client.runApp("apps/local/analyst", { wait: true });
+```
+
+At run **`RunApp`** resolves the rail off the *validated stored envelope* (SN-8): the
+context/rule/prompt/memory artifacts merge into the entry step's identity-bearing context,
+and each declared dataset folds a `retrieve@1` grant onto the entry step — a grant the
+operator authorizes by having ingested the dataset (not a caller escalation: `retrieve`
+only reads operator corpora, with no egress/filesystem/secret reach). You can also declare
+datasets and a tool wish through the steering config
+(`steering_config.context.dataset_refs`, `steering_config.tools.requested_grants`); tool
+wishes are intersected server-side (`wish ∩ your grants ∩ fireable`) — a wish never becomes
+authority. On a gateway built without the `hnsw` retrieval seam a declared dataset
+honest-degrades to an *ungrounded* run rather than erroring. In the **Apps** console, the
+**New App** form exposes a "Ground on dataset" chip + a guidance-rule field over these same
+rails. *(Today grounding uses the pre-ingested named dataset; carrying a corpus inside the
+envelope via `cas_refs` is a planned follow-up.)*
+
 ## Lock an App (POC-5b)
 
 `kx app lock <handle>` (or the **Security › Policies** section) **fully freezes** an
