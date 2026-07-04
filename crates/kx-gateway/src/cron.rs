@@ -50,8 +50,17 @@ pub(crate) async fn serve_cron(triggers: Arc<TriggersDb>, admin: Arc<dyn Trigger
             // Advance the watermark FIRST so neither a slow submit nor the next tick
             // re-picks this trigger. A failed submit = one missed fire (next interval
             // fires); the local cron makes no exactly-once delivery claim (that is CLOUD).
-            let interval_secs: u64 = cfg.schedule_spec.trim().parse().unwrap_or(60).max(1);
-            let next = now.saturating_add(interval_secs.saturating_mul(1000));
+            // `next_fire` resolves BOTH a legacy interval-seconds spec and a 5-field
+            // crontab expression (in the trigger's timezone, DST-correct). Register-time
+            // validation makes a runtime error unexpected — the defensive path backs off
+            // an hour rather than hot-loop the 5s poll on a corrupt row.
+            let next = match crate::schedule::next_fire(&cfg.schedule_spec, &cfg.timezone, now) {
+                Ok(n) => n,
+                Err(error) => {
+                    tracing::warn!(%error, trigger = %cfg.name, "cron: schedule invalid at fire; backing off 1h");
+                    now.saturating_add(3_600_000)
+                }
+            };
             if let Err(error) = triggers.set_next_fire(&cfg.name, next) {
                 tracing::warn!(%error, trigger = %cfg.name, "cron: watermark advance failed; skipping");
                 continue;

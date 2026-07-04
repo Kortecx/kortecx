@@ -145,6 +145,18 @@ const PROVIDERS = [
     command: "kx-connector-discord",
     credentialRef: "KX_DISCORD_CREDENTIAL",
   },
+  {
+    id: "slack",
+    label: "Slack",
+    command: "kx-connector-slack",
+    credentialRef: "KX_SLACK_CREDENTIAL",
+  },
+  {
+    id: "notion",
+    label: "Notion",
+    command: "kx-connector-notion",
+    credentialRef: "KX_NOTION_CREDENTIAL",
+  },
 ] as const;
 
 export function ConnectionsPanel() {

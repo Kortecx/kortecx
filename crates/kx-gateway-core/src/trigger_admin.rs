@@ -28,16 +28,28 @@ pub struct TriggerRegistration {
     pub name: String,
     /// `"webhook"` | `"cron"` | `"grpc"`.
     pub kind: String,
-    /// The `kx/recipes/…` handle the event Invokes.
+    /// The `kx/recipes/…` handle the event Invokes (`""` ⇒ an App target). Exactly one
+    /// of `recipe_handle` / `app_handle` is non-empty (validated at register).
     pub recipe_handle: String,
+    /// T-APP-TRIGGER-TARGET: a saved App handle the event runs via `RunApp` (`""` ⇒ a
+    /// recipe target). Lets a credentialed App fire on a cron/webhook/gRPC event with
+    /// its `references.connections` + `guards.secret_scope` resolved.
+    pub app_handle: String,
     /// `"none"` | `"hmac_sha256"` | `"bearer"` (the webhook auth posture).
     pub auth: String,
     /// SecretRef NAME of the webhook auth secret (never the value); `""` ⇒ none.
     pub auth_secret_ref: String,
-    /// Cron: the interval in seconds (e.g. `"300"`); empty otherwise.
+    /// Cron: a legacy interval in seconds (e.g. `"300"`) OR a 5-field crontab expression
+    /// (e.g. `"0 9 * * 1-5"`); empty otherwise.
     pub schedule_spec: String,
+    /// IANA timezone for a 5-field cron expression (e.g. `"America/New_York"`); `""` ⇒
+    /// UTC. Ignored for interval / non-cron triggers.
+    pub timezone: String,
     /// Whether the trigger is active (a disabled trigger refuses to fire).
     pub enabled: bool,
+    /// Per-trigger HITL (D114): the fired run withholds irreversible (world-mutating)
+    /// actions until an operator grant. Recommended-on for unattended webhook/gRPC Apps.
+    pub require_approval: bool,
     /// The server-derived registrant party the fired run binds authority under (D102.2).
     pub owner_party: String,
 }
@@ -51,16 +63,22 @@ pub struct TriggerView {
     pub name: String,
     /// `"webhook"` | `"cron"` | `"grpc"`.
     pub kind: String,
-    /// The recipe handle the event Invokes.
+    /// The recipe handle the event Invokes (`""` for an App target).
     pub recipe_handle: String,
+    /// T-APP-TRIGGER-TARGET: the App target handle (`""` for a recipe target).
+    pub app_handle: String,
     /// `"none"` | `"hmac_sha256"` | `"bearer"`.
     pub auth: String,
     /// Whether an auth-secret ref NAME is attached (never the value, D81).
     pub auth_secret_present: bool,
-    /// Cron interval seconds (empty for non-cron).
+    /// Cron interval seconds or a 5-field crontab expr (empty for non-cron).
     pub schedule_spec: String,
+    /// IANA timezone for a 5-field cron expr (`""` ⇒ UTC).
+    pub timezone: String,
     /// Whether the trigger is active.
     pub enabled: bool,
+    /// Per-trigger HITL posture (D114).
+    pub require_approval: bool,
     /// Last-fired wall-clock (ms since epoch); 0 ⇒ never fired.
     pub last_fire_unix_ms: u64,
 }

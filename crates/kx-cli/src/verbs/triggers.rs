@@ -3,12 +3,16 @@
 //! `TestTrigger` / `SubmitTrigger` / `DeregisterTrigger`). Tri-surface parity
 //! with the UI + SDK.
 //!
-//! A trigger binds an inbound source (`webhook` | `cron` | `grpc`) to a recipe
-//! handle; on an event the gateway starts a FRESH registered run via the Invoke
-//! path. SN-8: `trigger_id` is server-derived; the run binds under the
-//! REGISTRANT's party; the auth secret is referenced by NAME only (never the
-//! value, D81). `test` dry-runs the binding WITHOUT firing; `fire` is the inbound
-//! `grpc` event verb (idempotency-keyed dedup).
+//! A trigger binds an inbound source (`webhook` | `cron` | `grpc`) to EITHER a
+//! recipe handle (`--recipe`) OR a saved App handle (`--app`, T-APP-TRIGGER-TARGET
+//! — the credentialed App fires unattended with its connections + secret_scope
+//! resolved). Cron accepts interval seconds (`--cron 300`) OR a 5-field crontab
+//! expr (`--cron "0 9 * * 1-5" --timezone America/New_York`). `--require-approval`
+//! adds a per-trigger HITL gate (D114). On an event the gateway starts a FRESH
+//! registered run via the Invoke/RunApp propose-proxy. SN-8: `trigger_id` is
+//! server-derived; the run binds under the REGISTRANT's party; the auth secret is
+//! referenced by NAME only (never the value, D81). `test` dry-runs WITHOUT firing;
+//! `fire` is the inbound `grpc` event verb (idempotency-keyed dedup).
 
 use kx_proto::proto;
 
@@ -53,14 +57,21 @@ pub struct AddSpec {
     pub name: String,
     /// The proto [`proto::TriggerKind`] discriminant.
     pub kind: i32,
-    /// The `kx/recipes/...` handle the event Invokes.
+    /// The `kx/recipes/...` handle the event Invokes (`""` ⇒ App target).
     pub recipe_handle: String,
+    /// T-APP-TRIGGER-TARGET: the saved App handle the event runs via `RunApp` (`""` ⇒
+    /// recipe target). Exactly one of `recipe_handle` / `app_handle` is set.
+    pub app_handle: String,
     /// The proto [`proto::TriggerAuth`] discriminant (default `none`).
     pub auth: i32,
     /// SecretRef NAME of the HMAC/bearer secret (never the value).
     pub auth_secret_ref: String,
-    /// cron: interval seconds (e.g. "300"); empty otherwise.
+    /// cron: interval seconds (e.g. "300") OR a 5-field crontab expr; empty otherwise.
     pub schedule_spec: String,
+    /// IANA timezone for a 5-field cron expr (e.g. "America/New_York"); empty ⇒ UTC.
+    pub timezone: String,
+    /// Per-trigger HITL (D114): withhold irreversible actions until an operator grant.
+    pub require_approval: bool,
     /// Whether the trigger is enabled on registration.
     pub enabled: bool,
 }
@@ -113,9 +124,12 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<TriggersArgs, Cli
     let mut name: Option<String> = None;
     let mut kind: Option<String> = None;
     let mut recipe: Option<String> = None;
+    let mut app: Option<String> = None;
     let mut auth: Option<String> = None;
     let mut secret_ref = String::new();
     let mut schedule = String::new();
+    let mut timezone = String::new();
+    let mut require_approval = false;
     let mut enabled = false;
     let mut idempotency_key = String::new();
     let mut payload: Option<String> = None;
@@ -129,9 +143,14 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<TriggersArgs, Cli
             "--name" => name = Some(next_value(&mut args, "--name")?),
             "--kind" => kind = Some(next_value(&mut args, "--kind")?),
             "--recipe" => recipe = Some(next_value(&mut args, "--recipe")?),
+            "--app" => app = Some(next_value(&mut args, "--app")?),
             "--auth" => auth = Some(next_value(&mut args, "--auth")?),
             "--secret-ref" => secret_ref = next_value(&mut args, "--secret-ref")?,
-            "--schedule" => schedule = next_value(&mut args, "--schedule")?,
+            // `--schedule` and `--cron` are aliases: interval seconds ("300") OR a
+            // 5-field crontab expr ("0 9 * * 1-5"); the server discriminates.
+            "--schedule" | "--cron" => schedule = next_value(&mut args, &flag)?,
+            "--timezone" | "--tz" => timezone = next_value(&mut args, &flag)?,
+            "--require-approval" => require_approval = true,
             "--enabled" => enabled = true,
             "--idempotency-key" => idempotency_key = next_value(&mut args, "--idempotency-key")?,
             "--payload" => payload = Some(next_value(&mut args, "--payload")?),
@@ -152,9 +171,15 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<TriggersArgs, Cli
                 CliError::Usage("triggers add requires --kind <webhook|cron|grpc>".into())
             })?;
             let kind = parse_kind(&kind_str)?;
-            let recipe_handle = recipe
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| CliError::Usage("triggers add requires --recipe <handle>".into()))?;
+            // T-APP-TRIGGER-TARGET: EXACTLY ONE of --recipe | --app.
+            let recipe_handle = recipe.filter(|s| !s.is_empty()).unwrap_or_default();
+            let app_handle = app.filter(|s| !s.is_empty()).unwrap_or_default();
+            if recipe_handle.is_empty() == app_handle.is_empty() {
+                return Err(CliError::Usage(
+                    "triggers add requires exactly one of --recipe <handle> | --app <handle>"
+                        .into(),
+                ));
+            }
             // Default to `none` (validated only on a loopback webhook bind server-side).
             let auth = match auth {
                 Some(a) => parse_auth(&a)?,
@@ -164,9 +189,12 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<TriggersArgs, Cli
                 name,
                 kind,
                 recipe_handle,
+                app_handle,
                 auth,
                 auth_secret_ref: secret_ref,
                 schedule_spec: schedule,
+                timezone,
+                require_approval,
                 enabled,
             })
         }
@@ -208,10 +236,13 @@ pub async fn execute(args: TriggersArgs) -> Result<(), CliError> {
                 name: spec.name,
                 kind: spec.kind,
                 recipe_handle: spec.recipe_handle,
+                app_handle: spec.app_handle,
                 auth: spec.auth,
                 auth_secret_ref: spec.auth_secret_ref,
                 schedule_spec: spec.schedule_spec,
+                timezone: spec.timezone,
                 enabled: spec.enabled,
+                require_approval: spec.require_approval,
             };
             let resp = client
                 .register_trigger(resolved.request(req)?)
@@ -357,6 +388,49 @@ mod tests {
             panic!("expected Fire");
         };
         assert_eq!(payload_json, r#"{"x":1}"#);
+    }
+
+    #[test]
+    fn parses_add_app_target_with_cron_tz_and_hitl() {
+        let a = p(&[
+            "add",
+            "--name",
+            "nightly-triage",
+            "--kind",
+            "cron",
+            "--app",
+            "support-triage",
+            "--cron",
+            "0 9 * * 1-5",
+            "--timezone",
+            "America/New_York",
+            "--require-approval",
+            "--enabled",
+        ])
+        .unwrap();
+        let TriggersSub::Add(spec) = a.sub else {
+            panic!("expected Add");
+        };
+        assert_eq!(spec.app_handle, "support-triage");
+        assert!(spec.recipe_handle.is_empty());
+        assert_eq!(spec.schedule_spec, "0 9 * * 1-5");
+        assert_eq!(spec.timezone, "America/New_York");
+        assert!(spec.require_approval);
+        assert!(spec.enabled);
+    }
+
+    #[test]
+    fn add_requires_exactly_one_of_recipe_or_app() {
+        // Neither.
+        assert!(
+            p(&["add", "--name", "x", "--kind", "grpc"]).is_err(),
+            "needs --recipe or --app"
+        );
+        // Both.
+        assert!(
+            p(&["add", "--name", "x", "--kind", "grpc", "--recipe", "r", "--app", "a"]).is_err(),
+            "recipe + app are mutually exclusive"
+        );
     }
 
     #[test]

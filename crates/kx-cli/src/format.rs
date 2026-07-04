@@ -3033,10 +3033,13 @@ pub fn render_triggers_list(resp: &proto::ListTriggersResponse, json: bool) -> S
                     "name": t.name,
                     "kind": trigger_kind_name(t.kind),
                     "recipe_handle": t.recipe_handle,
+                    "app_handle": t.app_handle,
                     "auth": trigger_auth_name(t.auth),
                     "auth_secret_present": t.auth_secret_present,
                     "schedule_spec": t.schedule_spec,
+                    "timezone": t.timezone,
                     "enabled": t.enabled,
+                    "require_approval": t.require_approval,
                     "last_fire_unix_ms": t.last_fire_unix_ms,
                 })
             })
@@ -3054,20 +3057,31 @@ pub fn render_triggers_list(resp: &proto::ListTriggersResponse, json: bool) -> S
                 } else {
                     ""
                 };
+                // T-APP-TRIGGER-TARGET: an App target renders as `app:<handle>`; a recipe
+                // target as its handle. Timezone shows only for a 5-field cron expr.
+                let target = if t.app_handle.is_empty() {
+                    t.recipe_handle.clone()
+                } else {
+                    format!("app:{}", t.app_handle)
+                };
                 let sched = if t.schedule_spec.is_empty() {
                     String::new()
-                } else {
+                } else if t.timezone.is_empty() || t.timezone == "UTC" {
                     format!("  schedule={}", t.schedule_spec)
+                } else {
+                    format!("  schedule={} {}", t.schedule_spec, t.timezone)
                 };
+                let hitl = if t.require_approval { "  hitl" } else { "" };
                 format!(
-                    "{}  [{}]  -> {}  auth={}  ({}){}{}",
+                    "{}  [{}]  -> {}  auth={}  ({}){}{}{}",
                     t.name,
                     trigger_kind_name(t.kind),
-                    t.recipe_handle,
+                    target,
                     trigger_auth_name(t.auth),
                     state,
                     secret,
                     sched,
+                    hitl,
                 )
             })
             .collect::<Vec<_>>()

@@ -1,10 +1,12 @@
 /**
- * The triggers panel (D113 / D170.b) — the govern surface over the local trigger
- * registry. A trigger binds an inbound EVENT (a webhook POST, a cron interval, or a
- * bare `SubmitTrigger` RPC) to a recipe handle the event Invokes.
+ * The triggers panel (D113 / D170.b / T-APP-TRIGGER-TARGET) — the govern surface over
+ * the local trigger registry. A trigger binds an inbound EVENT (a webhook POST, a cron
+ * schedule, or a bare `SubmitTrigger` RPC) to EITHER a recipe handle OR a saved App (the
+ * credentialed App fires unattended with its connections + secret_scope resolved).
  *
- * Register a trigger (name · kind · recipe handle · webhook auth posture · the auth
- * secret REF NAME · a cron schedule), list the registered triggers with their folded
+ * Register a trigger (name · kind · recipe|App target · webhook auth posture · the auth
+ * secret REF NAME · a cron schedule [interval seconds OR a 5-field expr + timezone] · a
+ * per-trigger HITL approval posture), list the registered triggers with their folded
  * state, then per row Test (dry-run the binding — fires nothing), Fire (submit the
  * inbound event), or Remove. D81: the auth secret is referenced by NAME only — a row
  * shows `authSecretPresent` (signed), never the secret itself. SN-8: the trigger id /
@@ -36,6 +38,17 @@ const AUTHS: readonly TriggerAuthInput[] = ["none", "hmac_sha256", "bearer"];
 /** A local audit-clock formatter: `never` when unfired, else the locale string. */
 function fmtFired(ms: number): string {
   return ms > 0 ? new Date(ms).toLocaleString() : "never";
+}
+
+/** Render a cron schedule: legacy interval-seconds (all digits) as `every Ns`, else the
+ *  5-field crontab expr with its timezone (T-APP-TRIGGER-TARGET). */
+function fmtSchedule(spec: string, timezone: string): string {
+  const s = spec.trim();
+  if (s.length > 0 && /^\d+$/.test(s)) {
+    return `every ${s}s`;
+  }
+  const tz = timezone && timezone !== "UTC" ? ` ${timezone}` : "";
+  return `${s}${tz}`;
 }
 
 /**
@@ -104,7 +117,7 @@ function TriggerRowActions({
         >
           {test.data.ok
             ? `Binding OK${test.data.detail ? ` — ${test.data.detail}` : ""}`
-            : `Binding failed — ${test.data.detail || "the recipe handle did not resolve."}`}
+            : `Binding failed — ${test.data.detail || "the recipe/App handle did not resolve."}`}
         </p>
       ) : null}
 
@@ -130,14 +143,20 @@ export function TriggersPanel() {
 
   const [name, setName] = useState("");
   const [kind, setKind] = useState<TriggerKindInput>("webhook");
+  const [target, setTarget] = useState<"recipe" | "app">("recipe");
   const [recipeHandle, setRecipeHandle] = useState("");
+  const [appHandle, setAppHandle] = useState("");
   const [auth, setAuth] = useState<TriggerAuthInput>("none");
   const [authSecretRef, setAuthSecretRef] = useState("");
   const [scheduleSpec, setScheduleSpec] = useState("");
+  const [timezone, setTimezone] = useState("");
+  const [requireApproval, setRequireApproval] = useState(false);
 
+  // T-APP-TRIGGER-TARGET: exactly one target (recipe | app) is required.
+  const handleValue = target === "app" ? appHandle : recipeHandle;
   const canSubmit =
     name.trim().length > 0 &&
-    recipeHandle.trim().length > 0 &&
+    handleValue.trim().length > 0 &&
     (auth === "none" || authSecretRef.trim().length > 0) &&
     (kind !== "cron" || scheduleSpec.trim().length > 0);
 
@@ -150,20 +169,27 @@ export function TriggersPanel() {
       {
         name: name.trim(),
         kind,
-        recipeHandle: recipeHandle.trim(),
+        recipeHandle: target === "recipe" ? recipeHandle.trim() : "",
+        appHandle: target === "app" ? appHandle.trim() : "",
         auth,
         authSecretRef: auth !== "none" ? authSecretRef.trim() : "",
         scheduleSpec: kind === "cron" ? scheduleSpec.trim() : "",
+        timezone: kind === "cron" ? timezone.trim() : "",
         enabled: true,
+        requireApproval,
       },
       {
         onSuccess: () => {
           setName("");
           setRecipeHandle("");
+          setAppHandle("");
           setAuth("none");
           setAuthSecretRef("");
           setScheduleSpec("");
+          setTimezone("");
+          setRequireApproval(false);
           setKind("webhook");
+          setTarget("recipe");
         },
       },
     );
@@ -176,10 +202,14 @@ export function TriggersPanel() {
     <GlowCard hover={false} variants={fadeUp} data-testid="triggers-panel">
       <h2>Triggers</h2>
       <p className="muted">
-        Bind an inbound EVENT — a webhook POST, a cron interval, or a bare{" "}
-        <code>SubmitTrigger</code> RPC — to a recipe handle the event Invokes. Webhook auth (HMAC /
-        bearer) references its secret by NAME only (never the value, D81); add that secret on the
-        Secrets tab. Hosted, multi-tenant triggers at scale are a Cloud capability.
+        Bind an inbound EVENT — a webhook POST, a cron schedule, or a bare{" "}
+        <code>SubmitTrigger</code> RPC — to a <strong>recipe</strong> handle OR a saved{" "}
+        <strong>App</strong> (the App fires unattended with its integrations + secret scope
+        resolved). Cron takes interval seconds or a 5-field expression in a timezone.{" "}
+        <strong>Approval</strong> holds irreversible actions for an operator grant (recommended for
+        unattended Apps). Webhook auth references its secret by NAME only (never the value, D81) —
+        add that secret on the Secrets tab. Hosted, multi-tenant triggers at scale are a Cloud
+        capability.
       </p>
 
       {list.notWired ? (
@@ -216,6 +246,13 @@ export function TriggersPanel() {
                   <span className="chip chip--static" title={`auth: ${t.auth}`}>
                     <span className="chip__label">{t.auth}</span>
                   </span>
+                  <span
+                    className="chip chip--static"
+                    data-testid={`trigger-target-kind-${t.name}`}
+                    title={t.appHandle ? "fires a saved App" : "invokes a recipe"}
+                  >
+                    <span className="chip__label">{t.appHandle ? "app" : "recipe"}</span>
+                  </span>
                   {t.authSecretPresent ? (
                     <span
                       className="chip chip--static"
@@ -225,11 +262,22 @@ export function TriggersPanel() {
                       <span className="chip__label">🔒 signed</span>
                     </span>
                   ) : null}
+                  {t.requireApproval ? (
+                    <span
+                      className="chip chip--static"
+                      data-testid={`trigger-hitl-${t.name}`}
+                      title="Per-trigger HITL: irreversible actions await an operator grant (D114)"
+                    >
+                      <span className="chip__label">🛡 approval</span>
+                    </span>
+                  ) : null}
                 </div>
                 <div className="connections-list__meta muted">
-                  <code className="mono">{t.recipeHandle}</code>
+                  <code className="mono">
+                    {t.appHandle ? `app:${t.appHandle}` : t.recipeHandle}
+                  </code>
                   {t.kind === "cron" && t.scheduleSpec ? (
-                    <span>· every {t.scheduleSpec}s</span>
+                    <span>· {fmtSchedule(t.scheduleSpec, t.timezone)}</span>
                   ) : null}
                   <span>· {t.enabled ? "enabled" : "disabled"}</span>
                   <span>· last fired {fmtFired(t.lastFireUnixMs)}</span>
@@ -276,6 +324,23 @@ export function TriggersPanel() {
           </div>
         </fieldset>
         <fieldset className="register-tool-form__idempotency">
+          <legend className="muted">Target</legend>
+          <div className="chip-row">
+            {(["recipe", "app"] as const).map((tgt) => (
+              <button
+                key={tgt}
+                type="button"
+                className={`chip${target === tgt ? " chip--active" : ""}`}
+                data-testid={`trigger-target-${tgt}`}
+                aria-pressed={target === tgt}
+                onClick={() => setTarget(tgt)}
+              >
+                <span className="chip__label">{tgt === "app" ? "App" : "Recipe"}</span>
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset className="register-tool-form__idempotency">
           <legend className="muted">Webhook auth</legend>
           <div className="chip-row">
             {AUTHS.map((a) => (
@@ -301,14 +366,25 @@ export function TriggersPanel() {
             onChange={(e) => setName(e.target.value)}
             aria-label="Trigger name"
           />
-          <input
-            type="text"
-            data-testid="trigger-add-recipe"
-            placeholder="recipe handle (e.g. kx/recipes/react)"
-            value={recipeHandle}
-            onChange={(e) => setRecipeHandle(e.target.value)}
-            aria-label="Recipe handle"
-          />
+          {target === "app" ? (
+            <input
+              type="text"
+              data-testid="trigger-add-app"
+              placeholder="App handle (a saved App — fires unattended with its integrations)"
+              value={appHandle}
+              onChange={(e) => setAppHandle(e.target.value)}
+              aria-label="App handle"
+            />
+          ) : (
+            <input
+              type="text"
+              data-testid="trigger-add-recipe"
+              placeholder="recipe handle (e.g. kx/recipes/react)"
+              value={recipeHandle}
+              onChange={(e) => setRecipeHandle(e.target.value)}
+              aria-label="Recipe handle"
+            />
+          )}
         </div>
         {auth !== "none" ? (
           <input
@@ -321,16 +397,42 @@ export function TriggersPanel() {
           />
         ) : null}
         {kind === "cron" ? (
-          <input
-            type="text"
-            data-testid="trigger-add-schedule"
-            placeholder="cron interval seconds (e.g. 300)"
-            value={scheduleSpec}
-            onChange={(e) => setScheduleSpec(e.target.value)}
-            aria-label="Cron interval seconds"
-            inputMode="numeric"
-          />
+          <div className="register-tool-form__row">
+            <input
+              type="text"
+              data-testid="trigger-add-schedule"
+              placeholder="interval seconds (300) or a 5-field cron (0 9 * * 1-5)"
+              value={scheduleSpec}
+              onChange={(e) => setScheduleSpec(e.target.value)}
+              aria-label="Cron interval seconds or 5-field expression"
+            />
+            <input
+              type="text"
+              data-testid="trigger-add-timezone"
+              placeholder="timezone for a cron expr (e.g. America/New_York; blank = UTC)"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              aria-label="Cron timezone"
+            />
+          </div>
         ) : null}
+        <fieldset className="register-tool-form__idempotency">
+          <legend className="muted">Approval (HITL)</legend>
+          <div className="chip-row">
+            <button
+              type="button"
+              className={`chip${requireApproval ? " chip--active" : ""}`}
+              data-testid="trigger-add-require-approval"
+              aria-pressed={requireApproval}
+              onClick={() => setRequireApproval((v) => !v)}
+              title="Withhold irreversible actions until an operator grant (D114) — recommended for unattended Apps"
+            >
+              <span className="chip__label">
+                {requireApproval ? "🛡 approval required" : "autonomous"}
+              </span>
+            </button>
+          </div>
+        </fieldset>
         <button
           type="submit"
           data-testid="trigger-add-submit"

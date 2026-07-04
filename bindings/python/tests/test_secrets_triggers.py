@@ -100,10 +100,13 @@ def test_triggers_page_holds_rows_and_has_more():
                 name="t",
                 kind="webhook",
                 recipe_handle="r",
+                app_handle="",
                 auth="none",
                 auth_secret_present=False,
                 schedule_spec="",
+                timezone="",
                 enabled=False,
+                require_approval=False,
                 last_fire_unix_ms=0,
             )
         ],

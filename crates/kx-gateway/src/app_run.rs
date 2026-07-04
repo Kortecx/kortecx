@@ -66,7 +66,7 @@ use kx_gateway_core::{
     DatasetView, RegisteredToolsView,
 };
 use kx_mcp_gateway::SqliteConnectionStore;
-use kx_mote::ContextItemRef;
+use kx_mote::{ContextItemRef, REACT_REQUIRE_APPROVAL_KEY};
 use kx_tool_registry::ToolRegistry;
 use kx_warrant::{SecretRef, SecretScope};
 
@@ -557,11 +557,16 @@ fn context_rail_items(
 
 #[tonic::async_trait]
 impl AppAuthor for HostAppAuthor {
+    // A single linear resolve→lower→author→stamp pipeline (context rail + skills + RAG +
+    // HITL); the steps read top-to-bottom and share local state, so splitting would only
+    // scatter it. The T-APP-TRIGGER-TARGET HITL fold pushed it one line over the default.
+    #[allow(clippy::too_many_lines)]
     async fn author_app(
         &self,
         party: &str,
         handle: &str,
         args: &[u8],
+        require_approval: bool,
     ) -> Result<BoundRecipe, AppRunError> {
         // (1) Read the validated stored envelope (server-owned; uniform not-found so an
         //     unauthorized caller learns nothing about what exists).
@@ -655,6 +660,21 @@ impl AppAuthor for HostAppAuthor {
         //      search them. Empty ⇒ skipped (the digest no-op).
         if !dataset_names.is_empty() {
             self.fold_dataset_rag(&dataset_names, &mut dag)?;
+        }
+
+        // (3d) T-APP-TRIGGER-TARGET / D114: stamp the per-run HITL posture onto the entry
+        //      agentic step's config BEFORE the DAG is lowered — the coordinator's
+        //      `react_seed_params` reads `require_approval` off the launch Mote's
+        //      config_subset (a canonical-JSON bool; `"true"` lowers to `b"true"`). Injected
+        //      pre-lowering so it is part of the launch MoteId (never post-author, which
+        //      would change the id + orphan its edges). `false` ⇒ nothing injected ⇒
+        //      byte-identical (the serve-wide KX_SERVE_REQUIRE_APPROVAL default applies).
+        if require_approval {
+            if let Some(i) = entry_agentic_step_index(&dag) {
+                dag.steps[i]
+                    .params
+                    .insert(REACT_REQUIRE_APPROVAL_KEY.to_string(), "true".to_string());
+            }
         }
 
         let req = to_request(dag).map_err(|e| AppRunError::InvalidArgs(e.to_string()))?;
@@ -1162,7 +1182,10 @@ mod tests {
             serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
         );
         let handle = save_app(&host, &env);
-        let via_app = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let via_app = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
 
         // The reference: the same blueprint lowered + authored directly.
         let d = dag(vec![model_step("go")]);
@@ -1180,6 +1203,52 @@ mod tests {
             assert_eq!(w1, w2, "byte-identical warrants (the no-op proof)");
         }
         assert_eq!(via_app.recipe_fingerprint, direct.recipe_fingerprint);
+    }
+
+    /// D114 / T-APP-TRIGGER-TARGET: `require_approval = true` stamps the HITL posture
+    /// (the canonical-JSON bool the coordinator's `react_seed_params` reads) onto the
+    /// entry agentic step's `config_subset`; `false` injects nothing (byte-identical to
+    /// today). The posture is part of the launch MoteId — so the same App with vs without
+    /// approval produces distinct ids (injected BEFORE lowering, never post-author).
+    #[tokio::test]
+    async fn author_app_require_approval_stamps_hitl_and_false_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        // An agentic entry step (MODEL + a non-empty tool_contract) — the step the HITL
+        // posture (and the react loop) attach to.
+        let env = AppEnvelope::new(
+            "gated",
+            serde_json::json!({
+                "steps": [{ "kind": "model", "prompt": "go", "tool_contract": { "echo-tool": "1" } }]
+            }),
+        );
+        let handle = save_app(&host, &env);
+
+        let with_hitl = host
+            .author_app("alice@acme", &handle, b"", true)
+            .await
+            .unwrap();
+        let without = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+
+        let key = kx_mote::ConfigKey(REACT_REQUIRE_APPROVAL_KEY.to_string());
+        let (m_hitl, _) = &with_hitl.motes[0];
+        let (m_plain, _) = &without.motes[0];
+        // true ⇒ the canonical-JSON bool `true` on the entry mote's identity-bearing config.
+        assert_eq!(
+            m_hitl.def.config_subset.get(&key).map(|v| v.0.clone()),
+            Some(b"true".to_vec()),
+            "require_approval=true stamps the HITL posture"
+        );
+        // false ⇒ nothing injected (byte-identical to a plain agentic App).
+        assert!(
+            !m_plain.def.config_subset.contains_key(&key),
+            "require_approval=false injects nothing"
+        );
+        // The posture is part of the launch identity (folded before lowering).
+        assert_ne!(m_hitl.id, m_plain.id, "the HITL bit is part of the mote id");
     }
 
     /// The skill bind end-to-end: instructions land as a labeled entry context
@@ -1205,7 +1274,10 @@ mod tests {
         });
         env.validate().unwrap();
         let handle = save_app(&host, &env);
-        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
 
         let (mote, warrant) = &bound.motes[0];
         // The wish became a REAL grant (wish ∩ fireable ∩ registry) on the step
@@ -1332,7 +1404,10 @@ mod tests {
         });
         env.validate().unwrap();
         let handle = save_app(&host, &env);
-        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
 
         let (mote, _warrant) = &bound.motes[0];
         let encoded = mote
@@ -1373,8 +1448,14 @@ mod tests {
         });
         env.validate().unwrap();
         let handle = save_app(&host, &env);
-        let a = host.author_app("alice@acme", &handle, b"").await.unwrap();
-        let b = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let a = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+        let b = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
 
         // The plain (no-rail) reference over the same blueprint.
         let d = dag(vec![model_step("go")]);
@@ -1439,7 +1520,10 @@ mod tests {
             .insert("echo-tool".into(), "1".into());
         env.validate().unwrap();
         let handle = save_app(&host, &env);
-        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
         let (mote, warrant) = &bound.motes[0];
         assert!(
             mote.def
@@ -1496,7 +1580,10 @@ mod tests {
         });
         env.validate().unwrap();
         let handle = save_app(&host, &env);
-        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
         let (mote, warrant) = &bound.motes[0];
         assert!(
             mote.def
@@ -1530,7 +1617,7 @@ mod tests {
         });
         env.validate().unwrap();
         let handle = save_app(&host, &env);
-        match host.author_app("alice@acme", &handle, b"").await {
+        match host.author_app("alice@acme", &handle, b"", false).await {
             Err(AppRunError::InvalidArgs(msg)) => {
                 assert!(msg.contains("does-not-exist"), "{msg}");
                 assert!(msg.contains("kx datasets ingest"), "actionable: {msg}");
@@ -1556,7 +1643,10 @@ mod tests {
         });
         env.validate().unwrap();
         let handle = save_app(&host, &env);
-        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
         // No retrieve grant (ungrounded), but the run authors fine.
         assert!(
             !bound.motes[0]
@@ -1591,7 +1681,10 @@ mod tests {
                 .collect(),
         });
         let handle = save_app(&host, &env);
-        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
 
         let (mote, warrant) = &bound.motes[0];
         assert!(

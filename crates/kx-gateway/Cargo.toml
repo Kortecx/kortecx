@@ -261,6 +261,14 @@ keyring            = { workspace = true }
 # build-no-inference + serve-engine FFI-free gates stay green. Pairs with sha2 (promoted
 # to always-on below for both this + the inference GGUF SHA-256 verify).
 hmac               = { workspace = true }
+# T-APP-TRIGGER-TARGET (D113 extension): 5-field cron + IANA-timezone DST for
+# App-target scheduled triggers. Always-on (the cron ticker is in the default build).
+# `croner` parses standard 5-field crontab; `chrono` (default-features off) is the
+# DateTime algebra; `chrono-tz` embeds the IANA db for DST-correct next-fire. All
+# pure-Rust/FFI-free — the dep-wall + build-no-inference gates stay green.
+croner             = { workspace = true }
+chrono             = { workspace = true }
+chrono-tz          = { workspace = true }
 
 # MM-3: per-target native keychain backend. macOS Keychain / Windows Credential
 # Manager / Linux kernel keyutils (headless-OK; NOT the D-Bus secret-service, which

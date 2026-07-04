@@ -511,6 +511,194 @@ async fn runapp_discord_connection_and_secret_scope_live() {
     .await;
 }
 
+/// T-APP-TRIGGER-TARGET GR24 LIVE witness: a credentialed App fires from a gRPC TRIGGER
+/// (not a direct `RunApp`) and drives the agentic loop to a terminal on a live model — the
+/// automation vertical the trigger→App wiring exists for. Mirrors `runapp_connection_live`'s
+/// setup, then registers an App-TARGET trigger + `SubmitTrigger`, and OBSERVES the resulting
+/// run (a GR16 observe-witness: settles to a terminal; a fired tool is the granted one, SN-8).
+/// Dual-engine (llama.cpp + Ollama), model restarted per engine.
+async fn trigger_fires_connector_app_live(case: &ConnectorCase) {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model (set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA)");
+        return;
+    };
+    let Some(connector) = connector_bin(case.bin_name) else {
+        eprintln!(
+            "skipping: {} not built — `cargo build -p {}`",
+            case.bin_name, case.bin_name
+        );
+        return;
+    };
+    std::env::set_var("KX_SERVE_AUTOGRANT", "1");
+    std::env::set_var(case.fake_env, "1");
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // Register the connector + scope its credential + save the credentialed App.
+    let reg = c
+        .register_mcp_server(proto::RegisterMcpServerRequest {
+            server_name: case.server_name.to_string(),
+            transport: "stdio".to_string(),
+            endpoint: connector.to_string_lossy().into_owned(),
+            args: vec![],
+            tls_required: false,
+            credential_ref: case.credential_ref.to_string(),
+            session_mode: String::new(),
+        })
+        .await
+        .expect("RegisterMcpServer")
+        .into_inner();
+    eprintln!(
+        "{} connection: health={} discovered={}",
+        case.server_name, reg.health, reg.discovered
+    );
+    let _ = c
+        .put_secret(proto::PutSecretRequest {
+            name: case.credential_ref.to_string(),
+            value: case.credential_value.to_string(),
+        })
+        .await;
+
+    let handle_str = format!("apps/local/{}-trigger-agent", case.server_name);
+    let envelope = connector_app_envelope(
+        &connector.to_string_lossy(),
+        case.granted_tool,
+        case.credential_ref,
+        case.prompt,
+        true,
+    );
+    c.save_app(proto::SaveAppRequest {
+        handle: handle_str.clone(),
+        envelope_json: envelope,
+    })
+    .await
+    .expect("SaveApp")
+    .into_inner();
+
+    if !c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .recipes
+        .iter()
+        .any(|r| r.handle == REACT_RECIPE_HANDLE)
+    {
+        eprintln!("skipping the run leg: kx/recipes/react not provisioned");
+        running.shutdown().await.unwrap();
+        std::env::remove_var("KX_SERVE_AUTOGRANT");
+        std::env::remove_var(case.fake_env);
+        return;
+    }
+
+    // Register an App-TARGET gRPC trigger, then FIRE it (the automation path). The run
+    // binds under the registrant party with the App's connection + secret_scope resolved.
+    let trigger_name = format!("{}-fire", case.server_name);
+    c.register_trigger(proto::RegisterTriggerRequest {
+        name: trigger_name.clone(),
+        kind: proto::TriggerKind::Grpc as i32,
+        recipe_handle: String::new(),
+        app_handle: handle_str.clone(),
+        auth: proto::TriggerAuth::None as i32,
+        auth_secret_ref: String::new(),
+        schedule_spec: String::new(),
+        timezone: String::new(),
+        enabled: true,
+        require_approval: false,
+    })
+    .await
+    .expect("register App-target trigger")
+    .into_inner();
+
+    let fired = c
+        .submit_trigger(proto::SubmitTriggerRequest {
+            name: trigger_name,
+            idempotency_key: String::new(),
+            payload_json: "{}".to_string(),
+        })
+        .await
+        .expect("SubmitTrigger fires the App")
+        .into_inner();
+    assert_eq!(fired.instance_id.len(), 16, "the trigger started a run");
+    assert!(!fired.deduped, "the first fire is not deduped");
+
+    // Observe the trigger-started run to a terminal (same loop as runapp_connection_live).
+    let mut tool_fired = false;
+    let mut fired_tool_ids: Vec<String> = Vec::new();
+    let mut answered = false;
+    let mut dead_lettered = false;
+    for _ in 0..3000 {
+        let turns = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(fired.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        for t in &turns.turns {
+            if t.branch == "tool" {
+                tool_fired = true;
+                if !t.tool_id.is_empty() && !fired_tool_ids.contains(&t.tool_id) {
+                    fired_tool_ids.push(t.tool_id.clone());
+                }
+            }
+        }
+        answered = turns.turns.iter().any(|t| t.branch == "answer");
+        dead_lettered = turns.turns.iter().any(|t| t.branch == "dead_lettered");
+        if answered || dead_lettered {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    eprintln!(
+        "LIVE TRIGGER→App {} [{engine}]: tool_fired={tool_fired} fired_tools={fired_tool_ids:?} \
+         answered={answered} dead_lettered={dead_lettered}",
+        case.server_name
+    );
+    assert!(
+        answered || dead_lettered,
+        "the trigger-fired {} App settled to a terminal on the live model [{engine}]",
+        case.server_name
+    );
+    if tool_fired {
+        assert!(
+            fired_tool_ids
+                .iter()
+                .all(|id| id.is_empty() || id == case.granted_tool),
+            "if a tool fired it was the granted {}. fired_tools={fired_tool_ids:?}",
+            case.granted_tool
+        );
+    }
+
+    running.shutdown().await.unwrap();
+    std::env::remove_var("KX_SERVE_AUTOGRANT");
+    std::env::remove_var(case.fake_env);
+}
+
+/// T-APP-TRIGGER-TARGET Discord witness — a gRPC trigger fires the credentialed Discord App
+/// (the automation vertical: an event, not an operator, starts the credentialed run).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-discord; opt in with --ignored"]
+async fn trigger_fires_discord_app_live() {
+    trigger_fires_connector_app_live(&ConnectorCase {
+        server_name: "discord",
+        bin_name: "kx-connector-discord",
+        credential_ref: "KX_DISCORD_CREDENTIAL",
+        credential_value: r#"{"bot_token":"x"}"#,
+        fake_env: "KX_DISCORD_FAKE",
+        granted_tool: "discord/read_channel",
+        prompt: "Read the most recent messages from channel 123 using the \
+                 discord/read_channel tool, then briefly summarize them.",
+    })
+    .await;
+}
+
 /// One server-embed document (empty embedding ⇒ the host embeds `content` with the
 /// served model). Mirrors `react_rag_serve::doc`.
 fn doc(content: &[u8]) -> proto::IngestDocument {

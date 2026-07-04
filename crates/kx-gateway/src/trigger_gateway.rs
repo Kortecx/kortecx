@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    BinderError, RecipeBinder, RunSubmitter, TriggerAdmin, TriggerAdminError, TriggerFireOutcome,
-    TriggerRegistration, TriggerView,
+    AppAuthor, AppRunError, BinderError, RecipeBinder, RegisteredToolsView, RunSubmitter,
+    TriggerAdmin, TriggerAdminError, TriggerFireOutcome, TriggerRegistration, TriggerView,
 };
 
 use crate::triggers_store::{trigger_id_of, TriggerRow, TriggersDb};
@@ -31,6 +31,14 @@ pub(crate) struct HostTriggerAdmin {
     submitter: Arc<dyn RunSubmitter>,
     /// Whether this serve can drive a live ReAct chain (the Invoke react backstop).
     react_supported: bool,
+    /// T-APP-TRIGGER-TARGET: the App-run resolver (the RunApp seam). `None` ⇒ App-target
+    /// triggers fail closed (the serve was built without the App-run path — no
+    /// mcp-gateway / connections.db). Recipe triggers never touch it.
+    app_author: Option<Arc<dyn AppAuthor>>,
+    /// The live broker-fireable view for the ported RunApp fireable-grant backstop
+    /// (an App blueprint is client-authored, so a grant the broker never registered must
+    /// fail closed here). `Some` exactly when `app_author` is `Some`.
+    fireable: Option<Arc<dyn RegisteredToolsView>>,
 }
 
 impl HostTriggerAdmin {
@@ -39,12 +47,16 @@ impl HostTriggerAdmin {
         binder: Arc<dyn RecipeBinder>,
         submitter: Arc<dyn RunSubmitter>,
         react_supported: bool,
+        app_author: Option<Arc<dyn AppAuthor>>,
+        fireable: Option<Arc<dyn RegisteredToolsView>>,
     ) -> Self {
         Self {
             triggers,
             binder,
             submitter,
             react_supported,
+            app_author,
+            fireable,
         }
     }
 
@@ -79,9 +91,41 @@ fn bind_err(e: BinderError) -> TriggerAdminError {
     }
 }
 
+/// Map an [`AppRunError`] (the RunApp seam) to a [`TriggerAdminError`], mirroring the
+/// `run_app` RPC handler's mapping so an App-target trigger fails the SAME way RunApp does.
+fn app_err(e: AppRunError) -> TriggerAdminError {
+    match e {
+        AppRunError::NotAuthorized => TriggerAdminError::NotAuthorized,
+        AppRunError::InvalidArgs(d) => TriggerAdminError::InvalidArgument(d),
+        AppRunError::MissingIntegration(name) => TriggerAdminError::Unsupported(format!(
+            "missing integration: {name} (register it with `kx connections add`)"
+        )),
+        AppRunError::Internal(d) => TriggerAdminError::Storage(d),
+    }
+}
+
 #[tonic::async_trait]
 impl TriggerAdmin for HostTriggerAdmin {
     async fn register(&self, reg: TriggerRegistration) -> Result<[u8; 16], TriggerAdminError> {
+        // T-APP-TRIGGER-TARGET: EXACTLY ONE of recipe_handle | app_handle. Both-or-neither
+        // is a clear authoring error (never a silent recipe fallback).
+        let is_app = !reg.app_handle.trim().is_empty();
+        let is_recipe = !reg.recipe_handle.trim().is_empty();
+        if is_app == is_recipe {
+            return Err(TriggerAdminError::InvalidArgument(
+                "exactly one of recipe_handle | app_handle is required".into(),
+            ));
+        }
+        // An App-target trigger needs the App-run seam (mcp-gateway + connections.db).
+        // Fail FAST at register so a serve without it says so immediately, rather than
+        // accept a trigger that dead-letters every fire.
+        if is_app && self.app_author.is_none() {
+            return Err(TriggerAdminError::Unsupported(
+                "App-target triggers require the App-run seam \
+                 (build --features mcp-gateway with a connections.db)"
+                    .into(),
+            ));
+        }
         // Validate auth posture: an HMAC/bearer webhook needs a secret ref to verify against.
         if matches!(reg.auth.as_str(), "hmac_sha256" | "bearer") && reg.auth_secret_ref.is_empty() {
             return Err(TriggerAdminError::InvalidArgument(format!(
@@ -89,20 +133,14 @@ impl TriggerAdmin for HostTriggerAdmin {
                 reg.auth
             )));
         }
-        // Cron: validate the interval + seed the first fire watermark.
+        // Cron: validate the schedule (legacy interval-seconds OR a 5-field crontab expr
+        // in `timezone`) + seed the first fire watermark. Validating HERE makes a bad
+        // expression / unknown timezone a synchronous `invalid_argument`, never a silent
+        // never-firing trigger.
         let now = now_unix_ms();
         let next_fire_unix_ms = if reg.kind == "cron" {
-            let secs: u64 = reg.schedule_spec.trim().parse().map_err(|_| {
-                TriggerAdminError::InvalidArgument(
-                    "cron schedule_spec must be a positive integer (interval seconds)".into(),
-                )
-            })?;
-            if secs == 0 {
-                return Err(TriggerAdminError::InvalidArgument(
-                    "cron interval must be > 0 seconds".into(),
-                ));
-            }
-            now.saturating_add(secs.saturating_mul(1000))
+            crate::schedule::next_fire(&reg.schedule_spec, &reg.timezone, now)
+                .map_err(|e| TriggerAdminError::InvalidArgument(e.to_string()))?
         } else {
             0
         };
@@ -112,11 +150,14 @@ impl TriggerAdmin for HostTriggerAdmin {
             name: reg.name,
             kind: reg.kind,
             recipe_handle: reg.recipe_handle,
+            app_handle: reg.app_handle,
             args_template_json: String::new(),
             auth: reg.auth,
             auth_secret_ref: reg.auth_secret_ref,
             schedule_spec: reg.schedule_spec,
+            timezone: reg.timezone,
             owner_party: reg.owner_party,
+            require_approval: reg.require_approval,
             enabled: reg.enabled,
             next_fire_unix_ms,
             created_unix_ms: now,
@@ -144,10 +185,13 @@ impl TriggerAdmin for HostTriggerAdmin {
                 name: r.name,
                 kind: r.kind,
                 recipe_handle: r.recipe_handle,
+                app_handle: r.app_handle,
                 auth: r.auth,
                 auth_secret_present: !r.auth_secret_ref.is_empty(),
                 schedule_spec: r.schedule_spec,
+                timezone: r.timezone,
                 enabled: r.enabled,
+                require_approval: r.require_approval,
                 last_fire_unix_ms: r.last_fire_unix_ms,
             })
             .collect();
@@ -192,18 +236,58 @@ impl TriggerAdmin for HostTriggerAdmin {
                 deduped: true,
             });
         }
-        // Bind the recipe under the trigger's OWNER party (D102.2) with the event
-        // payload as the args (passthrough). An empty payload is the empty object.
+        // Bind under the trigger's OWNER party (D102.2) with the event payload as the args
+        // (passthrough). An empty payload is the empty object.
         let args = if payload_json.trim().is_empty() {
             b"{}".to_vec()
         } else {
             payload_json.as_bytes().to_vec()
         };
-        let bound = self
-            .binder
-            .bind(&cfg.owner_party, &cfg.recipe_handle, &args, &[], &[])
-            .await
-            .map_err(bind_err)?;
+        // T-APP-TRIGGER-TARGET: route by target. An App target runs through the SAME
+        // `author_app` the RunApp RPC uses — connections + secret_scope + the context/RAG
+        // rail resolved, HITL posture stamped — so a credentialed App fires unattended.
+        // A recipe target binds as before. Both yield a BoundRecipe fed to the identical
+        // register_run + submit_mote tail below (the coordinator stays the sole writer).
+        let bound = if cfg.app_handle.is_empty() {
+            self.binder
+                .bind(&cfg.owner_party, &cfg.recipe_handle, &args, &[], &[])
+                .await
+                .map_err(bind_err)?
+        } else {
+            let author = self.app_author.as_ref().ok_or_else(|| {
+                TriggerAdminError::Unsupported(
+                    "App-target trigger requires the App-run seam (no connections.db on this serve)"
+                        .into(),
+                )
+            })?;
+            let bound = author
+                .author_app(
+                    &cfg.owner_party,
+                    &cfg.app_handle,
+                    &args,
+                    cfg.require_approval,
+                )
+                .await
+                .map_err(app_err)?;
+            // Port the RunApp fireable-grant backstop (service.rs run_app): an App
+            // blueprint is client-authored, so a tool grant the broker never registered
+            // must fail closed HERE — never submitted as a warrant the recipe path would
+            // never produce (SN-8 / provisioning-drift guard).
+            if let Some(fireable) = self.fireable.as_ref() {
+                let registered = fireable.registered_grants();
+                for (_, warrant) in &bound.motes {
+                    if let Some(g) = warrant.tool_grants.iter().find(|g| {
+                        !registered.contains(&(g.tool_id.0.clone(), g.tool_version.0.clone()))
+                    }) {
+                        return Err(TriggerAdminError::Unsupported(format!(
+                            "app step grants tool {}@{} but this serve registered no such capability",
+                            g.tool_id.0, g.tool_version.0
+                        )));
+                    }
+                }
+            }
+            bound
+        };
         if bound.react_seed && !self.react_supported {
             return Err(TriggerAdminError::Unsupported(
                 "this serve cannot drive a live ReAct chain (no inference executor)".into(),
@@ -252,24 +336,64 @@ impl TriggerAdmin for HostTriggerAdmin {
         } else {
             payload_json.as_bytes().to_vec()
         };
-        match self
-            .binder
-            .bind(&cfg.owner_party, &cfg.recipe_handle, &args, &[], &[])
-            .await
-        {
-            Ok(bound) => Ok((
-                true,
-                format!(
-                    "binds '{}' ({} mote{})",
-                    cfg.recipe_handle,
-                    bound.motes.len(),
-                    if bound.motes.len() == 1 { "" } else { "s" }
-                ),
-            )),
-            // A dry-run never fires; report the bind failure as a non-fatal detail.
-            Err(BinderError::NotAuthorized) => Ok((false, "not authorized for the recipe".into())),
-            Err(BinderError::InvalidArgs(d)) => Ok((false, format!("payload does not bind: {d}"))),
-            Err(BinderError::Internal(d)) => Err(TriggerAdminError::Storage(d)),
+        // A dry-run authors/binds but NEVER submits; a resolution failure is a non-fatal
+        // (ok=false) detail, an internal store error is fatal.
+        if cfg.app_handle.is_empty() {
+            match self
+                .binder
+                .bind(&cfg.owner_party, &cfg.recipe_handle, &args, &[], &[])
+                .await
+            {
+                Ok(bound) => Ok((
+                    true,
+                    format!(
+                        "binds '{}' ({} mote{})",
+                        cfg.recipe_handle,
+                        bound.motes.len(),
+                        if bound.motes.len() == 1 { "" } else { "s" }
+                    ),
+                )),
+                Err(BinderError::NotAuthorized) => {
+                    Ok((false, "not authorized for the recipe".into()))
+                }
+                Err(BinderError::InvalidArgs(d)) => {
+                    Ok((false, format!("payload does not bind: {d}")))
+                }
+                Err(BinderError::Internal(d)) => Err(TriggerAdminError::Storage(d)),
+            }
+        } else {
+            // T-APP-TRIGGER-TARGET: an App-target dry-run authors the App (no submit, no
+            // fatal fireable-backstop — report an over-broad grant would be caught at fire).
+            let Some(author) = self.app_author.as_ref() else {
+                return Ok((false, "App-run seam not wired on this serve".into()));
+            };
+            match author
+                .author_app(
+                    &cfg.owner_party,
+                    &cfg.app_handle,
+                    &args,
+                    cfg.require_approval,
+                )
+                .await
+            {
+                Ok(bound) => Ok((
+                    true,
+                    format!(
+                        "authors '{}' ({} mote{})",
+                        cfg.app_handle,
+                        bound.motes.len(),
+                        if bound.motes.len() == 1 { "" } else { "s" }
+                    ),
+                )),
+                Err(AppRunError::NotAuthorized) => Ok((false, "not authorized for the app".into())),
+                Err(AppRunError::InvalidArgs(d)) => {
+                    Ok((false, format!("payload does not bind: {d}")))
+                }
+                Err(AppRunError::MissingIntegration(n)) => {
+                    Ok((false, format!("missing integration: {n}")))
+                }
+                Err(AppRunError::Internal(d)) => Err(TriggerAdminError::Storage(d)),
+            }
         }
     }
 }

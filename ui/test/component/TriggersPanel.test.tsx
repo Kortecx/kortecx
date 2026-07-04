@@ -53,10 +53,13 @@ const oneTrigger = (over: Record<string, unknown> = {}) => {
       name: "gh-push",
       kind: "webhook",
       recipeHandle: "kx/recipes/react",
+      appHandle: "",
       auth: "hmac_sha256",
       authSecretPresent: true,
       scheduleSpec: "",
+      timezone: "",
       enabled: true,
+      requireApproval: false,
       lastFireUnixMs: 0,
       ...over,
     },
@@ -147,5 +150,54 @@ describe("TriggersPanel", () => {
     // No recipe handle yet → blocked.
     fireEvent.submit(screen.getByTestId("trigger-add-form"));
     expect(registerM.mutate).not.toHaveBeenCalled();
+  });
+
+  it("T-APP-TRIGGER-TARGET: registers an App target + HITL + cron/timezone", () => {
+    render(<TriggersPanel />);
+    // Cron kind reveals the schedule + timezone fields.
+    fireEvent.click(screen.getByTestId("trigger-kind-cron"));
+    // Swap the target to App (recipe input → app input).
+    fireEvent.click(screen.getByTestId("trigger-target-app"));
+    expect(screen.queryByTestId("trigger-add-recipe")).toBeNull();
+    fireEvent.change(screen.getByTestId("trigger-add-name"), { target: { value: "standup" } });
+    fireEvent.change(screen.getByTestId("trigger-add-app"), {
+      target: { value: "standup-digest" },
+    });
+    fireEvent.change(screen.getByTestId("trigger-add-schedule"), {
+      target: { value: "0 9 * * 1-5" },
+    });
+    fireEvent.change(screen.getByTestId("trigger-add-timezone"), {
+      target: { value: "America/New_York" },
+    });
+    fireEvent.click(screen.getByTestId("trigger-add-require-approval"));
+    fireEvent.submit(screen.getByTestId("trigger-add-form"));
+    expect(registerM.mutate).toHaveBeenCalledTimes(1);
+    expect(registerM.mutate.mock.calls[0]?.[0]).toMatchObject({
+      name: "standup",
+      kind: "cron",
+      recipeHandle: "",
+      appHandle: "standup-digest",
+      scheduleSpec: "0 9 * * 1-5",
+      timezone: "America/New_York",
+      requireApproval: true,
+    });
+  });
+
+  it("renders an App-target trigger with the app: target + HITL chip", () => {
+    oneTrigger({
+      name: "standup",
+      kind: "cron",
+      recipeHandle: "",
+      appHandle: "standup-digest",
+      auth: "none",
+      authSecretPresent: false,
+      scheduleSpec: "0 9 * * 1-5",
+      timezone: "America/New_York",
+      requireApproval: true,
+    });
+    render(<TriggersPanel />);
+    expect(screen.getByText("app:standup-digest")).toBeInTheDocument();
+    expect(screen.getByTestId("trigger-hitl-standup")).toBeInTheDocument();
+    expect(screen.getByTestId("trigger-target-kind-standup")).toHaveTextContent("app");
   });
 });

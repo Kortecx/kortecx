@@ -57,6 +57,13 @@ pub trait AppAuthor: Send + Sync {
     /// Resolve the caller-owned App `handle` (+ optional entry `args`) into a runnable
     /// [`BoundRecipe`].
     ///
+    /// `require_approval` (T-APP-TRIGGER-TARGET / D114): when `true`, the entry agentic
+    /// step is authored with the HITL posture so the coordinator withholds irreversible
+    /// (world-mutating) tool actions until an operator grant. `false` ⇒ byte-identical to
+    /// today (the coordinator falls back to the serve-wide `KX_SERVE_REQUIRE_APPROVAL`
+    /// default). Injected at author time (into the launch Mote's config, BEFORE the DAG is
+    /// lowered) — never post-hoc, which would change the MoteId and orphan its edges.
+    ///
     /// # Errors
     /// [`AppRunError`] — see the variants.
     async fn author_app(
@@ -64,5 +71,6 @@ pub trait AppAuthor: Send + Sync {
         party: &str,
         handle: &str,
         args: &[u8],
+        require_approval: bool,
     ) -> Result<BoundRecipe, AppRunError>;
 }

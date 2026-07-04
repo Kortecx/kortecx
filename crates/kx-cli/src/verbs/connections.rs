@@ -104,14 +104,29 @@ struct ProviderDefaults {
     credential_ref: &'static str,
 }
 
-/// The static provider catalog. Gmail is the first curated provider (the bundled
-/// `kx-connector-gmail` sidecar); Discord/Slack/Notion clone this row when curated.
+/// The static provider catalog (mirrors the SDK App builders + the UI provider chips).
+/// Each row is a bundled `kx-connector-*` sidecar dialed by command + credential-ref name.
 fn provider_defaults(id: &str) -> Option<ProviderDefaults> {
     match id {
         "gmail" => Some(ProviderDefaults {
             name: "gmail",
             command: "kx-connector-gmail",
             credential_ref: "KX_GMAIL_CREDENTIAL",
+        }),
+        "discord" => Some(ProviderDefaults {
+            name: "discord",
+            command: "kx-connector-discord",
+            credential_ref: "KX_DISCORD_CREDENTIAL",
+        }),
+        "slack" => Some(ProviderDefaults {
+            name: "slack",
+            command: "kx-connector-slack",
+            credential_ref: "KX_SLACK_CREDENTIAL",
+        }),
+        "notion" => Some(ProviderDefaults {
+            name: "notion",
+            command: "kx-connector-notion",
+            credential_ref: "KX_NOTION_CREDENTIAL",
         }),
         _ => None,
     }
@@ -201,7 +216,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
             // gmail` is enough. Explicit flags still override each field.
             if let Some(pid) = &provider {
                 let p = provider_defaults(pid).ok_or_else(|| {
-                    CliError::Usage(format!("unknown --provider {pid:?} (known: gmail)"))
+                    CliError::Usage(format!(
+                        "unknown --provider {pid:?} (known: gmail, discord, slack, notion)"
+                    ))
                 })?;
                 if name.is_none() {
                     name = Some(p.name.to_string());

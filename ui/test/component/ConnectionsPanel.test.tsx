@@ -167,6 +167,25 @@ describe("ConnectionsPanel", () => {
     });
   });
 
+  it.each([
+    ["slack", "kx-connector-slack", "KX_SLACK_CREDENTIAL"],
+    ["notion", "kx-connector-notion", "KX_NOTION_CREDENTIAL"],
+  ])(
+    "T-APP-TRIGGER-TARGET: 'Connect %s' prefills the bundled connector defaults",
+    (id, endpoint, credentialRef) => {
+      render(<ConnectionsPanel />);
+      fireEvent.click(screen.getByTestId(`connection-provider-${id}`));
+      fireEvent.submit(screen.getByTestId("connections-add-form"));
+      expect(registerM.mutate).toHaveBeenCalledTimes(1);
+      expect(registerM.mutate.mock.calls[0]?.[0]).toMatchObject({
+        name: id,
+        transport: "stdio",
+        endpoint,
+        credentialRef,
+      });
+    },
+  );
+
   it("switches to http transport and shows the TLS toggle", () => {
     render(<ConnectionsPanel />);
     fireEvent.click(screen.getByTestId("connection-transport-http"));
