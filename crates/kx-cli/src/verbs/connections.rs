@@ -643,7 +643,8 @@ mod tests {
             p(&["doctor"]).unwrap().sub,
             ConnectionsSub::Doctor { provider: None }
         ));
-        let ConnectionsSub::Doctor { provider } = p(&["doctor", "--provider", "slack"]).unwrap().sub
+        let ConnectionsSub::Doctor { provider } =
+            p(&["doctor", "--provider", "slack"]).unwrap().sub
         else {
             panic!("expected Doctor");
         };
@@ -664,7 +665,14 @@ mod tests {
         // On Unix (EXE_SUFFIX empty) exactly the bare name; on Windows also the `.exe`.
         let names = sibling_names("kx-connector-slack");
         assert!(names.contains(&"kx-connector-slack".to_string()));
-        assert_eq!(names.len(), if std::env::consts::EXE_SUFFIX.is_empty() { 1 } else { 2 });
+        assert_eq!(
+            names.len(),
+            if std::env::consts::EXE_SUFFIX.is_empty() {
+                1
+            } else {
+                2
+            }
+        );
     }
 
     #[test]

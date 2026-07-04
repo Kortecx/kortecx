@@ -127,6 +127,9 @@ mod tests {
     #[test]
     fn empty_spec_degrades_to_a_generic_object() {
         // Defensive: the caller guards `is_empty`, but a never-broken fallback must hold.
-        assert_eq!(render_union(&ToolEnvelopeSpec::new(vec![])), json!({ "type": "object" }));
+        assert_eq!(
+            render_union(&ToolEnvelopeSpec::new(vec![])),
+            json!({ "type": "object" })
+        );
     }
 }

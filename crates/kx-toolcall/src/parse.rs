@@ -49,17 +49,18 @@ pub fn max_args_bytes(warrant: &WarrantSpec) -> usize {
 /// already treats a non-`tool_call` object as `Ok(None)` (a settle).
 #[must_use]
 pub fn extract_answer(bytes: &[u8]) -> Cow<'_, [u8]> {
+    // Only an EXACT single-key `{"answer":<string>}` object unwraps (`deny_unknown_fields`).
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct AnswerArm {
+        answer: String,
+    }
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Cow::Borrowed(bytes);
     };
     let trimmed = text.trim();
     if !trimmed.starts_with('{') {
         return Cow::Borrowed(bytes);
-    }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct AnswerArm {
-        answer: String,
     }
     match serde_json::from_str::<AnswerArm>(trimmed) {
         Ok(arm) => Cow::Owned(arm.answer.into_bytes()),
@@ -2479,7 +2480,10 @@ mod tests {
         let stray = br#"{"answer":"x","note":"y"}"#;
         assert!(matches!(extract_answer(stray), Cow::Borrowed(_)));
         // A non-string answer ⇒ verbatim.
-        assert!(matches!(extract_answer(br#"{"answer":42}"#), Cow::Borrowed(_)));
+        assert!(matches!(
+            extract_answer(br#"{"answer":42}"#),
+            Cow::Borrowed(_)
+        ));
         // Non-JSON / non-object ⇒ verbatim.
         assert!(matches!(extract_answer(b"[1,2,3]"), Cow::Borrowed(_)));
         assert!(matches!(extract_answer(b"not json"), Cow::Borrowed(_)));
@@ -2490,9 +2494,6 @@ mod tests {
         // The union answer arm must be a SETTLE at the parser (Ok(None)), NOT a refusal —
         // this is why no classification change was needed (the answer arm is off-envelope).
         let w = warrant_granting(Some(("slack/read_channel", "1")));
-        assert_eq!(
-            parse_tool_call(br#"{"answer":"done"}"#, &w, 4096),
-            Ok(None)
-        );
+        assert_eq!(parse_tool_call(br#"{"answer":"done"}"#, &w, 4096), Ok(None));
     }
 }
