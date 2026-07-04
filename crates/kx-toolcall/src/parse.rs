@@ -34,6 +34,40 @@ pub fn max_args_bytes(warrant: &WarrantSpec) -> usize {
     (warrant.model_route.max_output_tokens as usize).saturating_mul(4)
 }
 
+/// Unwrap the union ANSWER arm `{"answer":"<text>"}` to its inner text, returning the
+/// bytes VERBATIM (`Cow::Borrowed`) for anything else — prose, a `tool_call` envelope, or
+/// any non-answer JSON. This is the presentation/commit companion of the Ollama non-strict
+/// UNION `format` (`kx_grammar::ToolEnvelopeSpec::to_ollama_union_format`): when the union
+/// is armed the model settles by emitting `{"answer":"…"}` instead of free prose, so the
+/// display/commit layer unwraps it to the plain text a user expects.
+///
+/// PRESENTATION ONLY (SN-8) — never an authority decision — and a byte-identical NO-OP for
+/// every non-union path (llama.cpp, non-tool turns, the canonical demo), so those commits
+/// stay unchanged (`Cow::Borrowed`). `deny_unknown_fields` means only an EXACT single-key
+/// `{"answer":<string>}` object unwraps; a stray field, a `tool_call`, prose, or non-JSON
+/// all pass through untouched. This does NOT change parse CLASSIFICATION — the parser
+/// already treats a non-`tool_call` object as `Ok(None)` (a settle).
+#[must_use]
+pub fn extract_answer(bytes: &[u8]) -> Cow<'_, [u8]> {
+    // Only an EXACT single-key `{"answer":<string>}` object unwraps (`deny_unknown_fields`).
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct AnswerArm {
+        answer: String,
+    }
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Cow::Borrowed(bytes);
+    };
+    let trimmed = text.trim();
+    if !trimmed.starts_with('{') {
+        return Cow::Borrowed(bytes);
+    }
+    match serde_json::from_str::<AnswerArm>(trimmed) {
+        Ok(arm) => Cow::Owned(arm.answer.into_bytes()),
+        Err(_) => Cow::Borrowed(bytes),
+    }
+}
+
 /// Extract the JSON envelope a model wrapped in reasoning and/or a markdown code
 /// fence, so the strict parser sees the bare `{ … }`. Removes a SINGLE leading
 /// reasoning block — Qwen3 `<think>…</think>` OR Gemma-4 `<|channel>…<channel|>`
@@ -2417,5 +2451,49 @@ mod tests {
     fn parse_permutation_n_zero_only_accepts_empty_array() {
         assert_eq!(parse_permutation("[]", 0), Some(vec![]));
         assert_eq!(parse_permutation("[0]", 0), None);
+    }
+
+    #[test]
+    fn extract_answer_unwraps_only_the_exact_answer_arm() {
+        // The union answer arm ⇒ unwrapped to its inner text.
+        assert_eq!(
+            extract_answer(br#"{"answer":"Team shipped the release."}"#).as_ref(),
+            b"Team shipped the release."
+        );
+        // Whitespace-tolerant (Ollama pretty-prints).
+        assert_eq!(
+            extract_answer(b"{\n  \"answer\": \"hi\"\n}").as_ref(),
+            b"hi"
+        );
+    }
+
+    #[test]
+    fn extract_answer_is_a_byte_identical_noop_for_everything_else() {
+        // Prose ⇒ verbatim (Cow::Borrowed).
+        let prose = b"Just a plain-text answer.";
+        assert!(matches!(extract_answer(prose), Cow::Borrowed(_)));
+        assert_eq!(extract_answer(prose).as_ref(), prose);
+        // A tool_call envelope ⇒ verbatim (never unwrapped — it must still parse as a call).
+        let call = br#"{"tool_call":{"name":"slack/read_channel","version":"1","args":{}}}"#;
+        assert!(matches!(extract_answer(call), Cow::Borrowed(_)));
+        // A `{"answer":…}` with a STRAY field ⇒ verbatim (deny_unknown_fields).
+        let stray = br#"{"answer":"x","note":"y"}"#;
+        assert!(matches!(extract_answer(stray), Cow::Borrowed(_)));
+        // A non-string answer ⇒ verbatim.
+        assert!(matches!(
+            extract_answer(br#"{"answer":42}"#),
+            Cow::Borrowed(_)
+        ));
+        // Non-JSON / non-object ⇒ verbatim.
+        assert!(matches!(extract_answer(b"[1,2,3]"), Cow::Borrowed(_)));
+        assert!(matches!(extract_answer(b"not json"), Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn extract_answer_arm_still_classifies_as_a_settle() {
+        // The union answer arm must be a SETTLE at the parser (Ok(None)), NOT a refusal —
+        // this is why no classification change was needed (the answer arm is off-envelope).
+        let w = warrant_granting(Some(("slack/read_channel", "1")));
+        assert_eq!(parse_tool_call(br#"{"answer":"done"}"#, &w, 4096), Ok(None));
     }
 }

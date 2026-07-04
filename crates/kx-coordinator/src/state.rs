@@ -4484,9 +4484,21 @@ fn finalize_agentic_launch<J: Journal>(
     // RISK 3: this commit is a DIRECT append (it bypasses `flush_commits`' admission
     // + phantom-ref guards), so re-verify the answer payload is present in the store
     // before committing — a store fault retries next pass.
-    if store.get(&result_ref).is_err() {
+    let Ok(raw) = store.get(&result_ref) else {
         return ReactChainStatus::Active;
-    }
+    };
+    // gemma3 connector-tool-fire: under the Ollama non-strict UNION `format` the model
+    // settles by emitting `{"answer":"…"}` instead of free prose; unwrap it to the plain
+    // text a consumer/CLI expects. `extract_answer` is a byte-identical NO-OP for prose /
+    // llama.cpp / non-union answers (`Cow::Borrowed` ⇒ the SAME `result_ref` commits, so
+    // those launches stay byte-invariant + recovery-stable). Only a union answer re-`put`s
+    // a clean fact — deterministic over the committed turn bytes ⇒ the same ref on a cold
+    // re-fold. Presentation only (SN-8); the launch idempotency key stays the launch MoteId
+    // (`commit_agentic_launch`), never the ref, so recovery identity is unaffected.
+    let served_ref = match kx_toolcall::extract_answer(raw.as_ref()) {
+        std::borrow::Cow::Borrowed(_) => result_ref,
+        std::borrow::Cow::Owned(unwrapped) => store.put(&unwrapped).unwrap_or(result_ref),
+    };
     commit_agentic_launch(
         journal,
         projection,
@@ -4494,7 +4506,7 @@ fn finalize_agentic_launch<J: Journal>(
         dispatch,
         &launch_mote,
         &launch_warrant,
-        result_ref,
+        served_ref,
     );
     ReactChainStatus::Settled
 }

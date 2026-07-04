@@ -204,7 +204,7 @@ def test_app_run_routes_through_save_and_run_app_not_submit_workflow() -> None:
 def test_with_discord_and_secrets() -> None:
     env = (
         kx.app("notifier")
-        .blueprint(kx.flow().agent("post an update", tools=["kx-connector-discord/send_message"]))
+        .blueprint(kx.flow().agent("post an update", tools=["discord/send_message"]))
         .with_discord()
         .secrets("KX_EXTRA_CRED")
         .to_envelope()
@@ -219,7 +219,7 @@ def test_with_discord_and_secrets() -> None:
 def test_with_slack_curated_connector() -> None:
     env = (
         kx.app("slacker")
-        .blueprint(kx.flow().agent("post a digest", tools=["kx-connector-slack/post_message"]))
+        .blueprint(kx.flow().agent("post a digest", tools=["slack/post_message"]))
         .with_slack()
         .to_envelope()
     )
@@ -232,7 +232,7 @@ def test_with_slack_curated_connector() -> None:
 def test_with_notion_curated_connector() -> None:
     env = (
         kx.app("notetaker")
-        .blueprint(kx.flow().agent("append a note", tools=["kx-connector-notion/append_block"]))
+        .blueprint(kx.flow().agent("append a note", tools=["notion/append_block"]))
         .with_notion()
         .to_envelope()
     )

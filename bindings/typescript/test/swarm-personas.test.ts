@@ -203,7 +203,7 @@ describe("App.run → SaveApp + RunApp (the integration-in-app fix)", () => {
 
   it("withDiscord + secrets", () => {
     const env = app("notifier")
-      .blueprint(flow().agent("post an update", { tools: ["kx-connector-discord/send_message"] }))
+      .blueprint(flow().agent("post an update", { tools: ["discord/send_message"] }))
       .withDiscord()
       .secrets("KX_EXTRA_CRED")
       .toEnvelope() as Record<string, any>;
@@ -216,7 +216,7 @@ describe("App.run → SaveApp + RunApp (the integration-in-app fix)", () => {
 
   it("withSlack curated connector", () => {
     const env = app("slacker")
-      .blueprint(flow().agent("post a digest", { tools: ["kx-connector-slack/post_message"] }))
+      .blueprint(flow().agent("post a digest", { tools: ["slack/post_message"] }))
       .withSlack()
       .toEnvelope() as Record<string, any>;
     expect(env.references.connections[0].descriptor).toBe("kx-connector-slack");
@@ -226,7 +226,7 @@ describe("App.run → SaveApp + RunApp (the integration-in-app fix)", () => {
 
   it("withNotion curated connector", () => {
     const env = app("notetaker")
-      .blueprint(flow().agent("append a note", { tools: ["kx-connector-notion/append_block"] }))
+      .blueprint(flow().agent("append a note", { tools: ["notion/append_block"] }))
       .withNotion()
       .toEnvelope() as Record<string, any>;
     expect(env.references.connections[0].descriptor).toBe("kx-connector-notion");

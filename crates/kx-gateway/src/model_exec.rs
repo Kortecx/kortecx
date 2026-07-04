@@ -150,10 +150,18 @@ fn build_tool_grammar(warrant: &WarrantSpec) -> Option<Grammar> {
     // skip-serialized ⇒ the carrier is byte-identical to pre-RC4c-2c (the free-form answer
     // path is preserved). llama.cpp ignores `strict` (it already arms a lazy/triggered GBNF).
     let strict = crate::mcp_tool::ollama_tool_format_enabled();
+    // gemma3 connector-tool-fire (T-RUNAPP-RAG-RECIPE-ROUTE generalized): the non-strict
+    // UNION carrier (`KX_SERVE_OLLAMA_TOOL_UNION`, default-ON kill-switch). On Ollama it
+    // becomes a `{"tool_call":{…}} oneOf {"answer":"…"}` whole-response `format` — forces
+    // PARSEABLE output (the Ollama analog of the lazy GBNF) so a free-form gemma3 turn can
+    // no longer emit a malformed body that dead-letters, WITHOUT forcing tool-required.
+    // Mutually exclusive with `strict` (strict wins; both never set). llama.cpp ignores it.
+    let answerable = !strict && crate::mcp_tool::ollama_tool_union_enabled();
     // Serialization of the closed spec types does not fail in practice; on the
     // off chance it does, degrade to unconstrained (never panic on a dispatch).
     ToolEnvelopeSpec::new(tools)
         .with_strict(strict)
+        .with_answerable(answerable)
         .to_raw()
         .ok()
         .map(Grammar::new)
@@ -599,6 +607,24 @@ object and nothing else: {\"tool_call\":{\"name\":\"<tool name>\",\"version\":\"
 tool's inputs. After a tool result is returned, keep reasoning. When you have enough information, \
 reply with the final answer as plain text and do NOT emit a tool_call. Never invent a tool, \
 version, or argument that is not listed.";
+
+/// gemma3 connector-tool-fire (`T-RUNAPP-RAG-RECIPE-ROUTE` generalized from RAG to
+/// arbitrary connector/skill tool-calls): a shared tool-USE directive appended to the
+/// granted-tool MENU. It steers the model to CALL a listed tool to gather/act on real
+/// data BEFORE answering — the missing nudge that left the connector agentic-launch path
+/// unprimed (unlike the dataset/react-rag path), so a free-form gemma3 would "answer from
+/// memory" instead of firing. Respects the `fold_react_rag_dataset` NOTE (`provision.rs`):
+/// it NAMES the behavior, never shows a `{tool_call}` example — the menu + [`REACT_SYSTEM`]
+/// already own the exact envelope (a second inline example primed some models to emit a
+/// stray `call:` prefix that broke Gemma-4 native recovery). Presentation only (SN-8), off
+/// the MoteId / off-digest (it rides the ephemeral menu, never a committed fact), and it
+/// reaches BOTH the connector agentic turn AND react-rag on BOTH engines from the ONE menu
+/// choke point — the exact gap that left the connector path unprimed.
+const TOOL_STEER_DIRECTIVE: &str = "Use the tools listed above to gather or act on the real \
+data the task needs BEFORE you answer: when a listed tool can obtain the authoritative \
+result, call it (using the format above) rather than answering from memory. Once a tool has \
+returned a result, USE that result to write your final plain-text answer — do NOT call the \
+same tool again with the same arguments.";
 
 /// Qwen ChatML wrapping of a user prompt with an EXPLICIT system message — the
 /// **training contract** the companion model repo mirrors (kept byte-identical to
@@ -1500,7 +1526,9 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             return None;
         }
         let menu = kx_context_assembler::render_tool_menu(&warrant.tool_grants, reg.as_ref());
-        (!menu.is_empty()).then_some(menu)
+        // Append the shared tool-USE steer so the model FIRES a listed tool before
+        // answering (gemma3 connector-tool-fire). Off-MoteId/off-digest like the menu.
+        (!menu.is_empty()).then(|| format!("{menu}\n{TOOL_STEER_DIRECTIVE}"))
     }
 
     /// RC3: the system prompt for this dispatch. A ReAct turn uses the operator

@@ -124,6 +124,13 @@ plain chat — it never silently drops the image or fakes grounding.
 - Everything is **off the canonical projection digest** — the recipes are catalog entries, and the
   committed retrieval fact is the ordered chunk-ref set (scores excluded). A crashed agent recovers
   to its exact recall state.
+- **The agent fires `retrieve` reliably on both `kx serve` engines** — llama.cpp (Gemma) and Ollama
+  (`gemma3:12b`). Each engine emits tool-calls in its own format, so the runtime constrains the
+  model to a parseable shape: llama.cpp arms a lazy grammar; Ollama applies a non-strict
+  `{"tool_call":…} | {"answer":…}` response schema so a free-form turn can't emit a malformed call
+  yet still answers when it has enough. On by default; `KX_SERVE_OLLAMA_TOOL_UNION=0` reverts Ollama
+  to unconstrained decoding. This same guarantee makes connector tools ([Integrations](./integrations.md))
+  fire on both engines.
 
 ## Reranking: deterministic MMR now, LLM listwise rerank (authored pipelines)
 

@@ -277,6 +277,29 @@ pub(crate) fn ollama_tool_format_enabled() -> bool {
     }
 }
 
+/// gemma3 connector-tool-fire (`T-RUNAPP-RAG-RECIPE-ROUTE` generalized): the operator
+/// SERVE-LEVEL kill-switch for the Ollama **non-strict UNION** format
+/// (`KX_SERVE_OLLAMA_TOOL_UNION`). Default-**ON** (unset / `"1"` / `"true"` ⇒ `true`;
+/// only `"0"` / `"false"` / `"off"` disables) — byte-mirrors [`grammar_constrained_enabled`],
+/// the always-on posture. When on (and `KX_SERVE_OLLAMA_TOOL_FORMAT` is OFF), a
+/// tool-granted turn's carrier is armed `answerable`, so the Ollama backend applies a
+/// `{"tool_call":{…}} oneOf {"answer":"…"}` whole-response `format` — the model is forced
+/// to PARSEABLE JSON (fires OR settles) instead of a free-form body that may dead-letter,
+/// while KEEPING the answer/settle path (unlike `strict`, which forbids answering). This
+/// is what makes gemma3 reliably fire connector/RAG tools on the live loop. llama.cpp is
+/// unaffected (it already arms a lazy/triggered GBNF). Off-digest (the grammar rides off
+/// the MoteId, D108.2) — the toggle changes only the live dispatch, never a committed fact.
+pub(crate) fn ollama_tool_union_enabled() -> bool {
+    match std::env::var_os("KX_SERVE_OLLAMA_TOOL_UNION") {
+        Some(v) => {
+            let v = v.to_string_lossy();
+            let v = v.trim();
+            !(v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
+        }
+        None => true,
+    }
+}
+
 /// RC3 (T-REACT-TOOL-MENU): the operator SERVE-LEVEL kill-switch for the
 /// granted-tool MENU prepend (`KX_SERVE_REACT_TOOL_MENU`). Default-ON (unset /
 /// `"1"` / `"true"` ⇒ `true`) — byte-mirrors [`grammar_constrained_enabled`]; set

@@ -215,22 +215,33 @@ class App:
     def with_discord(self) -> "App":
         """RC-SW2: declare the bundled Discord connector (the curated provider default) —
         equivalent to ``with_connection("kx-connector-discord", "KX_DISCORD_CREDENTIAL")``.
-        Register it on the runtime with ``kx connections add --command kx-connector-discord
-        --credential-ref KX_DISCORD_CREDENTIAL`` (the sidecar reads a bot token by name)."""
+        Register it with ``kx connections add --provider discord`` (the sidecar reads a bot
+        token by name). To let an agent FIRE a Discord tool, grant it by the registered
+        CONNECTION NAME — e.g. ``tools=["discord/read_channel"]`` — NOT the descriptor
+        ``kx-connector-discord/*`` (an agent grant is namespaced by the connection name, so
+        the descriptor form will not dispatch against a "discord"-named connection)."""
         return self.with_connection(DISCORD_CONNECTOR_COMMAND, DISCORD_CREDENTIAL_REF)
 
     def with_slack(self) -> "App":
         """T-APP-TRIGGER-TARGET: declare the bundled Slack connector (the curated provider
         default) — equivalent to ``with_connection("kx-connector-slack", "KX_SLACK_CREDENTIAL")``.
         Register it with ``kx connections add --provider slack`` (the sidecar reads a bot
-        token ``{"bot_token": "xoxb-…"}`` by name)."""
+        token ``{"bot_token": "xoxb-…"}`` by name). To let an agent FIRE a Slack tool, grant
+        it by the registered CONNECTION NAME — e.g. ``tools=["slack/read_channel"]`` — NOT
+        the descriptor ``kx-connector-slack/*`` (an agent grant is namespaced by the
+        connection name, so the descriptor form will not dispatch against a "slack"-named
+        connection)."""
         return self.with_connection(SLACK_CONNECTOR_COMMAND, SLACK_CREDENTIAL_REF)
 
     def with_notion(self) -> "App":
         """T-APP-TRIGGER-TARGET: declare the bundled Notion connector (the curated provider
         default) — equivalent to ``with_connection("kx-connector-notion", "KX_NOTION_CREDENTIAL")``.
         Register it with ``kx connections add --provider notion`` (the sidecar reads an
-        integration token ``{"token": "…"}`` by name)."""
+        integration token ``{"token": "…"}`` by name). To let an agent FIRE a Notion tool,
+        grant it by the registered CONNECTION NAME — e.g. ``tools=["notion/search"]`` — NOT
+        the descriptor ``kx-connector-notion/*`` (an agent grant is namespaced by the
+        connection name, so the descriptor form will not dispatch against a "notion"-named
+        connection)."""
         return self.with_connection(NOTION_CONNECTOR_COMMAND, NOTION_CREDENTIAL_REF)
 
     def secrets(self, names: "Union[str, List[str]]") -> "App":

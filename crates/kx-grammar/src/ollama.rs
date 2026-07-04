@@ -47,6 +47,36 @@ pub(crate) fn render(spec: &ToolEnvelopeSpec) -> Value {
     })
 }
 
+/// Render a NON-STRICT UNION Ollama `format` JSON Schema: a well-formed tool-call
+/// envelope `oneOf` a well-formed answer object — the Ollama analog of llama.cpp's
+/// LAZY/triggered GBNF. Forces the whole response to be PARSEABLE JSON (a tool call →
+/// it fires, OR an `{"answer":"…"}` object → it settles) WITHOUT forcing tool-required,
+/// so a free-form gemma3 turn can no longer emit a malformed body that dead-letters, yet
+/// can still answer. The two arms are disjoint by required key (`tool_call` vs `answer`,
+/// `additionalProperties:false` on the answer arm) so `oneOf` matches exactly one arm.
+///
+/// (`oneOf` is honored by the pinned Ollama/llama.cpp json-schema→GBNF converter —
+/// verified live against gemma3:12b: a tool-eliciting turn emits the exact envelope, a
+/// non-tool turn emits `{"answer":…}`.)
+pub(crate) fn render_union(spec: &ToolEnvelopeSpec) -> Value {
+    if spec.tools.is_empty() {
+        // Defensive: caller guards `is_empty`; a generic object is the safest
+        // never-broken fallback (mirrors `render`).
+        return json!({ "type": "object" });
+    }
+    json!({
+        "oneOf": [
+            render(spec),
+            {
+                "type": "object",
+                "properties": { "answer": { "type": "string" } },
+                "required": ["answer"],
+                "additionalProperties": false
+            }
+        ]
+    })
+}
+
 /// Render an Ollama `format` JSON Schema (RC4c) for a listwise-rerank turn: the
 /// WHOLE response is an integer array of length `n` with each item in `[0, n)`.
 ///
@@ -64,4 +94,42 @@ pub(crate) fn render_permutation(n: u32) -> Value {
         "maxItems": n,
         "uniqueItems": true
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spec::ToolSpec;
+
+    #[test]
+    fn union_has_a_toolcall_arm_and_an_answer_arm() {
+        let spec = ToolEnvelopeSpec::new(vec![
+            ToolSpec::new("slack/read_channel", "1"),
+            ToolSpec::new("notion/search", "1"),
+        ]);
+        let v = render_union(&spec);
+        let arms = v["oneOf"].as_array().expect("union ⇒ oneOf arms");
+        assert_eq!(arms.len(), 2, "exactly a tool_call arm + an answer arm");
+        // Arm 0 is the EXACT tool-call envelope schema (name enum over the granted ids).
+        assert_eq!(arms[0], render(&spec));
+        let names = arms[0]["properties"]["tool_call"]["properties"]["name"]["enum"]
+            .as_array()
+            .expect("name enum");
+        assert!(names.iter().any(|n| n == "slack/read_channel"));
+        assert!(names.iter().any(|n| n == "notion/search"));
+        // Arm 1 is a closed `{"answer":<string>}` object (disjoint from the tool_call arm).
+        assert_eq!(arms[1]["type"], "object");
+        assert_eq!(arms[1]["properties"]["answer"]["type"], "string");
+        assert_eq!(arms[1]["required"], json!(["answer"]));
+        assert_eq!(arms[1]["additionalProperties"], json!(false));
+    }
+
+    #[test]
+    fn empty_spec_degrades_to_a_generic_object() {
+        // Defensive: the caller guards `is_empty`, but a never-broken fallback must hold.
+        assert_eq!(
+            render_union(&ToolEnvelopeSpec::new(vec![])),
+            json!({ "type": "object" })
+        );
+    }
 }

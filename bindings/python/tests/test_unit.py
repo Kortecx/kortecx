@@ -295,6 +295,32 @@ def test_react_wait_settles_on_answer_via_list_react_turns():
     assert out.payload == b"the final answer"
 
 
+def test_react_wait_unwraps_the_ollama_union_answer_arm():
+    """gemma3 connector-tool-fire: under the Ollama union ``format`` the settled answer
+    commits ``{"answer": "…"}``; the wait unwraps it to the plain text (parity with the
+    server-side finalize_agentic_launch + the ``kx`` CLI). A NO-OP for plain prose."""
+    from kortecx.wait import _extract_answer, poll_react_result
+
+    inst = b"\x07" * 16
+    seed = b"\x99" * 32
+    answer = b"\x42" * 32
+    stub = _FakeReactStub(
+        turns=[g.ReactTurnSummary(turn=0, turn_mote_id=answer, branch="answer")],
+        answer_mote=answer,
+        answer_ref=b"\x03" * 32,
+        payload=b'{"answer": "photosynthesis converts light to energy"}',
+    )
+    out = poll_react_result(stub, [], inst, seed, timeout=5)
+    assert out.payload == b"photosynthesis converts light to energy"
+    # Direct helper: no-ops for prose / tool_call / stray-field / non-json.
+    assert _extract_answer(b"just prose") == b"just prose"
+    assert _extract_answer(b'{"tool_call":{"name":"x","version":"1","args":{}}}') == (
+        b'{"tool_call":{"name":"x","version":"1","args":{}}}'
+    )
+    assert _extract_answer(b'{"answer":"x","note":"y"}') == b'{"answer":"x","note":"y"}'
+    assert _extract_answer(None) is None
+
+
 def test_react_turn_carries_the_rejection_reason():
     """PR-3 (A2): a rejected ReactTurn surfaces its fail-closed reason."""
     from kortecx.react import ReactTurn

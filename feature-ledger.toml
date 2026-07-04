@@ -228,7 +228,8 @@ notes    = "The SECOND bundled app-connector sidecar (the template the Slack/Not
 [[feature]]
 id       = "slack-connector"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "291"
 branch   = "lane/integrations"
 covers   = [
   "integrations/kx-connector-slack: a bundled Slack MCP connector modelled on kx-connector-discord — slack/{post_message,read_channel,search,list_channels}; bot-token (xoxb-) credential-by-ref KX_SLACK_CREDENTIAL; FFI-free leaf, no kx-* dep",
@@ -239,7 +240,8 @@ notes    = "Extension lane, same template as discord-connector. Zero core blast 
 [[feature]]
 id       = "notion-connector"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "291"
 branch   = "lane/integrations"
 covers   = [
   "integrations/kx-connector-notion: a bundled Notion MCP connector modelled on kx-connector-discord — notion/{search,read_page,create_page,append_block}; integration-token credential-by-ref KX_NOTION_CREDENTIAL; FFI-free leaf, no kx-* dep",
@@ -400,7 +402,8 @@ notes    = "D178 completeness plan #4 (the automation gap), PULLED FORWARD ahead
 [[feature]]
 id       = "integrations-come-alive"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "292"
 branch   = "feat/integrations-come-alive"
 covers   = [
   "connector binary discoverability (out-of-box dial): kx-mcp StdioTransport resolves a BARE connector program name (no path separator — e.g. 'kx-connector-slack' from a curated `--provider slack` connection) to a SIBLING of std::env::current_exe() first (+ EXE_SUFFIX for SN-7/Windows), then falls back to the OS PATH; a name that already contains a separator (absolute/relative — e.g. the witness harness's target/release path) is used verbatim. So a co-installed bundled connector dials without a manual PATH install (previously Command::new(bare) => TransportError::Unreachable). Resolution is spawn-time (round_trip + open_session Command::new sites); the stored `program` keeps author intent. GR8: additive (PATH fallback preserved), security-positive (a kx-sibling beats a bare-PATH lookup — narrows PATH-hijack surface), no env_clear/secret-injection change; kx-mcp is outside the projection closure => digest 7d22d4bd invariant, frozen-trio EMPTY, no journal/proto change",
@@ -412,3 +415,18 @@ covers   = [
 ]
 inherits = ["autonomy-safety-gates", "t-app-trigger-target", "slack-connector", "notion-connector", "integrations-foundation", "connector-extension-sdk"]
 notes    = "D178 'integrations come alive + watchable' (user-directed 2026-07-04, this session = come-alive-now / RC-SW4-next). Bundles three cohesive, well-integrated pieces that turn shipped machinery into a usable+governable+proven experience: (2A) the out-of-box connector dial fix [the real 'come alive' gap — a real user's --provider slack failed Unreachable without a manual PATH install], (2B) the RC6a approvals-inbox + cost panel [makes trigger-firing autonomous Apps governable/watchable — UI over shipped RPCs, ~zero backend blast radius], (2C) the GR28 dual-engine live witnesses [proof an App fires slack/notion on both engines]. Shared lane (feat/*); depends on the path-disjoint lane/integrations sidecar PR #291 (connector crates) for 2C to RUN. Additive; digest 7d22d4bd invariant (2A off-projection-closure kx-mcp; 2B UI-only; 2C test-only); frozen-trio EMPTY. Deferred: swarm trace-tree (RC6a-continuation, no precedent) · T-RUNAPP-RAG-RECIPE-ROUTE (own small PR) · respond_json/registry-install (later RC6a)."
+
+[[feature]]
+id       = "gemma3-connector-tool-fire"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/gemma3-connector-tool-fire"
+covers   = [
+  "The gemma3 connector-tool-fire fix (T-RUNAPP-RAG-RECIPE-ROUTE generalized from RAG retrieve@1 to ARBITRARY connector/skill tool-calls, L-006/L-016): make Ollama gemma3:12b RELIABLY FIRE tools on the live agentic loop (was: slack answers-without-firing; notion dead-letters 'no admissible turn') while llama.cpp Gemma-4 already fired",
+  "Lever A — shared tool-use priming: a TOOL_STEER_DIRECTIVE const appended to the OFF-DIGEST tool menu (kx-gateway model_exec.rs react_tool_menu) — reaches BOTH the connector agentic-launch turn AND react-rag on BOTH engines from one choke point; ephemeral/off-MoteId; respects the provision.rs NOTE (name the tools, never inline the {tool_call} envelope). Fixes the answer-without-firing symptom",
+  "Lever B — Ollama non-strict UNION format (the firing guarantee; the Ollama analog of llama.cpp's lazy GBNF): a new {\"tool_call\":{…}} oneOf {\"answer\":\"…\"} whole-response `format` forces gemma3 to emit PARSEABLE JSON (a well-formed tool_call fires OR a well-formed answer settles) — never a malformed dead-letter, without forcing tool-required (unlike KX_SERVE_OLLAMA_TOOL_FORMAT strict mode). kx-grammar ToolEnvelopeSpec.answerable flag (skip_serializing_if=is_false ⇒ default carrier byte-identical) + to_ollama_union_format/render_union; kx-ollama response_format answerable arm; build_tool_grammar arms answerable=!strict && KX_SERVE_OLLAMA_TOOL_UNION (default-ON kill-switch); kx-toolcall extract_answer helper (pure, additive — {\"answer\"} was already Ok(None), NO classification change); coordinator finalize_agentic_launch + CLI wait.rs display/commit unwrap of the answer arm",
+  "bundle: feature-ledger reconcile (slack/notion #291, integrations-come-alive #292 in-progress→merged) + .with_slack()/.with_notion()/.with_discord() connection-NAME tool-grant docstrings + SDK test grants (slack/read_channel not kx-connector-slack/*) + `kx connections doctor` local advisory (reuses kx-mcp resolve_program_with) + UI chip namespace hint + richer GR28 dual-engine witnesses (multi-tool read→post/search→create + trigger+approval + mixed MCP+connector; gemma3 now HARD-asserts tool_fired)",
+  "gates: render_union/to_ollama_union_format/extract_answer/response_format-union-arm units + carrier round-trip (answerable) + deterministic connector-fire wiring gate + a0_guard 7d22d4bd INVARIANT + frozen-trio EMPTY + no journal/proto change + kx-profile Ollama-vs-llama.cpp decode + GR28 dual-engine live (both engines restarted; gemma3 FIRES slack/notion/retrieve)",
+]
+inherits = ["integrations-come-alive", "slack-connector", "notion-connector", "t-runapp-context-rail"]
+notes    = "User-locked 2026-07-04 (mechanism decision: 'Priming + Ollama union format'). Digest 7d22d4bd invariant by construction — the grammar carrier rides the dispatch-time params clone (model_exec.rs:1391→1408), NEVER the durable MoteDef (build_agentic_turn leaves grammar:None); the priming rides the ephemeral off-MoteId tool menu. Frozen-trio (kx-scheduler/kx-executor/kx-inference) EMPTY: gbnf::render reads only spec.tools, so `answerable` never enters the GBNF/lazy-arm. Cost accepted: the Ollama tool turn loses free-form CoT (fine for tool-decision turns; kill-switch KX_SERVE_OLLAMA_TOOL_UNION; Ollama-only; tools-granted-only). SN-5 docs/plans/2026-07-04-gemma3-connector-tool-fire.md."

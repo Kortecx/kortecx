@@ -1482,6 +1482,7 @@ dependencies = [
  "kx-proto",
  "kx-runtime",
  "kx-skill",
+ "kx-toolcall",
  "serde",
  "serde_json",
  "tempfile",
