@@ -49,6 +49,11 @@ export interface MockClientImpl {
   triggersTest?: (...args: unknown[]) => Promise<unknown>;
   triggersFire?: (...args: unknown[]) => Promise<unknown>;
   triggersRemove?: (...args: unknown[]) => Promise<unknown>;
+  // D114 / RC6a: the HITL approvals inbox (`client.approvals.*`) + cost readout (`client.cost.*`).
+  approvalsListPending?: (...args: unknown[]) => Promise<unknown>;
+  approvalsGrant?: (...args: unknown[]) => Promise<unknown>;
+  approvalsDeny?: (...args: unknown[]) => Promise<unknown>;
+  costGetRunCost?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -160,6 +165,25 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     impl.triggersFire ?? (async () => ({ instanceId: "cd".repeat(8), deduped: false })),
   );
   const triggersRemove = vi.fn(impl.triggersRemove ?? (async () => true));
+  // D114 / RC6a: the HITL approvals inbox + the cost readout namespaces.
+  const approvalsListPending = vi.fn(
+    impl.approvalsListPending ?? (async () => ({ approvals: [] })),
+  );
+  const approvalsGrant = vi.fn(impl.approvalsGrant ?? (async () => true));
+  const approvalsDeny = vi.fn(impl.approvalsDeny ?? (async () => true));
+  const costGetRunCost = vi.fn(
+    impl.costGetRunCost ??
+      (async () => ({
+        instanceId: "",
+        turns: 0,
+        toolCalls: 0,
+        estimatedMicroUsd: 0,
+        ceilingMicroUsd: 0,
+        perTurnMicroUsd: 0,
+        perToolCallMicroUsd: 0,
+        overCeiling: false,
+      })),
+  );
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -203,6 +227,12 @@ export function makeMockClient(impl: MockClientImpl = {}) {
       fire: triggersFire,
       remove: triggersRemove,
     },
+    approvals: {
+      listPending: approvalsListPending,
+      grant: approvalsGrant,
+      deny: approvalsDeny,
+    },
+    cost: { getRunCost: costGetRunCost },
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -250,6 +280,10 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     triggersTest,
     triggersFire,
     triggersRemove,
+    approvalsListPending,
+    approvalsGrant,
+    approvalsDeny,
+    costGetRunCost,
     close,
   };
 }
