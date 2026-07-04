@@ -228,7 +228,8 @@ notes    = "The SECOND bundled app-connector sidecar (the template the Slack/Not
 [[feature]]
 id       = "slack-connector"
 lane     = "oss"
-state    = "planned"
+state    = "in-progress"
+branch   = "lane/integrations"
 covers   = [
   "integrations/kx-connector-slack: a bundled Slack MCP connector modelled on kx-connector-discord — slack/{post_message,read_channel,search,list_channels}; bot-token (xoxb-) credential-by-ref KX_SLACK_CREDENTIAL; FFI-free leaf, no kx-* dep",
 ]
@@ -238,7 +239,8 @@ notes    = "Extension lane, same template as discord-connector. Zero core blast 
 [[feature]]
 id       = "notion-connector"
 lane     = "oss"
-state    = "planned"
+state    = "in-progress"
+branch   = "lane/integrations"
 covers   = [
   "integrations/kx-connector-notion: a bundled Notion MCP connector modelled on kx-connector-discord — notion/{search,read_page,create_page,append_block}; integration-token credential-by-ref KX_NOTION_CREDENTIAL; FFI-free leaf, no kx-* dep",
 ]

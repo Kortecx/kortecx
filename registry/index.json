@@ -47,6 +47,24 @@
       "ledger": "discord-connector"
     },
     {
+      "family": "integration",
+      "name": "kx-connector-slack",
+      "version": "0.1.0",
+      "source": "integrations/kx-connector-slack",
+      "description": "Bundled Slack MCP connector (post_message/read_channel/search/list_channels; xoxb- bot token by ref).",
+      "conformance": "just test-connector target/debug/kx-connector-slack",
+      "ledger": "slack-connector"
+    },
+    {
+      "family": "integration",
+      "name": "kx-connector-notion",
+      "version": "0.1.0",
+      "source": "integrations/kx-connector-notion",
+      "description": "Bundled Notion MCP connector (search/read_page/create_page/append_block; integration token by ref).",
+      "conformance": "just test-connector target/debug/kx-connector-notion",
+      "ledger": "notion-connector"
+    },
+    {
       "family": "tool",
       "name": "kx-mcp-echo",
       "version": "1",
