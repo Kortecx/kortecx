@@ -9,6 +9,7 @@
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::Arc;
@@ -111,6 +112,57 @@ pub(crate) fn scope_of_credentials<'a>(
     }
 }
 
+/// Resolve a connector program name to a concrete path just before spawn.
+///
+/// A curated connection (`kx connections add --provider slack`) stores a BARE
+/// program name (`kx-connector-slack`). With no resolution that name is looked up
+/// only on the OS `PATH`, so a user who installed `kx` but never put the bundled
+/// connector on their `PATH` gets [`TransportError::Unreachable`] — the sidecar is
+/// present beside `kx`, just not discoverable. We therefore look for the connector
+/// first as a SIBLING of the running executable (the usual install layout: a
+/// bundled connector next to `kx`), then fall back to the bare name (OS `PATH`, the
+/// prior behaviour). A name that already contains a path separator (absolute or
+/// relative — e.g. a test harness's `target/release/...`) is honoured verbatim and
+/// never rewritten. This is a spawn-time hint only; the stored `program` keeps the
+/// author's intent, and preferring the `kx`-sibling over a bare `PATH` lookup also
+/// narrows the PATH-hijack surface for a bare name (GR8 security-positive).
+fn resolve_program(program: &OsString) -> OsString {
+    resolve_program_with(program, std::env::current_exe().ok().as_deref())
+}
+
+/// The pure core of [`resolve_program`], with the running-executable path injected
+/// so it is unit-testable without touching the process's real `current_exe`.
+fn resolve_program_with(program: &OsString, current_exe: Option<&Path>) -> OsString {
+    // A qualified path (contains a separator) is the author's explicit choice — honour it.
+    if Path::new(program).components().count() > 1 {
+        return program.clone();
+    }
+    // A bare name: prefer a sibling of the running executable, else fall back to PATH.
+    if let Some(dir) = current_exe.and_then(|exe| exe.parent()) {
+        for name in sibling_candidates(program) {
+            let candidate = dir.join(&name);
+            if candidate.is_file() {
+                return candidate.into_os_string();
+            }
+        }
+    }
+    program.clone()
+}
+
+/// The sibling filenames to probe for a bare connector name: the name as given,
+/// plus the same name with the platform executable suffix (`.exe` on Windows) when
+/// it is not already present. On Unix `EXE_SUFFIX` is empty ⇒ a single candidate.
+fn sibling_candidates(program: &OsString) -> Vec<OsString> {
+    let mut names = vec![program.clone()];
+    let suffix = std::env::consts::EXE_SUFFIX;
+    if !suffix.is_empty() && !program.to_string_lossy().ends_with(suffix) {
+        let mut with_suffix = program.clone();
+        with_suffix.push(suffix);
+        names.push(with_suffix);
+    }
+    names
+}
+
 /// A subprocess MCP transport: newline-delimited JSON-RPC over the child's
 /// stdin/stdout.
 ///
@@ -201,7 +253,7 @@ impl McpTransport for StdioTransport {
         // content-addressed staging key (the broker's idempotency token), so the
         // key is intentionally unused here.
         let _ = idempotency_key;
-        let mut cmd = Command::new(&self.program);
+        let mut cmd = Command::new(resolve_program(&self.program));
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -285,7 +337,7 @@ impl McpTransport for StdioTransport {
     /// spawn (D81). A background reader thread bounds each response line (a 16 MiB
     /// OOM backstop) so a hostile server cannot OOM the host.
     fn open_session(&self) -> Result<Box<dyn McpSession>, TransportError> {
-        let mut cmd = Command::new(&self.program);
+        let mut cmd = Command::new(resolve_program(&self.program));
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -492,5 +544,82 @@ impl Drop for StdioSession {
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::{resolve_program_with, OsString, Path};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// A unique temp directory per test — kx-mcp keeps its dev-deps minimal (no
+    /// `tempfile`), and `resolve_program_with` only reads the exe's PARENT, so a
+    /// plain std dir under the system temp is enough. Uniqueness is process-id +
+    /// a monotonic counter (no randomness needed).
+    fn unique_dir(tag: &str) -> std::path::PathBuf {
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("kx-mcp-resolve-{tag}-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn qualified_paths_are_used_verbatim() {
+        // A relative path (contains a separator) is the author's explicit choice —
+        // never rewritten, regardless of what sits beside the executable.
+        let rel = OsString::from("target/release/kx-connector-slack");
+        assert_eq!(
+            resolve_program_with(&rel, Some(Path::new("/opt/kx/bin/kx"))),
+            rel
+        );
+        // An absolute path — verbatim (this is exactly what the live witness harness
+        // registers, so resolution must never disturb it).
+        let abs = OsString::from("/usr/local/libexec/kx-connector-notion");
+        assert_eq!(
+            resolve_program_with(&abs, Some(Path::new("/opt/kx/bin/kx"))),
+            abs
+        );
+    }
+
+    #[test]
+    fn bare_name_resolves_to_a_sibling_of_the_executable() {
+        let dir = unique_dir("sibling");
+        let connector = dir.join("kx-connector-slack");
+        std::fs::write(&connector, b"#!/bin/sh\n").unwrap();
+        // The exe file itself need not exist; only its parent directory is read.
+        let exe = dir.join("kx");
+        let got = resolve_program_with(&OsString::from("kx-connector-slack"), Some(&exe));
+        assert_eq!(got, connector.into_os_string());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bare_name_falls_back_to_the_bare_name_when_no_sibling() {
+        let dir = unique_dir("no-sibling"); // empty ⇒ nothing beside the exe
+        let exe = dir.join("kx");
+        let bare = OsString::from("kx-connector-slack");
+        // No sibling ⇒ returned unchanged (the OS PATH resolves it at spawn, the
+        // prior behaviour — so a user who DID put it on PATH is unaffected).
+        assert_eq!(resolve_program_with(&bare, Some(&exe)), bare);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn no_current_exe_leaves_the_bare_name() {
+        let bare = OsString::from("kx-connector-slack");
+        assert_eq!(resolve_program_with(&bare, None), bare);
+    }
+
+    #[test]
+    fn a_same_named_directory_is_not_mistaken_for_the_binary() {
+        // The `is_file()` guard rejects a directory that happens to share the name.
+        let dir = unique_dir("dir-not-file");
+        std::fs::create_dir_all(dir.join("kx-connector-slack")).unwrap();
+        let exe = dir.join("kx");
+        let bare = OsString::from("kx-connector-slack");
+        assert_eq!(resolve_program_with(&bare, Some(&exe)), bare);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
