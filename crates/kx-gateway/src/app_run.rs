@@ -63,7 +63,7 @@ use kx_blueprint::{to_request, DagSpec, StepSpec};
 use kx_content::{ContentRef, ContentStore};
 use kx_gateway_core::{
     author_steps_from_proto, AppAuthor, AppCatalog, AppRunError, BinderError, BoundRecipe,
-    RegisteredToolsView,
+    DatasetView, RegisteredToolsView,
 };
 use kx_mcp_gateway::SqliteConnectionStore;
 use kx_mote::ContextItemRef;
@@ -113,6 +113,13 @@ pub(crate) struct HostAppAuthor {
     /// instructions are a skill's semantic core; a dispatch-time miss would
     /// dead-letter opaquely instead).
     content: Arc<dyn ContentPresence>,
+    /// T-RUNAPP-CONTEXT-RAIL: the live dataset store (the SAME `Arc` the retrieve@1
+    /// capability + the `DatasetView` service seam share) — used to fail-closed
+    /// PRESENCE-check an App's declared `references.datasets` before folding the
+    /// `retrieve@1` grant. `None` on a build without the retrieval seam (`hnsw` off)
+    /// ⇒ a declared dataset honest-degrades to an ungrounded run (retrieve@1 is not
+    /// registered there anyway).
+    datasets: Option<Arc<dyn DatasetView>>,
 }
 
 impl HostAppAuthor {
@@ -120,6 +127,8 @@ impl HostAppAuthor {
     /// live workflow author, and the RC-SW1 skill-bind seams (library authority +
     /// live registry + fireable view + content presence).
     #[must_use]
+    #[allow(clippy::too_many_arguments)] // distinct Arc deps for one host resolver; a
+                                         // config struct would only move the arity to the caller (Rule 1: no churn for churn).
     pub(crate) fn new(
         apps: Arc<dyn AppCatalog>,
         connections: Arc<SqliteConnectionStore>,
@@ -128,6 +137,7 @@ impl HostAppAuthor {
         tools: Arc<dyn ToolRegistry>,
         registered: Arc<dyn RegisteredToolsView>,
         content: Arc<dyn ContentPresence>,
+        datasets: Option<Arc<dyn DatasetView>>,
     ) -> Self {
         Self {
             apps,
@@ -137,8 +147,100 @@ impl HostAppAuthor {
             tools,
             registered,
             content,
+            datasets,
         }
     }
+
+    /// T-RUNAPP-CONTEXT-RAIL: declarative RAG-on-App (the "reference-existing" model).
+    /// When the App declares datasets to ground over (`references.datasets[].dataset_ref`
+    /// ∪ `steering_config.context.dataset_refs`), grant the entry agentic step the
+    /// read-only `retrieve@1` tool + steer it to search the named dataset(s) live in the
+    /// loop — exactly how `kx/recipes/react-rag` grounds. Server-authorized by the
+    /// operator's INGESTED dataset (not a caller-Use escalation: `retrieve@1` is a
+    /// `ReadOnlyNondet`, `NetScope::None`, `FsScope::empty` builtin that only reads
+    /// operator-provided corpora — so it is granted directly, like the recipe, rather than
+    /// through the caller-Use wish intersection).
+    ///
+    /// - Each named dataset must EXIST in the live store ⇒ else fail-closed `InvalidArgs`
+    ///   (a mis-authoring guard; the operator pre-ingests via `kx datasets ingest`). The
+    ///   self-contained `cas_refs` ingest is the `T-RUNAPP-RAG-SELF-CONTAINED` follow-up.
+    /// - No retrieval seam on this build (`hnsw` off ⇒ `self.datasets == None` ⇒ `retrieve@1`
+    ///   is not even registered) ⇒ honest-degrade to an UNGROUNDED run (mirrors chat-rag's
+    ///   no-dataset-view path), never a hard error.
+    /// - No root model step to ground ⇒ the fold + steer skip (mirror `fold_skill_tools`).
+    fn fold_dataset_rag(
+        &self,
+        dataset_names: &[String],
+        dag: &mut DagSpec,
+    ) -> Result<(), AppRunError> {
+        let Some(view) = self.datasets.as_ref() else {
+            tracing::warn!(
+                count = dataset_names.len(),
+                "app declares datasets to ground over but this build has no retrieval seam \
+                 (rebuild with --features hnsw); running UNGROUNDED"
+            );
+            return Ok(());
+        };
+        let present: BTreeSet<String> = view
+            .list_datasets()
+            .into_iter()
+            .map(|d| d.dataset_id)
+            .collect();
+        for name in dataset_names {
+            if !present.contains(name) {
+                return Err(AppRunError::InvalidArgs(format!(
+                    "app grounds on dataset {name:?} but no such dataset is ingested; run \
+                     `kx datasets ingest {name} …` first, then re-run"
+                )));
+            }
+        }
+        // Grant retrieve@1 on the entry root model step (agentic_step_warrant mints the
+        // grant from the folded contract ∩ registry). `or_insert` ⇒ an author pin wins.
+        let granted: BTreeMap<String, String> = [("retrieve".to_string(), "1".to_string())]
+            .into_iter()
+            .collect();
+        fold_skill_tools(dag, &granted);
+        // Steer the entry step to USE retrieve on the named dataset(s) — steer-only DATA,
+        // never a grant (SN-8; the same class as `inject_app_args` / `fold_react_rag_dataset`).
+        steer_dataset_prompt(dag, dataset_names);
+        Ok(())
+    }
+}
+
+/// T-RUNAPP-CONTEXT-RAIL: steer the ENTRY root model step to USE `retrieve` on the
+/// named dataset(s) — steer-only DATA, never a grant (SN-8; the same class as
+/// [`inject_app_args`]). A NO-OP when there is no root model step (mirror
+/// [`fold_skill_tools`]). Deterministic (declaration order) ⇒ recovery-stable. Pure.
+fn steer_dataset_prompt(dag: &mut DagSpec, dataset_names: &[String]) {
+    let Some(idx) = entry_agentic_step_index(dag) else {
+        return;
+    };
+    let list = dataset_names.join(", ");
+    let directive = format!(
+        "Grounding: use the `retrieve` tool to search the dataset(s) [{list}] for relevant \
+         passages BEFORE answering, and ground your answer in what you retrieve."
+    );
+    let step = &mut dag.steps[idx];
+    step.prompt = format!("{}\n\n{directive}", step.prompt).trim().to_string();
+}
+
+/// T-RUNAPP-CONTEXT-RAIL: the datasets an App grounds over — `references.datasets`
+/// dataset refs UNIONed with `steering_config.context.dataset_refs`, deduped in
+/// declaration order (empty names skipped). `cas_refs` are unused here (2a
+/// reference-existing; self-contained ingest = `T-RUNAPP-RAG-SELF-CONTAINED`). Pure.
+fn collect_dataset_names(env: &AppEnvelope) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for d in &env.references.datasets {
+        if !d.dataset_ref.is_empty() && !names.contains(&d.dataset_ref) {
+            names.push(d.dataset_ref.clone());
+        }
+    }
+    for n in &env.steering_config.context.dataset_refs {
+        if !n.is_empty() && !names.contains(n) {
+            names.push(n.clone());
+        }
+    }
+    names
 }
 
 /// Resolve an App's `references.connections` + `guards.secret_scope` against the
@@ -266,6 +368,34 @@ fn skill_wish_union(skills: &[SkillRef]) -> BTreeMap<String, String> {
     wish
 }
 
+/// T-RUNAPP-CONTEXT-RAIL: the combined tool WISH the entry step folds — the skill
+/// wish union (envelope order) UNIONed with `steering_config.tools.requested_grants`.
+/// Skills merge first (deterministic); a cross-source version conflict is FAIL-SOFT
+/// first-occurrence-wins + a warning (a wish is NEVER authority — the server still
+/// intersects it against caller-Use ∩ fireable ∩ registry ∩ compat, SN-8). A pure
+/// function (Rule 5.2 — unit-testable).
+fn combined_tool_wish(
+    skills: &[SkillRef],
+    steering_grants: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut wish = skill_wish_union(skills);
+    for (id, version) in steering_grants {
+        match wish.get(id) {
+            None => {
+                wish.insert(id.clone(), version.clone());
+            }
+            Some(kept) if kept != version => {
+                tracing::warn!(
+                    tool = %id, kept = %kept, dropped = %version,
+                    "steering.tools wish version conflicts with a skill wish: skill wins"
+                );
+            }
+            Some(_) => {}
+        }
+    }
+    wish
+}
+
 /// RC-SW1: the ENTRY agentic step — the first MODEL step that is a DAG ROOT (no
 /// incoming edge). This is EXACTLY where `author_with_context_items` →
 /// `inject_entry_config` places the skill instructions (it targets DAG roots),
@@ -349,6 +479,82 @@ fn skill_context_items(
     Ok(items)
 }
 
+/// T-RUNAPP-CONTEXT-RAIL: decode a 64-hex content ref + assert the blob is PRESENT
+/// in the content store at author time (fail-closed — never run the model on PARTIAL
+/// context; a dispatch-time miss would dead-letter the run opaquely). The exact gate
+/// [`skill_context_items`] applies to a skill's `instructions_ref`, factored so every
+/// rail item shares it. Returns the `[u8; 32]` ref for a [`ContextItemRef`].
+fn decode_present_ref(
+    field: &str,
+    content_ref: &str,
+    content: &dyn ContentPresence,
+) -> Result<[u8; 32], AppRunError> {
+    let bytes = crate::provision::decode_hex32(content_ref).ok_or_else(|| {
+        // Defense-in-depth: already impossible past AppEnvelope::validate (check_ref).
+        AppRunError::InvalidArgs(format!(
+            "{field} is not a 64-hex content ref: {content_ref:?}"
+        ))
+    })?;
+    if !content.contains_ref(&ContentRef::from_bytes(bytes)) {
+        return Err(AppRunError::InvalidArgs(format!(
+            "{field} ({}…) not found in the content store; upload it first \
+             (kx content put / PutContent), then re-run",
+            &content_ref[..12.min(content_ref.len())]
+        )));
+    }
+    Ok(bytes)
+}
+
+/// T-RUNAPP-CONTEXT-RAIL: resolve the App's declarative KNOWLEDGE rail —
+/// `references.context / prompts / rules / memory` + `steering_config.context.context_refs`
+/// — into labeled [`ContextItemRef`]s, merged (alongside any skill instructions) through
+/// the SAME identity-bearing entry-step `author_with_context_items` inject RC-SW1 uses.
+/// Each item is FAIL-CLOSED on a blob missing from the content store (mirrors
+/// [`skill_context_items`]). Labels keep each item legible in the assembled prompt
+/// (`context.<prefix>:<name>` per `kx-context-assembler`); a raw steering ref (no name)
+/// is labeled `ref:<hex12>` (the D155 raw-refs convention). `references.memory` here are
+/// STATIC content notes (distinct from the durable `recall@1` store). An entirely empty
+/// rail ⇒ empty `Vec` ⇒ `author_with_context_items` sees no items ⇒ byte-identical to the
+/// plain author path (the digest `7d22d4bd` no-op).
+fn context_rail_items(
+    env: &AppEnvelope,
+    content: &dyn ContentPresence,
+) -> Result<Vec<ContextItemRef>, AppRunError> {
+    let r = &env.references;
+    let mut items = Vec::new();
+    for c in &r.context {
+        let bytes = decode_present_ref("context", &c.content_ref, content)?;
+        items.push(ContextItemRef {
+            name: format!("context:{}", c.name),
+            content_ref: bytes,
+        });
+    }
+    // prompts / rules / memory are all `ArtifactRef { name, content_ref }`, distinguished
+    // only by their label prefix (the assembler heading the model reads).
+    for (prefix, arts) in [
+        ("prompt", &r.prompts),
+        ("rule", &r.rules),
+        ("memory", &r.memory),
+    ] {
+        for a in arts {
+            let bytes = decode_present_ref(prefix, &a.content_ref, content)?;
+            items.push(ContextItemRef {
+                name: format!("{prefix}:{}", a.name),
+                content_ref: bytes,
+            });
+        }
+    }
+    // steering_config.context.context_refs: raw 64-hex, no name ⇒ `ref:<hex12>`.
+    for cr in &env.steering_config.context.context_refs {
+        let bytes = decode_present_ref("context_ref", cr, content)?;
+        items.push(ContextItemRef {
+            name: format!("ref:{}", &cr[..12.min(cr.len())]),
+            content_ref: bytes,
+        });
+    }
+    Ok(items)
+}
+
 #[tonic::async_trait]
 impl AppAuthor for HostAppAuthor {
     async fn author_app(
@@ -366,6 +572,16 @@ impl AppAuthor for HostAppAuthor {
             .ok_or(AppRunError::NotAuthorized)?;
         let env = AppEnvelope::from_json_slice(&envelope_bytes)
             .map_err(|e| AppRunError::Internal(format!("stored envelope invalid: {e}")))?;
+
+        // (1b) T-RUNAPP-CONTEXT-RAIL: resolve the App's declarative knowledge rail
+        //      (context/prompts/rules/memory + steering context refs) into labeled
+        //      context items BEFORE the blueprint is consumed. Skills (3b) extend this
+        //      same Vec; the whole set rides ONE `author_with_context_items` inject.
+        //      Empty rail ⇒ empty Vec ⇒ the digest no-op.
+        let mut context_items = context_rail_items(&env, self.content.as_ref())?;
+        // The datasets to ground over (collected now, while `env` is fully intact — the
+        // blueprint move below partially moves `env`). Empty ⇒ no RAG fold (the no-op).
+        let dataset_names = collect_dataset_names(&env);
 
         // (2) Resolve references.connections against the caller's OWN registry + compute
         //     the run's secret scope (a pure function over the registered creds/endpoints).
@@ -394,46 +610,67 @@ impl AppAuthor for HostAppAuthor {
         })?;
         inject_app_args(&mut dag, args)?;
 
-        // (3b) RC-SW1: resolve the App's attached skills BEFORE lowering (module
-        //      doc). Structurally gated: NO skills ⇒ zero new code runs (the
-        //      digest no-op). Instructions → labeled context items (fail-closed
-        //      CAS presence); wishes → the fail-soft intersection, folded into
-        //      the entry model step's tool_contract (declared pins win).
-        let mut skill_items: Vec<ContextItemRef> = Vec::new();
+        // (3b) RC-SW1 skills + T-RUNAPP-CONTEXT-RAIL steering.tools: skill instructions →
+        //      labeled context items (fail-closed CAS presence); the skill tool wishes
+        //      UNIONed with steering_config.tools.requested_grants → ONE server-side
+        //      intersection (wish ∩ caller-Use ∩ fireable ∩ registry ∩ compat) folded onto
+        //      the entry model step's tool_contract (declared pins win). Structurally gated:
+        //      no skills AND no steering wishes ⇒ zero new code runs (the digest no-op).
         if !env.references.skills.is_empty() {
-            skill_items = skill_context_items(&env.references.skills, self.content.as_ref())?;
-            let wish = skill_wish_union(&env.references.skills);
-            if !wish.is_empty() {
-                // Use-gate + conditional narrowing (SN-8; see party_tool_authority).
-                let allowlist = party_tool_authority(&self.lib, party).map_err(|e| match e {
-                    BinderError::NotAuthorized => AppRunError::NotAuthorized,
-                    BinderError::InvalidArgs(d) => AppRunError::InvalidArgs(d),
-                    BinderError::Internal(d) => AppRunError::Internal(d),
-                })?;
-                let fireable = self.registered.registered_grants();
-                // The declared contract seed is read from the SAME entry agentic
-                // step the fold targets (the root model step), so an author pin on
-                // that step wins + the fs/net compat union is seeded correctly.
-                let declared = entry_agentic_step_index(&dag)
-                    .map(|i| dag.steps[i].tool_contract.clone())
-                    .unwrap_or_default();
-                let granted = skill_union_grants(
-                    &declared,
-                    &wish,
-                    allowlist.as_ref(),
-                    self.tools.as_ref(),
-                    &fireable,
-                );
-                fold_skill_tools(&mut dag, &granted);
-            }
+            context_items.extend(skill_context_items(
+                &env.references.skills,
+                self.content.as_ref(),
+            )?);
+        }
+        let wish = combined_tool_wish(
+            &env.references.skills,
+            &env.steering_config.tools.requested_grants,
+        );
+        if !wish.is_empty() {
+            // Use-gate + conditional narrowing (SN-8; see party_tool_authority).
+            let allowlist = party_tool_authority(&self.lib, party).map_err(|e| match e {
+                BinderError::NotAuthorized => AppRunError::NotAuthorized,
+                BinderError::InvalidArgs(d) => AppRunError::InvalidArgs(d),
+                BinderError::Internal(d) => AppRunError::Internal(d),
+            })?;
+            let fireable = self.registered.registered_grants();
+            // The declared contract seed is read from the SAME entry agentic step the
+            // fold targets (the root model step), so an author pin on that step wins +
+            // the fs/net compat union is seeded correctly.
+            let declared = entry_agentic_step_index(&dag)
+                .map(|i| dag.steps[i].tool_contract.clone())
+                .unwrap_or_default();
+            let granted = skill_union_grants(
+                &declared,
+                &wish,
+                allowlist.as_ref(),
+                self.tools.as_ref(),
+                &fireable,
+            );
+            fold_skill_tools(&mut dag, &granted);
+        }
+
+        // (3c) T-RUNAPP-CONTEXT-RAIL: declarative RAG-on-App — the datasets the App
+        //      grounds over (collected above) grant the entry step retrieve@1 + steer it to
+        //      search them. Empty ⇒ skipped (the digest no-op).
+        if !dataset_names.is_empty() {
+            self.fold_dataset_rag(&dataset_names, &mut dag)?;
         }
 
         let req = to_request(dag).map_err(|e| AppRunError::InvalidArgs(e.to_string()))?;
 
+        // T-RUNAPP-CONTEXT-RAIL: steering_config.context.bundle_handles attach as named
+        // context bundles alongside any the blueprint already carries (resolved fail-closed
+        // by author_with_context_items → resolve_context_items). Empty ⇒ req.context_bundles
+        // verbatim ⇒ byte-identical.
+        let mut context_bundles = req.context_bundles;
+        context_bundles.extend(env.steering_config.context.bundle_handles.iter().cloned());
+
         // (4) Parse into the authoring vocabulary (SHARED with SubmitWorkflow) + author
         //     SERVER-SIDE (warrants from the party's grants, never the client — SN-8).
-        //     The skill instructions ride as extra context items into the SAME entry
-        //     bundle inject (empty slice ⇒ byte-identical to the plain author path).
+        //     The context rail (context/prompts/rules/memory/refs) + skill instructions ride
+        //     as extra context items into the SAME entry bundle inject (empty set ⇒
+        //     byte-identical to the plain author path).
         let (steps, edges, mode) =
             author_steps_from_proto(req.steps, req.edges, req.execution_mode)
                 .map_err(|s| AppRunError::InvalidArgs(s.message().to_string()))?;
@@ -445,8 +682,8 @@ impl AppAuthor for HostAppAuthor {
                 &steps,
                 &edges,
                 mode,
-                &req.context_bundles,
-                &skill_items,
+                &context_bundles,
+                &context_items,
             )
             .await
             .map_err(|e| match e {
@@ -766,14 +1003,18 @@ mod tests {
         }
     }
 
+    /// The test registry: `echo-tool@1` (skill/steering fold tests) + `retrieve@1`
+    /// (the RAG-on-App dataset fold test — the entry-step retrieve grant is minted from
+    /// the contract ∩ registry, so retrieve must be REGISTERED for the fold to author).
+    /// Both are ReadOnlyNondet-compatible builtins (empty syscall / net / fs); the extra
+    /// retrieve def is inert for the echo tests (grants are minted only for contract tools).
     fn echo_registry() -> Arc<dyn ToolRegistry> {
         use kx_tool_registry::{
             IdempotencyClass, InMemoryToolRegistry, ToolDef, ToolKind, ToolProvenance,
         };
         use kx_warrant::{FsScope, NetScope, ResourceCeiling};
-        let mut reg = InMemoryToolRegistry::new();
-        let def = ToolDef {
-            tool_id: kx_mote::ToolName("echo-tool".into()),
+        let builtin = |id: &str| ToolDef {
+            tool_id: kx_mote::ToolName(id.into()),
             tool_version: kx_mote::ToolVersion("1".into()),
             kind: ToolKind::Builtin,
             required_capability: kx_warrant::ToolRequirement {
@@ -792,15 +1033,76 @@ mod tests {
             idempotency_class: IdempotencyClass::Staged,
             input_schema: None,
         };
-        let _ = reg.register(def, ToolProvenance::HumanAuthored { author: "t".into() });
+        let mut reg = InMemoryToolRegistry::new();
+        for id in ["echo-tool", "retrieve"] {
+            let _ = reg.register(
+                builtin(id),
+                ToolProvenance::HumanAuthored { author: "t".into() },
+            );
+        }
         Arc::new(reg)
     }
 
+    /// A test [`DatasetView`] whose only real behavior is `list_datasets` (the App-run
+    /// presence check); ingest/query are unused by `author_app`.
+    struct FakeDatasets(Vec<String>);
+    impl DatasetView for FakeDatasets {
+        fn list_datasets(&self) -> Vec<kx_gateway_core::DatasetSummaryEntry> {
+            self.0
+                .iter()
+                .map(|id| kx_gateway_core::DatasetSummaryEntry {
+                    dataset_id: id.clone(),
+                    name: id.clone(),
+                    doc_count: 1,
+                    dim: 0,
+                    created_ms: 0,
+                    chunked: false,
+                    embed_model_fingerprint: String::new(),
+                    index_version: 0,
+                    chunk_count: 1,
+                })
+                .collect()
+        }
+        fn ingest(
+            &self,
+            _dataset: &str,
+            _docs: &[kx_gateway_core::IngestDoc<'_>],
+        ) -> Result<kx_gateway_core::IngestOutcome, kx_gateway_core::DatasetError> {
+            // author_app never ingests — a benign result keeps the stub clippy-clean.
+            Err(kx_gateway_core::DatasetError::NotFound)
+        }
+        fn query(
+            &self,
+            _dataset: &str,
+            _emb: Option<&[f32]>,
+            _text: &str,
+            _k: usize,
+            _mode: kx_gateway_core::RetrievalMode,
+            _rerank: Option<bool>,
+        ) -> Result<Vec<kx_gateway_core::DatasetHitEntry>, kx_gateway_core::DatasetError> {
+            Ok(Vec::new()) // author_app never queries.
+        }
+    }
+
     /// A full [`HostAppAuthor`] over a tempdir: served model "m", the echo-tool
-    /// registry, an explicit fireable set, and an in-memory content store.
+    /// registry, an explicit fireable set, and an in-memory content store. No dataset
+    /// view (RAG-on-App off) — use [`rig_ex`] to attach one.
     fn rig(
         dir: &std::path::Path,
         fireable: &[(&str, &str)],
+    ) -> (
+        HostAppAuthor,
+        Arc<InMemoryContentStore>,
+        Arc<HostWorkflowAuthor>,
+    ) {
+        rig_ex(dir, fireable, None)
+    }
+
+    /// [`rig`] plus an optional dataset view (the RAG-on-App presence-check seam).
+    fn rig_ex(
+        dir: &std::path::Path,
+        fireable: &[(&str, &str)],
+        datasets: Option<Arc<dyn DatasetView>>,
     ) -> (
         HostAppAuthor,
         Arc<InMemoryContentStore>,
@@ -835,6 +1137,7 @@ mod tests {
             echo_registry(),
             Arc::new(FixedFireable(fire)),
             content.clone(),
+            datasets,
         );
         (host, content, author)
     }
@@ -928,6 +1231,340 @@ mod tests {
                 .iter()
                 .any(|i| i.name == "skill:triage" && i.content_ref == blob.0),
             "labeled skill instructions present: {items:?}"
+        );
+    }
+
+    // ----- T-RUNAPP-CONTEXT-RAIL: the declarative knowledge rail -----
+
+    /// The rail helper labels every kind (`context:`/`prompt:`/`rule:`/`memory:`/`ref:`),
+    /// carries the exact ref bytes, and FAILS CLOSED on a blob missing from the store.
+    #[test]
+    fn context_rail_items_labels_every_kind_and_fails_closed() {
+        use kx_content::{ContentStore as _, InMemoryContentStore};
+        let store = InMemoryContentStore::new();
+        let ctx = store.put(b"context body").unwrap();
+        let prompt = store.put(b"prompt body").unwrap();
+        let rule = store.put(b"rule body").unwrap();
+        let mem = store.put(b"memory body").unwrap();
+        let sref = store.put(b"steering ref body").unwrap();
+
+        let mut env = AppEnvelope::new(
+            "rails",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.references.context.push(kx_app::ContextRef {
+            name: "c1".into(),
+            content_ref: hex_str(&ctx.0),
+            media_type: "text/plain".into(),
+        });
+        env.references.prompts.push(kx_app::ArtifactRef {
+            name: "p1".into(),
+            content_ref: hex_str(&prompt.0),
+        });
+        env.references.rules.push(kx_app::ArtifactRef {
+            name: "r1".into(),
+            content_ref: hex_str(&rule.0),
+        });
+        env.references.memory.push(kx_app::ArtifactRef {
+            name: "m1".into(),
+            content_ref: hex_str(&mem.0),
+        });
+        env.steering_config
+            .context
+            .context_refs
+            .push(hex_str(&sref.0));
+
+        let items = context_rail_items(&env, &store).unwrap();
+        let named = |n: &str| items.iter().find(|i| i.name == n);
+        assert_eq!(named("context:c1").unwrap().content_ref, ctx.0);
+        assert_eq!(named("prompt:p1").unwrap().content_ref, prompt.0);
+        assert_eq!(named("rule:r1").unwrap().content_ref, rule.0);
+        assert_eq!(named("memory:m1").unwrap().content_ref, mem.0);
+        assert!(
+            items
+                .iter()
+                .any(|i| i.name.starts_with("ref:") && i.content_ref == sref.0),
+            "raw steering ref labeled ref:<hex12>: {items:?}"
+        );
+
+        // A blob absent from the store ⇒ fail-closed (never a partial-context run).
+        let mut bad = AppEnvelope::new(
+            "bad",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        bad.references.rules.push(kx_app::ArtifactRef {
+            name: "x".into(),
+            content_ref: "d".repeat(64),
+        });
+        let err = context_rail_items(&bad, &store).unwrap_err();
+        match err {
+            AppRunError::InvalidArgs(msg) => {
+                assert!(msg.contains("not found in the content store"), "{msg}");
+                assert!(msg.contains("dddddddddddd"), "names the ref prefix: {msg}");
+            }
+            other => panic!("expected InvalidArgs, got {other:?}"),
+        }
+    }
+
+    /// End-to-end: an App declaring `references.rules` + `references.memory` (no skills)
+    /// injects those as labeled items on the entry mote's identity-bearing context —
+    /// the App self-grounds without a hand-authored blueprint.
+    #[tokio::test]
+    async fn author_app_with_a_context_rail_injects_labeled_items() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, content, _) = rig(dir.path(), &[]);
+        let rule =
+            kx_content::ContentStore::put(content.as_ref(), b"# Cite your sources.").unwrap();
+        let note = kx_content::ContentStore::put(content.as_ref(), b"Prior finding: whales sing.")
+            .unwrap();
+
+        let mut env = AppEnvelope::new(
+            "grounded",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.references.rules.push(kx_app::ArtifactRef {
+            name: "cite".into(),
+            content_ref: hex_str(&rule.0),
+        });
+        env.references.memory.push(kx_app::ArtifactRef {
+            name: "prior".into(),
+            content_ref: hex_str(&note.0),
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+
+        let (mote, _warrant) = &bound.motes[0];
+        let encoded = mote
+            .def
+            .config_subset
+            .get(&ConfigKey(CONTEXT_ITEMS_KEY.into()))
+            .expect("entry mote carries CONTEXT_ITEMS");
+        let items = kx_mote::decode_context_items(&encoded.0);
+        assert!(
+            items
+                .iter()
+                .any(|i| i.name == "rule:cite" && i.content_ref == rule.0),
+            "labeled rule present: {items:?}"
+        );
+        assert!(
+            items
+                .iter()
+                .any(|i| i.name == "memory:prior" && i.content_ref == note.0),
+            "labeled memory note present: {items:?}"
+        );
+    }
+
+    /// A rail-bearing App legitimately produces a DIFFERENT entry MoteId than the plain
+    /// blueprint (identity-bearing context) — but is idempotent (recovery-stable). The
+    /// digest no-op is proven separately by `author_app_without_skills_is_byte_identical`.
+    #[tokio::test]
+    async fn author_app_with_a_rail_is_identity_bearing_and_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, content, author) = rig(dir.path(), &[]);
+        let rule = kx_content::ContentStore::put(content.as_ref(), b"# Rule.").unwrap();
+        let mut env = AppEnvelope::new(
+            "grounded",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.references.rules.push(kx_app::ArtifactRef {
+            name: "r".into(),
+            content_ref: hex_str(&rule.0),
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let a = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let b = host.author_app("alice@acme", &handle, b"").await.unwrap();
+
+        // The plain (no-rail) reference over the same blueprint.
+        let d = dag(vec![model_step("go")]);
+        let req = to_request(d).unwrap();
+        let (steps, edges, mode) =
+            author_steps_from_proto(req.steps, req.edges, req.execution_mode).unwrap();
+        let plain = author
+            .author("alice@acme", req.seed, &steps, &edges, mode, &[])
+            .await
+            .unwrap();
+
+        assert_ne!(
+            a.motes[0].0.id, plain.motes[0].0.id,
+            "a rail changes the entry MoteId (identity-bearing context)"
+        );
+        assert_eq!(
+            a.motes[0].0.id, b.motes[0].0.id,
+            "the same rail re-derives the same MoteId (recovery-stable)"
+        );
+    }
+
+    #[test]
+    fn combined_tool_wish_unions_skills_and_steering_skill_wins_on_conflict() {
+        let skills = vec![skill(
+            "a",
+            &"a".repeat(64),
+            &[("echo-tool", "1"), ("retrieve", "1")],
+        )];
+        let steering: BTreeMap<String, String> = [
+            ("echo-tool".to_string(), "9".to_string()), // conflicts with the skill wish (1)
+            ("fs-read".to_string(), "1".to_string()),   // steering-only
+        ]
+        .into_iter()
+        .collect();
+        let wish = combined_tool_wish(&skills, &steering);
+        assert_eq!(
+            wish["echo-tool"], "1",
+            "skill wins the cross-source conflict"
+        );
+        assert_eq!(wish["retrieve"], "1");
+        assert_eq!(wish["fs-read"], "1", "steering-only wish included");
+        assert_eq!(wish.len(), 3);
+        // No skills ⇒ steering wishes stand alone.
+        assert_eq!(combined_tool_wish(&[], &steering).len(), 2);
+        // Neither ⇒ empty ⇒ the fold is skipped (the digest no-op).
+        assert!(combined_tool_wish(&[], &BTreeMap::new()).is_empty());
+    }
+
+    /// steering_config.tools.requested_grants folds a REAL grant onto the entry step
+    /// even with NO skills (the tools-steering axis, server-intersected — SN-8).
+    #[tokio::test]
+    async fn author_app_with_steering_tools_folds_grants_without_skills() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        let mut env = AppEnvelope::new(
+            "steered",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.steering_config
+            .tools
+            .requested_grants
+            .insert("echo-tool".into(), "1".into());
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let (mote, warrant) = &bound.motes[0];
+        assert!(
+            mote.def
+                .tool_contract
+                .contains_key(&kx_mote::ToolName("echo-tool".into())),
+            "steering wish folded onto the entry step contract"
+        );
+        assert!(
+            warrant
+                .tool_grants
+                .iter()
+                .any(|g| g.tool_id.0 == "echo-tool" && g.tool_version.0 == "1"),
+            "steering wish became a real (intersected) grant"
+        );
+    }
+
+    // ----- T-RUNAPP-CONTEXT-RAIL: declarative RAG-on-App (datasets → retrieve@1) -----
+
+    #[test]
+    fn steer_dataset_prompt_appends_a_grounding_directive_naming_datasets() {
+        let mut d = dag(vec![model_step("Answer the question.")]);
+        steer_dataset_prompt(&mut d, &["science".to_string(), "history".to_string()]);
+        assert!(
+            d.steps[0].prompt.contains("retrieve"),
+            "{}",
+            d.steps[0].prompt
+        );
+        assert!(
+            d.steps[0].prompt.contains("science, history"),
+            "names the datasets: {}",
+            d.steps[0].prompt
+        );
+        assert!(d.steps[0].prompt.starts_with("Answer the question."));
+        // No root model step ⇒ no-op (mirror fold_skill_tools).
+        let mut none = dag(vec![pure_step()]);
+        steer_dataset_prompt(&mut none, &["science".to_string()]);
+        assert!(none.steps[0].prompt.is_empty());
+    }
+
+    /// An App declaring `references.datasets` grants the entry step retrieve@1 (contract +
+    /// warrant, server-authorized) AND steers the entry prompt — declarative RAG-on-App.
+    #[tokio::test]
+    async fn author_app_with_a_dataset_grants_retrieve_and_steers() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets(vec!["science".into()]));
+        let (host, _c, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(ds));
+        let mut env = AppEnvelope::new(
+            "grounded",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "Answer." }] }),
+        );
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "science".into(),
+            cas_refs: vec![],
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        let (mote, warrant) = &bound.motes[0];
+        assert!(
+            mote.def
+                .tool_contract
+                .contains_key(&kx_mote::ToolName("retrieve".into())),
+            "retrieve@1 folded onto the entry step"
+        );
+        assert!(
+            warrant
+                .tool_grants
+                .iter()
+                .any(|g| g.tool_id.0 == "retrieve" && g.tool_version.0 == "1"),
+            "retrieve@1 is a real grant (server-authorized by the operator's dataset)"
+        );
+    }
+
+    /// FAIL-CLOSED: grounding on a dataset that is not ingested is a mis-authoring error
+    /// (not a silently ungrounded run).
+    #[tokio::test]
+    async fn author_app_with_an_absent_dataset_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets(vec!["science".into()]));
+        let (host, _c, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(ds));
+        let mut env = AppEnvelope::new(
+            "grounded",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "Answer." }] }),
+        );
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "does-not-exist".into(),
+            cas_refs: vec![],
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        match host.author_app("alice@acme", &handle, b"").await {
+            Err(AppRunError::InvalidArgs(msg)) => {
+                assert!(msg.contains("does-not-exist"), "{msg}");
+                assert!(msg.contains("kx datasets ingest"), "actionable: {msg}");
+            }
+            Ok(_) => panic!("expected fail-closed on an absent dataset"),
+            Err(other) => panic!("expected InvalidArgs, got {other:?}"),
+        }
+    }
+
+    /// HONEST DEGRADE: with no retrieval seam on the build (datasets == None), a declared
+    /// dataset produces an UNGROUNDED run (no retrieve fold), never a hard error.
+    #[tokio::test]
+    async fn author_app_with_a_dataset_but_no_view_degrades_ungrounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _c, _) = rig_ex(dir.path(), &[], None); // no dataset view (non-hnsw)
+        let mut env = AppEnvelope::new(
+            "grounded",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "Answer." }] }),
+        );
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "science".into(),
+            cas_refs: vec![],
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let bound = host.author_app("alice@acme", &handle, b"").await.unwrap();
+        // No retrieve grant (ungrounded), but the run authors fine.
+        assert!(
+            !bound.motes[0]
+                .0
+                .def
+                .tool_contract
+                .contains_key(&kx_mote::ToolName("retrieve".into())),
+            "no retrieval seam ⇒ no retrieve fold (ungrounded degrade)"
         );
     }
 

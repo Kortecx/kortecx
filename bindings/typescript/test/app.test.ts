@@ -72,6 +72,27 @@ describe("App builder (no server)", () => {
     expect(canon).not.toContain("secret");
   });
 
+  it("dataset()/rag() populate references.datasets (RAG-on-App)", () => {
+    const env = app("analyst")
+      .blueprint(flow().agent("Answer grounded."))
+      .dataset("research")
+      .rag("archive", { casRefs: ["c".repeat(64)] })
+      .toEnvelope();
+    const datasets = (env.references as { datasets: unknown[] }).datasets;
+    expect(datasets[0]).toEqual({ dataset_ref: "research" }); // no casRefs ⇒ omitted
+    expect(datasets[1]).toEqual({ dataset_ref: "archive", cas_refs: ["c".repeat(64)] });
+    // canonicalizes + round-trips.
+    expect(JSON.parse(canonicalJson(env))).toEqual(env);
+  });
+
+  it("dataset() rejects a non-hex casRef", () => {
+    expect(() =>
+      app("x")
+        .blueprint(flow().step({ topic: "hi" }))
+        .dataset("d", { casRefs: ["not-hex"] }),
+    ).toThrow();
+  });
+
   it("minimalAppEnvelope produces a valid canonical single-step envelope (POC-5a)", () => {
     const env = minimalAppEnvelope("PDF Summarizer", "Summarize uploaded PDFs", {
       model: "gemma-4",
@@ -96,7 +117,8 @@ describe("App golden corpus parity (the cross-surface byte-shape gate)", () => {
   }
   it("covers the required shapes", () => {
     const names = new Set(corpus.map((c) => c.name));
-    for (const want of ["minimal", "agentic", "full"]) expect(names.has(want)).toBe(true);
+    for (const want of ["minimal", "agentic", "full", "grounded"])
+      expect(names.has(want)).toBe(true);
   });
 });
 

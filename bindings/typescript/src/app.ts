@@ -71,6 +71,7 @@ type ToolEntry = { tool_id: string; tool_version: string };
 /** G2: a by-reference connection — the MCP endpoint descriptor + the bare credential
  * NAME (never the secret value; the runtime resolves it at dial). */
 type ConnectionEntry = { descriptor: string; credential_ref: string };
+type DatasetEntry = { dataset_ref: string; cas_refs?: string[] };
 
 /** G1: the curated Gmail provider defaults (the bundled `kx-connector-gmail` sidecar).
  * Mirrors the CLI `kx connections add --provider gmail` + the Python SDK. */
@@ -92,6 +93,7 @@ export class AppBuilder {
   private readonly _context: ContextEntry[] = [];
   private readonly _tools: ToolEntry[] = [];
   private readonly _connections: ConnectionEntry[] = [];
+  private readonly _datasets: DatasetEntry[] = [];
   private readonly _secretScope: string[] = [];
   private readonly _prompts: ArtifactEntry[] = [];
   private readonly _rules: ArtifactEntry[] = [];
@@ -183,6 +185,30 @@ export class AppBuilder {
   useTool(toolId: string, toolVersion = "1"): this {
     this._tools.push({ tool_id: toolId, tool_version: toolVersion });
     return this;
+  }
+
+  /** Ground the App on a dataset (declarative RAG-on-App). At run, `RunApp` grants the
+   * entry step the read-only `retrieve` tool and steers it to search `datasetRef` live in
+   * the loop — the App self-grounds instead of needing a hand-authored blueprint. INGEST
+   * the corpus first with `kx datasets ingest <datasetRef> …` (the "reference-existing"
+   * model; a named dataset absent from the server fails closed at run). `casRefs` (64-hex
+   * content refs the dataset spans) are recorded for a future self-contained ingest;
+   * today grounding uses the pre-ingested named dataset. */
+  dataset(datasetRef: string, opts: { casRefs?: string[] } = {}): this {
+    const entry: DatasetEntry = { dataset_ref: datasetRef };
+    if (opts.casRefs && opts.casRefs.length > 0) {
+      for (const r of opts.casRefs) {
+        if (!HEX64.test(r)) throw new KxUsage("dataset casRef must be 64-char lowercase hex");
+      }
+      entry.cas_refs = [...opts.casRefs];
+    }
+    this._datasets.push(entry);
+    return this;
+  }
+
+  /** Alias for {@link dataset} — ground the App on a dataset (RAG-on-App). */
+  rag(datasetRef: string, opts: { casRefs?: string[] } = {}): this {
+    return this.dataset(datasetRef, opts);
   }
 
   /** G2: declare a by-reference connection the App uses. `descriptor` is the MCP
@@ -279,6 +305,7 @@ export class AppBuilder {
     if (this._context.length) refs.context = this._context;
     if (this._tools.length) refs.tools = this._tools;
     if (this._connections.length) refs.connections = this._connections;
+    if (this._datasets.length) refs.datasets = this._datasets;
     if (this._prompts.length) refs.prompts = this._prompts;
     if (this._rules.length) refs.rules = this._rules;
     if (this._memory.length) refs.memory = this._memory;
