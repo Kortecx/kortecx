@@ -246,14 +246,21 @@ pub async fn await_react_result(
                 .iter()
                 .find(|m| m.mote_id == answer.turn_mote_id)
                 .and_then(|m| m.result_ref.clone());
-            return committed_outcome(
+            let mut outcome = committed_outcome(
                 client,
                 resolved,
                 instance_id,
                 answer.turn_mote_id.clone(),
                 result_ref,
             )
-            .await;
+            .await?;
+            // gemma3 connector-tool-fire: under the Ollama non-strict UNION `format` the
+            // settled answer turn commits `{"answer":"…"}`; unwrap it to the plain text a
+            // user expects. Byte-identical NO-OP for prose / llama.cpp answers (SN-8).
+            if let Some(payload) = outcome.payload.take() {
+                outcome.payload = Some(kx_toolcall::extract_answer(&payload).into_owned());
+            }
+            return Ok(outcome);
         }
         if let Some(dead) = turns.iter().find(|t| t.branch == REACT_DEAD) {
             return Ok(terminal(

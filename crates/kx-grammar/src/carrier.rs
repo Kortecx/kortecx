@@ -115,6 +115,39 @@ mod tests {
     }
 
     #[test]
+    fn answerable_defaults_false_skip_serialized_and_round_trips() {
+        // gemma3 connector-tool-fire: the DEFAULT carrier omits `answerable` (byte-identical
+        // to pre-union), so the a0/digest carrier bytes are unchanged.
+        let raw = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")])
+            .to_raw()
+            .unwrap();
+        assert!(
+            !raw.contains("answerable"),
+            "default carrier must omit answerable: {raw}"
+        );
+        match GrammarSpec::from_raw(&raw).unwrap() {
+            GrammarSpec::ToolEnvelope(spec) => assert!(!spec.answerable),
+            GrammarSpec::Permutation(_) => panic!("must decode as ToolEnvelope"),
+        }
+        // The OPT-IN union carrier serializes + round-trips with answerable = true.
+        let union_raw = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")])
+            .with_answerable(true)
+            .to_raw()
+            .unwrap();
+        assert!(
+            union_raw.contains("\"answerable\":true"),
+            "union carrier must carry it"
+        );
+        match GrammarSpec::from_raw(&union_raw).unwrap() {
+            GrammarSpec::ToolEnvelope(spec) => {
+                assert!(spec.answerable);
+                assert!(!spec.strict, "union is not strict");
+            }
+            GrammarSpec::Permutation(_) => panic!("must decode as ToolEnvelope"),
+        }
+    }
+
+    #[test]
     fn permutation_raw_decodes_as_permutation() {
         let raw = GrammarSpec::Permutation(PermutationSpec::new(8))
             .to_raw()

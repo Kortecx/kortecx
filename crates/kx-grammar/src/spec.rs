@@ -73,6 +73,19 @@ pub struct ToolEnvelopeSpec {
     /// carrier stays byte-identical to pre-RC4c-2c (off-digest either way, D108.2).
     #[serde(default, skip_serializing_if = "is_false")]
     pub strict: bool,
+    /// `T-RUNAPP-RAG-RECIPE-ROUTE` (gemma3 connector-tool-fire): opt-in **non-strict
+    /// UNION** mode. When `true`, the Ollama backend applies this envelope as a
+    /// `{"tool_call":{…}} oneOf {"answer":"…"}` whole-response `format` — the Ollama
+    /// analog of llama.cpp's LAZY/triggered GBNF: the model is forced to emit PARSEABLE
+    /// JSON (a well-formed tool call → it fires, OR a well-formed answer → it settles),
+    /// so a free-form gemma3 turn can no longer emit a malformed body that dead-letters.
+    /// Unlike `strict` (which forbids answering), the answer arm PRESERVES the settle
+    /// path. Mutually exclusive with `strict` (the caller sets at most one). llama.cpp is
+    /// unaffected (it already arms a lazy GBNF that lets prose flow until the opener).
+    /// Serialized ONLY when set, so the default carrier stays byte-identical (off-digest,
+    /// D108.2).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub answerable: bool,
 }
 
 /// `skip_serializing_if` predicate — omit `strict` when `false` (byte-identical default carrier).
@@ -92,6 +105,7 @@ impl ToolEnvelopeSpec {
         Self {
             tools,
             strict: false,
+            answerable: false,
         }
     }
 
@@ -99,6 +113,13 @@ impl ToolEnvelopeSpec {
     #[must_use]
     pub fn with_strict(mut self, strict: bool) -> Self {
         self.strict = strict;
+        self
+    }
+
+    /// Set the non-strict UNION (`answerable`) mode (chainable). See the field docs.
+    #[must_use]
+    pub fn with_answerable(mut self, answerable: bool) -> Self {
+        self.answerable = answerable;
         self
     }
 
@@ -140,5 +161,13 @@ impl ToolEnvelopeSpec {
     #[must_use]
     pub fn to_ollama_format(&self) -> serde_json::Value {
         crate::ollama::render(self)
+    }
+
+    /// Render this spec to a non-strict UNION JSON Schema (Ollama `format` dialect):
+    /// `{"tool_call":{…}} oneOf {"answer":"…"}` — forces PARSEABLE output while keeping
+    /// the settle (answer) path open. See [`Self::answerable`].
+    #[must_use]
+    pub fn to_ollama_union_format(&self) -> serde_json::Value {
+        crate::ollama::render_union(self)
     }
 }

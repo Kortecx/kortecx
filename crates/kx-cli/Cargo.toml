@@ -24,6 +24,9 @@ kx-runtime = { workspace = true }
 kx-gateway = { workspace = true }
 # The FROZEN KxGateway client stubs + request/response messages.
 kx-proto   = { workspace = true }
+# gemma3 connector-tool-fire: `extract_answer` unwraps the Ollama union `{"answer":…}`
+# settle arm for display (pure FFI-free leaf; byte-identical no-op for prose answers).
+kx-toolcall = { workspace = true }
 # G2: the author-side blueprint shape (DagSpec/StepSpec/EdgeSpec) + the ONE canonical
 # lowering to a SubmitWorkflowRequest, extracted so `chain`/`app` and the gateway host
 # share the identical path (a pure FFI-free leaf: kx-proto + serde).

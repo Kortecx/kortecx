@@ -599,6 +599,15 @@ fn response_format(grammar: Option<&kx_mote::Grammar>) -> Option<serde_json::Val
     match grammar.and_then(|g| kx_grammar::GrammarSpec::from_raw(&g.raw).ok()) {
         Some(kx_grammar::GrammarSpec::Permutation(p)) => Some(p.to_ollama_format()),
         Some(kx_grammar::GrammarSpec::ToolEnvelope(e)) if e.strict => Some(e.to_ollama_format()),
+        // gemma3 connector-tool-fire: a non-strict UNION carrier ⇒ a
+        // `{"tool_call":{…}} oneOf {"answer":"…"}` whole-response `format`. Forces
+        // PARSEABLE output (fires OR settles), the Ollama analog of the lazy GBNF, so a
+        // free-form gemma3 turn can no longer emit a malformed body that dead-letters —
+        // WITHOUT forcing tool-required (the answer arm keeps the settle path). llama.cpp
+        // ignores `answerable` (it already arms a lazy GBNF).
+        Some(kx_grammar::GrammarSpec::ToolEnvelope(e)) if e.answerable => {
+            Some(e.to_ollama_union_format())
+        }
         _ => None,
     }
 }
@@ -640,6 +649,24 @@ mod tests {
         let fmt = response_format(Some(&strict)).expect("strict tool-envelope ⇒ a format");
         assert_eq!(fmt["type"], "object");
         assert!(fmt["properties"]["tool_call"].is_object());
+
+        // gemma3 connector-tool-fire: a non-strict UNION (`answerable`) carrier ⇒ a
+        // `oneOf` whole-response format with a tool_call arm AND an answer arm.
+        let union = kx_mote::Grammar::new(
+            kx_grammar::ToolEnvelopeSpec::new(vec![kx_grammar::ToolSpec::new(
+                "slack/read_channel",
+                "1",
+            )])
+            .with_answerable(true)
+            .to_raw()
+            .unwrap(),
+        );
+        let fmt = response_format(Some(&union)).expect("union tool-envelope ⇒ a format");
+        let arms = fmt["oneOf"].as_array().expect("union ⇒ oneOf arms");
+        assert_eq!(arms.len(), 2, "tool_call arm + answer arm");
+        assert!(arms[0]["properties"]["tool_call"].is_object());
+        assert_eq!(arms[1]["properties"]["answer"]["type"], "string");
+        assert_eq!(arms[1]["additionalProperties"], false);
 
         // A malformed carrier never fails closed (the parser is the authority).
         assert!(response_format(Some(&kx_mote::Grammar::new("not json"))).is_none());
