@@ -313,6 +313,12 @@ struct ConnectorCase {
     granted_tool: &'static str,
     /// The task prompt.
     prompt: &'static str,
+    /// gemma3 connector-tool-fire (GR28): HARD-assert the tool fired on this run. Set for
+    /// cases validated on BOTH engines (the union format makes gemma3 emit a parseable call,
+    /// so a tool-NECESSITATING prompt reliably fires on both llama.cpp AND Ollama gemma3).
+    /// Whether the chain then ANSWERS is still logged softly (gemma3 may loop on a duplicate
+    /// call and dead-letter — a model-behavior gap tracked separately from tool-firing).
+    require_fire: bool,
 }
 
 /// GR15/GR24 LIVE witness + the `T-RUNAPP-SECRET-SCOPE-OBSERVATION` regression, generalized
@@ -470,6 +476,18 @@ async fn runapp_connection_live(case: &ConnectorCase) {
             case.granted_tool
         );
     }
+    // GR28: the gemma3 connector-tool-fire proof — a tool-necessitating prompt FIRES the
+    // granted tool on BOTH engines (the union format + priming). Answer-completeness is
+    // logged, not gated (gemma3 may loop on a duplicate call).
+    if case.require_fire {
+        assert!(
+            tool_fired && fired_tool_ids.iter().any(|id| id == case.granted_tool),
+            "the {} App must FIRE {} on the live model [{engine}] (union format) — \
+             tool_fired={tool_fired} fired={fired_tool_ids:?}",
+            case.server_name,
+            case.granted_tool
+        );
+    }
 
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
@@ -489,6 +507,7 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
         granted_tool: "gmail/search",
         prompt: "Search my Gmail for unread messages using the gmail/search tool, then \
                  briefly answer with what you found.",
+        require_fire: false, // observe-only (not re-validated with the union format this PR)
     })
     .await;
 }
@@ -507,6 +526,7 @@ async fn runapp_discord_connection_and_secret_scope_live() {
         granted_tool: "discord/read_channel",
         prompt: "Read the most recent messages from channel 123 using the \
                  discord/read_channel tool, then briefly summarize them.",
+        require_fire: false, // observe-only (validated pre-union in #290; not the focus here)
     })
     .await;
 }
@@ -528,6 +548,7 @@ async fn runapp_slack_connection_and_secret_scope_live() {
         granted_tool: "slack/read_channel",
         prompt: "Read the most recent messages from channel 123 using the \
                  slack/read_channel tool, then briefly summarize them.",
+        require_fire: true, // GR28: gemma3 + llama.cpp both FIRE slack/read_channel (union format)
     })
     .await;
 }
@@ -548,6 +569,7 @@ async fn runapp_notion_connection_and_secret_scope_live() {
         granted_tool: "notion/search",
         prompt: "Search the Notion workspace for pages about the launch using the \
                  notion/search tool, then briefly summarize what you found.",
+        require_fire: true, // GR28: gemma3 + llama.cpp both FIRE notion/search (union format)
     })
     .await;
 }
@@ -716,6 +738,18 @@ async fn trigger_fires_connector_app_live(case: &ConnectorCase) {
             case.granted_tool
         );
     }
+    // GR28: the gemma3 connector-tool-fire proof — a tool-necessitating prompt FIRES the
+    // granted tool on BOTH engines (the union format + priming). Answer-completeness is
+    // logged, not gated (gemma3 may loop on a duplicate call).
+    if case.require_fire {
+        assert!(
+            tool_fired && fired_tool_ids.iter().any(|id| id == case.granted_tool),
+            "the {} App must FIRE {} on the live model [{engine}] (union format) — \
+             tool_fired={tool_fired} fired={fired_tool_ids:?}",
+            case.server_name,
+            case.granted_tool
+        );
+    }
 
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
@@ -736,6 +770,7 @@ async fn trigger_fires_discord_app_live() {
         granted_tool: "discord/read_channel",
         prompt: "Read the most recent messages from channel 123 using the \
                  discord/read_channel tool, then briefly summarize them.",
+        require_fire: false, // observe-only (validated pre-union in #290)
     })
     .await;
 }
@@ -755,6 +790,7 @@ async fn trigger_fires_slack_app_live() {
         granted_tool: "slack/read_channel",
         prompt: "Read the most recent messages from channel 123 using the \
                  slack/read_channel tool, then briefly summarize them.",
+        require_fire: false, // observe-only (the hard-fire proof rides the RunApp slack witness)
     })
     .await;
 }
@@ -773,6 +809,7 @@ async fn trigger_fires_notion_app_live() {
         granted_tool: "notion/search",
         prompt: "Search the Notion workspace for pages about the launch using the \
                  notion/search tool, then briefly summarize what you found.",
+        require_fire: false, // observe-only (the hard-fire proof rides the RunApp notion witness)
     })
     .await;
 }

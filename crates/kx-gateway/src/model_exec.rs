@@ -622,8 +622,9 @@ version, or argument that is not listed.";
 /// choke point — the exact gap that left the connector path unprimed.
 const TOOL_STEER_DIRECTIVE: &str = "Use the tools listed above to gather or act on the real \
 data the task needs BEFORE you answer: when a listed tool can obtain the authoritative \
-result, call it (using the format above) rather than answering from memory. Only give a \
-final plain-text answer once the tool results are enough.";
+result, call it (using the format above) rather than answering from memory. Once a tool has \
+returned a result, USE that result to write your final plain-text answer — do NOT call the \
+same tool again with the same arguments.";
 
 /// Qwen ChatML wrapping of a user prompt with an EXPLICIT system message — the
 /// **training contract** the companion model repo mirrors (kept byte-identical to
