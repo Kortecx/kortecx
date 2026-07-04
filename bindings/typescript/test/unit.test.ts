@@ -299,6 +299,38 @@ describe("pollReactResult (F13 — react wait via ListReactTurns)", () => {
     expect(dec(out.payload as Uint8Array)).toBe("final");
   });
 
+  it("unwraps the Ollama union answer arm to plain text (gemma3 connector-tool-fire)", async () => {
+    // Under the Ollama union `format` a settled answer commits {"answer":"…"}; the wait
+    // unwraps it (parity with the server-side finalize_agentic_launch, the CLI, and Python).
+    const seed = fill(0x99, 32);
+    const answer = fill(0x42, 32);
+    const gw = fakeGateway([{ branch: "answer", turnMoteId: answer }], {
+      moteId: answer,
+      resultRef: fill(0x03, 32),
+      payload: new TextEncoder().encode('{"answer": "photosynthesis converts light to energy"}'),
+    });
+    const out = await pollReactResult(gw, fill(0x07, 16), seed, 5_000);
+    expect(dec(out.payload as Uint8Array)).toBe("photosynthesis converts light to energy");
+  });
+
+  it("leaves prose / tool_call / stray-field bodies untouched (union unwrap is exact)", async () => {
+    const seed = fill(0x99, 32);
+    const answer = fill(0x42, 32);
+    for (const raw of [
+      "just prose",
+      '{"tool_call":{"name":"x","version":"1","args":{}}}',
+      '{"answer":"x","note":"y"}',
+    ]) {
+      const gw = fakeGateway([{ branch: "answer", turnMoteId: answer }], {
+        moteId: answer,
+        resultRef: fill(0x03, 32),
+        payload: new TextEncoder().encode(raw),
+      });
+      const out = await pollReactResult(gw, fill(0x07, 16), seed, 5_000);
+      expect(dec(out.payload as Uint8Array)).toBe(raw);
+    }
+  });
+
   it("ReactTurn.fromProto carries the rejection reason (PR-3/A2)", () => {
     const t = ReactTurn.fromProto(
       create(ReactTurnSummarySchema, {

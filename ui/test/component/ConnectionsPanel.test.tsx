@@ -186,6 +186,15 @@ describe("ConnectionsPanel", () => {
     },
   );
 
+  it("gemma3-tool-fire: a provider chip's title hints the firing-correct tool namespace", () => {
+    render(<ConnectionsPanel />);
+    // The chip title tells the author an agent grants tools as `<connection-name>/<tool>`
+    // (the connection NAME, not the descriptor) — the firing-correct namespace.
+    const slack = screen.getByTestId("connection-provider-slack");
+    expect(slack.getAttribute("title")).toContain('"slack/<tool>"');
+    expect(slack.getAttribute("title")).toContain("connection name");
+  });
+
   it("switches to http transport and shows the TLS toggle", () => {
     render(<ConnectionsPanel />);
     fireEvent.click(screen.getByTestId("connection-transport-http"));

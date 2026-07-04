@@ -369,7 +369,7 @@ export function ConnectionsPanel() {
                 type="button"
                 className="chip"
                 data-testid={`connection-provider-${p.id}`}
-                title={`Prefill the form for the bundled ${p.label} connector (${p.command}); set ${p.credentialRef} in Secrets`}
+                title={`Prefill the form for the bundled ${p.label} connector (${p.command}); set ${p.credentialRef} in Secrets. An agent grants its tools as "${p.id}/<tool>" (the connection name), e.g. ${p.id}/read.`}
                 onClick={() => connectProvider(p)}
               >
                 <span className="chip__label">Connect {p.label}</span>

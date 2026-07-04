@@ -49,6 +49,13 @@ pub enum ConnectionsSub {
         /// JSON args object (validated against the tool's inputSchema; default `{}`).
         args_json: String,
     },
+    /// LOCAL advisory (no gateway dial): report whether each curated provider's bundled
+    /// connector binary will resolve at spawn — as a `kx`-sibling or on the OS PATH —
+    /// else how to install it. `--provider <id>` narrows to one provider.
+    Doctor {
+        /// Optional single provider to check (else all curated providers).
+        provider: Option<String>,
+    },
 }
 
 /// A `connections add` request, assembled from the flags.
@@ -138,7 +145,8 @@ fn provider_defaults(id: &str) -> Option<ProviderDefaults> {
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
         CliError::Usage(
-            "connections requires a subcommand: add | list | test | remove | discover".into(),
+            "connections requires a subcommand: add | list | test | remove | discover | fire | doctor"
+                .into(),
         )
     })?;
 
@@ -193,6 +201,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
 
     let sub = match kw.as_str() {
         "list" => ConnectionsSub::List,
+        "doctor" => ConnectionsSub::Doctor {
+            provider: provider.filter(|s| !s.is_empty()),
+        },
         "test" => ConnectionsSub::Test {
             name: require_name(name, "test")?,
         },
@@ -271,7 +282,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
         }
         other => {
             return Err(CliError::Usage(format!(
-                "unknown connections subcommand {other:?} (expected add | list | test | remove | discover | fire)"
+                "unknown connections subcommand {other:?} (expected add | list | test | remove | discover | fire | doctor)"
             )))
         }
     };
@@ -280,6 +291,11 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ConnectionsArgs, 
 
 /// Execute `connections`.
 pub async fn execute(args: ConnectionsArgs) -> Result<(), CliError> {
+    // `doctor` is a LOCAL advisory — it inspects the on-disk connector binaries, so it
+    // must NOT dial the gateway (a fresh install has no server running yet).
+    if let ConnectionsSub::Doctor { provider } = &args.sub {
+        return run_doctor(provider.as_deref(), args.common.json);
+    }
     let resolved = args.common.resolve()?;
     let mut client = resolved.connect().await?;
     let json = args.common.json;
@@ -358,7 +374,94 @@ pub async fn execute(args: ConnectionsArgs) -> Result<(), CliError> {
                 .into_inner();
             println!("{}", format::render_call_tool(&resp, json));
         }
+        ConnectionsSub::Doctor { .. } => unreachable!("handled before the gateway dial"),
     }
+    Ok(())
+}
+
+/// How a bundled connector binary resolves at spawn (mirrors `kx_mcp::resolve_program`:
+/// a bare connector name prefers a SIBLING of the running `kx`, then the OS PATH).
+#[derive(Debug, PartialEq, Eq)]
+enum ConnectorResolution {
+    /// Found beside the running `kx` (preferred; narrows the PATH-hijack surface).
+    Sibling(std::path::PathBuf),
+    /// Found on the OS `PATH` (what a bare `Command::new` resolves at spawn).
+    OnPath(std::path::PathBuf),
+    /// Neither — dialing this provider would fail `Unreachable` at spawn.
+    Missing,
+}
+
+/// The sibling filenames to probe for a bare connector name — the name as given plus the
+/// platform executable suffix (`.exe` on Windows). Mirrors `kx_mcp::sibling_candidates`.
+fn sibling_names(command: &str) -> Vec<String> {
+    let mut names = vec![command.to_string()];
+    let suffix = std::env::consts::EXE_SUFFIX;
+    if !suffix.is_empty() && !command.ends_with(suffix) {
+        names.push(format!("{command}{suffix}"));
+    }
+    names
+}
+
+/// Probe how `command` resolves: a `kx`-sibling first, else the OS `PATH`, else missing.
+/// Pure w.r.t. the process environment (no spawning) — a read-only advisory.
+fn probe_connector(command: &str) -> ConnectorResolution {
+    let names = sibling_names(command);
+    // 1) a sibling of the running `kx` (the preferred spawn resolution).
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+    {
+        for name in &names {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return ConnectorResolution::Sibling(candidate);
+            }
+        }
+    }
+    // 2) on the OS PATH (what a bare `Command::new` resolves at spawn).
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            for name in &names {
+                let candidate = dir.join(name);
+                if candidate.is_file() {
+                    return ConnectorResolution::OnPath(candidate);
+                }
+            }
+        }
+    }
+    ConnectorResolution::Missing
+}
+
+/// LOCAL advisory (no gateway): for each curated provider (or the one named), report
+/// whether its bundled connector binary will resolve at spawn + how to install it if not.
+fn run_doctor(provider: Option<&str>, json: bool) -> Result<(), CliError> {
+    let ids: Vec<&str> = match provider {
+        Some(p) => vec![p],
+        None => vec!["gmail", "discord", "slack", "notion"],
+    };
+    let mut rows = Vec::with_capacity(ids.len());
+    for id in ids {
+        let p = provider_defaults(id).ok_or_else(|| {
+            CliError::Usage(format!(
+                "unknown --provider {id:?} (known: gmail, discord, slack, notion)"
+            ))
+        })?;
+        rows.push(format::ConnectorDoctorRow {
+            provider: id.to_string(),
+            command: p.command.to_string(),
+            credential_ref: p.credential_ref.to_string(),
+            status: match probe_connector(p.command) {
+                ConnectorResolution::Sibling(path) => {
+                    format::ConnectorDoctorStatus::Sibling(path.display().to_string())
+                }
+                ConnectorResolution::OnPath(path) => {
+                    format::ConnectorDoctorStatus::OnPath(path.display().to_string())
+                }
+                ConnectorResolution::Missing => format::ConnectorDoctorStatus::Missing,
+            },
+        });
+    }
+    println!("{}", format::render_connections_doctor(&rows, json));
     Ok(())
 }
 
@@ -532,5 +635,51 @@ mod tests {
             "exactly one endpoint"
         );
         assert!(p(&["frobnicate"]).is_err(), "unknown subcommand");
+    }
+
+    #[test]
+    fn parses_doctor_all_and_single_provider() {
+        assert!(matches!(
+            p(&["doctor"]).unwrap().sub,
+            ConnectionsSub::Doctor { provider: None }
+        ));
+        let ConnectionsSub::Doctor { provider } = p(&["doctor", "--provider", "slack"]).unwrap().sub
+        else {
+            panic!("expected Doctor");
+        };
+        assert_eq!(provider.as_deref(), Some("slack"));
+    }
+
+    #[test]
+    fn probe_reports_missing_for_an_absent_binary() {
+        // A name that will not exist as a sibling or on PATH ⇒ Missing (would fail spawn).
+        assert_eq!(
+            probe_connector("kx-connector-definitely-absent-xyz"),
+            ConnectorResolution::Missing
+        );
+    }
+
+    #[test]
+    fn sibling_names_include_the_bare_name() {
+        // On Unix (EXE_SUFFIX empty) exactly the bare name; on Windows also the `.exe`.
+        let names = sibling_names("kx-connector-slack");
+        assert!(names.contains(&"kx-connector-slack".to_string()));
+        assert_eq!(names.len(), if std::env::consts::EXE_SUFFIX.is_empty() { 1 } else { 2 });
+    }
+
+    #[test]
+    fn doctor_render_flags_missing_with_install_advice() {
+        let rows = vec![format::ConnectorDoctorRow {
+            provider: "slack".into(),
+            command: "kx-connector-slack".into(),
+            credential_ref: "KX_SLACK_CREDENTIAL".into(),
+            status: format::ConnectorDoctorStatus::Missing,
+        }];
+        let human = format::render_connections_doctor(&rows, false);
+        assert!(human.contains("NOT FOUND"));
+        assert!(human.contains("cargo install"));
+        let j = format::render_connections_doctor(&rows, true);
+        assert!(j.contains("\"status\":\"missing\""));
+        assert!(j.contains("\"ok\":false"));
     }
 }

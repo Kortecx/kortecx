@@ -247,8 +247,11 @@ export class AppBuilder {
 
   /** RC-SW2: declare the bundled Discord connector (the curated provider default) —
    * equivalent to `withConnection("kx-connector-discord", "KX_DISCORD_CREDENTIAL")`.
-   * Register with `kx connections add --command kx-connector-discord --credential-ref
-   * KX_DISCORD_CREDENTIAL`. */
+   * Register with `kx connections add --provider discord` (a bot token by name). To let an
+   * agent FIRE a Discord tool, grant it by the registered CONNECTION NAME — e.g.
+   * `tools: ["discord/read_channel"]` — NOT the descriptor `kx-connector-discord/*` (an
+   * agent grant is namespaced by the connection name, so the descriptor form will not
+   * dispatch against a "discord"-named connection). */
   withDiscord(): this {
     return this.withConnection(DISCORD_CONNECTOR_COMMAND, DISCORD_CREDENTIAL_REF);
   }
@@ -256,7 +259,10 @@ export class AppBuilder {
   /** T-APP-TRIGGER-TARGET: declare the bundled Slack connector (the curated provider
    * default) — equivalent to `withConnection("kx-connector-slack", "KX_SLACK_CREDENTIAL")`.
    * Register with `kx connections add --provider slack` (a bot token `{"bot_token": "xoxb-…"}`
-   * by name). */
+   * by name). To let an agent FIRE a Slack tool, grant it by the registered CONNECTION
+   * NAME — e.g. `tools: ["slack/read_channel"]` — NOT the descriptor `kx-connector-slack/*`
+   * (an agent grant is namespaced by the connection name, so the descriptor form will not
+   * dispatch against a "slack"-named connection). */
   withSlack(): this {
     return this.withConnection(SLACK_CONNECTOR_COMMAND, SLACK_CREDENTIAL_REF);
   }
@@ -264,7 +270,10 @@ export class AppBuilder {
   /** T-APP-TRIGGER-TARGET: declare the bundled Notion connector (the curated provider
    * default) — equivalent to `withConnection("kx-connector-notion", "KX_NOTION_CREDENTIAL")`.
    * Register with `kx connections add --provider notion` (an integration token `{"token": "…"}`
-   * by name). */
+   * by name). To let an agent FIRE a Notion tool, grant it by the registered CONNECTION
+   * NAME — e.g. `tools: ["notion/search"]` — NOT the descriptor `kx-connector-notion/*` (an
+   * agent grant is namespaced by the connection name, so the descriptor form will not
+   * dispatch against a "notion"-named connection). */
   withNotion(): this {
     return this.withConnection(NOTION_CONNECTOR_COMMAND, NOTION_CREDENTIAL_REF);
   }

@@ -18,6 +18,7 @@ kind — sync or aio — decides whether a call returns a value or an awaitable)
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -114,6 +115,30 @@ _REACT_ANSWER = "answer"
 _REACT_DEAD = "dead_lettered"
 
 
+def _extract_answer(payload: Optional[bytes]) -> Optional[bytes]:
+    """gemma3 connector-tool-fire: under the Ollama non-strict UNION ``format`` a settled
+    react answer turn commits ``{"answer": "…"}`` instead of free prose; unwrap it to the
+    plain text a caller expects. Mirrors the Rust ``kx_toolcall::extract_answer`` and the
+    ``kx`` CLI ``wait.rs`` — a byte-identical NO-OP for prose / llama.cpp answers or any
+    body that is not EXACTLY a single-key ``{"answer": <string>}`` object (presentation
+    only; the parser already treats it as a settle)."""
+    if payload is None:
+        return None
+    try:
+        text = payload.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return payload
+    if not text.startswith("{"):
+        return payload
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        return payload
+    if isinstance(obj, dict) and set(obj) == {"answer"} and isinstance(obj["answer"], str):
+        return obj["answer"].encode("utf-8")
+    return payload
+
+
 def _list_react_turns(stub, md, instance_id: bytes, step_salt: bytes = b""):
     try:
         req = _g.ListReactTurnsRequest(instance_id=instance_id)
@@ -150,7 +175,9 @@ def poll_react_result(
         answer = next((t for t in turns if t.branch == _REACT_ANSWER), None)
         if answer is not None:
             rr = _projection_result_ref(stub, md, instance_id, answer.turn_mote_id)
-            return _committed_outcome(stub, md, instance_id, answer.turn_mote_id, rr)
+            outcome = _committed_outcome(stub, md, instance_id, answer.turn_mote_id, rr)
+            outcome.payload = _extract_answer(outcome.payload)
+            return outcome
         dead = next((t for t in turns if t.branch == _REACT_DEAD), None)
         if dead is not None:
             return _terminal(instance_id, dead.turn_mote_id, WaitState.FAILED)
@@ -293,7 +320,9 @@ async def apoll_react_result(
         answer = next((t for t in turns if t.branch == _REACT_ANSWER), None)
         if answer is not None:
             rr = await _aprojection_result_ref(stub, md, instance_id, answer.turn_mote_id)
-            return await _acommitted_outcome(stub, md, instance_id, answer.turn_mote_id, rr)
+            outcome = await _acommitted_outcome(stub, md, instance_id, answer.turn_mote_id, rr)
+            outcome.payload = _extract_answer(outcome.payload)
+            return outcome
         dead = next((t for t in turns if t.branch == _REACT_DEAD), None)
         if dead is not None:
             return _terminal(instance_id, dead.turn_mote_id, WaitState.FAILED)

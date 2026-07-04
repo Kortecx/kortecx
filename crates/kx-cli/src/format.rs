@@ -1382,6 +1382,76 @@ pub fn render_call_tool(resp: &proto::CallMcpToolResponse, json: bool) -> String
     }
 }
 
+/// gemma3 connector-tool-fire: one `kx connections doctor` row — how a curated
+/// provider's bundled connector binary resolves at spawn.
+pub struct ConnectorDoctorRow {
+    /// The provider id (e.g. `slack`).
+    pub provider: String,
+    /// The bundled connector command (e.g. `kx-connector-slack`).
+    pub command: String,
+    /// The credential-ref name the sidecar reads by name (D81).
+    pub credential_ref: String,
+    /// How the command resolves at spawn.
+    pub status: ConnectorDoctorStatus,
+}
+
+/// The resolution outcome for a connector binary (mirrors `kx_mcp::resolve_program`).
+pub enum ConnectorDoctorStatus {
+    /// Found beside the running `kx` (preferred — narrows the PATH-hijack surface).
+    Sibling(String),
+    /// Found on the OS `PATH` (what a bare `Command::new` resolves at spawn).
+    OnPath(String),
+    /// Not found anywhere — dialing this provider would fail `Unreachable` at spawn.
+    Missing,
+}
+
+/// Render `kx connections doctor` — the per-provider connector-binary resolution advisory.
+#[must_use]
+pub fn render_connections_doctor(rows: &[ConnectorDoctorRow], json: bool) -> String {
+    if json {
+        let items: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                let (status, path) = match &r.status {
+                    ConnectorDoctorStatus::Sibling(p) => ("sibling", Some(p.as_str())),
+                    ConnectorDoctorStatus::OnPath(p) => ("path", Some(p.as_str())),
+                    ConnectorDoctorStatus::Missing => ("missing", None),
+                };
+                json!({
+                    "provider": r.provider,
+                    "command": r.command,
+                    "credential_ref": r.credential_ref,
+                    "status": status,
+                    "path": path,
+                    "ok": !matches!(r.status, ConnectorDoctorStatus::Missing),
+                })
+            })
+            .collect();
+        json!({ "connectors": items }).to_string()
+    } else if rows.is_empty() {
+        "no providers to check".to_string()
+    } else {
+        let mut out = String::new();
+        for r in rows {
+            let line = match &r.status {
+                ConnectorDoctorStatus::Sibling(p) => {
+                    format!("  ✓ {} → kx-sibling {p}", r.provider)
+                }
+                ConnectorDoctorStatus::OnPath(p) => format!("  ✓ {} → on PATH {p}", r.provider),
+                ConnectorDoctorStatus::Missing => format!(
+                    "  ✗ {} → `{}` NOT FOUND — install it beside `kx` or on PATH \
+                     (`cargo install --path integrations/{}` from a checkout), then set the \
+                     {} secret",
+                    r.provider, r.command, r.command, r.credential_ref
+                ),
+            };
+            out.push_str(&line);
+            out.push('\n');
+        }
+        out.trim_end().to_string()
+    }
+}
+
 /// Render `connections remove` — whether the server was removed.
 #[must_use]
 pub fn render_deregister_server(resp: &proto::DeregisterMcpServerResponse, json: bool) -> String {

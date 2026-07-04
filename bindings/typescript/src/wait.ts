@@ -117,6 +117,40 @@ const REACT_ANSWER = "answer";
 const REACT_DEAD = "dead_lettered";
 
 /**
+ * gemma3 connector-tool-fire: under the Ollama non-strict UNION `format` a settled react
+ * answer turn commits `{"answer": "…"}` instead of free prose; unwrap it to the plain text
+ * a caller expects. Mirrors the Rust `kx_toolcall::extract_answer`, the `kx` CLI, and the
+ * Python SDK — a byte-identical NO-OP for prose / llama.cpp answers or any body that is not
+ * EXACTLY a single-key `{"answer": <string>}` object (presentation only).
+ */
+function extractAnswer(payload: Uint8Array | undefined): Uint8Array | undefined {
+  if (payload === undefined) return payload;
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(payload).trim();
+  } catch {
+    return payload;
+  }
+  if (!text.startsWith("{")) return payload;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    return payload;
+  }
+  if (
+    typeof obj === "object" &&
+    obj !== null &&
+    !Array.isArray(obj) &&
+    Object.keys(obj).length === 1 &&
+    typeof (obj as Record<string, unknown>).answer === "string"
+  ) {
+    return new TextEncoder().encode((obj as Record<string, string>).answer);
+  }
+  return payload;
+}
+
+/**
  * Wait for a ReAct CHAIN to settle (the `invoke` react path).
  *
  * A react chain has no statically-known terminal Mote: the run-salted turn-0 id
@@ -143,7 +177,8 @@ export async function pollReactResult(
     if (answer !== undefined) {
       const view = await rpc(gw.getProjection({ instanceId: instance }));
       const m = view.motes.find((x) => eq(x.moteId, answer.turnMoteId));
-      return committedOutcome(gw, instance, answer.turnMoteId, m?.resultRef);
+      const outcome = await committedOutcome(gw, instance, answer.turnMoteId, m?.resultRef);
+      return { ...outcome, payload: extractAnswer(outcome.payload) };
     }
     const dead = resp.turns.find((t) => t.branch === REACT_DEAD);
     if (dead !== undefined) {

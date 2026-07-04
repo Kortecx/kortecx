@@ -50,7 +50,14 @@ runtime first looks for that binary **beside the running `kx`** (its install sib
 falls back to your `PATH`. So a co-installed bundled connector dials with **no manual PATH
 setup**. A connector you built yourself is still reachable by an absolute path or on `PATH`.
 If a `--provider` dial reports the connector is unreachable, the sidecar binary is simply not
-installed next to `kx` or on your `PATH` yet.
+installed next to `kx` or on your `PATH` yet. Run `kx connections doctor` (a local, offline
+advisory — no server needed) to see, per provider, whether its bundled connector resolves as a
+`kx`-sibling or on `PATH`, and how to install it if not:
+
+```bash
+kx connections doctor                 # check every curated provider
+kx connections doctor --provider slack --json
+```
 :::
 
 You can dial any of the four tools directly to check the wiring before you build an App:
@@ -110,6 +117,15 @@ An agent grants tools by `<connection-name>/<tool>` — the name you gave the co
 `kx connections add` (the curated `--provider slack` names it **`slack`**). `.with_slack()`
 declares WHICH connector the App dials; the agent's `tools=[…]` list is what it is allowed to
 fire. Keep the two in step — grant `slack/…` for a `--provider slack` connection.
+:::
+
+:::tip Fires on your local models — both engines
+The agentic loop reliably fires connector tools on the local OSS models kortecx positions on —
+**both** `kx serve` engines: llama.cpp (Gemma) and Ollama (`gemma3:12b`). Each engine emits
+tool-calls in its own format, so the runtime constrains the model to a parseable shape: llama.cpp
+arms a lazy grammar; Ollama applies a non-strict `{"tool_call":…} | {"answer":…}` response
+schema (the model still answers freely, it just can't emit a malformed call). This is on by
+default; `KX_SERVE_OLLAMA_TOOL_UNION=0` reverts to unconstrained free-form decoding on Ollama.
 :::
 
 ## 3. Automate it on a trigger
