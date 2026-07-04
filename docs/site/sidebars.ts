@@ -36,6 +36,7 @@ const sidebars: SidebarsConfig = {
         "parallel-execution",
         "security",
         "tools",
+        "integrations",
         "agentic-prompts",
         "authoring-a-connector",
         "managing-secrets",

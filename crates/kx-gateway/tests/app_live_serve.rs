@@ -511,6 +511,47 @@ async fn runapp_discord_connection_and_secret_scope_live() {
     .await;
 }
 
+/// integrations-come-alive Slack witness — the same generic harness pointed at the
+/// bundled Slack sidecar (offline FAKE mode, no real token). Channel id "123" is
+/// ASCII-alphanumeric so it clears `slack/validate`'s channel-id guard BEFORE the
+/// fake branch. Proves a credentialed Slack App fires `slack/read_channel` on a live
+/// model. Skips gracefully until `kx-connector-slack` is built (PR #291).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-slack; opt in with --ignored"]
+async fn runapp_slack_connection_and_secret_scope_live() {
+    runapp_connection_live(&ConnectorCase {
+        server_name: "slack",
+        bin_name: "kx-connector-slack",
+        credential_ref: "KX_SLACK_CREDENTIAL",
+        credential_value: r#"{"bot_token":"x"}"#,
+        fake_env: "KX_SLACK_FAKE",
+        granted_tool: "slack/read_channel",
+        prompt: "Read the most recent messages from channel 123 using the \
+                 slack/read_channel tool, then briefly summarize them.",
+    })
+    .await;
+}
+
+/// integrations-come-alive Notion witness — the generic harness over the bundled
+/// Notion sidecar (offline FAKE mode). `notion/search` takes a free-text query (no
+/// id guard), the cleanest tool to drive. Proves a credentialed Notion App fires
+/// `notion/search` on a live model.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-notion; opt in with --ignored"]
+async fn runapp_notion_connection_and_secret_scope_live() {
+    runapp_connection_live(&ConnectorCase {
+        server_name: "notion",
+        bin_name: "kx-connector-notion",
+        credential_ref: "KX_NOTION_CREDENTIAL",
+        credential_value: r#"{"token":"x"}"#,
+        fake_env: "KX_NOTION_FAKE",
+        granted_tool: "notion/search",
+        prompt: "Search the Notion workspace for pages about the launch using the \
+                 notion/search tool, then briefly summarize what you found.",
+    })
+    .await;
+}
+
 /// T-APP-TRIGGER-TARGET GR24 LIVE witness: a credentialed App fires from a gRPC TRIGGER
 /// (not a direct `RunApp`) and drives the agentic loop to a terminal on a live model — the
 /// automation vertical the trigger→App wiring exists for. Mirrors `runapp_connection_live`'s
@@ -695,6 +736,43 @@ async fn trigger_fires_discord_app_live() {
         granted_tool: "discord/read_channel",
         prompt: "Read the most recent messages from channel 123 using the \
                  discord/read_channel tool, then briefly summarize them.",
+    })
+    .await;
+}
+
+/// integrations-come-alive Slack trigger witness — a gRPC trigger fires the
+/// credentialed Slack App (the automation vertical: an event, not an operator,
+/// starts the run). Offline FAKE mode; dual-engine (llama.cpp + Ollama).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-slack; opt in with --ignored"]
+async fn trigger_fires_slack_app_live() {
+    trigger_fires_connector_app_live(&ConnectorCase {
+        server_name: "slack",
+        bin_name: "kx-connector-slack",
+        credential_ref: "KX_SLACK_CREDENTIAL",
+        credential_value: r#"{"bot_token":"x"}"#,
+        fake_env: "KX_SLACK_FAKE",
+        granted_tool: "slack/read_channel",
+        prompt: "Read the most recent messages from channel 123 using the \
+                 slack/read_channel tool, then briefly summarize them.",
+    })
+    .await;
+}
+
+/// integrations-come-alive Notion trigger witness — a gRPC trigger fires the
+/// credentialed Notion App. Offline FAKE mode; dual-engine.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-notion; opt in with --ignored"]
+async fn trigger_fires_notion_app_live() {
+    trigger_fires_connector_app_live(&ConnectorCase {
+        server_name: "notion",
+        bin_name: "kx-connector-notion",
+        credential_ref: "KX_NOTION_CREDENTIAL",
+        credential_value: r#"{"token":"x"}"#,
+        fake_env: "KX_NOTION_FAKE",
+        granted_tool: "notion/search",
+        prompt: "Search the Notion workspace for pages about the launch using the \
+                 notion/search tool, then briefly summarize what you found.",
     })
     .await;
 }

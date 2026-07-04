@@ -144,4 +144,14 @@ export const queryKeys = {
    *  facts folded newest-first; cursor pages live inside the one key. */
   alerts: (endpoint: string, instanceId: string | undefined, pageSize: number) =>
     ["kx", endpoint, "alerts", instanceId ?? "all", pageSize] as const,
+  /** RC6a: the pending HITL approvals inbox (`ListPendingApprovals`, D114) — the
+   *  govern surface over withheld world-mutating actions. Polled (approvals are NOT
+   *  on the event stream); `limit` scopes the page. `requestId` is server-derived
+   *  (SN-8); a grant/deny releases a staged action, never mints a warrant. */
+  pendingApprovals: (endpoint: string, limit: number) =>
+    ["kx", endpoint, "pending-approvals", limit] as const,
+  /** RC6a: a run's local spend estimate (`GetRunCost`, M11) — display-only over the
+   *  durable turn/tool counters at operator-set rates (a guardrail, not billing). */
+  runCost: (endpoint: string, instanceId: string) =>
+    ["kx", endpoint, "run-cost", instanceId] as const,
 };

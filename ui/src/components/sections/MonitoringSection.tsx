@@ -18,12 +18,19 @@ import { m } from "framer-motion";
 import { useMemo, useState } from "react";
 import { fadeUp, stagger } from "../../app/motion";
 import { useAlerts } from "../../kx/use-alerts";
+import {
+  type ApprovalDecisionArgs,
+  useDenyApproval,
+  useGrantApproval,
+  useListPendingApprovals,
+} from "../../kx/use-approvals";
 import { useCaptureRecords } from "../../kx/use-capture-records";
 import { type RunScopedRef, useResultMapMulti } from "../../kx/use-content-batch";
 import { useEvalScore } from "../../kx/use-eval-score";
 import { useReactTurns } from "../../kx/use-react-turns";
 import { useReplanRounds } from "../../kx/use-replan-rounds";
 import { useRerankTurns } from "../../kx/use-rerank-turns";
+import { useRunCost } from "../../kx/use-run-cost";
 import { useRuns } from "../../kx/use-runs";
 import { useTelemetry } from "../../kx/use-telemetry";
 import { useTelemetrySummary } from "../../kx/use-telemetry-summary";
@@ -52,13 +59,22 @@ import { HealthIndicator } from "../metrics/HealthIndicator";
 import { MetricCard } from "../metrics/MetricCard";
 import { RunsTable } from "./RunsTable";
 
-const MONITOR_VIEWS = [undefined, "runs", "feed", "telemetry", "alerts", "quality"] as const;
+const MONITOR_VIEWS = [
+  undefined,
+  "runs",
+  "feed",
+  "telemetry",
+  "alerts",
+  "approvals",
+  "quality",
+] as const;
 const VIEW_LABEL: Record<string, string> = {
   overview: "Overview",
   runs: "Runs",
   feed: "Live feed",
   telemetry: "Telemetry",
   alerts: "Alerts",
+  approvals: "Approvals",
   quality: "Quality",
 };
 
@@ -145,6 +161,8 @@ export function MonitoringSection({
         <TelemetryView />
       ) : tab === "alerts" ? (
         <AlertsView />
+      ) : tab === "approvals" ? (
+        <ApprovalsView />
       ) : tab === "quality" ? (
         <QualityView />
       ) : (
@@ -379,6 +397,166 @@ function AlertsView() {
             </span>
           </div>
         </div>
+      )}
+    </GlowCard>
+  );
+}
+
+/** RC6a (M11): a compact per-run spend readout for an approval row (`GetRunCost`) —
+ *  the operator sees what the autonomous run has ALREADY spent (turns · tool calls ·
+ *  estimated µUSD) while deciding whether to release its next action. Display-only.
+ *  A run with no instance id, a gateway without the cost admin, or a zero-baseline
+ *  price book degrades honestly (no fabricated dollar figure, GR15/D142). */
+export function ApprovalCost({ instanceId }: { instanceId: string }) {
+  const { cost, notWired } = useRunCost(instanceId || undefined);
+  if (!instanceId || notWired || !cost) {
+    return <span className="muted">—</span>;
+  }
+  const usd = (cost.estimatedMicroUsd / 1_000_000).toFixed(4);
+  return (
+    <span className="mono" title={`${cost.turns} turns · ${cost.toolCalls} tool calls`}>
+      {cost.turns}t/{cost.toolCalls}c{cost.estimatedMicroUsd > 0 ? ` · $${usd}` : ""}
+      {cost.overCeiling ? " ⚠" : ""}
+    </span>
+  );
+}
+
+/** RC6a (D178 #3): the HITL pre-action approvals INBOX — the govern surface over
+ *  world-mutating actions a live autonomous run has STAGED and withheld pending an
+ *  operator decision (`ListPendingApprovals` / `GrantApproval` / `DenyApproval`,
+ *  autonomy-safety-gates #267). A grant releases the staged action to fire exactly
+ *  once; a deny dead-letters the chain. Server-derived `requestId` (SN-8) — the
+ *  operator decides, never mints authority. Polled (approvals are not on the event
+ *  stream). The leg that lets a NON-CLI operator govern a trigger-firing App;
+ *  degrades to an honest not-wired note without the approval admin. */
+function ApprovalsView() {
+  const inbox = useListPendingApprovals();
+  const grant = useGrantApproval();
+  const deny = useDenyApproval();
+  // Track the requestId mid-decision so only that row's controls disable.
+  const [acting, setActing] = useState<string | null>(null);
+
+  function decide(mut: ReturnType<typeof useGrantApproval>, args: ApprovalDecisionArgs): void {
+    setActing(args.requestId);
+    mut.mutate(args, { onSettled: () => setActing(null) });
+  }
+
+  return (
+    <GlowCard hover={false} className="monitor-panel" data-testid="monitor-approvals">
+      <div className="monitor-panel__head">
+        <h2>Approvals</h2>
+        <span className="muted">
+          world-mutating actions withheld pending an operator decision (HITL)
+        </span>
+      </div>
+      {inbox.notWired ? (
+        <p className="muted" data-testid="approvals-not-wired">
+          Not wired on this gateway — pre-action approvals need a serve built with the approval
+          admin (an autonomous run requests a decision only under a require-approval posture).
+        </p>
+      ) : inbox.error ? (
+        <ErrorNotice error={inbox.error} />
+      ) : inbox.isLoading ? (
+        <EmptyState title="Loading approvals…" />
+      ) : inbox.approvals.length === 0 ? (
+        <EmptyState
+          title="No actions awaiting approval"
+          detail="A pending item appears when a run's irreversible action (an email send, a channel post, a DB write) is staged under a require-approval posture. Grant to fire it once; deny to dead-letter the chain."
+        />
+      ) : (
+        <>
+          <m.div
+            className="metrics-grid"
+            variants={stagger()}
+            initial="hidden"
+            animate="show"
+            data-testid="approvals-kpis"
+          >
+            <MetricCard
+              label="Awaiting"
+              value={inbox.count}
+              tone="scheduled"
+              sub="pending decisions"
+            />
+          </m.div>
+          <table className="trail-table" data-testid="approvals-table">
+            <thead>
+              <tr>
+                <th>Tool</th>
+                <th>Intent</th>
+                <th>Run</th>
+                <th>Spend</th>
+                <th>Requested</th>
+                <th>Deadline</th>
+                <th>Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inbox.approvals.map((ap) => {
+                const busy = acting === ap.requestId;
+                return (
+                  <tr key={ap.requestId} data-testid="approval-row">
+                    <td className="mono">
+                      {ap.toolId}@{ap.toolVersion}
+                    </td>
+                    <td>{ap.intent || "—"}</td>
+                    <td className="mono">
+                      {ap.instanceId ? (
+                        <Link
+                          to="/workflows/$instanceId"
+                          params={{ instanceId: ap.instanceId }}
+                          className="linkbtn mono"
+                          title="Open this run"
+                        >
+                          {shortHex(ap.instanceId)}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td data-testid="approval-cost">
+                      <ApprovalCost instanceId={ap.instanceId} />
+                    </td>
+                    <td className="muted">
+                      {ap.createdUnixMs > 0 ? new Date(ap.createdUnixMs).toLocaleTimeString() : "—"}
+                    </td>
+                    <td className="muted">
+                      {ap.deadlineUnixMs > 0
+                        ? new Date(ap.deadlineUnixMs).toLocaleTimeString()
+                        : "—"}
+                    </td>
+                    <td className="approval-actions">
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        data-testid="approval-grant-btn"
+                        disabled={busy}
+                        onClick={() => decide(grant, { requestId: ap.requestId })}
+                      >
+                        {busy && grant.isPending ? "…" : "Grant"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        data-testid="approval-deny-btn"
+                        disabled={busy}
+                        onClick={() => decide(deny, { requestId: ap.requestId })}
+                      >
+                        {busy && deny.isPending ? "…" : "Deny"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {grant.isError || deny.isError ? (
+            <p className="field-error" data-testid="approval-decision-error" role="alert">
+              The last decision failed — it may have already resolved or expired. The list refreshes
+              automatically.
+            </p>
+          ) : null}
+        </>
       )}
     </GlowCard>
   );

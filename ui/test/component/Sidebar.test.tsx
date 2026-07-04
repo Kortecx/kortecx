@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The sidebar renders TanStack <Link>s; stub them to plain <a> so we can test the
 // nav in isolation (the real router integration is covered by the e2e shell-nav).
@@ -19,9 +19,20 @@ vi.mock("../../src/kx/use-telemetry", () => ({
   useTelemetry: () => ({ rows: [], notWired: false, isLoading: false }),
 }));
 
+// RC6a: the Monitoring nav badge reads pending approvals (react-query + connection).
+// Stub it (overridable per test) so the sidebar renders without a provider tree.
+const { mockPending } = vi.hoisted(() => ({
+  mockPending: vi.fn(() => ({ count: 0, approvals: [], notWired: false })),
+}));
+vi.mock("../../src/kx/use-approvals", () => ({ useListPendingApprovals: mockPending }));
+
 import { Sidebar } from "../../src/components/shell/Sidebar";
 
 describe("Sidebar (POC-5c / D168 flat IA)", () => {
+  beforeEach(() => {
+    mockPending.mockReturnValue({ count: 0, approvals: [], notWired: false });
+  });
+
   it("renders a plain-button item with a label for every flat section when expanded", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
     for (const id of ["chat", "apps", "runs", "context", "tools", "models", "monitor", "systems"]) {
@@ -84,5 +95,27 @@ describe("Sidebar (POC-5c / D168 flat IA)", () => {
     expect(screen.getByTestId("nav-settings")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("sidebar-toggle"));
     expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("badges the Monitoring nav item with the pending-approval count (RC6a)", () => {
+    mockPending.mockReturnValue({ count: 3, approvals: [], notWired: false });
+    render(<Sidebar collapsed={false} onToggle={() => {}} />);
+    expect(screen.getByTestId("nav-badge-monitor")).toHaveTextContent("3");
+    // Only Monitoring carries the badge — no other section is decorated.
+    for (const id of ["chat", "apps", "runs", "context", "tools", "models", "systems"]) {
+      expect(screen.queryByTestId(`nav-badge-${id}`)).toBeNull();
+    }
+  });
+
+  it("shows no nav badge when nothing is awaiting approval", () => {
+    mockPending.mockReturnValue({ count: 0, approvals: [], notWired: false });
+    render(<Sidebar collapsed={false} onToggle={() => {}} />);
+    expect(screen.queryByTestId("nav-badge-monitor")).toBeNull();
+  });
+
+  it("keeps the badge on the collapsed icon rail (rides the icon)", () => {
+    mockPending.mockReturnValue({ count: 7, approvals: [], notWired: false });
+    render(<Sidebar collapsed={true} onToggle={() => {}} />);
+    expect(screen.getByTestId("nav-badge-monitor")).toHaveTextContent("7");
   });
 });

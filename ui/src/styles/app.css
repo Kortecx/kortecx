@@ -846,6 +846,26 @@ button:disabled {
 .navitem__icon {
   display: inline-flex;
   flex: 0 0 auto;
+  position: relative;
+}
+/* RC6a: a count bubble on a nav icon (pending approvals awaiting a decision).
+   Rides the icon so it shows in both the expanded and collapsed rail. Uses the
+   accent fg/bg PAIR so the contrast is AA in both themes. */
+.navitem__badge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.25rem;
+  box-sizing: border-box;
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1rem;
+  text-align: center;
 }
 .sidebar--collapsed .navitem {
   justify-content: center;
@@ -4400,6 +4420,13 @@ button.card-grid__title:hover {
   gap: 0.4rem;
 }
 .app-file__editor-actions {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+/* RC6a approvals-inbox: the Grant/Deny decision pair in a table row (same
+   inline-flex+gap pattern as the App editor's Approve/Reject actions). */
+.approval-actions {
   display: inline-flex;
   gap: 0.5rem;
   align-items: center;

@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { useListPendingApprovals } from "../../kx/use-approvals";
 import { Brand } from "./Brand";
 import { Icon } from "./Icon";
 import { NavItem } from "./NavItem";
@@ -14,6 +15,10 @@ import { NAV_SECTIONS, SETTINGS_SECTION } from "./nav-model";
  * bottom-left. Collapsed → an icon rail (labels + footer drop away).
  */
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  // RC6a: surface the count of world-mutating actions awaiting an operator decision
+  // on the Monitoring nav item (its Approvals tab). Approvals are not on the event
+  // stream, so this polls; it degrades to 0 (no badge) when disconnected / not wired.
+  const { count: pendingApprovals } = useListPendingApprovals();
   return (
     <nav
       className={collapsed ? "sidebar sidebar--collapsed" : "sidebar"}
@@ -92,7 +97,12 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
 
       <div className="sidebar__nav" data-testid="sidebar-nav">
         {NAV_SECTIONS.map((section) => (
-          <NavItem key={section.id} section={section} collapsed={collapsed} />
+          <NavItem
+            key={section.id}
+            section={section}
+            collapsed={collapsed}
+            badge={section.id === "monitor" ? pendingApprovals : undefined}
+          />
         ))}
       </div>
 
