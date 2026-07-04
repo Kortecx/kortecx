@@ -31,19 +31,26 @@ use rusqlite::{params, Connection};
 use crate::error::GatewayError;
 
 /// Bump on any table-shape change. Unknown/missing ⇒ recreate EMPTY (module doc).
-const SCHEMA_VERSION: i64 = 1;
+/// v2 (T-APP-TRIGGER-TARGET): + `app_handle` (App target), `timezone` (5-field cron
+/// tz), `require_approval` (per-trigger HITL). Off-journal ⇒ the bump rebuilds the
+/// sidecar EMPTY (re-register after upgrade); the canonical projection digest is
+/// untouched (no journal/checkpoint change).
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS triggers (
     trigger_id         BLOB PRIMARY KEY,   -- 16B server-derived id
     name               TEXT NOT NULL UNIQUE,
     kind               TEXT NOT NULL,      -- 'webhook' | 'cron' | 'grpc'
-    recipe_handle      TEXT NOT NULL,      -- the kx/recipes/... handle to Invoke
+    recipe_handle      TEXT NOT NULL,      -- the kx/recipes/... handle to Invoke ('' ⇒ App target)
+    app_handle         TEXT NOT NULL DEFAULT '',   -- the saved App handle to RunApp ('' ⇒ recipe target)
     args_template_json TEXT NOT NULL,      -- reserved (passthrough today); '' default
     auth               TEXT NOT NULL,      -- 'none' | 'hmac_sha256' | 'bearer'
     auth_secret_ref    TEXT NOT NULL,      -- SecretRef NAME ('' ⇒ none); never the value
-    schedule_spec      TEXT NOT NULL,      -- cron: interval seconds; '' otherwise
+    schedule_spec      TEXT NOT NULL,      -- cron: interval seconds OR a 5-field crontab expr; '' otherwise
+    timezone           TEXT NOT NULL DEFAULT 'UTC', -- IANA zone for a 5-field cron expr ('' ⇒ UTC)
     owner_party        TEXT NOT NULL,      -- the registrant party the run fires under (D102.2, SN-8)
+    require_approval   INTEGER NOT NULL DEFAULT 0,  -- per-trigger HITL: withhold irreversible actions (D114)
     enabled            INTEGER NOT NULL,
     next_fire_unix_ms  INTEGER NOT NULL,   -- cron watermark (0 ⇒ n/a)
     created_unix_ms    INTEGER NOT NULL,
@@ -67,13 +74,22 @@ pub(crate) struct TriggerRow {
     pub trigger_id: [u8; 16],
     pub name: String,
     pub kind: String,
+    /// The `kx/recipes/…` handle to Invoke (`""` ⇒ this is an App target). Exactly one
+    /// of `recipe_handle` / `app_handle` is non-empty (validated at register).
     pub recipe_handle: String,
+    /// The saved App handle to RunApp (`""` ⇒ this is a recipe target).
+    pub app_handle: String,
     pub args_template_json: String,
     pub auth: String,
     pub auth_secret_ref: String,
+    /// Cron: legacy interval-seconds OR a 5-field crontab expr; empty otherwise.
     pub schedule_spec: String,
+    /// IANA timezone for a 5-field cron expr (`""` ⇒ UTC); ignored for interval/other.
+    pub timezone: String,
     /// The registrant party the fired run binds authority under (D102.2; server-derived).
     pub owner_party: String,
+    /// Per-trigger HITL (D114): withhold irreversible actions until an operator grant.
+    pub require_approval: bool,
     pub enabled: bool,
     pub next_fire_unix_ms: u64,
     pub created_unix_ms: u64,
@@ -168,10 +184,11 @@ impl TriggersDb {
         conn.execute(
             "INSERT INTO triggers(trigger_id, name, kind, recipe_handle, args_template_json, \
              auth, auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, \
-             created_unix_ms, last_fire_unix_ms) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) \
+             created_unix_ms, last_fire_unix_ms, app_handle, timezone, require_approval) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16) \
              ON CONFLICT(name) DO UPDATE SET kind=?3, recipe_handle=?4, args_template_json=?5, \
              auth=?6, auth_secret_ref=?7, schedule_spec=?8, owner_party=?9, enabled=?10, \
-             next_fire_unix_ms=?11",
+             next_fire_unix_ms=?11, app_handle=?14, timezone=?15, require_approval=?16",
             params![
                 row.trigger_id.to_vec(),
                 row.name,
@@ -186,6 +203,9 @@ impl TriggersDb {
                 ms(row.next_fire_unix_ms),
                 ms(row.created_unix_ms),
                 ms(row.last_fire_unix_ms),
+                row.app_handle,
+                row.timezone,
+                i64::from(row.require_approval),
             ],
         )
         .map_err(|e| GatewayError::Catalog(format!("triggers upsert: {e}")))?;
@@ -198,7 +218,7 @@ impl TriggersDb {
         conn.query_row(
             "SELECT trigger_id, name, kind, recipe_handle, args_template_json, auth, \
              auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, created_unix_ms, \
-             last_fire_unix_ms FROM triggers WHERE name = ?1",
+             last_fire_unix_ms, app_handle, timezone, require_approval FROM triggers WHERE name = ?1",
             params![name],
             row_from,
         )
@@ -222,7 +242,7 @@ impl TriggersDb {
             .prepare(
                 "SELECT trigger_id, name, kind, recipe_handle, args_template_json, auth, \
                  auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, created_unix_ms, \
-                 last_fire_unix_ms FROM triggers WHERE name > ?1 ORDER BY name ASC LIMIT ?2",
+                 last_fire_unix_ms, app_handle, timezone, require_approval FROM triggers WHERE name > ?1 ORDER BY name ASC LIMIT ?2",
             )
             .map_err(|e| GatewayError::Catalog(format!("triggers list prepare: {e}")))?;
         let mut rows = stmt
@@ -338,7 +358,7 @@ impl TriggersDb {
             .prepare(
                 "SELECT trigger_id, name, kind, recipe_handle, args_template_json, auth, \
                  auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, created_unix_ms, \
-                 last_fire_unix_ms FROM triggers \
+                 last_fire_unix_ms, app_handle, timezone, require_approval FROM triggers \
                  WHERE kind = 'cron' AND enabled = 1 AND next_fire_unix_ms <= ?1 \
                  ORDER BY name ASC",
             )
@@ -382,6 +402,9 @@ fn row_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<TriggerRow> {
         next_fire_unix_ms: u64::try_from(r.get::<_, i64>(10)?).unwrap_or(0),
         created_unix_ms: u64::try_from(r.get::<_, i64>(11)?).unwrap_or(0),
         last_fire_unix_ms: u64::try_from(r.get::<_, i64>(12)?).unwrap_or(0),
+        app_handle: r.get(13)?,
+        timezone: r.get(14)?,
+        require_approval: r.get::<_, i64>(15)? != 0,
     })
 }
 
@@ -395,6 +418,7 @@ mod tests {
             name: name.to_string(),
             kind: kind.to_string(),
             recipe_handle: "kx/recipes/chat".to_string(),
+            app_handle: String::new(),
             args_template_json: String::new(),
             auth: "hmac_sha256".to_string(),
             auth_secret_ref: "WEBHOOK_SECRET".to_string(),
@@ -403,12 +427,34 @@ mod tests {
             } else {
                 String::new()
             },
+            timezone: "UTC".to_string(),
             owner_party: "local-dev".to_string(),
+            require_approval: false,
             enabled: true,
             next_fire_unix_ms: if kind == "cron" { 1_000 } else { 0 },
             created_unix_ms: 500,
             last_fire_unix_ms: 0,
         }
+    }
+
+    #[test]
+    fn app_target_and_cron_tz_and_hitl_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = TriggersDb::open(dir.path()).unwrap();
+        // An App-target cron trigger with a 5-field expr, a timezone, and HITL on.
+        let mut r = row("nightly", "cron");
+        r.recipe_handle = String::new();
+        r.app_handle = "support-triage".to_string();
+        r.schedule_spec = "0 9 * * 1-5".to_string();
+        r.timezone = "America/New_York".to_string();
+        r.require_approval = true;
+        db.upsert(&r).unwrap();
+        let got = db.get("nightly").unwrap().unwrap();
+        assert_eq!(got, r);
+        assert_eq!(got.app_handle, "support-triage");
+        assert_eq!(got.timezone, "America/New_York");
+        assert!(got.require_approval);
+        assert!(got.recipe_handle.is_empty());
     }
 
     #[test]

@@ -214,6 +214,26 @@ describe("App.run → SaveApp + RunApp (the integration-in-app fix)", () => {
     expect(scope).toContain("KX_EXTRA_CRED");
   });
 
+  it("withSlack curated connector", () => {
+    const env = app("slacker")
+      .blueprint(flow().agent("post a digest", { tools: ["kx-connector-slack/post_message"] }))
+      .withSlack()
+      .toEnvelope() as Record<string, any>;
+    expect(env.references.connections[0].descriptor).toBe("kx-connector-slack");
+    expect(env.references.connections[0].credential_ref).toBe("KX_SLACK_CREDENTIAL");
+    expect(env.steering_config.guards.secret_scope).toContain("KX_SLACK_CREDENTIAL");
+  });
+
+  it("withNotion curated connector", () => {
+    const env = app("notetaker")
+      .blueprint(flow().agent("append a note", { tools: ["kx-connector-notion/append_block"] }))
+      .withNotion()
+      .toEnvelope() as Record<string, any>;
+    expect(env.references.connections[0].descriptor).toBe("kx-connector-notion");
+    expect(env.references.connections[0].credential_ref).toBe("KX_NOTION_CREDENTIAL");
+    expect(env.steering_config.guards.secret_scope).toContain("KX_NOTION_CREDENTIAL");
+  });
+
   it("Flow.asApp promotes topology and carries side-channels", async () => {
     const { client, calls } = fakeClient();
     await flow()

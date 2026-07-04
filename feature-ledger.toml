@@ -350,7 +350,8 @@ notes    = "Committed follow-up to RC-SW3 (own PR; may split RC-SW3.1a admission
 [[feature]]
 id       = "t-runapp-context-rail"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "289"
 branch   = "feat/t-runapp-context-rail"
 covers   = [
   "wire the App envelope's INERT knowledge rail into RunApp (D178 pillar #2 CRITICAL): HostAppAuthor::author_app (kx-gateway/src/app_run.rs) resolves references.context/prompts/rules/memory + steering_config.context.{context_refs,bundle_handles} into labeled ContextItemRefs merged through the SAME author_with_context_items extra_items seam RC-SW1 uses for skills (context:/prompt:/rule:/memory:/ref: prefixes; fail-closed CAS-presence per item) => an App self-grounds on its declaration instead of a hand-authored blueprint",
@@ -376,3 +377,19 @@ covers   = [
 ]
 inherits = ["t-runapp-context-rail", "rc5b-consolidation-decay-memory-ui"]
 notes    = "SPLIT out of t-runapp-context-rail by the subtask-8 plan-mode review: it touches TWO foundational crates (kx-warrant identity model + kx-capability broker-dispatch seam) that EVERY run flows through, whereas the context-rail folds are wholly contained in kx-gateway. Landing it separately keeps the context-rail PR reviewable and isolates the security-sensitive warrant/broker change with its own guard evidence. Additive; digest 7d22d4bd invariant (product digest ignores warrant_ref)."
+
+[[feature]]
+id       = "t-app-trigger-target"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/t-app-trigger-target"
+covers   = [
+  "T-APP-TRIGGER-TARGET (D178 pillar #4, the automation gap): a cron/webhook/gRPC trigger can fire a saved App (kortecx.app/v1), not just a recipe. Additive proto app_handle=8/timezone=9/require_approval=10 on RegisterTriggerRequest (+ 10/11/12 on TriggerView, back-compat; recipe_handle stays field 3). HostTriggerAdmin gains Option<Arc<dyn AppAuthor>>+Option<Arc<dyn RegisteredToolsView>>; submit() branches recipe binder.bind vs App author_app(party,app_handle,args,require_approval), ports the RunApp fireable-grant backstop, then the IDENTICAL register_run+submit_mote tail (coordinator stays sole writer). server.rs hoists the App-run resolver above the trigger seam (shared clone; None => App triggers fail closed + RunApp unimplemented). exactly-one-of recipe|app validated at register; App-target-without-seam fails fast",
+  "5-field cron + IANA timezone (croner + chrono default-features-off + chrono-tz): schedule.rs next_fire() — legacy all-digits interval-seconds (ZERO migration) OR a 5-field crontab expr in a timezone (DST-correct); validated at register (bad expr/tz => synchronous invalid_argument, never a silent never-firing trigger). triggers.db SCHEMA_VERSION 1->2 (off-journal rebuild-empty) + app_handle/timezone/require_approval columns",
+  "per-trigger HITL (D114, reuses the shipped machinery): require_approval threaded into AppAuthor::author_app; app_run.rs injects REACT_REQUIRE_APPROVAL_KEY (canonical-JSON bool) into the entry agentic step's config BEFORE lowering (part of the launch MoteId; false => nothing injected => byte-identical). Per-trigger cost_ceiling DEFERRED to PR-8 (blocked by T-WARRANT-COST-TLS-WIRE-DROP: WarrantSpec.cost_ceiling is intentionally not proto-encoded, convert.rs:579-581)",
+  "first-class curated .with_slack()/.with_notion() App builders + provider catalog rows across CLI (verbs/connections.rs, + backfill the missing Discord CLI row)/Py(app.py)/TS(app.ts)/UI(ConnectionsPanel PROVIDERS); reference the kx-connector-slack/-notion sidecars (built in the parallel GR25 lane/integrations)",
+  "cross-surface (D177 single-entry chaining): kx triggers add --app/--cron/--timezone/--require-approval (mutually exclusive --recipe|--app) + list render (app:/tz/hitl); Py kx.triggers.add(app_handle,timezone,require_approval); TS client.triggers.add({appHandle,timezone,requireApproval}); UI TriggersPanel recipe|app toggle + tz/HITL fields + app:/hitl row chips; docs/site/docs/authoring-a-trigger.md 'Firing an App on a schedule'",
+  "gates: schedule.rs unit (interval/cron/tz/DST/bad) + triggers_store app/tz/hitl round-trip + app_run require_approval-injection-and-no-op + trigger_admin_e2e {app-target register+view · exactly-one-of · bad cron/tz · legacy interval} + CLI parse + Py/TS/UI cross-surface + LIVE dual-engine app_live_serve::trigger_fires_discord_app_live (a gRPC trigger fires a credentialed App to a terminal, both engines). Digest 7d22d4bd invariant (require_approval=false + recipe path byte-identical; triggers.db off-journal, NO journal/checkpoint change); frozen-trio EMPTY; additive-only proto + codegen-fresh; croner/chrono/chrono-tz cargo-deny clean",
+]
+inherits = ["app-pointer-run-resolution", "integrations-foundation", "autonomy-safety-gates", "gmail-integration", "discord-connector", "t-runapp-context-rail"]
+notes    = "D178 completeness plan #4 (the automation gap), PULLED FORWARD ahead of the corpus's literal-next RC-SW3.1/RC-SW4 per the user's integrations-come-alive steer (2026-07-04). Realizes the persona-App-on-trigger vision (D170). MEDIUM blast radius: additive proto + a HostTriggerAdmin branch + a server.rs hoist + a new schedule.rs helper + the croner/chrono/chrono-tz dep subtree (server-binary; the cron ticker is host-owned; dep-wall + build-no-inference unaffected — iana-time-zone is pure-Rust on Linux CI). Off-journal + digest 7d22d4bd invariant by construction. Slack/Notion sidecars land in the path-disjoint lane/integrations lane (own PR; slack-connector/notion-connector rows). Deferred: per-trigger cost_ceiling => PR-8 (T-WARRANT-COST-TLS-WIRE-DROP); full approvals-inbox UI => RC6a; T-RUNAPP-RAG-RECIPE-ROUTE stays its own ticket."

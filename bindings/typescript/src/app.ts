@@ -81,6 +81,14 @@ const GMAIL_CREDENTIAL_REF = "KX_GMAIL_CREDENTIAL";
  * sidecar, #277). Mirrors `withGmail` + the Python SDK. */
 const DISCORD_CONNECTOR_COMMAND = "kx-connector-discord";
 const DISCORD_CREDENTIAL_REF = "KX_DISCORD_CREDENTIAL";
+/** T-APP-TRIGGER-TARGET: the curated Slack provider defaults (the bundled
+ * `kx-connector-slack` sidecar). Credential = a bot token `{"bot_token": "xoxb-…"}`. */
+const SLACK_CONNECTOR_COMMAND = "kx-connector-slack";
+const SLACK_CREDENTIAL_REF = "KX_SLACK_CREDENTIAL";
+/** T-APP-TRIGGER-TARGET: the curated Notion provider defaults (the bundled
+ * `kx-connector-notion` sidecar). Credential = an integration token `{"token": "…"}`. */
+const NOTION_CONNECTOR_COMMAND = "kx-connector-notion";
+const NOTION_CREDENTIAL_REF = "KX_NOTION_CREDENTIAL";
 type Pending = { rail: string; name: string; body: string; skill?: Skill };
 
 /** A fluent App builder. Each method returns `this`; terminate with
@@ -243,6 +251,22 @@ export class AppBuilder {
    * KX_DISCORD_CREDENTIAL`. */
   withDiscord(): this {
     return this.withConnection(DISCORD_CONNECTOR_COMMAND, DISCORD_CREDENTIAL_REF);
+  }
+
+  /** T-APP-TRIGGER-TARGET: declare the bundled Slack connector (the curated provider
+   * default) — equivalent to `withConnection("kx-connector-slack", "KX_SLACK_CREDENTIAL")`.
+   * Register with `kx connections add --provider slack` (a bot token `{"bot_token": "xoxb-…"}`
+   * by name). */
+  withSlack(): this {
+    return this.withConnection(SLACK_CONNECTOR_COMMAND, SLACK_CREDENTIAL_REF);
+  }
+
+  /** T-APP-TRIGGER-TARGET: declare the bundled Notion connector (the curated provider
+   * default) — equivalent to `withConnection("kx-connector-notion", "KX_NOTION_CREDENTIAL")`.
+   * Register with `kx connections add --provider notion` (an integration token `{"token": "…"}`
+   * by name). */
+  withNotion(): this {
+    return this.withConnection(NOTION_CONNECTOR_COMMAND, NOTION_CREDENTIAL_REF);
   }
 
   /** Add secret NAMES to `guards.secret_scope` — the run warrant's

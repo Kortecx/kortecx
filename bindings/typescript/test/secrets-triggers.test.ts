@@ -96,6 +96,8 @@ describe("TriggerRow.fromProto", () => {
     expect(row.authSecretPresent).toBe(true);
     expect(row.recipeHandle).toBe("kx/recipes/react");
     expect(row.enabled).toBe(true);
+    expect(row.appHandle).toBe("");
+    expect(row.requireApproval).toBe(false);
     expect(row.lastFireUnixMs).toBe(1700001234000);
     // The hex id round-trips back to the server bytes.
     expect(decodeFixed(row.triggerId, 16)).toEqual(TID);
@@ -104,30 +106,40 @@ describe("TriggerRow.fromProto", () => {
       name: "gh-push",
       kind: "webhook",
       recipe_handle: "kx/recipes/react",
+      app_handle: "",
       auth: "hmac_sha256",
       auth_secret_present: true,
       schedule_spec: "",
+      timezone: "",
       enabled: true,
+      require_approval: false,
       last_fire_unix_ms: 1700001234000,
     });
   });
 
-  it("maps a never-fired cron row (lastFireUnixMs 0)", () => {
+  it("T-APP-TRIGGER-TARGET: maps an App-target cron row (5-field expr + tz + HITL)", () => {
     const row = TriggerRow.fromProto(
       create(TriggerViewSchema, {
         triggerId: TID,
         name: "nightly",
         kind: TriggerKind.CRON,
-        recipeHandle: "kx/recipes/echo",
+        recipeHandle: "",
+        appHandle: "standup-digest",
         auth: TriggerAuth.NONE,
-        scheduleSpec: "86400",
+        scheduleSpec: "0 9 * * 1-5",
+        timezone: "America/New_York",
         enabled: false,
+        requireApproval: true,
         lastFireUnixMs: 0n,
       }),
     );
     expect(row.kind).toBe("cron");
     expect(row.auth).toBe("none");
-    expect(row.scheduleSpec).toBe("86400");
+    expect(row.recipeHandle).toBe("");
+    expect(row.appHandle).toBe("standup-digest");
+    expect(row.scheduleSpec).toBe("0 9 * * 1-5");
+    expect(row.timezone).toBe("America/New_York");
+    expect(row.requireApproval).toBe(true);
     expect(row.enabled).toBe(false);
     expect(row.lastFireUnixMs).toBe(0);
   });

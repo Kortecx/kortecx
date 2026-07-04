@@ -234,6 +234,11 @@ mod approval_gateway;
 // fail-closed threat model) + the local cron ticker. Both fire registered triggers
 // via the SAME TriggerAdmin::submit path. Tokio lives here in the host, never the lib.
 mod cron;
+// T-APP-TRIGGER-TARGET: PURE next-fire computation for cron triggers — legacy
+// interval-seconds (preserved) OR a 5-field crontab expr in an IANA timezone
+// (DST-correct via chrono-tz). No I/O; `now_ms` is passed in so register-seed +
+// tick-advance share one deterministic helper.
+mod schedule;
 mod server;
 mod webhook;
 // Batch C: the telemetry.db sidecar (the TelemetryView seam) — host-measured

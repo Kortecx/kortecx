@@ -129,6 +129,17 @@ keyring            = { version = "3", default-features = false }
 # transitive tree (anndists/mmap-rs/rayon/hashbrown/…) is permissive; cargo-deny
 # (all-features) gates it.
 hnsw_rs            = { version = "0.3", default-features = false }
+# T-APP-TRIGGER-TARGET (D113 extension): real 5-field cron + IANA-timezone DST for
+# App-target scheduled triggers. `croner` (MIT) parses STANDARD 5-field Unix crontab
+# patterns natively (the `cron` crate requires a leading seconds field); `chrono`
+# (`default-features = false` — no `clock`/`oldtime`, so no legacy `time 0.1` path)
+# supplies the DateTime algebra; `chrono-tz` embeds the IANA tz database
+# (MIT/Apache/Unicode-3.0) for DST-correct next-fire arithmetic. Host-owned (the cron
+# ticker lives in the gateway binary); the dep-wall keeps them out of the frozen-trio
+# closure. All permissive — cargo-deny (licenses/advisories/bans) gates the subtree.
+croner             = "2"
+chrono             = { version = "0.4", default-features = false, features = ["std"] }
+chrono-tz          = "0.10"
 # Workspace member path-deps carry an explicit `version = "0.1.0"` matching
 # each member's `[package].version`. Without it, cargo-deny flags path-only
 # deps as wildcards (the version constraint is unconstrained). The version

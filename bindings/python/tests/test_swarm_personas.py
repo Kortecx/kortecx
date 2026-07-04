@@ -216,6 +216,32 @@ def test_with_discord_and_secrets() -> None:
     assert "KX_DISCORD_CREDENTIAL" in scope and "KX_EXTRA_CRED" in scope
 
 
+def test_with_slack_curated_connector() -> None:
+    env = (
+        kx.app("slacker")
+        .blueprint(kx.flow().agent("post a digest", tools=["kx-connector-slack/post_message"]))
+        .with_slack()
+        .to_envelope()
+    )
+    conns = env["references"]["connections"]
+    assert conns[0]["descriptor"] == "kx-connector-slack"
+    assert conns[0]["credential_ref"] == "KX_SLACK_CREDENTIAL"
+    assert "KX_SLACK_CREDENTIAL" in env["steering_config"]["guards"]["secret_scope"]
+
+
+def test_with_notion_curated_connector() -> None:
+    env = (
+        kx.app("notetaker")
+        .blueprint(kx.flow().agent("append a note", tools=["kx-connector-notion/append_block"]))
+        .with_notion()
+        .to_envelope()
+    )
+    conns = env["references"]["connections"]
+    assert conns[0]["descriptor"] == "kx-connector-notion"
+    assert conns[0]["credential_ref"] == "KX_NOTION_CREDENTIAL"
+    assert "KX_NOTION_CREDENTIAL" in env["steering_config"]["guards"]["secret_scope"]
+
+
 def test_flow_as_app_promotes_topology_and_carries_side_channels() -> None:
     fake = _FakeClient()
     (

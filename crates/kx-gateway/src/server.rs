@@ -365,6 +365,16 @@ async fn wait_for_shutdown_signal() {
     }
 }
 
+// T-APP-TRIGGER-TARGET: the App-run seam pair — the RunApp resolver + its paired
+// broker-fireable view (both `Some` iff the connections.db opened on an mcp-gateway build;
+// else both `None` ⇒ App-target triggers + RunApp fail closed). Module scope so the two
+// cfg-branched `let` bindings share one name (a mid-fn `type` trips items_after_statements).
+#[cfg(feature = "embedded-worker")]
+type AppRunSeam = (
+    Option<Arc<dyn kx_gateway_core::AppAuthor>>,
+    Option<Arc<dyn kx_gateway_core::RegisteredToolsView>>,
+);
+
 // A flat, sequential wiring function: content store → coordinator → worker →
 // gateway read seams → catalog → auth → (optional) TLS → bind. Splitting it would
 // scatter the one-shot startup wiring across helpers for no clarity gain (the
@@ -1607,6 +1617,54 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             tracing::warn!(%error, "MM-3: secret store unavailable; secret RPCs return unimplemented");
         }
     }
+    // T-APP-TRIGGER-TARGET: build the App-run resolver (the RunApp seam) HERE — before
+    // the trigger seam — so an App-target trigger can fire a credentialed App through the
+    // SAME author_app + submit path RunApp uses. It reads connections.db (mcp-gateway
+    // only); absent ⇒ None ⇒ App-target triggers fail closed at register + RunApp returns
+    // `unimplemented` (recipe triggers + the legacy client App path are unaffected). The
+    // paired fireable view backs the port of RunApp's fireable-grant backstop onto the
+    // trigger path. Shared (clone) with the `with_app_runner` wiring in the mcp-gateway
+    // block below (one construction, no duplicate connections.db handle churn). `AppRunSeam`
+    // (module scope) names the (resolver, fireable) pair.
+    #[cfg(feature = "mcp-gateway")]
+    let (app_author, app_fireable): AppRunSeam = match kx_mcp_gateway::SqliteConnectionStore::open(
+        catalog_dir.join("connections.db"),
+    ) {
+        Ok(conn_store) => {
+            // The live dataset view for RAG-on-App presence checks — Some ONLY where
+            // retrieve@1 is both registered AND fireable (serve-engine + hnsw); else None.
+            #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+            let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> =
+                Some(dataset_view.clone() as Arc<dyn kx_gateway_core::DatasetView>);
+            #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
+            let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> = None;
+            // The SAME live-broker truth the service's fireable backstop uses.
+            let fireable: Arc<dyn kx_gateway_core::RegisteredToolsView> =
+                Arc::new(HostRegisteredTools {
+                    broker: local_broker.clone(),
+                });
+            let app_runner = crate::app_run::HostAppAuthor::new(
+                apps_db.clone(),
+                Arc::new(conn_store),
+                host_author.clone(),
+                demo.clone(),
+                tool_registry.clone(),
+                fireable.clone(),
+                content.clone(),
+                app_datasets,
+            );
+            (
+                Some(Arc::new(app_runner) as Arc<dyn kx_gateway_core::AppAuthor>),
+                Some(fireable),
+            )
+        }
+        Err(error) => {
+            tracing::warn!(%error, "G2: App-run resolver disabled (connections.db unavailable)");
+            (None, None)
+        }
+    };
+    #[cfg(not(feature = "mcp-gateway"))]
+    let (app_author, app_fireable): AppRunSeam = (None, None);
     // D113: wire the trigger seam (Register/List/Deregister/Submit/Test). Opens the
     // off-journal triggers.db; the HostTriggerAdmin starts runs via the SAME propose-
     // proxy the Invoke path uses (coordinator = sole journal writer; frozen trio
@@ -1623,6 +1681,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 trigger_binder,
                 trigger_submitter,
                 react_supported,
+                app_author.clone(),
+                app_fireable.clone(),
             ));
             gateway = gateway.with_trigger_admin(admin.clone());
             tracing::info!("D113: trigger seam wired (triggers.db)");
@@ -1709,43 +1769,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 tracing::warn!(%error, "external MCP gateway disabled (connections.db unavailable)");
             }
         }
-        // G2: wire the App-pointer → run resolver (RunApp) over its OWN read handle to
-        // connections.db + the App catalog + the live workflow author. Independent of
-        // the admin wiring above (the resolver only READS connections). A store-open
-        // failure leaves RunApp `unimplemented` (clients fall back to GetApp ->
-        // SubmitWorkflow). Server-minted warrants; off-journal, off-digest.
-        match kx_mcp_gateway::SqliteConnectionStore::open(catalog_dir.join("connections.db")) {
-            Ok(conn_store) => {
-                // T-RUNAPP-CONTEXT-RAIL: the live dataset view for RAG-on-App presence
-                // checks — Some ONLY where retrieve@1 is both registered AND fireable
-                // (serve-engine + hnsw, matching register_retrieve_capability above); else
-                // None ⇒ a declared App dataset honest-degrades to an ungrounded run.
-                #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
-                let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> =
-                    Some(dataset_view.clone() as Arc<dyn kx_gateway_core::DatasetView>);
-                #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
-                let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> = None;
-                let app_runner = crate::app_run::HostAppAuthor::new(
-                    apps_db.clone(),
-                    Arc::new(conn_store),
-                    host_author.clone(),
-                    demo.clone(),
-                    tool_registry.clone(),
-                    // The SAME live-broker truth the service's fireable backstop
-                    // uses (a skill wish that is not fireable is dropped at bind,
-                    // never authored into a warrant the backstop would refuse).
-                    Arc::new(HostRegisteredTools {
-                        broker: local_broker.clone(),
-                    }),
-                    content.clone(),
-                    app_datasets,
-                );
-                gateway = gateway.with_app_runner(Arc::new(app_runner));
-                tracing::info!("G2: App-pointer run resolver wired (RunApp)");
-            }
-            Err(error) => {
-                tracing::warn!(%error, "G2: App-run resolver disabled (connections.db unavailable)");
-            }
+        // G2/T-APP-TRIGGER-TARGET: wire the App-pointer → run resolver (RunApp). It was
+        // constructed ABOVE (shared by clone with the trigger seam, so an App-target
+        // trigger and RunApp use the SAME resolver + connections handle). `None` ⇒ the
+        // connections.db open failed ⇒ RunApp returns `unimplemented` (clients fall back
+        // to GetApp -> SubmitWorkflow) and App-target triggers already fail closed.
+        if let Some(runner) = app_author.clone() {
+            gateway = gateway.with_app_runner(runner);
+            tracing::info!("G2: App-pointer run resolver wired (RunApp)");
         }
     }
 

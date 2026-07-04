@@ -78,16 +78,25 @@ export interface RegisterTriggerInput {
   readonly name: string;
   /** `"webhook"` | `"cron"` | `"grpc"`. */
   readonly kind: TriggerKindInput;
-  /** The `kx/recipes/...` handle the event Invokes. */
-  readonly recipeHandle: string;
+  /** The `kx/recipes/...` handle the event Invokes (`""` ⇒ App target). Exactly one
+   *  of `recipeHandle` / `appHandle` is required. */
+  readonly recipeHandle?: string;
+  /** T-APP-TRIGGER-TARGET: a saved App handle the event runs via `RunApp` (`""` ⇒
+   *  recipe target). The credentialed App fires unattended with its connections +
+   *  secret_scope resolved. */
+  readonly appHandle?: string;
   /** Webhook auth posture (defaults to `"none"`). */
   readonly auth?: TriggerAuthInput;
   /** SecretRef NAME of the HMAC/bearer secret (never the value; defaults to none). */
   readonly authSecretRef?: string;
-  /** cron: interval seconds (e.g. `"300"`); empty otherwise. */
+  /** cron: interval seconds (`"300"`) OR a 5-field crontab expr (`"0 9 * * 1-5"`). */
   readonly scheduleSpec?: string;
+  /** IANA timezone for a 5-field cron expr (e.g. `"America/New_York"`); `""` ⇒ UTC. */
+  readonly timezone?: string;
   /** Defaults to `true`. */
   readonly enabled?: boolean;
+  /** Per-trigger HITL (D114): withhold irreversible actions until an operator grant. */
+  readonly requireApproval?: boolean;
 }
 
 /** The outcome of `registerTrigger` — the server-derived trigger id (hex). */
@@ -105,13 +114,20 @@ export class TriggerRow {
     readonly name: string,
     /** `"webhook"` | `"cron"` | `"grpc"` (`"unknown"` absorbs any future value). */
     readonly kind: TriggerKindName,
+    /** `""` for an App target. */
     readonly recipeHandle: string,
+    /** T-APP-TRIGGER-TARGET: the App target (`""` for a recipe target). */
+    readonly appHandle: string,
     /** `"none"` | `"hmac_sha256"` | `"bearer"` (`"unknown"` absorbs any future value). */
     readonly auth: TriggerAuthName,
     /** A ref NAME is attached (never the value). */
     readonly authSecretPresent: boolean,
     readonly scheduleSpec: string,
+    /** IANA timezone for a 5-field cron expr (`""` ⇒ UTC). */
+    readonly timezone: string,
     readonly enabled: boolean,
+    /** Per-trigger HITL posture (D114). */
+    readonly requireApproval: boolean,
     /** Audit-only wall-clock; `0` ⇒ never fired. */
     readonly lastFireUnixMs: number,
   ) {}
@@ -122,10 +138,13 @@ export class TriggerRow {
       t.name,
       triggerKindName(t.kind),
       t.recipeHandle,
+      t.appHandle,
       triggerAuthName(t.auth),
       t.authSecretPresent,
       t.scheduleSpec,
+      t.timezone,
       t.enabled,
+      t.requireApproval,
       Number(t.lastFireUnixMs),
     );
   }
@@ -137,10 +156,13 @@ export class TriggerRow {
       name: this.name,
       kind: this.kind,
       recipe_handle: this.recipeHandle,
+      app_handle: this.appHandle,
       auth: this.auth,
       auth_secret_present: this.authSecretPresent,
       schedule_spec: this.scheduleSpec,
+      timezone: this.timezone,
       enabled: this.enabled,
+      require_approval: this.requireApproval,
       last_fire_unix_ms: this.lastFireUnixMs,
     };
   }

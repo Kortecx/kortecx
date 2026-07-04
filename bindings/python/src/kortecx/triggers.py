@@ -80,11 +80,14 @@ class TriggerView:
     trigger_id: str  # server-derived id, hex
     name: str
     kind: str  # "webhook" | "cron" | "grpc" | "unknown"
-    recipe_handle: str
+    recipe_handle: str  # "" for an App target
+    app_handle: str  # T-APP-TRIGGER-TARGET: the App target ("" for a recipe target)
     auth: str  # "none" | "hmac_sha256" | "bearer" | "unknown"
     auth_secret_present: bool
-    schedule_spec: str  # cron expression (cron kind) / "" otherwise
+    schedule_spec: str  # interval seconds OR a 5-field crontab expr (cron kind) / "" otherwise
+    timezone: str  # IANA zone for a 5-field cron expr ("" ⇒ UTC)
     enabled: bool
+    require_approval: bool  # per-trigger HITL posture (D114)
     last_fire_unix_ms: int
 
     @classmethod
@@ -94,10 +97,13 @@ class TriggerView:
             name=t.name,
             kind=trigger_kind_name(t.kind),
             recipe_handle=t.recipe_handle,
+            app_handle=t.app_handle,
             auth=trigger_auth_name(t.auth),
             auth_secret_present=t.auth_secret_present,
             schedule_spec=t.schedule_spec,
+            timezone=t.timezone,
             enabled=t.enabled,
+            require_approval=t.require_approval,
             last_fire_unix_ms=t.last_fire_unix_ms,
         )
 

@@ -2,7 +2,7 @@
 id: authoring-a-trigger
 title: Authoring a trigger
 sidebar_label: Authoring a trigger
-description: Bind an inbound source (webhook / cron / grpc) to a recipe so an event starts a fresh durable run through the Invoke path, with per-trigger HMAC or bearer auth on the untrusted webhook surface (D113).
+description: Bind an inbound source (webhook / cron / grpc) to a recipe OR a saved App so an event starts a fresh durable run — with 5-field cron + timezones, per-trigger HITL approval, and per-trigger HMAC/bearer auth on the untrusted webhook surface (D113 / T-APP-TRIGGER-TARGET).
 ---
 
 # Authoring a trigger
@@ -23,8 +23,14 @@ There are three inbound kinds:
 | Kind | Source | Auth surface |
 |---|---|---|
 | `webhook` | an inbound HTTP POST | **untrusted** — HMAC / bearer required off loopback |
-| `cron` | a fixed interval (seconds) | internal scheduler — no inbound auth |
+| `cron` | an interval (seconds) **or** a 5-field crontab expression in a timezone | internal scheduler — no inbound auth |
 | `grpc` | an authenticated gRPC `FireTrigger` | the gateway's existing bearer gate |
+
+A trigger targets **either a recipe handle or a saved App**. An **App target** fires a
+credentialed [App](./apps.md) unattended — its declared `references.connections` +
+`guards.secret_scope` resolve on the run so an integration (Gmail, Slack, Discord,
+Notion…) can be dialed inside the agentic loop, exactly as an interactive `RunApp`. This
+is how a persona-App reacts to the world on a schedule or an event.
 
 ## The webhook is the untrusted-inbound surface
 
@@ -113,6 +119,50 @@ kx triggers rm --name alert
 `test` validates a payload against the trigger **without** starting a durable run —
 a "does this trigger route" check. `fire` (and a real inbound event) starts a fresh,
 journaled, replayable run.
+
+## Firing an App on a schedule
+
+Point a trigger at a **saved App** with `app` instead of `recipe` — the App fires
+unattended with its integrations + secret scope resolved. Pair it with a **5-field cron
+expression** and a **timezone** for real scheduling, and turn on **`require_approval`**
+so an unattended App holds any irreversible action for an operator grant (D114 — see
+[Security](./security.md)):
+
+```python title="Python — an App on a weekday-morning schedule, HITL-gated"
+import kortecx as kx
+
+# "standup-digest" is a saved, credentialed App (see Apps → author + .save()); it
+# declares .with_slack() + .secrets("KX_SLACK_CREDENTIAL") so it can post unattended.
+
+# 09:00 on weekdays, New York time; hold irreversible posts for approval
+kx.triggers.add(name="standup", kind="cron", app="standup-digest",
+                schedule="0 9 * * 1-5", timezone="America/New_York",
+                require_approval=True)
+```
+
+```ts title="TypeScript"
+await client.triggers.add({ name: "standup", kind: "cron", appHandle: "standup-digest",
+  scheduleSpec: "0 9 * * 1-5", timezone: "America/New_York", requireApproval: true });
+```
+
+```bash title="CLI"
+kx triggers add --name standup --kind cron --app standup-digest \
+  --cron "0 9 * * 1-5" --timezone America/New_York --require-approval
+```
+
+- **Target** — pass exactly one of `recipe` / `app` (`--recipe` | `--app`). An App
+  target needs the App-run seam (`kx serve --features mcp-gateway`, the default).
+- **Schedule** — `schedule` accepts either interval seconds (`"300"`) **or** a standard
+  5-field crontab expression (`min hour dom month dow`). A cron expression is evaluated
+  in `timezone` (any IANA name; empty ⇒ UTC), DST-correct.
+- **Approval** — `require_approval` withholds irreversible (world-mutating) tool actions
+  until an operator grants them from the **Security → approvals** surface; read-only
+  actions still auto-proceed. Recommended for any unattended webhook/cron App that can
+  take an irreversible action.
+
+An App-target trigger runs under the **registrant's party** (D102.2) — the same identity
+that saved the App and registered its connections — so a webhook caller can start the run
+but never escalate beyond what the registrant could `RunApp` themselves (SN-8).
 
 ## POSTing a signed webhook
 

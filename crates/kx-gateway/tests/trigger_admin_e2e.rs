@@ -50,6 +50,9 @@ async fn trigger_admin_register_list_deregister_round_trips() {
             auth_secret_ref: "HOOK_SECRET".to_string(),
             schedule_spec: String::new(),
             enabled: true,
+            app_handle: String::new(),
+            timezone: String::new(),
+            require_approval: false,
         })
         .await
         .expect("register")
@@ -100,6 +103,9 @@ async fn trigger_admin_register_list_deregister_round_trips() {
             auth_secret_ref: "HOOK_SECRET".to_string(),
             schedule_spec: String::new(),
             enabled: true,
+            app_handle: String::new(),
+            timezone: String::new(),
+            require_approval: false,
         })
         .await
         .expect("re-register")
@@ -161,6 +167,9 @@ async fn register_trigger_rejects_unknown_kind_and_missing_fields() {
             auth_secret_ref: String::new(),
             schedule_spec: String::new(),
             enabled: true,
+            app_handle: String::new(),
+            timezone: String::new(),
+            require_approval: false,
         })
         .await
         .expect_err("unknown kind refused");
@@ -176,8 +185,128 @@ async fn register_trigger_rejects_unknown_kind_and_missing_fields() {
             auth_secret_ref: String::new(),
             schedule_spec: String::new(),
             enabled: true,
+            app_handle: String::new(),
+            timezone: String::new(),
+            require_approval: false,
         })
         .await
         .expect_err("hmac without a secret ref refused");
     assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}
+
+// T-APP-TRIGGER-TARGET: a cron trigger targeting a saved App with a 5-field crontab
+// expression, a timezone, and the per-trigger HITL posture round-trips through the
+// governance view (the App-run seam is wired on the default e2e serve; register does
+// not check App existence — a fire against a missing App fails at submit).
+#[tokio::test]
+async fn register_app_target_cron_trigger_round_trips_view() {
+    let dir = TempDir::new().unwrap();
+    let running = start(config(&dir)).await.unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let reg = c
+        .register_trigger(proto::RegisterTriggerRequest {
+            name: "standup".to_string(),
+            kind: proto::TriggerKind::Cron as i32,
+            recipe_handle: String::new(),
+            app_handle: "standup-digest".to_string(),
+            auth: proto::TriggerAuth::None as i32,
+            auth_secret_ref: String::new(),
+            schedule_spec: "0 9 * * 1-5".to_string(),
+            timezone: "America/New_York".to_string(),
+            enabled: true,
+            require_approval: true,
+        })
+        .await
+        .expect("register app-target cron trigger")
+        .into_inner();
+    assert_eq!(reg.trigger_id.len(), 16);
+
+    let list = c
+        .list_triggers(proto::ListTriggersRequest {
+            limit: 0,
+            after_name: String::new(),
+        })
+        .await
+        .expect("list")
+        .into_inner();
+    let row = list
+        .triggers
+        .iter()
+        .find(|t| t.name == "standup")
+        .expect("the app-target trigger is listed");
+    assert_eq!(row.app_handle, "standup-digest", "App target surfaced");
+    assert!(row.recipe_handle.is_empty(), "no recipe target");
+    assert_eq!(row.schedule_spec, "0 9 * * 1-5");
+    assert_eq!(row.timezone, "America/New_York");
+    assert!(row.require_approval, "HITL posture surfaced");
+}
+
+// T-APP-TRIGGER-TARGET: exactly one of recipe_handle | app_handle.
+#[tokio::test]
+async fn register_rejects_both_and_neither_targets() {
+    let dir = TempDir::new().unwrap();
+    let running = start(config(&dir)).await.unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let mk = |recipe: &str, app: &str| proto::RegisterTriggerRequest {
+        name: "x".to_string(),
+        kind: proto::TriggerKind::Grpc as i32,
+        recipe_handle: recipe.to_string(),
+        app_handle: app.to_string(),
+        auth: proto::TriggerAuth::None as i32,
+        auth_secret_ref: String::new(),
+        schedule_spec: String::new(),
+        timezone: String::new(),
+        enabled: true,
+        require_approval: false,
+    };
+    // Neither.
+    let err = c
+        .register_trigger(mk("", ""))
+        .await
+        .expect_err("neither target refused");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    // Both.
+    let err = c
+        .register_trigger(mk("kx/recipes/react", "some-app"))
+        .await
+        .expect_err("both targets refused");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}
+
+// T-APP-TRIGGER-TARGET: a malformed 5-field cron expression / unknown timezone is
+// rejected at register (a synchronous error, never a silent never-firing trigger).
+#[tokio::test]
+async fn register_cron_rejects_bad_expr_and_timezone() {
+    let dir = TempDir::new().unwrap();
+    let running = start(config(&dir)).await.unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let mk = |sched: &str, tz: &str| proto::RegisterTriggerRequest {
+        name: "cronbad".to_string(),
+        kind: proto::TriggerKind::Cron as i32,
+        recipe_handle: "kx/recipes/react".to_string(),
+        app_handle: String::new(),
+        auth: proto::TriggerAuth::None as i32,
+        auth_secret_ref: String::new(),
+        schedule_spec: sched.to_string(),
+        timezone: tz.to_string(),
+        enabled: true,
+        require_approval: false,
+    };
+    let err = c
+        .register_trigger(mk("not a cron", ""))
+        .await
+        .expect_err("bad cron refused");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    let err = c
+        .register_trigger(mk("0 9 * * *", "Mars/Phobos"))
+        .await
+        .expect_err("bad timezone refused");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    // A legacy interval-seconds spec still registers (back-compat).
+    c.register_trigger(mk("300", ""))
+        .await
+        .expect("legacy interval still valid");
 }

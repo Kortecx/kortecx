@@ -2533,7 +2533,7 @@ class DeleteSecretResponse(_message.Message):
     def __init__(self, removed: bool = ...) -> None: ...
 
 class RegisterTriggerRequest(_message.Message):
-    __slots__ = ("name", "kind", "recipe_handle", "auth", "auth_secret_ref", "schedule_spec", "enabled")
+    __slots__ = ("name", "kind", "recipe_handle", "auth", "auth_secret_ref", "schedule_spec", "enabled", "app_handle", "timezone", "require_approval")
     NAME_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     RECIPE_HANDLE_FIELD_NUMBER: _ClassVar[int]
@@ -2541,6 +2541,9 @@ class RegisterTriggerRequest(_message.Message):
     AUTH_SECRET_REF_FIELD_NUMBER: _ClassVar[int]
     SCHEDULE_SPEC_FIELD_NUMBER: _ClassVar[int]
     ENABLED_FIELD_NUMBER: _ClassVar[int]
+    APP_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    TIMEZONE_FIELD_NUMBER: _ClassVar[int]
+    REQUIRE_APPROVAL_FIELD_NUMBER: _ClassVar[int]
     name: str
     kind: TriggerKind
     recipe_handle: str
@@ -2548,7 +2551,10 @@ class RegisterTriggerRequest(_message.Message):
     auth_secret_ref: str
     schedule_spec: str
     enabled: bool
-    def __init__(self, name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_ref: _Optional[str] = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ...) -> None: ...
+    app_handle: str
+    timezone: str
+    require_approval: bool
+    def __init__(self, name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_ref: _Optional[str] = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ..., app_handle: _Optional[str] = ..., timezone: _Optional[str] = ..., require_approval: bool = ...) -> None: ...
 
 class RegisterTriggerResponse(_message.Message):
     __slots__ = ("trigger_id",)
@@ -2565,7 +2571,7 @@ class ListTriggersRequest(_message.Message):
     def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ...) -> None: ...
 
 class TriggerView(_message.Message):
-    __slots__ = ("trigger_id", "name", "kind", "recipe_handle", "auth", "auth_secret_present", "schedule_spec", "enabled", "last_fire_unix_ms")
+    __slots__ = ("trigger_id", "name", "kind", "recipe_handle", "auth", "auth_secret_present", "schedule_spec", "enabled", "last_fire_unix_ms", "app_handle", "timezone", "require_approval")
     TRIGGER_ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
@@ -2575,6 +2581,9 @@ class TriggerView(_message.Message):
     SCHEDULE_SPEC_FIELD_NUMBER: _ClassVar[int]
     ENABLED_FIELD_NUMBER: _ClassVar[int]
     LAST_FIRE_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    APP_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    TIMEZONE_FIELD_NUMBER: _ClassVar[int]
+    REQUIRE_APPROVAL_FIELD_NUMBER: _ClassVar[int]
     trigger_id: bytes
     name: str
     kind: TriggerKind
@@ -2584,7 +2593,10 @@ class TriggerView(_message.Message):
     schedule_spec: str
     enabled: bool
     last_fire_unix_ms: int
-    def __init__(self, trigger_id: _Optional[bytes] = ..., name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_present: bool = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ..., last_fire_unix_ms: _Optional[int] = ...) -> None: ...
+    app_handle: str
+    timezone: str
+    require_approval: bool
+    def __init__(self, trigger_id: _Optional[bytes] = ..., name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_present: bool = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ..., last_fire_unix_ms: _Optional[int] = ..., app_handle: _Optional[str] = ..., timezone: _Optional[str] = ..., require_approval: bool = ...) -> None: ...
 
 class ListTriggersResponse(_message.Message):
     __slots__ = ("triggers", "has_more")

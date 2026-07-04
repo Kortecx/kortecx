@@ -2162,7 +2162,11 @@ impl KxGateway for GatewayService {
         // App's declared `guards.secret_scope`. Server-minted warrants (SN-8): the
         // envelope carries NO authority.
         let bound = runner
-            .author_app(&party, &req.handle, &req.args)
+            // Interactive RunApp keeps today's posture (require_approval = false ⇒ the
+            // serve-wide KX_SERVE_REQUIRE_APPROVAL default applies). A per-request
+            // override field is a later additive; the per-TRIGGER posture is threaded on
+            // the App-target trigger path (T-APP-TRIGGER-TARGET).
+            .author_app(&party, &req.handle, &req.args, false)
             .await
             .map_err(|e| match e {
                 crate::apps_run::AppRunError::NotAuthorized => {
@@ -3759,9 +3763,9 @@ impl KxGateway for GatewayService {
         if req.name.trim().is_empty() {
             return Err(Status::invalid_argument("name is required"));
         }
-        if req.recipe_handle.trim().is_empty() {
-            return Err(Status::invalid_argument("recipe_handle is required"));
-        }
+        // T-APP-TRIGGER-TARGET: recipe_handle | app_handle exactly-one-of is validated in
+        // the seam's register() (which also fail-fasts an App target when the App-run seam
+        // is absent), so no unconditional recipe_handle check here.
         let kind = trigger_kind_str(req.kind);
         if kind.is_empty() {
             return Err(Status::invalid_argument(
@@ -3779,10 +3783,13 @@ impl KxGateway for GatewayService {
                 name: req.name,
                 kind: kind.to_string(),
                 recipe_handle: req.recipe_handle,
+                app_handle: req.app_handle,
                 auth: auth.to_string(),
                 auth_secret_ref: req.auth_secret_ref,
                 schedule_spec: req.schedule_spec,
+                timezone: req.timezone,
                 enabled: req.enabled,
+                require_approval: req.require_approval,
                 owner_party,
             })
             .await
@@ -3814,10 +3821,13 @@ impl KxGateway for GatewayService {
                     name: t.name,
                     kind: trigger_kind_proto(&t.kind),
                     recipe_handle: t.recipe_handle,
+                    app_handle: t.app_handle,
                     auth: trigger_auth_proto(&t.auth),
                     auth_secret_present: t.auth_secret_present,
                     schedule_spec: t.schedule_spec,
+                    timezone: t.timezone,
                     enabled: t.enabled,
+                    require_approval: t.require_approval,
                     last_fire_unix_ms: t.last_fire_unix_ms,
                 })
                 .collect(),

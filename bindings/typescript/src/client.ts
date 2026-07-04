@@ -1715,20 +1715,27 @@ export abstract class KxClientBase {
 
   /**
    * Register a TRIGGER (D113 / D170.b `RegisterTrigger`) — bind an inbound EVENT (a
-   * webhook POST, a cron interval, or a bare `SubmitTrigger` RPC) to a recipe handle
-   * the event Invokes. The auth secret is referenced by NAME only (never the value,
-   * D81); the server derives the trigger id (SN-8). Returns the trigger id (hex).
+   * webhook POST, a cron interval/expression, or a bare `SubmitTrigger` RPC) to EITHER a
+   * recipe handle (`recipeHandle`) OR a saved App (`appHandle` — T-APP-TRIGGER-TARGET:
+   * the credentialed App fires unattended with its connections + secret_scope resolved).
+   * A cron `scheduleSpec` is interval seconds (`"300"`) OR a 5-field crontab expr
+   * (`"0 9 * * 1-5"`) in `timezone`. `requireApproval` adds a per-trigger HITL gate
+   * (D114). The auth secret is referenced by NAME only (D81); the server derives the
+   * trigger id (SN-8). Returns the trigger id (hex).
    */
   async registerTrigger(input: RegisterTriggerInput): Promise<RegisterTriggerResult> {
     const resp = await rpc(
       this.grpc.registerTrigger({
         name: input.name,
         kind: triggerKindToProto(input.kind),
-        recipeHandle: input.recipeHandle,
+        recipeHandle: input.recipeHandle ?? "",
+        appHandle: input.appHandle ?? "",
         auth: triggerAuthToProto(input.auth ?? "none"),
         authSecretRef: input.authSecretRef ?? "",
         scheduleSpec: input.scheduleSpec ?? "",
+        timezone: input.timezone ?? "",
         enabled: input.enabled ?? true,
+        requireApproval: input.requireApproval ?? false,
       }),
     );
     return { triggerId: encode(resp.triggerId) };

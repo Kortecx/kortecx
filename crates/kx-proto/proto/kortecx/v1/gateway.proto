@@ -2053,7 +2053,7 @@ message DeleteSecretResponse { bool removed = 1; }  // false iff absent
 enum TriggerKind {
   TRIGGER_KIND_UNSPECIFIED = 0;
   WEBHOOK = 1;  // an authenticated local HTTP POST (the --webhook-listen port)
-  CRON    = 2;  // a local interval schedule (schedule_spec = interval seconds)
+  CRON    = 2;  // a local schedule (schedule_spec = interval seconds OR a 5-field crontab expr + timezone)
   GRPC    = 3;  // fired only via the SubmitTrigger RPC (no listener)
 }
 enum TriggerAuth {
@@ -2069,8 +2069,12 @@ message RegisterTriggerRequest {
   string      recipe_handle      = 3;  // the kx/recipes/... handle the event Invokes
   TriggerAuth auth               = 4;  // webhook auth posture
   string      auth_secret_ref    = 5;  // SecretRef NAME of the HMAC/bearer secret (never the value)
-  string      schedule_spec      = 6;  // cron: interval seconds (e.g. "300"); empty otherwise
+  string      schedule_spec      = 6;  // cron: interval seconds ("300") OR a 5-field crontab expr ("0 9 * * *"); empty otherwise
   bool        enabled            = 7;
+  // T-APP-TRIGGER-TARGET (additive; back-compat: absent ⇒ recipe target, UTC, no HITL).
+  string      app_handle         = 8;  // a saved App handle to RunApp; EXACTLY ONE of recipe_handle | app_handle
+  string      timezone           = 9;  // IANA zone for a 5-field cron expr (e.g. "America/New_York"); empty ⇒ UTC
+  bool        require_approval   = 10; // per-trigger HITL (D114): withhold irreversible actions until an operator grant
 }
 message RegisterTriggerResponse { bytes trigger_id = 1; }  // 16B server-derived
 
@@ -2088,6 +2092,10 @@ message TriggerView {                  // governance row — never a secret valu
   string      schedule_spec       = 7;
   bool        enabled             = 8;
   uint64      last_fire_unix_ms   = 9;  // 0 ⇒ never fired
+  // T-APP-TRIGGER-TARGET (additive governance fields).
+  string      app_handle          = 10; // the App target handle ('' ⇒ a recipe target)
+  string      timezone            = 11; // IANA zone for a 5-field cron expr ('' ⇒ UTC)
+  bool        require_approval    = 12; // per-trigger HITL posture (D114)
 }
 message ListTriggersResponse {
   repeated TriggerView triggers = 1;

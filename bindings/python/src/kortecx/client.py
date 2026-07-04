@@ -510,21 +510,29 @@ class _Triggers:
         *,
         kind: str = "webhook",
         recipe: str = "",
+        app: str = "",
         auth: str = "none",
         secret_ref: str = "",
         schedule: str = "",
+        timezone: str = "",
         enabled: bool = True,
+        require_approval: bool = False,
     ) -> str:
-        """Register a trigger; returns the hex ``trigger_id``. See
-        ``register_trigger``."""
+        """Register a trigger; returns the hex ``trigger_id``. Pass EITHER ``recipe``
+        OR ``app`` (T-APP-TRIGGER-TARGET: fire a credentialed App unattended). ``schedule``
+        is interval seconds or a 5-field crontab expr (in ``timezone``); ``require_approval``
+        adds a per-trigger HITL gate. See ``register_trigger``."""
         return self._c.register_trigger(
             name=name,
             kind=kind,
             recipe_handle=recipe,
+            app_handle=app,
             auth=auth,
             auth_secret_ref=secret_ref,
             schedule_spec=schedule,
+            timezone=timezone,
             enabled=enabled,
+            require_approval=require_approval,
         )
 
     def list(self, *, limit: int = 0, after_name: str = "") -> "TriggersPage":
@@ -2109,26 +2117,36 @@ class KxClient:
         name: str,
         kind: str = "webhook",
         recipe_handle: str = "",
+        app_handle: str = "",
         auth: str = "none",
         auth_secret_ref: str = "",
         schedule_spec: str = "",
+        timezone: str = "",
         enabled: bool = True,
+        require_approval: bool = False,
     ) -> str:
-        """Register a durable trigger that binds an inbound event to a published
-        recipe (``RegisterTrigger``). ``kind`` is ``"webhook"`` | ``"cron"`` |
-        ``"grpc"`` and ``auth`` is ``"none"`` | ``"hmac_sha256"`` | ``"bearer"``
-        (mapped to the proto enums; an unknown string raises ``ValueError``).
-        ``auth_secret_ref`` NAMES a stored secret (the HMAC key / bearer token
-        resolves server-side, never in the client). Returns the server-derived
-        ``trigger_id`` as hex."""
+        """Register a durable trigger that binds an inbound event to EITHER a published
+        recipe (``recipe_handle``) OR a saved App (``app_handle`` —
+        T-APP-TRIGGER-TARGET: the credentialed App fires unattended with its
+        connections + secret_scope resolved). Exactly one of the two is required.
+        ``kind`` is ``"webhook"`` | ``"cron"`` | ``"grpc"`` and ``auth`` is ``"none"`` |
+        ``"hmac_sha256"`` | ``"bearer"`` (an unknown string raises ``ValueError``). For a
+        cron trigger, ``schedule_spec`` is interval seconds (``"300"``) OR a 5-field
+        crontab expr (``"0 9 * * 1-5"``) evaluated in ``timezone`` (an IANA name;
+        ``""`` ⇒ UTC). ``require_approval`` adds a per-trigger HITL gate (D114).
+        ``auth_secret_ref`` NAMES a stored secret (resolved server-side, D81). Returns
+        the server-derived ``trigger_id`` as hex."""
         req = _g.RegisterTriggerRequest(
             name=name,
             kind=trigger_kind_to_proto(kind),
             recipe_handle=recipe_handle,
+            app_handle=app_handle,
             auth=trigger_auth_to_proto(auth),
             auth_secret_ref=auth_secret_ref,
             schedule_spec=schedule_spec,
+            timezone=timezone,
             enabled=enabled,
+            require_approval=require_approval,
         )
         resp = self._call(lambda: self._stub.RegisterTrigger(req, metadata=self._md))
         return hexids.encode(resp.trigger_id)
