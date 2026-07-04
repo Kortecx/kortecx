@@ -382,6 +382,7 @@ notes    = "SPLIT out of t-runapp-context-rail by the subtask-8 plan-mode review
 id       = "t-app-trigger-target"
 lane     = "oss"
 state    = "in-progress"
+pr       = "290"
 branch   = "feat/t-app-trigger-target"
 covers   = [
   "T-APP-TRIGGER-TARGET (D178 pillar #4, the automation gap): a cron/webhook/gRPC trigger can fire a saved App (kortecx.app/v1), not just a recipe. Additive proto app_handle=8/timezone=9/require_approval=10 on RegisterTriggerRequest (+ 10/11/12 on TriggerView, back-compat; recipe_handle stays field 3). HostTriggerAdmin gains Option<Arc<dyn AppAuthor>>+Option<Arc<dyn RegisteredToolsView>>; submit() branches recipe binder.bind vs App author_app(party,app_handle,args,require_approval), ports the RunApp fireable-grant backstop, then the IDENTICAL register_run+submit_mote tail (coordinator stays sole writer). server.rs hoists the App-run resolver above the trigger seam (shared clone; None => App triggers fail closed + RunApp unimplemented). exactly-one-of recipe|app validated at register; App-target-without-seam fails fast",
