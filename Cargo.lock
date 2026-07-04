@@ -1517,6 +1517,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-connector-notion"
+version = "0.1.0"
+dependencies = [
+ "kx-extension-sdk",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
+
+[[package]]
+name = "kx-connector-slack"
+version = "0.1.0"
+dependencies = [
+ "kx-extension-sdk",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "ureq",
+]
+
+[[package]]
 name = "kx-content"
 version = "0.1.1"
 dependencies = [

@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name         = "kx-connector-notion"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx bundled Notion MCP connector — a standalone MCP stdio server (initialize -> tools/list -> tools/call) exposing notion/{search,read_page,create_page,append_block}. Authenticates by-reference (D81): a Notion integration token is injected out-of-band BY NAME (KX_NOTION_CREDENTIAL) and used INSIDE this process; the secret value never appears in a reply, a log, or the runtime. An external process the runtime DIALS via `kx connections add` — never linked into the gateway or the frozen trio (no kx-* dependency)."
+
+[lib]
+path = "src/lib.rs"
+
+# The Notion MCP connector binary — a full initialize -> tools/list -> tools/call
+# stdio server the runtime dials via `kx connections add --command kx-connector-notion`.
+[[bin]]
+name = "kx-connector-notion"
+path = "src/main.rs"
+
+[dependencies]
+# JSON-RPC request/response + tool argument decoding (fail-closed).
+serde      = { workspace = true }
+# `raw_value` lets us keep `tools/call` arguments as opaque JSON (decoded per tool).
+serde_json = { workspace = true, features = ["raw_value"] }
+# Blocking HTTP to the Notion REST API (TLS; no json feature).
+ureq       = { workspace = true }
+# Typed connector errors (mapped to fail-closed JSON-RPC errors; never leak the token).
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+# The conformance harness (dials THIS bin through the real register_server path).
+kx-extension-sdk = { path = "../../crates/kx-extension-sdk", version = "0.1.0" }
+
+[lints]
+workspace = true

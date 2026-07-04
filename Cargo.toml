@@ -69,6 +69,8 @@ members = [
     # extension surface from the core library crates. See `integrations/README.md`.
     "integrations/kx-connector-gmail",
     "integrations/kx-connector-discord",
+    "integrations/kx-connector-slack",
+    "integrations/kx-connector-notion",
 ]
 exclude = [
     "kx-cloud",
