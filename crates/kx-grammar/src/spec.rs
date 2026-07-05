@@ -86,6 +86,19 @@ pub struct ToolEnvelopeSpec {
     /// D108.2).
     #[serde(default, skip_serializing_if = "is_false")]
     pub answerable: bool,
+    /// `T-GEMMA3-TOOL-LOOP-ANSWER-FORCE` (loop-completeness follow-up to `answerable`):
+    /// opt-in **answer-only** mode. When `true`, the Ollama backend applies this envelope
+    /// as an `{"answer":"…"}`-ONLY whole-response `format` — the union with the `tool_call`
+    /// arm DROPPED — so a weak model (e.g. gemma3) is FORCED to settle instead of re-firing
+    /// a duplicate tool call or looping past its budget. Armed by the gateway ONLY on a react
+    /// turn whose frozen instruction is a duplicate-rejection re-prompt or the near-budget
+    /// settle-nudge (llama.cpp already completes the loop, so its GBNF ignores this flag).
+    /// **Mutually exclusive** with `strict`/`answerable` — the caller sets at most one; the
+    /// dispatch site gates it on `answerable` (i.e. `!strict`) and clears `answerable` when it
+    /// sets this. Serialized ONLY when set, so the default carrier stays byte-identical
+    /// (off-digest, D108.2).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub answer_only: bool,
 }
 
 /// `skip_serializing_if` predicate — omit `strict` when `false` (byte-identical default carrier).
@@ -106,6 +119,7 @@ impl ToolEnvelopeSpec {
             tools,
             strict: false,
             answerable: false,
+            answer_only: false,
         }
     }
 
@@ -120,6 +134,15 @@ impl ToolEnvelopeSpec {
     #[must_use]
     pub fn with_answerable(mut self, answerable: bool) -> Self {
         self.answerable = answerable;
+        self
+    }
+
+    /// Set the answer-only (`answer_only`) mode (chainable). See the field docs. The
+    /// dispatch site is responsible for the mutual exclusivity (clearing `answerable`
+    /// when it sets this); this setter does not enforce it so the builder stays orthogonal.
+    #[must_use]
+    pub fn with_answer_only(mut self, answer_only: bool) -> Self {
+        self.answer_only = answer_only;
         self
     }
 
@@ -169,5 +192,13 @@ impl ToolEnvelopeSpec {
     #[must_use]
     pub fn to_ollama_union_format(&self) -> serde_json::Value {
         crate::ollama::render_union(self)
+    }
+
+    /// Render this spec to an ANSWER-ONLY JSON Schema (Ollama `format` dialect):
+    /// `{"answer":"…"}` with the `tool_call` arm DROPPED — forces the model to settle.
+    /// See [`Self::answer_only`].
+    #[must_use]
+    pub fn to_ollama_answer_only_format(&self) -> serde_json::Value {
+        crate::ollama::render_answer_only(self)
     }
 }

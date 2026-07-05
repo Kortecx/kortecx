@@ -148,6 +148,36 @@ mod tests {
     }
 
     #[test]
+    fn answer_only_defaults_false_skip_serialized_and_round_trips() {
+        // T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: the DEFAULT carrier omits `answer_only`
+        // (byte-identical to pre-answer-force), so the a0/digest carrier bytes are unchanged.
+        let raw = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")])
+            .to_raw()
+            .unwrap();
+        assert!(
+            !raw.contains("answer_only"),
+            "default carrier must omit answer_only: {raw}"
+        );
+        match GrammarSpec::from_raw(&raw).unwrap() {
+            GrammarSpec::ToolEnvelope(spec) => assert!(!spec.answer_only),
+            GrammarSpec::Permutation(_) => panic!("must decode as ToolEnvelope"),
+        }
+        // The OPT-IN answer-only carrier serializes + round-trips with answer_only = true.
+        let answer_raw = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")])
+            .with_answer_only(true)
+            .to_raw()
+            .unwrap();
+        assert!(
+            answer_raw.contains("\"answer_only\":true"),
+            "answer-only carrier must carry it"
+        );
+        match GrammarSpec::from_raw(&answer_raw).unwrap() {
+            GrammarSpec::ToolEnvelope(spec) => assert!(spec.answer_only),
+            GrammarSpec::Permutation(_) => panic!("must decode as ToolEnvelope"),
+        }
+    }
+
+    #[test]
     fn permutation_raw_decodes_as_permutation() {
         let raw = GrammarSpec::Permutation(PermutationSpec::new(8))
             .to_raw()

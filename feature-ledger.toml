@@ -385,7 +385,7 @@ notes    = "SPLIT out of t-runapp-context-rail by the subtask-8 plan-mode review
 [[feature]]
 id       = "t-app-trigger-target"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
 pr       = "290"
 branch   = "feat/t-app-trigger-target"
 covers   = [
@@ -419,7 +419,8 @@ notes    = "D178 'integrations come alive + watchable' (user-directed 2026-07-04
 [[feature]]
 id       = "gemma3-connector-tool-fire"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
+pr       = "293"
 branch   = "feat/gemma3-connector-tool-fire"
 covers   = [
   "The gemma3 connector-tool-fire fix (T-RUNAPP-RAG-RECIPE-ROUTE generalized from RAG retrieve@1 to ARBITRARY connector/skill tool-calls, L-006/L-016): make Ollama gemma3:12b RELIABLY FIRE tools on the live agentic loop (was: slack answers-without-firing; notion dead-letters 'no admissible turn') while llama.cpp Gemma-4 already fired",
@@ -430,3 +431,17 @@ covers   = [
 ]
 inherits = ["integrations-come-alive", "slack-connector", "notion-connector", "t-runapp-context-rail"]
 notes    = "User-locked 2026-07-04 (mechanism decision: 'Priming + Ollama union format'). Digest 7d22d4bd invariant by construction — the grammar carrier rides the dispatch-time params clone (model_exec.rs:1391→1408), NEVER the durable MoteDef (build_agentic_turn leaves grammar:None); the priming rides the ephemeral off-MoteId tool menu. Frozen-trio (kx-scheduler/kx-executor/kx-inference) EMPTY: gbnf::render reads only spec.tools, so `answerable` never enters the GBNF/lazy-arm. Cost accepted: the Ollama tool turn loses free-form CoT (fine for tool-decision turns; kill-switch KX_SERVE_OLLAMA_TOOL_UNION; Ollama-only; tools-granted-only). SN-5 docs/plans/2026-07-04-gemma3-connector-tool-fire.md."
+
+[[feature]]
+id       = "t-gemma3-tool-loop-answer-force"
+lane     = "oss"
+state    = "in-progress"
+branch   = "feat/gemma3-tool-loop-answer-force"
+covers   = [
+  "T-GEMMA3-TOOL-LOOP-ANSWER-FORCE (loop-completeness follow-up to gemma3-connector-tool-fire #293, L-019): once gemma3:12b FIRES (via the #293 union), it loops — re-firing the SAME tool with identical args on the observation turn; kx_toolcall dedup refuses it, but gemma3 re-proposes the identical call and dead-letters under budget (llama.cpp Gemma-4 already completes fire→answer). Fix: on the next react turn AFTER a duplicate-call rejection OR the near-budget settle-nudge, arm an ANSWER-ONLY Ollama union ({\"answer\":\"…\"}-only, tool_call arm DROPPED) so a weak model is FORCED to settle instead of looping",
+  "GATEWAY-DERIVED, off-digest (two adversarial plan reviews converged on this over coordinator-carried plumbing): the reprompt/nudge decision is ALREADY serialized by the coordinator into the turn's on-digest instruction (config_subset[PROMPT_KEY] via render_reprompt/render_settle_nudge); model_exec.rs react_answer_force(mote) reads prompt_from_config(mote) and matches the shared kx_toolcall markers — DRIFT-PROOF (same bytes the build wrote; no re-computed loop-counter twin) + NO proto/worker/ContextSink/coordinator plumbing. FIRST-duplicate arming (user-chosen): GR15-safe since the tool result already exists in context, so the forced answer draws on real data",
+  "kx-grammar ToolEnvelopeSpec.answer_only flag (skip_serializing_if=is_false ⇒ default carrier byte-identical) + render_answer_only (DRY-shares answer_arm() with render_union) + to_ollama_answer_only_format; kx-ollama response_format e.answer_only arm (BEFORE the answerable arm — stronger constraint wins); kx-toolcall DUPLICATE_REJECT_MARKER + SETTLE_NUDGE_MARKER shared consts + is_duplicate_reason; kx-gateway build_tool_grammar(warrant, answer_force) with answer_only=union&&answer_force&&KX_SERVE_OLLAMA_ANSWER_FORCE and answerable=union&&!answer_only (STRUCTURAL mutual exclusivity) + a separate default-ON kill-switch (independent rollback of the answer-force without losing the #293 fire fix)",
+  "gates: kx-grammar render_answer_only/carrier-round-trip/gbnf_ignores_answer_only (llama.cpp no-op) + kx-ollama answer_only-arm/≤1-of-3-modes + kx-toolcall is_duplicate_reason/uniqueness/truncation-guard + model_exec react_answer_force fires-on-dup/nudge-not-base/bad-args + build_tool_grammar arms-answer_only + kx-coordinator render_output_carries_the_shared_answer_force_markers (coupling) + react_live duplicate_reprompt_instruction_carries_the_answer_force_marker (deterministic full-seam) + a0_guard 7d22d4bd INVARIANT + frozen-trio EMPTY + no journal/proto change. GR28 dual-engine LIVE: (Ollama) kx-ollama answer_force_live PROVES the answer-only format FORCES gemma3 to settle ({\"answer\"}) vs the union firing on the identical prompt; (llama.cpp) gbnf no-op + fires+completes ~80% (Metal FP nondeterminism, byte-identical carrier ⇒ NOT regressed)",
+]
+inherits = ["gemma3-connector-tool-fire", "integrations-come-alive", "slack-connector", "notion-connector"]
+notes    = "Loop-completeness follow-up ticketed in #293 (L-019). Digest 7d22d4bd invariant by construction — answer_force is derived at dispatch from the on-digest instruction and only shapes params.grammar (the dispatch clone), NEVER the MoteDef. Frozen-trio EMPTY: gbnf::render reads only spec.tools so `answer_only` never enters the GBNF ⇒ llama.cpp byte-unchanged (it already completes the loop; this is the gemma3-specific gap). Ollama-only; tools-granted-only; kill-switch KX_SERVE_OLLAMA_ANSWER_FORCE (default-ON). ★ LIVE TESTING FINDING (GR28): gemma3's DOMINANT connector-loop failure is MISSING REQUIRED TOOL ARGS (emits args:{} → the observation fails → an HONEST dead-letter at turn 0, BEFORE any reprompt/nudge — correct per GR15), a SEPARATE deferred gap ticketed T-GEMMA3-OLLAMA-TOOL-ARG-SCHEMA (constrain the Ollama union tool_call args to each tool's inputSchema required fields). So the app_live_serve `require_answer` witness is SOFT-OBSERVE (log, not gate) — a hard 'always answers' would be invalid (GR15). The answer-force itself is proven by the deterministic full-seam + the answer_force_live contrast. SN-5 docs/plans/2026-07-05-gemma3-tool-loop-answer-force.md (private)."

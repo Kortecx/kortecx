@@ -25,7 +25,10 @@ mod dedup;
 mod parse;
 mod types;
 
-pub use dedup::{duplicate_call_reason, is_duplicate_call};
+pub use dedup::{
+    duplicate_call_reason, is_duplicate_call, is_duplicate_reason, DUPLICATE_REJECT_MARKER,
+    SETTLE_NUDGE_MARKER,
+};
 pub use parse::{
     extract_answer, max_args_bytes, parse_permutation, parse_tool_call, parse_tool_calls,
 };

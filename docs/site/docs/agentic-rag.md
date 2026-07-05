@@ -131,6 +131,10 @@ plain chat — it never silently drops the image or fakes grounding.
   yet still answers when it has enough. On by default; `KX_SERVE_OLLAMA_TOOL_UNION=0` reverts Ollama
   to unconstrained decoding. This same guarantee makes connector tools ([Integrations](./integrations.md))
   fire on both engines.
+- **A stuck loop is forced to complete.** If a weaker model keeps re-proposing the *same*
+  `retrieve` call it already made (or exhausts its tool budget), the runtime drops the `tool_call`
+  arm for that one turn so it must answer from what it retrieved — the loop settles instead of
+  dead-ending. On by default; `KX_SERVE_OLLAMA_ANSWER_FORCE=0` disables just this answer-forcing.
 
 ## Reranking: deterministic MMR now, LLM listwise rerank (authored pipelines)
 

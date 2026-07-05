@@ -985,6 +985,42 @@ mod tests {
     }
 
     #[test]
+    fn render_output_carries_the_shared_answer_force_markers() {
+        // T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: the gateway arms the answer-only decode
+        // constraint by matching these SHARED `kx_toolcall` markers in the FROZEN
+        // instruction the coordinator writes. Pin the RENDER side here (the gateway pins
+        // the MATCH side): if a render function ever drops its marker, the answer-force
+        // silently regresses — this test fails first. NEVER "fix" a break by changing the
+        // render text (it is harness-twin/golden byte-pinned); update the marker to a new
+        // substring in `kx_toolcall::dedup` instead.
+        let nudge = render_settle_nudge("list the files");
+        assert!(
+            nudge.contains(kx_toolcall::SETTLE_NUDGE_MARKER),
+            "render_settle_nudge must carry the shared marker: {nudge}"
+        );
+        // A duplicate re-prompt embeds the duplicate reason, which carries the marker.
+        let call = kx_toolcall::ToolCall {
+            name: kx_mote::ToolName("mcp-echo".into()),
+            version: kx_mote::ToolVersion("1".into()),
+            args_bytes: b"{}".to_vec(),
+        };
+        let dup_reprompt = render_reprompt(
+            "list the files",
+            &bounded_reason(kx_toolcall::duplicate_call_reason(&call)),
+        );
+        assert!(
+            kx_toolcall::is_duplicate_reason(&dup_reprompt),
+            "a duplicate re-prompt must be detected via the shared marker: {dup_reprompt}"
+        );
+        // A NON-duplicate reject re-prompt must NOT match (self-correction preserved).
+        let other = render_reprompt("list the files", "tool `x@1` is not granted to this run");
+        assert!(
+            !kx_toolcall::is_duplicate_reason(&other),
+            "a non-duplicate reject must not be answer-forced: {other}"
+        );
+    }
+
+    #[test]
     fn bounded_reason_truncates_at_a_char_boundary_total() {
         // Under the cap: identity.
         let short = "short reason".to_string();

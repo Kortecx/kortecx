@@ -599,6 +599,17 @@ fn response_format(grammar: Option<&kx_mote::Grammar>) -> Option<serde_json::Val
     match grammar.and_then(|g| kx_grammar::GrammarSpec::from_raw(&g.raw).ok()) {
         Some(kx_grammar::GrammarSpec::Permutation(p)) => Some(p.to_ollama_format()),
         Some(kx_grammar::GrammarSpec::ToolEnvelope(e)) if e.strict => Some(e.to_ollama_format()),
+        // T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: an ANSWER-ONLY carrier ⇒ an `{"answer":"…"}`-only
+        // whole-response `format` (the union with the tool_call arm DROPPED). Armed by the
+        // gateway ONLY on a duplicate-rejection re-prompt or the near-budget settle-nudge, so a
+        // weak model (gemma3) is FORCED to settle instead of looping on an identical call →
+        // dead-letter. Placed BEFORE the `answerable` arm so the stronger (answer-forcing)
+        // constraint wins even if both flags were somehow set (the dispatch site guarantees
+        // exclusivity by clearing `answerable`). llama.cpp ignores `answer_only` (its GBNF
+        // already completes the loop).
+        Some(kx_grammar::GrammarSpec::ToolEnvelope(e)) if e.answer_only => {
+            Some(e.to_ollama_answer_only_format())
+        }
         // gemma3 connector-tool-fire: a non-strict UNION carrier ⇒ a
         // `{"tool_call":{…}} oneOf {"answer":"…"}` whole-response `format`. Forces
         // PARSEABLE output (fires OR settles), the Ollama analog of the lazy GBNF, so a
@@ -668,9 +679,53 @@ mod tests {
         assert_eq!(arms[1]["properties"]["answer"]["type"], "string");
         assert_eq!(arms[1]["additionalProperties"], false);
 
+        // T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: an ANSWER-ONLY (`answer_only`) carrier ⇒ an
+        // `{"answer":"…"}`-only whole-response format — NO tool_call arm, so the model is
+        // forced to settle.
+        let answer_only = kx_mote::Grammar::new(
+            kx_grammar::ToolEnvelopeSpec::new(vec![kx_grammar::ToolSpec::new(
+                "slack/read_channel",
+                "1",
+            )])
+            .with_answer_only(true)
+            .to_raw()
+            .unwrap(),
+        );
+        let fmt = response_format(Some(&answer_only)).expect("answer-only ⇒ a format");
+        assert!(fmt.get("oneOf").is_none(), "answer-only has no union arms");
+        assert!(
+            fmt["properties"].get("tool_call").is_none(),
+            "answer-only must NOT expose a tool_call"
+        );
+        assert_eq!(fmt["properties"]["answer"]["type"], "string");
+        assert_eq!(fmt["required"], serde_json::json!(["answer"]));
+        assert_eq!(fmt["additionalProperties"], false);
+
         // A malformed carrier never fails closed (the parser is the authority).
         assert!(response_format(Some(&kx_mote::Grammar::new("not json"))).is_none());
         assert!(response_format(None).is_none());
+    }
+
+    #[test]
+    fn at_most_one_tool_envelope_mode_is_ever_set() {
+        // The three modes are mutually exclusive by contract (the dispatch site sets at
+        // most one). Guard it: every builder combination the site can produce keeps
+        // `strict + answerable + answer_only <= 1` true. If a future edit lets two co-set,
+        // this fails — the invariant the `response_format` arm ordering relies on.
+        let base = || kx_grammar::ToolEnvelopeSpec::new(vec![kx_grammar::ToolSpec::new("t", "1")]);
+        for spec in [
+            base(),
+            base().with_strict(true),
+            base().with_answerable(true),
+            base().with_answer_only(true).with_answerable(false),
+        ] {
+            let set =
+                u8::from(spec.strict) + u8::from(spec.answerable) + u8::from(spec.answer_only);
+            assert!(
+                set <= 1,
+                "at most one of strict/answerable/answer_only may be set, got {set}"
+            );
+        }
     }
 
     #[test]
