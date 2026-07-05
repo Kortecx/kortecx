@@ -1674,6 +1674,50 @@ async fn identical_repeat_call_is_deduped() {
     );
 }
 
+/// T-GEMMA3-TOOL-LOOP-ANSWER-FORCE (deterministic full-seam proof): a REAL duplicate loop
+/// produces a re-prompt turn whose instruction carries the shared
+/// `kx_toolcall::DUPLICATE_REJECT_MARKER` — the exact signal the gateway matches to arm the
+/// answer-only decode constraint (proven gateway-side in `model_exec`'s
+/// `answer_force_arms_answer_only_on_a_duplicate_reprompt`). Together the two halves close
+/// the loop: the coordinator EMITS the marker on a duplicate, the gateway ARMS on it. Model-
+/// free + deterministic; the marker rides the on-digest instruction, so it is recovery-stable.
+#[tokio::test]
+async fn duplicate_reprompt_instruction_carries_the_answer_force_marker() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+
+    // Turn 0 fires the tool; turn 1 re-proposes the IDENTICAL call → deduped → the next
+    // turn is a duplicate re-prompt. Capture every turn Mote's instruction.
+    let mut reprompt_carries_marker = false;
+    for _ in 0..8 {
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        let Some(item) = leased.into_iter().next() else {
+            break;
+        };
+        let mote: Mote = item.mote.unwrap().try_into().unwrap();
+        if mote.def.tool_contract.is_empty() {
+            // A turn Mote: check if its (frozen) instruction is a duplicate re-prompt.
+            if kx_toolcall::is_duplicate_reason(&turn_prompt(&mote)) {
+                reprompt_carries_marker = true;
+            }
+            commit_raw(&svc, &store, &mote, &w, TOOL_ENVELOPE, worker).await;
+        } else {
+            commit_raw(&svc, &store, &mote, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
+        }
+    }
+
+    assert!(
+        reprompt_carries_marker,
+        "a duplicate re-prompt turn's instruction must carry DUPLICATE_REJECT_MARKER so the \
+         gateway arms answer-only (marker = {:?})",
+        kx_toolcall::DUPLICATE_REJECT_MARKER
+    );
+}
+
 /// Read a turn Mote's instruction (the bytes that ride `config_subset[PROMPT_KEY]`).
 fn turn_prompt(mote: &Mote) -> String {
     mote.def

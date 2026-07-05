@@ -126,6 +126,11 @@ tool-calls in its own format, so the runtime constrains the model to a parseable
 arms a lazy grammar; Ollama applies a non-strict `{"tool_call":…} | {"answer":…}` response
 schema (the model still answers freely, it just can't emit a malformed call). This is on by
 default; `KX_SERVE_OLLAMA_TOOL_UNION=0` reverts to unconstrained free-form decoding on Ollama.
+
+And when a weaker model gets stuck re-proposing the *same* tool call it already made (or runs
+low on its tool budget), the runtime forces it to answer from what it has — dropping the
+`tool_call` arm for that one turn so the loop completes instead of dead-ending. On by default;
+`KX_SERVE_OLLAMA_ANSWER_FORCE=0` disables just this answer-forcing (the tool-firing above stays).
 :::
 
 ## 3. Automate it on a trigger

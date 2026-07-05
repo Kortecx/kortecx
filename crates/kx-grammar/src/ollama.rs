@@ -67,13 +67,37 @@ pub(crate) fn render_union(spec: &ToolEnvelopeSpec) -> Value {
     json!({
         "oneOf": [
             render(spec),
-            {
-                "type": "object",
-                "properties": { "answer": { "type": "string" } },
-                "required": ["answer"],
-                "additionalProperties": false
-            }
+            answer_arm()
         ]
+    })
+}
+
+/// Render an ANSWER-ONLY Ollama `format` JSON Schema: the closed `{"answer":"…"}`
+/// object with NO `tool_call` arm — the union's answer arm ALONE. This FORCES a weak
+/// model (e.g. gemma3) to settle on a parseable answer instead of re-firing a
+/// duplicate tool call or looping past its budget (`T-GEMMA3-TOOL-LOOP-ANSWER-FORCE`,
+/// the loop-completeness follow-up to `render_union`). Armed by the gateway ONLY on a
+/// react turn whose (frozen) instruction is a duplicate-rejection re-prompt or the
+/// near-budget settle-nudge; llama.cpp is unaffected (its GBNF ignores the flag and
+/// already completes the loop). Same empty-guard as `render`/`render_union`.
+pub(crate) fn render_answer_only(spec: &ToolEnvelopeSpec) -> Value {
+    if spec.tools.is_empty() {
+        // Defensive: caller guards `is_empty`; a generic object is the safest
+        // never-broken fallback (mirrors `render`/`render_union`).
+        return json!({ "type": "object" });
+    }
+    answer_arm()
+}
+
+/// The closed `{"answer":<string>}` schema — arm 1 of the union AND the WHOLE of the
+/// answer-only format. Shared by [`render_union`] + [`render_answer_only`] so the two
+/// renderers cannot drift.
+fn answer_arm() -> Value {
+    json!({
+        "type": "object",
+        "properties": { "answer": { "type": "string" } },
+        "required": ["answer"],
+        "additionalProperties": false
     })
 }
 
@@ -129,6 +153,33 @@ mod tests {
         // Defensive: the caller guards `is_empty`, but a never-broken fallback must hold.
         assert_eq!(
             render_union(&ToolEnvelopeSpec::new(vec![])),
+            json!({ "type": "object" })
+        );
+    }
+
+    #[test]
+    fn answer_only_is_the_closed_answer_arm_alone() {
+        let spec = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")]);
+        let v = render_answer_only(&spec);
+        // NO tool_call arm — the model is forced to settle, not fire.
+        assert!(v.get("oneOf").is_none(), "answer-only has no union arms");
+        assert!(
+            v["properties"].get("tool_call").is_none(),
+            "answer-only must NOT expose a tool_call"
+        );
+        assert_eq!(v["type"], "object");
+        assert_eq!(v["properties"]["answer"]["type"], "string");
+        assert_eq!(v["required"], json!(["answer"]));
+        assert_eq!(v["additionalProperties"], json!(false));
+        // It is BYTE-identical to the union's answer arm (the shared `answer_arm`).
+        let union = render_union(&spec);
+        assert_eq!(v, union["oneOf"][1]);
+    }
+
+    #[test]
+    fn answer_only_empty_spec_degrades_to_a_generic_object() {
+        assert_eq!(
+            render_answer_only(&ToolEnvelopeSpec::new(vec![])),
             json!({ "type": "object" })
         );
     }

@@ -136,7 +136,13 @@ pub(crate) fn shaper_warrant(model_id: &ModelId, exec_class: ExecutorClass) -> W
 /// enum; envelope-first — args stay a generic object, the per-tool arg-schema
 /// stretch is a follow-on once live results justify it). The grammar is the
 /// ACCEPT-side constraint only; the authority gate stays `kx_toolcall` (SN-8).
-fn build_tool_grammar(warrant: &WarrantSpec) -> Option<Grammar> {
+///
+/// `answer_force` (`T-GEMMA3-TOOL-LOOP-ANSWER-FORCE`): when the turn is a
+/// duplicate-rejection re-prompt or the near-budget settle-nudge (derived by
+/// [`Self::react_answer_force`] from the frozen instruction), FORCE the union's
+/// answer-only arm so a weak model settles instead of looping. Off-digest (a dispatch
+/// decode param, never the MoteDef).
+fn build_tool_grammar(warrant: &WarrantSpec, answer_force: bool) -> Option<Grammar> {
     if warrant.tool_grants.is_empty() {
         return None;
     }
@@ -151,17 +157,26 @@ fn build_tool_grammar(warrant: &WarrantSpec) -> Option<Grammar> {
     // path is preserved). llama.cpp ignores `strict` (it already arms a lazy/triggered GBNF).
     let strict = crate::mcp_tool::ollama_tool_format_enabled();
     // gemma3 connector-tool-fire (T-RUNAPP-RAG-RECIPE-ROUTE generalized): the non-strict
-    // UNION carrier (`KX_SERVE_OLLAMA_TOOL_UNION`, default-ON kill-switch). On Ollama it
+    // UNION path (`KX_SERVE_OLLAMA_TOOL_UNION`, default-ON kill-switch). On Ollama it
     // becomes a `{"tool_call":{…}} oneOf {"answer":"…"}` whole-response `format` — forces
     // PARSEABLE output (the Ollama analog of the lazy GBNF) so a free-form gemma3 turn can
     // no longer emit a malformed body that dead-letters, WITHOUT forcing tool-required.
     // Mutually exclusive with `strict` (strict wins; both never set). llama.cpp ignores it.
-    let answerable = !strict && crate::mcp_tool::ollama_tool_union_enabled();
+    let union = !strict && crate::mcp_tool::ollama_tool_union_enabled();
+    // T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: on a duplicate-rejection re-prompt / near-budget
+    // settle-nudge turn, DROP the tool_call arm (answer-only) so gemma3 is forced to settle
+    // instead of re-firing an identical call → dead-letter (`KX_SERVE_OLLAMA_ANSWER_FORCE`,
+    // default-ON kill-switch). Gated on the union path (`!strict`); clears `answerable` so the
+    // two modes are STRUCTURALLY mutually exclusive (not just arm-ordering). llama.cpp ignores
+    // it (its GBNF already completes the loop).
+    let answer_only = union && answer_force && crate::mcp_tool::ollama_answer_force_enabled();
+    let answerable = union && !answer_only;
     // Serialization of the closed spec types does not fail in practice; on the
     // off chance it does, degrade to unconstrained (never panic on a dispatch).
     ToolEnvelopeSpec::new(tools)
         .with_strict(strict)
         .with_answerable(answerable)
+        .with_answer_only(answer_only)
         .to_raw()
         .ok()
         .map(Grammar::new)
@@ -1430,7 +1445,10 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             && !Self::is_unconstrained(mote)
             && crate::mcp_tool::grammar_constrained_enabled()
         {
-            if let Some(grammar) = build_tool_grammar(warrant) {
+            // T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: derive the answer-only signal from THIS
+            // turn's frozen instruction (a duplicate re-prompt / settle-nudge) so a weak
+            // model is forced to settle. Off-digest — armed on the params clone only.
+            if let Some(grammar) = build_tool_grammar(warrant, Self::react_answer_force(mote)) {
                 params.grammar = Some(grammar);
             }
         }
@@ -1480,6 +1498,30 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         mote.def
             .config_subset
             .contains_key(&kx_mote::ConfigKey(kx_mote::REACT_TURN_KEY.to_string()))
+    }
+
+    /// `T-GEMMA3-TOOL-LOOP-ANSWER-FORCE`: `true` iff this react turn's frozen instruction
+    /// is a DUPLICATE-rejection re-prompt OR the near-budget SETTLE-NUDGE — the two cases
+    /// where a weak model (gemma3) should be FORCED to answer instead of firing another
+    /// tool. Derived here, gateway-side, from the ON-DIGEST instruction the coordinator
+    /// already wrote (`config_subset[PROMPT_KEY]` via `render_reprompt`/`render_settle_nudge`)
+    /// — NOT re-computed from loop counters, so the live drive and a recovery re-fold read
+    /// byte-identical bytes and can never drift (the two markers are shared `kx_toolcall`
+    /// consts, pinned to the render output by a coordinator test). A duplicate re-prompt is
+    /// detected via [`kx_toolcall::is_duplicate_reason`] (the embedded reason carries the
+    /// marker) — a NON-duplicate reject re-prompt (bad args / ungranted) does NOT match, so
+    /// genuine self-correction stays free to retry a tool. Off-digest: shapes only the
+    /// dispatch grammar (a clone of the params), never the MoteId; a false positive would at
+    /// most force one answer, never corrupt truth.
+    fn react_answer_force(mote: &Mote) -> bool {
+        if !Self::is_react_turn(mote) {
+            return false;
+        }
+        let Some(instruction) = prompt_from_config(mote) else {
+            return false;
+        };
+        kx_toolcall::is_duplicate_reason(&instruction)
+            || instruction.contains(kx_toolcall::SETTLE_NUDGE_MARKER)
     }
 
     /// `true` iff `mote` is a coordinator-materialized live LLM RERANK turn (RC4c-2b)
@@ -3116,6 +3158,100 @@ mod tests {
                 .any(|t| t.name == "mcp-echo" && t.version == "1"),
             "the granted tool is in the spec: {:?}",
             spec.tools
+        );
+    }
+
+    /// A react TURN Mote with a caller-supplied instruction (the frozen `PROMPT_KEY`
+    /// the coordinator writes) — used to exercise the answer-force marker detection.
+    fn react_turn_mote_with_instruction(instruction: &[u8]) -> Mote {
+        let mut def = react_turn_mote().def.clone();
+        def.config_subset.insert(
+            ConfigKey(PROMPT_KEY.to_string()),
+            ConfigVal(instruction.to_vec()),
+        );
+        Mote::new(
+            def,
+            InputDataId::from_bytes([2u8; 32]),
+            GraphPosition(vec![2u8]),
+            SmallVec::new(),
+        )
+    }
+
+    /// Dispatch `mote` with a granted warrant and return the armed grammar carrier's spec.
+    fn armed_spec(mote: &Mote) -> kx_grammar::ToolEnvelopeSpec {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"answered.", None);
+        exec.run(mote, &granted_warrant(), None)
+            .expect("react turn dispatches");
+        let grammar = backend
+            .last_grammar
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("grammar armed on a granted react turn");
+        kx_grammar::ToolEnvelopeSpec::from_raw(&grammar.raw).expect("valid carrier")
+    }
+
+    /// T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: a DUPLICATE-rejection re-prompt turn arms the
+    /// answer-only union arm (drops `tool_call`) so a weak model is forced to settle.
+    #[test]
+    fn answer_force_arms_answer_only_on_a_duplicate_reprompt() {
+        let call = kx_toolcall::ToolCall {
+            name: kx_mote::ToolName("mcp-echo".into()),
+            version: kx_mote::ToolVersion("1".into()),
+            args_bytes: b"{}".to_vec(),
+        };
+        // The instruction the coordinator's render_reprompt writes: base + embedded reason.
+        let instruction = format!(
+            "list the files\n\n[Your previous tool call was REJECTED: {}\nCorrect it, or answer directly.]",
+            kx_toolcall::duplicate_call_reason(&call)
+        );
+        let spec = armed_spec(&react_turn_mote_with_instruction(instruction.as_bytes()));
+        assert!(spec.answer_only, "duplicate re-prompt ⇒ answer-only forced");
+        assert!(
+            !spec.answerable,
+            "answer-only clears answerable (exclusivity)"
+        );
+        assert!(!spec.strict);
+    }
+
+    /// The near-budget SETTLE-NUDGE turn also arms answer-only (the model must answer now).
+    #[test]
+    fn answer_force_arms_answer_only_on_a_settle_nudge() {
+        let instruction = format!(
+            "summarize the doc\n\n[You have already gathered tool results, and {}. Answer now.]",
+            kx_toolcall::SETTLE_NUDGE_MARKER
+        );
+        let spec = armed_spec(&react_turn_mote_with_instruction(instruction.as_bytes()));
+        assert!(spec.answer_only, "settle-nudge ⇒ answer-only forced");
+        assert!(!spec.answerable);
+    }
+
+    /// A PLAIN react turn (no reject / nudge marker) keeps the union (answerable), NOT
+    /// answer-only — the fire path is preserved.
+    #[test]
+    fn no_answer_force_on_a_plain_react_turn() {
+        let spec = armed_spec(&react_turn_mote()); // instruction = "list the files"
+        assert!(!spec.answer_only, "a plain turn is never answer-forced");
+        assert!(spec.answerable, "the default union (fire) path stays armed");
+    }
+
+    /// A NON-duplicate reject re-prompt (bad args) does NOT force answer-only — genuine
+    /// self-correction stays free to retry a tool (finding 3: preserve the correction path).
+    #[test]
+    fn no_answer_force_on_a_nonduplicate_reject_reprompt() {
+        let instruction =
+            "list the files\n\n[Your previous tool call was REJECTED: the arguments for \
+             `calc/add@1` do not match its schema\nCorrect it, or answer directly.]";
+        let spec = armed_spec(&react_turn_mote_with_instruction(instruction.as_bytes()));
+        assert!(
+            !spec.answer_only,
+            "a fixable-args reject must NOT force answer-only (self-correction preserved)"
+        );
+        assert!(
+            spec.answerable,
+            "the union (with the tool arm) stays available to retry"
         );
     }
 

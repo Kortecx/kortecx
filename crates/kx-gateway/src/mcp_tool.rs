@@ -300,6 +300,27 @@ pub(crate) fn ollama_tool_union_enabled() -> bool {
     }
 }
 
+/// `T-GEMMA3-TOOL-LOOP-ANSWER-FORCE`: the operator SERVE-LEVEL kill-switch for the Ollama
+/// **answer-only** force (`KX_SERVE_OLLAMA_ANSWER_FORCE`). Default-**ON** (unset / `"1"` /
+/// `"true"` ⇒ `true`; only `"0"` / `"false"` / `"off"` disables) — byte-mirrors
+/// [`ollama_tool_union_enabled`]. When on, a react turn whose frozen instruction is a
+/// duplicate-rejection re-prompt or the near-budget settle-nudge drops the union's
+/// `tool_call` arm (answer-only), FORCING a weak model (gemma3) to settle instead of
+/// looping on an identical call → dead-letter. A SEPARATE switch from the union so an
+/// operator can disable answer-forcing WITHOUT losing the (fire-enabling) union — the
+/// safe independent rollback. Off-digest (the grammar rides off the MoteId, D108.2);
+/// disabling it is byte-identical to the pre-answer-force union behavior.
+pub(crate) fn ollama_answer_force_enabled() -> bool {
+    match std::env::var_os("KX_SERVE_OLLAMA_ANSWER_FORCE") {
+        Some(v) => {
+            let v = v.to_string_lossy();
+            let v = v.trim();
+            !(v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
+        }
+        None => true,
+    }
+}
+
 /// RC3 (T-REACT-TOOL-MENU): the operator SERVE-LEVEL kill-switch for the
 /// granted-tool MENU prepend (`KX_SERVE_REACT_TOOL_MENU`). Default-ON (unset /
 /// `"1"` / `"true"` ⇒ `true`) — byte-mirrors [`grammar_constrained_enabled`]; set

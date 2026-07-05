@@ -317,3 +317,20 @@ fn permutation_carrier_round_trips_and_is_distinct_from_tool_envelope() {
         GrammarSpec::ToolEnvelope(_)
     ));
 }
+
+/// T-GEMMA3-TOOL-LOOP-ANSWER-FORCE: the GBNF renderer (llama.cpp) reads ONLY `spec.tools`
+/// — `answer_only` (like `strict`/`answerable`) never enters the grammar. So arming
+/// answer-force is a NO-OP on llama.cpp: its lazy/triggered GBNF is byte-identical and it
+/// already completes the loop (the gemma3 gap is Ollama-only). This pins that invariant so
+/// a future GBNF edit can't silently start honoring the flag.
+#[test]
+fn gbnf_ignores_answer_only() {
+    let base = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")]);
+    let answer_only = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")])
+        .with_answer_only(true);
+    assert_eq!(
+        base.to_gbnf(),
+        answer_only.to_gbnf(),
+        "answer_only must not change the llama.cpp GBNF (llama.cpp already completes the loop)"
+    );
+}
