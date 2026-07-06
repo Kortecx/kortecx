@@ -16,9 +16,9 @@
 //! [`ToolEnvelopeSpec::to_gbnf`] for llama.cpp, [`ToolEnvelopeSpec::to_ollama_format`]
 //! for Ollama.
 //!
-//! ## Two constrained-output uses, one carrier (RC4c)
+//! ## Two constrained-output uses, one carrier (`RC4c`)
 //! The carrier [`GrammarSpec`] is a tagged enum: a [`ToolEnvelopeSpec`] (RC2
-//! tool-calling) OR a [`PermutationSpec`] (RC4c listwise rerank). The tool envelope
+//! tool-calling) OR a [`PermutationSpec`] (`RC4c` listwise rerank). The tool envelope
 //! renders to GBNF (llama.cpp, armed lazily) + a JSON schema (Ollama). The permutation
 //! renders ONLY to an Ollama whole-response `format`; on llama.cpp it degrades to the
 //! fail-closed parser (the char-level GBNF crashes some tokenizers — see

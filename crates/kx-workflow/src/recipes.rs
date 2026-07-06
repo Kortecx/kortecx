@@ -221,7 +221,7 @@ pub fn rag_pipeline(
     Ok(wf)
 }
 
-/// **Hybrid RAG (RC4c).** The retrieval-quality sibling of [`rag_pipeline`],
+/// **Hybrid RAG (`RC4c`).** The retrieval-quality sibling of [`rag_pipeline`],
 /// completing the authored RAG quartet:
 ///
 /// ```text

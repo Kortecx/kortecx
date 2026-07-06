@@ -119,6 +119,12 @@ fn manifest_covers_known_private_roots() {
         "docs/analysis/**",
         "docs/plans/**",
         "docs/benchmarks/**",
+        // The three private ledgers: the master feature-ledger (spans both lanes;
+        // the public per-repo `feature-ledger.toml` is the [shared] one), plus the
+        // bug- and learning-ledgers. All private_only — an OSS PR must never track them.
+        "docs/feature-ledger.md",
+        "docs/bug-ledger.md",
+        "docs/learning-ledger.md",
         "CLAUDE.md",
         "WARNINGS.md",
         "00-*.md",
