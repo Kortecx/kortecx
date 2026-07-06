@@ -3,7 +3,7 @@
 //! the build locally + in CI if the boundary invariants drift. Mirrors the
 //! shell-out-and-skip-if-unavailable pattern of `dep_wall.rs`.
 //!
-//! Three invariants (single source of truth: `shared-paths.toml` at the repo root):
+//! Four invariants (single source of truth: `shared-paths.toml` at the repo root):
 //!  (a) the OSS public repo tracks ZERO `[private_only]` paths. Gated on repo
 //!      identity — the private corpus repo LEGITIMATELY tracks them, so the
 //!      assertion runs only when the corpus sentinel is NOT tracked.
@@ -11,6 +11,11 @@
 //!      (catches an accidentally-weakened manifest).
 //!  (c) root `Cargo.toml` still `exclude`s `kx-cloud` (K0 — cloud stays outside
 //!      the projection workspace, so it can never move the canonical digest).
+//!  (d) EVERY tracked file is classified by the manifest — `[shared].include`,
+//!      `[private_only].paths`, or `[divergent].paths`. The include-side twin of
+//!      (a): an UNCLASSIFIED path is invisible to `just port` (never carried) AND
+//!      to `just cmp-shared` (never compared), so it silently escapes the mirror
+//!      in EITHER direction. Runs in BOTH repos. L-029 (`shared-paths-include-under-inclusion`).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
@@ -170,5 +175,58 @@ fn oss_repo_tracks_no_private_paths() {
         hits.is_empty(),
         "SN-2 LEAK: the OSS repo tracks private-only path(s):\n  {}",
         hits.join("\n  ")
+    );
+}
+
+/// (d) EVERY tracked file must be classified by shared-paths.toml. An unclassified
+/// path is never carried by `just port` and never compared by `just cmp-shared`, so
+/// it silently drifts the mirror in either direction (L-029). Reuses git's own glob
+/// engine — the union of the three classes' `:(glob)` pathspecs must cover every
+/// tracked file. Runs in BOTH repos; skipped only when git is unavailable.
+#[test]
+fn every_tracked_file_is_classified() {
+    use std::collections::BTreeSet;
+    let root = repo_root();
+    let all = match git(&root, &["ls-files"]) {
+        Some(s) => s,
+        None => return, // no git — the CI leak-check is the backstop
+    };
+    let manifest = read_manifest(&root);
+    // Union of [shared].include + [private_only].paths + [divergent].paths as git
+    // glob pathspecs. `divergent` is authoritative here too — a divergent file is
+    // classified (intentionally per-repo), just never ported.
+    let mut args: Vec<String> = vec!["ls-files".into(), "--".into()];
+    for (section, key) in [
+        ("shared", "include"),
+        ("private_only", "paths"),
+        ("divergent", "paths"),
+    ] {
+        for p in manifest_array(&manifest, section, key) {
+            args.push(format!(":(glob){p}"));
+        }
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let classified = match git(&root, &arg_refs) {
+        Some(s) => s,
+        None => return,
+    };
+    let classified_set: BTreeSet<&str> = classified
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let unclassified: Vec<&str> = all
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter(|l| !classified_set.contains(l))
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "L-029 UNDER-INCLUSION: shared-paths.toml classifies neither [shared] / \
+         [private_only] / [divergent] for {} tracked path(s) — each silently escapes \
+         the mirror (never ported, never cmp-shared'd):\n  {}",
+        unclassified.len(),
+        unclassified.join("\n  ")
     );
 }

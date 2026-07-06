@@ -6,9 +6,12 @@
 # Subcommands:
 #   paths-shared              [shared].include patterns, one per line
 #   paths-private             [private_only].paths patterns, one per line
+#   paths-divergent           [divergent].paths patterns, one per line
 #   deny-terms                [private_only].deny_terms, one per line
 #   pathspec-shared           git pathspecs for [shared].include  (e.g. :(glob)crates/**)
 #   pathspec-private          git pathspecs for [private_only].paths (positive)
+#   pathspec-divergent        git pathspecs for [divergent].paths (positive)
+#   pathspec-classified       git pathspecs for the UNION of all three classes
 #   pathspec-exclude-private  git EXCLUDE pathspecs for [private_only].paths
 #   grep-regex-private        anchored ERE alternation matching private path strings
 #
@@ -58,18 +61,26 @@ _to_regex() {
 }
 
 case "${1:-}" in
-  paths-shared)  _array shared include ;;
-  paths-private) _array private_only paths ;;
-  deny-terms)    _array private_only deny_terms ;;
+  paths-shared)    _array shared include ;;
+  paths-private)   _array private_only paths ;;
+  paths-divergent) _array divergent paths ;;
+  deny-terms)      _array private_only deny_terms ;;
   pathspec-shared)
     _array shared include | while IFS= read -r p; do printf ':(glob)%s\n' "$p"; done ;;
   pathspec-private)
     _array private_only paths | while IFS= read -r p; do printf ':(glob)%s\n' "$p"; done ;;
+  pathspec-divergent)
+    _array divergent paths | while IFS= read -r p; do printf ':(glob)%s\n' "$p"; done ;;
+  pathspec-classified)
+    # The UNION of all three classes — every tracked file must match one of these,
+    # else it is UNCLASSIFIED and silently escapes the mirror (L-029 completeness).
+    { _array shared include; _array private_only paths; _array divergent paths; } \
+      | while IFS= read -r p; do printf ':(glob)%s\n' "$p"; done ;;
   pathspec-exclude-private)
     _array private_only paths | while IFS= read -r p; do printf ':(exclude,glob)%s\n' "$p"; done ;;
   grep-regex-private)
     _array private_only paths | while IFS= read -r p; do _to_regex "$p"; done | paste -sd'|' - ;;
   *)
-    echo "usage: $0 {paths-shared|paths-private|deny-terms|pathspec-shared|pathspec-private|pathspec-exclude-private|grep-regex-private}" >&2
+    echo "usage: $0 {paths-shared|paths-private|paths-divergent|deny-terms|pathspec-shared|pathspec-private|pathspec-divergent|pathspec-classified|pathspec-exclude-private|grep-regex-private}" >&2
     exit 2 ;;
 esac
