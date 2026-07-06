@@ -50,16 +50,15 @@ kx-cloud/
 /.claude/
 /docs/design/*.md
 /docs/suggestions/*.md
-# Internal analysis / feasibility reviews — private-only (docs default to private).
+# Internal analysis / feasibility reviews — kept out of tree.
 /docs/analysis/
-# Plan files are private-only (SN-5: plans NEVER land in the public OSS repo).
+# Plan files are kept out of tree.
 /docs/plans/
-# Profiling/benchmark results are private-only (Golden Rule 10 / SN-2): the
-# `just profile` HARNESS is public OSS, but the captured numbers are a corpus
-# trend record that lives only in the private kortecx-core checkout under
-# docs/benchmarks/. Added BEFORE any result file can exist so none leaks.
+# Profiling/benchmark results are kept out of tree: the `just profile` HARNESS
+# ships here, but the captured numbers are maintained separately. Ignored BEFORE
+# any result file can exist so none is committed.
 /docs/benchmarks/
-# Internal warning/debug log — kept in the private kortecx-core repo only.
+# Internal warning/debug log — kept out of tree.
 /WARNINGS.md
 
 # Local code-review tooling runtime data (a throwaway review journal + catalog +
@@ -76,15 +75,13 @@ kx-cloud/
 # proptest failure-persistence DIRECTORIES (the pattern above only matched *.proptest-regressions files)
 **/proptest-regressions/
 
-# ---- Private BRAIN machinery — kept ONLY in the private kortecx-core repo (2026-07-06) ----
-# The OSS↔private boundary manifest (shared-paths.toml), the roadmap registry (feature-ledger.toml),
-# and the dev/corpus/lane shell scripts live in private ONLY. The public OSS runtime ships its code
-# plus scripts/install.sh — nothing else from scripts/. The boundary is enforced entirely from the
-# PRIVATE side (`just port` structurally refuses private paths; `cmp-shared`; shared_boundary.rs),
-# so OSS no longer carries the manifest/reader or the leak-check workflow. These entries stop the
-# private files from silently re-landing on a shared checkout (any new scripts/*.sh is private by
-# default; only install.sh is public).
+# ---- Maintainer-local tooling — not part of the public runtime ----
+# The public repo ships the runtime code plus scripts/install.sh. Other top-level
+# dev/release helper scripts and their config are maintained out of tree; they are
+# ignored here so they never land in a public checkout by accident. Any new
+# scripts/*.sh is treated as local by default — only install.sh ships.
 /shared-paths.toml
 /feature-ledger.toml
 /scripts/*.sh
 !/scripts/install.sh
+/justfile.private
