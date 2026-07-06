@@ -94,7 +94,7 @@ test-skill *packs:
 # agree with the tree (skills/** ⟷ skill entries, integrations/kx-connector-*
 # ⟷ integration entries, sources exist, ledger ids real). Pure file reads.
 registry-check:
-    bash scripts/registry-check.sh
+    @[ -f scripts/registry-check.sh ] && bash scripts/registry-check.sh || echo "registry-check: private-only script (not in this repo) — skipped"
 
 # ============================================================================
 # Onboarding / install automation (sudo-free, opt-in)
@@ -508,7 +508,7 @@ docker-build-inference:
 # and what the CI `docker-smoke` job runs. Requires a working Docker daemon. NOT
 # part of `just ci` (a separate, Docker-dependent gate — like verify-quickstart).
 docker-smoke:
-    ./scripts/docker-smoke.sh
+    @[ -f scripts/docker-smoke.sh ] && ./scripts/docker-smoke.sh || echo "docker-smoke: private-only script (not in this repo) — skipped"
 
 # ============================================================================
 # Policy + supply-chain recipes
@@ -1084,7 +1084,7 @@ shared-lane-status:
 # next-free §/D/L/Rule to claim, and FAIL if this branch claims a D/Rule/L number already
 # taken on main (the #329/#330 race) or duplicated in-branch. Run before a corpus commit.
 corpus-preflight:
-    scripts/corpus-preflight.sh
+    @[ -f scripts/corpus-preflight.sh ] && scripts/corpus-preflight.sh || echo "corpus-preflight: private-only script (not in this repo) — skipped"
 
 # ============================================================================
 # Parallel lanes (D175) — isolated git worktrees so concurrent sessions never

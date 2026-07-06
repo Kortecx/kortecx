@@ -1144,5 +1144,15 @@ jobs:
       - name: Checkout (NO submodules — file reads only)
         uses: actions/checkout@v6
 
+      # scripts/registry-check.sh is now private-only (kortecx-core, 2026-07-06): the OSS
+      # runtime ships registry/index.json (a [shared] path, byte-equal in both repos) but not
+      # the validator. registry/index.json ⟷ tree consistency is asserted in PRIVATE CI + proven
+      # byte-equal to OSS via cmp-shared. The check reports here (branch-protection-safe) but
+      # skips honestly when the private script is absent.
       - name: Verify registry/index.json against the tree
-        run: bash scripts/registry-check.sh
+        run: |
+          if [ -f scripts/registry-check.sh ]; then
+            bash scripts/registry-check.sh
+          else
+            echo "registry-check.sh is private-only (kortecx-core) — skipped on OSS; registry/index.json is validated in private CI and proven byte-equal via cmp-shared"
+          fi

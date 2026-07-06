@@ -75,3 +75,16 @@ kx-cloud/
 
 # proptest failure-persistence DIRECTORIES (the pattern above only matched *.proptest-regressions files)
 **/proptest-regressions/
+
+# ---- Private BRAIN machinery — kept ONLY in the private kortecx-core repo (2026-07-06) ----
+# The OSS↔private boundary manifest (shared-paths.toml), the roadmap registry (feature-ledger.toml),
+# and the dev/corpus/lane shell scripts live in private ONLY. The public OSS runtime ships its code
+# plus scripts/install.sh — nothing else from scripts/. The boundary is enforced entirely from the
+# PRIVATE side (`just port` structurally refuses private paths; `cmp-shared`; shared_boundary.rs),
+# so OSS no longer carries the manifest/reader or the leak-check workflow. These entries stop the
+# private files from silently re-landing on a shared checkout (any new scripts/*.sh is private by
+# default; only install.sh is public).
+/shared-paths.toml
+/feature-ledger.toml
+/scripts/*.sh
+!/scripts/install.sh

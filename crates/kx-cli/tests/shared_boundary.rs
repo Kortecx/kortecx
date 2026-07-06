@@ -88,9 +88,13 @@ fn manifest_array(manifest: &str, section: &str, key: &str) -> Vec<String> {
     out
 }
 
-fn read_manifest(root: &Path) -> String {
-    std::fs::read_to_string(root.join("shared-paths.toml"))
-        .expect("shared-paths.toml at the repo root")
+/// Read the manifest, or `None` if it is absent. `shared-paths.toml` is
+/// `[private_only]` (2026-07-06): it lives ONLY in the private repo — the OSS
+/// public repo does not carry it, so manifest-reading tests SKIP there (the
+/// boundary is enforced from the private side: `just port` refuses private
+/// paths, `cmp-shared`, and these tests running in the private repo).
+fn read_manifest(root: &Path) -> Option<String> {
+    std::fs::read_to_string(root.join("shared-paths.toml")).ok()
 }
 
 /// (c) K0 — root `Cargo.toml` must keep `kx-cloud` excluded from the workspace.
@@ -115,7 +119,10 @@ fn root_cargo_excludes_kx_cloud() {
 #[test]
 fn manifest_covers_known_private_roots() {
     let root = repo_root();
-    let manifest = read_manifest(&root);
+    let manifest = match read_manifest(&root) {
+        Some(m) => m,
+        None => return, // shared-paths.toml is [private_only] — absent in OSS; skip (private-side enforced)
+    };
     let private = manifest_array(&manifest, "private_only", "paths");
     const REQUIRED: &[&str] = &[
         "kx-cloud/**",
@@ -158,7 +165,10 @@ fn oss_repo_tracks_no_private_paths() {
         return; // private corpus repo — private paths are expected here
     }
 
-    let manifest = read_manifest(&root);
+    let manifest = match read_manifest(&root) {
+        Some(m) => m,
+        None => return, // shared-paths.toml is [private_only] — absent in OSS; skip (private-side enforced)
+    };
     let private = manifest_array(&manifest, "private_only", "paths");
     // Ask git's own pathspec engine to list any tracked private path.
     let mut args: Vec<String> = vec!["ls-files".into(), "--".into()];
@@ -191,7 +201,10 @@ fn every_tracked_file_is_classified() {
         Some(s) => s,
         None => return, // no git — the CI leak-check is the backstop
     };
-    let manifest = read_manifest(&root);
+    let manifest = match read_manifest(&root) {
+        Some(m) => m,
+        None => return, // shared-paths.toml is [private_only] — absent in OSS; skip (private-side enforced)
+    };
     // Union of [shared].include + [private_only].paths + [divergent].paths as git
     // glob pathspecs. `divergent` is authoritative here too — a divergent file is
     // classified (intentionally per-repo), just never ported.
