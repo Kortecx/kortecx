@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # scripts/lane-guard.sh — the no-cross-merge gate (Golden Rule 25: lane isolation).
-# OSS and cloud are developed as two ISOLATED lanes; a change must not cross the
-# OSS↔cloud boundary unless explicitly requested. This gate enforces it in CI on
-# BOTH repos (it is [shared], invoked from each repo's divergent workflow).
+# OSS and cloud are developed as ISOLATED lanes; a change must not cross the
+# OSS↔cloud boundary unless explicitly requested. Runs in the OSS + private corpus
+# repos (it is [shared], invoked from each repo's divergent workflow).
+#
+# NOTE (D182): cloud/UI are now STANDALONE sibling repos (kortecx-cloud / -cloud-ml /
+# kortecx-UI), so their isolation is enforced PRIMARILY by the repo boundary (they
+# path-dep ../kortecx-core/crates/* read-only + carry their OWN local lane-guard). The
+# `cloud` lane below is a LEGACY backstop for the retired nested-kx-cloud/ breadcrumb;
+# real cloud work never happens on a `cloud/*` branch in this repo.
 #
 # Lane is derived from a `Lane:` commit trailer, else the branch prefix:
 #   oss     feat/*, fix/*, sync-oss-pr*  — OSS shared surface; may touch [shared] +
@@ -10,7 +16,8 @@
 #   seam    feat/seam-*                  — the cloud→OSS "push the seam" exception;
 #                                          same path rules as oss (an OSS change that
 #                                          enables a cloud feature; impl stays private).
-#   cloud   cloud/*                      — cloud repo; may touch ONLY kx-cloud/**.
+#   cloud   cloud/*                      — LEGACY nested breadcrumb only (kx-cloud/**);
+#                                          the standalone cloud repos self-enforce.
 #   corpus  corpus/*, mirror/*           — private corpus; no OSS-side path constraint.
 #
 # Explicit override ("unless specified or requested"): a `Cross-Lane: <reason>`

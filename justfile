@@ -1052,6 +1052,10 @@ leak-check base="origin/main":
         fi
     done < <(scripts/shared-paths.sh deny-terms)
     [ "$FAIL" -eq 0 ] || exit 1
+    # Defense-in-depth (advisory): every [private_only] root should also be
+    # backstopped by the OSS .gitignore. Repo-aware + non-failing (see the script);
+    # flip to `--strict` once the OSS .gitignore covers every root (D14 follow-up).
+    scripts/check-private-gitignore.sh || true
     echo "leak-check clean vs {{base}}"
 
 # Guard the SHARED lane: only ONE shared-path change should be in flight at a time
@@ -1075,6 +1079,12 @@ shared-lane-status:
         exit 1
     fi
     echo "shared lane clear"
+
+# Corpus counter guard (Rule 29 / L-012, scheme A): fetch the freshest main, print the
+# next-free §/D/L/Rule to claim, and FAIL if this branch claims a D/Rule/L number already
+# taken on main (the #329/#330 race) or duplicated in-branch. Run before a corpus commit.
+corpus-preflight:
+    scripts/corpus-preflight.sh
 
 # ============================================================================
 # Parallel lanes (D175) — isolated git worktrees so concurrent sessions never

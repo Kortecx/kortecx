@@ -1,4 +1,4 @@
-//! RC4c — the LLM listwise rerank (`rerank_hits`) driven by a REAL model on BOTH
+//! `RC4c` — the LLM listwise rerank (`rerank_hits`) driven by a REAL model on BOTH
 //! inference engines (GR15 real-model integrity + GR24 dual-engine parity).
 //!
 //! Gated `#[ignore]` (needs a served model — never runs in the default `cargo test`).

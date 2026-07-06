@@ -116,7 +116,7 @@ fn strip_code_fence(text: &str) -> &str {
     }
 }
 
-/// Parse a model's listwise-rerank output (RC4c) into a validated PERMUTATION of
+/// Parse a model's listwise-rerank output (`RC4c`) into a validated PERMUTATION of
 /// `[0, n)` — the retrieved candidate indices in the model's proposed best→worst
 /// order.
 ///

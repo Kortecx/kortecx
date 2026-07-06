@@ -1,4 +1,4 @@
-//! [`PermutationSpec`] — the constraint for an LLM listwise-RERANK turn (RC4c).
+//! [`PermutationSpec`] — the constraint for an LLM listwise-RERANK turn (`RC4c`).
 //!
 //! A rerank turn shows the model `n` retrieved candidate passages and asks it to
 //! emit their indices in best→worst order: a JSON array that is a PERMUTATION of

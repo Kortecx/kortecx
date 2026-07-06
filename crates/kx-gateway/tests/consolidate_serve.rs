@@ -1,10 +1,10 @@
-//! Live RC5b e2e witness — `kx serve` with `KX_SERVE_MEMORY=1` consolidates episodic
+//! Live `RC5b` e2e witness — `kx serve` with `KX_SERVE_MEMORY=1` consolidates episodic
 //! memories into a durable semantic fact, and the decay/stats/restore RPC surface
 //! responds, on BOTH engines.
 //!
 //!   - the decay/stats/restore RPCs (the HARD witness): deterministic, model-free — a
 //!     store → `MemoryStats` → `DecayMemory --dry-run` → `RestoreMemory` round-trip
-//!     smokes the whole RC5b RPC surface end-to-end (a reliable dual-engine parity gate;
+//!     smokes the whole `RC5b` RPC surface end-to-end (a reliable dual-engine parity gate;
 //!     the tombstone/restore LOGIC is exhaustively unit-tested in `kx-memory` with an
 //!     injected clock, since a live store stamps `created_ms = now` and nothing is old
 //!     enough to evict);

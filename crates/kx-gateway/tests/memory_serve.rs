@@ -1,4 +1,4 @@
-//! Live durable-MEMORY e2e witness (RC5a) — `kx serve` with `KX_SERVE_MEMORY=1`
+//! Live durable-MEMORY e2e witness (`RC5a`) — `kx serve` with `KX_SERVE_MEMORY=1`
 //! remembers a fact and recalls it BY MEANING across runs, on BOTH engines.
 //!
 //!   - store→recall round-trip (the HARD witness): a `StoreMemory` then a `RecallMemory`

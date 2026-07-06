@@ -668,7 +668,7 @@ const TOOL_CALL_TRIGGERS: [&str; 1] = [r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#];
 /// Two arming modes by carrier variant:
 /// - [`GrammarSpec::ToolEnvelope`] (RC2 tool-calling) → LAZY/triggered: prose answers
 ///   flow free until the model emits the `{"tool_call"` opener.
-/// - [`GrammarSpec::Permutation`] (RC4c listwise rerank) → DEGRADES to the fail-closed
+/// - [`GrammarSpec::Permutation`] (`RC4c` listwise rerank) → DEGRADES to the fail-closed
 ///   parser (no GBNF armed). The pinned llama.cpp grammar sampler crashes the owner
 ///   thread mid-decode when constraining a digit-array permutation against some
 ///   tokenizers (Gemma's digit/punctuation tokens span the char-level grammar's

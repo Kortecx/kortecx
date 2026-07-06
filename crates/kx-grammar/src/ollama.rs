@@ -101,7 +101,7 @@ fn answer_arm() -> Value {
     })
 }
 
-/// Render an Ollama `format` JSON Schema (RC4c) for a listwise-rerank turn: the
+/// Render an Ollama `format` JSON Schema (`RC4c`) for a listwise-rerank turn: the
 /// WHOLE response is an integer array of length `n` with each item in `[0, n)`.
 ///
 /// Unlike RC2's tool-call envelope (which can appear mid-prose, so Ollama's

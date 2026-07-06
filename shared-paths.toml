@@ -3,7 +3,8 @@
 # kortecx is developed across separate git repos that share a code surface:
 #   • OSS public        Kortecx/kortecx        (Apache-2.0)
 #   • private corpus    (design corpus + a byte-equivalent mirror of the OSS code)
-#   • cloud             (private; nested at kx-cloud/, its own repo)
+#   • cloud             (private; standalone sibling repos kortecx-cloud / -cloud-ml, D182)
+#   • UI                (private; standalone sibling repo kortecx-UI, D182)
 # This file classifies every path so tooling can move code between repos WITHOUT
 # leaking private content and WITHOUT drifting the shared surface.
 #
@@ -66,11 +67,14 @@ paths = [
   "docs/training-corpus/**",
   "docs/HANDOFF.md",
   "docs/HISTORY.md",
+  "docs/feature-ledger.md",
   "docs/bug-ledger.md",
   "docs/learning-ledger.md",
   "docs/VISION.md",
+  "docs/GLOSSARY.md",
+  "docs/cloud-dev-playbook.md",
+  "docs/cloud-engineering-discipline.md",
   "CLAUDE.md",
-  "MEMORY.md",
   "WARNINGS.md",
   "00-*.md",
   "01-*.md",

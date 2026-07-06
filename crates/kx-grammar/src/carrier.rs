@@ -1,7 +1,7 @@
 //! [`GrammarSpec`] — the tagged constraint carrier the off-digest
 //! `kx_mote::Grammar.raw` holds.
 //!
-//! RC2 carried a bare [`ToolEnvelopeSpec`] (tool-call constraint). RC4c adds a
+//! RC2 carried a bare [`ToolEnvelopeSpec`] (tool-call constraint). `RC4c` adds a
 //! second constrained-output use — the listwise-rerank [`PermutationSpec`] — so the
 //! carrier becomes a tagged enum. `kx_inference::cache` arms a [`Self::ToolEnvelope`]
 //! as a LAZY GBNF (triggered on the `{"tool_call"` opener, so prose answers flow
@@ -25,7 +25,7 @@ use crate::permutation::PermutationSpec;
 use crate::spec::ToolEnvelopeSpec;
 
 /// The constrained-generation carrier: EITHER a tool-call envelope constraint (RC2)
-/// OR a listwise-rerank permutation constraint (RC4c).
+/// OR a listwise-rerank permutation constraint (`RC4c`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GrammarSpec {

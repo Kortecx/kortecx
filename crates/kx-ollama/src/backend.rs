@@ -587,7 +587,7 @@ fn backend_failure(err: OllamaError) -> InferenceError {
     }
 }
 
-/// RC4c: choose the Ollama whole-response `format` for a grammar carrier. A
+/// `RC4c`: choose the Ollama whole-response `format` for a grammar carrier. A
 /// `Permutation` (listwise-rerank) carrier → its JSON-schema (the entire output is
 /// the permutation, so a strict format is correct — closing `T-OLLAMA-GRAMMAR-FORMAT`
 /// for that turn). A `ToolEnvelope` carrier is applied as a strict format ONLY when the
