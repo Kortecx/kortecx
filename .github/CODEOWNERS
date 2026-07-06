@@ -8,37 +8,48 @@
 # (admin-bypass is allowed per the branch-protection rules but the rule
 # still surfaces these files in the PR reviewers list automatically).
 
+# NOTE: patterns are repo-root-relative. The crates live UNDER crates/, so every rule below
+# uses the /crates/<name>/ prefix — a bare /kx-mote/ would match nothing (fixed 2026-07-06).
+
 # ----- Identity-bearing crates (do not change MoteDef shape lightly) -----
 
-/kx-mote/                              @kortecx
+/crates/kx-mote/                       @kortecx @toolexi
+
+# ----- gRPC wire contract (change additively; a break ripples to every generated client) -----
+
+/crates/kx-proto/                      @kortecx @toolexi
+
+# ----- Capability registry (index ⟷ tree must stay consistent) ----------
+
+/registry/                             @kortecx @toolexi
 
 # ----- FFI boundary (unsafe-heavy; CMake/bindgen pipeline) ---------------
 
-/kx-llamacpp-sys/                      @kortecx
-/kx-llamacpp/                          @kortecx
+/crates/kx-llamacpp-sys/               @kortecx @toolexi
+/crates/kx-llamacpp/                   @kortecx @toolexi
 
 # ----- Storage layer (content-addressed; atomic-per-object) --------------
 
-/kx-content/                           @kortecx
+/crates/kx-content/                    @kortecx @toolexi
 
 # ----- Journal (the synchronization substrate) ---------------------------
 
-/kx-journal/                           @kortecx
+/crates/kx-journal/                    @kortecx @toolexi
 
 # ----- Projection (read-side fold over journal) --------------------------
 
-/kx-projection/                        @kortecx
+/crates/kx-projection/                 @kortecx @toolexi
 
 # ----- CI + governance --------------------------------------------------
 
-/.github/workflows/                    @kortecx
-/.github/CODEOWNERS                    @kortecx
-/.github/pull_request_template.md      @kortecx
+/.github/workflows/                    @kortecx @toolexi
+/.github/CODEOWNERS                    @kortecx @toolexi
+/.github/pull_request_template.md      @kortecx @toolexi
 
 # ----- Build orchestration ----------------------------------------------
 
-/justfile                              @kortecx
-/Cargo.toml                            @kortecx
-/Cargo.lock                            @kortecx
-/rust-toolchain.toml                   @kortecx
-/clippy.toml                           @kortecx
+/justfile                              @kortecx @toolexi
+/Cargo.toml                            @kortecx @toolexi
+/Cargo.lock                            @kortecx @toolexi
+/rust-toolchain.toml                   @kortecx @toolexi
+/clippy.toml                           @kortecx @toolexi
