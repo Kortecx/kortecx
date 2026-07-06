@@ -109,6 +109,8 @@ setup:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "kortecx setup — FFI-free runtime (Tier 0: Rust only, no C++ toolchain)"
+    # Install the repo's local git hooks if present (see `just install-hooks`).
+    [ -d scripts/hooks ] && git config core.hooksPath scripts/hooks 2>/dev/null && chmod +x scripts/hooks/* 2>/dev/null || true
     if ! command -v cargo >/dev/null 2>&1; then
         echo " ✗ cargo not found — install Rust from https://rustup.rs, then re-run." >&2
         exit 1
@@ -133,6 +135,16 @@ setup:
     echo ""
     echo "For REAL local LLM inference (opt-in; needs a C++ toolchain), run:"
     echo "     just doctor   # per-OS install hints   →   just setup-inference"
+
+# install-hooks — install the repo's local git hooks (if present) via core.hooksPath. The hooks run
+# quick pre-push quality checks. core.hooksPath is per-clone local config that cannot self-install,
+# so run this once per checkout (the `setup` recipe also runs it when the hooks are present).
+# Emergency bypass of a hook: `git push --no-verify`.
+install-hooks:
+    @if [ -d scripts/hooks ]; then \
+        git config core.hooksPath scripts/hooks && chmod +x scripts/hooks/* && \
+        echo "hooks installed: core.hooksPath → scripts/hooks ($(ls scripts/hooks | tr '\n' ' '))"; \
+     else echo "install-hooks: no scripts/hooks/ in this repo — nothing to install"; fi
 
 # OPT-IN inference tier (Tier 1). Inits the llama.cpp submodule and builds the FFI
 # link. Requires a C++ toolchain — run `just doctor` first for per-OS hints.
