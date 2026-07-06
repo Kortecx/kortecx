@@ -3,7 +3,7 @@ name: Release
 # Tag-triggered: publish SHA-256-verified prebuilt FFI-free `kx` binaries on a `v*`
 # tag (the tag is cut from an already-green `main`). This is NOT a pull-request /
 # branch check, so it adds NO branch-protection status context. `scripts/install.sh`
-# downloads these assets. `leak-check.yml` still guards every push/PR to main.
+# downloads these assets.
 on:
   push:
     tags: ["v*"]

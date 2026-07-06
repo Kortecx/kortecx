@@ -1122,37 +1122,35 @@ jobs:
       - name: Dial a pinned REAL external MCP server through the conformance gate
         run: just test-connector-real
 
-      # RC-SW1: the DECLARATIVE-family gate — every in-tree skills/** pack through
+      # The DECLARATIVE-family gate — every in-tree skills/** pack through
       # run_skill_conformance (pack loads · canonical roundtrip · authority
       # deny-keys · wish grammar · bounded instructions · declarative-only ·
       # empty-grant-binds-to-zero). Offline, no model, <10s on the warm cache —
       # rides this job rather than paying a fresh ~5-8 min build in its own.
-      - name: Skill-pack conformance (RC-SW1 — all skills/** reference packs)
+      - name: Skill-pack conformance (all skills/** reference packs)
         run: just test-skill
 
   # ---------------------------------------------------------------------------
-  # registry-consistency — RC-SW1 (D175 test-infra enabler #3): registry/index.json
+  # registry-consistency: registry/index.json
   # must agree with the tree (skills/** ⟷ skill entries · integrations/kx-connector-*
   # ⟷ integration entries · sources exist · ledger ids real · per-pack name/version
   # match). Closes the "merge green while missing from an index" hole. Pure local
   # file reads (python3 stdlib) — no Rust build, no network, <30s.
   # ---------------------------------------------------------------------------
   registry-consistency:
-    name: registry-consistency (RC-SW1 — index ⟷ tree)
+    name: registry-consistency (index ⟷ tree)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (NO submodules — file reads only)
         uses: actions/checkout@v6
 
-      # scripts/registry-check.sh is now private-only (kortecx-core, 2026-07-06): the OSS
-      # runtime ships registry/index.json (a [shared] path, byte-equal in both repos) but not
-      # the validator. registry/index.json ⟷ tree consistency is asserted in PRIVATE CI + proven
-      # byte-equal to OSS via cmp-shared. The check reports here (branch-protection-safe) but
-      # skips honestly when the private script is absent.
+      # The registry validator script is a maintainer-local helper and is not
+      # bundled in the public repo; registry/index.json itself ships here. This
+      # step runs the validator when present and skips honestly when it is not.
       - name: Verify registry/index.json against the tree
         run: |
           if [ -f scripts/registry-check.sh ]; then
             bash scripts/registry-check.sh
           else
-            echo "registry-check.sh is private-only (kortecx-core) — skipped on OSS; registry/index.json is validated in private CI and proven byte-equal via cmp-shared"
+            echo "registry-check.sh not present — skipped; registry/index.json ships in this repo"
           fi

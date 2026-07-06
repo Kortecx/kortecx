@@ -1,11 +1,11 @@
 <!--
   Kortecx OSS pull request template. Every checkbox below corresponds to a
-  standing-note or invariant locked in the private corpus. Tick boxes only
+  standing engineering practice for this repo. Tick boxes only
   for items genuinely satisfied; leave the rest unchecked so the reviewer
   knows what's still open.
 
-  CI enforces SN-2 (leak-check.yml workflow), SN-4 v1+v2 (just ci + smoke
-  tests). The other items are honor-system + reviewer sanity check.
+  CI runs `just ci` + smoke tests. The other items are honor-system +
+  reviewer sanity check.
 -->
 
 ## Summary
@@ -15,12 +15,10 @@
 
 ## Standing-note compliance
 
-### SN-2 — Private-content leak audit
+### Sensitive content
 
-- [ ] `gh pr diff` reviewed manually; no private paths or architecture refs.
-      (The `private-content-leak-check` CI job is the automated half; this
-      checkbox is the human-eye half. The two are complementary, not
-      redundant.)
+- [ ] `gh pr diff` reviewed manually; no secrets, credentials, or
+      unintended files in the diff.
 
 ### SN-4 v1 — Functionality + determinism
 
