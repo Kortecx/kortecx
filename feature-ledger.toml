@@ -39,14 +39,14 @@ inherits = []
 [[feature]]
 id       = "serve-engine-public-seam"
 lane     = "seam"
-state    = "planned"
+state    = "retired"
 covers   = [
   "pub trait ServeEngine",
   "EngineRegistration + ServeEngineFactory",
   "extra_engine_factories hook in build_serve_runtime / GatewayConfig",
 ]
 inherits = ["oss-cloud-sync-infra"]
-notes    = "Lets an external/cloud crate register a serve engine without editing OSS gateway per-engine. Digest-invariant; frozen trio untouched. The canonical cloud→OSS push-the-seam instance."
+notes    = "RETIRED — D183 (2026-07-05) CANCELLED this seam: even doc-hidden + default-off, a ServeEngineFactory / extra_engine_factories hook is an enable-able BYO-engine mechanism physically present in the PUBLIC repo (exactly what D179.6 forbade). OSS ships llama.cpp + ollama ONLY, no registration seam; the cloud implements the ALREADY-public kx_inference::InferenceBackend privately + builds its own serve/route/lifecycle stack (no OSS change). Do NOT build this. See decisions.md#d183 + the master docs/feature-ledger.md."
 
 [[feature]]
 id       = "connector-extension-sdk"
@@ -433,10 +433,22 @@ inherits = ["integrations-come-alive", "slack-connector", "notion-connector", "t
 notes    = "User-locked 2026-07-04 (mechanism decision: 'Priming + Ollama union format'). Digest 7d22d4bd invariant by construction — the grammar carrier rides the dispatch-time params clone (model_exec.rs:1391→1408), NEVER the durable MoteDef (build_agentic_turn leaves grammar:None); the priming rides the ephemeral off-MoteId tool menu. Frozen-trio (kx-scheduler/kx-executor/kx-inference) EMPTY: gbnf::render reads only spec.tools, so `answerable` never enters the GBNF/lazy-arm. Cost accepted: the Ollama tool turn loses free-form CoT (fine for tool-decision turns; kill-switch KX_SERVE_OLLAMA_TOOL_UNION; Ollama-only; tools-granted-only). SN-5 docs/plans/2026-07-04-gemma3-connector-tool-fire.md."
 
 [[feature]]
+id       = "rc-sw4-supervisor-consensus"
+lane     = "oss"
+state    = "planned"
+covers   = [
+  "RC-SW4 min-viable orchestration: supervisor + consensus + core patterns; DEFER handoff()/advanced debate/graph post-RC (the one digest-sensitive item) — user-locked 2026-07-05",
+  "cross-surface bundle same-PR (D143): swarm/team on CLI+UI · respond_json/--json-schema · chat-attach-tools",
+]
+inherits = ["oss-cloud-sync-infra"]
+notes    = "The next OSS RC code PR per HANDOFF §2.312/§2.315 + D178. Registered here (readiness-audit C3) so a concurrent OSS session does not double-grab it. B-spec docs/plans/2026-07-05-rc-sw4-supervisor-consensus-plus-cross-surface-bspec.md. Serialized shared lane — start only after the registry-reconcile PR merges."
+
+[[feature]]
 id       = "t-gemma3-tool-loop-answer-force"
 lane     = "oss"
-state    = "in-progress"
+state    = "merged"
 branch   = "feat/gemma3-tool-loop-answer-force"
+pr       = "294"
 covers   = [
   "T-GEMMA3-TOOL-LOOP-ANSWER-FORCE (loop-completeness follow-up to gemma3-connector-tool-fire #293, L-019): once gemma3:12b FIRES (via the #293 union), it loops — re-firing the SAME tool with identical args on the observation turn; kx_toolcall dedup refuses it, but gemma3 re-proposes the identical call and dead-letters under budget (llama.cpp Gemma-4 already completes fire→answer). Fix: on the next react turn AFTER a duplicate-call rejection OR the near-budget settle-nudge, arm an ANSWER-ONLY Ollama union ({\"answer\":\"…\"}-only, tool_call arm DROPPED) so a weak model is FORCED to settle instead of looping",
   "GATEWAY-DERIVED, off-digest (two adversarial plan reviews converged on this over coordinator-carried plumbing): the reprompt/nudge decision is ALREADY serialized by the coordinator into the turn's on-digest instruction (config_subset[PROMPT_KEY] via render_reprompt/render_settle_nudge); model_exec.rs react_answer_force(mote) reads prompt_from_config(mote) and matches the shared kx_toolcall markers — DRIFT-PROOF (same bytes the build wrote; no re-computed loop-counter twin) + NO proto/worker/ContextSink/coordinator plumbing. FIRST-duplicate arming (user-chosen): GR15-safe since the tool result already exists in context, so the forced answer draws on real data",

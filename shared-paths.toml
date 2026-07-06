@@ -51,6 +51,26 @@ include = [
   "docker-compose.yml",
   "shared-paths.toml",
   "feature-ledger.toml",
+  # Capability packs + the machine-readable capability registry (RC-SW1 skills /
+  # #291 registry). OSS-authoritative; restored into the private mirror by L-029.
+  "skills/**",
+  "registry/**",
+  # The cross-surface (Py↔TS↔CLI) byte-shape golden corpus (GR12/D143). OSS-authoritative.
+  "tests/golden/**",
+  # Byte-equal shared build/infra config. Listing them closes the L-029 cmp-shared
+  # blind spot (an unlisted-but-identical file could drift undetected). The rest of
+  # .github is divergent (workflows differ per repo) — only these two files are shared.
+  # NB keep in-array comments free of a close-bracket char: the one-element-per-line
+  # scanner ends the array at the first one it sees on any line, comments included.
+  ".cargo/**",
+  ".dockerignore",
+  ".editorconfig",
+  ".gitmodules",
+  "Dockerfile",
+  "Dockerfile.cuda",
+  "Dockerfile.inference",
+  ".github/CODEOWNERS",
+  ".github/pull_request_template.md",
 ]
 
 [private_only]
@@ -84,6 +104,11 @@ paths = [
   "05-*.md",
   "06-*.md",
   "07-*.md",
+  # Private-only local dev/build artifacts (never on OSS). `src/**` holds the
+  # maturin/pyo3 build output tree; the regenerable `.so`/`.pyc` under it are
+  # git-ignored via the private divergent .gitignore. `.python-version` is a local pyenv pin.
+  "src/**",
+  ".python-version",
 ]
 # Content sentinels: private architecture NAMES that must not appear in added
 # OSS lines. These are crate/remote identifiers, not vendor names — "vLLM" /
@@ -110,4 +135,8 @@ deny_terms = [
 paths = [
   ".github/workflows/**",
   ".gitignore",
+  # The private mirror keeps a `doc-valid-idents` RC-token allowlist that OSS does
+  # not need (OSS backticked the tokens in #295); classified so the completeness
+  # guard passes, but NEVER ported in either direction.
+  "clippy.toml",
 ]
