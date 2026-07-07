@@ -51,6 +51,8 @@ usage: kx <command> [args]
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [--context <handle>]...
     kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--out <file>] [--emit-blueprint <file>] [--dry-run]
                                                  (string-DSL DAG: a > [b & c]; --emit-blueprint = a portable blueprint; see `kx help chain`)
+    kx swarm \"<agent>\"... [--pattern swarm|supervisor|consensus] [--planner <p>] [--gather <p>] [--vote judge|majority] [--goal <g>] [--wait] [--dry-run]
+                                                 (multi-agent patterns without hand-writing the DSL: N agents → gather / plan→team→integrate / vote)
     kx blueprint run|import --file <dag.json> [--wait]    (run a portable DAG, or import = validate+summarize offline; `kx help blueprint`)
     kx projection --instance <hex16> [--at-seq N]
     kx runs list [--limit N] [--before-seq N]    (durable run history, newest-first)
@@ -117,6 +119,9 @@ pub enum Cli {
     Blueprint(verbs::blueprint::BlueprintArgs),
     /// `chain run` — author a Tier-1 DAG from the string-DSL and run it (SubmitWorkflow).
     Chain(verbs::chain::ChainArgs),
+    /// `swarm` — run a multi-agent pattern (swarm / supervisor / consensus) without
+    /// hand-writing the chain DSL (composes participants → the equivalent topology).
+    Swarm(verbs::swarm::SwarmArgs),
     /// Render a run as a DAG of Mote states.
     Projection(verbs::projection::ProjectionArgs),
     /// Durable run history (Batch B `ListRuns`; read-only).
@@ -217,6 +222,7 @@ impl Cli {
             Some("invoke") => Ok(Cli::Invoke(verbs::invoke::parse(args)?)),
             Some("blueprint") => Ok(Cli::Blueprint(verbs::blueprint::parse(args)?)),
             Some("chain") => Ok(Cli::Chain(verbs::chain::parse(args)?)),
+            Some("swarm") => Ok(Cli::Swarm(verbs::swarm::parse(args)?)),
             Some("projection") => Ok(Cli::Projection(verbs::projection::parse(args)?)),
             Some("runs") => Ok(Cli::Runs(verbs::runs::parse(args)?)),
             Some("recipe") => Ok(Cli::Recipe(verbs::recipe::parse(args)?)),
@@ -303,6 +309,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Invoke(a) => verbs::invoke::execute(a).await,
         Cli::Blueprint(a) => verbs::blueprint::execute(a).await,
         Cli::Chain(a) => verbs::chain::execute(a).await,
+        Cli::Swarm(a) => verbs::swarm::execute(a).await,
         Cli::Projection(a) => verbs::projection::execute(a).await,
         Cli::Runs(a) => verbs::runs::execute(a).await,
         Cli::Recipe(a) => verbs::recipe::execute(a).await,
@@ -595,6 +602,21 @@ kx chain run \"<dsl>\" --tasks <tasks.json> [--seed N] [--wait] [--timeout-secs 
   --emit-blueprint <file> also writes the lowered chain as a PORTABLE blueprint JSON (the
   exact `blueprint run --file` input — save / share / re-run it). --dry-run lowers +
   validates (+ emits) WITHOUT submitting (needs no gateway), the offline export path."
+            .into(),
+        "swarm" => "\
+kx swarm \"<agent prompt>\"... [--pattern swarm|supervisor|consensus] [--planner <p>] [--gather <p>]
+              [--vote judge|majority] [--goal <g>] [--seed N] [--wait] [--dry-run] [client flags]
+  Run a multi-agent orchestration pattern WITHOUT hand-writing the chain DSL — the same
+  topology the SDK swarm()/supervisor()/consensus() methods author (client composition;
+  the server compiles + warrants every step, SN-8). Each bare positional is an agent prompt.
+    swarm       (default)      [a0 & a1 & ...] > gather   — N parallel agents -> a synthesizer.
+    supervisor  --planner <p>  p > [a0 & a1 & ...] > gather — a lead plans, workers execute,
+                               the lead integrates. --gather steers the integration.
+    consensus   --vote judge   [a0 & a1 & ...] > judge    — a judge SELECTS the best-of-N.
+    consensus   --vote majority [a0 & a1 & ...] > reduce  — the server reduces to the
+                               EXACT-equality plurality (best for constrained outputs; SN-8).
+  --gather steers the synthesizer/judge; --goal is appended to each participant's prompt.
+  --dry-run lowers + validates without submitting (needs no gateway)."
             .into(),
         "projection" => "\
 kx projection --instance <hex16> [--at-seq N] [client flags]
