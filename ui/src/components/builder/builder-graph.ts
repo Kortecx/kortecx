@@ -320,3 +320,109 @@ export function newStep(kind: BuilderStepKind, id: string): BuilderStep {
     toolContract: {},
   };
 }
+
+// -- orchestration pattern macros ------------------------------------------
+//
+// A multi-agent orchestration pattern the visual builder scaffolds as a CLUSTER of
+// the EXISTING model/pure node vocabulary — no new BuilderStepKind, no new wire
+// shape. Each cluster lowers (via `toRequest` → the SDK `BlueprintBuilder`) to the
+// SAME DAG the SDK `flow().swarm/supervisor/consensus()` and the `kx swarm` CLI
+// author, so a UI-authored pattern is byte-equivalent to its SDK/CLI twin (modulo
+// the served-model binding — the one-shot builder pins an explicit model per node,
+// the SDK's App convention leaves it empty). SN-8 unchanged: the client still sends
+// only topology + params; the server compiles the DAG + builds every warrant.
+
+/** A pattern the builder can insert. `consensusJudge` reduces via a MODEL judge that
+ *  SELECTS the best candidate; `consensusMajority` reduces via a PURE sink the server
+ *  folds to the exact-equality plurality (SN-8; ties → first-appearance). */
+export type PatternKind = "swarm" | "supervisor" | "consensusJudge" | "consensusMajority";
+
+/** The `config_subset` key marking a PURE sink as an exact-equality consensus vote —
+ *  mirrors `kx_mote::CONSENSUS_VOTE_KEY` and the TS SDK `CONSENSUS_VOTE_KEY`
+ *  (`flow.ts`). Only `"majority"` is defined today. */
+export const CONSENSUS_VOTE_KEY = "kx.consensus.vote";
+
+/** UI-editable default sink prompts — a copy of the SDK constants (`flow.ts`
+ *  `DEFAULT_SWARM_GATHER` / `DEFAULT_SUPERVISOR_PLANNER` / `DEFAULT_SUPERVISOR_GATHER`
+ *  / `DEFAULT_CONSENSUS_JUDGE`). Seeded so a fresh pattern runs sensibly; the author
+ *  edits each per node. The lowering source-of-truth stays the SDK. */
+export const PATTERN_PROMPTS = {
+  swarmGather:
+    "You are the lead. Synthesize the parallel agents' results above into one coherent, " +
+    "complete answer. Reconcile disagreements, keep what is well-supported, and drop redundancy.",
+  supervisorPlanner:
+    "You are the supervisor. Break the task into clear, independent subtasks for the team " +
+    "and state each subtask precisely, so each teammate knows exactly what to do.",
+  supervisorGather:
+    "You are the supervisor. Integrate the team's results above into one complete, coherent " +
+    "answer. Reconcile disagreements, keep what is well-supported, drop redundancy.",
+  consensusJudge:
+    "You are the judge. Read the candidate answers above and choose the single best one; " +
+    "reply with that answer verbatim, without merging or editing the candidates.",
+} as const;
+
+/** The steps + edges a pattern insert contributes to the canvas, plus the first
+ *  node's id (the section selects it to open the config drawer) and the next free
+ *  numeric id past the cluster. */
+export interface PatternInsert {
+  readonly steps: BuilderStep[];
+  readonly edges: BuilderEdge[];
+  readonly firstId: string;
+  readonly nextId: number;
+}
+
+/** A data edge between two client-local node ids (the only edge kind a pattern uses —
+ *  every fan-in/fan-out is a Data edge, matching the SDK lowering). */
+function dataEdge(source: string, target: string): BuilderEdge {
+  return { id: `e-${source}-${target}`, source, target, edge: "data", instruction: "" };
+}
+
+/** Scaffold a `kind` pattern as a cluster of existing-vocabulary nodes, minting ids
+ *  from `startId` and seeding `participants` model leaves (default 2). Pure + total —
+ *  exhaustively unit-testable; positioning is the section's concern. Node ORDER
+ *  matches the SDK lowering (participants first, then the sink) so the lowered
+ *  `addStep` indices — and thus the derived MoteIds — line up. */
+export function insertPattern(kind: PatternKind, startId: number, participants = 2): PatternInsert {
+  const n = Math.max(1, Math.floor(participants));
+  let next = startId;
+  const model = (label: string, prompt: string): BuilderStep => ({
+    ...newStep("model", `s${next++}`),
+    label,
+    prompt,
+  });
+  const leaves = (label: string): BuilderStep[] =>
+    Array.from({ length: n }, () => model(label, ""));
+  const steps: BuilderStep[] = [];
+  const edges: BuilderEdge[] = [];
+
+  if (kind === "swarm") {
+    const parts = leaves("Agent");
+    const gather = model("Gather", PATTERN_PROMPTS.swarmGather);
+    steps.push(...parts, gather);
+    for (const p of parts) edges.push(dataEdge(p.id, gather.id));
+  } else if (kind === "supervisor") {
+    const planner = model("Planner", PATTERN_PROMPTS.supervisorPlanner);
+    const workers = leaves("Worker");
+    const gather = model("Gather", PATTERN_PROMPTS.supervisorGather);
+    steps.push(planner, ...workers, gather);
+    for (const w of workers) {
+      edges.push(dataEdge(planner.id, w.id));
+      edges.push(dataEdge(w.id, gather.id));
+    }
+  } else {
+    // consensusJudge | consensusMajority — N voters fan into one reduce sink.
+    const voters = leaves("Voter");
+    const sink =
+      kind === "consensusJudge"
+        ? model("Judge", PATTERN_PROMPTS.consensusJudge)
+        : {
+            ...newStep("pure", `s${next++}`),
+            label: "Majority vote",
+            paramsText: `{"${CONSENSUS_VOTE_KEY}":"majority"}`,
+          };
+    steps.push(...voters, sink);
+    for (const v of voters) edges.push(dataEdge(v.id, sink.id));
+  }
+
+  return { steps, edges, firstId: steps[0]?.id ?? `s${startId}`, nextId: next };
+}
