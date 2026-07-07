@@ -243,6 +243,45 @@ def test_empty_consensus_is_an_error() -> None:
         kx.consensus()
 
 
+# ---- review_loop (iterative refine: worker > review > review > …) ----
+
+
+def test_review_loop_chains_worker_then_review_passes() -> None:
+    low = kx.review_loop("Draft it", reviewer="Improve it", rounds=2).lowering()
+    assert len(low["steps"]) == 3  # worker + 2 review passes
+    assert [s["prompt"] for s in low["steps"]] == ["Draft it", "Improve it", "Improve it"]
+    assert all(s["kind"] == "model" for s in low["steps"])
+    # a linear chain: each step feeds the next.
+    assert low["edges"] == [
+        {"parent": 0, "child": 1, "edge": "data"},
+        {"parent": 1, "child": 2, "edge": "data"},
+    ]
+
+
+def test_review_loop_default_reviewer_and_rounds_one() -> None:
+    low = kx.review_loop("Draft it").lowering()
+    assert len(low["steps"]) == 2  # worker + one default review pass
+    assert low["steps"][0]["prompt"] == "Draft it"
+    assert low["steps"][1]["prompt"]  # a non-empty default review prompt
+
+
+def test_review_loop_is_byte_identical_to_the_equivalent_chain() -> None:
+    rl = kx.review_loop(("Draft", ["echo"]), reviewer="Fix it", rounds=1)
+    dsl = kx.chain(
+        "w > r",
+        {
+            "w": kx.model(prompt="Draft", tools=["echo"]),
+            "r": kx.model(prompt="Fix it"),
+        },
+    )
+    assert rl.lowering() == dsl.lowering()
+
+
+def test_review_loop_rounds_must_be_positive() -> None:
+    with pytest.raises(ChainError):
+        kx.review_loop("x", rounds=0)
+
+
 # ---- personas ----
 
 

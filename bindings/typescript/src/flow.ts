@@ -89,6 +89,12 @@ const DEFAULT_CONSENSUS_JUDGE =
  * exact-equality consensus vote — the server reduces its parents to the plurality winner
  * (SN-8: exact byte-equality, ties → first-appearance). Only `"majority"` today. */
 const CONSENSUS_VOTE_KEY = "kx.consensus.vote";
+/** The default reviewer prompt for {@link Flow.reviewLoop} — each pass reviews the previous
+ * output for errors/gaps and emits an improved version. Byte-identical to the Python
+ * `_DEFAULT_REVIEW` (Py↔TS parity). */
+const DEFAULT_REVIEW =
+  "Review the work above for errors, gaps, and weaknesses, then output an improved " +
+  "version that fixes them. Reply with only the improved work.";
 
 /** A swarm/team participant: a prompt, a `[prompt, tools]` tuple, an Agent /
  * persona (duck-typed), a {@link Flow} (already task-bound), or a Frag. */
@@ -166,6 +172,15 @@ export interface ConsensusOptions {
   /** For `vote: "judge"`: the judge sink — a selection prompt (a MODEL step) or an explicit
    * Frag. Default = a standard "pick the single best" judge. Ignored for `vote: "majority"`. */
   judge?: string | Frag;
+}
+/** Options for {@link Flow.reviewLoop} / the top-level {@link reviewLoop}. */
+export interface ReviewLoopOptions {
+  /** A review prompt or a critic persona applied each round (default: review-and-improve). */
+  reviewer?: SwarmParticipant;
+  /** How many review passes to run (≥ 1; default 1). */
+  rounds?: number;
+  /** The shared task appended to the worker's prompt. */
+  goal?: string;
 }
 
 function joinGoal(text: string, goal: string): string {
@@ -552,6 +567,35 @@ export class Flow {
     return this.then(task.pure({ [CONSENSUS_VOTE_KEY]: "majority" }));
   }
 
+  /** A **review loop**: a `worker` drafts, then a `reviewer` reviews-and-improves the draft
+   * `opts.rounds` times — an iterative refine chain `worker > review > review > …`:
+   *
+   * ```ts
+   * await kx.reviewLoop("Draft a launch email",
+   *                     { reviewer: "Tighten it and fix any errors", rounds: 2 })
+   *   .run();
+   * ```
+   *
+   * `worker` is the initial task; `opts.reviewer` is a review prompt or a critic persona
+   * applied each round (default: review-and-improve). Each pass reads the previous version
+   * (its Data-edge parent) and emits a better one; the LAST step's output is the result.
+   * Pure sequential composition (no new step kind) — the author-static refine loop; a
+   * runtime-adaptive "revise until a critic passes" loop is the topology-shaper follow-on. */
+  reviewLoop(worker: SwarmParticipant, opts: ReviewLoopOptions = {}): this {
+    const rounds = opts.rounds ?? 1;
+    if (rounds < 1) throw new ChainParseError("reviewLoop() needs rounds >= 1");
+    const goal = opts.goal ?? "";
+    this.then(this.resolveParticipant(worker, goal));
+    for (let i = 0; i < rounds; i++) {
+      this.then(
+        opts.reviewer === undefined
+          ? task.model("", DEFAULT_REVIEW)
+          : this.resolveParticipant(opts.reviewer, ""),
+      );
+    }
+    return this;
+  }
+
   /** Promote this Flow to a durable, named {@link import("./app.js").AppBuilder} — the
    * EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
    * `RunApp` (server-resolved connections + secret_scope + skills). Chain the App rails
@@ -678,4 +722,13 @@ export function consensus(
   opts: ConsensusOptions & { seed?: number } = {},
 ): Flow {
   return flow({ seed: opts.seed }).consensus(voters, opts);
+}
+
+/** `reviewLoop(worker, opts)` — a worker drafts, then a reviewer improves it `opts.rounds`
+ * times, as a whole flow. Sugar for `flow(seed).reviewLoop(...)`; see {@link Flow.reviewLoop}. */
+export function reviewLoop(
+  worker: SwarmParticipant,
+  opts: ReviewLoopOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).reviewLoop(worker, opts);
 }

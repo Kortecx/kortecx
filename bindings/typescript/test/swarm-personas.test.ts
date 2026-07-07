@@ -19,6 +19,7 @@ import {
   mapReduce,
   persona,
   personaNames,
+  reviewLoop,
   supervisor,
   swarm,
   task,
@@ -244,6 +245,41 @@ describe("consensus (judge = select best-of-N; majority = exact-equality plurali
 
   it("an empty consensus is an error", () => {
     expect(() => consensus([])).toThrow();
+  });
+});
+
+describe("reviewLoop (iterative refine: worker > review > review > …)", () => {
+  it("chains the worker then N review passes (linear)", () => {
+    const low = reviewLoop("Draft it", { reviewer: "Improve it", rounds: 2 }).lower();
+    expect(low.steps).toHaveLength(3); // worker + 2 review passes
+    expect(low.steps.map((s) => s.prompt)).toEqual(["Draft it", "Improve it", "Improve it"]);
+    expect(low.steps.every((s) => s.kind === "model")).toBe(true);
+    expect(low.edges).toEqual([
+      { parent: 0, child: 1, edge: "data" },
+      { parent: 1, child: 2, edge: "data" },
+    ]);
+  });
+
+  it("defaults to one review pass with a non-empty default reviewer", () => {
+    const low = reviewLoop("Draft it").lower();
+    expect(low.steps).toHaveLength(2);
+    expect(low.steps[0]?.prompt).toBe("Draft it");
+    expect(low.steps[1]?.prompt).toBeTruthy();
+  });
+
+  it("is byte-identical to the equivalent w > r chain", () => {
+    const rl = reviewLoop(["Draft", ["echo"]], { reviewer: "Fix it", rounds: 1 });
+    const dsl = chain("w > r", {
+      tasks: {
+        w: task.model("", "Draft", {}, { tools: ["echo"] }),
+        r: task.model("", "Fix it"),
+      },
+    });
+    expect(rl.lower()).toEqual(dsl.lower());
+  });
+
+  it("rounds < 1 throws", () => {
+    expect(() => reviewLoop("x", { rounds: 0 })).toThrow();
   });
 });
 

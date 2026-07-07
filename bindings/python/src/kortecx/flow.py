@@ -94,6 +94,13 @@ _DEFAULT_CONSENSUS_JUDGE = (
 #: winner (SN-8: exact byte-equality, ties → first-appearance). Only ``"majority"`` today.
 _CONSENSUS_VOTE_KEY = "kx.consensus.vote"
 
+#: The default reviewer prompt for :meth:`Flow.review_loop` — each pass reviews the
+#: previous output for errors/gaps and emits an improved version.
+_DEFAULT_REVIEW = (
+    "Review the work above for errors, gaps, and weaknesses, then output an improved "
+    "version that fixes them. Reply with only the improved work."
+)
+
 
 def _join_goal(text: str, goal: str) -> str:
     """Compose a participant prompt = its role/prompt + the shared ``goal`` (if any)."""
@@ -522,6 +529,40 @@ class Flow:
         # (config_subset[kx.consensus.vote]="majority").
         return self.then(_as_node(_pure(**{_CONSENSUS_VOTE_KEY: "majority"})))
 
+    def review_loop(
+        self,
+        worker: "object",
+        *,
+        reviewer: "Optional[Union[str, FlowItem]]" = None,
+        rounds: int = 1,
+        goal: str = "",
+    ) -> "Flow":
+        """A **review loop**: a ``worker`` drafts, then a ``reviewer`` reviews-and-improves
+        the draft ``rounds`` times — an iterative refine chain
+        ``worker > review > review > …``::
+
+            (kx.review_loop("Draft a launch email",
+                            reviewer="Tighten it and fix any errors", rounds=2)
+               .run())
+
+        ``worker`` is the initial task (a prompt / ``(prompt, tools)`` / Agent / persona /
+        Flow); ``reviewer`` is a review prompt or a critic persona applied each round
+        (default: review-and-improve). Each pass reads the previous version (its Data-edge
+        parent) and emits a better one; the LAST step's output is the result. Pure
+        sequential composition (no new step kind) — the author-static refine loop; a
+        runtime-adaptive "revise until a critic passes" loop is the topology-shaper
+        follow-on. ``rounds`` ≥ 1."""
+        if rounds < 1:
+            raise ChainError("review_loop() needs rounds >= 1")
+        self.then(_participant_to_node(worker, goal))
+        for _ in range(rounds):
+            self.then(
+                _participant_to_node(reviewer, "")
+                if reviewer is not None
+                else _model(prompt=_DEFAULT_REVIEW)
+            )
+        return self
+
     def as_app(self, name: str, *, version: str = "1"):
         """Promote this Flow to a durable, named :class:`~kortecx.app.App` — the
         EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
@@ -682,3 +723,17 @@ def consensus(
     selects best-of-N, or an exact-equality majority), as a whole flow. Sugar for
     ``kx.flow(seed=seed).consensus(...)``; see :meth:`Flow.consensus`."""
     return flow(seed=seed).consensus(*voters, vote=vote, goal=goal, judge=judge)
+
+
+def review_loop(
+    worker: "object",
+    *,
+    reviewer: "Optional[Union[str, FlowItem]]" = None,
+    rounds: int = 1,
+    goal: str = "",
+    seed: int = 0,
+) -> Flow:
+    """``kx.review_loop(...)`` — a worker drafts, then a reviewer improves it ``rounds``
+    times, as a whole flow. Sugar for ``kx.flow(seed=seed).review_loop(...)``; see
+    :meth:`Flow.review_loop`."""
+    return flow(seed=seed).review_loop(worker, reviewer=reviewer, rounds=rounds, goal=goal)
