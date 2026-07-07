@@ -632,5 +632,30 @@
         { "parent": 1, "child": 2, "edge": "data" }
       ]
     }
+  },
+  {
+    "name": "supervisor_hierarchical",
+    "dsl": "p > [a & b] > g",
+    "seed": 0,
+    "tasks": {
+      "p": { "kind": "model", "prompt": "Plan the work." },
+      "a": { "kind": "model", "prompt": "Do subtask A." },
+      "b": { "kind": "model", "prompt": "Do subtask B." },
+      "g": { "kind": "model", "prompt": "Integrate the results." }
+    },
+    "expect": {
+      "steps": [
+        { "kind": "model", "model_id": "", "prompt": "Plan the work.", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "model", "model_id": "", "prompt": "Do subtask A.", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "model", "model_id": "", "prompt": "Do subtask B.", "body_signature_id": null, "tool_contract": {}, "params": {} },
+        { "kind": "model", "model_id": "", "prompt": "Integrate the results.", "body_signature_id": null, "tool_contract": {}, "params": {} }
+      ],
+      "edges": [
+        { "parent": 0, "child": 1, "edge": "data" },
+        { "parent": 0, "child": 2, "edge": "data" },
+        { "parent": 1, "child": 3, "edge": "data" },
+        { "parent": 2, "child": 3, "edge": "data" }
+      ]
+    }
   }
 ]

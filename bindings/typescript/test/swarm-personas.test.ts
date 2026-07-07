@@ -18,6 +18,7 @@ import {
   mapReduce,
   persona,
   personaNames,
+  supervisor,
   swarm,
   task,
   team,
@@ -111,6 +112,74 @@ describe("swarm / team / fanOutGather / mapReduce lowering", () => {
   it("an empty swarm is an error", () => {
     expect(() => swarm([])).toThrow();
     expect(() => flow().fanOutGather([])).toThrow();
+  });
+});
+
+describe("supervisor (static-hierarchical: planner > [workers] > gather)", () => {
+  it("lowers to planner > [workers] > gather", () => {
+    const low = supervisor(
+      [
+        ["Analyze the market", ["mcp-echo/echo"]],
+        ["Critique the analysis", ["mcp-echo/echo"]],
+      ],
+      { planner: "Plan the work", goal: "the Q3 plan", gather: "Integrate" },
+    ).lower();
+    expect(low.steps).toHaveLength(4); // planner + 2 workers + gather
+    expect(low.steps[0]?.kind).toBe("model");
+    expect(low.steps[0]?.tool_contract).toEqual({});
+    expect(low.steps[0]?.prompt?.endsWith("the Q3 plan")).toBe(true);
+    for (const i of [1, 2]) {
+      expect(low.steps[i]?.tool_contract).toEqual({ "mcp-echo/echo": "1" });
+      expect(low.steps[i]?.prompt?.endsWith("the Q3 plan")).toBe(true);
+    }
+    expect(low.steps[3]?.kind).toBe("model");
+    expect(low.steps[3]?.tool_contract).toEqual({});
+    expect(low.edges).toEqual([
+      { parent: 0, child: 1, edge: "data" },
+      { parent: 0, child: 2, edge: "data" },
+      { parent: 1, child: 3, edge: "data" },
+      { parent: 2, child: 3, edge: "data" },
+    ]);
+  });
+
+  it("is byte-identical to the equivalent p > [a & b] > g chain", () => {
+    const sup = supervisor(
+      [
+        ["A", ["echo"]],
+        ["B", ["echo"]],
+      ],
+      { planner: "Plan", gather: "Merge" },
+    );
+    const dsl = chain("p > [a & b] > g", {
+      tasks: {
+        p: task.model("", "Plan"),
+        a: task.model("", "A", {}, { tools: ["echo"] }),
+        b: task.model("", "B", {}, { tools: ["echo"] }),
+        g: task.model("", "Merge"),
+      },
+    });
+    expect(sup.lower()).toEqual(dsl.lower());
+  });
+
+  it("defaults to model planner + model gather; synthesize:false uses a pure gather", () => {
+    const low = supervisor([persona("researcher"), persona("writer")]).lower();
+    expect(low.steps).toHaveLength(4);
+    expect(low.steps[0]?.kind).toBe("model");
+    expect(low.steps[0]?.prompt).toBeTruthy();
+    expect(low.steps[3]?.kind).toBe("model");
+    const pure = supervisor(["worker A", "worker B"], { synthesize: false }).lower();
+    expect(pure.steps[pure.steps.length - 1]?.kind).toBe("pure");
+  });
+
+  it("rounds>1 and pool are reserved for the topology shaper (they raise)", () => {
+    expect(() => supervisor(["w"], { rounds: 2 })).toThrow(/rounds/);
+    expect(() => supervisor(["w"], { pool: 4 })).toThrow(/pool/);
+    // the defaults lower fine: planner + 1 worker + gather.
+    expect(supervisor(["w"]).lower().steps).toHaveLength(3);
+  });
+
+  it("an empty supervisor is an error", () => {
+    expect(() => supervisor([])).toThrow();
   });
 });
 

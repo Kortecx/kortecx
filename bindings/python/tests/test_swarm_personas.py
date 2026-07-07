@@ -109,6 +109,80 @@ def test_empty_swarm_is_an_error() -> None:
         kx.flow().fan_out_gather()
 
 
+# ---- supervisor (static-hierarchical: planner > [workers] > gather) ----
+
+
+def test_supervisor_lowers_to_planner_then_workers_then_gather() -> None:
+    low = kx.supervisor(
+        ("Analyze the market", ["mcp-echo/echo"]),
+        ("Critique the analysis", ["mcp-echo/echo"]),
+        planner="Plan the work",
+        goal="the Q3 plan",
+        gather="Integrate",
+    ).lowering()
+    # planner(0) + 2 workers(1,2) + gather(3)
+    assert len(low["steps"]) == 4
+    assert low["steps"][0]["kind"] == "model" and low["steps"][0]["tool_contract"] == {}
+    assert low["steps"][0]["prompt"].endswith("the Q3 plan")  # goal appended to planner
+    for i in (1, 2):
+        assert low["steps"][i]["tool_contract"] == {"mcp-echo/echo": "1"}
+        assert low["steps"][i]["prompt"].endswith("the Q3 plan")
+    assert low["steps"][3]["kind"] == "model" and low["steps"][3]["tool_contract"] == {}
+    # planner fans OUT to each worker; each worker fans IN to the gather lead.
+    assert low["edges"] == [
+        {"parent": 0, "child": 1, "edge": "data"},
+        {"parent": 0, "child": 2, "edge": "data"},
+        {"parent": 1, "child": 3, "edge": "data"},
+        {"parent": 2, "child": 3, "edge": "data"},
+    ]
+
+
+def test_supervisor_is_byte_identical_to_the_equivalent_chain() -> None:
+    # A supervisor is pure composition — byte-identical to the `p > [a & b] > g` chain
+    # (the tri-surface golden contract; digest-invariant, no new step kind).
+    sup = kx.supervisor(
+        ("A", ["echo"]), ("B", ["echo"]), planner="Plan", gather="Merge"
+    )
+    dsl = kx.chain(
+        "p > [a & b] > g",
+        {
+            "p": kx.model(prompt="Plan"),
+            "a": kx.model(prompt="A", tools=["echo"]),
+            "b": kx.model(prompt="B", tools=["echo"]),
+            "g": kx.model(prompt="Merge"),
+        },
+    )
+    assert sup.lowering() == dsl.lowering()
+
+
+def test_supervisor_default_planner_and_gather_are_model_steps() -> None:
+    low = kx.supervisor(kx.persona("researcher"), kx.persona("writer")).lowering()
+    assert len(low["steps"]) == 4  # default planner + 2 workers + default gather
+    assert low["steps"][0]["kind"] == "model" and low["steps"][0]["prompt"]
+    assert low["steps"][3]["kind"] == "model" and low["steps"][3]["prompt"]
+
+
+def test_supervisor_synthesize_false_uses_a_pure_gather() -> None:
+    low = kx.supervisor("worker A", "worker B", synthesize=False).lowering()
+    assert low["steps"][-1]["kind"] == "pure"
+
+
+def test_supervisor_rounds_and_pool_are_reserved_for_the_topology_shaper() -> None:
+    # the static-hierarchical supervisor raises on the shaper-only knobs (never a silent
+    # no-op) so the API stays stable when the topology shaper wires them.
+    with pytest.raises(ChainError, match="rounds"):
+        kx.supervisor("w", rounds=2)
+    with pytest.raises(ChainError, match="pool"):
+        kx.supervisor("w", pool=4)
+    # the defaults (rounds=1, pool=None) lower fine.
+    assert len(kx.supervisor("w").lowering()["steps"]) == 3  # planner + 1 worker + gather
+
+
+def test_empty_supervisor_is_an_error() -> None:
+    with pytest.raises(ChainError):
+        kx.supervisor()
+
+
 # ---- personas ----
 
 

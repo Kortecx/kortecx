@@ -66,6 +66,19 @@ const DEFAULT_SWARM_GATHER =
 const DEFAULT_FAN_GATHER = "Combine the parallel results above into one coherent answer.";
 const DEFAULT_REDUCE = "Reduce the mapper results above into one consolidated result.";
 
+/** The default lead/planner prompt for {@link Flow.supervisor} — decomposes the goal;
+ * its committed output steers each worker (a Data-edge parent). Byte-identical to the
+ * Python `_DEFAULT_SUPERVISOR_PLANNER` (Py↔TS parity). */
+const DEFAULT_SUPERVISOR_PLANNER =
+  "You are the supervisor. Break the task into clear, independent subtasks for the team " +
+  "and state each subtask precisely, so each teammate knows exactly what to do.";
+/** The default integrator prompt for {@link Flow.supervisor} — the lead reads every
+ * worker's committed output (its Data-edge parents, F-7) and writes one final answer.
+ * Byte-identical to the Python `_DEFAULT_SUPERVISOR_GATHER` (Py↔TS parity). */
+const DEFAULT_SUPERVISOR_GATHER =
+  "You are the supervisor. Integrate the team's results above into one complete, coherent " +
+  "answer. Reconcile disagreements, keep what is well-supported, drop redundancy.";
+
 /** A swarm/team participant: a prompt, a `[prompt, tools]` tuple, an Agent /
  * persona (duck-typed), a {@link Flow} (already task-bound), or a Frag. */
 export type SwarmParticipant =
@@ -112,6 +125,25 @@ export interface FanOptions {
 export interface ReduceOptions {
   reduce?: string | Frag;
   synthesize?: boolean;
+}
+/** Options for {@link Flow.supervisor} / the top-level {@link supervisor}. */
+export interface SupervisorOptions {
+  /** The lead that decomposes the goal (a prompt, `[prompt, tools]`, an Agent / persona,
+   * or a Flow). Default = a standard supervisor prompt. */
+  planner?: SwarmParticipant;
+  /** The shared task the planner + workers work on (appended to each prompt). */
+  goal?: string;
+  /** The gather sink: a synthesis prompt (a MODEL step) or an explicit Frag. Default = a
+   * MODEL integrator. */
+  gather?: string | Frag;
+  /** `true` (default) = a MODEL integrator gather; `false` = a PURE deterministic fold. */
+  synthesize?: boolean;
+  /** RESERVED for the runtime topology shaper: this static-hierarchical supervisor is
+   * single-round, so `rounds > 1` raises rather than silently ignoring it (stable API). */
+  rounds?: number;
+  /** RESERVED for the runtime topology shaper: passing `pool` raises — local worker
+   * concurrency is governed by the server worker pool (`kx serve --workers` / `KX_WORKERS`). */
+  pool?: number;
 }
 
 function joinGoal(text: string, goal: string): string {
@@ -421,6 +453,52 @@ export class Flow {
     return this.then(sinkFrag(opts.reduce, opts.synthesize ?? true, DEFAULT_REDUCE));
   }
 
+  /** A **hierarchical supervisor**: a lead `planner` decomposes the goal, the `workers`
+   * each act on that plan in parallel, then the lead integrates — the topology
+   * `planner > [workers] > gather`:
+   *
+   * ```ts
+   * await kx.supervisor([kx.persona("researcher"), kx.persona("writer")],
+   *                     { planner: "Plan a briefing on durable execution",
+   *                       goal: "Cover crash-recovery + exactly-once" })
+   *   .run();
+   * ```
+   *
+   * The planner's committed output is a Data-edge parent of every worker (they run *on*
+   * the plan); every worker feeds the `gather` lead (default = a MODEL integrator; steer
+   * with `opts.gather`, a Frag for a custom sink, or `synthesize: false` for a PURE fold).
+   * Pure client composition — byte-identical to the equivalent `p > [a & b] > g` chain; no
+   * new step kind.
+   *
+   * This supervisor is **static-hierarchical** — a fixed team, authored up front. `rounds` /
+   * `pool` are reserved for the runtime **topology shaper** (a planner that decides team
+   * size/roles at execution time and re-plans each round); they sit in the signature so the
+   * API is stable when the shaper wires them, but passing `rounds > 1` or `pool` raises today
+   * rather than silently ignoring it. Local worker concurrency is governed by the server
+   * worker pool (`kx serve --workers` / `KX_WORKERS`). */
+  supervisor(workers: SwarmParticipant[], opts: SupervisorOptions = {}): this {
+    if (workers.length === 0) throw new ChainParseError("supervisor() needs at least one worker");
+    if ((opts.rounds ?? 1) !== 1)
+      throw new ChainParseError(
+        "supervisor(rounds>1) requires the runtime topology shaper, which isn't wired to this " +
+          "static-hierarchical path; use rounds=1",
+      );
+    if (opts.pool !== undefined)
+      throw new ChainParseError(
+        "supervisor(pool=…) requires the runtime topology shaper, which isn't wired to this " +
+          "path; local worker concurrency is set by the server worker pool " +
+          "(kx serve --workers / KX_WORKERS)",
+      );
+    const goal = opts.goal ?? "";
+    const plan =
+      opts.planner === undefined
+        ? task.model("", joinGoal(DEFAULT_SUPERVISOR_PLANNER, goal))
+        : this.resolveParticipant(opts.planner, goal);
+    this.then(plan);
+    this.parallel(...workers.map((w) => this.resolveParticipant(w, goal)));
+    return this.then(sinkFrag(opts.gather, opts.synthesize ?? true, DEFAULT_SUPERVISOR_GATHER));
+  }
+
   /** Promote this Flow to a durable, named {@link import("./app.js").AppBuilder} — the
    * EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
    * `RunApp` (server-resolved connections + secret_scope + skills). Chain the App rails
@@ -527,4 +605,14 @@ export function fanOutGather(
  * {@link Flow.mapReduce}. */
 export function mapReduce(mappers: FlowItem[], opts: ReduceOptions & { seed?: number } = {}): Flow {
   return flow({ seed: opts.seed }).mapReduce(mappers, opts);
+}
+
+/** `supervisor(workers, opts)` — a lead plans, workers execute in parallel, the lead
+ * integrates, as a whole flow. Sugar for `flow(seed).supervisor(...)`; see
+ * {@link Flow.supervisor}. */
+export function supervisor(
+  workers: SwarmParticipant[],
+  opts: SupervisorOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).supervisor(workers, opts);
 }

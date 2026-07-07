@@ -77,7 +77,15 @@ from .errors import (
 )
 from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
-from .flow import Flow, fan_out_gather, flow, map_reduce, swarm, team
+from .flow import (
+    Flow,
+    fan_out_gather,
+    flow,
+    map_reduce,
+    supervisor,
+    swarm,
+    team,
+)
 from .grants import AssetGrants, GrantView
 from .memory import (
     DecayCandidate,
@@ -236,6 +244,7 @@ __all__ = [
     "team",
     "fan_out_gather",
     "map_reduce",
+    "supervisor",
     "persona",
     "persona_names",
     "PERSONAS",
