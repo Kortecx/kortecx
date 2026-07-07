@@ -13,6 +13,7 @@ import {
   PERSONAS,
   app,
   chain,
+  consensus,
   fanOutGather,
   flow,
   mapReduce,
@@ -180,6 +181,69 @@ describe("supervisor (static-hierarchical: planner > [workers] > gather)", () =>
 
   it("an empty supervisor is an error", () => {
     expect(() => supervisor([])).toThrow();
+  });
+});
+
+describe("consensus (judge = select best-of-N; majority = exact-equality plurality)", () => {
+  it("judge lowers to voters > a model judge", () => {
+    const low = consensus(
+      [
+        ["Assess A", ["mcp-echo/echo"]],
+        ["Assess B", ["mcp-echo/echo"]],
+      ],
+      { goal: "the proposal", vote: "judge" },
+    ).lower();
+    expect(low.steps).toHaveLength(3); // 2 voters + 1 judge
+    for (const i of [0, 1]) {
+      expect(low.steps[i]?.tool_contract).toEqual({ "mcp-echo/echo": "1" });
+      expect(low.steps[i]?.prompt?.endsWith("the proposal")).toBe(true);
+    }
+    expect(low.steps[2]?.kind).toBe("model");
+    expect(low.steps[2]?.tool_contract).toEqual({});
+    expect(low.edges).toEqual([
+      { parent: 0, child: 2, edge: "data" },
+      { parent: 1, child: 2, edge: "data" },
+    ]);
+  });
+
+  it("judge is byte-identical to the equivalent [a & b] > j chain", () => {
+    const con = consensus(
+      [
+        ["A", ["echo"]],
+        ["B", ["echo"]],
+      ],
+      { judge: "Pick best" },
+    );
+    const dsl = chain("[a & b] > j", {
+      tasks: {
+        a: task.model("", "A", {}, { tools: ["echo"] }),
+        b: task.model("", "B", {}, { tools: ["echo"] }),
+        j: task.model("", "Pick best"),
+      },
+    });
+    expect(con.lower()).toEqual(dsl.lower());
+  });
+
+  it("majority lowers to a PURE exact-equality sink carrying the reserved marker", () => {
+    const low = consensus(["vote A", "vote B", "vote C"], { vote: "majority" }).lower();
+    expect(low.steps).toHaveLength(4); // 3 voters + a PURE reducer
+    const sink = low.steps[3];
+    expect(sink?.kind).toBe("pure");
+    expect(sink?.params).toEqual({ "kx.consensus.vote": "majority" });
+    expect(low.edges).toEqual([
+      { parent: 0, child: 3, edge: "data" },
+      { parent: 1, child: 3, edge: "data" },
+      { parent: 2, child: 3, edge: "data" },
+    ]);
+  });
+
+  it("defaults to judge; an unknown vote mode throws", () => {
+    expect(consensus(["a", "b"]).lower().steps[2]?.kind).toBe("model");
+    expect(() => consensus(["a", "b"], { vote: "plurality" as "judge" })).toThrow(/judge|majority/);
+  });
+
+  it("an empty consensus is an error", () => {
+    expect(() => consensus([])).toThrow();
   });
 });
 

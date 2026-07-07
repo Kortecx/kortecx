@@ -79,6 +79,7 @@ from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_from_proto, rating_to_proto
 from .flow import (
     Flow,
+    consensus,
     fan_out_gather,
     flow,
     map_reduce,
@@ -245,6 +246,7 @@ __all__ = [
     "fan_out_gather",
     "map_reduce",
     "supervisor",
+    "consensus",
     "persona",
     "persona_names",
     "PERSONAS",

@@ -183,6 +183,66 @@ def test_empty_supervisor_is_an_error() -> None:
         kx.supervisor()
 
 
+# ---- consensus (judge = select best-of-N; majority = exact-equality plurality) ----
+
+
+def test_consensus_judge_lowers_to_voters_then_a_model_judge() -> None:
+    low = kx.consensus(
+        ("Assess A", ["mcp-echo/echo"]),
+        ("Assess B", ["mcp-echo/echo"]),
+        goal="the proposal",
+        vote="judge",
+    ).lowering()
+    assert len(low["steps"]) == 3  # 2 voters + 1 judge
+    for i in (0, 1):
+        assert low["steps"][i]["tool_contract"] == {"mcp-echo/echo": "1"}
+        assert low["steps"][i]["prompt"].endswith("the proposal")
+    assert low["steps"][2]["kind"] == "model" and low["steps"][2]["tool_contract"] == {}
+    assert low["edges"] == [
+        {"parent": 0, "child": 2, "edge": "data"},
+        {"parent": 1, "child": 2, "edge": "data"},
+    ]
+
+
+def test_consensus_judge_is_byte_identical_to_the_equivalent_chain() -> None:
+    con = kx.consensus(("A", ["echo"]), ("B", ["echo"]), judge="Pick best")
+    dsl = kx.chain(
+        "[a & b] > j",
+        {
+            "a": kx.model(prompt="A", tools=["echo"]),
+            "b": kx.model(prompt="B", tools=["echo"]),
+            "j": kx.model(prompt="Pick best"),
+        },
+    )
+    assert con.lowering() == dsl.lowering()
+
+
+def test_consensus_majority_lowers_to_a_pure_exact_equality_sink() -> None:
+    low = kx.consensus("vote A", "vote B", "vote C", vote="majority").lowering()
+    assert len(low["steps"]) == 4  # 3 voters + a PURE reducer
+    sink = low["steps"][-1]
+    assert sink["kind"] == "pure"
+    # the reserved marker the SERVER reduces on (exact-equality plurality).
+    assert sink["params"] == {"kx.consensus.vote": "majority"}
+    assert low["edges"] == [
+        {"parent": 0, "child": 3, "edge": "data"},
+        {"parent": 1, "child": 3, "edge": "data"},
+        {"parent": 2, "child": 3, "edge": "data"},
+    ]
+
+
+def test_consensus_default_is_judge_and_a_bad_vote_raises() -> None:
+    # default is judge (a MODEL sink); an unknown vote mode fails closed.
+    assert kx.consensus("a", "b").lowering()["steps"][-1]["kind"] == "model"
+    with pytest.raises(ChainError, match="judge.*majority|vote"):
+        kx.consensus("a", "b", vote="plurality")
+
+
+def test_empty_consensus_is_an_error() -> None:
+    with pytest.raises(ChainError):
+        kx.consensus()
+
+
 # ---- personas ----
 
 

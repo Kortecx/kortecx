@@ -79,6 +79,17 @@ const DEFAULT_SUPERVISOR_GATHER =
   "You are the supervisor. Integrate the team's results above into one complete, coherent " +
   "answer. Reconcile disagreements, keep what is well-supported, drop redundancy.";
 
+/** The default judge prompt for {@link Flow.consensus} (`vote: "judge"`) — a MODEL step that
+ * SELECTS the single best candidate (distinct from {@link Flow.swarm}, which MERGES).
+ * Byte-identical to the Python `_DEFAULT_CONSENSUS_JUDGE` (Py↔TS parity). */
+const DEFAULT_CONSENSUS_JUDGE =
+  "You are the judge. Read the candidate answers above and choose the single best one; " +
+  "reply with that answer verbatim, without merging or editing the candidates.";
+/** The `config_subset` key (mirrors `kx_mote::CONSENSUS_VOTE_KEY`) marking a PURE sink as an
+ * exact-equality consensus vote — the server reduces its parents to the plurality winner
+ * (SN-8: exact byte-equality, ties → first-appearance). Only `"majority"` today. */
+const CONSENSUS_VOTE_KEY = "kx.consensus.vote";
+
 /** A swarm/team participant: a prompt, a `[prompt, tools]` tuple, an Agent /
  * persona (duck-typed), a {@link Flow} (already task-bound), or a Frag. */
 export type SwarmParticipant =
@@ -144,6 +155,17 @@ export interface SupervisorOptions {
   /** RESERVED for the runtime topology shaper: passing `pool` raises — local worker
    * concurrency is governed by the server worker pool (`kx serve --workers` / `KX_WORKERS`). */
   pool?: number;
+}
+/** Options for {@link Flow.consensus} / the top-level {@link consensus}. */
+export interface ConsensusOptions {
+  /** `"judge"` (default) = a MODEL judge SELECTS the single best candidate; `"majority"` = the
+   * server reduces to the exact-equality plurality (SN-8; ties → first-appearance). */
+  vote?: "judge" | "majority";
+  /** The shared task each voter works on (appended to its prompt). */
+  goal?: string;
+  /** For `vote: "judge"`: the judge sink — a selection prompt (a MODEL step) or an explicit
+   * Frag. Default = a standard "pick the single best" judge. Ignored for `vote: "majority"`. */
+  judge?: string | Frag;
 }
 
 function joinGoal(text: string, goal: string): string {
@@ -499,6 +521,37 @@ export class Flow {
     return this.then(sinkFrag(opts.gather, opts.synthesize ?? true, DEFAULT_SUPERVISOR_GATHER));
   }
 
+  /** Run N `voters` in parallel, then reach **consensus** — the topology
+   * `[v1 & v2 & …] > reduce`:
+   *
+   * ```ts
+   * await kx.consensus([kx.persona("analyst"), kx.persona("skeptic"), kx.persona("engineer")],
+   *                    { goal: "Is this design sound?", vote: "judge" })
+   *   .run();
+   * ```
+   *
+   * Each voter is a prompt, a `[prompt, tools]` tuple, an Agent / persona, or a Flow (as in
+   * {@link Flow.swarm}). Two reduce modes: `vote: "judge"` (default) — a MODEL judge SELECTS
+   * the single best candidate (distinct from swarm's *merge*; steer with `opts.judge`);
+   * `vote: "majority"` — the server reduces to the **exact-equality plurality** (most-frequent
+   * voter output by EXACT byte-equality, ties → first-appearance; SN-8, best for CONSTRAINED
+   * outputs). Pure client composition; the SERVER drives + warrants each voter (SN-8). */
+  consensus(voters: SwarmParticipant[], opts: ConsensusOptions = {}): this {
+    if (voters.length === 0) throw new ChainParseError("consensus() needs at least one voter");
+    const vote = opts.vote ?? "judge";
+    if (vote !== "judge" && vote !== "majority")
+      throw new ChainParseError(`consensus(vote=…) must be 'judge' or 'majority', got '${vote}'`);
+    const goal = opts.goal ?? "";
+    this.parallel(...voters.map((v) => this.resolveParticipant(v, goal)));
+    if (vote === "judge") {
+      // a MODEL judge that SELECTS the single best answer (distinct from swarm's merge).
+      return this.then(sinkFrag(opts.judge, true, DEFAULT_CONSENSUS_JUDGE));
+    }
+    // vote === "majority": a PURE sink the server reduces by exact-equality plurality
+    // (config_subset[kx.consensus.vote]="majority").
+    return this.then(task.pure({ [CONSENSUS_VOTE_KEY]: "majority" }));
+  }
+
   /** Promote this Flow to a durable, named {@link import("./app.js").AppBuilder} — the
    * EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
    * `RunApp` (server-resolved connections + secret_scope + skills). Chain the App rails
@@ -615,4 +668,14 @@ export function supervisor(
   opts: SupervisorOptions & { seed?: number } = {},
 ): Flow {
   return flow({ seed: opts.seed }).supervisor(workers, opts);
+}
+
+/** `consensus(voters, opts)` — N voters in parallel → a consensus reduce (a judge that
+ * selects best-of-N, or an exact-equality majority), as a whole flow. Sugar for
+ * `flow(seed).consensus(...)`; see {@link Flow.consensus}. */
+export function consensus(
+  voters: SwarmParticipant[],
+  opts: ConsensusOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).consensus(voters, opts);
 }

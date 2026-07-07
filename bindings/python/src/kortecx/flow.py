@@ -83,6 +83,17 @@ _DEFAULT_SUPERVISOR_GATHER = (
     "coherent answer. Reconcile disagreements, keep what is well-supported, drop redundancy."
 )
 
+#: The default judge prompt for :meth:`Flow.consensus` (``vote="judge"``) — a MODEL step
+#: that SELECTS the single best candidate (distinct from :meth:`Flow.swarm`, which MERGES).
+_DEFAULT_CONSENSUS_JUDGE = (
+    "You are the judge. Read the candidate answers above and choose the single best one; "
+    "reply with that answer verbatim, without merging or editing the candidates."
+)
+#: The ``config_subset`` key (mirrors ``kx_mote::CONSENSUS_VOTE_KEY``) marking a PURE sink
+#: as an exact-equality consensus vote — the server reduces its parents to the plurality
+#: winner (SN-8: exact byte-equality, ties → first-appearance). Only ``"majority"`` today.
+_CONSENSUS_VOTE_KEY = "kx.consensus.vote"
+
 
 def _join_goal(text: str, goal: str) -> str:
     """Compose a participant prompt = its role/prompt + the shared ``goal`` (if any)."""
@@ -468,6 +479,49 @@ class Flow:
         self.parallel(*leaves)
         return self.then(_sink_node(gather, synthesize, _DEFAULT_SUPERVISOR_GATHER))
 
+    def consensus(
+        self,
+        *voters: "object",
+        vote: str = "judge",
+        goal: str = "",
+        judge: "Optional[Union[str, FlowItem]]" = None,
+    ) -> "Flow":
+        """Run N ``voters`` in parallel, then reach **consensus** over their outputs —
+        the topology ``[v1 & v2 & …] > reduce``::
+
+            (kx.consensus(kx.persona("analyst"), kx.persona("skeptic"), kx.persona("engineer"),
+                          goal="Is this design sound?", vote="judge")
+               .run())
+
+        Each ``voter`` is a prompt, a ``(prompt, tools)`` tuple, an
+        :class:`~kortecx.agent.Agent` / :func:`~kortecx.personas.persona`, or a
+        :class:`Flow` (as in :meth:`swarm`). Two reduce modes:
+
+        - ``vote="judge"`` (default): a MODEL judge reads the candidates and **selects the
+          single best** one (distinct from :meth:`swarm`, which *merges*). ``judge="<prompt>"``
+          steers the selection, or pass a Task/Flow for a custom judge.
+        - ``vote="majority"``: the server reduces to the **exact-equality plurality** — the
+          most-frequent voter output by EXACT byte-equality, ties broken by first-appearance
+          (SN-8: exact equality only, never a similarity score). Best for CONSTRAINED outputs
+          (a label / structured JSON / a tool decision) — free-form prose rarely ties, so
+          ``judge`` is the usual mode there.
+
+        Pure client-side composition (no new step kind); the SERVER drives + warrants each
+        voter and computes the reduce (SN-8)."""
+        if not voters:
+            raise ChainError("consensus() needs at least one voter")
+        if vote not in ("judge", "majority"):
+            raise ChainError(
+                f"consensus(vote=…) must be 'judge' or 'majority', got {vote!r}"
+            )
+        leaves = [_participant_to_node(v, goal) for v in voters]
+        self.parallel(*leaves)
+        if vote == "judge":
+            return self.then(_sink_node(judge, True, _DEFAULT_CONSENSUS_JUDGE))
+        # vote == "majority": a PURE sink the server reduces by exact-equality plurality
+        # (config_subset[kx.consensus.vote]="majority").
+        return self.then(_as_node(_pure(**{_CONSENSUS_VOTE_KEY: "majority"})))
+
     def as_app(self, name: str, *, version: str = "1"):
         """Promote this Flow to a durable, named :class:`~kortecx.app.App` — the
         EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
@@ -615,3 +669,16 @@ def supervisor(
         pool=pool,
         synthesize=synthesize,
     )
+
+
+def consensus(
+    *voters: "object",
+    vote: str = "judge",
+    goal: str = "",
+    judge: "Optional[Union[str, FlowItem]]" = None,
+    seed: int = 0,
+) -> Flow:
+    """``kx.consensus(...)`` — N voters in parallel → a consensus reduce (a judge that
+    selects best-of-N, or an exact-equality majority), as a whole flow. Sugar for
+    ``kx.flow(seed=seed).consensus(...)``; see :meth:`Flow.consensus`."""
+    return flow(seed=seed).consensus(*voters, vote=vote, goal=goal, judge=judge)

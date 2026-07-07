@@ -71,6 +71,23 @@ pub const PROMPT_KEY: &str = "prompt";
 /// constant cannot move any digest (the canonical demo declares no judge).
 pub const JUDGE_RUBRIC_KEY: &str = "kx.judge.rubric";
 
+/// The [`ConfigKey`] *name* marking a PURE sink Mote as an exact-equality
+/// CONSENSUS vote (`consensus(vote="majority")`). Its value selects the reduce:
+/// `"majority"` = commit the most-frequent parent output by EXACT byte equality
+/// (SN-8: exact equality ONLY, never a similarity score), ties broken by
+/// first-appearance (the lowest parent index). The gateway's `ModelRouterExecutor`
+/// routes on key PRESENCE to the plurality-reduce arm (the same PRESENCE routing
+/// [`REACT_TURN_KEY`]/rerank use); absent ⇒ a plain PURE transform, byte-unchanged.
+///
+/// Identity-bearing (lives in `config_subset` ⇒ folds into [`crate::MoteDef::hash`]
+/// → `MoteId`, D53), so a client cannot drop it in transit without changing the id
+/// the coordinator re-derives — structurally fail-closed. Adding or referencing the
+/// constant cannot move any digest (the canonical demo declares no consensus vote);
+/// the reduce is a DETERMINISTIC pure function of the committed parents, so a
+/// client-crafted marker only selects a deterministic fold — no model, no egress,
+/// no widen.
+pub const CONSENSUS_VOTE_KEY: &str = "kx.consensus.vote";
+
 /// The single canonical [`ConfigKey`] *name* marking a Mote as a live ReAct
 /// TURN (PR-2d-1, react-substrate). The value is the run-salt (the registered
 /// `instance_id`) — the same bytes salted into the turn's identity material.
