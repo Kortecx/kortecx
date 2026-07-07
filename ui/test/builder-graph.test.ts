@@ -1,8 +1,13 @@
-import { TOOL_ARGS_KEY, proto } from "@kortecx/sdk/web";
+import { TOOL_ARGS_KEY, flow, proto } from "@kortecx/sdk/web";
 import { describe, expect, it } from "vitest";
 import {
   type BuilderGraph,
+  type BuilderStep,
+  CONSENSUS_VOTE_KEY,
+  PATTERN_PROMPTS,
+  type PatternKind,
   builderTopologyHash,
+  insertPattern,
   isJsonObject,
   newStep,
   toRequest,
@@ -130,5 +135,114 @@ describe("validationError allowEmptyModel (POC-5d App lineage)", () => {
     const g: BuilderGraph = { steps: [a], edges: [] };
     expect(validationError(g)).toMatch(/needs a model/i);
     expect(validationError(g, { allowEmptyModel: true })).toBeNull();
+  });
+});
+
+// -- orchestration pattern macros -------------------------------------------
+
+const edgeKey = (e: BuilderGraph["edges"][number]) => `${e.source}->${e.target}`;
+
+describe("insertPattern — orchestration macros", () => {
+  it("swarm: N model participants fan into one MODEL gather", () => {
+    const p = insertPattern("swarm", 0);
+    expect(p.steps.map((s) => s.kind)).toEqual(["model", "model", "model"]);
+    expect(p.steps.map((s) => s.id)).toEqual(["s0", "s1", "s2"]);
+    expect(p.firstId).toBe("s0");
+    expect(p.nextId).toBe(3);
+    expect(p.steps[2]?.label).toBe("Gather");
+    expect(p.steps[2]?.prompt).toBe(PATTERN_PROMPTS.swarmGather);
+    expect(p.edges.map(edgeKey).sort()).toEqual(["s0->s2", "s1->s2"]);
+    expect(p.edges.every((e) => e.edge === "data")).toBe(true);
+  });
+
+  it("supervisor: planner → workers (in parallel) → gather", () => {
+    const p = insertPattern("supervisor", 0);
+    expect(p.steps.map((s) => s.label)).toEqual(["Planner", "Worker", "Worker", "Gather"]);
+    expect(p.steps.every((s) => s.kind === "model")).toBe(true);
+    expect(p.steps[0]?.prompt).toBe(PATTERN_PROMPTS.supervisorPlanner);
+    expect(p.steps[3]?.prompt).toBe(PATTERN_PROMPTS.supervisorGather);
+    expect(p.edges.map(edgeKey).sort()).toEqual(["s0->s1", "s0->s2", "s1->s3", "s2->s3"]);
+  });
+
+  it("consensus (judge): voters → a MODEL judge that selects the best", () => {
+    const p = insertPattern("consensusJudge", 0);
+    expect(p.steps.map((s) => s.kind)).toEqual(["model", "model", "model"]);
+    expect(p.steps[2]?.label).toBe("Judge");
+    expect(p.steps[2]?.prompt).toBe(PATTERN_PROMPTS.consensusJudge);
+    expect(p.edges.map(edgeKey).sort()).toEqual(["s0->s2", "s1->s2"]);
+  });
+
+  it("consensus (majority): voters → a PURE exact-equality vote sink (honest-gated)", () => {
+    const p = insertPattern("consensusMajority", 0);
+    expect(p.steps.map((s) => s.kind)).toEqual(["model", "model", "pure"]);
+    const sink = p.steps[2];
+    expect(sink?.label).toBe("Majority vote");
+    expect(JSON.parse(sink?.paramsText ?? "{}")).toEqual({ [CONSENSUS_VOTE_KEY]: "majority" });
+    expect(p.edges.map(edgeKey).sort()).toEqual(["s0->s2", "s1->s2"]);
+  });
+
+  it("mints ids from the given counter and reports the next free id", () => {
+    const p = insertPattern("consensusJudge", 5);
+    expect(p.steps.map((s) => s.id)).toEqual(["s5", "s6", "s7"]);
+    expect(p.firstId).toBe("s5");
+    expect(p.nextId).toBe(8);
+  });
+
+  it("defaults to 2 participants but honors a larger count", () => {
+    const p = insertPattern("swarm", 0, 4);
+    expect(p.steps.filter((s) => s.label === "Agent")).toHaveLength(4);
+    expect(p.edges).toHaveLength(4); // each participant → gather
+    expect(insertPattern("swarm", 0, 0).steps.filter((s) => s.label === "Agent")).toHaveLength(1);
+  });
+
+  it("a fresh pattern is submittable once each agent gets a model (honest gate)", () => {
+    const p = insertPattern("supervisor", 0);
+    // As inserted, the model nodes have no model → the canvas surfaces the gate.
+    expect(validationError({ steps: p.steps, edges: p.edges })).toMatch(/needs a model/i);
+    const withModels = { steps: p.steps.map(pinModel), edges: p.edges };
+    expect(validationError(withModels)).toBeNull();
+  });
+});
+
+/** Pin a served model on every MODEL node (the one-shot builder requires an explicit
+ *  model; the SDK's App convention leaves it empty — the one intended difference). */
+function pinModel(s: BuilderStep): BuilderStep {
+  return s.kind === "model" ? { ...s, modelId: "kx-serve:m" } : s;
+}
+
+/** A DAG *shape* signature — step kinds (in lowered order) + sorted parent→child
+ *  edges + any per-step consensus-vote marker. Ignores model id + prompts (author
+ *  content that legitimately differs between the one-shot builder and the SDK). */
+function shapeOf(req: ReturnType<typeof toRequest>) {
+  const dec = new TextDecoder();
+  return {
+    kinds: (req.steps ?? []).map((s) => s.kind),
+    edges: (req.edges ?? []).map((e) => `${e.parent}->${e.child}`).sort(),
+    votes: (req.steps ?? []).map((s) => {
+      const v = s.params?.[CONSENSUS_VOTE_KEY];
+      return v ? dec.decode(v as Uint8Array) : null;
+    }),
+  };
+}
+
+describe("insertPattern lowering ≡ the SDK flow() lowering (UI arm of tri-surface parity)", () => {
+  it.each([
+    ["swarm", () => flow().swarm(["a", "b"])],
+    ["supervisor", () => flow().supervisor(["a", "b"])],
+    ["consensusJudge", () => flow().consensus(["a", "b"], { vote: "judge" })],
+    ["consensusMajority", () => flow().consensus(["a", "b"], { vote: "majority" })],
+  ] as const)("%s: the UI macro lowers to the same DAG shape as the SDK", (kind, sdk) => {
+    const macro = insertPattern(kind as PatternKind, 0);
+    const uiReq = toRequest({ steps: macro.steps.map(pinModel), edges: macro.edges }, 0);
+    expect(shapeOf(uiReq)).toEqual(shapeOf(sdk().build()));
+  });
+
+  it("the majority sink lowers the vote marker to config bytes (server-reduced)", () => {
+    const macro = insertPattern("consensusMajority", 0);
+    const req = toRequest({ steps: macro.steps.map(pinModel), edges: macro.edges }, 0);
+    const sink = req.steps?.[2];
+    expect(sink?.kind).toBe(proto.WorkflowStepKind.PURE);
+    const v = sink?.params?.[CONSENSUS_VOTE_KEY];
+    expect(new TextDecoder().decode(v as Uint8Array)).toBe("majority");
   });
 });

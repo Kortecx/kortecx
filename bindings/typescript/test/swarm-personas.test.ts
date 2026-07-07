@@ -13,11 +13,14 @@ import {
   PERSONAS,
   app,
   chain,
+  consensus,
   fanOutGather,
   flow,
   mapReduce,
   persona,
   personaNames,
+  reviewLoop,
+  supervisor,
   swarm,
   task,
   team,
@@ -111,6 +114,172 @@ describe("swarm / team / fanOutGather / mapReduce lowering", () => {
   it("an empty swarm is an error", () => {
     expect(() => swarm([])).toThrow();
     expect(() => flow().fanOutGather([])).toThrow();
+  });
+});
+
+describe("supervisor (static-hierarchical: planner > [workers] > gather)", () => {
+  it("lowers to planner > [workers] > gather", () => {
+    const low = supervisor(
+      [
+        ["Analyze the market", ["mcp-echo/echo"]],
+        ["Critique the analysis", ["mcp-echo/echo"]],
+      ],
+      { planner: "Plan the work", goal: "the Q3 plan", gather: "Integrate" },
+    ).lower();
+    expect(low.steps).toHaveLength(4); // planner + 2 workers + gather
+    expect(low.steps[0]?.kind).toBe("model");
+    expect(low.steps[0]?.tool_contract).toEqual({});
+    expect(low.steps[0]?.prompt?.endsWith("the Q3 plan")).toBe(true);
+    for (const i of [1, 2]) {
+      expect(low.steps[i]?.tool_contract).toEqual({ "mcp-echo/echo": "1" });
+      expect(low.steps[i]?.prompt?.endsWith("the Q3 plan")).toBe(true);
+    }
+    expect(low.steps[3]?.kind).toBe("model");
+    expect(low.steps[3]?.tool_contract).toEqual({});
+    expect(low.edges).toEqual([
+      { parent: 0, child: 1, edge: "data" },
+      { parent: 0, child: 2, edge: "data" },
+      { parent: 1, child: 3, edge: "data" },
+      { parent: 2, child: 3, edge: "data" },
+    ]);
+  });
+
+  it("is byte-identical to the equivalent p > [a & b] > g chain", () => {
+    const sup = supervisor(
+      [
+        ["A", ["echo"]],
+        ["B", ["echo"]],
+      ],
+      { planner: "Plan", gather: "Merge" },
+    );
+    const dsl = chain("p > [a & b] > g", {
+      tasks: {
+        p: task.model("", "Plan"),
+        a: task.model("", "A", {}, { tools: ["echo"] }),
+        b: task.model("", "B", {}, { tools: ["echo"] }),
+        g: task.model("", "Merge"),
+      },
+    });
+    expect(sup.lower()).toEqual(dsl.lower());
+  });
+
+  it("defaults to model planner + model gather; synthesize:false uses a pure gather", () => {
+    const low = supervisor([persona("researcher"), persona("writer")]).lower();
+    expect(low.steps).toHaveLength(4);
+    expect(low.steps[0]?.kind).toBe("model");
+    expect(low.steps[0]?.prompt).toBeTruthy();
+    expect(low.steps[3]?.kind).toBe("model");
+    const pure = supervisor(["worker A", "worker B"], { synthesize: false }).lower();
+    expect(pure.steps[pure.steps.length - 1]?.kind).toBe("pure");
+  });
+
+  it("rounds>1 and pool are reserved for the topology shaper (they raise)", () => {
+    expect(() => supervisor(["w"], { rounds: 2 })).toThrow(/rounds/);
+    expect(() => supervisor(["w"], { pool: 4 })).toThrow(/pool/);
+    // the defaults lower fine: planner + 1 worker + gather.
+    expect(supervisor(["w"]).lower().steps).toHaveLength(3);
+  });
+
+  it("an empty supervisor is an error", () => {
+    expect(() => supervisor([])).toThrow();
+  });
+});
+
+describe("consensus (judge = select best-of-N; majority = exact-equality plurality)", () => {
+  it("judge lowers to voters > a model judge", () => {
+    const low = consensus(
+      [
+        ["Assess A", ["mcp-echo/echo"]],
+        ["Assess B", ["mcp-echo/echo"]],
+      ],
+      { goal: "the proposal", vote: "judge" },
+    ).lower();
+    expect(low.steps).toHaveLength(3); // 2 voters + 1 judge
+    for (const i of [0, 1]) {
+      expect(low.steps[i]?.tool_contract).toEqual({ "mcp-echo/echo": "1" });
+      expect(low.steps[i]?.prompt?.endsWith("the proposal")).toBe(true);
+    }
+    expect(low.steps[2]?.kind).toBe("model");
+    expect(low.steps[2]?.tool_contract).toEqual({});
+    expect(low.edges).toEqual([
+      { parent: 0, child: 2, edge: "data" },
+      { parent: 1, child: 2, edge: "data" },
+    ]);
+  });
+
+  it("judge is byte-identical to the equivalent [a & b] > j chain", () => {
+    const con = consensus(
+      [
+        ["A", ["echo"]],
+        ["B", ["echo"]],
+      ],
+      { judge: "Pick best" },
+    );
+    const dsl = chain("[a & b] > j", {
+      tasks: {
+        a: task.model("", "A", {}, { tools: ["echo"] }),
+        b: task.model("", "B", {}, { tools: ["echo"] }),
+        j: task.model("", "Pick best"),
+      },
+    });
+    expect(con.lower()).toEqual(dsl.lower());
+  });
+
+  it("majority lowers to a PURE exact-equality sink carrying the reserved marker", () => {
+    const low = consensus(["vote A", "vote B", "vote C"], { vote: "majority" }).lower();
+    expect(low.steps).toHaveLength(4); // 3 voters + a PURE reducer
+    const sink = low.steps[3];
+    expect(sink?.kind).toBe("pure");
+    expect(sink?.params).toEqual({ "kx.consensus.vote": "majority" });
+    expect(low.edges).toEqual([
+      { parent: 0, child: 3, edge: "data" },
+      { parent: 1, child: 3, edge: "data" },
+      { parent: 2, child: 3, edge: "data" },
+    ]);
+  });
+
+  it("defaults to judge; an unknown vote mode throws", () => {
+    expect(consensus(["a", "b"]).lower().steps[2]?.kind).toBe("model");
+    expect(() => consensus(["a", "b"], { vote: "plurality" as "judge" })).toThrow(/judge|majority/);
+  });
+
+  it("an empty consensus is an error", () => {
+    expect(() => consensus([])).toThrow();
+  });
+});
+
+describe("reviewLoop (iterative refine: worker > review > review > …)", () => {
+  it("chains the worker then N review passes (linear)", () => {
+    const low = reviewLoop("Draft it", { reviewer: "Improve it", rounds: 2 }).lower();
+    expect(low.steps).toHaveLength(3); // worker + 2 review passes
+    expect(low.steps.map((s) => s.prompt)).toEqual(["Draft it", "Improve it", "Improve it"]);
+    expect(low.steps.every((s) => s.kind === "model")).toBe(true);
+    expect(low.edges).toEqual([
+      { parent: 0, child: 1, edge: "data" },
+      { parent: 1, child: 2, edge: "data" },
+    ]);
+  });
+
+  it("defaults to one review pass with a non-empty default reviewer", () => {
+    const low = reviewLoop("Draft it").lower();
+    expect(low.steps).toHaveLength(2);
+    expect(low.steps[0]?.prompt).toBe("Draft it");
+    expect(low.steps[1]?.prompt).toBeTruthy();
+  });
+
+  it("is byte-identical to the equivalent w > r chain", () => {
+    const rl = reviewLoop(["Draft", ["echo"]], { reviewer: "Fix it", rounds: 1 });
+    const dsl = chain("w > r", {
+      tasks: {
+        w: task.model("", "Draft", {}, { tools: ["echo"] }),
+        r: task.model("", "Fix it"),
+      },
+    });
+    expect(rl.lower()).toEqual(dsl.lower());
+  });
+
+  it("rounds < 1 throws", () => {
+    expect(() => reviewLoop("x", { rounds: 0 })).toThrow();
   });
 });
 

@@ -69,6 +69,38 @@ _DEFAULT_SWARM_GATHER = (
 _DEFAULT_FAN_GATHER = "Combine the parallel results above into one coherent answer."
 _DEFAULT_REDUCE = "Reduce the mapper results above into one consolidated result."
 
+#: The default lead/planner prompt for :meth:`Flow.supervisor` — a MODEL step that reads
+#: the goal, decomposes it, and (via its committed output on each worker's Data edge)
+#: steers the team. Workers run on the plan; the supervisor gather integrates their results.
+_DEFAULT_SUPERVISOR_PLANNER = (
+    "You are the supervisor. Break the task into clear, independent subtasks for the "
+    "team and state each subtask precisely, so each teammate knows exactly what to do."
+)
+#: The default integrator prompt for :meth:`Flow.supervisor` — the lead reads every
+#: worker's committed output (its Data-edge parents, F-7) and produces one final answer.
+_DEFAULT_SUPERVISOR_GATHER = (
+    "You are the supervisor. Integrate the team's results above into one complete, "
+    "coherent answer. Reconcile disagreements, keep what is well-supported, drop redundancy."
+)
+
+#: The default judge prompt for :meth:`Flow.consensus` (``vote="judge"``) — a MODEL step
+#: that SELECTS the single best candidate (distinct from :meth:`Flow.swarm`, which MERGES).
+_DEFAULT_CONSENSUS_JUDGE = (
+    "You are the judge. Read the candidate answers above and choose the single best one; "
+    "reply with that answer verbatim, without merging or editing the candidates."
+)
+#: The ``config_subset`` key (mirrors ``kx_mote::CONSENSUS_VOTE_KEY``) marking a PURE sink
+#: as an exact-equality consensus vote — the server reduces its parents to the plurality
+#: winner (SN-8: exact byte-equality, ties → first-appearance). Only ``"majority"`` today.
+_CONSENSUS_VOTE_KEY = "kx.consensus.vote"
+
+#: The default reviewer prompt for :meth:`Flow.review_loop` — each pass reviews the
+#: previous output for errors/gaps and emits an improved version.
+_DEFAULT_REVIEW = (
+    "Review the work above for errors, gaps, and weaknesses, then output an improved "
+    "version that fixes them. Reply with only the improved work."
+)
+
 
 def _join_goal(text: str, goal: str) -> str:
     """Compose a participant prompt = its role/prompt + the shared ``goal`` (if any)."""
@@ -395,6 +427,140 @@ class Flow:
         self.parallel(*leaves)
         return self.then(_sink_node(reduce, synthesize, _DEFAULT_REDUCE))
 
+    def supervisor(
+        self,
+        *workers: "object",
+        planner: "Optional[Union[str, FlowItem]]" = None,
+        goal: str = "",
+        gather: "Optional[Union[str, FlowItem]]" = None,
+        rounds: int = 1,
+        pool: "Optional[int]" = None,
+        synthesize: bool = True,
+    ) -> "Flow":
+        """A **hierarchical supervisor**: a lead ``planner`` decomposes the ``goal``, the
+        ``workers`` each act on that plan in parallel, then the lead integrates their
+        results — the topology ``planner > [workers] > gather``::
+
+            (kx.supervisor(kx.persona("researcher"), kx.persona("writer"),
+                           planner="Plan a briefing on durable execution",
+                           goal="Cover crash-recovery + exactly-once")
+               .run())
+
+        Each ``worker`` is a prompt, a ``(prompt, tools)`` tuple, an
+        :class:`~kortecx.agent.Agent` / :func:`~kortecx.personas.persona`, or a
+        :class:`Flow` (as in :meth:`swarm`); ``planner`` is the same, defaulting to a
+        standard lead prompt. The planner's committed output is a Data-edge parent of
+        every worker (they run *on* the plan), and every worker feeds the ``gather`` lead
+        (default = a MODEL integrator; steer with ``gather="<prompt>"``, a Task/Flow for a
+        custom sink, or ``synthesize=False`` for a PURE fold). Pure client-side composition
+        (no new step kind), byte-identical to the equivalent ``p > [a & b] > g`` chain; the
+        SERVER drives + warrants each agent (SN-8).
+
+        This supervisor is **static-hierarchical** — a fixed team, authored up front.
+        ``rounds`` and ``pool`` are reserved for the runtime **topology shaper** (a planner
+        that decides team size/roles at execution time and re-plans each round); they sit in
+        the signature so the API is stable when the shaper wires them, but passing
+        ``rounds>1`` or ``pool`` raises today rather than silently ignoring it. Local worker
+        concurrency is governed by the server worker pool (``kx serve --workers`` /
+        ``KX_WORKERS``)."""
+        if not workers:
+            raise ChainError("supervisor() needs at least one worker")
+        if rounds != 1:
+            raise ChainError(
+                "supervisor(rounds>1) requires the runtime topology shaper, which isn't "
+                "wired to this static-hierarchical path; use rounds=1"
+            )
+        if pool is not None:
+            raise ChainError(
+                "supervisor(pool=…) requires the runtime topology shaper, which isn't wired "
+                "to this path; local worker concurrency is set by the server worker pool "
+                "(kx serve --workers / KX_WORKERS)"
+            )
+        plan = (
+            _model(prompt=_join_goal(_DEFAULT_SUPERVISOR_PLANNER, goal))
+            if planner is None
+            else _participant_to_node(planner, goal)
+        )
+        leaves = [_participant_to_node(w, goal) for w in workers]
+        self.then(plan)
+        self.parallel(*leaves)
+        return self.then(_sink_node(gather, synthesize, _DEFAULT_SUPERVISOR_GATHER))
+
+    def consensus(
+        self,
+        *voters: "object",
+        vote: str = "judge",
+        goal: str = "",
+        judge: "Optional[Union[str, FlowItem]]" = None,
+    ) -> "Flow":
+        """Run N ``voters`` in parallel, then reach **consensus** over their outputs —
+        the topology ``[v1 & v2 & …] > reduce``::
+
+            (kx.consensus(kx.persona("analyst"), kx.persona("skeptic"), kx.persona("engineer"),
+                          goal="Is this design sound?", vote="judge")
+               .run())
+
+        Each ``voter`` is a prompt, a ``(prompt, tools)`` tuple, an
+        :class:`~kortecx.agent.Agent` / :func:`~kortecx.personas.persona`, or a
+        :class:`Flow` (as in :meth:`swarm`). Two reduce modes:
+
+        - ``vote="judge"`` (default): a MODEL judge reads the candidates and **selects the
+          single best** one (distinct from :meth:`swarm`, which *merges*). ``judge="<prompt>"``
+          steers the selection, or pass a Task/Flow for a custom judge.
+        - ``vote="majority"``: the server reduces to the **exact-equality plurality** — the
+          most-frequent voter output by EXACT byte-equality, ties broken by first-appearance
+          (SN-8: exact equality only, never a similarity score). Best for CONSTRAINED outputs
+          (a label / structured JSON / a tool decision) — free-form prose rarely ties, so
+          ``judge`` is the usual mode there.
+
+        Pure client-side composition (no new step kind); the SERVER drives + warrants each
+        voter and computes the reduce (SN-8)."""
+        if not voters:
+            raise ChainError("consensus() needs at least one voter")
+        if vote not in ("judge", "majority"):
+            raise ChainError(f"consensus(vote=…) must be 'judge' or 'majority', got {vote!r}")
+        leaves = [_participant_to_node(v, goal) for v in voters]
+        self.parallel(*leaves)
+        if vote == "judge":
+            return self.then(_sink_node(judge, True, _DEFAULT_CONSENSUS_JUDGE))
+        # vote == "majority": a PURE sink the server reduces by exact-equality plurality
+        # (config_subset[kx.consensus.vote]="majority").
+        return self.then(_as_node(_pure(**{_CONSENSUS_VOTE_KEY: "majority"})))
+
+    def review_loop(
+        self,
+        worker: "object",
+        *,
+        reviewer: "Optional[Union[str, FlowItem]]" = None,
+        rounds: int = 1,
+        goal: str = "",
+    ) -> "Flow":
+        """A **review loop**: a ``worker`` drafts, then a ``reviewer`` reviews-and-improves
+        the draft ``rounds`` times — an iterative refine chain
+        ``worker > review > review > …``::
+
+            (kx.review_loop("Draft a launch email",
+                            reviewer="Tighten it and fix any errors", rounds=2)
+               .run())
+
+        ``worker`` is the initial task (a prompt / ``(prompt, tools)`` / Agent / persona /
+        Flow); ``reviewer`` is a review prompt or a critic persona applied each round
+        (default: review-and-improve). Each pass reads the previous version (its Data-edge
+        parent) and emits a better one; the LAST step's output is the result. Pure
+        sequential composition (no new step kind) — the author-static refine loop; a
+        runtime-adaptive "revise until a critic passes" loop is the topology-shaper
+        follow-on. ``rounds`` ≥ 1."""
+        if rounds < 1:
+            raise ChainError("review_loop() needs rounds >= 1")
+        self.then(_participant_to_node(worker, goal))
+        for _ in range(rounds):
+            self.then(
+                _participant_to_node(reviewer, "")
+                if reviewer is not None
+                else _model(prompt=_DEFAULT_REVIEW)
+            )
+        return self
+
     def as_app(self, name: str, *, version: str = "1"):
         """Promote this Flow to a durable, named :class:`~kortecx.app.App` — the
         EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
@@ -518,3 +684,54 @@ def map_reduce(
     """``kx.map_reduce(...)`` — map N mappers in parallel, then reduce; see
     :meth:`Flow.map_reduce`."""
     return flow(seed=seed).map_reduce(*mappers, reduce=reduce, synthesize=synthesize)
+
+
+def supervisor(
+    *workers: "object",
+    planner: "Optional[Union[str, FlowItem]]" = None,
+    goal: str = "",
+    gather: "Optional[Union[str, FlowItem]]" = None,
+    rounds: int = 1,
+    pool: "Optional[int]" = None,
+    synthesize: bool = True,
+    seed: int = 0,
+) -> Flow:
+    """``kx.supervisor(...)`` — a lead plans, workers execute in parallel, the lead
+    integrates, as a whole flow. Sugar for ``kx.flow(seed=seed).supervisor(...)``; see
+    :meth:`Flow.supervisor`."""
+    return flow(seed=seed).supervisor(
+        *workers,
+        planner=planner,
+        goal=goal,
+        gather=gather,
+        rounds=rounds,
+        pool=pool,
+        synthesize=synthesize,
+    )
+
+
+def consensus(
+    *voters: "object",
+    vote: str = "judge",
+    goal: str = "",
+    judge: "Optional[Union[str, FlowItem]]" = None,
+    seed: int = 0,
+) -> Flow:
+    """``kx.consensus(...)`` — N voters in parallel → a consensus reduce (a judge that
+    selects best-of-N, or an exact-equality majority), as a whole flow. Sugar for
+    ``kx.flow(seed=seed).consensus(...)``; see :meth:`Flow.consensus`."""
+    return flow(seed=seed).consensus(*voters, vote=vote, goal=goal, judge=judge)
+
+
+def review_loop(
+    worker: "object",
+    *,
+    reviewer: "Optional[Union[str, FlowItem]]" = None,
+    rounds: int = 1,
+    goal: str = "",
+    seed: int = 0,
+) -> Flow:
+    """``kx.review_loop(...)`` — a worker drafts, then a reviewer improves it ``rounds``
+    times, as a whole flow. Sugar for ``kx.flow(seed=seed).review_loop(...)``; see
+    :meth:`Flow.review_loop`."""
+    return flow(seed=seed).review_loop(worker, reviewer=reviewer, rounds=rounds, goal=goal)

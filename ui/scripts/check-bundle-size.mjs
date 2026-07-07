@@ -6,12 +6,12 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 624 KiB raw (override with KX_UI_EAGER_BUDGET_BYTES for emergencies —
+ * Budget: 648 KiB raw (override with KX_UI_EAGER_BUDGET_BYTES for emergencies —
  * a deliberate, reviewed override, never a silent default bump).
  *
- * History (deliberate, reviewed default bumps — each tied to a real RPC surface that
- * the eager SDK client + its generated proto stub must carry; lazy-loading proto types
- * per-RPC is not possible since the client is loaded by connection-context up front):
+ * History (deliberate, reviewed default bumps — each tied to a real capability the
+ * eager SDK client must carry; the SDK is loaded by connection-context up front, so
+ * an eager-surface addition can't be lazy-split per-feature):
  *   - 600 KiB → 624 KiB (D170 Integrations Foundation): +13 proto messages / +2 enums
  *     for the secrets (PutSecret/ListSecretNames/DeleteSecret) + triggers
  *     (Register/List/Deregister/Submit/TestTrigger) RPC surface, plus the
@@ -20,6 +20,11 @@
  *     (DecayMemory/MemoryStats/RestoreMemory req+resp) + MemorySummary salience/
  *     tombstone fields, plus the `client.memory.{decay,stats,restore,consolidate}`
  *     methods + DecayReport/MemoryStats/DecayCandidate result types (~2 KiB eager).
+ *   - 640 KiB → 648 KiB (multi-agent orchestration layer): the eager Flow client gains the
+ *     supervisor() / consensus() / reviewLoop() orchestration methods + their default
+ *     planner/gather/judge/review prompt constants + the consensus-vote key. Pure client
+ *     composition (no new proto / RPC), but it rides the eager `common.js`. Measured
+ *     654,787 B (origin/main) → 656,790 B (~2 KiB eager); bumped to the next KiB boundary.
  *
  * Exit 1 over budget. The printed table doubles as the GR10 evidence blob.
  */
@@ -30,7 +35,7 @@ import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(UI_ROOT, "dist");
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 655_360);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 663_552);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

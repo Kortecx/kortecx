@@ -35,6 +35,7 @@ pub mod runs;
 pub mod secrets;
 pub mod signatures;
 pub mod skills;
+pub mod swarm;
 pub mod telemetry;
 pub mod tools;
 pub mod triggers;

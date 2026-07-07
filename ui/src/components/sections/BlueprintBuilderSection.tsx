@@ -37,6 +37,8 @@ import {
   type BuilderGraph,
   type BuilderStep,
   type BuilderStepKind,
+  type PatternKind,
+  insertPattern,
   newStep,
   toRequest,
   validationError,
@@ -133,6 +135,46 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
       setSelNode(id);
     },
     [setNodes],
+  );
+
+  // Scaffold a multi-agent orchestration pattern — insert a pre-wired
+  // cluster of the EXISTING model/pure vocabulary (the same nodes/edges/drawer as
+  // `addStep`), laid out below the current canvas via the shared dagre layout. The
+  // cluster lowers to the SAME DAG the SDK/CLI author (`insertPattern` mirrors
+  // `flow().swarm/supervisor/consensus()`). The author then fills in each node's
+  // model (validation gates submit until every agent has one).
+  const insertPatternMacro = useCallback(
+    (kind: PatternKind) => {
+      const { steps, edges: patEdges, firstId, nextId } = insertPattern(kind, idc.current);
+      idc.current = nextId;
+      const layout = layoutGraph(
+        steps.map((s) => s.id),
+        patEdges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          edgeKind: "data" as const,
+          nonCascade: false,
+        })),
+      );
+      const minY = Math.min(...steps.map((s) => layout.get(s.id)?.y ?? 0));
+      setNodes((ns) => {
+        const yBase = ns.length ? Math.max(...ns.map((n) => n.position.y)) + NODE_H + 80 : 40;
+        const added: BuilderFlowNode[] = steps.map((step) => {
+          const p = layout.get(step.id) ?? { x: 80, y: 0 };
+          return {
+            id: step.id,
+            type: "builder",
+            position: { x: p.x, y: p.y - minY + yBase },
+            data: { step },
+          };
+        });
+        return [...ns, ...added];
+      });
+      setEdges((es) => [...es, ...patEdges.map(toRfEdge)]);
+      setSelNode(firstId);
+    },
+    [setNodes, setEdges],
   );
 
   const updateStep = useCallback(
@@ -274,6 +316,43 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
             onClick={() => addStep("tool")}
           >
             + Tool
+          </button>
+          <span className="builder-toolbar__divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="btn-ghost"
+            data-testid="builder-add-swarm"
+            title="Fan out to parallel agents, then gather"
+            onClick={() => insertPatternMacro("swarm")}
+          >
+            + Swarm
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            data-testid="builder-add-supervisor"
+            title="A planner decomposes the task; workers run in parallel; a lead integrates"
+            onClick={() => insertPatternMacro("supervisor")}
+          >
+            + Supervisor
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            data-testid="builder-add-consensus-judge"
+            title="N voters, then a judge selects the single best answer"
+            onClick={() => insertPatternMacro("consensusJudge")}
+          >
+            + Consensus · judge
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            data-testid="builder-add-consensus-majority"
+            title="N voters, then an exact-equality majority vote (server-reduced)"
+            onClick={() => insertPatternMacro("consensusMajority")}
+          >
+            + Consensus · majority
           </button>
           <button
             type="button"

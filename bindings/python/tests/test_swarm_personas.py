@@ -109,6 +109,177 @@ def test_empty_swarm_is_an_error() -> None:
         kx.flow().fan_out_gather()
 
 
+# ---- supervisor (static-hierarchical: planner > [workers] > gather) ----
+
+
+def test_supervisor_lowers_to_planner_then_workers_then_gather() -> None:
+    low = kx.supervisor(
+        ("Analyze the market", ["mcp-echo/echo"]),
+        ("Critique the analysis", ["mcp-echo/echo"]),
+        planner="Plan the work",
+        goal="the Q3 plan",
+        gather="Integrate",
+    ).lowering()
+    # planner(0) + 2 workers(1,2) + gather(3)
+    assert len(low["steps"]) == 4
+    assert low["steps"][0]["kind"] == "model" and low["steps"][0]["tool_contract"] == {}
+    assert low["steps"][0]["prompt"].endswith("the Q3 plan")  # goal appended to planner
+    for i in (1, 2):
+        assert low["steps"][i]["tool_contract"] == {"mcp-echo/echo": "1"}
+        assert low["steps"][i]["prompt"].endswith("the Q3 plan")
+    assert low["steps"][3]["kind"] == "model" and low["steps"][3]["tool_contract"] == {}
+    # planner fans OUT to each worker; each worker fans IN to the gather lead.
+    assert low["edges"] == [
+        {"parent": 0, "child": 1, "edge": "data"},
+        {"parent": 0, "child": 2, "edge": "data"},
+        {"parent": 1, "child": 3, "edge": "data"},
+        {"parent": 2, "child": 3, "edge": "data"},
+    ]
+
+
+def test_supervisor_is_byte_identical_to_the_equivalent_chain() -> None:
+    # A supervisor is pure composition — byte-identical to the `p > [a & b] > g` chain
+    # (the tri-surface golden contract; digest-invariant, no new step kind).
+    sup = kx.supervisor(("A", ["echo"]), ("B", ["echo"]), planner="Plan", gather="Merge")
+    dsl = kx.chain(
+        "p > [a & b] > g",
+        {
+            "p": kx.model(prompt="Plan"),
+            "a": kx.model(prompt="A", tools=["echo"]),
+            "b": kx.model(prompt="B", tools=["echo"]),
+            "g": kx.model(prompt="Merge"),
+        },
+    )
+    assert sup.lowering() == dsl.lowering()
+
+
+def test_supervisor_default_planner_and_gather_are_model_steps() -> None:
+    low = kx.supervisor(kx.persona("researcher"), kx.persona("writer")).lowering()
+    assert len(low["steps"]) == 4  # default planner + 2 workers + default gather
+    assert low["steps"][0]["kind"] == "model" and low["steps"][0]["prompt"]
+    assert low["steps"][3]["kind"] == "model" and low["steps"][3]["prompt"]
+
+
+def test_supervisor_synthesize_false_uses_a_pure_gather() -> None:
+    low = kx.supervisor("worker A", "worker B", synthesize=False).lowering()
+    assert low["steps"][-1]["kind"] == "pure"
+
+
+def test_supervisor_rounds_and_pool_are_reserved_for_the_topology_shaper() -> None:
+    # the static-hierarchical supervisor raises on the shaper-only knobs (never a silent
+    # no-op) so the API stays stable when the topology shaper wires them.
+    with pytest.raises(ChainError, match="rounds"):
+        kx.supervisor("w", rounds=2)
+    with pytest.raises(ChainError, match="pool"):
+        kx.supervisor("w", pool=4)
+    # the defaults (rounds=1, pool=None) lower fine.
+    assert len(kx.supervisor("w").lowering()["steps"]) == 3  # planner + 1 worker + gather
+
+
+def test_empty_supervisor_is_an_error() -> None:
+    with pytest.raises(ChainError):
+        kx.supervisor()
+
+
+# ---- consensus (judge = select best-of-N; majority = exact-equality plurality) ----
+
+
+def test_consensus_judge_lowers_to_voters_then_a_model_judge() -> None:
+    low = kx.consensus(
+        ("Assess A", ["mcp-echo/echo"]),
+        ("Assess B", ["mcp-echo/echo"]),
+        goal="the proposal",
+        vote="judge",
+    ).lowering()
+    assert len(low["steps"]) == 3  # 2 voters + 1 judge
+    for i in (0, 1):
+        assert low["steps"][i]["tool_contract"] == {"mcp-echo/echo": "1"}
+        assert low["steps"][i]["prompt"].endswith("the proposal")
+    assert low["steps"][2]["kind"] == "model" and low["steps"][2]["tool_contract"] == {}
+    assert low["edges"] == [
+        {"parent": 0, "child": 2, "edge": "data"},
+        {"parent": 1, "child": 2, "edge": "data"},
+    ]
+
+
+def test_consensus_judge_is_byte_identical_to_the_equivalent_chain() -> None:
+    con = kx.consensus(("A", ["echo"]), ("B", ["echo"]), judge="Pick best")
+    dsl = kx.chain(
+        "[a & b] > j",
+        {
+            "a": kx.model(prompt="A", tools=["echo"]),
+            "b": kx.model(prompt="B", tools=["echo"]),
+            "j": kx.model(prompt="Pick best"),
+        },
+    )
+    assert con.lowering() == dsl.lowering()
+
+
+def test_consensus_majority_lowers_to_a_pure_exact_equality_sink() -> None:
+    low = kx.consensus("vote A", "vote B", "vote C", vote="majority").lowering()
+    assert len(low["steps"]) == 4  # 3 voters + a PURE reducer
+    sink = low["steps"][-1]
+    assert sink["kind"] == "pure"
+    # the reserved marker the SERVER reduces on (exact-equality plurality).
+    assert sink["params"] == {"kx.consensus.vote": "majority"}
+    assert low["edges"] == [
+        {"parent": 0, "child": 3, "edge": "data"},
+        {"parent": 1, "child": 3, "edge": "data"},
+        {"parent": 2, "child": 3, "edge": "data"},
+    ]
+
+
+def test_consensus_default_is_judge_and_a_bad_vote_raises() -> None:
+    # default is judge (a MODEL sink); an unknown vote mode fails closed.
+    assert kx.consensus("a", "b").lowering()["steps"][-1]["kind"] == "model"
+    with pytest.raises(ChainError, match="judge.*majority|vote"):
+        kx.consensus("a", "b", vote="plurality")
+
+
+def test_empty_consensus_is_an_error() -> None:
+    with pytest.raises(ChainError):
+        kx.consensus()
+
+
+# ---- review_loop (iterative refine: worker > review > review > …) ----
+
+
+def test_review_loop_chains_worker_then_review_passes() -> None:
+    low = kx.review_loop("Draft it", reviewer="Improve it", rounds=2).lowering()
+    assert len(low["steps"]) == 3  # worker + 2 review passes
+    assert [s["prompt"] for s in low["steps"]] == ["Draft it", "Improve it", "Improve it"]
+    assert all(s["kind"] == "model" for s in low["steps"])
+    # a linear chain: each step feeds the next.
+    assert low["edges"] == [
+        {"parent": 0, "child": 1, "edge": "data"},
+        {"parent": 1, "child": 2, "edge": "data"},
+    ]
+
+
+def test_review_loop_default_reviewer_and_rounds_one() -> None:
+    low = kx.review_loop("Draft it").lowering()
+    assert len(low["steps"]) == 2  # worker + one default review pass
+    assert low["steps"][0]["prompt"] == "Draft it"
+    assert low["steps"][1]["prompt"]  # a non-empty default review prompt
+
+
+def test_review_loop_is_byte_identical_to_the_equivalent_chain() -> None:
+    rl = kx.review_loop(("Draft", ["echo"]), reviewer="Fix it", rounds=1)
+    dsl = kx.chain(
+        "w > r",
+        {
+            "w": kx.model(prompt="Draft", tools=["echo"]),
+            "r": kx.model(prompt="Fix it"),
+        },
+    )
+    assert rl.lowering() == dsl.lowering()
+
+
+def test_review_loop_rounds_must_be_positive() -> None:
+    with pytest.raises(ChainError):
+        kx.review_loop("x", rounds=0)
+
+
 # ---- personas ----
 
 

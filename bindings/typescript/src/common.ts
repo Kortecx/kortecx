@@ -129,13 +129,24 @@ export { Flow, flow } from "./flow.js";
 export type { FlowItem, AgentStepOptions, FlowClient } from "./flow.js";
 // Multi-agent swarm authoring + a curated persona library (pure client
 // composition: N parallel agentic leaves → gather; personas fold into the step prompt).
-export { swarm, team, fanOutGather, mapReduce } from "./flow.js";
+export {
+  swarm,
+  team,
+  fanOutGather,
+  mapReduce,
+  supervisor,
+  consensus,
+  reviewLoop,
+} from "./flow.js";
 export type {
   SwarmParticipant,
   SwarmOptions,
   TeamOptions,
   FanOptions,
   ReduceOptions,
+  SupervisorOptions,
+  ConsensusOptions,
+  ReviewLoopOptions,
 } from "./flow.js";
 export { PERSONAS, persona, personaNames } from "./personas.js";
 // POC-4 — the App builder + envelope (kortecx.app/v1) + catalog views.

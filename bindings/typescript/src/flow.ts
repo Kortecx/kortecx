@@ -66,6 +66,36 @@ const DEFAULT_SWARM_GATHER =
 const DEFAULT_FAN_GATHER = "Combine the parallel results above into one coherent answer.";
 const DEFAULT_REDUCE = "Reduce the mapper results above into one consolidated result.";
 
+/** The default lead/planner prompt for {@link Flow.supervisor} — decomposes the goal;
+ * its committed output steers each worker (a Data-edge parent). Byte-identical to the
+ * Python `_DEFAULT_SUPERVISOR_PLANNER` (Py↔TS parity). */
+const DEFAULT_SUPERVISOR_PLANNER =
+  "You are the supervisor. Break the task into clear, independent subtasks for the team " +
+  "and state each subtask precisely, so each teammate knows exactly what to do.";
+/** The default integrator prompt for {@link Flow.supervisor} — the lead reads every
+ * worker's committed output (its Data-edge parents, F-7) and writes one final answer.
+ * Byte-identical to the Python `_DEFAULT_SUPERVISOR_GATHER` (Py↔TS parity). */
+const DEFAULT_SUPERVISOR_GATHER =
+  "You are the supervisor. Integrate the team's results above into one complete, coherent " +
+  "answer. Reconcile disagreements, keep what is well-supported, drop redundancy.";
+
+/** The default judge prompt for {@link Flow.consensus} (`vote: "judge"`) — a MODEL step that
+ * SELECTS the single best candidate (distinct from {@link Flow.swarm}, which MERGES).
+ * Byte-identical to the Python `_DEFAULT_CONSENSUS_JUDGE` (Py↔TS parity). */
+const DEFAULT_CONSENSUS_JUDGE =
+  "You are the judge. Read the candidate answers above and choose the single best one; " +
+  "reply with that answer verbatim, without merging or editing the candidates.";
+/** The `config_subset` key (mirrors `kx_mote::CONSENSUS_VOTE_KEY`) marking a PURE sink as an
+ * exact-equality consensus vote — the server reduces its parents to the plurality winner
+ * (SN-8: exact byte-equality, ties → first-appearance). Only `"majority"` today. */
+const CONSENSUS_VOTE_KEY = "kx.consensus.vote";
+/** The default reviewer prompt for {@link Flow.reviewLoop} — each pass reviews the previous
+ * output for errors/gaps and emits an improved version. Byte-identical to the Python
+ * `_DEFAULT_REVIEW` (Py↔TS parity). */
+const DEFAULT_REVIEW =
+  "Review the work above for errors, gaps, and weaknesses, then output an improved " +
+  "version that fixes them. Reply with only the improved work.";
+
 /** A swarm/team participant: a prompt, a `[prompt, tools]` tuple, an Agent /
  * persona (duck-typed), a {@link Flow} (already task-bound), or a Frag. */
 export type SwarmParticipant =
@@ -112,6 +142,45 @@ export interface FanOptions {
 export interface ReduceOptions {
   reduce?: string | Frag;
   synthesize?: boolean;
+}
+/** Options for {@link Flow.supervisor} / the top-level {@link supervisor}. */
+export interface SupervisorOptions {
+  /** The lead that decomposes the goal (a prompt, `[prompt, tools]`, an Agent / persona,
+   * or a Flow). Default = a standard supervisor prompt. */
+  planner?: SwarmParticipant;
+  /** The shared task the planner + workers work on (appended to each prompt). */
+  goal?: string;
+  /** The gather sink: a synthesis prompt (a MODEL step) or an explicit Frag. Default = a
+   * MODEL integrator. */
+  gather?: string | Frag;
+  /** `true` (default) = a MODEL integrator gather; `false` = a PURE deterministic fold. */
+  synthesize?: boolean;
+  /** RESERVED for the runtime topology shaper: this static-hierarchical supervisor is
+   * single-round, so `rounds > 1` raises rather than silently ignoring it (stable API). */
+  rounds?: number;
+  /** RESERVED for the runtime topology shaper: passing `pool` raises — local worker
+   * concurrency is governed by the server worker pool (`kx serve --workers` / `KX_WORKERS`). */
+  pool?: number;
+}
+/** Options for {@link Flow.consensus} / the top-level {@link consensus}. */
+export interface ConsensusOptions {
+  /** `"judge"` (default) = a MODEL judge SELECTS the single best candidate; `"majority"` = the
+   * server reduces to the exact-equality plurality (SN-8; ties → first-appearance). */
+  vote?: "judge" | "majority";
+  /** The shared task each voter works on (appended to its prompt). */
+  goal?: string;
+  /** For `vote: "judge"`: the judge sink — a selection prompt (a MODEL step) or an explicit
+   * Frag. Default = a standard "pick the single best" judge. Ignored for `vote: "majority"`. */
+  judge?: string | Frag;
+}
+/** Options for {@link Flow.reviewLoop} / the top-level {@link reviewLoop}. */
+export interface ReviewLoopOptions {
+  /** A review prompt or a critic persona applied each round (default: review-and-improve). */
+  reviewer?: SwarmParticipant;
+  /** How many review passes to run (≥ 1; default 1). */
+  rounds?: number;
+  /** The shared task appended to the worker's prompt. */
+  goal?: string;
 }
 
 function joinGoal(text: string, goal: string): string {
@@ -421,6 +490,112 @@ export class Flow {
     return this.then(sinkFrag(opts.reduce, opts.synthesize ?? true, DEFAULT_REDUCE));
   }
 
+  /** A **hierarchical supervisor**: a lead `planner` decomposes the goal, the `workers`
+   * each act on that plan in parallel, then the lead integrates — the topology
+   * `planner > [workers] > gather`:
+   *
+   * ```ts
+   * await kx.supervisor([kx.persona("researcher"), kx.persona("writer")],
+   *                     { planner: "Plan a briefing on durable execution",
+   *                       goal: "Cover crash-recovery + exactly-once" })
+   *   .run();
+   * ```
+   *
+   * The planner's committed output is a Data-edge parent of every worker (they run *on*
+   * the plan); every worker feeds the `gather` lead (default = a MODEL integrator; steer
+   * with `opts.gather`, a Frag for a custom sink, or `synthesize: false` for a PURE fold).
+   * Pure client composition — byte-identical to the equivalent `p > [a & b] > g` chain; no
+   * new step kind.
+   *
+   * This supervisor is **static-hierarchical** — a fixed team, authored up front. `rounds` /
+   * `pool` are reserved for the runtime **topology shaper** (a planner that decides team
+   * size/roles at execution time and re-plans each round); they sit in the signature so the
+   * API is stable when the shaper wires them, but passing `rounds > 1` or `pool` raises today
+   * rather than silently ignoring it. Local worker concurrency is governed by the server
+   * worker pool (`kx serve --workers` / `KX_WORKERS`). */
+  supervisor(workers: SwarmParticipant[], opts: SupervisorOptions = {}): this {
+    if (workers.length === 0) throw new ChainParseError("supervisor() needs at least one worker");
+    if ((opts.rounds ?? 1) !== 1)
+      throw new ChainParseError(
+        "supervisor(rounds>1) requires the runtime topology shaper, which isn't wired to this " +
+          "static-hierarchical path; use rounds=1",
+      );
+    if (opts.pool !== undefined)
+      throw new ChainParseError(
+        "supervisor(pool=…) requires the runtime topology shaper, which isn't wired to this " +
+          "path; local worker concurrency is set by the server worker pool " +
+          "(kx serve --workers / KX_WORKERS)",
+      );
+    const goal = opts.goal ?? "";
+    const plan =
+      opts.planner === undefined
+        ? task.model("", joinGoal(DEFAULT_SUPERVISOR_PLANNER, goal))
+        : this.resolveParticipant(opts.planner, goal);
+    this.then(plan);
+    this.parallel(...workers.map((w) => this.resolveParticipant(w, goal)));
+    return this.then(sinkFrag(opts.gather, opts.synthesize ?? true, DEFAULT_SUPERVISOR_GATHER));
+  }
+
+  /** Run N `voters` in parallel, then reach **consensus** — the topology
+   * `[v1 & v2 & …] > reduce`:
+   *
+   * ```ts
+   * await kx.consensus([kx.persona("analyst"), kx.persona("skeptic"), kx.persona("engineer")],
+   *                    { goal: "Is this design sound?", vote: "judge" })
+   *   .run();
+   * ```
+   *
+   * Each voter is a prompt, a `[prompt, tools]` tuple, an Agent / persona, or a Flow (as in
+   * {@link Flow.swarm}). Two reduce modes: `vote: "judge"` (default) — a MODEL judge SELECTS
+   * the single best candidate (distinct from swarm's *merge*; steer with `opts.judge`);
+   * `vote: "majority"` — the server reduces to the **exact-equality plurality** (most-frequent
+   * voter output by EXACT byte-equality, ties → first-appearance; SN-8, best for CONSTRAINED
+   * outputs). Pure client composition; the SERVER drives + warrants each voter (SN-8). */
+  consensus(voters: SwarmParticipant[], opts: ConsensusOptions = {}): this {
+    if (voters.length === 0) throw new ChainParseError("consensus() needs at least one voter");
+    const vote = opts.vote ?? "judge";
+    if (vote !== "judge" && vote !== "majority")
+      throw new ChainParseError(`consensus(vote=…) must be 'judge' or 'majority', got '${vote}'`);
+    const goal = opts.goal ?? "";
+    this.parallel(...voters.map((v) => this.resolveParticipant(v, goal)));
+    if (vote === "judge") {
+      // a MODEL judge that SELECTS the single best answer (distinct from swarm's merge).
+      return this.then(sinkFrag(opts.judge, true, DEFAULT_CONSENSUS_JUDGE));
+    }
+    // vote === "majority": a PURE sink the server reduces by exact-equality plurality
+    // (config_subset[kx.consensus.vote]="majority").
+    return this.then(task.pure({ [CONSENSUS_VOTE_KEY]: "majority" }));
+  }
+
+  /** A **review loop**: a `worker` drafts, then a `reviewer` reviews-and-improves the draft
+   * `opts.rounds` times — an iterative refine chain `worker > review > review > …`:
+   *
+   * ```ts
+   * await kx.reviewLoop("Draft a launch email",
+   *                     { reviewer: "Tighten it and fix any errors", rounds: 2 })
+   *   .run();
+   * ```
+   *
+   * `worker` is the initial task; `opts.reviewer` is a review prompt or a critic persona
+   * applied each round (default: review-and-improve). Each pass reads the previous version
+   * (its Data-edge parent) and emits a better one; the LAST step's output is the result.
+   * Pure sequential composition (no new step kind) — the author-static refine loop; a
+   * runtime-adaptive "revise until a critic passes" loop is the topology-shaper follow-on. */
+  reviewLoop(worker: SwarmParticipant, opts: ReviewLoopOptions = {}): this {
+    const rounds = opts.rounds ?? 1;
+    if (rounds < 1) throw new ChainParseError("reviewLoop() needs rounds >= 1");
+    const goal = opts.goal ?? "";
+    this.then(this.resolveParticipant(worker, goal));
+    for (let i = 0; i < rounds; i++) {
+      this.then(
+        opts.reviewer === undefined
+          ? task.model("", DEFAULT_REVIEW)
+          : this.resolveParticipant(opts.reviewer, ""),
+      );
+    }
+    return this;
+  }
+
   /** Promote this Flow to a durable, named {@link import("./app.js").AppBuilder} — the
    * EXPLICIT boundary (D177) from ad-hoc authoring to a shareable App that runs via
    * `RunApp` (server-resolved connections + secret_scope + skills). Chain the App rails
@@ -527,4 +702,33 @@ export function fanOutGather(
  * {@link Flow.mapReduce}. */
 export function mapReduce(mappers: FlowItem[], opts: ReduceOptions & { seed?: number } = {}): Flow {
   return flow({ seed: opts.seed }).mapReduce(mappers, opts);
+}
+
+/** `supervisor(workers, opts)` — a lead plans, workers execute in parallel, the lead
+ * integrates, as a whole flow. Sugar for `flow(seed).supervisor(...)`; see
+ * {@link Flow.supervisor}. */
+export function supervisor(
+  workers: SwarmParticipant[],
+  opts: SupervisorOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).supervisor(workers, opts);
+}
+
+/** `consensus(voters, opts)` — N voters in parallel → a consensus reduce (a judge that
+ * selects best-of-N, or an exact-equality majority), as a whole flow. Sugar for
+ * `flow(seed).consensus(...)`; see {@link Flow.consensus}. */
+export function consensus(
+  voters: SwarmParticipant[],
+  opts: ConsensusOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).consensus(voters, opts);
+}
+
+/** `reviewLoop(worker, opts)` — a worker drafts, then a reviewer improves it `opts.rounds`
+ * times, as a whole flow. Sugar for `flow(seed).reviewLoop(...)`; see {@link Flow.reviewLoop}. */
+export function reviewLoop(
+  worker: SwarmParticipant,
+  opts: ReviewLoopOptions & { seed?: number } = {},
+): Flow {
+  return flow({ seed: opts.seed }).reviewLoop(worker, opts);
 }

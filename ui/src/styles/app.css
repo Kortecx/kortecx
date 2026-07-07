@@ -4008,6 +4008,15 @@ button.card-grid__title:hover {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: wrap;
+}
+/* Groups the base palette (Agent/Pure/Tool) from the pattern macros
+   (Swarm/Supervisor/Consensus) — a hairline in the shared border token, both themes. */
+.builder-toolbar__divider {
+  width: 1px;
+  align-self: stretch;
+  min-height: 1.5rem;
+  background: var(--border);
 }
 .builder-submit {
   margin-top: 0; /* the toolbar aligns it; override the global button margin */

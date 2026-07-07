@@ -1861,6 +1861,63 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         })
     }
 
+    /// Reduce a CONSENSUS **majority** sink: commit the most-frequent committed
+    /// parent output by EXACT byte-equality (SN-8 — exact equality only, never a
+    /// similarity score), ties broken by first-appearance (the lowest parent
+    /// index). A PURE, total, deterministic fold of the committed voter facts: no
+    /// model, no egress. Re-running re-derives the identical winner (content-
+    /// addressed), so a crash-mid-consensus replay is byte-stable and a committed
+    /// winner is served-not-re-run. Fail-closed on no parents / an oversized voter.
+    fn run_consensus_majority(
+        &self,
+        mote: &Mote,
+    ) -> Result<MoteExecutionResult, MoteExecutorError> {
+        // (1) The committed voter outputs, in scheduling (first-appearance) order (F-7).
+        let parents = self.take_parent_context(mote.id).unwrap_or_default();
+        if parents.is_empty() {
+            return Err(internal(
+                "consensus(majority) sink has no committed parents to reduce (fail-closed)",
+            ));
+        }
+        // (2) Fetch each voter's committed bytes (bounded fail-closed — never truncate).
+        let mut outputs: Vec<Vec<u8>> = Vec::with_capacity(parents.len());
+        for (id, r) in &parents {
+            let bytes = self
+                .store
+                .get(r)
+                .map_err(|e| internal(&format!("read consensus voter {id:?} bytes: {e}")))?;
+            if bytes.len() > CRITIC_MAX_INPUT_BYTES {
+                return Err(internal(&format!(
+                    "consensus voter {id:?} output {} bytes exceeds max {CRITIC_MAX_INPUT_BYTES}",
+                    bytes.len()
+                )));
+            }
+            outputs.push(bytes.to_vec());
+        }
+        // (3) Exact-equality plurality (SN-8: exact byte-equality, ties → first-appearance).
+        let best = consensus_plurality_index(&outputs);
+        // (4) Commit the winner's exact bytes (content-addressed — a re-run puts the
+        // same bytes ⇒ the same ref; exactly-once / replay-stable).
+        let result_ref = self
+            .store
+            .put(&outputs[best])
+            .map_err(|e| internal(&format!("content store put (consensus winner): {e}")))?;
+        Ok(MoteExecutionResult {
+            result_ref,
+            started_at_epoch_ms: 0,
+            finished_at_epoch_ms: 0,
+        })
+    }
+
+    /// True iff `mote` is a PURE sink carrying the exact-equality CONSENSUS-majority
+    /// marker (`config_subset[CONSENSUS_VOTE_KEY] == "majority"`). Gated on
+    /// [`NdClass::Pure`] (the reduce is a pure fold; a prompt/tool Mote never carries
+    /// the marker) — defense-in-depth against a mis-marked Mote.
+    fn is_consensus_majority(mote: &Mote) -> bool {
+        mote.nd_class() == NdClass::Pure
+            && consensus_vote_from_config(mote).as_deref() == Some("majority")
+    }
+
     /// Run an opt-in **LLM-JUDGE** critic Mote (T-AGENT2) — the model-graded
     /// sibling of [`Self::run_critic`]. Where the native critic evaluates a
     /// deterministic check in-process (`Pure`), the judge dispatches the SERVED
@@ -2003,6 +2060,14 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
                 self.run_critic(mote)
             };
         }
+        // CONSENSUS majority: a PURE sink carrying the exact-equality vote marker
+        // reduces its committed parents to the plurality winner (SN-8: exact
+        // byte-equality, ties → first-appearance). Route on marker PRESENCE before the
+        // PURE fall-through — a consensus sink has no prompt/critic, so it would
+        // otherwise reach the generic transform arm (which does NOT compute majority).
+        if Self::is_consensus_majority(mote) {
+            return self.run_consensus_majority(mote);
+        }
         // RC4c-2b: a live LLM RERANK turn is a model Mote WITHOUT a `PROMPT_KEY` (its
         // prompt is rendered at dispatch from `config_subset` refs), so it must route
         // BEFORE the `has_prompt` gate — else it would fall to the inner PURE/demo
@@ -2098,6 +2163,43 @@ fn prompt_from_config(mote: &Mote) -> Option<String> {
         serde_json::from_slice::<String>(raw)
             .unwrap_or_else(|_| String::from_utf8_lossy(raw).into_owned()),
     )
+}
+
+/// The CONSENSUS vote mode from `config_subset[CONSENSUS_VOTE_KEY]` (e.g.
+/// `"majority"`), decoded JSON-quoted-or-raw exactly like [`prompt_from_config`]
+/// (the SDK sends a JSON string; a directly-built Mote may carry raw bytes).
+/// `None` ⇒ not a consensus sink.
+fn consensus_vote_from_config(mote: &Mote) -> Option<String> {
+    let raw = &mote
+        .def
+        .config_subset
+        .get(&ConfigKey(kx_mote::CONSENSUS_VOTE_KEY.to_string()))?
+        .0;
+    Some(
+        serde_json::from_slice::<String>(raw)
+            .unwrap_or_else(|_| String::from_utf8_lossy(raw).into_owned()),
+    )
+}
+
+/// The exact-equality **plurality** winner index over `outputs` (in first-appearance
+/// order): the index of the modal value by EXACT byte-equality; on a tie the earliest
+/// first-appearance wins (scan in order, replace ONLY on a strictly greater count) —
+/// total + deterministic, no floats/similarity (SN-8). All-distinct ⇒ index 0 (each
+/// count 1, the earliest holds). Panics only on an empty slice (callers guarantee ≥1).
+fn consensus_plurality_index(outputs: &[Vec<u8>]) -> usize {
+    let mut best = 0usize;
+    let mut best_count = 0usize;
+    for i in 0..outputs.len() {
+        let count = outputs
+            .iter()
+            .filter(|o| o.as_slice() == outputs[i].as_slice())
+            .count();
+        if count > best_count {
+            best_count = count;
+            best = i;
+        }
+    }
+    best
 }
 
 /// The T-AGENT2 judge's RUBRIC from `config_subset[JUDGE_RUBRIC_KEY]` (the
@@ -2233,6 +2335,70 @@ fn internal(reason: &str) -> MoteExecutorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consensus_plurality_picks_the_modal_value() {
+        // three voters, "yes" appears twice → the exact-equality majority.
+        let outputs = vec![b"yes".to_vec(), b"no".to_vec(), b"yes".to_vec()];
+        assert_eq!(
+            consensus_plurality_index(&outputs),
+            0,
+            "'yes' (2x) first appears at 0"
+        );
+    }
+
+    #[test]
+    fn consensus_plurality_breaks_ties_by_first_appearance() {
+        // "a"@[0,3] and "b"@[1,2] both count 2; "a" first-appears earlier ⇒ wins.
+        assert_eq!(
+            consensus_plurality_index(&[
+                b"a".to_vec(),
+                b"b".to_vec(),
+                b"b".to_vec(),
+                b"a".to_vec()
+            ]),
+            0,
+        );
+        // swap first-appearance: "b" first ⇒ "b" wins the tie (index 0 holds "b").
+        assert_eq!(
+            consensus_plurality_index(&[
+                b"b".to_vec(),
+                b"a".to_vec(),
+                b"a".to_vec(),
+                b"b".to_vec()
+            ]),
+            0,
+        );
+    }
+
+    #[test]
+    fn consensus_plurality_all_distinct_returns_voter_zero() {
+        assert_eq!(
+            consensus_plurality_index(&[b"x".to_vec(), b"y".to_vec(), b"z".to_vec()]),
+            0,
+        );
+    }
+
+    #[test]
+    fn consensus_plurality_is_exact_equality_not_similarity() {
+        // byte-exact: "Yes" != "yes" (no case folding, no similarity — SN-8).
+        let outputs = vec![b"Yes".to_vec(), b"yes".to_vec(), b"yes".to_vec()];
+        assert_eq!(
+            consensus_plurality_index(&outputs),
+            1,
+            "'yes' (2x) beats 'Yes' (1x)"
+        );
+        // determinism: same input → same winner, twice.
+        assert_eq!(
+            consensus_plurality_index(&outputs),
+            consensus_plurality_index(&outputs)
+        );
+    }
+
+    #[test]
+    fn consensus_plurality_single_voter() {
+        assert_eq!(consensus_plurality_index(&[b"solo".to_vec()]), 0);
+    }
 
     #[test]
     fn dedicated_embedder_heuristic_flags_decoders() {
