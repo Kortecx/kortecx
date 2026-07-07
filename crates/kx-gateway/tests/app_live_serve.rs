@@ -1302,3 +1302,296 @@ async fn swarm_pool_parallel_speedup_live() {
         "pool=4 produced a non-empty synthesis on [{engine}]"
     );
 }
+
+// -- orchestration LIVE witnesses (supervisor / consensus) --------------------
+//
+// These prove the ORCHESTRATION layer end-to-end on a live model (both engines): a
+// hierarchical supervisor, a best-of-N judge, and an exact-equality majority vote all
+// run to a committed terminal producing REAL output (GR15). Each lowers to the SAME
+// fan-out/fan-in DAG the SDK `supervisor()`/`consensus()` methods and the `kx swarm`
+// verb author (raw proto built here); the deterministic shapes are pinned by the SDK +
+// UI unit tests and the golden corpus. Pure composition of existing step kinds — no new
+// wire shape (the majority sink's server-side reduce lives in `model_exec::
+// run_consensus_majority`, gated on `config_subset[kx.consensus.vote] == "majority"`).
+
+/// One MODEL leaf/sink step routed to the served model (empty `model_id`).
+fn orch_model(prompt: &str) -> proto::WorkflowStep {
+    proto::WorkflowStep {
+        kind: proto::WorkflowStepKind::Model as i32,
+        model_id: String::new(),
+        prompt: prompt.to_string(),
+        body_signature_id: Vec::new(),
+        tool_contract: Default::default(),
+        params: Default::default(),
+    }
+}
+
+/// A Data edge `parent -> child`.
+fn orch_edge(parent: u32, child: u32) -> proto::WorkflowEdge {
+    proto::WorkflowEdge {
+        parent,
+        child,
+        edge_kind: proto::EdgeKind::Data as i32,
+        non_cascade: false,
+    }
+}
+
+/// `supervisor()` lowers to `planner(0) > [worker(1) & worker(2)] > gather(3)`: the
+/// planner's committed plan is a Data-parent of every worker, and every worker feeds the
+/// gather (the mote with two parents).
+fn supervisor_request() -> proto::SubmitWorkflowRequest {
+    proto::SubmitWorkflowRequest {
+        seed: 0,
+        steps: vec![
+            orch_model(
+                "You are the supervisor. Split the task into two one-sentence subtasks: \
+                 (A) one concrete BENEFIT and (B) one concrete RISK of durable agentic \
+                 execution. State subtask A and subtask B, each in one sentence.",
+            ),
+            orch_model(
+                "Do subtask A from the plan above: in one sentence, give a concrete BENEFIT \
+                 of durable agentic execution.",
+            ),
+            orch_model(
+                "Do subtask B from the plan above: in one sentence, give a concrete RISK of \
+                 durable agentic execution.",
+            ),
+            orch_model("Integrate the workers' results above into one two-sentence summary."),
+        ],
+        edges: vec![
+            orch_edge(0, 1),
+            orch_edge(0, 2),
+            orch_edge(1, 3),
+            orch_edge(2, 3),
+        ],
+        execution_mode: proto::WorkflowExecutionMode::Frozen as i32,
+        context_bundles: vec![],
+    }
+}
+
+/// `consensus(vote="judge")` lowers to `[voter(0) & voter(1)] > judge(2)`: a MODEL judge
+/// that SELECTS the single best candidate (distinct from a swarm's merge).
+fn consensus_judge_request() -> proto::SubmitWorkflowRequest {
+    proto::SubmitWorkflowRequest {
+        seed: 0,
+        steps: vec![
+            orch_model(
+                "In one sentence, argue that durable agentic execution is worth its complexity.",
+            ),
+            orch_model(
+                "In one sentence, argue that durable agentic execution is NOT worth its complexity.",
+            ),
+            orch_model(
+                "You are the judge. Read the two candidate answers above and reply with the \
+                 single best one VERBATIM, without merging or editing them.",
+            ),
+        ],
+        edges: vec![orch_edge(0, 2), orch_edge(1, 2)],
+        execution_mode: proto::WorkflowExecutionMode::Frozen as i32,
+        context_bundles: vec![],
+    }
+}
+
+/// `consensus(vote="majority")` lowers to `[voter(0) & voter(1) & voter(2)] > sink(3)`,
+/// where the sink is a PURE step carrying `config_subset[kx.consensus.vote] = "majority"`;
+/// the server reduces the voters to the exact-equality plurality winner (SN-8). The three
+/// voters are given the SAME constrained prompt so a real majority is likely.
+fn consensus_majority_request() -> proto::SubmitWorkflowRequest {
+    let voter = || {
+        orch_model(
+            "Reply with exactly one lowercase word and NOTHING else — either 'yes' or 'no': \
+             is a durable, append-only journal a sound basis for exactly-once execution?",
+        )
+    };
+    let sink = proto::WorkflowStep {
+        kind: proto::WorkflowStepKind::Pure as i32,
+        model_id: String::new(),
+        prompt: String::new(),
+        body_signature_id: Vec::new(),
+        tool_contract: Default::default(),
+        // The consensus-vote marker (raw bytes; `consensus_vote_from_config` decodes
+        // JSON-quoted-or-raw). Free params fold verbatim into the sink's config_subset.
+        params: std::iter::once(("kx.consensus.vote".to_string(), b"majority".to_vec())).collect(),
+    };
+    proto::SubmitWorkflowRequest {
+        seed: 0,
+        steps: vec![voter(), voter(), voter(), sink],
+        edges: vec![orch_edge(0, 3), orch_edge(1, 3), orch_edge(2, 3)],
+        execution_mode: proto::WorkflowExecutionMode::Frozen as i32,
+        context_bundles: vec![],
+    }
+}
+
+/// Drive a fan-in orchestration to completion on the live engine and return the RAW
+/// committed payloads: the terminal sink's bytes + every leaf's bytes (the 0-parent
+/// voters/agents). Polls until all `total` motes commit and the terminal (the mote with
+/// `terminal_parents` Data-parents) commits; panics on timeout (the non-flaky settle
+/// invariant). The gateway is torn down before returning.
+async fn run_fanin(
+    engine: &str,
+    req: proto::SubmitWorkflowRequest,
+    total: usize,
+    terminal_parents: usize,
+) -> (Vec<u8>, Vec<Vec<u8>>) {
+    const COMMITTED: i32 = proto::MoteSnapshotState::Committed as i32;
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+    let iid = c
+        .submit_workflow(req)
+        .await
+        .expect("SubmitWorkflow of the fan-in orchestration")
+        .into_inner()
+        .instance_id;
+    assert_eq!(iid.len(), 16);
+
+    let mut settled = false;
+    let mut committed = 0usize;
+    for i in 0..2400 {
+        let view = c
+            .get_projection(proto::GetProjectionRequest {
+                instance_id: iid.clone(),
+                at_seq: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        committed = view.motes.iter().filter(|m| m.state == COMMITTED).count();
+        let terminal_ok = view.motes.iter().any(|m| {
+            m.parents.len() == terminal_parents && m.state == COMMITTED && m.result_ref.is_some()
+        });
+        if committed >= total && terminal_ok {
+            settled = true;
+            break;
+        }
+        // Diagnostic (every ~10s): per-mote `p{parents}:s{state}` so a stuck DAG is
+        // visible (which mote never leaves Pending / dead-letters).
+        if i % 40 == 0 {
+            let states = view
+                .motes
+                .iter()
+                .map(|m| format!("p{}:s{}", m.parents.len(), m.state))
+                .collect::<Vec<_>>()
+                .join(",");
+            eprintln!("[{engine}] poll {i}: committed={committed}/{total} motes=[{states}]");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert!(
+        settled,
+        "the {terminal_parents}-parent fan-in settled with all {total} motes committed on \
+         [{engine}] (got committed={committed}/{total})"
+    );
+
+    let view = c
+        .get_projection(proto::GetProjectionRequest {
+            instance_id: iid.clone(),
+            at_seq: None,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    let terminal_ref: [u8; 32] = view
+        .motes
+        .iter()
+        .find(|m| m.parents.len() == terminal_parents && m.state == COMMITTED)
+        .and_then(|m| m.result_ref.clone())
+        .and_then(|r| r.try_into().ok())
+        .expect("the terminal sink committed with a result ref");
+    let leaf_refs: Vec<[u8; 32]> = view
+        .motes
+        .iter()
+        .filter(|m| m.parents.is_empty() && m.state == COMMITTED)
+        .filter_map(|m| m.result_ref.clone().and_then(|r| r.try_into().ok()))
+        .collect();
+
+    let fetch = |content_ref: [u8; 32]| proto::GetContentRequest {
+        content_ref: content_ref.to_vec(),
+        instance_id: iid.clone(),
+    };
+    let terminal = c
+        .get_content(fetch(terminal_ref))
+        .await
+        .expect("GetContent of the terminal sink")
+        .into_inner()
+        .payload;
+    let mut leaves = Vec::with_capacity(leaf_refs.len());
+    for r in leaf_refs {
+        leaves.push(
+            c.get_content(fetch(r))
+                .await
+                .expect("GetContent of a leaf")
+                .into_inner()
+                .payload,
+        );
+    }
+
+    running.shutdown().await.unwrap();
+    (terminal, leaves)
+}
+
+/// LIVE supervisor witness (GR15/GR24): planner → 2 workers → gather runs end-to-end on a
+/// live model; the gather (the 2-parent terminal) integrates a REAL non-empty answer.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally) or KX_SERVE_OLLAMA=on"]
+async fn supervisor_plans_delegates_and_integrates_live() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    let (integration, _leaves) = run_fanin(engine, supervisor_request(), 4, 2).await;
+    let text = String::from_utf8_lossy(&integration);
+    eprintln!("LIVE supervisor [{engine}] integration: {}", text.trim());
+    assert!(
+        !text.trim().is_empty(),
+        "the supervisor integrated a non-empty answer on the live model [{engine}]"
+    );
+}
+
+/// LIVE consensus(judge) witness (GR15/GR24): 2 voters → a model judge that SELECTS the
+/// best; the judge (the 2-parent terminal) commits a REAL non-empty selection.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally) or KX_SERVE_OLLAMA=on"]
+async fn consensus_judge_selects_best_of_n_live() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    let (selected, _cands) = run_fanin(engine, consensus_judge_request(), 3, 2).await;
+    let text = String::from_utf8_lossy(&selected);
+    eprintln!("LIVE consensus(judge) [{engine}] selected: {}", text.trim());
+    assert!(
+        !text.trim().is_empty(),
+        "the judge selected a non-empty answer on the live model [{engine}]"
+    );
+}
+
+/// LIVE consensus(majority) witness (GR15/GR24/SN-8): 3 constrained voters → a PURE
+/// server-reduced majority. Proves the EXACT-equality reduce: the committed winner is
+/// byte-equal to one of the voter outputs VERBATIM (never a merged/similar answer).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally) or KX_SERVE_OLLAMA=on"]
+async fn consensus_majority_reduces_to_a_voter_verbatim_live() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    let (winner, voters) = run_fanin(engine, consensus_majority_request(), 4, 3).await;
+    let show = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
+    eprintln!(
+        "LIVE consensus(majority) [{engine}] winner={:?} voters={:?}",
+        show(&winner),
+        voters.iter().map(|v| show(v)).collect::<Vec<_>>()
+    );
+    assert!(
+        !String::from_utf8_lossy(&winner).trim().is_empty(),
+        "the majority sink committed a non-empty winner on [{engine}]"
+    );
+    // SN-8: the reduce is EXACT byte-equality — the winner MUST equal a voter output VERBATIM.
+    assert!(
+        voters.contains(&winner),
+        "the majority winner must be byte-equal to one of the voter outputs on [{engine}]"
+    );
+}
