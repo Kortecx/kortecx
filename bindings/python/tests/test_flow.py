@@ -161,6 +161,7 @@ class _FakeClient:
     def __init__(self) -> None:
         self.any_calls = 0
         self.term_calls = 0
+        self.react_calls = 0
         self.mcp_calls: list = []
 
     def register_mcp_server(self, **kw: object) -> object:
@@ -181,6 +182,10 @@ class _FakeClient:
     def _await_terminal(self, instance: bytes, terminal: bytes, timeout: float, mode: str) -> str:
         self.term_calls += 1
         return "TERM"
+
+    def _await_react(self, instance: bytes, salt: bytes, timeout: float) -> str:
+        self.react_calls += 1
+        return "REACT"
 
 
 def test_result_json_aliases_to_dict() -> None:
@@ -206,6 +211,31 @@ def test_run_wait_with_no_terminal_uses_await_any() -> None:
     run = flow().agent("a").submit(client=fc)
     assert run.wait() == "ANY"
     assert fc.any_calls == 1 and fc.term_calls == 0
+
+
+def test_chat_tools_normalize_accepts_versions_and_bare_ids() -> None:
+    # Chat(tools=…) accepts BOTH the CLI `id@version` form AND a bare `id` (→ "1"),
+    # so a grant copied from `kx chat --tools` lowers to the same contract. First wins on dup.
+    from kortecx.client import _tools_to_contract
+
+    assert _tools_to_contract(["mcp-echo/echo@2", "calc", "mcp-echo/echo@9"]) == {
+        "mcp-echo/echo": "2",
+        "calc": "1",
+    }
+
+
+def test_run_wait_with_a_salt_scopes_to_the_react_chain() -> None:
+    # An agentic run (a tool-granted MODEL step) carries the server's
+    # react_chain_salt; wait() must scope the settle poll to THAT chain (_await_react),
+    # NOT the first committed Mote (_await_any) — which on a shared journal would be a
+    # stale/foreign answer.
+    from kortecx.run import Run
+
+    fc = _FakeClient()
+    run = Run(fc, b"\x01" * 16, b"", b"\x02" * 32, b"\x9a" * 32)
+    assert run.react_chain_salt == "9a" * 32
+    assert run.wait() == "REACT"
+    assert fc.react_calls == 1 and fc.any_calls == 0 and fc.term_calls == 0
 
 
 def test_flow_run_uses_explicit_client_and_default(monkeypatch: pytest.MonkeyPatch) -> None:

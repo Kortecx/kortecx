@@ -92,6 +92,16 @@ message SubmitMoteSpec {
 message RunHandle {
   bytes instance_id = 1;                 // 16B — coordinator-assigned, journaled
   bytes recipe_fingerprint = 2;          // 32B — echoed for client-side discovery/dedup
+  // (additive, mirrors InvokeResponse.react_chain_salt): the per-run key of a
+  // tool-granted (agentic) MODEL step, so a client on serve's shared journal can scope
+  // ListReactTurns / the answer poll to THIS submission's chain. A `SubmitWorkflow` /
+  // `RunApp` bound recipe with EXACTLY ONE agentic step (a MODEL Mote whose server-built
+  // warrant has non-empty tool_grants) reports that step's server-derived MoteId — which
+  // the coordinator uses verbatim as the chain's `step_salt` (state.rs: `step_salt =
+  // *launch_id.as_bytes()`). EMPTY (0 bytes) when there is no agentic step, or more than
+  // one (ambiguous — the client falls back to instance_id-only scoping, like an old
+  // server). Never client-supplied (SN-8).
+  bytes react_chain_salt = 3;            // 32B — the agentic-step chain key; EMPTY if none / ambiguous
 }
 
 // ---------------------------------------------------------------------------

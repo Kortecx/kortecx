@@ -74,6 +74,63 @@ kx agent run --goal "Use the echo tool to repeat 'pong'." --max-tool-calls 20 --
 > the granted tool set is fixed and part of the step's identity. There is no separate
 > chains `agent()` node by design (it would be a second, divergent wire shape).
 
+## Chat with tools
+
+Attach an **explicit tool set** to a single chat turn and it becomes a bounded agentic
+turn — the model may reason, call **only the tools you named**, observe, and answer. The
+server builds the per-turn warrant **from the tools you passed** and re-verifies each at
+every fire (SN-8); it is never a blanket auto-grant, and a tool you did not name cannot
+fire. It is the one-liner entry to the same loop `flow().agent(prompt, tools=[…])` authors
+as a chain step — the granted set is fixed and part of the turn's identity.
+
+**Python** — `chat(prompt, *, tools=…, max_turns=…, max_tool_calls=…)`:
+
+```python
+from kortecx import KxClient
+
+client = KxClient("http://localhost:50150", token="…")
+answer = client.chat(
+    "Use the echo tool to echo 'pong', then answer with it.",
+    tools=["mcp-echo/echo@1"],          # or a bare "mcp-echo/echo" (version 1)
+)
+print(answer)                           # the settled answer text
+# async: await AsyncKxClient(...).chat(prompt, tools=["mcp-echo/echo@1"])
+```
+
+**TypeScript** — `chat(prompt, { tools, maxTurns?, maxToolCalls? })`:
+
+```ts
+import { KxClient } from "@kortecx/sdk";
+
+const client = new KxClient("http://localhost:50150", { token: "…" });
+const answer = await client.chat(
+  "Use the echo tool to echo 'pong', then answer with it.",
+  { tools: ["mcp-echo/echo@1"] },
+);
+console.log(answer);
+```
+
+**CLI** — `kx chat --tools <id@ver,…>`:
+
+```bash
+kx chat "Use the echo tool to echo 'pong', then answer with it." \
+  --tools mcp-echo/echo@1 --max-turns 8 --max-tool-calls 20
+```
+
+- **`tools`** is the exact granted set (`id@version`; comma-separated on the CLI, a list
+  or a `{name: version}` map in the SDKs — a bare `id` defaults to version `1`). The turn
+  lowers to one agentic MODEL step whose `tool_contract` is those tools — identical to
+  `flow().agent(prompt, tools=[…])` — so the server builds the scoped warrant from it.
+- **`max_turns`** (default 8) / **`max_tool_calls`** (default 20) bound the loop.
+- Attaching tools does **not** compose with `--dataset` / `--image` (or `dataset=` /
+  `image=`) yet — run them separately (a clear usage error, never a silent drop).
+
+> **`chat(tools=…)` vs `run_agent`.** Both run the bounded loop; the difference is *who
+> fixes the tool set*. `run_agent` uses the server's pre-wired react recipe (its warrant
+> is fixed at provision). `chat(tools=…)` / `kx chat --tools` lets **you** name the exact
+> tools for this turn — a scoped, per-turn grant — reusing the `flow().agent(tools=…)`
+> lowering. (Attaching tools from the **console** chat composer is coming in a follow-up.)
+
 ## Searching a dataset (agentic RAG)
 
 Pass `--dataset <name>` and the agent gets a read-only **`retrieve` tool** — it decides
@@ -142,7 +199,7 @@ vision model is served the SDKs/CLI **fail closed** with a clear error (the imag
 silently dropped); in the console, agent mode **honest-degrades** to the text-only loop and
 the attachment stays display-only. `dataset` + `image` together (vision-RAG) is a
 follow-up. See [local inference engines](./local-inference-engines.md) to serve a vision
-model and [chat](./chat.md#vision--ocr) for single-shot image→text / OCR.
+model and [chat](./chat.md#vision--ocr-attach-an-image) for single-shot image→text / OCR.
 
 ## Chains of agents
 

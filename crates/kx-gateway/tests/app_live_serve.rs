@@ -239,6 +239,160 @@ async fn app_catalog_round_trips_and_runs_on_a_live_model() {
     std::env::remove_var("KX_SERVE_AUTOGRANT");
 }
 
+/// The `SubmitWorkflow` request the CLI `kx chat --tools <tool>@1` + SDK `chat(tools=…)` build
+/// (`kx-cli::verbs::chat::build_agentic_request`): ONE agentic MODEL step whose `tool_contract`
+/// names ONLY the granted tool, plus the bounded ReAct budget in the canonical react keys. The
+/// SERVER builds the SCOPED warrant FROM the contract (SN-8) — no client warrant, no autogrant.
+fn chat_tools_request(prompt: &str, granted_tool: &str) -> proto::SubmitWorkflowRequest {
+    proto::SubmitWorkflowRequest {
+        seed: 0,
+        steps: vec![proto::WorkflowStep {
+            kind: proto::WorkflowStepKind::Model as i32,
+            model_id: String::new(),
+            prompt: prompt.to_string(),
+            body_signature_id: Vec::new(),
+            tool_contract: [(granted_tool.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            params: [
+                ("max_turns".to_string(), b"8".to_vec()),
+                ("max_tool_calls".to_string(), b"20".to_vec()),
+            ]
+            .into_iter()
+            .collect(),
+        }],
+        edges: vec![],
+        execution_mode: proto::WorkflowExecutionMode::Frozen as i32,
+        context_bundles: vec![],
+    }
+}
+
+/// (`kx chat --tools` / `chat(tools=…)`): a chat turn with an EXPLICIT `tool_contract` fires
+/// the named tool through a SERVER-BUILT SCOPED warrant (SN-8), proven WITHOUT
+/// `KX_SERVE_AUTOGRANT` — the bundled `mcp-echo/echo` capability is registered whenever a model
+/// is served (`register_echo_capability`, gated on the model, NOT autogrant), so the grant that
+/// fires comes from the CONTRACT, never the react-auto blanket. The settle poll is SCOPED by the
+/// server-returned `react_chain_salt` so a shared-journal serve surfaces THIS turn's chain.
+/// Dual-engine (GR28): Gemma-4 completes fire→answer; gemma3 fires but may honestly dead-letter on
+/// a missing required arg (`T-GEMMA3-OLLAMA-TOOL-ARG-SCHEMA`) — settling to a terminal is the
+/// robust invariant (GR15); `tool_fired` is LOGGED (model-nondeterministic).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a served model + bundled kx-mcp-echo; opt in with --ignored"]
+async fn chat_with_explicit_tools_fires_scoped_by_salt_no_autogrant() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    // Deliberately NO KX_SERVE_AUTOGRANT: prove the EXPLICIT tool_contract grant fires on its own.
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // Skip the run leg if the react recipe / bundled echo is absent (a model-free / echo-free serve).
+    let recipes = c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner();
+    if !recipes
+        .recipes
+        .iter()
+        .any(|r| r.handle == REACT_RECIPE_HANDLE)
+    {
+        eprintln!(
+            "skipping the run leg: kx/recipes/react not provisioned (bundled kx-mcp-echo missing)"
+        );
+        running.shutdown().await.unwrap();
+        return;
+    }
+
+    let handle = c
+        .submit_workflow(chat_tools_request(
+            "Use the echo tool to echo the word 'pong', then answer with it.",
+            "mcp-echo/echo",
+        ))
+        .await
+        .expect("SubmitWorkflow of the chat --tools turn")
+        .into_inner();
+    assert_eq!(handle.instance_id.len(), 16);
+    // A single tool-granted (agentic) MODEL step MUST report its 32B chain salt — the key
+    // that scopes ListReactTurns on serve's shared journal (an empty salt would strand the poll).
+    assert_eq!(
+        handle.react_chain_salt.len(),
+        32,
+        "An agentic tool-granted step reports its react_chain_salt"
+    );
+
+    let mut tool_fired = false;
+    let mut settled = false;
+    for _ in 0..900 {
+        let turns = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(handle.instance_id.clone()),
+                // Scope the poll to THIS turn's chain via the server-returned salt.
+                step_salt: Some(handle.react_chain_salt.clone()),
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        if turns.turns.iter().any(|t| t.branch == "tool") {
+            tool_fired = true;
+        }
+        if turns
+            .turns
+            .iter()
+            .any(|t| t.branch == "answer" || t.branch == "dead_lettered")
+        {
+            settled = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    eprintln!("chat --tools LIVE ({engine}): tool_fired={tool_fired} settled={settled}");
+    // SN-8: the model could fire ONLY mcp-echo/echo (the sole granted tool) — the scoped warrant
+    // fail-closes any other tool at the broker, so a fired tool IS the grant. Settling is robust.
+    assert!(
+        settled,
+        "the explicit-tools chat turn settled to a terminal on the live model"
+    );
+    running.shutdown().await.unwrap();
+}
+
+/// SN-8 (DETERMINISTIC — no model): a `chat --tools` turn whose `tool_contract` names a tool
+/// the serve did NOT register is REFUSED at `SubmitWorkflow` (`failed_precondition`), BEFORE any
+/// run — the fireable-grant backstop (the server never blanket-grants an un-vetted tool). This
+/// pins the SCOPING half of "explicit grant, not autogrant blanket" without needing a live model.
+#[tokio::test(flavor = "multi_thread")]
+async fn chat_tools_contract_with_an_unregistered_tool_is_refused_at_submit() {
+    // A model-free serve registers no tool capabilities, so ANY tool_contract is un-fireable.
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let status = c
+        .submit_workflow(chat_tools_request("echo pong", "no-such/tool"))
+        .await
+        .expect_err("a tool_contract naming an unregistered tool must be refused");
+    // The server rejects the ungranted tool at AUTHORING (InvalidArgument, before the run),
+    // never binds a warrant for it — the SN-8 scoping half of "explicit grant, not a blanket".
+    assert_eq!(
+        status.code(),
+        tonic::Code::InvalidArgument,
+        "an unregistered tool in the contract is refused, got: {status:?}"
+    );
+    assert!(
+        status.message().contains("unregistered tool") && status.message().contains("no-such/tool"),
+        "the refusal names the offending tool, got: {}",
+        status.message()
+    );
+    running.shutdown().await.unwrap();
+}
+
 /// Resolve a bundled connector sidecar binary by crate name (release preferred), if built.
 fn connector_bin(bin_name: &str) -> Option<PathBuf> {
     for profile in ["release", "debug"] {

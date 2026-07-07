@@ -205,6 +205,23 @@ function isModelStep(s: DagSpecStep): boolean {
   return s.kind === "model" || (s.kind === undefined && Boolean(s.model_id || s.prompt));
 }
 
+/** Normalize a `chat({ tools })` grant list to a `{ name: version }` contract,
+ * accepting BOTH the CLI `--tools` `id@version` form AND a bare `id` (→ version `"1"`,
+ * the `@tool` grammar default). The map lowers to the exact tool_contract the CLI
+ * builds, so `chat({ tools })`, `flow().agent({ tools })`, and `kx chat --tools` agree. */
+function toolsToContract(tools: readonly string[]): Record<string, string> {
+  const contract: Record<string, string> = {};
+  for (const tool of tools) {
+    const at = tool.lastIndexOf("@");
+    const name = at > 0 ? tool.slice(0, at) : tool;
+    const version = at > 0 && at < tool.length - 1 ? tool.slice(at + 1) : "1";
+    if (!(name in contract)) {
+      contract[name] = version;
+    }
+  }
+  return contract;
+}
+
 /**
  * POC-5d: fold an App's `input_schema` args into the ENTRY (first) model step's
  * prompt as a clearly-delimited "Inputs" block, returning a NEW blueprint (never
@@ -335,8 +352,41 @@ export abstract class KxClientBase {
    */
   async chat(
     prompt: string,
-    opts: { dataset?: string; k?: number; timeoutMs?: number; image?: ImageInput } = {},
+    opts: {
+      dataset?: string;
+      k?: number;
+      timeoutMs?: number;
+      image?: ImageInput;
+      tools?: readonly string[];
+      maxTurns?: number;
+      maxToolCalls?: number;
+    } = {},
   ): Promise<string> {
+    // Attaching `tools` makes the turn a BOUNDED agentic (ReAct) turn — one MODEL step
+    // granted ONLY those tools (the server builds the scoped warrant, SN-8; never the
+    // autogrant blanket). Lowers through the same `flow().agent({ tools })` path as the CLI
+    // `kx chat --tools` and scopes the wait to THIS turn's chain (reactChainSalt). Does not
+    // compose with dataset/image yet (a clear usage error, never a silent drop).
+    if (opts.tools && opts.tools.length > 0) {
+      if (opts.dataset !== undefined || opts.image !== undefined) {
+        throw new KxUsage(
+          "chat({ tools }) does not compose with dataset/image yet; run them separately",
+        );
+      }
+      const { flow } = await import("./flow.js");
+      const chain = flow()
+        .agent(prompt, {
+          tools: toolsToContract(opts.tools),
+          maxTurns: opts.maxTurns,
+          maxToolCalls: opts.maxToolCalls,
+        })
+        .toChain();
+      const result = (await this.runChain(chain, {
+        wait: true,
+        timeoutMs: opts.timeoutMs,
+      })) as Result;
+      return result.text ?? "";
+    }
     // PR-B2 vision: an `image` attaches to the SAME single-entry chat call and binds
     // the `kx/recipes/vision` recipe (image→text). RC4b: `image` + `dataset` together
     // binds `kx/recipes/vision-rag` — the VLM answers about the image WHILE grounded on
@@ -506,8 +556,19 @@ export abstract class KxClientBase {
     const handle = await rpc(this.grpc.submitWorkflow(request));
     // V2a: a workflow has no statically-known terminal Mote — return a {@link Run} with
     // an empty terminal whose `.wait()` resolves the FIRST committed Mote (await-any).
+    // A tool-granted (agentic) workflow carries the server's `reactChainSalt` so the
+    // Run/wait scopes to THIS run's ReAct chain instead of a stale/foreign committed Mote.
     if (!opts.wait) {
-      return new Run(this, handle.instanceId, new Uint8Array(0), handle.recipeFingerprint);
+      return new Run(
+        this,
+        handle.instanceId,
+        new Uint8Array(0),
+        handle.recipeFingerprint,
+        handle.reactChainSalt,
+      );
+    }
+    if (handle.reactChainSalt.length > 0) {
+      return this._awaitReact(handle.instanceId, handle.reactChainSalt, opts.timeoutMs ?? 120_000);
     }
     const outcome = await pollAny(this.grpc, handle.instanceId, opts.timeoutMs ?? 120_000);
     return this._finish(outcome);
@@ -2318,6 +2379,15 @@ export abstract class KxClientBase {
    * has no statically-known terminal (backs {@link Run.wait} for a workflow run). */
   async _awaitAny(instance: Uint8Array, timeoutMs: number): Promise<Result> {
     return this._finish(await pollAny(this.grpc, instance, timeoutMs));
+  }
+
+  /** Wait for an AGENTIC run's ReAct chain to settle, scoped by `salt` (a tool-granted
+   * MODEL step has no static terminal). Scopes the `listReactTurns` settle poll to THIS
+   * run's chain so a repeated agentic turn never reads a stale/foreign answer. Backs
+   * {@link Run.wait} + `submitWorkflow(wait)` for a tool-granted run. */
+  async _awaitReact(instance: Uint8Array, salt: Uint8Array, timeoutMs: number): Promise<Result> {
+    const outcome = await pollReactResult(this.grpc, instance, new Uint8Array(0), timeoutMs, salt);
+    return this._finish(outcome, salt.length > 0 ? encode(salt) : "");
   }
 
   protected _finish(outcome: WaitOutcome, reactChainSalt = ""): Result {

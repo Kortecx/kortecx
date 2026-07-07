@@ -56,6 +56,34 @@ fn obligation_1_submit_mote_response_round_trips() {
 }
 
 #[test]
+fn obligation_1_run_handle_round_trips_with_react_chain_salt() {
+    // Additive: `RunHandle` gained `react_chain_salt` — the agentic-step chain key
+    // (mirrors `InvokeResponse.react_chain_salt`). The populated form round-trips.
+    roundtrip(&proto::RunHandle {
+        instance_id: vec![0xCD; 16],
+        recipe_fingerprint: vec![0xAB; 32],
+        react_chain_salt: vec![0x9A; 32],
+    });
+    // Back/forward compat (proto3 additive-field semantics): an EMPTY salt is the proto3
+    // default ⇒ NOT serialized, so a new server's non-agentic `RunHandle` is byte-identical
+    // to the pre-existing two-field wire, and an OLD server's wire (fields 1+2 only) decodes on a
+    // NEW client with `react_chain_salt == ""` (the client then falls back to
+    // instance_id-only scoping). No digest/journal impact — `RunHandle` is a response
+    // message, never a journal fact.
+    let old_wire = proto::RunHandle {
+        instance_id: vec![0x01; 16],
+        recipe_fingerprint: vec![0x02; 32],
+        react_chain_salt: Vec::new(),
+    }
+    .encode_to_vec();
+    let decoded = proto::RunHandle::decode(&old_wire[..]).expect("decode old-server wire");
+    assert!(
+        decoded.react_chain_salt.is_empty(),
+        "an old-server RunHandle wire (no field 3) ⇒ empty react_chain_salt"
+    );
+}
+
+#[test]
 fn obligation_1_report_commit_request_round_trips() {
     let req = proto::ReportCommitRequest {
         mote_id: vec![1; 32],

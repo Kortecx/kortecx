@@ -17,6 +17,7 @@ import { Result, Run } from "../src/run.js";
 class FakeClient {
   anyCalls = 0;
   termCalls = 0;
+  reactCalls = 0;
   async runChain(_chain: unknown, opts: { wait?: boolean } = {}): Promise<unknown> {
     // empty terminal ⇒ Run.wait() takes the await-any path.
     const run = new Run(
@@ -34,6 +35,10 @@ class FakeClient {
   async _awaitTerminal(): Promise<Result> {
     this.termCalls++;
     return "TERM" as unknown as Result;
+  }
+  async _awaitReact(): Promise<Result> {
+    this.reactCalls++;
+    return "REACT" as unknown as Result;
   }
   // AgentClient surface (the frozen no-tools lane never reaches these).
   async invoke(): Promise<unknown> {
@@ -173,6 +178,25 @@ describe("V2a g1/g2 — Run-from-handle, await-any wait, zero-config, Agent.stre
     expect(run).toBeInstanceOf(Run);
     await run.wait();
     expect(fc.anyCalls).toBe(1);
+    expect(fc.termCalls).toBe(0);
+  });
+
+  it("A run with a react_chain_salt scopes wait() to the ReAct chain (not await-any)", async () => {
+    // An agentic run (a tool-granted MODEL step) carries the server's salt; wait() must
+    // scope the settle poll to THAT chain (_awaitReact), not the first committed Mote —
+    // which on a shared journal would be a stale/foreign answer.
+    const fc = new FakeClient();
+    const run = new Run(
+      fc as unknown as KxClientBase,
+      new Uint8Array(16).fill(1),
+      new Uint8Array(0),
+      new Uint8Array(32).fill(2),
+      new Uint8Array(32).fill(0x9a),
+    );
+    expect(run.reactChainSalt).toBe("9a".repeat(32));
+    await run.wait();
+    expect(fc.reactCalls).toBe(1);
+    expect(fc.anyCalls).toBe(0);
     expect(fc.termCalls).toBe(0);
   });
 
