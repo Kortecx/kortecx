@@ -44,6 +44,21 @@ The builder runs a client-side **acyclicity precheck** (a workflow DAG must be
 acyclic) so an invalid graph is caught before submit; the server's compiler remains
 the authority.
 
+### Orchestration patterns
+
+Beyond single nodes, the toolbar scaffolds whole **multi-agent patterns** — the same
+topologies the SDK `supervisor()` / `consensus()` methods and the `kx swarm` verb author:
+
+- **+ Swarm** — N parallel agents → a gather.
+- **+ Supervisor** — a planner → workers (in parallel) → an integrator.
+- **+ Consensus · judge** — N voters → a model judge that selects the best.
+- **+ Consensus · majority** — N voters → an exact-equality majority vote (server-reduced).
+
+Each button drops a **pre-wired cluster of ordinary agent / pure nodes** onto the canvas —
+no new node kind — which you then fill in per node (pick a model, edit the prompt) and run. The
+pattern is just a scaffold of the nodes you already know; it lowers to the same DAG the SDK and
+CLI produce. See [Orchestration patterns](./patterns.md) for the full family.
+
 ### Chained agents
 
 Wire two MODEL steps with a data edge and you have a **chain of agents** — the first

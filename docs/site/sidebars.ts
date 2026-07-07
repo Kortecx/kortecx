@@ -33,6 +33,7 @@ const sidebars: SidebarsConfig = {
         "blueprint-builder",
         "agent-runner",
         "swarms",
+        "patterns",
         "parallel-execution",
         "security",
         "tools",
