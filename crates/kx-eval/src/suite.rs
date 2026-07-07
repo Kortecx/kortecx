@@ -79,7 +79,7 @@ pub struct Expectation {
     /// consolidation that produced/recalled nothing scores 0.
     #[serde(default)]
     pub consolidation_must_capture: Vec<String>,
-    /// RC-SW1: the SKILL's tool WISH set for a skill-bearing task. The skill_quality
+    /// The SKILL's tool WISH set for a skill-bearing task. The skill_quality
     /// gate: every Tool turn must stay WITHIN this set (an out-of-wish call is a
     /// fold/warrant boundary leak) and the run must actually fire a tool + answer
     /// (fail-closed: a wished skill whose run never touched a tool scores 0). Empty
@@ -99,7 +99,7 @@ pub struct GoldenTask {
     /// The task id (stable; labels every metric).
     pub id: String,
     /// The capability FAMILY this task exercises (`core` when omitted) — the
-    /// `kx-eval --suite <family>` selector (RC-SW1: per-family iteration; the
+    /// `kx-eval --suite <family>` selector (per-family iteration; the
     /// committed baseline stays the aggregate gate).
     #[serde(default = "default_family")]
     pub family: String,

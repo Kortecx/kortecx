@@ -676,7 +676,7 @@ export abstract class KxClientBase {
     return resp.found ? StoredApp.fromProto(resp) : null;
   }
 
-  // ----- RC-SW1 skills (add / list / show / remove; off-journal skills.db catalog) -----
+  // ----- Skills (add / list / show / remove; off-journal skills.db catalog) -----
 
   /**
    * Add (upsert) a `kortecx.skill/v1` skill to the caller-scoped catalog. The
@@ -750,7 +750,7 @@ export abstract class KxClientBase {
           );
         }
         // Legacy client-orchestrated fallback. It compiles the blueprint locally and
-        // DROPS references.connections + guards.secret_scope. RC-SW3: if the App
+        // DROPS references.connections + guards.secret_scope. If the App
         // actually declares integrations, refuse LOUDLY rather than silently run a
         // de-integrated workflow (the credentialed connector would never fire, and the
         // secret_scope narrowing would be lost). Only an integration-free App may take
@@ -1651,7 +1651,7 @@ export abstract class KxClientBase {
   }
 
   /**
-   * RC-SW1: the grouped SKILLS surface — `kx.skills.add / list / show / remove`
+   * The grouped SKILLS surface — `kx.skills.add / list / show / remove`
    * (the verb vocabulary of the `kx skills` CLI). Each method delegates 1:1 to
    * the flat `addSkill` etc. A skill is a declarative `kortecx.skill/v1` bundle
    * (instructions + tool grant-WISHES) an App attaches via the builder's

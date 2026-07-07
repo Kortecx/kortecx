@@ -317,7 +317,7 @@ class Flow:
         for spec in self._memory:
             kx.store_memory(**spec)
 
-    # -- orchestration (RC-SW2: parallel agentic patterns; pure client composition) --
+    # -- orchestration (parallel agentic patterns; pure client composition) --
 
     def swarm(
         self,
@@ -484,7 +484,7 @@ def swarm(
     synthesize: bool = True,
     seed: int = 0,
 ) -> Flow:
-    """``kx.swarm(...)`` — N parallel agents → gather, as a whole flow (RC-SW2). Sugar
+    """``kx.swarm(...)`` — N parallel agents → gather, as a whole flow. Sugar
     for ``kx.flow(seed=seed).swarm(...)``; see :meth:`Flow.swarm`."""
     return flow(seed=seed).swarm(*agents, goal=goal, gather=gather, synthesize=synthesize)
 

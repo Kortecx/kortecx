@@ -1,10 +1,10 @@
 //! `kx new <kind> <name> [--dir <parent>]` — offline scaffolders (no gateway):
 //!
-//! - `kx new skill <name>` — a `kortecx.skill/v1` pack (RC-SW1, D175): the three
+//! - `kx new skill <name>` — a `kortecx.skill/v1` pack (D175): the three
 //!   pack files with a template the author fills in, then the conformance + add +
 //!   registry checklist.
-//! - `kx new connector <name>` — a bundled MCP connector *sidecar* crate (RC-SW2,
-//!   the D175 test-infra scaffolder): a self-contained stdio JSON-RPC 2.0 server
+//! - `kx new connector <name>` — a bundled MCP connector *sidecar* crate (the
+//!   D175 test-infra scaffolder): a self-contained stdio JSON-RPC 2.0 server
 //!   (`initialize` → `tools/list` → `tools/call`) with ONE starter tool, the
 //!   credential-by-reference (D81) discipline, an offline FAKE mode, and a
 //!   conformance test — modelled on `integrations/kx-connector-discord` so a
@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::client::next_value;
 use crate::error::CliError;
 
-/// The `new` subcommand: `skill` (RC-SW1) or `connector` (RC-SW2).
+/// The `new` subcommand: `skill` or `connector`.
 #[derive(Debug)]
 pub enum NewSub {
     /// Scaffold a skill pack directory.

@@ -343,7 +343,7 @@ class _Connections:
 
 
 class _Skills:
-    """The ``kx.skills`` namespace — the skill catalog (RC-SW1), with a verb
+    """The ``kx.skills`` namespace — the skill catalog, with a verb
     vocabulary matching the ``kx skills`` CLI (``add`` / ``list`` / ``show`` /
     ``remove``). Each method delegates 1:1 to the flat ``add_skill`` etc. A skill
     is a declarative ``kortecx.skill/v1`` bundle (instructions + tool grant-
@@ -1064,7 +1064,7 @@ class KxClient:
         )
         return StoredApp.from_proto(resp) if resp.found else None
 
-    # ----- RC-SW1 skills (add / list / show / remove; off-journal skills.db) -----
+    # ----- skills (add / list / show / remove; off-journal skills.db) -----
 
     def add_skill(
         self, manifest: "Mapping[str, object]", *, instructions: str = ""
@@ -1142,7 +1142,7 @@ class KxClient:
                         "unavailable); upgrade the server, or run without args"
                     ) from e
                 # Legacy client-orchestrated fallback. It compiles the blueprint locally
-                # and DROPS references.connections + guards.secret_scope. RC-SW3: if the
+                # and DROPS references.connections + guards.secret_scope. If the
                 # App actually declares integrations, refuse LOUDLY rather than silently
                 # run a de-integrated workflow (the credentialed connector would never
                 # fire, and the secret_scope narrowing would be lost). Only a truly
@@ -2057,7 +2057,7 @@ class KxClient:
 
     @property
     def skills(self) -> _Skills:
-        """The skill-catalog namespace (RC-SW1) — ``kx.skills.add / list / show /
+        """The skill-catalog namespace — ``kx.skills.add / list / show /
         remove`` (the verb vocabulary of the ``kx skills`` CLI). A skill is a
         declarative ``kortecx.skill/v1`` bundle (instructions + tool grant-WISHES);
         attach one to an App with ``kx.app(...).skill(...)`` — the server grants

@@ -32,7 +32,7 @@ vi.mock("../../src/kx/use-apps", () => ({
   }),
 }));
 
-// RC-SW1: the SkillsRail rides the detail shell; an empty catalog keeps these
+// The SkillsRail rides the detail shell; an empty catalog keeps these
 // shell tests focused on the IDE affordances.
 vi.mock("../../src/kx/use-skills", () => ({
   useListSkills: () => ({

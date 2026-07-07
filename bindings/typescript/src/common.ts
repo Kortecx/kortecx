@@ -127,7 +127,7 @@ export type {
 // Batch V2 — the fluent builder + first-class Agent (the headline authoring surface).
 export { Flow, flow } from "./flow.js";
 export type { FlowItem, AgentStepOptions, FlowClient } from "./flow.js";
-// RC-SW2 — multi-agent swarm authoring + a curated persona library (pure client
+// Multi-agent swarm authoring + a curated persona library (pure client
 // composition: N parallel agentic leaves → gather; personas fold into the step prompt).
 export { swarm, team, fanOutGather, mapReduce } from "./flow.js";
 export type {
@@ -152,7 +152,7 @@ export {
   scaffoldPhaseName,
 } from "./apps.js";
 export type { Skill, ScaffoldPhase, ScaffoldStatus } from "./apps.js";
-// RC-SW1: the skill-catalog views (declarative kortecx.skill/v1 bundles).
+// The skill-catalog views (declarative kortecx.skill/v1 bundles).
 export { AddSkillResult, SkillForm, SkillSummary, SKILL_SCHEMA } from "./skills.js";
 export type { AddSkillInput, SkillWish } from "./skills.js";
 export { Agent, REACT_RECIPE_HANDLE, REACT_AUTO_RECIPE_HANDLE } from "./agent.js";

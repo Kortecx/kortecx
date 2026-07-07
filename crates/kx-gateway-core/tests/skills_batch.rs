@@ -1,4 +1,4 @@
-//! RC-SW1 skill-catalog RPCs over a real tonic transport: `AddSkill` (the
+//! Skill-catalog RPCs over a real tonic transport: `AddSkill` (the
 //! content-write seam mints the instructions ref — SN-8), `ListSkills` (paging),
 //! `GetSkillForm` (the ADVISORY `registered` wish bit + preview), `RemoveSkill`,
 //! and the honest degrades (`unimplemented` without the seam / without the

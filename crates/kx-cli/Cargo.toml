@@ -34,7 +34,7 @@ kx-blueprint = { workspace = true }
 # POC-4: the App envelope type (kortecx.app/v1) — author / validate / canonicalize
 # an envelope for `kx app new|save|run` (a pure leaf, serde/serde_json/thiserror).
 kx-app     = { workspace = true }
-# RC-SW1: the kortecx.skill/v1 manifest + pack loader — `kx skills add --dir`
+# The kortecx.skill/v1 manifest + pack loader — `kx skills add --dir`
 # validates a pack LOCALLY (the same checks the server re-runs) and `kx new
 # skill` pins its template against the same validator (a pure leaf).
 kx-skill   = { workspace = true }

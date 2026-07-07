@@ -1,4 +1,4 @@
-//! The RC-SW1 skill-catalog sidecar: `skills.db` under `--catalog-dir`, backing
+//! The skill-catalog sidecar: `skills.db` under `--catalog-dir`, backing
 //! the [`SkillCatalog`] seam — `ListSkills` / `GetSkillForm` / `AddSkill` /
 //! `RemoveSkill`.
 //!

@@ -41,7 +41,7 @@ kx-mote          = { workspace = true }
 kx-capability    = { workspace = true }
 # The content store the broker stages a tool's result into (conformance dispatch).
 kx-content       = { workspace = true }
-# RC-SW1: the kortecx.skill/v1 manifest + pack loader the DECLARATIVE-family
+# The kortecx.skill/v1 manifest + pack loader the DECLARATIVE-family
 # conformance harness (`run_skill_conformance`) validates against (a pure leaf).
 kx-skill         = { workspace = true }
 # Empty parent set for the conformance probe Mote (Mote::new takes a SmallVec).
@@ -54,7 +54,7 @@ thiserror        = { workspace = true }
 kx-gateway-core  = { workspace = true, optional = true }
 
 [dev-dependencies]
-# TEST-ONLY (RC-SW1): scratch pack directories for the skill-conformance tests.
+# TEST-ONLY: scratch pack directories for the skill-conformance tests.
 tempfile         = { workspace = true }
 
 [lints]

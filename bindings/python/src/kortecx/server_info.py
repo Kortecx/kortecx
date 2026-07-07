@@ -60,7 +60,7 @@ class ServerInfo:
     # posture (operator opt-in; the UI renders an honest-disabled Pull panel when off).
     active_model_id: str = ""
     allow_model_pull: bool = False
-    # RC-SW3: the resolved embedded-worker POOL size (``--workers`` / ``KX_WORKERS`` /
+    # The resolved embedded-worker POOL size (``--workers`` / ``KX_WORKERS`` /
     # ``KX_SERVE_WORKER_POOL``). ``1`` = the historical single worker; ``>1`` runs
     # Pure/IO/tool Motes concurrently. ``0`` from an old server ⇒ treat as ``1``
     # (see :meth:`effective_worker_pool`). Display/Settings only.

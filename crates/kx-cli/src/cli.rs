@@ -149,9 +149,9 @@ pub enum Cli {
     Tools(verbs::tools::ToolsArgs),
     /// External MCP gateway connections (PR-6b-1 — add/list/test/remove/discover).
     Connections(verbs::connections::ConnectionsArgs),
-    /// Skills (RC-SW1 — add/list/show/remove kortecx.skill/v1 catalog entries).
+    /// Skills (add/list/show/remove kortecx.skill/v1 catalog entries).
     Skills(verbs::skills::SkillsArgs),
-    /// Offline scaffolders (RC-SW1 — `kx new skill <name>`).
+    /// Offline scaffolders (`kx new skill <name>`).
     New(verbs::new::NewArgs),
     /// Context bundles (PR-7 — add/list/get/remove; attach via `invoke --context`).
     Context(verbs::context::ContextArgs),
@@ -750,7 +750,7 @@ kx skills add (--dir <pack-dir> | --manifest <file> [--instructions <md>]) [clie
 kx skills list [client flags]
 kx skills show --name <n> [client flags]
 kx skills remove --name <n> [client flags]
-  Govern the per-principal skill catalog (RC-SW1). A skill is a DECLARATIVE
+  Govern the per-principal skill catalog. A skill is a DECLARATIVE
   kortecx.skill/v1 bundle — instructions + a tool grant-WISH set; adding one
   grants NOTHING (at `kx app run` the server intersects the wish against your
   grants and the live broker: wish ∩ grants ∩ fireable). `add --dir` loads a

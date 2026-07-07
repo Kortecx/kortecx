@@ -765,12 +765,12 @@ fn lease_ready(
         if projection.state_of(&mote_id) == MoteState::Committed {
             continue;
         }
-        // RC-SW3 pool admission gate: skip a Mote already held by ANOTHER live worker
+        // Pool admission gate: skip a Mote already held by ANOTHER live worker
         // so two pool workers never redundantly run the same one (this is what turns
         // pool>1 into real work-PARTITIONING rather than duplicated leases). A worker
         // may still re-lease its OWN outstanding holds (mid-batch-error self-heal), and
-        // a single-worker serve never sees an "other" holder ⇒ byte-identical to pre-
-        // RC-SW3. Dead holders were dropped by `reap_dead_workers` above, so a crashed
+        // a single-worker serve never sees an "other" holder ⇒ byte-identical to the
+        // prior default. Dead holders were dropped by `reap_dead_workers` above, so a crashed
         // worker's Mote is re-offered here (via `rescheduleable`), never stranded.
         if tracker.is_leased_by_other(mote_id, worker) {
             continue;

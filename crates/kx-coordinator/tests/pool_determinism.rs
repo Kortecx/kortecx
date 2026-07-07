@@ -1,4 +1,4 @@
-//! RC-SW3 (parallel-local-exec) mandatory gates — the bounded worker pool + the
+//! Parallel-local-exec mandatory gates — the bounded worker pool + the
 //! `is_leased` admission gate MUST partition work across concurrent leasers AND leave
 //! the committed truth byte-identical to a single worker.
 //!
@@ -252,7 +252,7 @@ async fn drive_pool(
     done
 }
 
-/// **crash-mid-swarm replay-determinism (mandatory RC-SW3 gate).** A multi-worker
+/// **crash-mid-swarm replay-determinism (mandatory gate).** A multi-worker
 /// (pool>1) run over a durable journal, hard-dropped MID-FLIGHT (the coordinator process
 /// dies with in-flight leases outstanding), then recovered over the SAME journal by a
 /// fresh coordinator + a fresh worker pool that finishes the run, produces the IDENTICAL
@@ -316,7 +316,7 @@ async fn crash_mid_swarm_recovers_identical_facts() {
     );
 }
 
-/// **worker-death-mid-swarm digest-invariance (RC-SW3 gate).** The COORDINATOR survives
+/// **worker-death-mid-swarm digest-invariance (gate).** The COORDINATOR survives
 /// but ONE pool worker dies mid-swarm holding a leased batch (the "SIGKILL a worker" case,
 /// complementing `crash_mid_swarm` which drops the whole coordinator). After the liveness
 /// window the coordinator reaps the dead worker (folding a `Failed{WorkerCrashed}` fact +

@@ -230,7 +230,7 @@ __all__ = [
     "Flow",
     "flow",
     "Agent",
-    # RC-SW2 — multi-agent swarm authoring + a curated persona library (pure client
+    # Multi-agent swarm authoring + a curated persona library (pure client
     # composition: N parallel agentic leaves → gather; personas fold into PROMPT_KEY).
     "swarm",
     "team",

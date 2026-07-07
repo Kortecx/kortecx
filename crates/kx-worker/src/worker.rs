@@ -72,9 +72,9 @@ pub struct Worker {
     /// dispatch (the frozen `MoteExecutor::run` carries no snapshot). `None` for a worker
     /// whose executor does not assemble — its dispatch is byte-identical to pre-F-7.
     context_sink: Option<Arc<dyn ContextSink>>,
-    /// RC-SW3: optional per-Mote wall-clock deadline for a WORLD-MUTATING / READ-ONLY-
+    /// Optional per-Mote wall-clock deadline for a WORLD-MUTATING / READ-ONLY-
     /// NONDET effect (tool / MCP / IO) dispatch. `None` (the default) ⇒ no timeout wrap
-    /// ⇒ byte-identical to pre-RC-SW3. `Some(d)` ⇒ a dispatch exceeding `d` is cancelled
+    /// ⇒ byte-identical to the prior default. `Some(d)` ⇒ a dispatch exceeding `d` is cancelled
     /// and surfaced as the TRANSIENT `ExecutionTimedOut` (retried within the F4 budget,
     /// then dead-lettered), so a hung external tool never pins a pool worker's slot
     /// forever. In-memory + off the truth path (like `attempts`); a restart resets it
@@ -123,7 +123,7 @@ impl Worker {
         })
     }
 
-    /// RC-SW3: set the optional per-Mote wall-clock deadline for effect (tool/MCP/IO)
+    /// Set the optional per-Mote wall-clock deadline for effect (tool/MCP/IO)
     /// dispatch. `None` ⇒ no timeout (byte-identical). The gateway resolves it from
     /// `KX_SERVE_TOOL_DEADLINE_SECS` (default OFF) and attaches it to every pooled
     /// worker so a hung external tool cannot pin a pool slot indefinitely.
@@ -277,7 +277,7 @@ impl Worker {
                     instance_id,
                     tool_args,
                 );
-                // RC-SW3: bound a hung tool/MCP/IO dispatch by the optional per-Mote
+                // Bound a hung tool/MCP/IO dispatch by the optional per-Mote
                 // wall-clock deadline. On timeout the in-flight future is dropped
                 // (cancelled) — equivalent to a mini-crash of this one Mote, kept
                 // exactly-once by the broker's idempotency-key dedup + R-13 on retry —

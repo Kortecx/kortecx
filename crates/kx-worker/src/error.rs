@@ -67,7 +67,7 @@ pub enum WorkerError {
     #[error("mote {0:?} grants a tool but carried no coordinator-validated tool_args")]
     MissingToolArgs(kx_mote::MoteId),
 
-    /// RC-SW3: a leased WORLD-MUTATING / READ-ONLY-NONDET effect (tool / MCP / IO)
+    /// A leased WORLD-MUTATING / READ-ONLY-NONDET effect (tool / MCP / IO)
     /// exceeded the operator-set per-Mote wall-clock deadline (`KX_SERVE_TOOL_DEADLINE_SECS`,
     /// default OFF). The in-flight dispatch future is cancelled — equivalent to a
     /// mini-crash of that one Mote, made safe by the broker's idempotency-key dedup +

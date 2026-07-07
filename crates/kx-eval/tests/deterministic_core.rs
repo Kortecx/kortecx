@@ -52,7 +52,7 @@ fn aggregate_gate_values_are_pinned() {
     assert_eq!(gate("tool_call_f1"), Some(1000));
     assert_eq!(gate("groundedness"), Some(1000));
     // The rejection-recovery task spends one extra turn ⇒ the aggregate is below perfect.
-    // RC-SW1 added the `skill_email_triage` task (loop_efficiency 1000), so 11 tasks:
+    // The `skill_email_triage` task was added (loop_efficiency 1000), so 11 tasks:
     // (1000×10 + 750) / 11 = 977 per-mille (integer floor; was 975 over 10 tasks —
     // the deliberate re-baseline recorded with the suite_digest move).
     assert_eq!(gate("loop_efficiency"), Some(977));
@@ -64,7 +64,7 @@ fn aggregate_gate_values_are_pinned() {
     // RC5b: the agent DISTILLED its episodic memories into ONE recalled entry AND grounded
     // its answer on it (the fail-closed guard — nothing consolidated would score 0).
     assert_eq!(gate("consolidation_quality"), Some(1000));
-    // RC-SW1: the skill-bearing run stayed INSIDE its wish set (search/read/draft;
+    // The skill-bearing run stayed INSIDE its wish set (search/read/draft;
     // never send) and actually fired tools (the fail-closed guard — a wished run
     // that never touched a tool, or an out-of-wish call, would score 0).
     assert_eq!(gate("skill_quality"), Some(1000));

@@ -724,7 +724,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(not(feature = "serve-engine"))]
     let react_oracle_tools: Vec<(kx_mote::ToolName, kx_mote::ToolVersion)> = Vec::new();
     let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
-    // RC-SW3 (parallel-local-exec): the bounded embedded-worker POOL. Resolve the size
+    // Parallel-local-exec: the bounded embedded-worker POOL. Resolve the size
     // from `--workers` / `KX_WORKERS` / `KX_SERVE_WORKER_POOL` (default 1 = the
     // historical single worker ⇒ byte-identical serve). Each worker registers
     // INDEPENDENTLY — the coordinator assigns a distinct `WorkerId`, load-balances via
@@ -735,8 +735,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // Ollama swarms get real concurrent inference over independent HTTP. The coordinator
     // stays the sole journal writer ⇒ no journal/checkpoint/digest change.
     let worker_pool = crate::env_caps::resolve_worker_pool(cfg.worker_pool);
-    // RC-SW3 back-pressure (small fold-in; the full resource-aware admission layer is
-    // RC-SW3.1): under a pool, SPREAD the lease budget so a single worker cannot hoard
+    // Back-pressure (small fold-in; the full resource-aware admission layer is
+    // deferred): under a pool, SPREAD the lease budget so a single worker cannot hoard
     // `max_lease` leases while running them serially (the `is_leased` gate would then
     // block idle workers from stealing that queued work). Dividing `max_lease` across
     // the pool keeps the operator's total in-flight-lease budget while letting whoever
@@ -770,7 +770,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             Some(sink) => worker.with_context_sink(sink.clone()),
             None => worker,
         };
-        // RC-SW3: bound a hung tool/MCP/IO dispatch (opt-in `KX_SERVE_TOOL_DEADLINE_SECS`,
+        // Bound a hung tool/MCP/IO dispatch (opt-in `KX_SERVE_TOOL_DEADLINE_SECS`,
         // default OFF ⇒ None ⇒ byte-identical) so a stuck external tool cannot pin this
         // pool worker's slot forever.
         let worker = worker.with_tool_deadline(crate::env_caps::tool_deadline());
@@ -780,10 +780,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         worker_tasks.push(spawn_worker_loop(worker));
     }
     if worker_pool > 1 {
-        tracing::info!(
-            workers = worker_pool,
-            "RC-SW3: embedded worker pool spawned"
-        );
+        tracing::info!(workers = worker_pool, "embedded worker pool spawned");
     }
 
     // (3) Gateway read seams: a SECOND (read-only) journal handle on the SAME
@@ -1030,7 +1027,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // the SaveApp/ListApps/GetApp RPCs. Off-journal, off-digest, rebuildable-to-empty
     // (no broker dep — app_ref is a pure content hash, the bundles.db posture).
     let apps_db = Arc::new(crate::apps::AppsDb::open(&catalog_dir)?);
-    // RC-SW1: the skill catalog (skills.db) — caller-scoped kortecx.skill/v1
+    // The skill catalog (skills.db) — caller-scoped kortecx.skill/v1
     // manifests for the ListSkills/GetSkillForm/AddSkill/RemoveSkill RPCs.
     // Off-journal, off-digest, rebuildable-to-empty (skill_ref is a pure content
     // hash — the apps.db posture). A skill is a WISH bundle; the bind intersects.
@@ -1187,7 +1184,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // coordinator + broker hold) so a `tool()` step resolves its def + builds a
     // tool-aware authoring ceiling, and a runtime-dialed tool is authorable the
     // moment it registers.
-    // RC-SW1: kept as the CONCRETE type too — HostAppAuthor calls the inherent
+    // Kept as the CONCRETE type too — HostAppAuthor calls the inherent
     // `author_with_context_items` (skill instructions merge into the entry-step
     // bundle) that the `WorkflowAuthor` trait deliberately does not carry.
     let host_author: Arc<HostWorkflowAuthor> = Arc::new(
@@ -1451,7 +1448,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             // default; never possible on a non-serve-engine build). Read once here so
             // GetServerInfo / the UI render honestly.
             allow_model_pull: model_pull_allowed(),
-            // RC-SW3: the resolved embedded-worker pool size (from `resolve_worker_pool`
+            // The resolved embedded-worker pool size (from `resolve_worker_pool`
             // above) so Settings/Monitoring show the configured concurrency.
             worker_pool: worker_pool as u64,
         }
@@ -2050,7 +2047,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         telemetry_task,
         alerts_task,
     ];
-    // RC-SW3: the pooled worker + heartbeat tasks (one pair per pool member; default
+    // The pooled worker + heartbeat tasks (one pair per pool member; default
     // pool=1 ⇒ exactly one pair, same as before). All join the shutdown-abort set.
     aux.extend(worker_tasks);
     aux.extend(heartbeat_tasks);

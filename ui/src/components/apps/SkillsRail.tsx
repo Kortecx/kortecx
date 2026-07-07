@@ -1,5 +1,5 @@
 /**
- * The App SKILLS rail (RC-SW1) — attach/detach catalog skills on a stored App.
+ * The App SKILLS rail — attach/detach catalog skills on a stored App.
  *
  * A skill is a DECLARATIVE `kortecx.skill/v1` bundle the envelope references by
  * `SkillRef { name, instructions_ref, tools }` (`references.skills`). Attaching
@@ -103,7 +103,7 @@ export function SkillsRail({
         )}
       </div>
       {catalog.notWired ? (
-        <p className="muted">Skill catalog not available on this gateway (RC-SW1+).</p>
+        <p className="muted">Skill catalog not available on this gateway.</p>
       ) : attachable.length > 0 ? (
         <div className="chip-row" data-testid="app-skills-attachable">
           {attachable.map((s) => (
