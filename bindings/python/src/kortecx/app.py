@@ -42,7 +42,7 @@ def _is_hex_ref(s: str) -> bool:
 GMAIL_CONNECTOR_COMMAND = "kx-connector-gmail"
 GMAIL_CREDENTIAL_REF = "KX_GMAIL_CREDENTIAL"
 
-#: RC-SW2: the curated Discord provider defaults (the bundled ``kx-connector-discord``
+#: The curated Discord provider defaults (the bundled ``kx-connector-discord``
 #: sidecar, #277). Mirrors ``with_gmail`` — register with
 #: ``kx connections add --command kx-connector-discord --credential-ref KX_DISCORD_CREDENTIAL``.
 DISCORD_CONNECTOR_COMMAND = "kx-connector-discord"
@@ -95,7 +95,7 @@ class App:
         self._secret_scope: List[str] = []
         self._branch_handle = ""
         self._replay: Dict[str, str] = {}
-        # RC-SW2: imperative pre-run registrations carried from a Flow via
+        # Imperative pre-run registrations carried from a Flow via
         # :meth:`Flow.as_app` (with_mcp connectors / with_memory facts). Run() executes
         # them before RunApp so a `flow().with_mcp(...).as_app(...).run()` chain still
         # registers its connector. Never part of the envelope (off the golden digest).
@@ -213,7 +213,7 @@ class App:
         return self.with_connection(GMAIL_CONNECTOR_COMMAND, GMAIL_CREDENTIAL_REF)
 
     def with_discord(self) -> "App":
-        """RC-SW2: declare the bundled Discord connector (the curated provider default) —
+        """Declare the bundled Discord connector (the curated provider default) —
         equivalent to ``with_connection("kx-connector-discord", "KX_DISCORD_CREDENTIAL")``.
         Register it with ``kx connections add --provider discord`` (the sidecar reads a bot
         token by name). To let an agent FIRE a Discord tool, grant it by the registered
@@ -407,7 +407,7 @@ class App:
         """Save this App and run it via ``RunApp`` (exactly-once). ``args`` (the App's
         input schema) fold server-side into the entry step's prompt.
 
-        RC-SW2 fix: this now routes through ``SaveApp`` + ``RunApp`` instead of a local
+        Fix: this now routes through ``SaveApp`` + ``RunApp`` instead of a local
         ``submit_workflow`` recompile — so the App's ``references.connections`` +
         ``guards.secret_scope`` reach the server and a credentialed connector (Gmail /
         Discord) actually fires inside the agentic loop (the G2/#285 path). Saving is

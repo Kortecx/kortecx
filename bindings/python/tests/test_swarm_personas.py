@@ -1,4 +1,4 @@
-"""RC-SW2 — swarm/team authoring, the persona library, and the App.run→RunApp fix.
+"""Swarm/team authoring, the persona library, and the App.run→RunApp fix.
 
 All client-side (no server): the swarm/fan-out/map-reduce methods lower to the same
 ``[a & b] > g`` topology the golden corpus pins, personas fold into an agent's prompt,

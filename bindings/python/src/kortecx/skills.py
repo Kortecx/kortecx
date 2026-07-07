@@ -1,4 +1,4 @@
-"""RC-SW1 skill-catalog views — declarative ``kortecx.skill/v1`` bundles.
+"""Skill-catalog views — declarative ``kortecx.skill/v1`` bundles.
 
 A skill is instructions + a tool grant-WISH set; adding one grants NOTHING. At
 ``run_app`` the server intersects the wish against the caller's grants and the

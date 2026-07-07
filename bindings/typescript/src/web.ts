@@ -2,7 +2,7 @@
  * The browser entrypoint (`@kortecx/sdk/web`).
  *
  * Supplies a gRPC-web transport (`@connectrpc/connect-web`, fetch-based) so the
- * SAME `KxClient` surface runs in a browser — this is the Wave-5 dashboard's data
+ * SAME `KxClient` surface runs in a browser — this is the dashboard's data
  * layer. Tokens are passed explicitly (no filesystem/env in a browser); the WS
  * bridge uses the `Sec-WebSocket-Protocol: bearer, <token>` subprotocol because a
  * browser cannot set an `Authorization` header on a WebSocket.

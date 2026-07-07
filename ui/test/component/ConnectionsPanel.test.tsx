@@ -154,7 +154,7 @@ describe("ConnectionsPanel", () => {
     });
   });
 
-  it("RC-SW2: 'Connect Discord' prefills the bundled discord connector defaults", () => {
+  it("'Connect Discord' prefills the bundled discord connector defaults", () => {
     render(<ConnectionsPanel />);
     fireEvent.click(screen.getByTestId("connection-provider-discord"));
     fireEvent.submit(screen.getByTestId("connections-add-form"));

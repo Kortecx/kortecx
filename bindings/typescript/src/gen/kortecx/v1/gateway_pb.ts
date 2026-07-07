@@ -7807,7 +7807,7 @@ export type GetServerInfoResponse = Message<"kortecx.v1.GetServerInfoResponse"> 
   embedModelIsDecoder: boolean;
 
   /**
-   * RC-SW3 (additive): the resolved embedded-worker POOL size (--workers / KX_WORKERS /
+   * Additive: the resolved embedded-worker POOL size (--workers / KX_WORKERS /
    * KX_SERVE_WORKER_POOL; 1 = the historical single worker). >1 runs Pure/IO/tool Motes
    * concurrently (model Motes still serialize on the one ModelCache owner thread; Ollama
    * swarms get real concurrent inference). Display/Settings + Monitoring only; an old
@@ -10140,7 +10140,7 @@ export const KxGateway: GenService<{
     output: typeof UnlockAppResponseSchema;
   },
   /**
-   * RC-SW1 additive (D120.6/D175) — the per-principal skill catalog (skills.db).
+   * Additive (D120.6/D175) — the per-principal skill catalog (skills.db).
    * AddSkill validates the manifest fail-closed (kortecx.skill/v1 closed shape +
    * authority deny-keys) and stores the instructions body via the content-write
    * seam; skill_ref is server-derived over the canonical bytes (SN-8). A skill

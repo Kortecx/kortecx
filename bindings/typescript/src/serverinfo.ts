@@ -66,7 +66,7 @@ export class ServerInfo {
     readonly allowModelPull: boolean = false,
     /** RC4a: the configured embedder is a decoder LLM (weak embeddings) — advisory. */
     readonly embedModelIsDecoder: boolean = false,
-    /** RC-SW3: the resolved embedded-worker POOL size (`--workers` / `KX_WORKERS` /
+    /** The resolved embedded-worker POOL size (`--workers` / `KX_WORKERS` /
      *  `KX_SERVE_WORKER_POOL`; `1` = single worker, `>1` runs Pure/IO/tool Motes
      *  concurrently). `0` from an old server ⇒ treat as `1` (see {@link effectiveWorkerPool}). */
     readonly workerPool: number = 0,

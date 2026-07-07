@@ -1208,7 +1208,7 @@ class KxGatewayServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def ListSkills(self, request, context):
-        """RC-SW1 additive (D120.6/D175) — the per-principal skill catalog (skills.db).
+        """Additive (D120.6/D175) — the per-principal skill catalog (skills.db).
         AddSkill validates the manifest fail-closed (kortecx.skill/v1 closed shape +
         authority deny-keys) and stores the instructions body via the content-write
         seam; skill_ref is server-derived over the canonical bytes (SN-8). A skill

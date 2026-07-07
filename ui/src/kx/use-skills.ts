@@ -1,5 +1,5 @@
 /**
- * The RC-SW1 skill-catalog hooks: list the caller's skills (`ListSkills`), one
+ * The skill-catalog hooks: list the caller's skills (`ListSkills`), one
  * skill's form (`GetSkillForm` — the wish set with the ADVISORY `registered`
  * bit + the instructions preview), add (`AddSkill`), and remove (`RemoveSkill`).
  *

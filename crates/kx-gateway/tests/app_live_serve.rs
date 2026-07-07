@@ -532,7 +532,7 @@ async fn runapp_gmail_connection_and_secret_scope_live() {
     .await;
 }
 
-/// RC-SW2 Discord witness — the same generic harness pointed at the bundled Discord sidecar
+/// Discord witness — the same generic harness pointed at the bundled Discord sidecar
 /// (#277), so a parallel session can test ANY connector-in-App path without new harness code.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference + the built kx-connector-discord; opt in with --ignored"]
@@ -1027,7 +1027,7 @@ async fn runapp_grounded_app_self_grounds_live() {
     running.shutdown().await.unwrap();
 }
 
-/// The RC-SW2 swarm request `kx.swarm(...)` / `flow().swarm(...)` lowers to: N parallel MODEL
+/// The swarm request `kx.swarm(...)` / `flow().swarm(...)` lowers to: N parallel MODEL
 /// leaves (no inter-edges) fanned into one MODEL gather that reads every leaf's committed
 /// output (its Data-edge parents, F-7). Built here as the raw proto the SDK produces.
 fn swarm_request() -> proto::SubmitWorkflowRequest {
@@ -1067,7 +1067,7 @@ fn swarm_request() -> proto::SubmitWorkflowRequest {
     }
 }
 
-/// RC-SW2 LIVE swarm witness (GR15/GR24): a 2-agent swarm → gather runs end-to-end on a live
+/// LIVE swarm witness (GR15/GR24): a 2-agent swarm → gather runs end-to-end on a live
 /// model, both engines. Proves the multi-agent vertical: two INDEPENDENT parallel model
 /// chains commit, then the gather synthesizes over BOTH committed outputs (F-7). A GR16
 /// OBSERVE-witness — asserts the swarm settled with all three motes committed and the gather
@@ -1262,7 +1262,7 @@ async fn run_wide_swarm(dir_tag: &str, pool: usize, n_leaves: u32) -> (Duration,
     (elapsed, committed, text)
 }
 
-/// RC-SW3 LIVE pool witness (GR15/GR24): the SAME wide swarm run under a single worker
+/// LIVE pool witness (GR15/GR24): the SAME wide swarm run under a single worker
 /// (`--workers 1`, the historical serial drain) vs. a pool of 4, on a live model. Proves the
 /// pool executes an authored fan-out end-to-end and produces REAL output at both sizes, and
 /// LOGS the wall-clock speedup. The speedup is OBSERVED (logged), not asserted: a single live

@@ -1,5 +1,5 @@
 /**
- * RC-SW1 skill-catalog views — a declarative `kortecx.skill/v1` bundle
+ * Skill-catalog views — a declarative `kortecx.skill/v1` bundle
  * (instructions + a tool grant-WISH set). Kept in its own module (the Rust
  * core's module-per-concern discipline, GR3).
  *

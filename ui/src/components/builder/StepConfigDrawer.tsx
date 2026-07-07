@@ -164,8 +164,8 @@ export function StepConfigDrawer({
                 ))}
               </div>
               <span className="builder-field__hint">
-                RC-SW2: a curated role. Clicking prepends its instructions to the prompt (an
-                editable template); the same as the SDK <code>kx.persona("…")</code>.
+                A curated role. Clicking prepends its instructions to the prompt (an editable
+                template); the same as the SDK <code>kx.persona("…")</code>.
               </span>
             </div>
 

@@ -92,16 +92,16 @@ pub(crate) fn chat_rag_max_k() -> usize {
     )
 }
 
-/// RC-SW3: the maximum embedded-worker pool size an operator may request. A
+/// The maximum embedded-worker pool size an operator may request. A
 /// garbage-large value clamps here rather than spawning thousands of loops.
 #[cfg(feature = "embedded-worker")]
 const MAX_WORKER_POOL: usize = 64;
 
-/// RC-SW3: the maximum per-Mote effect deadline (seconds) an operator may set.
+/// The maximum per-Mote effect deadline (seconds) an operator may set.
 #[cfg(feature = "embedded-worker")]
 const MAX_TOOL_DEADLINE_SECS: u64 = 3_600;
 
-/// Resolve the embedded-worker POOL size (RC-SW3). Precedence: the `--workers` flag
+/// Resolve the embedded-worker POOL size. Precedence: the `--workers` flag
 /// wins; else `KX_WORKERS`; else `KX_SERVE_WORKER_POOL`; else [`DEFAULT_WORKER_POOL`]
 /// (1). Clamped to `1..=MAX_WORKER_POOL` (a `0` or unparseable value falls back to the
 /// default — never silent garbage). Read once at spawn (the process env is constant for
@@ -123,7 +123,7 @@ pub(crate) fn resolve_worker_pool(flag: Option<usize>) -> usize {
     )
 }
 
-/// RC-SW3: the optional per-Mote effect (tool/MCP/IO) wall-clock deadline
+/// The optional per-Mote effect (tool/MCP/IO) wall-clock deadline
 /// (`KX_SERVE_TOOL_DEADLINE_SECS`). Unset (the default) ⇒ `None` ⇒ no timeout wrap ⇒
 /// byte-identical serve. A positive integer number of seconds (clamped to
 /// `1..=MAX_TOOL_DEADLINE_SECS`) ⇒ a hung tool dispatch is cancelled + retried within

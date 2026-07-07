@@ -808,7 +808,7 @@ pub struct GatewayService {
     /// Caller-scoped, off-journal, off-digest, rebuildable-to-empty. The envelope
     /// carries NO authority (the host validates it); `app run` re-resolves warrants.
     apps: Option<Arc<dyn crate::apps_view::AppCatalog>>,
-    /// The optional skill-catalog store seam (RC-SW1 — the host injects a
+    /// The optional skill-catalog store seam (the host injects a
     /// `skills.db`-backed sidecar). `None` ⇒ the 4 skill RPCs return
     /// `unimplemented`. Caller-scoped, off-journal, off-digest, rebuildable-to-
     /// empty. A skill is a WISH bundle (the host refuses authority deny-keys);
@@ -1358,7 +1358,7 @@ impl GatewayService {
         self
     }
 
-    /// Wire the RC-SW1 skill-catalog store (the host's `skills.db` sidecar).
+    /// Wire the skill-catalog store (the host's `skills.db` sidecar).
     /// Without it the four skill RPCs (`ListSkills`/`GetSkillForm`/`AddSkill`/
     /// `RemoveSkill`) return `unimplemented`.
     #[must_use]
@@ -1747,7 +1747,7 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
     }
 }
 
-/// RC-SW1: map a host [`crate::SkillRecord`] (manifest-derived) to the wire view.
+/// Map a host [`crate::SkillRecord`] (manifest-derived) to the wire view.
 fn skill_record_to_proto(r: crate::skills_view::SkillRecord) -> proto::SkillSummary {
     proto::SkillSummary {
         skill_ref: r.skill_ref.to_vec(),
@@ -1760,7 +1760,7 @@ fn skill_record_to_proto(r: crate::skills_view::SkillRecord) -> proto::SkillSumm
     }
 }
 
-/// RC-SW1: the display excerpt stored beside a skill row at `AddSkill` time
+/// The display excerpt stored beside a skill row at `AddSkill` time
 /// (UTF-8 lossy, cut at a char boundary within [`crate::SKILL_PREVIEW_CAP_BYTES`]).
 fn skill_preview(body: &[u8]) -> (String, bool) {
     let text = String::from_utf8_lossy(body);
@@ -2426,7 +2426,7 @@ impl KxGateway for GatewayService {
             allow_model_pull: facts.allow_model_pull,
             // RC4a (T-RAG-EMBED-QUALITY): honest decoder-as-embedder advisory flag.
             embed_model_is_decoder: facts.embed_model_is_decoder,
-            // RC-SW3: the resolved embedded-worker pool size (1 = single worker).
+            // The resolved embedded-worker pool size (1 = single worker).
             worker_pool: facts.worker_pool,
         }))
     }
@@ -2719,7 +2719,7 @@ impl KxGateway for GatewayService {
         }
     }
 
-    // ----- RC-SW1 — skill catalog (add / list / form / remove; off-journal skills.db) -----
+    // ----- skill catalog (add / list / form / remove; off-journal skills.db) -----
 
     async fn add_skill(
         &self,

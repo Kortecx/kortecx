@@ -1,5 +1,5 @@
 /**
- * RC-SW1 — the Skills panel (the Integrations "Skills" tab) + the App SkillsRail.
+ * The Skills panel (the Integrations "Skills" tab) + the App SkillsRail.
  * Pins every designed state (D142): not-wired / empty / populated (wish chips
  * with the ADVISORY registered bit) for the panel, and attached/attachable CHIP
  * controls + the locked-disable on the rail — so a refactor that drops a state
@@ -67,7 +67,7 @@ vi.mock("../../src/kx/use-apps", () => ({
 import { SkillsRail } from "../../src/components/apps/SkillsRail";
 import { SkillsPanel } from "../../src/components/tools/SkillsPanel";
 
-describe("Skills — the catalog panel (RC-SW1)", () => {
+describe("Skills — the catalog panel", () => {
   it("renders the populated list with CHIP controls + the add form", () => {
     listState = catalog;
     render(<SkillsPanel />);
@@ -107,7 +107,7 @@ describe("Skills — the catalog panel (RC-SW1)", () => {
   });
 });
 
-describe("Apps — the SkillsRail attach control (RC-SW1)", () => {
+describe("Apps — the SkillsRail attach control", () => {
   const envelope = {
     schema: "kortecx.app/v1",
     name: "triager",

@@ -66,7 +66,7 @@ const DEFAULT_SWARM_GATHER =
 const DEFAULT_FAN_GATHER = "Combine the parallel results above into one coherent answer.";
 const DEFAULT_REDUCE = "Reduce the mapper results above into one consolidated result.";
 
-/** A swarm/team participant (RC-SW2): a prompt, a `[prompt, tools]` tuple, an Agent /
+/** A swarm/team participant: a prompt, a `[prompt, tools]` tuple, an Agent /
  * persona (duck-typed), a {@link Flow} (already task-bound), or a Frag. */
 export type SwarmParticipant =
   | string
@@ -339,7 +339,7 @@ export class Flow {
     for (const fact of this.memoryFacts) await client.storeMemory(fact);
   }
 
-  // -- orchestration (RC-SW2: parallel agentic patterns; pure client composition) --
+  // -- orchestration (parallel agentic patterns; pure client composition) --
 
   /** Resolve ONE swarm participant to an agentic-leaf Frag (mirrors Python
    * `_participant_to_node`; Agents duck-typed to avoid the flow↔agent cycle). */
@@ -498,7 +498,7 @@ export function flow(opts: { seed?: number } = {}): Flow {
 
 // -- top-level orchestration factories (a swarm is usually the whole flow) --
 
-/** `swarm(participants, opts)` — N parallel agents → gather, as a whole flow (RC-SW2).
+/** `swarm(participants, opts)` — N parallel agents → gather, as a whole flow.
  * Sugar for `flow(seed).swarm(...)`; see {@link Flow.swarm}. */
 export function swarm(
   participants: SwarmParticipant[],

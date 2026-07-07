@@ -83,7 +83,7 @@ impl LeaseTracker {
     }
 
     /// Whether `mote` is currently leased by a live worker OTHER than `worker` — the
-    /// RC-SW3 pool admission gate. `lease_ready` skips such a Mote so two pool workers
+    /// pool admission gate. `lease_ready` skips such a Mote so two pool workers
     /// never redundantly run the same one, WHILE a worker may always re-lease its OWN
     /// outstanding holds (the mid-batch-error self-heal). This makes a single-worker
     /// serve byte-identical: a lone worker is never an "other" holder, so the gate
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn is_leased_by_other_is_the_pool_admission_gate() {
-        // RC-SW3: the lease_ready gate. A lone holder never sees an "other" holder
+        // The lease_ready gate. A lone holder never sees an "other" holder
         // (pool=1 byte-identical); a second worker's hold makes it true for the first.
         let mut t = LeaseTracker::default();
         let m = mote(5);

@@ -75,7 +75,7 @@ pub struct CheckResult {
 }
 
 impl CheckResult {
-    // pub(crate): the RC-SW1 skill harness (`skill_conformance`) builds the same
+    // pub(crate): the skill harness (`skill_conformance`) builds the same
     // report vocabulary over a DECLARATIVE artifact.
     pub(crate) fn pass(name: &'static str, gate_item: u8, detail: impl Into<String>) -> Self {
         Self {

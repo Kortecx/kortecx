@@ -2565,7 +2565,7 @@ impl HostWorkflowAuthor {
 
 impl HostWorkflowAuthor {
     /// The full authoring body, with EXTRA caller-resolved [`ContextItemRef`]s
-    /// merged into the entry-step context bundle (RC-SW1: an App's skill
+    /// merged into the entry-step context bundle (an App's skill
     /// instructions ride here, labeled `skill:<name>`). The merge happens BEFORE
     /// `encode_context_items` canonicalizes (sort + dedup), so bundle items and
     /// extra items coexist deterministically in ONE inject — no overwrite hazard
@@ -2652,7 +2652,7 @@ impl HostWorkflowAuthor {
         // identity-bearing config BEFORE compile (fail-closed on an unknown handle;
         // empty ⇒ byte-identical to pre-PR-7). Resolution is caller-scoped. The
         // author/SubmitWorkflow path carries no direct `context_refs` (those are an
-        // Invoke-only field) ⇒ pass an empty ref set. RC-SW1: the caller-resolved
+        // Invoke-only field) ⇒ pass an empty ref set. The caller-resolved
         // `extra_items` (skill instructions) merge into the SAME bundle before the
         // canonical encode, so ONE inject carries both.
         let mut context_items =
@@ -3700,7 +3700,7 @@ pub(crate) fn tool_union_warrant(
     }
 }
 
-/// RC-SW1: a party's per-tool Use AUTHORITY for the skill-wish intersection,
+/// A party's per-tool Use AUTHORITY for the skill-wish intersection,
 /// resolved from the authoritative grant ledger (never a client warrant — SN-8).
 ///
 /// Semantics (D175 + the user-approved "Use-gate + conditional narrowing"):
@@ -3744,7 +3744,7 @@ pub(crate) fn party_tool_authority(
     }
 }
 
-/// RC-SW1: intersect a multi-skill tool WISH into the set actually grantable on
+/// Intersect a multi-skill tool WISH into the set actually grantable on
 /// the App's entry agentic step — `wish ∩ caller-allowlist ∩ fireable ∩ registry
 /// ∩ union-compat` — returning ONLY the additions to fold into the step's
 /// `tool_contract` (the author-declared entries always win and are never
@@ -6447,7 +6447,7 @@ mod tests {
         let _ = &binder;
     }
 
-    // ----- RC-SW1: skill_union_grants / party_tool_authority / context merge -----
+    // ----- skill_union_grants / party_tool_authority / context merge -----
 
     /// A registry over explicit `(id, version, syscall_profile, fs_scope)` defs —
     /// the skill-wish compat-filter fixtures need per-tool capability control.
@@ -6639,7 +6639,7 @@ mod tests {
         ));
     }
 
-    /// RC-SW1: the extra-items merge — bundle items and skill instructions land
+    /// The extra-items merge — bundle items and skill instructions land
     /// in ONE canonical entry-step bundle; an empty extra slice is byte-identical
     /// to the plain trait path (the digest no-op pin at the author layer).
     #[tokio::test]

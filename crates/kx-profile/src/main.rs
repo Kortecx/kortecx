@@ -112,7 +112,7 @@ async fn inproc_metrics(iterations: usize) -> Result<Vec<Metric>, ProfileError> 
         ],
     );
 
-    // RC-SW3 — the embedded worker pool: submit→Committed at pool ∈ {1, 2, 4}. The
+    // The embedded worker pool: submit→Committed at pool ∈ {1, 2, 4}. The
     // regression guard is `pool1 == the no-pool baseline` (byte-identical default) with
     // bounded pool>1 per-run overhead. (Throughput-under-real-work is the live swarm
     // witness, not this free-execution stub — see `measure_pool` docs.)

@@ -40,7 +40,7 @@ export interface AgentOptions {
   reasoning?: ReasoningMode;
   /** `false` (default) = the deterministic/frozen lane; `true` = the steered react recipe. */
   dynamic?: boolean;
-  /** RC-SW2: a curated persona name (from {@link import("./personas.js").PERSONAS}) whose
+  /** A curated persona name (from {@link import("./personas.js").PERSONAS}) whose
    * role instructions become this agent's base instructions. Any explicit `instructions`
    * layer on top. Throws for an unknown name. */
   persona?: string;

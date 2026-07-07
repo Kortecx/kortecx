@@ -1,5 +1,5 @@
 //! `kx skills add | list | show | remove` — govern the per-principal skill
-//! catalog (RC-SW1) over the gateway RPCs (`AddSkill` / `ListSkills` /
+//! catalog over the gateway RPCs (`AddSkill` / `ListSkills` /
 //! `GetSkillForm` / `RemoveSkill`). Tri-surface parity with the UI + SDK.
 //!
 //! A skill is a DECLARATIVE `kortecx.skill/v1` bundle — instructions + a tool

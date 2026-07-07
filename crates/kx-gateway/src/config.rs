@@ -13,7 +13,7 @@ use crate::error::GatewayError;
 pub const DEFAULT_MAX_LEASE: u32 = 16;
 
 /// Default embedded-worker POOL size — how many concurrent lease→run→propose
-/// worker loops the serve spawns (RC-SW3). `1` (the default) is byte-identical to
+/// worker loops the serve spawns. `1` (the default) is byte-identical to
 /// the historical single embedded worker. `>1` runs Pure/IO/tool Motes concurrently
 /// (model Motes still funnel to the one `ModelCache` owner thread; Ollama swarms get
 /// real concurrent inference over independent HTTP). Tune with `--workers` or the
@@ -85,7 +85,7 @@ pub struct GatewayConfig {
     pub content_root: PathBuf,
     /// Worker lease batch size (see [`DEFAULT_MAX_LEASE`]).
     pub max_lease: u32,
-    /// Embedded-worker POOL size from `--workers` (RC-SW3). `None` ⇒ not set on the
+    /// Embedded-worker POOL size from `--workers`. `None` ⇒ not set on the
     /// CLI; the serve resolves it via `KX_WORKERS` / `KX_SERVE_WORKER_POOL` else the
     /// [`DEFAULT_WORKER_POOL`] (see `env_caps::resolve_worker_pool`). Kept as the raw
     /// flag (not pre-resolved) so `parse_serve` stays pure/hermetic — env is read once
@@ -244,7 +244,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
                     ))
                 })?;
             }
-            // RC-SW3: bounded embedded-worker pool size (default 1 = single worker,
+            // Bounded embedded-worker pool size (default 1 = single worker,
             // byte-identical). A positive integer; the env fallback + clamp live in
             // `env_caps::resolve_worker_pool` (read once at spawn).
             "--workers" => {
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn workers_flag_parses_and_defaults_to_none() {
-        // RC-SW3: `--workers N` records the raw flag (env/default resolution happens at
+        // `--workers N` records the raw flag (env/default resolution happens at
         // spawn in `env_caps::resolve_worker_pool`, so `parse_serve` stays pure).
         let with = serve(
             Cli::from_args([

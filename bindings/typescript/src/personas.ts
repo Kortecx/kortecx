@@ -1,5 +1,5 @@
 /**
- * Curated **personas** — reusable, named agent instruction sets (RC-SW2), the TS
+ * Curated **personas** — reusable, named agent instruction sets, the TS
  * mirror of `kortecx.personas`.
  *
  * ```ts

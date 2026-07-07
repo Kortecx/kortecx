@@ -740,9 +740,9 @@ describe("Batch C: global event tail + telemetry", () => {
   });
 });
 
-// --- RC-SW1 skills catalog (declarative kortecx.skill/v1 bundles) --------------
+// --- Skills catalog (declarative kortecx.skill/v1 bundles) --------------
 
-describe("RC-SW1 skills catalog", () => {
+describe("Skills catalog", () => {
   it("add → list → show → remove round-trips with server-derived identity (SN-8)", async () => {
     const s = await devServer();
     const kx = new KxClient(s.endpoint);

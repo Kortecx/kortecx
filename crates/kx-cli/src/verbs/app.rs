@@ -154,7 +154,7 @@ pub struct NewSpec {
     pub branch: Option<String>,
     /// Write the pretty envelope JSON here (else stdout).
     pub output: Option<PathBuf>,
-    /// RC-SW1: catalog skill names to attach (`--skill`, repeatable). Non-empty
+    /// Catalog skill names to attach (`--skill`, repeatable). Non-empty
     /// makes `new` CONDITIONALLY ONLINE (each name resolves via `GetSkillForm`
     /// to a `SkillRef` — instructions_ref is server-derived, never hand-typed).
     pub skills: Vec<String>,
@@ -468,7 +468,7 @@ fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError>
 #[allow(clippy::too_many_lines)]
 pub async fn execute(args: AppArgs) -> Result<(), CliError> {
     // `new` is offline — no gateway contact — UNLESS `--skill` names catalog
-    // skills to attach (RC-SW1): each resolves via `GetSkillForm` to a SkillRef
+    // skills to attach: each resolves via `GetSkillForm` to a SkillRef
     // (instructions_ref is server-derived; hand-typing 64-hex is hostile). An
     // old server without the catalog answers UNIMPLEMENTED — surfaced clearly,
     // never silently dropped.
@@ -489,7 +489,7 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                     if s.code() == tonic::Code::Unimplemented {
                         CliError::Usage(format!(
                             "--skill {name:?}: this server has no skill catalog \
-                             (RC-SW1+ required); author the SkillRef in the envelope \
+                             (required); author the SkillRef in the envelope \
                              JSON instead, or upgrade the serve"
                         ))
                     } else {
@@ -610,7 +610,7 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                     }
                     let env = AppEnvelope::from_json_slice(&resp.envelope_json)
                         .map_err(|e| CliError::Usage(format!("stored envelope is invalid: {e}")))?;
-                    // RC-SW3: the legacy fallback DROPS references.connections +
+                    // The legacy fallback DROPS references.connections +
                     // guards.secret_scope. If this App actually declares integrations,
                     // refuse LOUDLY rather than silently run a de-integrated workflow (the
                     // credentialed connector would never fire; the secret_scope narrowing

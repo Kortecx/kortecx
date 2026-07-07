@@ -81,9 +81,9 @@ pub async fn measure(iterations: usize) -> Result<LatencySamples, ProfileError> 
     })
 }
 
-/// RC-SW3 regression guard: the FFI-free echo demo's submit→Committed latency under an
+/// Regression guard: the FFI-free echo demo's submit→Committed latency under an
 /// embedded worker pool of each size in `pools`. **pool=1 must match the no-pool baseline**
-/// (the byte-identical RC-SW3 default) and pool>1's per-run overhead must stay bounded. This
+/// (the byte-identical default) and pool>1's per-run overhead must stay bounded. This
 /// deliberately measures a SINGLE run per iteration (not a fan-out): the pool's *throughput*
 /// gain only materializes when execution has real cost (real inference/tool/IO) — OSS Pure
 /// motes are a near-free passthrough stub (D141.4), so a Pure fan-out here would measure lease

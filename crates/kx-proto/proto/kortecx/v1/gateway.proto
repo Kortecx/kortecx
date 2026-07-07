@@ -1256,7 +1256,7 @@ message UnlockAppRequest { string branch_handle = 1; }
 message UnlockAppResponse{ bool unlocked = 1; }
 
 // ---------------------------------------------------------------------------
-// RC-SW1 additive (D120.6/D175) — the per-principal SKILL catalog (skills.db,
+// Additive (D120.6/D175) — the per-principal SKILL catalog (skills.db,
 // the apps.db posture: off-journal, off-digest, rebuildable-to-empty). A skill
 // is a kortecx.skill/v1 manifest — instructions (content-store, by ref) plus a
 // tool grant-WISH set (id -> version) the server re-resolves at bind
@@ -1999,7 +1999,7 @@ message GetServerInfoResponse {
   // embeddings (paraphrase mis-rank). The CLI/UI/Settings surface an honest
   // "recommend a dedicated embed model" advisory from this single flag. Display only.
   bool   embed_model_is_decoder = 25;
-  // RC-SW3 (additive): the resolved embedded-worker POOL size (--workers / KX_WORKERS /
+  // Additive: the resolved embedded-worker POOL size (--workers / KX_WORKERS /
   // KX_SERVE_WORKER_POOL; 1 = the historical single worker). >1 runs Pure/IO/tool Motes
   // concurrently (model Motes still serialize on the one ModelCache owner thread; Ollama
   // swarms get real concurrent inference). Display/Settings + Monitoring only; an old
@@ -2429,7 +2429,7 @@ service KxGateway {
   rpc LockApp(LockAppRequest) returns (LockAppResponse);
   rpc UnlockApp(UnlockAppRequest) returns (UnlockAppResponse);
 
-  // RC-SW1 additive (D120.6/D175) — the per-principal skill catalog (skills.db).
+  // Additive (D120.6/D175) — the per-principal skill catalog (skills.db).
   // AddSkill validates the manifest fail-closed (kortecx.skill/v1 closed shape +
   // authority deny-keys) and stores the instructions body via the content-write
   // seam; skill_ref is server-derived over the canonical bytes (SN-8). A skill

@@ -1,4 +1,4 @@
-"""Curated **personas** — reusable, named agent instruction sets (RC-SW2).
+"""Curated **personas** — reusable, named agent instruction sets.
 
 ```python
 import kortecx as kx

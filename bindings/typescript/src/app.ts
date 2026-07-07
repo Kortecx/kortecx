@@ -38,7 +38,7 @@ export interface BlueprintSource {
 export interface AppClient {
   putContent(payload: Uint8Array, opts?: { mediaType?: string }): Promise<{ contentRef: string }>;
   saveApp(envelope: unknown, opts?: { handle?: string }): Promise<SaveAppResult>;
-  /** RC-SW2: the App run path — SaveApp + RunApp so `references.connections` +
+  /** The App run path — SaveApp + RunApp so `references.connections` +
    * `guards.secret_scope` reach the server (a credentialed connector can be dialed). */
   runApp(
     handle: string,
@@ -77,7 +77,7 @@ type DatasetEntry = { dataset_ref: string; cas_refs?: string[] };
  * Mirrors the CLI `kx connections add --provider gmail` + the Python SDK. */
 const GMAIL_CONNECTOR_COMMAND = "kx-connector-gmail";
 const GMAIL_CREDENTIAL_REF = "KX_GMAIL_CREDENTIAL";
-/** RC-SW2: the curated Discord provider defaults (the bundled `kx-connector-discord`
+/** The curated Discord provider defaults (the bundled `kx-connector-discord`
  * sidecar, #277). Mirrors `withGmail` + the Python SDK. */
 const DISCORD_CONNECTOR_COMMAND = "kx-connector-discord";
 const DISCORD_CREDENTIAL_REF = "KX_DISCORD_CREDENTIAL";
@@ -114,7 +114,7 @@ export class AppBuilder {
   private _maxTurns?: number;
   private _maxToolCalls?: number;
   private _branchHandle = "";
-  /** RC-SW2: imperative pre-run registrations carried from a Flow via {@link Flow.asApp}
+  /** Imperative pre-run registrations carried from a Flow via {@link Flow.asApp}
    * (with_mcp connectors / with_memory facts). {@link run} executes them before RunApp.
    * Never part of the envelope (off the golden digest). */
   private _flowMcp: RegisterMcpServerInput[] = [];
@@ -245,7 +245,7 @@ export class AppBuilder {
     return this.withConnection(GMAIL_CONNECTOR_COMMAND, GMAIL_CREDENTIAL_REF);
   }
 
-  /** RC-SW2: declare the bundled Discord connector (the curated provider default) —
+  /** Declare the bundled Discord connector (the curated provider default) —
    * equivalent to `withConnection("kx-connector-discord", "KX_DISCORD_CREDENTIAL")`.
    * Register with `kx connections add --provider discord` (a bot token by name). To let an
    * agent FIRE a Discord tool, grant it by the registered CONNECTION NAME — e.g.
@@ -428,7 +428,7 @@ export class AppBuilder {
   /** Save this App and run it via `RunApp` (exactly-once). `args` (the App's input schema)
    * fold server-side into the entry step's prompt.
    *
-   * RC-SW2 fix: routes through `SaveApp` + `RunApp` instead of a local `submitWorkflow`
+   * Routes through `SaveApp` + `RunApp` instead of a local `submitWorkflow`
    * recompile — so the App's `references.connections` + `guards.secret_scope` reach the
    * server and a credentialed connector (Gmail / Discord) actually fires inside the
    * agentic loop (the G2/#285 path). Saving is expected: an App is an explicitly-named

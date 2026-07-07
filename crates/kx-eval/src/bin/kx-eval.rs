@@ -24,7 +24,7 @@ struct Args {
     update: bool,
     json: bool,
     tolerance: u32,
-    // RC-SW1: score ONE capability family (report-only iteration; the committed
+    // Score ONE capability family (report-only iteration; the committed
     // baseline stays the aggregate gate — --suite + --update-baseline is refused).
     suite: Option<String>,
 }

@@ -23,7 +23,7 @@
 //!    scope is server-authorized; it is deterministic (a sorted `BTreeSet`) ⇒ recovery
 //!    replays the journaled `warrant_ref` byte-identically.
 //!
-//! ## RC-SW1: the skill bind (step 3b — BEFORE lowering; the wish is never authority)
+//! ## The skill bind (step 3b — BEFORE lowering; the wish is never authority)
 //!
 //! An App's `references.skills` (`SkillRef { name, instructions_ref, tools }`) resolve
 //! at run, PRE-author — both legs are author-time-or-never (verified ground truth: the
@@ -94,22 +94,22 @@ impl<T: ContentStore + Send + Sync> ContentPresence for T {
 pub(crate) struct HostAppAuthor {
     apps: Arc<dyn AppCatalog>,
     connections: Arc<SqliteConnectionStore>,
-    /// The CONCRETE live author (not the trait object): RC-SW1 needs the inherent
+    /// The CONCRETE live author (not the trait object): needs the inherent
     /// `author_with_context_items` (skill instructions merge into the entry-step
     /// bundle pre-compile — a trait-signature change would churn 17 call sites for
     /// one App-only concern). Same `Arc` the service's `WorkflowAuthor` wraps.
     author: Arc<HostWorkflowAuthor>,
-    /// RC-SW1: the shared library (grants + blueprint_base) — the skill-wish
+    /// The shared library (grants + blueprint_base) — the skill-wish
     /// caller-authority resolution ([`party_tool_authority`]).
     lib: Arc<DemoLibrary>,
-    /// RC-SW1: the LIVE tool registry (the SAME `Arc` the coordinator + broker
+    /// The LIVE tool registry (the SAME `Arc` the coordinator + broker
     /// share) — wish-tool defs for the compat filter.
     tools: Arc<dyn ToolRegistry>,
-    /// RC-SW1: the broker-fireable view (the SAME truth the admission backstops
+    /// The broker-fireable view (the SAME truth the admission backstops
     /// intersect against) — a wish tool that is not fireable is dropped, never
     /// authored into a warrant that would then fail the RunApp backstop.
     registered: Arc<dyn RegisteredToolsView>,
-    /// RC-SW1: the author-time `instructions_ref` presence gate (fail-closed —
+    /// The author-time `instructions_ref` presence gate (fail-closed —
     /// instructions are a skill's semantic core; a dispatch-time miss would
     /// dead-letter opaquely instead).
     content: Arc<dyn ContentPresence>,
@@ -124,7 +124,7 @@ pub(crate) struct HostAppAuthor {
 
 impl HostAppAuthor {
     /// Wire the App-run resolver over the App catalog, the connection registry, the
-    /// live workflow author, and the RC-SW1 skill-bind seams (library authority +
+    /// live workflow author, and the skill-bind seams (library authority +
     /// live registry + fireable view + content presence).
     #[must_use]
     #[allow(clippy::too_many_arguments)] // distinct Arc deps for one host resolver; a
@@ -343,7 +343,7 @@ fn inject_app_args(dag: &mut DagSpec, args: &[u8]) -> Result<(), AppRunError> {
     Ok(())
 }
 
-/// RC-SW1: the deduped multi-skill tool WISH union, in envelope (canonical-bytes)
+/// The deduped multi-skill tool WISH union, in envelope (canonical-bytes)
 /// order. A version conflict across skills for one tool id is FAIL-SOFT
 /// first-occurrence-wins + a warning (a wish is a wish — one stale skill must
 /// never brick the App). A pure function (Rule 5.2 — unit-testable).
@@ -396,7 +396,7 @@ fn combined_tool_wish(
     wish
 }
 
-/// RC-SW1: the ENTRY agentic step — the first MODEL step that is a DAG ROOT (no
+/// The ENTRY agentic step — the first MODEL step that is a DAG ROOT (no
 /// incoming edge). This is EXACTLY where `author_with_context_items` →
 /// `inject_entry_config` places the skill instructions (it targets DAG roots),
 /// so the tool fold and the instruction inject MUST co-locate on it — otherwise
@@ -416,7 +416,7 @@ fn entry_agentic_step_index(dag: &DagSpec) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// RC-SW1: fold the GRANTED (already-intersected) skill tools into the ENTRY
+/// Fold the GRANTED (already-intersected) skill tools into the ENTRY
 /// AGENTIC step's `tool_contract` — the SAME root model step the instructions
 /// bind to ([`entry_agentic_step_index`]). The fold decides LOOP EXISTENCE at
 /// author time (a non-empty contract compiles the step as a generator; the
@@ -444,7 +444,7 @@ fn fold_skill_tools(dag: &mut DagSpec, granted: &BTreeMap<String, String>) {
     }
 }
 
-/// RC-SW1: resolve each [`SkillRef`]'s instructions into a labeled `skill:<name>`
+/// Resolve each [`SkillRef`]'s instructions into a labeled `skill:<name>`
 /// [`ContextItemRef`] — FAIL-CLOSED on a blob missing from the content store at
 /// author time (instructions are the skill's semantic core; deferring the miss to
 /// dispatch would dead-letter the run opaquely — "never run the model on PARTIAL
@@ -508,7 +508,7 @@ fn decode_present_ref(
 /// T-RUNAPP-CONTEXT-RAIL: resolve the App's declarative KNOWLEDGE rail —
 /// `references.context / prompts / rules / memory` + `steering_config.context.context_refs`
 /// — into labeled [`ContextItemRef`]s, merged (alongside any skill instructions) through
-/// the SAME identity-bearing entry-step `author_with_context_items` inject RC-SW1 uses.
+/// the SAME identity-bearing entry-step `author_with_context_items` inject the skill bind uses.
 /// Each item is FAIL-CLOSED on a blob missing from the content store (mirrors
 /// [`skill_context_items`]). Labels keep each item legible in the assembled prompt
 /// (`context.<prefix>:<name>` per `kx-context-assembler`); a raw steering ref (no name)
@@ -615,7 +615,7 @@ impl AppAuthor for HostAppAuthor {
         })?;
         inject_app_args(&mut dag, args)?;
 
-        // (3b) RC-SW1 skills + T-RUNAPP-CONTEXT-RAIL steering.tools: skill instructions →
+        // (3b) skills + T-RUNAPP-CONTEXT-RAIL steering.tools: skill instructions →
         //      labeled context items (fail-closed CAS presence); the skill tool wishes
         //      UNIONed with steering_config.tools.requested_grants → ONE server-side
         //      intersection (wish ∩ caller-Use ∩ fireable ∩ registry ∩ compat) folded onto
@@ -891,7 +891,7 @@ mod tests {
         assert!(matches!(err, AppRunError::InvalidArgs(_)));
     }
 
-    // ----- RC-SW1: skill-bind pure helpers -----
+    // ----- skill-bind pure helpers -----
 
     fn skill(name: &str, instructions_ref: &str, tools: &[(&str, &str)]) -> SkillRef {
         SkillRef {
@@ -1002,7 +1002,7 @@ mod tests {
         }
     }
 
-    // ----- RC-SW1: author_app end-to-end (the digest no-op pin + the skill bind) -----
+    // ----- author_app end-to-end (the digest no-op pin + the skill bind) -----
 
     use kx_content::InMemoryContentStore;
     use kx_gateway_core::WorkflowAuthor as _;

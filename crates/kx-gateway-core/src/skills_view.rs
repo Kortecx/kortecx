@@ -1,4 +1,4 @@
-//! The RC-SW1 skill-catalog seam behind `ListSkills` / `GetSkillForm` /
+//! The skill-catalog seam behind `ListSkills` / `GetSkillForm` /
 //! `AddSkill` / `RemoveSkill`.
 //!
 //! A "skill" is a `kortecx.skill/v1` manifest — instructions (content-store, by

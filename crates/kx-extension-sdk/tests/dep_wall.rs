@@ -79,7 +79,7 @@ const ALLOWED: &[&str] = &[
     "kx-capability",
     "kx-content",
     "kx-gateway-core",
-    // RC-SW1: the kortecx.skill/v1 manifest + pack loader the DECLARATIVE-family
+    // The kortecx.skill/v1 manifest + pack loader the DECLARATIVE-family
     // conformance harness validates against. Itself a dep-wall-pinned pure leaf
     // (serde/serde_json/thiserror only) — cannot drag FFI or a writer in here.
     "kx-skill",

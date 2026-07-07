@@ -1,5 +1,5 @@
 /**
- * The Skills panel (RC-SW1) — the govern surface over the per-principal skill
+ * The Skills panel — the govern surface over the per-principal skill
  * catalog. A skill is a DECLARATIVE `kortecx.skill/v1` bundle: instructions +
  * a tool grant-WISH set. Adding one grants NOTHING (SN-8): at run the server
  * intersects the wish against the caller's grants and the live broker
@@ -177,7 +177,7 @@ export function SkillsPanel() {
       {list.notWired ? (
         <EmptyState
           title="Skill catalog not available"
-          detail="This gateway predates the skill catalog (RC-SW1). Upgrade the serve to govern skills here."
+          detail="This gateway predates the skill catalog. Upgrade the serve to govern skills here."
         />
       ) : list.isError ? (
         <ErrorNotice error={toUiError(list.error)} />

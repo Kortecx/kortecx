@@ -1,5 +1,5 @@
 /**
- * RC-SW2 — swarm/team authoring, the persona library, and the App.run→RunApp fix (TS).
+ * Swarm/team authoring, the persona library, and the App.run→RunApp fix (TS).
  *
  * The TS mirror of `bindings/python/tests/test_swarm_personas.py`: swarm/fan-out/map-
  * reduce lower to the same `[a & b] > g` topology the golden corpus pins, personas fold

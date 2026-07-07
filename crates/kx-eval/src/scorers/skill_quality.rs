@@ -1,4 +1,4 @@
-//! Skill-quality scorer (RC-SW1) — did a SKILL-bearing run stay inside its wish
+//! Skill-quality scorer — did a SKILL-bearing run stay inside its wish
 //! set and actually use it?
 //!
 //! The task declares the skill's tool WISH set (`skill_wish_tools`). The gate:
