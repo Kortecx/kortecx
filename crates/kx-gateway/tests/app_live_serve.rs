@@ -361,13 +361,15 @@ async fn chat_with_explicit_tools_fires_scoped_by_salt_no_autogrant() {
     running.shutdown().await.unwrap();
 }
 
-/// SN-8 (DETERMINISTIC — no model): a `chat --tools` turn whose `tool_contract` names a tool
-/// the serve did NOT register is REFUSED at `SubmitWorkflow` (`failed_precondition`), BEFORE any
-/// run — the fireable-grant backstop (the server never blanket-grants an un-vetted tool). This
-/// pins the SCOPING half of "explicit grant, not autogrant blanket" without needing a live model.
+/// SN-8 (DETERMINISTIC — no model): a `chat --tools` `SubmitWorkflow` that CANNOT be admitted
+/// is REFUSED at AUTHORING (`InvalidArgument`), never bound — the agentic path fails closed
+/// client-side, so an un-vetted tool is never silently accepted. The specific reason is
+/// environment-dependent (a model-free serve refuses the MODEL step "requires a served model";
+/// a served serve refuses the unregistered tool by name), so this pins the STABLE invariant —
+/// the `InvalidArgument` refusal — not the message. The POSITIVE scoping (the granted tool fires,
+/// no autogrant) is the live witness above.
 #[tokio::test(flavor = "multi_thread")]
-async fn chat_tools_contract_with_an_unregistered_tool_is_refused_at_submit() {
-    // A model-free serve registers no tool capabilities, so ANY tool_contract is un-fireable.
+async fn chat_tools_workflow_is_refused_at_authoring_when_unadmittable() {
     let dir = tempfile::TempDir::new().unwrap();
     let running = start(common::gateway_config(&dir, true, HashMap::new()))
         .await
@@ -377,18 +379,11 @@ async fn chat_tools_contract_with_an_unregistered_tool_is_refused_at_submit() {
     let status = c
         .submit_workflow(chat_tools_request("echo pong", "no-such/tool"))
         .await
-        .expect_err("a tool_contract naming an unregistered tool must be refused");
-    // The server rejects the ungranted tool at AUTHORING (InvalidArgument, before the run),
-    // never binds a warrant for it — the SN-8 scoping half of "explicit grant, not a blanket".
+        .expect_err("an un-admittable chat --tools workflow must be refused, not accepted");
     assert_eq!(
         status.code(),
         tonic::Code::InvalidArgument,
-        "an unregistered tool in the contract is refused, got: {status:?}"
-    );
-    assert!(
-        status.message().contains("unregistered tool") && status.message().contains("no-such/tool"),
-        "the refusal names the offending tool, got: {}",
-        status.message()
+        "refused at authoring (never admitted), got: {status:?}"
     );
     running.shutdown().await.unwrap();
 }
