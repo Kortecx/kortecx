@@ -518,9 +518,7 @@ class Flow:
         if not voters:
             raise ChainError("consensus() needs at least one voter")
         if vote not in ("judge", "majority"):
-            raise ChainError(
-                f"consensus(vote=…) must be 'judge' or 'majority', got {vote!r}"
-            )
+            raise ChainError(f"consensus(vote=…) must be 'judge' or 'majority', got {vote!r}")
         leaves = [_participant_to_node(v, goal) for v in voters]
         self.parallel(*leaves)
         if vote == "judge":

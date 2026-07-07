@@ -140,9 +140,7 @@ def test_supervisor_lowers_to_planner_then_workers_then_gather() -> None:
 def test_supervisor_is_byte_identical_to_the_equivalent_chain() -> None:
     # A supervisor is pure composition — byte-identical to the `p > [a & b] > g` chain
     # (the tri-surface golden contract; digest-invariant, no new step kind).
-    sup = kx.supervisor(
-        ("A", ["echo"]), ("B", ["echo"]), planner="Plan", gather="Merge"
-    )
+    sup = kx.supervisor(("A", ["echo"]), ("B", ["echo"]), planner="Plan", gather="Merge")
     dsl = kx.chain(
         "p > [a & b] > g",
         {
