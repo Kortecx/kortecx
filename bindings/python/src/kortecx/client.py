@@ -123,6 +123,21 @@ def _fill_default_model(
     return request
 
 
+def _tools_to_contract(tools: Sequence[str]) -> Dict[str, str]:
+    """Normalize a ``chat(tools=…)`` grant list to a ``{name: version}`` contract,
+    accepting BOTH the CLI ``--tools`` ``id@version`` form AND a bare ``id`` (→ version
+    ``"1"``, the ``@tool`` grammar default). Passing the map to ``flow().agent(tools=…)``
+    lowers to the exact same tool_contract the CLI builds — so the surfaces agree."""
+    contract: Dict[str, str] = {}
+    for tool in tools:
+        name, sep, version = tool.rpartition("@")
+        if sep and name and version:
+            contract.setdefault(name, version)
+        else:
+            contract.setdefault(tool, "1")
+    return contract
+
+
 def _is_model_step(step: dict) -> bool:
     """True when a portable-blueprint step is a MODEL step (mirrors the CLI
     ``resolve_kind`` inference: an explicit ``kind``, else model fields ⇒ model)."""
@@ -822,6 +837,9 @@ class KxClient:
         k: int = 4,
         timeout: float = 120.0,
         image: Optional[ImageInput] = None,
+        tools: Optional[Sequence[str]] = None,
+        max_turns: Optional[int] = None,
+        max_tool_calls: Optional[int] = None,
     ) -> str:
         """Ask the served model a single question and get its answer text (POC-1).
 
@@ -845,7 +863,38 @@ class KxClient:
         engine; also prompted OCR). RC4b: ``dataset`` + ``image`` together binds
         ``kx/recipes/vision-rag`` — the VLM answers about the image WHILE grounded on the
         dataset's retrieved text (a clear :class:`KxUsage` when vision-RAG is not
-        provisioned, never a silent drop)."""
+        provisioned, never a silent drop).
+
+        Pass ``tools`` (a sequence of ``tool_id`` / ``tool_id@version`` grants) to make
+        the turn a BOUNDED agentic (ReAct) turn — one MODEL step granted ONLY those tools,
+        looping reason→tool→observe up to ``max_turns`` (default 8) / ``max_tool_calls``
+        (default 20). The server builds the scoped warrant from the grants and re-verifies
+        each at every fire (SN-8) — never a blanket auto-grant. Lowers through the same
+        ``flow().agent(tools=...)`` path as the CLI ``kx chat --tools`` and scopes the wait
+        to THIS turn's chain (``react_chain_salt``). Does not compose with
+        ``dataset``/``image`` yet (a clear :class:`KxUsage`, never a silent drop)."""
+        if tools:
+            if dataset is not None or image is not None:
+                from .errors import KxUsage
+
+                raise KxUsage(
+                    "chat(tools=...) does not compose with dataset/image yet; run them separately"
+                )
+            from .flow import flow
+
+            chain = (
+                flow()
+                .agent(
+                    prompt,
+                    tools=_tools_to_contract(tools),
+                    max_turns=max_turns,
+                    max_tool_calls=max_tool_calls,
+                )
+                .to_chain()
+            )
+            result = self.run_chain(chain, wait=True, timeout=timeout)
+            assert isinstance(result, Result)
+            return result.text or ""
         if image is not None:
             image_ref = self._resolve_image_ref(image)
             if dataset is not None:
@@ -891,7 +940,14 @@ class KxClient:
         _fill_default_model(request, self.default_model)
         handle = self._call(lambda: self._stub.SubmitWorkflow(request, metadata=self._md))
         if not wait:
-            return Run(self, handle.instance_id, b"", handle.recipe_fingerprint)
+            return Run(
+                self, handle.instance_id, b"", handle.recipe_fingerprint, handle.react_chain_salt
+            )
+        # A tool-granted (agentic) workflow settles via its ReAct chain, scoped by the
+        # server-returned salt — not the first committed Mote (which on a shared journal
+        # would be a stale/foreign answer). A non-agentic workflow keeps the await-any path.
+        if handle.react_chain_salt:
+            return self._await_react(handle.instance_id, handle.react_chain_salt, timeout)
         outcome = _wait.poll_any(self._stub, self._md, handle.instance_id, timeout)
         return self._finish(outcome)
 
@@ -2605,6 +2661,18 @@ class KxClient:
         statically-known terminal (backs :meth:`Run.wait` for a workflow run)."""
         return self._finish(_wait.poll_any(self._stub, self._md, instance, timeout))
 
+    def _await_react(self, instance: bytes, salt: bytes, timeout: float) -> Result:
+        """Wait for an AGENTIC run's ReAct chain to settle (a tool-granted MODEL step
+        has no static terminal). Scopes the ``ListReactTurns`` settle poll to THIS run's
+        chain via ``salt`` (serve shares one journal/instance_id), so a repeated
+        agentic turn never reads a stale/foreign answer. Backs :meth:`Run.wait` +
+        ``submit_workflow(wait=True)`` for a tool-granted run."""
+        outcome = _wait.poll_react_result(self._stub, self._md, instance, b"", timeout, salt)
+        return _dataclasses.replace(
+            self._finish(outcome),
+            react_chain_salt=hexids.encode(salt) if salt else "",
+        )
+
     @staticmethod
     def _finish(outcome: _wait.WaitOutcome) -> Result:
         result = Result.from_outcome(outcome)
@@ -2813,13 +2881,40 @@ class AsyncKxClient:
         k: int = 4,
         timeout: float = 120.0,
         image: Optional[ImageInput] = None,
+        tools: Optional[Sequence[str]] = None,
+        max_turns: Optional[int] = None,
+        max_tool_calls: Optional[int] = None,
     ) -> str:
         """Async mirror of :meth:`KxClient.chat` — ask the served model a single
         question (optionally AUTO-RAG-grounded against ``dataset``, or image-bearing
         via ``image`` → ``kx/recipes/vision``) and return the committed answer text.
         The server degrades honestly to a plain answer when the dataset is
         missing/empty (never fakes grounding); RC4b: ``dataset`` + ``image`` together
-        binds ``kx/recipes/vision-rag`` (image answer grounded on retrieved text)."""
+        binds ``kx/recipes/vision-rag`` (image answer grounded on retrieved text).
+        Pass ``tools`` for a bounded agentic (ReAct) turn granted ONLY those tools (SN-8;
+        does not compose with ``dataset``/``image`` yet)."""
+        if tools:
+            if dataset is not None or image is not None:
+                from .errors import KxUsage
+
+                raise KxUsage(
+                    "chat(tools=...) does not compose with dataset/image yet; run them separately"
+                )
+            from .flow import flow
+
+            chain = (
+                flow()
+                .agent(
+                    prompt,
+                    tools=_tools_to_contract(tools),
+                    max_turns=max_turns,
+                    max_tool_calls=max_tool_calls,
+                )
+                .to_chain()
+            )
+            result = await self.run_chain(chain, wait=True, timeout=timeout)
+            assert isinstance(result, Result)
+            return result.text or ""
         if image is not None:
             image_ref = await self._resolve_image_ref(image)
             if dataset is not None:
@@ -2854,7 +2949,12 @@ class AsyncKxClient:
         _fill_default_model(request, self.default_model)
         handle = await self._acall(self._stub.SubmitWorkflow(request, metadata=self._md))
         if not wait:
-            return AsyncRun(self, handle.instance_id, b"", handle.recipe_fingerprint)
+            return AsyncRun(
+                self, handle.instance_id, b"", handle.recipe_fingerprint, handle.react_chain_salt
+            )
+        # A tool-granted (agentic) workflow settles via its salt-scoped ReAct chain.
+        if handle.react_chain_salt:
+            return await self._await_react(handle.instance_id, handle.react_chain_salt, timeout)
         outcome = await _wait.apoll_any(self._stub, self._md, handle.instance_id, timeout)
         return KxClient._finish(outcome)
 
@@ -3431,3 +3531,12 @@ class AsyncKxClient:
         """Wait for the FIRST committed Mote (the submit / run_chain path — no static
         terminal; backs :meth:`AsyncRun.wait` for a workflow run)."""
         return KxClient._finish(await _wait.apoll_any(self._stub, self._md, instance, timeout))
+
+    async def _await_react(self, instance: bytes, salt: bytes, timeout: float) -> Result:
+        """Wait for an AGENTIC run's ReAct chain to settle, scoped by ``salt`` (backs
+        :meth:`AsyncRun.wait` + ``submit_workflow(wait=True)`` for a tool-granted run)."""
+        outcome = await _wait.apoll_react_result(self._stub, self._md, instance, b"", timeout, salt)
+        return _dataclasses.replace(
+            KxClient._finish(outcome),
+            react_chain_salt=hexids.encode(salt) if salt else "",
+        )

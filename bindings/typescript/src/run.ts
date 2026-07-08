@@ -141,10 +141,19 @@ export class Run {
     return this._terminal;
   }
 
-  /** Block until this run's terminal Mote commits (or fails / times out). A run started
-   * via `submitWorkflow` / `runChain` carries no statically-known terminal, so it waits
-   * for the FIRST committed Mote (the await-any path, like `kx … --wait`). */
+  /** Block until this run settles (commits / fails / times out). An agentic run (a
+   * tool-granted MODEL step) settles via its ReAct chain — scoped by `reactChainSalt` so
+   * serve's shared journal surfaces THIS run's answer, not a stale/foreign Mote. A run
+   * with a static terminal waits on it; a plain `submitWorkflow` / `runChain` run waits
+   * for the FIRST committed Mote (`kx … --wait`). */
   wait(opts: { timeoutMs?: number; mode?: WaitMode } = {}): Promise<Result> {
+    if (this._reactChainSalt.length > 0) {
+      return this.client._awaitReact(
+        this._instance,
+        this._reactChainSalt,
+        opts.timeoutMs ?? 120_000,
+      );
+    }
     if (this._terminal.length === 0) {
       return this.client._awaitAny(this._instance, opts.timeoutMs ?? 120_000);
     }

@@ -1427,6 +1427,26 @@ fn submit_status(err: SubmitterError) -> Status {
     }
 }
 
+/// Derive the per-run agentic chain key returned on [`proto::RunHandle`]. A
+/// tool-granted MODEL Mote (its server-built warrant carries non-empty `tool_grants`)
+/// launches an agentic ReAct chain whose turns the coordinator salts by that step's
+/// `MoteId` (`step_salt = *launch_id.as_bytes()`, `kx-coordinator` `settle_agentic_launches`).
+/// Reporting it lets a client on serve's SHARED journal (a single `instance_id` across
+/// every run) scope `ListReactTurns` / the answer poll to THIS submission's chain — the
+/// `SubmitWorkflow`/`RunApp` analogue of `InvokeResponse.react_chain_salt`.
+///
+/// Returns that step's id iff EXACTLY ONE agentic step is present; otherwise EMPTY (no
+/// agentic step, or more than one — ambiguous, so the client falls back to
+/// instance_id-only scoping, exactly as it does against an old server). Server-derived
+/// from the bound motes, never client-supplied (SN-8).
+fn agentic_chain_salt(motes: &[(kx_mote::Mote, kx_warrant::WarrantSpec)]) -> Vec<u8> {
+    let mut agentic = motes.iter().filter(|(_, w)| !w.tool_grants.is_empty());
+    match (agentic.next(), agentic.next()) {
+        (Some((mote, _)), None) => mote.id.as_bytes().to_vec(),
+        _ => Vec::new(),
+    }
+}
+
 /// Map the wire palette (`WorkflowStep` / `WorkflowEdge` + execution mode) into
 /// gateway-core's authoring vocabulary. The SINGLE shared parse that both
 /// `SubmitWorkflow` and the G2 `RunApp` path (via the host, after lowering a stored
@@ -1888,7 +1908,7 @@ impl KxGateway for GatewayService {
                      executor wired); a critic-bearing workflow is refused",
                 ));
             }
-            // B3: enforce the CROSS-Mote critic refusals (R-2/R-4/R-5/R-6) the per-Mote
+            // Enforce the CROSS-Mote critic refusals (R-2/R-4/R-5/R-6) the per-Mote
             // submit path cannot — `critic_for` must reference an existing WORLD-MUTATING
             // producer, no producer may carry two critics, a critic may not be itself
             // WORLD-MUTATING, etc. `master_warrant`/`run_id` are not consulted by these
@@ -1929,6 +1949,9 @@ impl KxGateway for GatewayService {
         Ok(Response::new(proto::RunHandle {
             instance_id: instance_id.to_vec(),
             recipe_fingerprint: recipe_fp.to_vec(),
+            // SubmitRun refuses client `tool_grants` + `react_seed` (above), so it can
+            // carry no agentic step ⇒ never a chain key.
+            react_chain_salt: Vec::new(),
         }))
     }
 
@@ -2121,6 +2144,8 @@ impl KxGateway for GatewayService {
             .register_run(bound.recipe_fingerprint)
             .await
             .map_err(submit_status)?;
+        // The agentic-step chain key, derived BEFORE the consuming submit loop.
+        let react_chain_salt = agentic_chain_salt(&bound.motes);
         for (mote, warrant) in bound.motes {
             self.submitter
                 .submit_mote(mote, warrant, false, false)
@@ -2131,6 +2156,7 @@ impl KxGateway for GatewayService {
         Ok(Response::new(proto::RunHandle {
             instance_id: instance_id.to_vec(),
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
+            react_chain_salt,
         }))
     }
 
@@ -2208,6 +2234,9 @@ impl KxGateway for GatewayService {
             .register_run(bound.recipe_fingerprint)
             .await
             .map_err(submit_status)?;
+        // The agentic-step chain key, derived BEFORE the consuming submit loop (an
+        // App whose blueprint carries one tool-granted MODEL step is agentic).
+        let react_chain_salt = agentic_chain_salt(&bound.motes);
         for (mote, warrant) in bound.motes {
             self.submitter
                 .submit_mote(mote, warrant, false, false)
@@ -2218,6 +2247,7 @@ impl KxGateway for GatewayService {
         Ok(Response::new(proto::RunHandle {
             instance_id: instance_id.to_vec(),
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
+            react_chain_salt,
         }))
     }
 

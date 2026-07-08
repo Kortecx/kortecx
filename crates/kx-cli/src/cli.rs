@@ -44,8 +44,8 @@ usage: kx <command> [args]
               --cors-origin enables the gRPC-web browser shim for the listed origins, deny-by-default)
 
   client verbs (gRPC over the gateway; common flags: --endpoint <url> --token <t> | --token-file <p> --tls-ca <path> --json):
-    kx chat --message <text> [--dataset <name>] [--k N] [--timeout-secs N]
-                                                 (POC-1 chat: plain, or AUTO-RAG grounded over a dataset; see `kx help chat`)
+    kx chat --message <text> [--dataset <name>] [--k N] [--tools <id@ver,…>] [--timeout-secs N]
+                                                 (POC-1 chat: plain, AUTO-RAG grounded, or --tools = a bounded agentic turn; see `kx help chat`)
     kx agent run --goal <text> [--image <path>] [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N]
                                                  (the embeddable agent-runner: goal → answer + audited actions; see `kx help agent`)
     kx invoke <handle> --args <json> [--args-file <path>] [--wait] [--stream] [--timeout-secs N] [--out <file>] [--context <handle>]...
@@ -541,14 +541,20 @@ kx serve --dev-allow-local [--journal <path>] [--content <dir>] [--catalog-dir <
   gRPC-web shim for the listed origins (pair with --tls-cert/--tls-key for https)."
             .into(),
         "chat" => "\
-kx chat --message <text> [--dataset <name>] [--k N] [--timeout-secs N] [--json] [client flags]
+kx chat --message <text> [--dataset <name>] [--k N] [--tools <id@ver,…>] [--max-turns N]\n\
+        [--max-tool-calls N] [--timeout-secs N] [--json] [client flags]
   POC-1 chat over the served model. Plain by default; with --dataset it runs AUTO-RAG —
   the server embeds the message, retrieves the dataset's top-k documents (--k, default 4),
   and folds the EXACT retrieved refs into the prompt (edge-free, replayable, SN-8 exact-out).
   HONEST grounding: the turn is grounded ONLY when the named dataset exists and is non-empty;
   otherwise it answers plainly with a notice (grounding is never faked). A bare positional is
   taken as the message (`kx chat \"hello\"`). A thin Invoke wrapper (server-warranted, SN-8);
-  ingest a corpus first with `kx datasets ingest <name> ...`."
+  ingest a corpus first with `kx datasets ingest <name> ...`.
+  --tools <id@ver,…> attaches tools, making the turn a BOUNDED agentic (ReAct) turn: the
+  model may reason → call ONLY the named tools → observe, up to --max-turns (default 8) /
+  --max-tool-calls (default 20). The server builds the scoped warrant from the named tools
+  and re-verifies each at every fire (SN-8) — never a blanket auto-grant. --tools does not
+  yet compose with --image/--dataset (run them separately)."
             .into(),
         "agent" => "\
 kx agent run --goal <text> [--image <path>] [--context <handle>]... [--context-ref <hex>]... [--input k=v]... [--timeout-secs N] [client flags]

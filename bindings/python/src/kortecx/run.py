@@ -107,15 +107,30 @@ class Result:
 class _RunBase:
     """Common id surface for a started run (server-derived; never client-computed)."""
 
-    def __init__(self, instance_id: bytes, terminal_mote_id: bytes, recipe_fingerprint: bytes):
+    def __init__(
+        self,
+        instance_id: bytes,
+        terminal_mote_id: bytes,
+        recipe_fingerprint: bytes,
+        react_chain_salt: bytes = b"",
+    ):
         self._instance = instance_id
         self._terminal = terminal_mote_id
         self._fingerprint = recipe_fingerprint
+        # The agentic-step chain key (RunHandle/InvokeResponse.react_chain_salt).
+        # When set, ``wait`` scopes the settle poll to THIS run's ReAct chain on serve's
+        # shared journal instead of reading the first/foreign committed Mote.
+        self._salt = react_chain_salt
 
     @property
     def instance_id(self) -> str:
         """The run instance id (hex, 16B)."""
         return hexids.encode(self._instance)
+
+    @property
+    def react_chain_salt(self) -> str:
+        """The agentic-step chain key (hex, 32B); ``""`` for a non-agentic run."""
+        return hexids.encode(self._salt) if self._salt else ""
 
     @property
     def terminal_mote_id(self) -> str:
@@ -138,14 +153,25 @@ class _RunBase:
 class Run(_RunBase):
     """A started run on a sync :class:`~kortecx.client.KxClient`."""
 
-    def __init__(self, client: "KxClient", instance_id, terminal_mote_id, recipe_fingerprint):
-        super().__init__(instance_id, terminal_mote_id, recipe_fingerprint)
+    def __init__(
+        self,
+        client: "KxClient",
+        instance_id,
+        terminal_mote_id,
+        recipe_fingerprint,
+        react_chain_salt: bytes = b"",
+    ):
+        super().__init__(instance_id, terminal_mote_id, recipe_fingerprint, react_chain_salt)
         self._client = client
 
     def wait(self, timeout: float = 120.0, mode: str = "poll") -> Result:
-        """Block until this run's terminal Mote commits (or fails / times out). A run
-        started via ``submit`` / ``run_chain`` carries no statically-known terminal, so
-        it waits for the FIRST committed Mote (the await-any path, like ``kx … --wait``)."""
+        """Block until this run settles (commits / fails / times out). An agentic run
+        (a tool-granted MODEL step) settles via its ReAct chain — scoped by
+        ``react_chain_salt`` so serve's shared journal surfaces THIS run's answer, not a
+        stale/foreign Mote. A run with a statically-known terminal waits on it; a plain
+        ``submit`` / ``run_chain`` run waits for the FIRST committed Mote (``kx … --wait``)."""
+        if self._salt:
+            return self._client._await_react(self._instance, self._salt, timeout)
         if not self._terminal:
             return self._client._await_any(self._instance, timeout)
         return self._client._await_terminal(self._instance, self._terminal, timeout, mode)
@@ -182,11 +208,20 @@ class Run(_RunBase):
 class AsyncRun(_RunBase):
     """A started run on an :class:`~kortecx.client.AsyncKxClient`."""
 
-    def __init__(self, client: "AsyncKxClient", instance_id, terminal_mote_id, recipe_fingerprint):
-        super().__init__(instance_id, terminal_mote_id, recipe_fingerprint)
+    def __init__(
+        self,
+        client: "AsyncKxClient",
+        instance_id,
+        terminal_mote_id,
+        recipe_fingerprint,
+        react_chain_salt: bytes = b"",
+    ):
+        super().__init__(instance_id, terminal_mote_id, recipe_fingerprint, react_chain_salt)
         self._client = client
 
     async def wait(self, timeout: float = 120.0, mode: str = "poll") -> Result:
+        if self._salt:
+            return await self._client._await_react(self._instance, self._salt, timeout)
         if not self._terminal:
             return await self._client._await_any(self._instance, timeout)
         return await self._client._await_terminal(self._instance, self._terminal, timeout, mode)
