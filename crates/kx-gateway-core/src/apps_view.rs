@@ -28,11 +28,39 @@
 //!   `unimplemented` (a clear, fail-closed signal).
 //! - **No cross-instance import** in this seam (a sharing feature, deferred).
 
+use kx_content::ContentRef;
+
 use crate::error::GatewayError;
 
 /// Fail-closed cap on a single App envelope's serialized size (checked at the
 /// `SaveApp` handler BEFORE any host touch).
 pub const MAX_APP_ENVELOPE_BYTES: usize = 1 << 20; // 1 MiB
+
+/// Domain-separation tag for the handle-free App identity ([`app_digest_of`]). The exact
+/// preimage — `blake3(APP_DIGEST_DOMAIN ‖ canonical_envelope)` — is a stable, versioned
+/// contract: every producer of an `app_digest` (the runtime, an SDK) MUST compute it
+/// byte-for-byte identically so the digest names the SAME App everywhere. Changing the
+/// algorithm bumps the `/vN` tag (a new digest namespace), never a silent redefinition.
+pub const APP_DIGEST_DOMAIN: &[u8] = b"kortecx.app-digest/v1\0";
+
+/// `app_digest = blake3(APP_DIGEST_DOMAIN ‖ canonical_envelope)` — the FULL 32-byte,
+/// HANDLE-FREE identity of an App.
+///
+/// Unlike `app_ref` (the host folds in the save handle + truncates to 16B for local catalog
+/// dedup), `app_digest` is IDENTICAL for byte-identical envelopes no matter which handle or
+/// principal they are stored under — a stable, portable identity for the App itself.
+/// Exact-equality only (SN-8); never a similarity key.
+///
+/// Stability: a pure function of the canonical envelope bytes — any field intentionally
+/// excluded from identity must be stripped before hashing; today the envelope carries no
+/// such field, so the input is the canonical envelope verbatim.
+#[must_use]
+pub fn app_digest_of(canonical: &[u8]) -> [u8; 32] {
+    let mut keyed = Vec::with_capacity(APP_DIGEST_DOMAIN.len() + canonical.len());
+    keyed.extend_from_slice(APP_DIGEST_DOMAIN);
+    keyed.extend_from_slice(canonical);
+    ContentRef::of(&keyed).0
+}
 
 /// A stored App's summary — the catalog/display view. The envelope bytes are
 /// opaque to gateway-core; the host derives every field from the canonical JSON.
@@ -95,4 +123,38 @@ pub trait AppCatalog: Send + Sync {
         principal: &str,
         handle: &str,
     ) -> Result<Option<(AppRecord, Vec<u8>)>, GatewayError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// `app_digest_of` is a PURE, deterministic function of its input bytes, and
+        /// equals the exact `blake3(APP_DIGEST_DOMAIN ‖ bytes)` contract for ANY input
+        /// (SN-4 v2 #5 — property test over the arbitrary byte space, not hand-picked cases).
+        #[test]
+        fn app_digest_of_is_pure_and_matches_the_contract(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
+            prop_assert_eq!(app_digest_of(&bytes), app_digest_of(&bytes));
+            let mut preimage = APP_DIGEST_DOMAIN.to_vec();
+            preimage.extend_from_slice(&bytes);
+            prop_assert_eq!(app_digest_of(&bytes), ContentRef::of(&preimage).0);
+        }
+    }
+
+    #[test]
+    fn app_digest_is_deterministic_and_matches_the_domain_contract() {
+        let canonical = br#"{"name":"x","schema":"kortecx.app/v1"}"#;
+        // Deterministic + a pure function of the bytes.
+        assert_eq!(app_digest_of(canonical), app_digest_of(canonical));
+        assert_ne!(app_digest_of(canonical), app_digest_of(b"{}"));
+        // The exact cross-runtime byte contract: blake3(APP_DIGEST_DOMAIN ‖ canonical).
+        let mut preimage = APP_DIGEST_DOMAIN.to_vec();
+        preimage.extend_from_slice(canonical);
+        assert_eq!(app_digest_of(canonical), ContentRef::of(&preimage).0);
+        // Full 32-byte digest, domain-separated from the `app_ref` preimage tag.
+        assert_eq!(app_digest_of(canonical).len(), 32);
+        assert_ne!(APP_DIGEST_DOMAIN, b"kx-app\0".as_slice());
+    }
 }

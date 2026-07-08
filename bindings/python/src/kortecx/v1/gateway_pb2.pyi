@@ -1457,14 +1457,16 @@ class GetAppRequest(_message.Message):
     def __init__(self, handle: _Optional[str] = ...) -> None: ...
 
 class GetAppResponse(_message.Message):
-    __slots__ = ("found", "envelope_json", "summary")
+    __slots__ = ("found", "envelope_json", "summary", "app_digest")
     FOUND_FIELD_NUMBER: _ClassVar[int]
     ENVELOPE_JSON_FIELD_NUMBER: _ClassVar[int]
     SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    APP_DIGEST_FIELD_NUMBER: _ClassVar[int]
     found: bool
     envelope_json: bytes
     summary: AppSummary
-    def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[AppSummary, _Mapping]] = ...) -> None: ...
+    app_digest: bytes
+    def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[AppSummary, _Mapping]] = ..., app_digest: _Optional[bytes] = ...) -> None: ...
 
 class RunAppRequest(_message.Message):
     __slots__ = ("handle", "args")

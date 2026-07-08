@@ -153,6 +153,13 @@ export class StoredApp {
   constructor(
     readonly summary: AppSummary,
     readonly envelope: Record<string, unknown>,
+    /**
+     * The 32-byte HANDLE-FREE App identity as lowercase hex: `blake3` over the
+     * canonical envelope, identical for byte-identical envelopes regardless of the
+     * handle they are stored under (contrast `summary.appRef`, which is handle-scoped).
+     * Empty string when not found.
+     */
+    readonly appDigest: string,
   ) {}
 
   static fromProto(r: PbGetAppResponse): StoredApp {
@@ -163,6 +170,6 @@ export class StoredApp {
     const summary = r.summary
       ? AppSummary.fromProto(r.summary)
       : new AppSummary("", "", "", "", "", [], 0, false);
-    return new StoredApp(summary, envelope);
+    return new StoredApp(summary, envelope, encode(r.appDigest));
   }
 }

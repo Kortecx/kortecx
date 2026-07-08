@@ -147,6 +147,13 @@ def test_save_list_get_run_round_trip(dev_server) -> None:
         assert stored.envelope["name"] == "Pure Demo"
         assert stored.summary.step_count == 1
 
+        # The handle-free portable identity is surfaced: 64 hex chars (32 bytes),
+        # stable across an identical re-fetch, and wider than the handle-scoped app_ref.
+        assert len(stored.app_digest) == 64
+        assert all(c in "0123456789abcdef" for c in stored.app_digest)
+        assert client.get_app("apps/local/pure-demo").app_digest == stored.app_digest
+        assert stored.app_digest != stored.summary.app_ref
+
         # identical re-save dedups (content-addressed).
         again = a.save(client=client)
         assert again.deduplicated

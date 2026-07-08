@@ -103,7 +103,9 @@ mod writer;
 
 pub use alerts_view::{AlertEntry, AlertView};
 pub use apps_run::{AppAuthor, AppRunError};
-pub use apps_view::{AppCatalog, AppRecord, MAX_APP_ENVELOPE_BYTES};
+pub use apps_view::{
+    app_digest_of, AppCatalog, AppRecord, APP_DIGEST_DOMAIN, MAX_APP_ENVELOPE_BYTES,
+};
 pub use branches_view::{
     BranchItemRecord, BranchManifest, BranchStore, MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
 };

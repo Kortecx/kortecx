@@ -1919,7 +1919,12 @@ pub fn render_get_app(resp: &proto::GetAppResponse, json: bool) -> String {
         };
     };
     if json {
-        json!({ "found": true, "summary": app_summary_json(s) }).to_string()
+        json!({
+            "found": true,
+            "summary": app_summary_json(s),
+            "app_digest": hex::encode(&resp.app_digest),
+        })
+        .to_string()
     } else {
         let tags = if s.tags.is_empty() {
             String::new()
@@ -1927,13 +1932,14 @@ pub fn render_get_app(resp: &proto::GetAppResponse, json: bool) -> String {
             format!("  [{}]", s.tags.join(", "))
         };
         format!(
-            "{}  {} v{}  ref={}  {} step(s){}\n  {}",
+            "{}  {} v{}  ref={}  {} step(s){}\n  digest={}\n  {}",
             s.handle,
             s.name,
             s.version,
             hex::encode(&s.app_ref),
             s.step_count,
             tags,
+            hex::encode(&resp.app_digest),
             s.description
         )
     }

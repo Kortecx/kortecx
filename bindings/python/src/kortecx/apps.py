@@ -134,11 +134,19 @@ class StoredApp:
 
     summary: AppSummary
     envelope: Dict[str, Any]
+    # 32-byte HANDLE-FREE App identity as hex (blake3 over the canonical envelope):
+    # identical for byte-identical envelopes regardless of the handle they are stored
+    # under (contrast ``summary.app_ref``, which is handle-scoped). "" when not found.
+    app_digest: str
 
     @classmethod
     def from_proto(cls, r: "_g.GetAppResponse") -> "StoredApp":
         envelope = json.loads(bytes(r.envelope_json).decode("utf-8")) if r.envelope_json else {}
-        return cls(summary=AppSummary.from_proto(r.summary), envelope=envelope)
+        return cls(
+            summary=AppSummary.from_proto(r.summary),
+            envelope=envelope,
+            app_digest=hexids.encode(r.app_digest),
+        )
 
 
 @dataclass

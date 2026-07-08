@@ -1207,6 +1207,7 @@ message GetAppResponse {
   bool       found         = 1;  // uniform not-found for absent OR not-owned (no oracle)
   bytes      envelope_json = 2;  // canonical stored bytes (empty when not found)
   AppSummary summary       = 3;  // the derived summary (absent when not found)
+  bytes      app_digest    = 4;  // 32B HANDLE-FREE portable App identity (blake3 over the canonical envelope); the cross-instance "same App" key; empty when not found
 }
 
 // G2 (App-pointer -> run resolution). Run a caller-owned App SERVER-SIDE: the
