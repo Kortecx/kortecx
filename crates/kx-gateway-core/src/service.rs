@@ -2735,16 +2735,20 @@ impl KxGateway for GatewayService {
                 if let Some(l) = self.locks.as_ref() {
                     summary.locked = l.is_locked(&principal, &summary.handle).unwrap_or(false);
                 }
+                // Handle-free portable App identity, derived from the canonical stored bytes.
+                let app_digest = crate::apps_view::app_digest_of(&envelope_json).to_vec();
                 Ok(Response::new(proto::GetAppResponse {
                     found: true,
                     envelope_json,
                     summary: Some(summary),
+                    app_digest,
                 }))
             }
             None => Ok(Response::new(proto::GetAppResponse {
                 found: false,
                 envelope_json: Vec::new(),
                 summary: None,
+                app_digest: Vec::new(),
             })),
         }
     }

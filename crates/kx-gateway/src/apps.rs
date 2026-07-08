@@ -316,6 +316,22 @@ mod tests {
     }
 
     #[test]
+    fn app_ref_is_handle_scoped_but_app_digest_is_not() {
+        use kx_gateway_core::app_digest_of;
+        let canonical = envelope("echo-app");
+        // Same envelope under two handles: app_ref DIFFERS (the handle is folded in) ...
+        assert_ne!(
+            app_ref_of("team/apps/a", &canonical),
+            app_ref_of("team/apps/b", &canonical)
+        );
+        // ... but app_digest is the SAME portable, handle-free id (full 32B) and is
+        // domain-separated from app_ref (its leading 16B are not the app_ref).
+        let digest = app_digest_of(&canonical);
+        assert_eq!(digest.len(), 32);
+        assert_ne!(&digest[..16], &app_ref_of("team/apps/a", &canonical)[..]);
+    }
+
+    #[test]
     fn save_get_list_round_trip() {
         let dir = tmp_dir();
         let db = AppsDb::open(&dir).unwrap();
