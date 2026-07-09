@@ -39,6 +39,7 @@ from .alerts import AlertsPage, AlertSummary
 from .appbundle import MAX_BUNDLE_CLOSURE_BYTES, MAX_BUNDLE_REFS, AppBundle
 from .approvals import PendingApproval, PendingApprovalsPage
 from .apps import (
+    AppManifest,
     AppSummary,
     SaveAppResult,
     ScaffoldLaunch,
@@ -1201,6 +1202,19 @@ class KxClient:
             lambda: self._stub.GetApp(_g.GetAppRequest(handle=handle), metadata=self._md)
         )
         return StoredApp.from_proto(resp) if resp.found else None
+
+    def get_app_manifest(self, handle: str) -> Optional[AppManifest]:
+        """Fetch an App's READ-ONLY capability manifest ("what this App needs vs. what
+        you have"): its requested tools/connections/model diffed against your live
+        policy. ``None`` if not found / not owned (uniform — no existence oracle). The
+        manifest gates nothing; the runtime enforces the same intersection at run
+        (SN-8). An old gateway without the seam raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.GetAppManifest(
+                _g.GetAppManifestRequest(handle=handle), metadata=self._md
+            )
+        )
+        return AppManifest.from_proto(resp) if resp.found else None
 
     # ----- skills (add / list / show / remove; off-journal skills.db) -----
 

@@ -1945,6 +1945,148 @@ pub fn render_get_app(resp: &proto::GetAppResponse, json: bool) -> String {
     }
 }
 
+fn capability_json(c: &proto::AppCapability) -> Value {
+    json!({
+        "id": c.id,
+        "version": c.version,
+        "requested": c.requested,
+        "in_policy": c.in_policy,
+        "inherited": c.inherited,
+    })
+}
+
+fn tool_manifest_line(c: &proto::AppCapability) -> String {
+    let id = if c.version.is_empty() {
+        c.id.clone()
+    } else {
+        format!("{}@{}", c.id, c.version)
+    };
+    let status = if !c.requested && c.inherited {
+        "inherited"
+    } else if c.in_policy {
+        "satisfied"
+    } else {
+        "MISSING — not granted or not fireable"
+    };
+    format!("{id} [{status}]")
+}
+
+/// Render an App's capability manifest (`kx app manifest`) — what it needs (tools,
+/// connections, model) vs. what you have. `--json` emits the structured manifest;
+/// otherwise a human table. Read-only: the runtime enforces the same intersection at run.
+#[must_use]
+pub fn render_app_manifest(handle: &str, m: &proto::GetAppManifestResponse, json: bool) -> String {
+    use std::fmt::Write as _;
+    if json {
+        return json!({
+            "handle": handle,
+            "reach_inherit": m.reach_inherit,
+            "model_route": m.model_route,
+            "model_route_served": m.model_route_served,
+            "tools": m.tools.iter().map(capability_json).collect::<Vec<_>>(),
+            "connections": m.connections.iter().map(capability_json).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+    let mut out = String::new();
+    let _ = writeln!(out, "{handle} — capability manifest");
+    let route = if m.model_route.is_empty() {
+        "(served default)".to_string()
+    } else {
+        m.model_route.clone()
+    };
+    let model_status = if m.model_route_served {
+        "served"
+    } else {
+        "NOT SERVED — a run would refuse"
+    };
+    let _ = writeln!(out, "  model: {route}  [{model_status}]");
+    let reach = if m.reach_inherit {
+        "inherit_principal"
+    } else {
+        "explicit"
+    };
+    let _ = writeln!(out, "  tools (reach: {reach}):");
+    if m.tools.is_empty() {
+        let _ = writeln!(out, "    (none)");
+    }
+    for c in &m.tools {
+        let _ = writeln!(out, "    {}", tool_manifest_line(c));
+    }
+    let _ = writeln!(out, "  connections:");
+    if m.connections.is_empty() {
+        let _ = writeln!(out, "    (none)");
+    }
+    for c in &m.connections {
+        let status = if c.in_policy {
+            "registered"
+        } else {
+            "MISSING — register with `kx connections add`"
+        };
+        let _ = writeln!(out, "    {} [{status}]", c.id);
+    }
+    out.trim_end().to_string()
+}
+
+/// Render an envelope-only NEEDS view — the `kx app manifest` fallback on an older
+/// server without the manifest seam. Lists the App's declared tools/connections/model
+/// WITHOUT policy resolution (labelled honestly — no have/missing verdict).
+#[must_use]
+pub fn render_app_needs(handle: &str, env: &kx_app::AppEnvelope, json: bool) -> String {
+    use std::fmt::Write as _;
+    let tools: Vec<(&String, &String)> =
+        env.steering_config.tools.requested_grants.iter().collect();
+    let conns: Vec<&String> = env
+        .references
+        .connections
+        .iter()
+        .map(|c| &c.descriptor)
+        .collect();
+    let route = &env.steering_config.model.model_route;
+    let reach = if env.steering_config.tools.reach == kx_app::Reach::InheritPrincipal {
+        "inherit_principal"
+    } else {
+        "explicit"
+    };
+    if json {
+        return json!({
+            "handle": handle,
+            "needs_only": true,
+            "reach": reach,
+            "model_route": route,
+            "tools": tools.iter().map(|(id, v)| json!({ "id": id, "version": v })).collect::<Vec<_>>(),
+            "connections": conns,
+        })
+        .to_string();
+    }
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{handle} — declared needs (server can't resolve your policy — needs only)"
+    );
+    let route_disp = if route.is_empty() {
+        "(served default)"
+    } else {
+        route.as_str()
+    };
+    let _ = writeln!(out, "  model: {route_disp}");
+    let _ = writeln!(out, "  tools (reach: {reach}):");
+    if tools.is_empty() {
+        let _ = writeln!(out, "    (none)");
+    }
+    for (id, v) in &tools {
+        let _ = writeln!(out, "    {id}@{v}");
+    }
+    let _ = writeln!(out, "  connections:");
+    if conns.is_empty() {
+        let _ = writeln!(out, "    (none)");
+    }
+    for c in &conns {
+        let _ = writeln!(out, "    {c}");
+    }
+    out.trim_end().to_string()
+}
+
 // ----- D155 branches -----
 
 /// JSON of a branch manifest's `{path -> ref}` items (path-sorted display).
@@ -3212,6 +3354,78 @@ pub fn render_test_trigger(resp: &proto::TestTriggerResponse, json: bool) -> Str
 mod tests {
     use super::*;
     use crate::wait::{WaitOutcome, WaitState};
+
+    fn cap(
+        id: &str,
+        ver: &str,
+        requested: bool,
+        in_policy: bool,
+        inherited: bool,
+    ) -> proto::AppCapability {
+        proto::AppCapability {
+            id: id.to_string(),
+            version: ver.to_string(),
+            requested,
+            in_policy,
+            inherited,
+        }
+    }
+
+    #[test]
+    fn render_app_manifest_human_and_json() {
+        let m = proto::GetAppManifestResponse {
+            found: true,
+            reach_inherit: false,
+            tools: vec![
+                cap("echo", "1", true, true, false),
+                cap("gmail/search", "1", true, false, false),
+            ],
+            connections: vec![cap("mcp+stdio://gmail", "", true, false, false)],
+            model_route: "kx-serve:ghost".to_string(),
+            model_route_served: false,
+        };
+        let human = render_app_manifest("apps/local/a", &m, false);
+        assert!(human.contains("capability manifest"));
+        assert!(human.contains("echo@1 [satisfied]"), "{human}");
+        assert!(human.contains("gmail/search@1 [MISSING"), "{human}");
+        assert!(human.contains("NOT SERVED"), "{human}");
+        assert!(human.contains("mcp+stdio://gmail [MISSING"), "{human}");
+        let j: Value =
+            serde_json::from_str(&render_app_manifest("apps/local/a", &m, true)).unwrap();
+        assert_eq!(j["model_route_served"], json!(false));
+        assert_eq!(j["tools"][0]["in_policy"], json!(true));
+    }
+
+    #[test]
+    fn render_app_manifest_flags_inherited() {
+        let m = proto::GetAppManifestResponse {
+            found: true,
+            reach_inherit: true,
+            tools: vec![cap("echo", "1", false, true, true)],
+            connections: vec![],
+            model_route: String::new(),
+            model_route_served: true,
+        };
+        let human = render_app_manifest("apps/local/a", &m, false);
+        assert!(human.contains("reach: inherit_principal"), "{human}");
+        assert!(human.contains("echo@1 [inherited]"), "{human}");
+        assert!(human.contains("(served default)  [served]"), "{human}");
+    }
+
+    #[test]
+    fn render_app_needs_fallback_from_envelope() {
+        let mut env = kx_app::AppEnvelope::new("a", json!({ "steps": [] }));
+        env.steering_config.tools.requested_grants = [("echo".to_string(), "1".to_string())]
+            .into_iter()
+            .collect();
+        env.steering_config.tools.reach = kx_app::Reach::InheritPrincipal;
+        env.steering_config.model.model_route = "m".to_string();
+        let human = render_app_needs("apps/local/a", &env, false);
+        assert!(human.contains("needs only"), "{human}");
+        assert!(human.contains("reach: inherit_principal"), "{human}");
+        assert!(human.contains("echo@1"), "{human}");
+        assert!(human.contains("model: m"), "{human}");
+    }
 
     #[test]
     fn critic_verdict_summary_decodes_judge_and_ignores_prose() {

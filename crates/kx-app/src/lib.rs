@@ -42,6 +42,6 @@ mod envelope;
 
 pub use envelope::{
     canonical_json, summary_of, AppEnvelope, AppError, AppSummary, ArtifactRef, ConnectionRef,
-    ContextRef, ContextSteering, DatasetRef, Guards, ModelSteering, References, Replay, ReplayMode,
-    SkillRef, SteeringConfig, ToolRef, ToolsSteering, APP_SCHEMA,
+    ContextRef, ContextSteering, DatasetRef, Guards, ModelSteering, Reach, References, Replay,
+    ReplayMode, SkillRef, SteeringConfig, ToolRef, ToolsSteering, APP_SCHEMA,
 };

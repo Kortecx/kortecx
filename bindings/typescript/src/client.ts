@@ -16,6 +16,7 @@ import { AlertSummary, type AlertsPage } from "./alerts.js";
 import { AppBundle, MAX_BUNDLE_CLOSURE_BYTES, MAX_BUNDLE_REFS } from "./appbundle.js";
 import { PendingApprovalRow, type PendingApprovalsPage } from "./approvals.js";
 import {
+  AppManifest,
   AppSummary,
   SaveAppResult,
   type ScaffoldStatus,
@@ -747,6 +748,18 @@ export abstract class KxClientBase {
   async getApp(handle: string): Promise<StoredApp | null> {
     const resp = await rpc(this.grpc.getApp({ handle }));
     return resp.found ? StoredApp.fromProto(resp) : null;
+  }
+
+  /**
+   * Fetch an App's READ-ONLY capability manifest ("what this App needs vs. what you
+   * have"): its requested tools/connections/model diffed against your live policy.
+   * `null` if not found / not owned (uniform — no existence oracle). The manifest gates
+   * nothing; the runtime enforces the same intersection at run (SN-8). An old gateway
+   * without the seam throws {@link KxUnimplemented}.
+   */
+  async getAppManifest(handle: string): Promise<AppManifest | null> {
+    const resp = await rpc(this.grpc.getAppManifest({ handle }));
+    return resp.found ? AppManifest.fromProto(resp) : null;
   }
 
   /**

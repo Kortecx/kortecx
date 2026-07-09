@@ -373,6 +373,9 @@ async fn wait_for_shutdown_signal() {
 type AppRunSeam = (
     Option<Arc<dyn kx_gateway_core::AppAuthor>>,
     Option<Arc<dyn kx_gateway_core::RegisteredToolsView>>,
+    // The SAME host object as `AppAuthor`, also viewed as the manifest seam (it owns
+    // the envelope catalog + the policy folds), for `GetAppManifest`.
+    Option<Arc<dyn kx_gateway_core::AppManifestView>>,
 );
 
 // A flat, sequential wiring function: content store → coordinator → worker →
@@ -1624,44 +1627,47 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // block below (one construction, no duplicate connections.db handle churn). `AppRunSeam`
     // (module scope) names the (resolver, fireable) pair.
     #[cfg(feature = "mcp-gateway")]
-    let (app_author, app_fireable): AppRunSeam = match kx_mcp_gateway::SqliteConnectionStore::open(
-        catalog_dir.join("connections.db"),
-    ) {
-        Ok(conn_store) => {
-            // The live dataset view for RAG-on-App presence checks — Some ONLY where
-            // retrieve@1 is both registered AND fireable (serve-engine + hnsw); else None.
-            #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
-            let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> =
-                Some(dataset_view.clone() as Arc<dyn kx_gateway_core::DatasetView>);
-            #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
-            let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> = None;
-            // The SAME live-broker truth the service's fireable backstop uses.
-            let fireable: Arc<dyn kx_gateway_core::RegisteredToolsView> =
-                Arc::new(HostRegisteredTools {
-                    broker: local_broker.clone(),
-                });
-            let app_runner = crate::app_run::HostAppAuthor::new(
-                apps_db.clone(),
-                Arc::new(conn_store),
-                host_author.clone(),
-                demo.clone(),
-                tool_registry.clone(),
-                fireable.clone(),
-                content.clone(),
-                app_datasets,
-            );
-            (
-                Some(Arc::new(app_runner) as Arc<dyn kx_gateway_core::AppAuthor>),
-                Some(fireable),
-            )
-        }
-        Err(error) => {
-            tracing::warn!(%error, "G2: App-run resolver disabled (connections.db unavailable)");
-            (None, None)
-        }
-    };
+    let (app_author, app_fireable, app_manifest): AppRunSeam =
+        match kx_mcp_gateway::SqliteConnectionStore::open(catalog_dir.join("connections.db")) {
+            Ok(conn_store) => {
+                // The live dataset view for RAG-on-App presence checks — Some ONLY where
+                // retrieve@1 is both registered AND fireable (serve-engine + hnsw); else None.
+                #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
+                let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> =
+                    Some(dataset_view.clone() as Arc<dyn kx_gateway_core::DatasetView>);
+                #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
+                let app_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> = None;
+                // The SAME live-broker truth the service's fireable backstop uses.
+                let fireable: Arc<dyn kx_gateway_core::RegisteredToolsView> =
+                    Arc::new(HostRegisteredTools {
+                        broker: local_broker.clone(),
+                    });
+                let app_runner = Arc::new(crate::app_run::HostAppAuthor::new(
+                    apps_db.clone(),
+                    Arc::new(conn_store),
+                    host_author.clone(),
+                    demo.clone(),
+                    tool_registry.clone(),
+                    fireable.clone(),
+                    content.clone(),
+                    app_datasets,
+                ));
+                // ONE host object, viewed as both the run resolver (`AppAuthor`) and the
+                // capability-manifest seam (`AppManifestView`) — they share the envelope
+                // catalog + the policy folds, so the manifest agrees with the run.
+                (
+                    Some(app_runner.clone() as Arc<dyn kx_gateway_core::AppAuthor>),
+                    Some(fireable),
+                    Some(app_runner as Arc<dyn kx_gateway_core::AppManifestView>),
+                )
+            }
+            Err(error) => {
+                tracing::warn!(%error, "G2: App-run resolver disabled (connections.db unavailable)");
+                (None, None, None)
+            }
+        };
     #[cfg(not(feature = "mcp-gateway"))]
-    let (app_author, app_fireable): AppRunSeam = (None, None);
+    let (app_author, app_fireable, app_manifest): AppRunSeam = (None, None, None);
     // D113: wire the trigger seam (Register/List/Deregister/Submit/Test). Opens the
     // off-journal triggers.db; the HostTriggerAdmin starts runs via the SAME propose-
     // proxy the Invoke path uses (coordinator = sole journal writer; frozen trio
@@ -1774,6 +1780,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         if let Some(runner) = app_author.clone() {
             gateway = gateway.with_app_runner(runner);
             tracing::info!("G2: App-pointer run resolver wired (RunApp)");
+        }
+        if let Some(view) = app_manifest.clone() {
+            gateway = gateway.with_app_manifest(view);
+            tracing::info!("Permission-aware Apps: GetAppManifest seam wired");
         }
     }
 

@@ -13,7 +13,9 @@
  */
 
 import type {
+  AppCapability as PbAppCapability,
   AppSummary as PbAppSummary,
+  GetAppManifestResponse as PbGetAppManifestResponse,
   GetAppResponse as PbGetAppResponse,
   SaveAppResponse as PbSaveAppResponse,
 } from "./gen/kortecx/v1/gateway_pb.js";
@@ -212,5 +214,52 @@ export class StoredApp {
       ? AppSummary.fromProto(r.summary)
       : new AppSummary("", "", "", "", "", [], 0, false);
     return new StoredApp(summary, envelope, encode(r.appDigest), encode(r.sourceDigest));
+  }
+}
+
+/** One capability line in an {@link AppManifest} (a tool or a connection). */
+export interface AppCapability {
+  /** Tool id, or a connection descriptor. */
+  id: string;
+  /** Tool version; "" for a connection. */
+  version: string;
+  /** The App named this capability. */
+  requested: boolean;
+  /** Within your resolvable policy (fireable+registered tool / registered connection). */
+  inPolicy: boolean;
+  /** Surfaced only because the tool reach is `inherit_principal`. */
+  inherited: boolean;
+}
+
+/** A stored App's READ-ONLY capability manifest ("what this App needs vs. what you
+ * have"): the requested tools/connections/model diffed against your live policy. It
+ * gates nothing — the runtime enforces the same intersection at run (SN-8). */
+export class AppManifest {
+  constructor(
+    /** The App inherits your whole tool ceiling (reach=inherit_principal). */
+    readonly reachInherit: boolean,
+    readonly tools: AppCapability[],
+    readonly connections: AppCapability[],
+    /** The App's declared model route ("" ⇒ served default). */
+    readonly modelRoute: string,
+    /** The route is offered here (false ⇒ a run would refuse). */
+    readonly modelRouteServed: boolean,
+  ) {}
+
+  static fromProto(r: PbGetAppManifestResponse): AppManifest {
+    const cap = (c: PbAppCapability): AppCapability => ({
+      id: c.id,
+      version: c.version,
+      requested: c.requested,
+      inPolicy: c.inPolicy,
+      inherited: c.inherited,
+    });
+    return new AppManifest(
+      r.reachInherit,
+      r.tools.map(cap),
+      r.connections.map(cap),
+      r.modelRoute,
+      r.modelRouteServed,
+    );
   }
 }

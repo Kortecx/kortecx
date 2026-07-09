@@ -53,6 +53,45 @@ def test_builder_to_envelope_shape() -> None:
     assert json.loads(canon.decode()) == env
 
 
+def test_use_tool_dual_writes_the_wish_and_the_display_rail() -> None:
+    # use_tool records BOTH the display ref (references.tools) AND the wish the server
+    # actually consumes (steering_config.tools.requested_grants).
+    env = (
+        kx.app("x")
+        .blueprint(kx.flow().agent("go"))
+        .use_tool("mcp-echo/echo")
+        .use_tool("retrieve", "2")
+        .to_envelope()
+    )
+    assert env["references"]["tools"] == [
+        {"tool_id": "mcp-echo/echo", "tool_version": "1"},
+        {"tool_id": "retrieve", "tool_version": "2"},
+    ]
+    assert env["steering_config"]["tools"]["requested_grants"] == {
+        "mcp-echo/echo": "1",
+        "retrieve": "2",
+    }
+
+
+def test_reach_default_is_omitted_and_inherit_emits() -> None:
+    # Default reach ⇒ no reach key (byte-identical to the pre-reach form).
+    env = kx.app("x").blueprint(kx.flow().agent("go")).steer(requested_grants={"e": "1"}).to_envelope()
+    assert "reach" not in env["steering_config"]["tools"]
+    # inherit_principal ⇒ emitted, alongside any wish.
+    env2 = (
+        kx.app("x")
+        .blueprint(kx.flow().agent("go"))
+        .steer(reach=kx.REACH_INHERIT_PRINCIPAL)
+        .to_envelope()
+    )
+    assert env2["steering_config"]["tools"] == {"reach": "inherit_principal"}
+
+
+def test_reach_invalid_value_raises() -> None:
+    with pytest.raises(ValueError):
+        kx.app("x").blueprint(kx.flow().agent("go")).steer(reach="everything")
+
+
 def test_blueprint_required() -> None:
     with pytest.raises(ChainError):
         kx.app("x").to_envelope()
@@ -125,7 +164,7 @@ def test_golden_corpus_round_trips_byte_identically(case) -> None:
 
 def test_corpus_covers_required_shapes() -> None:
     names = {c["name"] for c in _CORPUS}
-    assert {"minimal", "agentic", "full", "grounded"} <= names
+    assert {"minimal", "agentic", "full", "grounded", "reach"} <= names
 
 
 # ---- server-backed (a real kx serve) ----

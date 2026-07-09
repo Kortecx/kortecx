@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
-import { KxClient, app, canonicalJson, flow, minimalAppEnvelope } from "../src/node.js";
+import { KxClient, Reach, app, canonicalJson, flow, minimalAppEnvelope } from "../src/node.js";
 import { devServer, stopAllServers } from "./fixtures/serve.js";
 
 const CORPUS_PATH = join(
@@ -53,6 +53,43 @@ describe("App builder (no server)", () => {
     expect("references" in env).toBe(false); // empty rails omitted
     // canonicalizes + round-trips.
     expect(JSON.parse(canonicalJson(env))).toEqual(env);
+  });
+
+  it("useTool dual-writes the wish and the display rail", () => {
+    // useTool records BOTH the display ref (references.tools) AND the wish the server
+    // actually consumes (steering_config.tools.requested_grants).
+    const env = app("x")
+      .blueprint(flow().agent("go"))
+      .useTool("mcp-echo/echo")
+      .useTool("retrieve", "2")
+      .toEnvelope();
+    expect((env.references as Record<string, unknown>).tools).toEqual([
+      { tool_id: "mcp-echo/echo", tool_version: "1" },
+      { tool_id: "retrieve", tool_version: "2" },
+    ]);
+    expect((env.steering_config as Record<string, unknown>).tools).toEqual({
+      requested_grants: { "mcp-echo/echo": "1", retrieve: "2" },
+    });
+  });
+
+  it("reach: default omitted, inherit_principal emitted, invalid throws", () => {
+    const def = app("x")
+      .blueprint(flow().agent("go"))
+      .steer({ requestedGrants: { e: "1" } })
+      .toEnvelope();
+    expect(
+      (def.steering_config as Record<string, { reach?: string }>).tools?.reach,
+    ).toBeUndefined();
+
+    const inh = app("x")
+      .blueprint(flow().agent("go"))
+      .steer({ reach: Reach.InheritPrincipal })
+      .toEnvelope();
+    expect((inh.steering_config as Record<string, unknown>).tools).toEqual({
+      reach: "inherit_principal",
+    });
+
+    expect(() => app("x").blueprint(flow().agent("go")).steer({ reach: "everything" })).toThrow();
   });
 
   it("rejects toEnvelope with a pending body upload", () => {
@@ -117,7 +154,7 @@ describe("App golden corpus parity (the cross-surface byte-shape gate)", () => {
   }
   it("covers the required shapes", () => {
     const names = new Set(corpus.map((c) => c.name));
-    for (const want of ["minimal", "agentic", "full", "grounded"])
+    for (const want of ["minimal", "agentic", "full", "grounded", "reach"])
       expect(names.has(want)).toBe(true);
   });
 });

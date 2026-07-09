@@ -58,15 +58,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use kx_app::{AppEnvelope, ConnectionRef, SkillRef};
+use kx_app::{AppEnvelope, ConnectionRef, Reach, SkillRef};
 use kx_blueprint::{to_request, DagSpec, StepSpec};
 use kx_content::{ContentRef, ContentStore};
 use kx_gateway_core::{
-    author_steps_from_proto, AppAuthor, AppCatalog, AppRunError, BinderError, BoundRecipe,
-    DatasetView, RegisteredToolsView,
+    author_steps_from_proto, AppAuthor, AppCapability, AppCatalog, AppManifest, AppManifestView,
+    AppRunError, BinderError, BoundRecipe, DatasetView, GatewayError, RegisteredToolsView,
 };
 use kx_mcp_gateway::SqliteConnectionStore;
-use kx_mote::{ContextItemRef, REACT_REQUIRE_APPROVAL_KEY};
+use kx_mote::{ContextItemRef, ToolName, ToolVersion, REACT_REQUIRE_APPROVAL_KEY};
 use kx_tool_registry::ToolRegistry;
 use kx_warrant::{SecretRef, SecretScope};
 
@@ -396,6 +396,79 @@ fn combined_tool_wish(
     wish
 }
 
+/// Map a caller-authority [`BinderError`] into the App-run error surface (identical
+/// variants). Centralized so the reach + wish resolution paths agree.
+fn map_binder_err(e: BinderError) -> AppRunError {
+    match e {
+        BinderError::NotAuthorized => AppRunError::NotAuthorized,
+        BinderError::InvalidArgs(d) => AppRunError::InvalidArgs(d),
+        BinderError::Internal(d) => AppRunError::Internal(d),
+    }
+}
+
+/// The caller's resolvable tool CEILING = `party_tool_authority ∩ fireable ∩
+/// registry` — the tools this caller is registered AND allowed to fire on this
+/// serve. The single source of truth shared by (a) the `Reach::InheritPrincipal`
+/// wish in [`HostAppAuthor::author_app`] and (b) the capability manifest — so the
+/// manifest can never report a tool "in policy" that the run would drop.
+///
+/// When [`party_tool_authority`] is `None` (the caller expressed no explicit tool
+/// grants — the permissive local-owner default), the allowlist leg is a no-op and
+/// the ceiling is `fireable ∩ registry` (BOUNDED — never unbounded; the broker only
+/// registers what the operator wired). Deterministic (sorted `BTreeSet`s + pure
+/// registry lookups) ⇒ the folded contract it seeds replays byte-identically.
+///
+/// # Errors
+/// Returns [`BinderError`] from [`party_tool_authority`] (e.g. `NotAuthorized` when
+/// the caller may not author blueprints at all).
+pub(crate) fn principal_tool_ceiling(
+    lib: &DemoLibrary,
+    party: &str,
+    registered: &dyn RegisteredToolsView,
+    tools: &dyn ToolRegistry,
+) -> Result<BTreeSet<(String, String)>, BinderError> {
+    let allowlist = party_tool_authority(lib, party)?;
+    let mut ceiling = BTreeSet::new();
+    for (id, ver) in registered.registered_grants() {
+        // Registry membership — author_app's `skill_union_grants` also requires it,
+        // so the ceiling matches what the run would actually materialize.
+        if tools
+            .lookup(&ToolName(id.clone()), &ToolVersion(ver.clone()))
+            .is_none()
+        {
+            continue;
+        }
+        if let Some(allow) = &allowlist {
+            if !allow.contains(&(id.clone(), ver.clone())) {
+                continue;
+            }
+        }
+        ceiling.insert((id, ver));
+    }
+    Ok(ceiling)
+}
+
+/// Apply `reach` to the declared tool wish. `Explicit` keeps the declared wish
+/// verbatim (the byte-identical default). `InheritPrincipal` REPLACES it with the
+/// caller's tool `ceiling` — a REPLACE, never a UNION with the declared set (a union
+/// would let an App reach a tool outside the ceiling; the forbidden SN-8 widen).
+/// Because the wish is either the declared set or the ceiling, and the downstream
+/// [`skill_union_grants`] fold only ever removes, the materialized contract is
+/// always `⊆ wish` and `⊆ ceiling` (monotonic narrowing). A pure function
+/// (Rule 5.2 — unit-testable without the gateway rig).
+fn effective_tool_wish(
+    reach: Reach,
+    declared: BTreeMap<String, String>,
+    ceiling: Option<&BTreeSet<(String, String)>>,
+) -> BTreeMap<String, String> {
+    match reach {
+        Reach::Explicit => declared,
+        Reach::InheritPrincipal => ceiling
+            .map(|c| c.iter().map(|(id, v)| (id.clone(), v.clone())).collect())
+            .unwrap_or_default(),
+    }
+}
+
 /// The ENTRY agentic step — the first MODEL step that is a DAG ROOT (no
 /// incoming edge). This is EXACTLY where `author_with_context_items` →
 /// `inject_entry_config` places the skill instructions (it targets DAG roots),
@@ -615,6 +688,25 @@ impl AppAuthor for HostAppAuthor {
         })?;
         inject_app_args(&mut dag, args)?;
 
+        // (3a) PR-3: the App's model axis (Axis 1). A non-empty `steering_config.model.
+        //      model_route` is a WISH intersected with the served catalog: if this serve
+        //      offers it, pin it onto every model step that did not already name a model
+        //      (an explicit per-step id wins); if it does NOT, REFUSE the run at submit —
+        //      never silently run on a different model (SN-8: the user names the model, no
+        //      auto-select, never degrade-to-primary). Empty route ⇒ no injection ⇒
+        //      byte-identical to the pre-PR-3 path (the digest no-op).
+        let route = &env.steering_config.model.model_route;
+        if !route.is_empty() {
+            if !self.lib.serve_model_ids().contains(route) {
+                return Err(AppRunError::UnservedModelRoute(route.clone()));
+            }
+            for s in &mut dag.steps {
+                if is_model_step(s) && s.model_id.is_empty() {
+                    s.model_id.clone_from(route);
+                }
+            }
+        }
+
         // (3b) skills + T-RUNAPP-CONTEXT-RAIL steering.tools: skill instructions →
         //      labeled context items (fail-closed CAS presence); the skill tool wishes
         //      UNIONed with steering_config.tools.requested_grants → ONE server-side
@@ -627,17 +719,37 @@ impl AppAuthor for HostAppAuthor {
                 self.content.as_ref(),
             )?);
         }
-        let wish = combined_tool_wish(
-            &env.references.skills,
-            &env.steering_config.tools.requested_grants,
+        // `Reach::InheritPrincipal` REPLACES the declared wish with the caller's whole
+        // tool ceiling (never a UNION — a union would widen past the ceiling, SN-8).
+        // The fold below re-applies the SAME `allowlist ∩ fireable ∩ registry`, so the
+        // materialized set is `ceiling ∩ compat ⊆ ceiling` (monotonic narrowing).
+        // Default (`Explicit`) leaves the declared wish untouched — byte-identical, and
+        // the ceiling is not even computed.
+        let reach = env.steering_config.tools.reach;
+        let ceiling = if reach == Reach::InheritPrincipal {
+            Some(
+                principal_tool_ceiling(
+                    &self.lib,
+                    party,
+                    self.registered.as_ref(),
+                    self.tools.as_ref(),
+                )
+                .map_err(map_binder_err)?,
+            )
+        } else {
+            None
+        };
+        let wish = effective_tool_wish(
+            reach,
+            combined_tool_wish(
+                &env.references.skills,
+                &env.steering_config.tools.requested_grants,
+            ),
+            ceiling.as_ref(),
         );
         if !wish.is_empty() {
             // Use-gate + conditional narrowing (SN-8; see party_tool_authority).
-            let allowlist = party_tool_authority(&self.lib, party).map_err(|e| match e {
-                BinderError::NotAuthorized => AppRunError::NotAuthorized,
-                BinderError::InvalidArgs(d) => AppRunError::InvalidArgs(d),
-                BinderError::Internal(d) => AppRunError::Internal(d),
-            })?;
+            let allowlist = party_tool_authority(&self.lib, party).map_err(map_binder_err)?;
             let fireable = self.registered.registered_grants();
             // The declared contract seed is read from the SAME entry agentic step the
             // fold targets (the root model step), so an author pin on that step wins +
@@ -728,6 +840,122 @@ impl AppAuthor for HostAppAuthor {
             }
         }
         Ok(bound)
+    }
+}
+
+/// Map a caller-authority [`BinderError`] into a [`GatewayError`] for the manifest seam.
+fn binder_to_gateway(e: BinderError) -> GatewayError {
+    match e {
+        BinderError::NotAuthorized => GatewayError::NotAuthorized,
+        BinderError::InvalidArgs(d) | BinderError::Internal(d) => GatewayError::Internal(d),
+    }
+}
+
+impl AppManifestView for HostAppAuthor {
+    /// Derive the READ-ONLY capability manifest for a caller-owned App: the requested
+    /// tools/connections/model diffed against the caller's LIVE policy, using the SAME
+    /// folds `author_app` applies at run ([`principal_tool_ceiling`], the connection
+    /// registry, the served catalog) — so a capability the manifest reports `in_policy`
+    /// is exactly one the run would grant. Advisory: it reads, never writes.
+    fn manifest(&self, principal: &str, handle: &str) -> Result<Option<AppManifest>, GatewayError> {
+        let Some((_, bytes)) = self
+            .apps
+            .get(principal, handle)
+            .map_err(|e| GatewayError::Internal(format!("apps.db read: {e}")))?
+        else {
+            return Ok(None); // absent OR not-owned — uniform, no oracle.
+        };
+        let env = AppEnvelope::from_json_slice(&bytes)
+            .map_err(|e| GatewayError::Internal(format!("stored envelope invalid: {e}")))?;
+
+        let reach_inherit = env.steering_config.tools.reach == Reach::InheritPrincipal;
+        // The declared wish (steering ∪ skills) and the caller's tool ceiling — the exact
+        // two sets author_app resolves. A caller with NO tool authority (NotAuthorized ⇒
+        // no Use grant) simply has an empty ceiling (nothing in policy), not an error.
+        let wish = combined_tool_wish(
+            &env.references.skills,
+            &env.steering_config.tools.requested_grants,
+        );
+        let ceiling = match principal_tool_ceiling(
+            &self.lib,
+            principal,
+            self.registered.as_ref(),
+            self.tools.as_ref(),
+        ) {
+            Ok(c) => c,
+            Err(BinderError::NotAuthorized) => BTreeSet::new(),
+            Err(e) => return Err(binder_to_gateway(e)),
+        };
+
+        // Tool lines: the declared wish, plus the ceiling when the App inherits it.
+        // `in_policy` = ∈ ceiling (fireable+registered+allowed); `inherited` = surfaced
+        // only because reach=InheritPrincipal (in the ceiling, not explicitly declared).
+        let mut keys: BTreeSet<(String, String)> =
+            wish.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        if reach_inherit {
+            keys.extend(ceiling.iter().cloned());
+        }
+        let tools = keys
+            .into_iter()
+            .map(|(id, version)| {
+                let requested = wish.get(&id).is_some_and(|v| *v == version);
+                let in_policy = ceiling.contains(&(id.clone(), version.clone()));
+                AppCapability {
+                    inherited: reach_inherit && in_policy && !requested,
+                    requested,
+                    in_policy,
+                    id,
+                    version,
+                }
+            })
+            .collect();
+
+        // Connection lines: each referenced connection vs. the caller's registry, using
+        // the SAME match resolve_secret_scope applies (by credential name, else endpoint).
+        let registered = self
+            .connections
+            .list()
+            .map_err(|e| GatewayError::Internal(format!("connections.db read: {e}")))?;
+        let reg_creds: BTreeSet<String> = registered
+            .iter()
+            .filter_map(|c| c.credential_ref.clone())
+            .collect();
+        let reg_endpoints: BTreeSet<String> = registered
+            .iter()
+            .map(|c| c.transport.endpoint().to_string())
+            .collect();
+        let connections = env
+            .references
+            .connections
+            .iter()
+            .map(|c| {
+                let in_policy = if c.credential_ref.is_empty() {
+                    reg_endpoints.contains(&c.descriptor)
+                } else {
+                    reg_creds.contains(&c.credential_ref)
+                };
+                AppCapability {
+                    id: c.descriptor.clone(),
+                    version: String::new(),
+                    requested: true,
+                    in_policy,
+                    inherited: false,
+                }
+            })
+            .collect();
+
+        // Model line: the declared route vs. the served catalog (empty ⇒ served default).
+        let model_route = env.steering_config.model.model_route.clone();
+        let model_route_served =
+            model_route.is_empty() || self.lib.serve_model_ids().contains(&model_route);
+
+        Ok(Some(AppManifest {
+            reach_inherit,
+            tools,
+            connections,
+            model_route,
+            model_route_served,
+        }))
     }
 }
 
@@ -1118,6 +1346,62 @@ mod tests {
         rig_ex(dir, fireable, None)
     }
 
+    /// A rig whose serve offers `secondaries` alongside the primary `m` — for the
+    /// model-axis tests (a step routing to a secondary served model).
+    fn rig_with_secondaries(
+        dir: &std::path::Path,
+        fireable: &[(&str, &str)],
+        secondaries: &[&str],
+    ) -> (
+        HostAppAuthor,
+        Arc<InMemoryContentStore>,
+        Arc<HostWorkflowAuthor>,
+    ) {
+        let secs: Vec<ModelId> = secondaries
+            .iter()
+            .map(|s| ModelId((*s).to_string()))
+            .collect();
+        let lib = Arc::new(
+            DemoLibrary::open_serve(
+                dir,
+                kx_warrant::ExecutorClass::Bwrap,
+                &["alice@acme".to_string()],
+                Some(&ModelId("m".into())),
+                None,
+                None,
+                None,
+                false,
+                None,
+                false,
+                &secs,
+            )
+            .unwrap(),
+        );
+        let author = Arc::new(HostWorkflowAuthor::from_shared_with_tools(
+            lib.clone(),
+            echo_registry(),
+        ));
+        let apps: Arc<dyn AppCatalog> = Arc::new(crate::apps::AppsDb::open(dir).unwrap());
+        let connections =
+            Arc::new(SqliteConnectionStore::open(dir.join("connections.db")).unwrap());
+        let content = Arc::new(InMemoryContentStore::new());
+        let fire: BTreeSet<(String, String)> = fireable
+            .iter()
+            .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
+            .collect();
+        let host = HostAppAuthor::new(
+            apps.clone(),
+            connections,
+            author.clone(),
+            lib,
+            echo_registry(),
+            Arc::new(FixedFireable(fire)),
+            content.clone(),
+            None,
+        );
+        (host, content, author)
+    }
+
     /// [`rig`] plus an optional dataset view (the RAG-on-App presence-check seam).
     fn rig_ex(
         dir: &std::path::Path,
@@ -1208,6 +1492,328 @@ mod tests {
             assert_eq!(w1, w2, "byte-identical warrants (the no-op proof)");
         }
         assert_eq!(via_app.recipe_fingerprint, direct.recipe_fingerprint);
+    }
+
+    #[test]
+    fn effective_tool_wish_never_unions_past_the_ceiling() {
+        // Exhaustive over a 4-tool universe (all 16×16 declared/ceiling subset pairs):
+        // Explicit keeps the declared wish; InheritPrincipal yields EXACTLY the ceiling
+        // and NEVER a declared tool outside it (a union would). This is the SN-8
+        // monotonic-narrowing / no-widen invariant on the wish selection; the downstream
+        // `skill_union_grants` fold then only narrows further (⊆ wish). A complete proof
+        // for the space (an exhaustive enumeration, not random sampling).
+        let universe = ["a", "b", "c", "d"];
+        let n = universe.len();
+        let subset = |mask: u32| -> Vec<String> {
+            (0..n)
+                .filter(|i| mask & (1 << i) != 0)
+                .map(|i| universe[i].to_string())
+                .collect()
+        };
+        for dmask in 0u32..(1 << n) {
+            for cmask in 0u32..(1 << n) {
+                let declared: BTreeMap<String, String> = subset(dmask)
+                    .into_iter()
+                    .map(|k| (k, "1".to_string()))
+                    .collect();
+                let ceiling: BTreeSet<(String, String)> = subset(cmask)
+                    .into_iter()
+                    .map(|k| (k, "1".to_string()))
+                    .collect();
+
+                let explicit =
+                    effective_tool_wish(Reach::Explicit, declared.clone(), Some(&ceiling));
+                assert_eq!(
+                    explicit, declared,
+                    "Explicit keeps the declared wish verbatim"
+                );
+
+                let inherit =
+                    effective_tool_wish(Reach::InheritPrincipal, declared.clone(), Some(&ceiling));
+                let inherit_set: BTreeSet<(String, String)> = inherit
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                assert!(inherit_set.is_subset(&ceiling), "materialized ⊆ ceiling");
+                assert_eq!(
+                    inherit_set, ceiling,
+                    "InheritPrincipal replaces the wish with the ceiling"
+                );
+                for id in declared.keys() {
+                    if !ceiling.iter().any(|(cid, _)| cid == id) {
+                        assert!(
+                            !inherit.contains_key(id),
+                            "declared {id:?} outside the ceiling must not appear (no union)"
+                        );
+                    }
+                }
+            }
+        }
+        // InheritPrincipal with no ceiling ⇒ empty wish (fail-closed, never a widen).
+        assert!(effective_tool_wish(Reach::InheritPrincipal, BTreeMap::new(), None).is_empty());
+    }
+
+    #[test]
+    fn principal_tool_ceiling_is_fireable_intersect_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        // echo-tool@1 is fireable AND in echo_registry; not-registered@9 is fireable but
+        // absent from the registry ⇒ excluded (matching skill_union_grants). alice has no
+        // explicit tool allowlist ⇒ no further narrowing.
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1"), ("not-registered", "9")]);
+        let ceiling = principal_tool_ceiling(
+            &host.lib,
+            "alice@acme",
+            host.registered.as_ref(),
+            host.tools.as_ref(),
+        )
+        .unwrap();
+        assert_eq!(
+            ceiling,
+            [("echo-tool".to_string(), "1".to_string())]
+                .into_iter()
+                .collect::<BTreeSet<_>>(),
+            "ceiling = fireable ∩ registry (the unregistered tool is dropped)"
+        );
+    }
+
+    #[tokio::test]
+    async fn author_app_reach_inherit_principal_folds_the_whole_ceiling() {
+        // An App declaring NO tools but reach=InheritPrincipal inherits the caller's
+        // whole fireable ∩ registry ceiling onto its entry agentic step.
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1"), ("retrieve", "1")]);
+        let mut env = AppEnvelope::new(
+            "inheritor",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.steering_config.tools.reach = Reach::InheritPrincipal;
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+
+        let (mote, warrant) = bound
+            .motes
+            .iter()
+            .find(|(_, w)| !w.tool_grants.is_empty())
+            .expect("an agentic mote carrying the inherited ceiling");
+        for id in ["echo-tool", "retrieve"] {
+            assert!(
+                mote.def
+                    .tool_contract
+                    .contains_key(&kx_mote::ToolName(id.into())),
+                "the whole ceiling ({id}) folds under InheritPrincipal"
+            );
+            assert!(warrant
+                .tool_grants
+                .iter()
+                .any(|g| g.tool_id.0 == id && g.tool_version.0 == "1"));
+        }
+    }
+
+    #[tokio::test]
+    async fn author_app_explicit_default_grants_no_undeclared_tools() {
+        // The default (Explicit) reach with NO declared wish grants nothing — the entry
+        // step stays a plain transform (byte-identical to the pre-reach behavior), even
+        // though the caller HAS a fireable ceiling.
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1"), ("retrieve", "1")]);
+        let env = AppEnvelope::new(
+            "plain",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        assert_eq!(env.steering_config.tools.reach, Reach::Explicit);
+        let handle = save_app(&host, &env);
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+        assert!(
+            bound.motes.iter().all(|(_, w)| w.tool_grants.is_empty()),
+            "Explicit + no declared wish grants nothing (the entry step stays plain)"
+        );
+    }
+
+    #[tokio::test]
+    async fn author_app_unserved_model_route_refuses_at_submit() {
+        // An App naming a model this serve does not offer REFUSES loudly at submit —
+        // it never silently authors on the primary (SN-8: no auto-select / degrade).
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        let mut env = AppEnvelope::new(
+            "ghosted",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.steering_config.model.model_route = "kx-serve:ghost".into();
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        match host.author_app("alice@acme", &handle, b"", false).await {
+            Err(AppRunError::UnservedModelRoute(r)) => assert_eq!(r, "kx-serve:ghost"),
+            Err(other) => panic!("expected UnservedModelRoute, got {other:?}"),
+            Ok(_) => panic!("expected UnservedModelRoute REFUSE, but the run authored"),
+        }
+    }
+
+    #[tokio::test]
+    async fn author_app_routes_to_a_served_secondary_model() {
+        // model_route names a SECONDARY served model (which step_def previously rejected).
+        // The relaxation routes the step there: the authored MoteDef carries the secondary
+        // id AND the step warrant's model_route matches it (the dispatcher equality gate).
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig_with_secondaries(dir.path(), &[], &["kx-serve:beta"]);
+        let mut env = AppEnvelope::new(
+            "routed",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.steering_config.model.model_route = "kx-serve:beta".into();
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+        let beta = ModelId("kx-serve:beta".into());
+        assert!(
+            bound
+                .motes
+                .iter()
+                .any(|(m, w)| m.def.model_id == beta && w.model_route.model_id == beta),
+            "the secondary route is pinned onto BOTH the MoteDef and its warrant"
+        );
+    }
+
+    #[test]
+    fn manifest_diffs_declared_needs_against_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        // echo-tool@1 is fireable + registered; gmail/search@1 is neither.
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        let mut env = AppEnvelope::new(
+            "assistant",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.steering_config.tools.requested_grants = [
+            ("echo-tool".to_string(), "1".to_string()),
+            ("gmail/search".to_string(), "1".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        env.references.connections.push(ConnectionRef {
+            descriptor: "mcp+stdio://gmail".into(),
+            credential_ref: "KX_GMAIL_CREDENTIAL".into(),
+        });
+        env.steering_config.model.model_route = "m".into(); // the served primary
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let m = host
+            .manifest("alice@acme", &handle)
+            .unwrap()
+            .expect("owned app");
+
+        assert!(!m.reach_inherit);
+        let echo = m.tools.iter().find(|c| c.id == "echo-tool").unwrap();
+        assert!(echo.requested && echo.in_policy && !echo.inherited);
+        let gmail = m.tools.iter().find(|c| c.id == "gmail/search").unwrap();
+        assert!(
+            gmail.requested && !gmail.in_policy,
+            "requested but not fireable ⇒ a missing capability"
+        );
+        let conn = m
+            .connections
+            .iter()
+            .find(|c| c.id == "mcp+stdio://gmail")
+            .unwrap();
+        assert!(
+            conn.requested && !conn.in_policy,
+            "an unregistered connection is requested but not in policy"
+        );
+        assert_eq!(m.model_route, "m");
+        assert!(m.model_route_served);
+    }
+
+    #[tokio::test]
+    async fn manifest_inherit_flags_inherited_and_predicts_the_run() {
+        // Under InheritPrincipal the manifest reports the whole ceiling as in-policy +
+        // inherited, and its in-policy tool set equals exactly what the run grants.
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1"), ("retrieve", "1")]);
+        let mut env = AppEnvelope::new(
+            "inheritor",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.steering_config.tools.reach = Reach::InheritPrincipal;
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+
+        let m = host
+            .manifest("alice@acme", &handle)
+            .unwrap()
+            .expect("owned app");
+        assert!(m.reach_inherit);
+        assert!(
+            m.tools
+                .iter()
+                .all(|c| c.inherited && c.in_policy && !c.requested),
+            "no tool was explicitly declared ⇒ every ceiling tool is inherited"
+        );
+        let manifest_in_policy: BTreeSet<(String, String)> = m
+            .tools
+            .iter()
+            .filter(|c| c.in_policy)
+            .map(|c| (c.id.clone(), c.version.clone()))
+            .collect();
+
+        // Parity by construction: the run grants EXACTLY the manifest's in-policy set.
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+        let run_grants: BTreeSet<(String, String)> = bound
+            .motes
+            .iter()
+            .flat_map(|(_, w)| {
+                w.tool_grants
+                    .iter()
+                    .map(|g| (g.tool_id.0.clone(), g.tool_version.0.clone()))
+            })
+            .collect();
+        assert_eq!(
+            manifest_in_policy, run_grants,
+            "the manifest predicts exactly what the run grants"
+        );
+    }
+
+    #[test]
+    fn manifest_flags_an_unserved_model_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        let mut env = AppEnvelope::new(
+            "routed",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.steering_config.model.model_route = "kx-serve:ghost".into();
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let m = host
+            .manifest("alice@acme", &handle)
+            .unwrap()
+            .expect("owned app");
+        assert_eq!(m.model_route, "kx-serve:ghost");
+        assert!(
+            !m.model_route_served,
+            "an unserved route is flagged in the manifest before the run refuses it"
+        );
+    }
+
+    #[test]
+    fn manifest_for_an_absent_app_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        assert!(host
+            .manifest("alice@acme", "team/apps/ghost")
+            .unwrap()
+            .is_none());
     }
 
     /// D114 / T-APP-TRIGGER-TARGET: `require_approval = true` stamps the HITL posture

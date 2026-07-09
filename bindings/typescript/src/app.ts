@@ -76,6 +76,14 @@ type ToolEntry = { tool_id: string; tool_version: string };
 type ConnectionEntry = { descriptor: string; credential_ref: string };
 type DatasetEntry = { dataset_ref: string; cas_refs?: string[] };
 
+/** Tool resolution reach. `Explicit` (default) grants only the declared wish and is
+ * OMITTED from the envelope; `InheritPrincipal` grants the caller's whole resolvable
+ * tool ceiling (bounded — the server still intersects with your grants ∩ fireable). */
+export const Reach = {
+  Explicit: "explicit",
+  InheritPrincipal: "inherit_principal",
+} as const;
+
 /** G1: the curated Gmail provider defaults (the bundled `kx-connector-gmail` sidecar).
  * Mirrors the CLI `kx connections add --provider gmail` + the Python SDK. */
 const GMAIL_CONNECTOR_COMMAND = "kx-connector-gmail";
@@ -114,6 +122,9 @@ export class AppBuilder {
   private _modelRoute = "";
   private readonly _freeParams: Record<string, string> = {};
   private readonly _requestedGrants: Record<string, string> = {};
+  /** Tool resolution reach: "" / "explicit" ⇒ the declared wish (default, omitted);
+   * "inherit_principal" ⇒ the caller's whole resolvable tool ceiling. */
+  private _reach = "";
   private _maxTurns?: number;
   private _maxToolCalls?: number;
   private _branchHandle = "";
@@ -192,9 +203,14 @@ export class AppBuilder {
     return this;
   }
 
-  /** Reference a registered tool (id + version only — never a grant). */
+  /** Request a tool the App wants to use. Records a tool WISH
+   * (`steering_config.tools.requested_grants`) — the surface the server actually
+   * intersects with your grants at run — and keeps a display entry on
+   * `references.tools`. A wish is never authority: the server grants only
+   * `wish ∩ your-grants ∩ fireable`. */
   useTool(toolId: string, toolVersion = "1"): this {
     this._tools.push({ tool_id: toolId, tool_version: toolVersion });
+    if (!(toolId in this._requestedGrants)) this._requestedGrants[toolId] = toolVersion;
     return this;
   }
 
@@ -302,18 +318,31 @@ export class AppBuilder {
     this._flowMemory = [...memory];
   }
 
-  /** Set steering knobs (a WISH the server re-resolves at bind — never authority). */
+  /** Set steering knobs (a WISH the server re-resolves at bind — never authority).
+   *
+   * `reach` selects how the tool wish is resolved: {@link Reach.Explicit} (default)
+   * grants only the declared wish; {@link Reach.InheritPrincipal} grants the caller's
+   * whole resolvable tool ceiling (bounded — never omnipotence). */
   steer(opts: {
     model?: string;
     maxTurns?: number;
     maxToolCalls?: number;
     requestedGrants?: Record<string, string>;
+    reach?: string;
     freeParams?: Record<string, string>;
   }): this {
     if (opts.model) this._modelRoute = opts.model;
     if (opts.maxTurns !== undefined) this._maxTurns = opts.maxTurns;
     if (opts.maxToolCalls !== undefined) this._maxToolCalls = opts.maxToolCalls;
     if (opts.requestedGrants) Object.assign(this._requestedGrants, opts.requestedGrants);
+    if (opts.reach) {
+      if (opts.reach !== Reach.Explicit && opts.reach !== Reach.InheritPrincipal) {
+        throw new Error(
+          `reach must be "${Reach.Explicit}" or "${Reach.InheritPrincipal}", got "${opts.reach}"`,
+        );
+      }
+      this._reach = opts.reach;
+    }
     if (opts.freeParams) Object.assign(this._freeParams, opts.freeParams);
     return this;
   }
@@ -355,9 +384,11 @@ export class AppBuilder {
     if (this._modelRoute) model.model_route = this._modelRoute;
     if (Object.keys(this._freeParams).length) model.free_params = this._freeParams;
     if (Object.keys(model).length) steer.model = model;
-    if (Object.keys(this._requestedGrants).length) {
-      steer.tools = { requested_grants: this._requestedGrants };
-    }
+    const tools: Record<string, unknown> = {};
+    if (Object.keys(this._requestedGrants).length) tools.requested_grants = this._requestedGrants;
+    // Default ("" / explicit) reach is OMITTED — byte-identical to the pre-reach form.
+    if (this._reach && this._reach !== Reach.Explicit) tools.reach = this._reach;
+    if (Object.keys(tools).length) steer.tools = tools;
     const guards: Record<string, unknown> = {};
     if (this._maxTurns !== undefined) guards.max_turns = this._maxTurns;
     if (this._maxToolCalls !== undefined) guards.max_tool_calls = this._maxToolCalls;

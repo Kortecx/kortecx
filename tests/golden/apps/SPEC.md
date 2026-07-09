@@ -42,6 +42,10 @@ separators, number format, or escaping fails the gate.
 - `full` — `references` (a multi-modal `media_type` context ref + a tool ref +
   a `skills` SkillRef with `instructions_ref` + a tool wish) + `steering_config`
   (model route + a guard) + `branch_handle`.
+- `grounded` — the datasets rail (`dataset_ref` + `cas_refs`) + a rule +
+  `steering_config.tools.requested_grants` + `steering_config.context.dataset_refs`.
+- `reach` — the `steering_config.tools.reach` selector (`inherit_principal`), sorted
+  before `requested_grants`, proving the additive field's canonical placement.
 
 Regenerate by constructing the envelopes via the typed `kx-app` API and printing
 `to_canonical_json()`; never hand-edit the `canonical` strings.

@@ -100,6 +100,9 @@ fn app_err(e: AppRunError) -> TriggerAdminError {
         AppRunError::MissingIntegration(name) => TriggerAdminError::Unsupported(format!(
             "missing integration: {name} (register it with `kx connections add`)"
         )),
+        AppRunError::UnservedModelRoute(route) => TriggerAdminError::Unsupported(format!(
+            "model route {route:?} is not served here (start `kx serve` with a matching model)"
+        )),
         AppRunError::Internal(d) => TriggerAdminError::Storage(d),
     }
 }
@@ -391,6 +394,9 @@ impl TriggerAdmin for HostTriggerAdmin {
                 }
                 Err(AppRunError::MissingIntegration(n)) => {
                     Ok((false, format!("missing integration: {n}")))
+                }
+                Err(AppRunError::UnservedModelRoute(route)) => {
+                    Ok((false, format!("model route {route:?} is not served here")))
                 }
                 Err(AppRunError::Internal(d)) => Err(TriggerAdminError::Storage(d)),
             }

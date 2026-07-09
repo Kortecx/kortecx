@@ -48,6 +48,15 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   // Reach the IDE via the Apps section → the card's overflow menu → Open project.
   await gotoViaPalette(page, "apps");
   await expect(page.getByTestId("apps-section")).toBeVisible();
+
+  // View details → the READ-ONLY capability manifest panel (needs vs. what you have).
+  await page.getByTestId(`app-menu-${HANDLE}`).click();
+  await page.getByTestId(`app-view-${HANDLE}`).click();
+  await expect(page.getByTestId("app-view")).toBeVisible();
+  await expect(page.getByTestId("app-manifest")).toBeVisible({ timeout: 15_000 });
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("app-view")).toBeHidden();
+
   await page.getByTestId(`app-menu-${HANDLE}`).click();
   await page.getByTestId(`app-open-${HANDLE}`).click();
 

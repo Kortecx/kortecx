@@ -150,10 +150,11 @@ export type {
 } from "./flow.js";
 export { PERSONAS, persona, personaNames } from "./personas.js";
 // POC-4 — the App builder + envelope (kortecx.app/v1) + catalog views.
-export { app, AppBuilder, minimalAppEnvelope } from "./app.js";
+export { app, AppBuilder, minimalAppEnvelope, Reach } from "./app.js";
 export type { BlueprintSource, AppClient } from "./app.js";
 export {
   APP_SCHEMA,
+  AppManifest,
   AppSummary,
   SaveAppResult,
   StoredApp,
@@ -163,7 +164,7 @@ export {
   defaultHandle,
   scaffoldPhaseName,
 } from "./apps.js";
-export type { Skill, ScaffoldPhase, ScaffoldStatus } from "./apps.js";
+export type { AppCapability, Skill, ScaffoldPhase, ScaffoldStatus } from "./apps.js";
 export { AppBundle, BUNDLE_SCHEMA } from "./appbundle.js";
 // The skill-catalog views (declarative kortecx.skill/v1 bundles).
 export { AddSkillResult, SkillForm, SkillSummary, SKILL_SCHEMA } from "./skills.js";
