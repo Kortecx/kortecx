@@ -14,5 +14,9 @@
   {
     "canonical": "{\"blueprint\":{\"steps\":[{\"kind\":\"model\",\"prompt\":\"Answer grounded in the corpus.\"}]},\"name\":\"grounded-analyst\",\"references\":{\"datasets\":[{\"cas_refs\":[\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"],\"dataset_ref\":\"research\"}],\"rules\":[{\"content_ref\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"name\":\"cite\"}]},\"schema\":\"kortecx.app/v1\",\"steering_config\":{\"context\":{\"dataset_refs\":[\"research\"]},\"tools\":{\"requested_grants\":{\"retrieve\":\"1\"}}},\"version\":\"1\"}",
     "name": "grounded"
+  },
+  {
+    "canonical": "{\"blueprint\":{\"steps\":[{\"kind\":\"model\",\"prompt\":\"go\"}]},\"name\":\"reach-app\",\"schema\":\"kortecx.app/v1\",\"steering_config\":{\"tools\":{\"reach\":\"inherit_principal\",\"requested_grants\":{\"mcp-echo/echo\":\"1\"}}},\"version\":\"1\"}",
+    "name": "reach"
   }
 ]

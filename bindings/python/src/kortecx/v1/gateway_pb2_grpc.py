@@ -469,6 +469,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
                 _registered_method=True)
+        self.GetAppManifest = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetAppManifest',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppManifestRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppManifestResponse.FromString,
+                _registered_method=True)
         self.RunApp = channel.unary_unary(
                 '/kortecx.v1.KxGateway/RunApp',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.RunAppRequest.SerializeToString,
@@ -1159,6 +1164,18 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetAppManifest(self, request, context):
+        """Permission-aware Apps — a READ-ONLY capability manifest ("what this App needs vs.
+        what you have"): the requested tools/connections/model diffed against the caller's
+        live policy (fireable tools, served models, registered connections). Advisory
+        (gates nothing); server-authoritative (the host reuses the RunApp policy folds);
+        off-journal / off-digest. Authenticated caller required; unimplemented when the
+        seam is absent (clients then fall back to an envelope-only "needs" view).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def RunApp(self, request, context):
         """G2 (App-pointer -> run resolution) — run a caller-owned App server-side so its
         references.connections + guards.secret_scope are honored (they are dropped by the
@@ -1675,6 +1692,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetApp,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.SerializeToString,
+            ),
+            'GetAppManifest': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetAppManifest,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppManifestRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppManifestResponse.SerializeToString,
             ),
             'RunApp': grpc.unary_unary_rpc_method_handler(
                     servicer.RunApp,
@@ -4071,6 +4093,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetApp',
             kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetAppManifest(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetAppManifest',
+            kortecx_dot_v1_dot_gateway__pb2.GetAppManifestRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetAppManifestResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -40,7 +40,7 @@ fn corpus_round_trips_byte_identically() {
 fn corpus_covers_the_required_shapes() {
     let cases: Vec<Case> = serde_json::from_str(CORPUS).unwrap();
     let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
-    for want in ["minimal", "agentic", "full", "grounded"] {
+    for want in ["minimal", "agentic", "full", "grounded", "reach"] {
         assert!(
             names.contains(&want),
             "corpus must cover the {want:?} shape"
@@ -67,4 +67,10 @@ fn corpus_covers_the_required_shapes() {
     assert!(grounded
         .canonical
         .contains("\"dataset_refs\":[\"research\"]"));
+    // the reach case proves the additive `reach` selector rides steering_config.tools
+    // (sorted before requested_grants) and serializes snake_case.
+    let reach = cases.iter().find(|c| c.name == "reach").unwrap();
+    assert!(reach
+        .canonical
+        .contains("\"tools\":{\"reach\":\"inherit_principal\",\"requested_grants\":"));
 }

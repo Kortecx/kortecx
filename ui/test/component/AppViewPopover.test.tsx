@@ -5,15 +5,29 @@
  */
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const useAppMock = vi.fn();
 const useBranchesMock = vi.fn();
+const useAppManifestMock = vi.fn();
 
 vi.mock("../../src/kx/use-apps", () => ({ useApp: (...a: unknown[]) => useAppMock(...a) }));
 vi.mock("../../src/kx/use-branches", () => ({
   useBranches: (...a: unknown[]) => useBranchesMock(...a),
 }));
+vi.mock("../../src/kx/use-app-manifest", () => ({
+  useAppManifest: (...a: unknown[]) => useAppManifestMock(...a),
+}));
+
+beforeEach(() => {
+  // Default: no manifest (the section renders its honest empty state); overridden per test.
+  useAppManifestMock.mockReturnValue({
+    view: null,
+    isLoading: false,
+    notFound: false,
+    error: null,
+  });
+});
 
 import { AppViewPopover } from "../../src/components/apps/AppViewPopover";
 
@@ -80,5 +94,49 @@ describe("AppViewPopover (POC-5c)", () => {
     render(<AppViewPopover handle="kx/apps/missing" onClose={() => {}} />);
     expect(screen.getByText("Not found")).toBeInTheDocument();
     expect(screen.queryByTestId("app-view-summary")).toBeNull();
+  });
+
+  it("renders the capability manifest — needs vs. what you have", () => {
+    useAppMock.mockReturnValue({
+      data: { summary: summary(), envelope: {} },
+      isLoading: false,
+      error: null,
+    });
+    useBranchesMock.mockReturnValue({ branches: [], notWired: false });
+    useAppManifestMock.mockReturnValue({
+      view: {
+        reachInherit: false,
+        tools: [
+          { id: "echo", version: "1", requested: true, inPolicy: true, inherited: false },
+          { id: "gmail/search", version: "1", requested: true, inPolicy: false, inherited: false },
+        ],
+        connections: [
+          {
+            id: "mcp+stdio://gmail",
+            version: "",
+            requested: true,
+            inPolicy: false,
+            inherited: false,
+          },
+        ],
+        modelRoute: "kx-serve:ghost",
+        modelRouteServed: false,
+        needsOnly: false,
+      },
+      isLoading: false,
+      notFound: false,
+      error: null,
+    });
+    render(<AppViewPopover handle="kx/apps/demo" onClose={() => {}} />);
+
+    const tools = screen.getByTestId("app-manifest-tools");
+    expect(tools).toHaveTextContent("echo@1");
+    expect(tools).toHaveTextContent("satisfied");
+    expect(tools).toHaveTextContent("gmail/search@1");
+    expect(tools).toHaveTextContent("missing");
+    // an unregistered connection shows as missing.
+    expect(screen.getByTestId("app-manifest-connections")).toHaveTextContent("missing");
+    // an unserved model route is flagged.
+    expect(screen.getByTestId("app-manifest-model-status")).toHaveTextContent("not served");
   });
 });

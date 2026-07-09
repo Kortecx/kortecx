@@ -1472,6 +1472,42 @@ class GetAppResponse(_message.Message):
     source_digest: bytes
     def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[AppSummary, _Mapping]] = ..., app_digest: _Optional[bytes] = ..., source_digest: _Optional[bytes] = ...) -> None: ...
 
+class GetAppManifestRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class AppCapability(_message.Message):
+    __slots__ = ("id", "version", "requested", "in_policy", "inherited")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    REQUESTED_FIELD_NUMBER: _ClassVar[int]
+    IN_POLICY_FIELD_NUMBER: _ClassVar[int]
+    INHERITED_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    version: str
+    requested: bool
+    in_policy: bool
+    inherited: bool
+    def __init__(self, id: _Optional[str] = ..., version: _Optional[str] = ..., requested: bool = ..., in_policy: bool = ..., inherited: bool = ...) -> None: ...
+
+class GetAppManifestResponse(_message.Message):
+    __slots__ = ("found", "reach_inherit", "tools", "connections", "model_route", "model_route_served")
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    REACH_INHERIT_FIELD_NUMBER: _ClassVar[int]
+    TOOLS_FIELD_NUMBER: _ClassVar[int]
+    CONNECTIONS_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ROUTE_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ROUTE_SERVED_FIELD_NUMBER: _ClassVar[int]
+    found: bool
+    reach_inherit: bool
+    tools: _containers.RepeatedCompositeFieldContainer[AppCapability]
+    connections: _containers.RepeatedCompositeFieldContainer[AppCapability]
+    model_route: str
+    model_route_served: bool
+    def __init__(self, found: bool = ..., reach_inherit: bool = ..., tools: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ..., connections: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ..., model_route: _Optional[str] = ..., model_route_served: bool = ...) -> None: ...
+
 class RunAppRequest(_message.Message):
     __slots__ = ("handle", "args")
     HANDLE_FIELD_NUMBER: _ClassVar[int]

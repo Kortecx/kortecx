@@ -47,6 +47,7 @@
 
 mod active_model;
 mod alerts_view;
+mod apps_manifest;
 mod apps_run;
 mod apps_view;
 mod branches_view;
@@ -102,6 +103,7 @@ mod view;
 mod writer;
 
 pub use alerts_view::{AlertEntry, AlertView};
+pub use apps_manifest::{AppCapability, AppManifest, AppManifestView};
 pub use apps_run::{AppAuthor, AppRunError};
 pub use apps_view::{
     app_digest_of, AppCatalog, AppRecord, APP_DIGEST_DOMAIN, MAX_APP_ENVELOPE_BYTES,

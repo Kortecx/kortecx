@@ -819,6 +819,10 @@ pub struct GatewayService {
     /// back to the legacy `GetApp` → `SubmitWorkflow` path. Server-minted warrants
     /// (SN-8); connection/secret resolution is caller-scoped, off-journal, off-digest.
     app_runner: Option<Arc<dyn crate::apps_run::AppAuthor>>,
+    /// The optional App-manifest seam (`GetAppManifest` — the READ-ONLY capability
+    /// preview). `None` ⇒ `GetAppManifest` is `unimplemented` (clients fall back to an
+    /// envelope-only "needs" view). Server-authoritative + off-journal / off-digest.
+    app_manifest: Option<Arc<dyn crate::apps_manifest::AppManifestView>>,
     /// The optional per-App lock store seam (POC-5b — the host injects a `locks.db`
     /// sidecar). `None` ⇒ `LockApp` / `UnlockApp` are `unimplemented` AND the
     /// `AdvanceBranch` chokepoint degrades OPEN (an additive feature never tightens
@@ -921,6 +925,7 @@ impl GatewayService {
             apps: None,
             skills: None,
             app_runner: None,
+            app_manifest: None,
             locks: None,
             scaffolder: None,
             model_puller: None,
@@ -1379,6 +1384,17 @@ impl GatewayService {
         self
     }
 
+    /// Wire the App-manifest seam (`GetAppManifest`). Typically the SAME host object
+    /// that implements `AppAuthor` (it holds the envelope catalog + the policy folds).
+    #[must_use]
+    pub fn with_app_manifest(
+        mut self,
+        view: Arc<dyn crate::apps_manifest::AppManifestView>,
+    ) -> Self {
+        self.app_manifest = Some(view);
+        self
+    }
+
     /// Wire the POC-5b per-App lock store (the host's `locks.db` sidecar). Without it
     /// `LockApp`/`UnlockApp` return `unimplemented` AND the `AdvanceBranch` chokepoint
     /// degrades OPEN (an additive feature never tightens an existing serve).
@@ -1764,6 +1780,16 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // App — the one-App-one-branch model). The list/get handlers OVERRIDE this
         // from the wired LockStore; `false` here = unlocked / no branch / unwired.
         locked: false,
+    }
+}
+
+fn capability_to_proto(c: crate::AppCapability) -> proto::AppCapability {
+    proto::AppCapability {
+        id: c.id,
+        version: c.version,
+        requested: c.requested,
+        in_policy: c.in_policy,
+        inherited: c.inherited,
     }
 }
 
@@ -2204,6 +2230,12 @@ impl KxGateway for GatewayService {
                 crate::apps_run::AppRunError::MissingIntegration(name) => {
                     Status::failed_precondition(format!(
                         "missing integration: {name} (register it with `kx connections add`)"
+                    ))
+                }
+                crate::apps_run::AppRunError::UnservedModelRoute(route) => {
+                    Status::failed_precondition(format!(
+                        "model route {route:?} is not served here (start `kx serve` with a matching \
+                         model, or clear the app's model route)"
                     ))
                 }
                 crate::apps_run::AppRunError::Internal(detail) => Status::internal(detail),
@@ -2764,6 +2796,37 @@ impl KxGateway for GatewayService {
                 summary: None,
                 app_digest: Vec::new(),
                 source_digest: Vec::new(),
+            })),
+        }
+    }
+
+    async fn get_app_manifest(
+        &self,
+        request: Request<proto::GetAppManifestRequest>,
+    ) -> Result<Response<proto::GetAppManifestResponse>, Status> {
+        let view = self
+            .app_manifest
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("GetAppManifest: no App-manifest seam wired"))?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
+        match view.manifest(&principal, &req.handle)? {
+            Some(m) => Ok(Response::new(proto::GetAppManifestResponse {
+                found: true,
+                reach_inherit: m.reach_inherit,
+                tools: m.tools.into_iter().map(capability_to_proto).collect(),
+                connections: m.connections.into_iter().map(capability_to_proto).collect(),
+                model_route: m.model_route,
+                model_route_served: m.model_route_served,
+            })),
+            None => Ok(Response::new(proto::GetAppManifestResponse {
+                found: false,
+                reach_inherit: false,
+                tools: Vec::new(),
+                connections: Vec::new(),
+                model_route: String::new(),
+                model_route_served: false,
             })),
         }
     }

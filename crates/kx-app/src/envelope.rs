@@ -160,8 +160,38 @@ impl ModelSteering {
     }
 }
 
+/// How the tool wish is resolved against the caller's own tool authority.
+///
+/// `Explicit` (default) materialises only the declared wish (`requested_grants`
+/// ∪ any skill wishes), intersected with the caller's resolvable tool ceiling —
+/// the pre-existing behaviour, so a default-reach envelope is byte-identical.
+/// `InheritPrincipal` sets the wish to the caller's WHOLE resolvable tool ceiling
+/// (the tools the caller is registered + allowed to fire), so the materialised set
+/// equals that ceiling — bounded, never unbounded. Either way the field only
+/// STEERS resolution; it grants nothing (the server always intersects, never
+/// unions — a union would widen past the ceiling).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reach {
+    /// Materialise only the declared wish (byte-identical to the pre-reach form).
+    #[default]
+    Explicit,
+    /// Expand the wish to the caller's whole resolvable tool ceiling.
+    InheritPrincipal,
+}
+
+impl Reach {
+    /// True for the default (`Explicit`). The `skip_serializing_if` predicate that
+    /// keeps a default-reach envelope byte-identical — the `reach` key is omitted.
+    #[must_use]
+    pub fn is_explicit(&self) -> bool {
+        matches!(self, Reach::Explicit)
+    }
+}
+
 /// Axis 2 — tools + scopes. `requested_grants` is a WISH the server intersects
-/// with the importer's own grants ∩ the step warrant; it grants nothing.
+/// with the importer's own grants ∩ the step warrant; it grants nothing. `reach`
+/// selects the wish set (declared vs. the caller's whole ceiling).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolsSteering {
     /// The tool wish set (id → version).
@@ -173,13 +203,20 @@ pub struct ToolsSteering {
     /// Requested filesystem scope (confined roots); re-vetted at bind.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fs_scope: Vec<String>,
+    /// How the wish is resolved (default `Explicit` ⇒ omitted from canonical bytes).
+    #[serde(default, skip_serializing_if = "Reach::is_explicit")]
+    pub reach: Reach,
 }
 
 impl ToolsSteering {
-    /// True when default.
+    /// True when default. `reach` participates: a lone `InheritPrincipal` must
+    /// keep the whole `tools` axis emitted (else the axis silently drops).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.requested_grants.is_empty() && self.net_scope.is_empty() && self.fs_scope.is_empty()
+        self.requested_grants.is_empty()
+            && self.net_scope.is_empty()
+            && self.fs_scope.is_empty()
+            && self.reach.is_explicit()
     }
 }
 
@@ -664,6 +701,75 @@ mod tests {
         // required fields always present.
         assert!(s.contains("\"schema\":\"kortecx.app/v1\""));
         assert!(s.contains("\"version\":\"1\""));
+    }
+
+    #[test]
+    fn reach_default_is_omitted_from_canonical_bytes() {
+        // A default (Explicit) reach must not emit a `reach` key — the byte-invariance
+        // guard that keeps every pre-reach App's canonical bytes unchanged.
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.steering_config.tools.requested_grants = [("echo".to_string(), "1".to_string())]
+            .into_iter()
+            .collect();
+        assert_eq!(env.steering_config.tools.reach, Reach::Explicit);
+        let s = String::from_utf8(env.to_canonical_json().unwrap()).unwrap();
+        assert!(
+            s.contains("\"requested_grants\""),
+            "the wish is present: {s}"
+        );
+        assert!(
+            !s.contains("\"reach\""),
+            "default reach must be omitted: {s}"
+        );
+    }
+
+    #[test]
+    fn reach_inherit_principal_round_trips() {
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.steering_config.tools.reach = Reach::InheritPrincipal;
+        let canon = env.to_canonical_json().unwrap();
+        let s = String::from_utf8(canon.clone()).unwrap();
+        assert!(
+            s.contains("\"reach\":\"inherit_principal\""),
+            "inherit_principal serializes snake_case: {s}"
+        );
+        let again = AppEnvelope::from_json_slice(&canon).unwrap();
+        assert_eq!(again.steering_config.tools.reach, Reach::InheritPrincipal);
+        assert_eq!(again.to_canonical_json().unwrap(), canon);
+    }
+
+    #[test]
+    fn lone_inherit_principal_keeps_the_tools_axis_emitted() {
+        // `ToolsSteering::is_empty` gates the whole `tools` axis; a reach-only steering
+        // must still emit (else the authority intent is silently dropped from the bytes).
+        let mut ts = ToolsSteering::default();
+        assert!(ts.is_empty());
+        ts.reach = Reach::InheritPrincipal;
+        assert!(!ts.is_empty(), "a lone InheritPrincipal is not empty");
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.steering_config.tools = ts;
+        let s = String::from_utf8(env.to_canonical_json().unwrap()).unwrap();
+        assert!(s.contains("\"steering_config\""), "steering emitted: {s}");
+        assert!(
+            s.contains("\"tools\":{\"reach\":\"inherit_principal\"}"),
+            "tools axis emitted: {s}"
+        );
+    }
+
+    #[test]
+    fn unknown_steering_field_is_ignored_forward_compat() {
+        // No `deny_unknown_fields`: an envelope from a NEWER binary carrying an unknown
+        // steering key must parse (ignored) and re-canonicalize without it, so old↔new
+        // binaries interoperate on the tools axis while the known `reach` survives.
+        let bytes = br#"{"blueprint":{"steps":[]},"name":"x","schema":"kortecx.app/v1","steering_config":{"tools":{"future_field":"whatever","reach":"inherit_principal"}},"version":"1"}"#;
+        let env = AppEnvelope::from_json_slice(bytes).unwrap();
+        assert_eq!(env.steering_config.tools.reach, Reach::InheritPrincipal);
+        let s = String::from_utf8(env.to_canonical_json().unwrap()).unwrap();
+        assert!(!s.contains("future_field"), "unknown field dropped: {s}");
+        assert!(
+            s.contains("\"reach\":\"inherit_principal\""),
+            "known field kept: {s}"
+        );
     }
 
     #[test]

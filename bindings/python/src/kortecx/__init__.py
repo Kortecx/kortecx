@@ -15,10 +15,25 @@ from __future__ import annotations
 from .agent import Agent
 from .agent_result import AgentResult, AuditedAction
 from .alerts import AlertsPage, AlertSummary
-from .app import App, app, minimal_app_envelope
+from .app import (
+    REACH_EXPLICIT,
+    REACH_INHERIT_PRINCIPAL,
+    App,
+    app,
+    minimal_app_envelope,
+)
 from .appbundle import AppBundle
 from .approvals import PendingApproval, PendingApprovalsPage
-from .apps import AppSummary, SaveAppResult, ScaffoldLaunch, ScaffoldStatus, Skill, StoredApp
+from .apps import (
+    AppCapability,
+    AppManifest,
+    AppSummary,
+    SaveAppResult,
+    ScaffoldLaunch,
+    ScaffoldStatus,
+    Skill,
+    StoredApp,
+)
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
 from .branch import (
     AdvanceResult,
@@ -188,6 +203,11 @@ __all__ = [
     "AppBundle",
     "SaveAppResult",
     "StoredApp",
+    # permission-aware Apps (reach + capability manifest)
+    "REACH_EXPLICIT",
+    "REACH_INHERIT_PRINCIPAL",
+    "AppManifest",
+    "AppCapability",
     # POC-5a App scaffold + IDE
     "minimal_app_envelope",
     "ScaffoldLaunch",

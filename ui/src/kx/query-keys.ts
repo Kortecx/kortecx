@@ -61,6 +61,9 @@ export const queryKeys = {
   skillForm: (endpoint: string, name: string) => ["kx", endpoint, "skill", name] as const,
   /** One App's full envelope (`GetApp`), keyed by handle. */
   app: (endpoint: string, handle: string) => ["kx", endpoint, "app", handle] as const,
+  /** One App's capability manifest (`GetAppManifest`), keyed by handle. */
+  appManifest: (endpoint: string, handle: string) =>
+    ["kx", endpoint, "app-manifest", handle] as const,
   /** One App's project branch manifest (`GetBranch`, POC-5d), keyed by handle
    *  (one-App-one-branch ⇒ the branch handle IS the App handle). */
   appBranch: (endpoint: string, handle: string) => ["kx", endpoint, "app-branch", handle] as const,

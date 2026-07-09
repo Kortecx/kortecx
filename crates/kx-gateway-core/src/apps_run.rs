@@ -42,6 +42,12 @@ pub enum AppRunError {
     /// connection/credential name so the gateway can surface an actionable
     /// "register it with `kx connections add`" hint.
     MissingIntegration(String),
+    /// The App's `steering_config.model.model_route` (or a per-step model id) names a
+    /// model this serve does not offer (empty intersection with the served catalog).
+    /// Carries the requested route so the gateway can surface which model is missing.
+    /// Fail-closed REFUSE at submit — the runtime never silently substitutes a model
+    /// the App did not name (SN-8: the user names the model; no auto-select).
+    UnservedModelRoute(String),
     /// An internal failure (storage / lowering).
     Internal(String),
 }

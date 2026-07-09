@@ -1213,6 +1213,30 @@ message GetAppResponse {
   bytes      source_digest = 5;  // OPTIONAL 32B lineage hint if this App was imported/cloned (the source's app_digest); empty when authored-here or not found. A hint, never authenticity.
 }
 
+// Server-authoritative, READ-ONLY capability manifest for a stored App ("what this
+// App needs vs. what you have"). The host derives it from the stored envelope + the
+// SAME live policy folds RunApp uses (fireable tools, served models, registered
+// connections), so it can never report a capability in-policy that the run would drop.
+// Advisory: it gates nothing, writes nothing; off-journal / off-digest, recomputed on
+// demand. Additive — old clients never call it; a host without the seam returns
+// UNIMPLEMENTED (the client then falls back to an envelope-only "needs" view).
+message GetAppManifestRequest { string handle = 1; }
+message AppCapability {
+  string id        = 1;  // tool id (e.g. "mcp-echo/echo") or a connection descriptor
+  string version   = 2;  // tool version; empty for a connection
+  bool   requested = 3;  // the App named this capability
+  bool   in_policy = 4;  // within the caller's resolvable policy (fireable+registered tool / registered connection)
+  bool   inherited = 5;  // surfaced only because the tool axis is reach=inherit_principal
+}
+message GetAppManifestResponse {
+  bool                   found              = 1;  // uniform not-found for absent OR not-owned (no oracle)
+  bool                   reach_inherit      = 2;  // the effective tool reach (true ⇒ inherit the caller's whole ceiling)
+  repeated AppCapability tools              = 3;
+  repeated AppCapability connections        = 4;
+  string                 model_route        = 5;  // the App's declared route ("" ⇒ served default)
+  bool                   model_route_served = 6;  // route is offered here (always true when empty); false ⇒ a run would REFUSE
+}
+
 // G2 (App-pointer -> run resolution). Run a caller-owned App SERVER-SIDE: the
 // gateway reads the validated stored envelope from apps.db, lowers its blueprint
 // through the SAME canonical path the client uses (kx-blueprint::to_request),
@@ -2416,6 +2440,14 @@ service KxGateway {
   rpc SaveApp(SaveAppRequest) returns (SaveAppResponse);
   rpc ListApps(ListAppsRequest) returns (ListAppsResponse);
   rpc GetApp(GetAppRequest) returns (GetAppResponse);
+
+  // Permission-aware Apps — a READ-ONLY capability manifest ("what this App needs vs.
+  // what you have"): the requested tools/connections/model diffed against the caller's
+  // live policy (fireable tools, served models, registered connections). Advisory
+  // (gates nothing); server-authoritative (the host reuses the RunApp policy folds);
+  // off-journal / off-digest. Authenticated caller required; unimplemented when the
+  // seam is absent (clients then fall back to an envelope-only "needs" view).
+  rpc GetAppManifest(GetAppManifestRequest) returns (GetAppManifestResponse);
 
   // G2 (App-pointer -> run resolution) — run a caller-owned App server-side so its
   // references.connections + guards.secret_scope are honored (they are dropped by the

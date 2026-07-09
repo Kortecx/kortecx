@@ -1,4 +1,4 @@
-//! `kx app new | save | list | get | run | export | import | clone` — author,
+//! `kx app new | save | list | get | manifest | run | export | import | clone` — author,
 //! persist, browse, RUN, and make PORTABLE a durable App (a `kortecx.app/v1`
 //! envelope: a portable blueprint wrapped with by-reference context/tool/connection/
 //! dataset references, a minimal prompt/rule/skill/memory rail, a 4-axis steering
@@ -58,6 +58,13 @@ pub enum AppSub {
         handle: String,
         /// Write the pretty envelope JSON here.
         output: Option<PathBuf>,
+    },
+    /// Show an App's capability manifest — what it needs (tools, connections, model)
+    /// vs. what you have (your fireable tools, registered connections, served models).
+    /// A read-only preview; the runtime enforces the same intersection at run.
+    Manifest {
+        /// The catalog handle.
+        handle: String,
     },
     /// Compile the App's blueprint and run it (exactly-once; the server warrants).
     /// Prefers the server-side `RunApp` (G2 — honors the envelope's
@@ -393,6 +400,9 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             handle: require_pos(f.positional, "a <handle>")?,
             output: f.output,
         }),
+        "manifest" => Ok(AppSub::Manifest {
+            handle: require_pos(f.positional, "a <handle>")?,
+        }),
         "run" => Ok(AppSub::Run {
             handle: require_pos(f.positional, "a <handle>")?,
             wait: f.wait_flag,
@@ -472,7 +482,7 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             handle: require_pos(f.positional, "a <handle>")?,
         }),
         other => Err(CliError::Usage(format!(
-            "unknown app subcommand {other:?} (expected new | save | list | get | run | \
+            "unknown app subcommand {other:?} (expected new | save | list | get | manifest | run | \
              export | import | clone | scaffold | files | cat | structure | edit | lock | unlock)"
         ))),
     }
@@ -545,7 +555,7 @@ fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError>
     Ok(())
 }
 
-/// Execute `app new | save | list | get | run | export | scaffold | files | cat | lock | unlock`.
+/// Execute `app new | save | list | get | manifest | run | export | scaffold | files | cat | lock | unlock`.
 ///
 /// # Errors
 /// [`CliError`] on a transport / status / usage failure.
@@ -643,6 +653,36 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
             }
             println!("{}", format::render_get_app(&resp, json));
             Ok(())
+        }
+        AppSub::Manifest { handle } => {
+            match client
+                .get_app_manifest(resolved.request(proto::GetAppManifestRequest {
+                    handle: handle.clone(),
+                })?)
+                .await
+            {
+                Ok(resp) => {
+                    let resp = resp.into_inner();
+                    if !resp.found {
+                        return Err(CliError::Usage(format!("app {handle:?} not found")));
+                    }
+                    println!("{}", format::render_app_manifest(&handle, &resp, json));
+                    Ok(())
+                }
+                // An older server without the manifest seam ⇒ derive a NEEDS-ONLY view
+                // from the envelope alone (no policy resolution — labelled honestly).
+                Err(status) if status.code() == tonic::Code::Unimplemented => {
+                    let stored = fetch_app(&mut client, &resolved, &handle).await?;
+                    if !stored.found {
+                        return Err(CliError::Usage(format!("app {handle:?} not found")));
+                    }
+                    let env = AppEnvelope::from_json_slice(&stored.envelope_json)
+                        .map_err(|e| CliError::Usage(format!("stored envelope is invalid: {e}")))?;
+                    println!("{}", format::render_app_needs(&handle, &env, json));
+                    Ok(())
+                }
+                Err(status) => Err(CliError::from_status(status)),
+            }
         }
         AppSub::Export {
             handle,
@@ -751,13 +791,32 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                 Err(status) => return Err(CliError::from_status(status)),
             };
             if do_wait {
-                let outcome = wait::await_any_result(
-                    &mut client,
-                    &resolved,
-                    submitted.instance_id,
-                    Duration::from_secs(timeout_secs),
-                )
-                .await?;
+                // serve shares ONE journal, so its instance_id is CONSTANT across App runs.
+                // An AGENTIC App (skills or `reach = inherit_principal` fold tools onto the
+                // entry step ⇒ a ReAct chain whose settled answer has no statically-known
+                // terminal Mote) MUST scope its wait to THIS run's react chain via
+                // `react_chain_salt` — else `await_any_result` surfaces a stale/foreign
+                // committed Mote (the launch turn, or a prior App's terminal). Mirrors the
+                // `kx chat --tools` scoping. A non-agentic App keeps instance-scoped waiting
+                // (the RunHandle carries no terminal Mote id to scope by).
+                let outcome = if submitted.react_chain_salt.is_empty() {
+                    wait::await_any_result(
+                        &mut client,
+                        &resolved,
+                        submitted.instance_id,
+                        Duration::from_secs(timeout_secs),
+                    )
+                    .await?
+                } else {
+                    wait::await_react_result(
+                        &mut client,
+                        &resolved,
+                        submitted.instance_id,
+                        submitted.react_chain_salt,
+                        Duration::from_secs(timeout_secs),
+                    )
+                    .await?
+                };
                 verbs::finish_wait(&outcome, json, out.as_deref())
             } else {
                 println!("{}", format::render_submit(&submitted, json));
@@ -1206,6 +1265,20 @@ mod tests {
             AppSub::Structure { handle } => assert_eq!(handle, "apps/local/echo"),
             other => panic!("expected Structure, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_manifest() {
+        match parse_ok(&["manifest", "apps/local/echo"]).sub {
+            AppSub::Manifest { handle } => assert_eq!(handle, "apps/local/echo"),
+            other => panic!("expected Manifest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_manifest_requires_handle() {
+        let err = parse(["manifest"].iter().map(ToString::to_string)).unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
     }
 
     #[test]

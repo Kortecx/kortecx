@@ -14,8 +14,9 @@ It is a `kortecx.app/v1` **envelope** that *wraps* the existing portable
 - **references** — by-*reference* pointers to context items, tools, connections,
   datasets, plus a minimal **prompt / rule / skill / memory** artifact rail. A
   reference is a name + a content ref (or a registry id); it never inlines bytes.
-- a **steering config** — four axes (model + routing, tools + grants, context +
-  data, guards + budgets) the server re-resolves at bind.
+- a **steering config** — four axes (model + routing, tools + grants + `reach`,
+  context + data, guards + budgets) the server re-resolves at bind (see
+  [Permissions & the capability manifest](#permissions--the-capability-manifest)).
 - per-step **replay** intent.
 
 An App carries **no authority**. There is no warrant, grant, secret, credential, or
@@ -78,6 +79,7 @@ kx app new "Echo Demo" --from-blueprint echo.dag.json \
 kx app save echo.app.json            # persist (handle defaults apps/local/echo-demo)
 kx app list                          # browse the catalog
 kx app get apps/local/echo-demo      # show the summary (--output writes the envelope)
+kx app manifest apps/local/echo-demo # capability manifest — needs vs. what you have
 kx app run apps/local/echo-demo --wait   # compile the blueprint + run it
 kx app export apps/local/echo-demo --output echo.app.json   # the by-ref envelope
 
@@ -305,6 +307,47 @@ honest-degrades to an *ungrounded* run rather than erroring. In the **Apps** con
 rails. *(Today grounding uses the pre-ingested named dataset; carrying a corpus inside the
 envelope via `cas_refs` is a planned follow-up.)*
 
+## Permissions & the capability manifest
+
+An App declares a **request** for capability (the tools, connections, and model it wants
+to use); the runtime grants only the **intersection** with what *you* — the party running
+it — are actually allowed to do. A wish is never authority.
+
+**See what an App needs vs. what you have** with `kx app manifest <handle>` (or the
+**View details** panel in the Apps console). It diffs the App's requested tools /
+connections / model against your live policy — your fireable tools, your registered
+connections, the models this instance serves — and marks each capability *satisfied*,
+*MISSING*, or *inherited*. It is read-only and gates nothing; a run resolves the same
+intersection server-side.
+
+```bash
+kx app manifest apps/local/research-assistant
+#   model: (served default)  [served]
+#   tools (reach: explicit):
+#     retrieve@1 [satisfied]
+#     gmail/search@1 [MISSING — not granted or not fireable]
+#   connections:
+#     mcp+stdio://gmail [MISSING — register with `kx connections add`]
+```
+
+**Tool reach.** The tool axis carries a `reach` selector (`steering_config.tools.reach`):
+
+- `explicit` (the default) grants exactly the tools the App enumerates in
+  `requested_grants`, intersected with your policy.
+- `inherit_principal` grants the App the *whole set of tools you are allowed to fire* —
+  a convenience for a personal App that should adapt to whatever you have, **bounded by
+  your policy** (never more than you can fire yourself). Set it with `steer(reach=…)` in
+  the SDK.
+
+Either way the server computes `materialised = request ∩ your-policy` — a strict
+intersection that only ever narrows.
+
+**Model route.** If an App names a model (`steer(model=…)` →
+`steering_config.model.model_route`), a run routes to that model **only if this instance
+serves it** — otherwise the run **fails closed** with a clear error rather than silently
+running on a different model. Clear the route to use the served default. The manifest
+flags an unserved route before you run.
+
 ## Lock an App (POC-5b)
 
 `kx app lock <handle>` (or the **Security › Policies** section) **fully freezes** an
@@ -318,9 +361,10 @@ on a locked App, but the runtime is the authoritative gate.
 ## The Apps console
 
 Open **Apps** in the sidebar. Browse your saved Apps and **Run** one (it routes to the
-live run). Each card's overflow (⋯) menu holds **View details**, **Open project**,
-**Inspect** the envelope, **Download** a portable `.kxapp` bundle, and **Duplicate**
-(clone locally). **Import** a bundle from the section header; click **New App** to
+live run). Each card's overflow (⋯) menu holds **View details** (the summary + the
+[capability manifest](#permissions--the-capability-manifest) — needs vs. what you have),
+**Open project**, **Inspect** the envelope, **Download** a portable `.kxapp` bundle, and
+**Duplicate** (clone locally). **Import** a bundle from the section header; click **New App** to
 scaffold a fresh App. **Share** across parties is a Cloud capability (shown
 honest-disabled). Per-App locks live in the **Policies** section
 ([policies.md](./policies.md)).

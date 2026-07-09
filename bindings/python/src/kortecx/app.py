@@ -37,6 +37,13 @@ def _is_hex_ref(s: str) -> bool:
     return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
 
 
+#: Tool reach — grant only the declared wish (the default; omitted from the envelope).
+REACH_EXPLICIT = "explicit"
+#: Tool reach — grant the caller's whole resolvable tool ceiling (bounded, never
+#: omnipotence; the server still intersects with your grants ∩ fireable).
+REACH_INHERIT_PRINCIPAL = "inherit_principal"
+
+
 #: G1: the curated Gmail provider defaults (the bundled ``kx-connector-gmail`` sidecar).
 #: Mirrors the CLI ``kx connections add --provider gmail`` + the UI provider catalog.
 GMAIL_CONNECTOR_COMMAND = "kx-connector-gmail"
@@ -87,6 +94,9 @@ class App:
         self._model_route = ""
         self._free_params: Dict[str, str] = {}
         self._requested_grants: Dict[str, str] = {}
+        # Tool resolution reach: "" / "explicit" ⇒ the declared wish (default, omitted);
+        # "inherit_principal" ⇒ the caller's whole resolvable tool ceiling.
+        self._reach = ""
         self._max_turns: Optional[int] = None
         self._max_tool_calls: Optional[int] = None
         # G2: secret NAMES to expose at run (guards.secret_scope). Populated by
@@ -162,8 +172,13 @@ class App:
         return self
 
     def use_tool(self, tool_id: str, tool_version: str = "1") -> "App":
-        """Reference a registered tool (id + version only — never a grant)."""
+        """Request a tool the App wants to use. Records a tool WISH
+        (``steering_config.tools.requested_grants``) — the surface the server actually
+        intersects with your grants at run — and keeps a display entry on
+        ``references.tools``. A wish is never authority: the server grants only
+        ``wish ∩ your-grants ∩ fireable``."""
         self._rails["tools"].append({"tool_id": tool_id, "tool_version": tool_version})
+        self._requested_grants.setdefault(tool_id, tool_version)
         return self
 
     def dataset(self, dataset_ref: str, *, cas_refs: Optional[List[str]] = None) -> "App":
@@ -275,9 +290,14 @@ class App:
         max_turns: Optional[int] = None,
         max_tool_calls: Optional[int] = None,
         requested_grants: Optional[Mapping[str, str]] = None,
+        reach: str = "",
         free_params: Optional[Mapping[str, str]] = None,
     ) -> "App":
-        """Set steering knobs (a WISH the server re-resolves at bind — never authority)."""
+        """Set steering knobs (a WISH the server re-resolves at bind — never authority).
+
+        ``reach`` selects how the tool wish is resolved: :data:`REACH_EXPLICIT`
+        (default) grants only the declared wish; :data:`REACH_INHERIT_PRINCIPAL` grants
+        the caller's whole resolvable tool ceiling (bounded — never omnipotence)."""
         if model:
             self._model_route = model
         if max_turns is not None:
@@ -286,6 +306,11 @@ class App:
             self._max_tool_calls = max_tool_calls
         if requested_grants:
             self._requested_grants.update(requested_grants)
+        if reach:
+            if reach not in (REACH_EXPLICIT, REACH_INHERIT_PRINCIPAL):
+                allowed = (REACH_EXPLICIT, REACH_INHERIT_PRINCIPAL)
+                raise ValueError(f"reach must be one of {allowed}, got {reach!r}")
+            self._reach = reach
         if free_params:
             self._free_params.update({k: str(v) for k, v in free_params.items()})
         return self
@@ -319,8 +344,14 @@ class App:
             model["free_params"] = dict(self._free_params)
         if model:
             steer["model"] = model
+        tools: Dict[str, Any] = {}
         if self._requested_grants:
-            steer["tools"] = {"requested_grants": dict(self._requested_grants)}
+            tools["requested_grants"] = dict(self._requested_grants)
+        # Default ("" / explicit) reach is OMITTED — byte-identical to the pre-reach form.
+        if self._reach and self._reach != REACH_EXPLICIT:
+            tools["reach"] = self._reach
+        if tools:
+            steer["tools"] = tools
         guards: Dict[str, Any] = {}
         if self._max_turns is not None:
             guards["max_turns"] = self._max_turns

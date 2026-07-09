@@ -1473,6 +1473,14 @@ impl DemoLibrary {
         serve_models.dedup();
         DemoSchemaResolver { serve_models }
     }
+
+    /// The full set of served model ids (primary + any secondaries) — the catalog an
+    /// App's declared model route is validated against at author time. Sorted + deduped
+    /// by the `BTreeSet` ⇒ deterministic. Empty when no model is served (a build without
+    /// `--features inference`, or `kx serve` started without a model).
+    pub(crate) fn serve_model_ids(&self) -> BTreeSet<String> {
+        self.serve_models.iter().map(|m| m.0.clone()).collect()
+    }
 }
 
 /// Resolve one Variable free-param slot into a renderable form field. An untyped
@@ -2349,6 +2357,42 @@ impl HostWorkflowAuthor {
         }
     }
 
+    /// PR-3: resolve a MODEL step's `model_id` against the served catalog + build its
+    /// warrant base. An empty id ⇒ the primary served model (`base` verbatim — the
+    /// byte-identical default). A named id must be in the served catalog (primary or a
+    /// secondary), else REFUSE at authoring (fail-closed — the runtime never routes a
+    /// step to a model this serve does not offer). Returns `(routed id, warrant base
+    /// pointed at that id)` so the dispatcher's strict `def.model_id ==
+    /// warrant.model_route.model_id` equality holds for a secondary route too.
+    fn resolve_model_route(
+        &self,
+        base: &WarrantSpec,
+        model_id: &str,
+    ) -> Result<(ModelId, WarrantSpec), BinderError> {
+        let served = self.lib.serve_model.as_ref().ok_or_else(|| {
+            BinderError::InvalidArgs(
+                "MODEL steps require a served model (run `kx serve --features inference`)".into(),
+            )
+        })?;
+        let route_id = if model_id.is_empty() {
+            served.clone()
+        } else if self.lib.serve_model_ids().contains(model_id) {
+            ModelId(model_id.to_string())
+        } else {
+            return Err(BinderError::InvalidArgs(format!(
+                "MODEL step model_id {model_id:?} is not a served model (serve it with `kx serve`)"
+            )));
+        };
+        let step_base = if route_id.0 == served.0 {
+            base.clone()
+        } else {
+            let mut b = base.clone();
+            b.model_route.model_id = route_id.clone();
+            b
+        };
+        Ok((route_id, step_base))
+    }
+
     /// Map one authored step → a `kx_workflow::StepDef`, server-assigning `logic_ref`.
     fn step_def(&self, index: usize, s: &AuthorStep) -> Result<StepDef, BinderError> {
         let base = &self.lib.blueprint_base;
@@ -2375,18 +2419,7 @@ impl HostWorkflowAuthor {
             // MODEL: a greedy model step routed to the SERVED model (the executor
             // recognizes it by config_subset[PROMPT_KEY] + a supported model_id).
             AuthorStepKind::Model => {
-                let served = self.lib.serve_model.as_ref().ok_or_else(|| {
-                    BinderError::InvalidArgs(
-                        "MODEL steps require a served model (run `kx serve --features inference`)"
-                            .into(),
-                    )
-                })?;
-                if !s.model_id.is_empty() && s.model_id != served.0 {
-                    return Err(BinderError::InvalidArgs(format!(
-                        "MODEL step model_id must equal the served model '{}'",
-                        served.0
-                    )));
-                }
+                let (route_id, step_base) = self.resolve_model_route(base, &s.model_id)?;
                 // PR-9b-2b (D161.1): a MODEL step carrying a non-empty tool_contract is
                 // a DETERMINISTIC-AGENTIC step (`model@tool` in the chains DSL). Build a
                 // GENERATOR StepDef (ReadOnlyNondet + StageThenCommit) + the SERVER-built
@@ -2398,17 +2431,17 @@ impl HostWorkflowAuthor {
                 // and COMMITS the launch mote with the loop's final answer to advance the
                 // frozen DAG (kx-coordinator `state.rs`). Budget validated here (fail fast).
                 if s.tool_contract.is_empty() {
-                    // P1.1: the step warrant is `base` — and `blueprint_base` now carries
-                    // the SERVED model in its `model_route` (see `seed`), so the dispatch
-                    // id (served) == the warrant route id (served) and the dispatcher's
-                    // strict check passes (it used to be the demo PLACEHOLDER route ≠
-                    // served → the MODEL step dead-lettered). Using `base` verbatim keeps
-                    // the step warrant == the authoring grant ⇒ a guaranteed no-op
-                    // narrowing at admission (no `AttemptedWiden` on the model_route ceilings).
+                    // P1.1: the step warrant is `step_base` — `blueprint_base` carries the
+                    // SERVED model in its `model_route` (see `seed`), so the dispatch id
+                    // (route_id) == the warrant route id and the dispatcher's strict check
+                    // passes (it used to be the demo PLACEHOLDER route ≠ served → the MODEL
+                    // step dead-lettered). `step_base == base` for the primary route ⇒ a
+                    // guaranteed no-op narrowing at admission (no `AttemptedWiden` on the
+                    // model_route ceilings).
                     transform(
                         LogicRef::from_bytes(MODEL_LOGIC_REF),
-                        served.clone(),
-                        base.clone(),
+                        route_id,
+                        step_base,
                         cap,
                     )
                 } else {
@@ -2425,10 +2458,13 @@ impl HostWorkflowAuthor {
                         )
                     })?;
                     validate_agentic_budget(s)?;
-                    let warrant = agentic_step_warrant(base, &s.tool_contract, tools.as_ref())?;
+                    // `agentic_step_warrant` copies `model_route` from its base arg, so
+                    // passing `step_base` carries the resolved route into the warrant.
+                    let warrant =
+                        agentic_step_warrant(&step_base, &s.tool_contract, tools.as_ref())?;
                     let mut sd = generator(
                         LogicRef::from_bytes(MODEL_LOGIC_REF),
-                        served.clone(),
+                        route_id,
                         warrant,
                         cap.clone(),
                     );

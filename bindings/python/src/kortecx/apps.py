@@ -106,6 +106,50 @@ class AppSummary:
 
 
 @dataclass(frozen=True)
+class AppCapability:
+    """One capability line in an :class:`AppManifest` (a tool or a connection)."""
+
+    id: str  # tool id, or a connection descriptor
+    version: str  # tool version; "" for a connection
+    requested: bool  # the App named this capability
+    in_policy: bool  # within your policy (fireable+registered tool / registered connection)
+    inherited: bool  # surfaced only because the tool reach is inherit_principal
+
+    @classmethod
+    def from_proto(cls, c: "_g.AppCapability") -> "AppCapability":
+        return cls(
+            id=c.id,
+            version=c.version,
+            requested=c.requested,
+            in_policy=c.in_policy,
+            inherited=c.inherited,
+        )
+
+
+@dataclass(frozen=True)
+class AppManifest:
+    """A stored App's READ-ONLY capability manifest ("what this App needs vs. what you
+    have"): the requested tools/connections/model diffed against your live policy. It
+    gates nothing — the runtime enforces the same intersection at run (SN-8)."""
+
+    reach_inherit: bool  # the App inherits your whole tool ceiling (reach=inherit_principal)
+    tools: List[AppCapability]
+    connections: List[AppCapability]
+    model_route: str  # the App's declared route ("" ⇒ served default)
+    model_route_served: bool  # the route is offered here (False ⇒ a run would refuse)
+
+    @classmethod
+    def from_proto(cls, r: "_g.GetAppManifestResponse") -> "AppManifest":
+        return cls(
+            reach_inherit=r.reach_inherit,
+            tools=[AppCapability.from_proto(c) for c in r.tools],
+            connections=[AppCapability.from_proto(c) for c in r.connections],
+            model_route=r.model_route,
+            model_route_served=r.model_route_served,
+        )
+
+
+@dataclass(frozen=True)
 class ScaffoldLaunch:
     """POC-5a: the result of launching a server-side App scaffold (correlate by
     ``branch_handle`` — poll :class:`ScaffoldStatus`)."""
