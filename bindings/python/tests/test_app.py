@@ -75,7 +75,12 @@ def test_use_tool_dual_writes_the_wish_and_the_display_rail() -> None:
 
 def test_reach_default_is_omitted_and_inherit_emits() -> None:
     # Default reach ⇒ no reach key (byte-identical to the pre-reach form).
-    env = kx.app("x").blueprint(kx.flow().agent("go")).steer(requested_grants={"e": "1"}).to_envelope()
+    env = (
+        kx.app("x")
+        .blueprint(kx.flow().agent("go"))
+        .steer(requested_grants={"e": "1"})
+        .to_envelope()
+    )
     assert "reach" not in env["steering_config"]["tools"]
     # inherit_principal ⇒ emitted, alongside any wish.
     env2 = (

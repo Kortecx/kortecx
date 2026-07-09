@@ -112,7 +112,7 @@ class AppCapability:
     id: str  # tool id, or a connection descriptor
     version: str  # tool version; "" for a connection
     requested: bool  # the App named this capability
-    in_policy: bool  # within your resolvable policy (fireable+registered tool / registered connection)
+    in_policy: bool  # within your policy (fireable+registered tool / registered connection)
     inherited: bool  # surfaced only because the tool reach is inherit_principal
 
     @classmethod

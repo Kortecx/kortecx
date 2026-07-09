@@ -21,7 +21,12 @@ vi.mock("../../src/kx/use-app-manifest", () => ({
 
 beforeEach(() => {
   // Default: no manifest (the section renders its honest empty state); overridden per test.
-  useAppManifestMock.mockReturnValue({ view: null, isLoading: false, notFound: false, error: null });
+  useAppManifestMock.mockReturnValue({
+    view: null,
+    isLoading: false,
+    notFound: false,
+    error: null,
+  });
 });
 
 import { AppViewPopover } from "../../src/components/apps/AppViewPopover";
@@ -106,7 +111,13 @@ describe("AppViewPopover (POC-5c)", () => {
           { id: "gmail/search", version: "1", requested: true, inPolicy: false, inherited: false },
         ],
         connections: [
-          { id: "mcp+stdio://gmail", version: "", requested: true, inPolicy: false, inherited: false },
+          {
+            id: "mcp+stdio://gmail",
+            version: "",
+            requested: true,
+            inPolicy: false,
+            inherited: false,
+          },
         ],
         modelRoute: "kx-serve:ghost",
         modelRouteServed: false,

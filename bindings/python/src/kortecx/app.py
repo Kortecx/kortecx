@@ -308,9 +308,8 @@ class App:
             self._requested_grants.update(requested_grants)
         if reach:
             if reach not in (REACH_EXPLICIT, REACH_INHERIT_PRINCIPAL):
-                raise ValueError(
-                    f"reach must be {REACH_EXPLICIT!r} or {REACH_INHERIT_PRINCIPAL!r}, got {reach!r}"
-                )
+                allowed = (REACH_EXPLICIT, REACH_INHERIT_PRINCIPAL)
+                raise ValueError(f"reach must be one of {allowed}, got {reach!r}")
             self._reach = reach
         if free_params:
             self._free_params.update({k: str(v) for k, v in free_params.items()})
