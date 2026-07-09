@@ -34,6 +34,14 @@ kx-blueprint = { workspace = true }
 # POC-4: the App envelope type (kortecx.app/v1) — author / validate / canonicalize
 # an envelope for `kx app new|save|run` (a pure leaf, serde/serde_json/thiserror).
 kx-app     = { workspace = true }
+# Portable App: the kortecx.appbundle/v1 codec (`kx app export --bundle | import | clone`).
+kx-appbundle = { workspace = true }
+# Content refs (ContentRef hex ↔ 32B) for the export/import content closure. Already
+# in-tree via kx-gateway; a direct dep for the ref conversions.
+kx-content = { workspace = true }
+# The canonical app_digest_of (portable App identity) for the client-side import
+# tamper check — the SAME function the server computes (no drift). Already in-tree.
+kx-gateway-core = { workspace = true }
 # The kortecx.skill/v1 manifest + pack loader — `kx skills add --dir`
 # validates a pack LOCALLY (the same checks the server re-runs) and `kx new
 # skill` pins its template against the same validator (a pure leaf).

@@ -104,3 +104,66 @@ export function useSaveApp() {
     },
   });
 }
+
+/**
+ * Export a saved App as a portable `kortecx.appbundle/v1` archive (the envelope PLUS
+ * its content-store closure; `withData` includes RAG payloads). The mutation returns
+ * the wire string; the caller triggers a browser download. Reuses the SDK client —
+ * no new eager weight.
+ */
+export function useExportAppBundle() {
+  const { client } = useConnection();
+  return useMutation<string, unknown, { handle: string; withData?: boolean }>({
+    mutationFn: async ({ handle, withData }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      return client.exportAppBundle(handle, { withData: withData ?? false });
+    },
+  });
+}
+
+/**
+ * Import a `kortecx.appbundle/v1` archive under the caller's OWN principal
+ * (fail-closed): PutContent the closure, then SaveApp with a `source_digest` lineage
+ * stamp. Connections/secrets never travel — re-register them by name (the App fails
+ * closed at run until then). On success the App inventory is invalidated.
+ */
+export function useImportApp() {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
+  return useMutation<{ handle: string }, unknown, { bundle: string; force?: boolean }>({
+    mutationFn: async ({ bundle, force }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      const res = await client.importApp(bundle, { force: force ?? false });
+      return { handle: res.handle };
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.apps(endpoint) });
+    },
+  });
+}
+
+/**
+ * Clone one of the caller's Apps locally under a new name (a frozen copy; content is
+ * already resident, so no transfer). Records the source's `app_digest` lineage. On
+ * success the inventory is invalidated so the copy appears.
+ */
+export function useCloneApp() {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
+  return useMutation<{ handle: string }, unknown, { handle: string; newname: string }>({
+    mutationFn: async ({ handle, newname }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      const res = await client.cloneApp(handle, newname);
+      return { handle: res.handle };
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.apps(endpoint) });
+    },
+  });
+}

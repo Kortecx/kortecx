@@ -36,6 +36,7 @@ from . import events as _events
 from . import hexids, types
 from . import wait as _wait  # aliased: `wait` is also a public kwarg name
 from .alerts import AlertsPage, AlertSummary
+from .appbundle import MAX_BUNDLE_CLOSURE_BYTES, MAX_BUNDLE_REFS, AppBundle
 from .approvals import PendingApproval, PendingApprovalsPage
 from .apps import (
     AppSummary,
@@ -44,6 +45,7 @@ from .apps import (
     ScaffoldStatus,
     StoredApp,
     canonical_json,
+    content_refs,
 )
 from .apps import default_handle as _default_app_handle
 from .branch import AdvanceResult, Branch, CreateBranchResult, EditProposal, SnapshotResult
@@ -60,7 +62,7 @@ from .datasets import (
     RetrievalMode,
     _to_documents,
 )
-from .errors import KxError, KxFailedPrecondition, KxUsage, from_rpc_error
+from .errors import KxError, KxFailedPrecondition, KxNotFound, KxUsage, from_rpc_error
 from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
@@ -1088,20 +1090,100 @@ class KxClient:
     # ----- POC-4 Apps (save / list / get / run; off-journal apps.db catalog) -----
 
     def save_app(
-        self, envelope: "Mapping[str, object]", *, handle: Optional[str] = None
+        self,
+        envelope: "Mapping[str, object]",
+        *,
+        handle: Optional[str] = None,
+        source_digest: bytes = b"",
     ) -> SaveAppResult:
         """Persist a ``kortecx.app/v1`` envelope to the caller-scoped catalog. The
         server validates + canonicalizes it and derives ``app_ref`` (SN-8); the
         envelope carries NO authority. ``handle`` defaults to
-        ``apps/local/<sanitized-name>``. An old gateway raises ``KxUnimplemented``."""
+        ``apps/local/<sanitized-name>``. ``source_digest`` is an OPTIONAL 32-byte
+        off-identity lineage hint (an import/clone stamps the source's ``app_digest``;
+        empty ⇒ authored-here). An old gateway raises ``KxUnimplemented``."""
         h = handle or _default_app_handle(str(envelope.get("name", "app")))
         resp = self._call(
             lambda: self._stub.SaveApp(
-                _g.SaveAppRequest(handle=h, envelope_json=canonical_json(envelope)),
+                _g.SaveAppRequest(
+                    handle=h,
+                    envelope_json=canonical_json(envelope),
+                    source_digest=source_digest,
+                ),
                 metadata=self._md,
             )
         )
         return SaveAppResult.from_proto(resp)
+
+    def export_app_bundle(self, handle: str, *, with_data: bool = False) -> str:
+        """Export a saved App as a portable ``kortecx.appbundle/v1`` archive — the
+        canonical envelope PLUS its transitive content-store closure (each blob
+        fetched at FULL size via ``GetContent``). ``with_data`` includes RAG dataset
+        payloads. Returns the wire string; write it to a ``.kxapp`` file.
+
+        Raises ``KxNotFound`` if the App is absent, ``KxUsage`` if a referenced blob
+        is missing (a faithful bundle is impossible)."""
+        stored = self.get_app(handle)
+        if stored is None:
+            raise KxNotFound(f"app {handle!r} not found")
+        blobs: Dict[str, bytes] = {}
+        for ref in content_refs(stored.envelope, include_datasets=with_data):
+            body = self.get_content(ref)
+            if not body:
+                raise KxUsage(
+                    f"content {ref} is missing or unreadable — cannot export a faithful bundle"
+                )
+            blobs[ref] = body
+        return AppBundle(
+            app_digest=stored.app_digest,
+            envelope=canonical_json(stored.envelope),
+            blobs=blobs,
+        ).to_json()
+
+    def import_app(self, bundle: str, *, force: bool = False) -> SaveAppResult:
+        """Import a ``kortecx.appbundle/v1`` archive under YOUR OWN principal
+        (fail-closed): ``PutContent`` the content closure (the server re-derives +
+        dedups each ref) then ``SaveApp`` with a ``source_digest`` lineage stamp.
+        Connections/secrets never travel — re-register them by name (the App fails
+        closed at run until then). ``force`` overwrites an existing same-handle App.
+
+        Raises ``KxUsage`` on a malformed/oversized/corrupt bundle or an existing App."""
+        parsed = AppBundle.from_json(bundle)
+        if parsed.blob_count() > MAX_BUNDLE_REFS:
+            raise KxUsage(f"bundle carries {parsed.blob_count()} blobs (ceiling {MAX_BUNDLE_REFS})")
+        if parsed.total_blob_bytes() > MAX_BUNDLE_CLOSURE_BYTES:
+            raise KxUsage(
+                f"bundle closure is {parsed.total_blob_bytes()} bytes "
+                f"(ceiling {MAX_BUNDLE_CLOSURE_BYTES})"
+            )
+        envelope = json.loads(parsed.envelope)
+        handle = _default_app_handle(str(envelope.get("name", "app")))
+        if not force and self.get_app(handle) is not None:
+            raise KxUsage(f"app {handle!r} already exists — pass force=True to overwrite")
+        for ref, body in parsed.blobs.items():
+            got = self.put_content(body).content_ref
+            if got != ref:
+                raise KxUsage(
+                    f"corrupt bundle: a blob was declared as {ref} but the store derived {got}"
+                )
+        source_digest = hexids.decode(parsed.app_digest)
+        return self.save_app(envelope, handle=handle, source_digest=source_digest)
+
+    def clone_app(self, handle: str, newname: str) -> SaveAppResult:
+        """Clone one of your Apps locally under a new name (a frozen copy; content is
+        already resident, so no transfer). Records the source's ``app_digest`` lineage.
+
+        Raises ``KxNotFound`` if the source is absent, ``KxUsage`` if the target exists."""
+        stored = self.get_app(handle)
+        if stored is None:
+            raise KxNotFound(f"app {handle!r} not found")
+        source_digest = hexids.decode(stored.app_digest) if stored.app_digest else b""
+        envelope = dict(stored.envelope)
+        envelope["name"] = newname  # rename ⇒ a new app_digest (with lineage to the source)
+        new_handle = _default_app_handle(newname)
+        if self.get_app(new_handle) is not None:
+            raise KxUsage(f"app {new_handle!r} already exists — choose a different newname")
+        return self.save_app(envelope, handle=new_handle, source_digest=source_digest)
 
     def list_apps(self) -> List[AppSummary]:
         """List the caller's App catalog (deterministic handle order)."""

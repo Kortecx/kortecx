@@ -1,0 +1,18 @@
+[
+  {
+    "bundle": "{\"app_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"envelope\":\"{\\\"blueprint\\\":{\\\"steps\\\":[]},\\\"name\\\":\\\"hello-app\\\",\\\"schema\\\":\\\"kortecx.app/v1\\\",\\\"version\\\":\\\"1\\\"}\",\"schema\":\"kortecx.appbundle/v1\"}",
+    "name": "empty-closure"
+  },
+  {
+    "bundle": "{\"app_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\",\"blobs\":{\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":\"WW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50Lg==\"},\"envelope\":\"{\\\"blueprint\\\":{\\\"steps\\\":[{\\\"kind\\\":\\\"model\\\",\\\"prompt\\\":\\\"Help.\\\"}]},\\\"name\\\":\\\"helper\\\",\\\"references\\\":{\\\"prompts\\\":[{\\\"content_ref\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"name\\\":\\\"sys\\\"}]},\\\"schema\\\":\\\"kortecx.app/v1\\\",\\\"version\\\":\\\"1\\\"}\",\"schema\":\"kortecx.appbundle/v1\"}",
+    "name": "single-blob"
+  },
+  {
+    "bundle": "{\"app_digest\":\"3333333333333333333333333333333333333333333333333333333333333333\",\"blobs\":{\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":\"AAEC/f7/\",\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\":\"QWx3YXlzIGNpdGUgeW91ciBzb3VyY2VzLg==\"},\"envelope\":\"{\\\"blueprint\\\":{\\\"steps\\\":[{\\\"kind\\\":\\\"model\\\",\\\"prompt\\\":\\\"Answer.\\\"}]},\\\"name\\\":\\\"grounded\\\",\\\"references\\\":{\\\"context\\\":[{\\\"content_ref\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"media_type\\\":\\\"application/octet-stream\\\",\\\"name\\\":\\\"blob\\\"}],\\\"rules\\\":[{\\\"content_ref\\\":\\\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\\",\\\"name\\\":\\\"cite\\\"}]},\\\"schema\\\":\\\"kortecx.app/v1\\\",\\\"version\\\":\\\"1\\\"}\",\"schema\":\"kortecx.appbundle/v1\"}",
+    "name": "multi-blob"
+  },
+  {
+    "bundle": "{\"app_digest\":\"4444444444444444444444444444444444444444444444444444444444444444\",\"blobs\":{\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\":\"WW91IGFyZSBhIGhlbHBmdWwgYXNzaXN0YW50Lg==\"},\"envelope\":\"{\\\"blueprint\\\":{\\\"steps\\\":[{\\\"kind\\\":\\\"model\\\",\\\"prompt\\\":\\\"Help.\\\"}]},\\\"name\\\":\\\"helper-copy\\\",\\\"references\\\":{\\\"prompts\\\":[{\\\"content_ref\\\":\\\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\\",\\\"name\\\":\\\"sys\\\"}]},\\\"schema\\\":\\\"kortecx.app/v1\\\",\\\"version\\\":\\\"1\\\"}\",\"schema\":\"kortecx.appbundle/v1\",\"source_digest\":\"2222222222222222222222222222222222222222222222222222222222222222\"}",
+    "name": "clone-lineage"
+  }
+]

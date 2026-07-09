@@ -23,6 +23,7 @@ vi.mock("../../src/kx/use-apps", () => ({
     error: null,
   }),
   useRunApp: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useExportAppBundle: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
   useSaveApp: () => ({
     mutate: vi.fn(),
     isPending: false,

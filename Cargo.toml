@@ -49,6 +49,7 @@ members = [
     "crates/kx-catalog",
     "crates/kx-bundle",
     "crates/kx-app",
+    "crates/kx-appbundle",
     "crates/kx-skill",
     "crates/kx-toolscout",
     "crates/kx-fleet",
@@ -272,6 +273,7 @@ kx-bundle            = { path = "crates/kx-bundle",            version = "0.1.1"
 # POC-4 App envelope (kortecx.app/v1) — a pure leaf type crate (serde/serde_json/
 # thiserror only); the apps.db host store + the CLI `kx app` verb depend on it.
 kx-app               = { path = "crates/kx-app",               version = "0.1.0" }
+kx-appbundle         = { path = "crates/kx-appbundle",         version = "0.1.0" }
 # The skill manifest (kortecx.skill/v1) — a pure leaf format crate (serde/
 # serde_json/thiserror only); declarative instructions + tool grant-WISHES, no
 # code and no authority. skills.db, the CLI `kx skills` verb, and the

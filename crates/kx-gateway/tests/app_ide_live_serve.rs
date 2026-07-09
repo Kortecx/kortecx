@@ -130,6 +130,7 @@ async fn app_ide_edit_lineage_files_and_run_on_a_live_model() {
     c.save_app(proto::SaveAppRequest {
         handle: handle.clone(),
         envelope_json: echo_app_envelope(v1_prompt),
+        source_digest: Vec::new(),
     })
     .await
     .expect("SaveApp v1")
@@ -151,6 +152,7 @@ async fn app_ide_edit_lineage_files_and_run_on_a_live_model() {
     c.save_app(proto::SaveAppRequest {
         handle: handle.clone(),
         envelope_json: env.to_canonical_json().unwrap(),
+        source_digest: Vec::new(),
     })
     .await
     .expect("SaveApp v2 (lineage edit)")
@@ -227,6 +229,7 @@ async fn app_ide_edit_lineage_files_and_run_on_a_live_model() {
         .save_app(proto::SaveAppRequest {
             handle: handle.clone(),
             envelope_json: echo_app_envelope("blocked"),
+            source_digest: Vec::new(),
         })
         .await
         .unwrap_err();

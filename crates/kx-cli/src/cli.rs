@@ -79,7 +79,7 @@ usage: kx <command> [args]
     kx secrets set --name <N> --value <V> | list | rm --name <N>   (MM-3/D110 local keychain; values write-only)
     kx triggers add --name <N> --kind <webhook|cron|grpc> --recipe <h> [--auth <a>] [--secret-ref <N>] [--schedule <secs>] [--enabled] | list | test | fire | rm   (D113 event ingress)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
-    kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | run <handle> [--wait] [--out <file>] | export <handle> --output <file>   (Apps — kortecx.app/v1 envelopes)
+    kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | run <handle> [--wait] [--out <file>] | export <handle> (--output <file> | --bundle <file> [--with-data]) | import <bundle> [--yes] | clone <handle> <newname>   (Apps — kortecx.app/v1 envelopes)
     kx branch create <handle> [--parent <handle>] [--description <s>] | snapshot <handle> --path <p>... [--parent <handle>] | list | get <handle> | remove <handle>   (D155 file branches)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list|load <id>|offload <id>       (model discovery + local lifecycle)
@@ -824,17 +824,22 @@ kx models list | load <id> | offload <id> [client flags]
             .into(),
         "app" => "\
 kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>]
-kx app save <file> [--handle <h>] | list | get <handle> [--output <file>] | run <handle> [--wait] [--timeout-secs N] [--out <file>] | export <handle> --output <file> [client flags]
+kx app save <file> [--handle <h>] | list | get <handle> [--output <file>] | run <handle> [--wait] [--timeout-secs N] [--out <file>]
+kx app export <handle> (--output <file> | --bundle <file> [--with-data] [--force]) | import <bundle> [--yes] [--force] | clone <handle> <newname>
 kx app scaffold <handle> [--goal <text>] [--wait] [--timeout-secs N] | files <handle> | cat <handle> <path> [--out <file>] | lock <handle> | unlock <handle>   (POC-5 Apps IDE)
   POC-4 Apps: a durable, reusable App = a kortecx.app/v1 envelope (a portable blueprint
   wrapped with by-reference context/tool/connection/dataset references, a minimal prompt/
   rule/skill/memory rail, a 4-axis steering config, and per-step replay intent). `new`
   authors an envelope OFFLINE from a blueprint file (no gateway); `save` validates +
   canonicalizes it and persists it in the caller-scoped, off-journal apps.db catalog
-  (the server derives app_ref, SN-8); `list`/`get`/`export` browse + round-trip it; `run`
-  compiles the envelope's blueprint and submits it exactly-once. The envelope carries NO
-  authority — `run` re-resolves every warrant from the caller's own grants (SN-8). There
-  is NO cross-instance import (a sharing feature, deferred)."
+  (the server derives app_ref, SN-8); `list`/`get` browse it; `run` compiles the
+  envelope's blueprint and submits it exactly-once. `export` writes the pretty envelope
+  (--output) or a portable kortecx.appbundle/v1 archive (--bundle: the envelope + its
+  content closure; --with-data also includes RAG payloads). `import` reconciles a bundle
+  fail-closed under YOUR OWN principal (PutContent the closure, then SaveApp with a
+  source_digest lineage stamp; connections/secrets never travel — re-register by name,
+  fail-closed at run until then); `clone` makes a local frozen copy. The envelope carries
+  NO authority — `run`/`import` re-resolve every warrant from the caller's own grants (SN-8)."
             .into(),
         "health" => "\
 kx health [client flags]

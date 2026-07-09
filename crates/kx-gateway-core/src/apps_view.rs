@@ -80,6 +80,10 @@ pub struct AppRecord {
     pub tags: Vec<String>,
     /// Blueprint step count (display only).
     pub step_count: u32,
+    /// OPTIONAL 32-byte lineage hint — the `app_digest` this App was imported/cloned
+    /// from (`None` ⇒ authored-here). Off-identity (never in the `app_ref`/`app_digest`
+    /// preimage), off-journal, off-digest. A provenance hint, never authenticity.
+    pub source_digest: Option<Vec<u8>>,
 }
 
 /// The App-catalog store seam: save / enumerate / fetch a caller's App envelopes.
@@ -88,8 +92,11 @@ pub struct AppRecord {
 pub trait AppCatalog: Send + Sync {
     /// Upsert the envelope bound to `(principal, handle)`. The host validates +
     /// canonicalizes `envelope_json`, derives `app_ref` + the summary, and stores
-    /// the canonical bytes. Returns `(record, deduplicated)` where `deduplicated`
-    /// is `true` iff an identical canonical envelope was already bound here.
+    /// the canonical bytes. `source_digest` is an OPTIONAL 32-byte off-identity
+    /// lineage hint (an import/clone records the source's `app_digest`; `None` ⇒
+    /// authored-here) — it never affects `app_ref` or dedup. Returns
+    /// `(record, deduplicated)` where `deduplicated` is `true` iff an identical
+    /// canonical envelope was already bound here.
     ///
     /// # Errors
     /// [`GatewayError::InvalidArgument`] if the envelope fails validation;
@@ -99,6 +106,7 @@ pub trait AppCatalog: Send + Sync {
         principal: &str,
         handle: &str,
         envelope_json: &[u8],
+        source_digest: Option<&[u8]>,
     ) -> Result<(AppRecord, bool), GatewayError>;
 
     /// List `principal`'s apps in deterministic handle order, paged. Returns

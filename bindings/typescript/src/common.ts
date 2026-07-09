@@ -158,11 +158,13 @@ export {
   SaveAppResult,
   StoredApp,
   canonicalJson,
+  contentRefs,
   prettyJson,
   defaultHandle,
   scaffoldPhaseName,
 } from "./apps.js";
 export type { Skill, ScaffoldPhase, ScaffoldStatus } from "./apps.js";
+export { AppBundle, BUNDLE_SCHEMA } from "./appbundle.js";
 // The skill-catalog views (declarative kortecx.skill/v1 bundles).
 export { AddSkillResult, SkillForm, SkillSummary, SKILL_SCHEMA } from "./skills.js";
 export type { AddSkillInput, SkillWish } from "./skills.js";

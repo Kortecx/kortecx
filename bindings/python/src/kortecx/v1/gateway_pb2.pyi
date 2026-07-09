@@ -1417,12 +1417,14 @@ class AppSummary(_message.Message):
     def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ...) -> None: ...
 
 class SaveAppRequest(_message.Message):
-    __slots__ = ("handle", "envelope_json")
+    __slots__ = ("handle", "envelope_json", "source_digest")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     ENVELOPE_JSON_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_DIGEST_FIELD_NUMBER: _ClassVar[int]
     handle: str
     envelope_json: bytes
-    def __init__(self, handle: _Optional[str] = ..., envelope_json: _Optional[bytes] = ...) -> None: ...
+    source_digest: bytes
+    def __init__(self, handle: _Optional[str] = ..., envelope_json: _Optional[bytes] = ..., source_digest: _Optional[bytes] = ...) -> None: ...
 
 class SaveAppResponse(_message.Message):
     __slots__ = ("app_ref", "handle", "deduplicated")
@@ -1457,16 +1459,18 @@ class GetAppRequest(_message.Message):
     def __init__(self, handle: _Optional[str] = ...) -> None: ...
 
 class GetAppResponse(_message.Message):
-    __slots__ = ("found", "envelope_json", "summary", "app_digest")
+    __slots__ = ("found", "envelope_json", "summary", "app_digest", "source_digest")
     FOUND_FIELD_NUMBER: _ClassVar[int]
     ENVELOPE_JSON_FIELD_NUMBER: _ClassVar[int]
     SUMMARY_FIELD_NUMBER: _ClassVar[int]
     APP_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_DIGEST_FIELD_NUMBER: _ClassVar[int]
     found: bool
     envelope_json: bytes
     summary: AppSummary
     app_digest: bytes
-    def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[AppSummary, _Mapping]] = ..., app_digest: _Optional[bytes] = ...) -> None: ...
+    source_digest: bytes
+    def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[AppSummary, _Mapping]] = ..., app_digest: _Optional[bytes] = ..., source_digest: _Optional[bytes] = ...) -> None: ...
 
 class RunAppRequest(_message.Message):
     __slots__ = ("handle", "args")

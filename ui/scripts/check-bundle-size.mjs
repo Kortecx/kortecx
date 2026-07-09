@@ -6,7 +6,7 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 648 KiB raw (override with KX_UI_EAGER_BUDGET_BYTES for emergencies —
+ * Budget: 656 KiB raw (override with KX_UI_EAGER_BUDGET_BYTES for emergencies —
  * a deliberate, reviewed override, never a silent default bump).
  *
  * History (deliberate, reviewed default bumps — each tied to a real capability the
@@ -25,6 +25,11 @@
  *     planner/gather/judge/review prompt constants + the consensus-vote key. Pure client
  *     composition (no new proto / RPC), but it rides the eager `common.js`. Measured
  *     654,787 B (origin/main) → 656,790 B (~2 KiB eager); bumped to the next KiB boundary.
+ *   - 648 KiB → 656 KiB (portable App bundles): the eager SDK client gains
+ *     exportAppBundle() / importApp() / cloneApp() + the `source_digest` field on
+ *     SaveApp/GetApp + the `kortecx.appbundle/v1` codec (base64 + envelope walk). Rides
+ *     the eager `common.js` (loaded up front by connection-context). Measured 656,790 B
+ *     (origin/main) → 662,868 B (~6 KiB eager); bumped to the next KiB boundary.
  *
  * Exit 1 over budget. The printed table doubles as the GR10 evidence blob.
  */
@@ -35,7 +40,7 @@ import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(UI_ROOT, "dist");
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 663_552);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 671_744);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

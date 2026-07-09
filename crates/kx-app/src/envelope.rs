@@ -404,6 +404,50 @@ impl AppEnvelope {
         Ok(s)
     }
 
+    /// Every content-store ref this App references — the transitive content closure
+    /// for a portable export, and the seed for the future GC reachability walk.
+    ///
+    /// Returns 64-char lowercase-hex refs, **sorted and deduplicated** (empties
+    /// skipped). Covers the always-travel artifact rail — `references.context`,
+    /// `prompts`, `rules`, `memory` (`content_ref`), `skills` (`instructions_ref`),
+    /// and `steering_config.context.context_refs`. `include_datasets` gates the
+    /// (potentially large) RAG payload refs in `references.datasets[].cas_refs`
+    /// (export's `--with-data`); the GC reachability set passes `true`.
+    ///
+    /// The opaque `blueprint` is intentionally NOT scanned — it carries inline text,
+    /// never a content ref (validated by [`AppEnvelope::validate`]). Any future
+    /// ref-bearing blueprint field MUST extend both this walk and `validate`.
+    #[must_use]
+    pub fn content_refs(&self, include_datasets: bool) -> Vec<String> {
+        let mut set = std::collections::BTreeSet::new();
+        for c in &self.references.context {
+            set.insert(c.content_ref.clone());
+        }
+        for a in self
+            .references
+            .prompts
+            .iter()
+            .chain(&self.references.rules)
+            .chain(&self.references.memory)
+        {
+            set.insert(a.content_ref.clone());
+        }
+        for s in &self.references.skills {
+            set.insert(s.instructions_ref.clone());
+        }
+        for r in &self.steering_config.context.context_refs {
+            set.insert(r.clone());
+        }
+        if include_datasets {
+            for d in &self.references.datasets {
+                for r in &d.cas_refs {
+                    set.insert(r.clone());
+                }
+            }
+        }
+        set.into_iter().filter(|r| !r.is_empty()).collect()
+    }
+
     /// The catalog summary derived from this envelope.
     #[must_use]
     pub fn summary(&self) -> AppSummary {
@@ -553,6 +597,7 @@ fn reject_floats(v: &Value) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use serde_json::json;
 
     fn sample_blueprint() -> Value {
@@ -658,5 +703,116 @@ mod tests {
     fn summary_counts_steps() {
         let env = AppEnvelope::new("x", sample_blueprint());
         assert_eq!(env.summary().step_count, 1);
+    }
+
+    /// A distinct, valid 64-char lowercase-hex ref per seed byte.
+    fn hexref(seed: u8) -> String {
+        format!("{seed:02x}").repeat(32)
+    }
+
+    #[test]
+    fn content_refs_walks_every_artifact_field_sorted_and_deduped() {
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.references.context.push(ContextRef {
+            name: "c".into(),
+            content_ref: hexref(0x01),
+            media_type: String::new(),
+        });
+        env.references.prompts.push(ArtifactRef {
+            name: "p".into(),
+            content_ref: hexref(0x02),
+        });
+        env.references.rules.push(ArtifactRef {
+            name: "r".into(),
+            content_ref: hexref(0x03),
+        });
+        env.references.memory.push(ArtifactRef {
+            name: "m".into(),
+            content_ref: hexref(0x04),
+        });
+        env.references.skills.push(SkillRef {
+            name: "s".into(),
+            instructions_ref: hexref(0x05),
+            tools: BTreeMap::new(),
+        });
+        env.steering_config.context.context_refs.push(hexref(0x06));
+        // A dataset ref — travels ONLY with include_datasets.
+        env.references.datasets.push(DatasetRef {
+            dataset_ref: "d".into(),
+            cas_refs: vec![hexref(0x07)],
+        });
+        // A duplicate across two fields MUST collapse to one.
+        env.references.prompts.push(ArtifactRef {
+            name: "dup".into(),
+            content_ref: hexref(0x01),
+        });
+        // The envelope is still valid (every ref is 64-hex).
+        env.validate().unwrap();
+
+        let without = env.content_refs(false);
+        assert_eq!(
+            without,
+            vec![
+                hexref(0x01),
+                hexref(0x02),
+                hexref(0x03),
+                hexref(0x04),
+                hexref(0x05),
+                hexref(0x06),
+            ],
+            "artifact rail only, sorted + deduped, datasets excluded"
+        );
+
+        let with = env.content_refs(true);
+        assert!(
+            with.contains(&hexref(0x07)),
+            "dataset ref travels with --with-data"
+        );
+        assert_eq!(with.len(), without.len() + 1);
+    }
+
+    #[test]
+    fn content_refs_skips_empty_refs() {
+        // A default (empty content_ref) artifact must not yield a bogus "" ref.
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.references.prompts.push(ArtifactRef::default());
+        assert!(env.content_refs(true).is_empty());
+    }
+
+    proptest! {
+        /// `content_refs(true)` is sorted, deduplicated, and set-equal to the union of
+        /// every content ref placed across the rail — over the arbitrary ref space
+        /// (SN-4 v2 #5).
+        #[test]
+        fn content_refs_is_sorted_deduped_and_complete(
+            seeds in prop::collection::vec(any::<u8>(), 0..40)
+        ) {
+            let mut env = AppEnvelope::new("x", json!({"steps": []}));
+            for (i, s) in seeds.iter().enumerate() {
+                match i % 3 {
+                    0 => env.references.prompts.push(ArtifactRef {
+                        name: "p".into(),
+                        content_ref: hexref(*s),
+                    }),
+                    1 => env.references.skills.push(SkillRef {
+                        name: "s".into(),
+                        instructions_ref: hexref(*s),
+                        tools: BTreeMap::new(),
+                    }),
+                    _ => env.steering_config.context.context_refs.push(hexref(*s)),
+                }
+            }
+            let refs = env.content_refs(true);
+            let mut sorted = refs.clone();
+            sorted.sort();
+            prop_assert_eq!(&refs, &sorted);
+            let mut deduped = refs.clone();
+            deduped.dedup();
+            prop_assert_eq!(&refs, &deduped);
+            let got: std::collections::BTreeSet<String> = refs.into_iter().collect();
+            let expect: std::collections::BTreeSet<String> =
+                seeds.iter().map(|s| hexref(*s)).collect();
+            prop_assert_eq!(got, expect);
+        }
     }
 }

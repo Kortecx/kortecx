@@ -1361,6 +1361,18 @@ dependencies = [
 name = "kx-app"
 version = "0.1.0"
 dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "kx-appbundle"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -1475,10 +1487,13 @@ name = "kx-cli"
 version = "0.1.1"
 dependencies = [
  "kx-app",
+ "kx-appbundle",
  "kx-blueprint",
+ "kx-content",
  "kx-critic-types",
  "kx-eval",
  "kx-gateway",
+ "kx-gateway-core",
  "kx-proto",
  "kx-runtime",
  "kx-skill",
@@ -1764,6 +1779,7 @@ dependencies = [
  "hyper-util",
  "keyring",
  "kx-app",
+ "kx-appbundle",
  "kx-audit",
  "kx-blueprint",
  "kx-bundle",

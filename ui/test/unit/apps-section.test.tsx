@@ -39,6 +39,9 @@ vi.mock("../../src/kx/use-apps", () => ({
   }),
   useApp: () => ({ data: null, isLoading: false, error: null }),
   useRunApp: () => ({ mutate, isPending: false, error: null, reset: vi.fn() }),
+  useExportAppBundle: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useImportApp: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useCloneApp: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
 }));
 
 // NewAppForm dependencies — keep the form mountable + inert in jsdom.
@@ -66,7 +69,7 @@ afterEach(() => {
 });
 
 describe("Apps section (catalog + POC-5a New App)", () => {
-  it("renders saved Apps as cards with Run + Open + Inspect", () => {
+  it("renders saved Apps as cards with Run + a kebab menu (Open/Inspect/Download/Duplicate)", () => {
     APPS = [
       {
         handle: "apps/local/echo",
@@ -83,8 +86,15 @@ describe("Apps section (catalog + POC-5a New App)", () => {
     expect(screen.getByTestId("apps-section")).toBeInTheDocument();
     expect(screen.getByTestId("app-card-apps/local/echo")).toBeInTheDocument();
     expect(screen.getByTestId("app-run-apps/local/echo")).toBeInTheDocument();
+    // The secondary actions live behind an overflow kebab (fixes the crowded row) —
+    // View / Open / Inspect / Download / Duplicate appear once it's opened.
+    const menu = screen.getByTestId("app-menu-apps/local/echo");
+    expect(menu).toBeInTheDocument();
+    fireEvent.click(menu);
     expect(screen.getByTestId("app-open-apps/local/echo")).toBeInTheDocument();
     expect(screen.getByTestId("app-inspect-apps/local/echo")).toBeInTheDocument();
+    expect(screen.getByTestId("app-download-apps/local/echo")).toBeInTheDocument();
+    expect(screen.getByTestId("app-duplicate-apps/local/echo")).toBeInTheDocument();
   });
 
   it("POC-5a: the New App button EXISTS (flipped from POC-4)", () => {

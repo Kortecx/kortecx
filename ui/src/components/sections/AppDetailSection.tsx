@@ -21,7 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useAppBranch, useAppFileContent, useSaveFile } from "../../kx/use-app-files";
-import { useApp } from "../../kx/use-apps";
+import { useApp, useExportAppBundle } from "../../kx/use-apps";
 import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
 import { buildFileTree } from "../../lib/file-tree";
 import { inferLanguageFromPath } from "../../lib/monaco/infer-language";
@@ -57,6 +57,23 @@ export function AppDetailSection({
   const app = useApp(handle);
   const summary = app.data?.summary;
   const locked = summary?.locked ?? false;
+  const exportBundle = useExportAppBundle();
+
+  function download(): void {
+    exportBundle.mutate(
+      { handle },
+      {
+        onSuccess: (wire) => {
+          const url = URL.createObjectURL(new Blob([wire], { type: "application/json" }));
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `${handle.replace(/\//g, "-")}.kxapp`;
+          a.click();
+          URL.revokeObjectURL(url);
+        },
+      },
+    );
+  }
 
   const [tabState, setTabState] = useState<IdeTab>("files");
   const [pathState, setPathState] = useState<string | undefined>(undefined);
@@ -94,6 +111,16 @@ export function AppDetailSection({
               🔒 Locked
             </span>
           ) : null}
+          <button
+            type="button"
+            className="btn-ghost"
+            data-testid="app-detail-download"
+            disabled={exportBundle.isPending}
+            title="Download a portable .kxapp bundle (envelope + content closure)"
+            onClick={download}
+          >
+            {exportBundle.isPending ? "Downloading…" : "Download"}
+          </button>
           <button
             type="button"
             className="btn-primary"

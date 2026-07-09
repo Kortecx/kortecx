@@ -48,6 +48,9 @@ export interface AppClient {
   registerMcpServer?(input: RegisterMcpServerInput): Promise<unknown>;
   /** OPTIONAL — used only when a promoting Flow (`asApp`) carried `withMemory` facts. */
   storeMemory?(content: string | Uint8Array, opts?: { kind?: number }): Promise<unknown>;
+  /** OPTIONAL — export a saved App as a portable `kortecx.appbundle/v1` archive
+   *  (used by `App.export({ bundle: true, client })`). */
+  exportAppBundle?(handle: string, opts?: { withData?: boolean }): Promise<string>;
 }
 
 function resolveClient(explicit?: AppClient): AppClient {
@@ -394,9 +397,22 @@ export class AppBuilder {
 
   /** Write the pretty envelope JSON to `path` (NODE-only — a dynamic `node:fs`
    * import keeps it out of the web/chains static bundle graph). */
-  async export(path: string): Promise<void> {
+  async export(
+    path: string,
+    opts: { bundle?: boolean; client?: AppClient; withData?: boolean } = {},
+  ): Promise<void> {
     const fs = await import("node:fs/promises");
-    await fs.writeFile(path, prettyJson(this.toEnvelope()));
+    if (!(opts.bundle ?? false)) {
+      await fs.writeFile(path, prettyJson(this.toEnvelope()));
+      return;
+    }
+    const client = resolveClient(opts.client);
+    if (client.exportAppBundle === undefined) {
+      throw new Error("export({ bundle: true }) requires a client that supports exportAppBundle");
+    }
+    const saved = await this.save({ client });
+    const wire = await client.exportAppBundle(saved.handle, { withData: opts.withData });
+    await fs.writeFile(path, wire);
   }
 
   private async resolvePending(client: AppClient): Promise<void> {

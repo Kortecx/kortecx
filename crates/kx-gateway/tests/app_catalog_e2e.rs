@@ -76,6 +76,7 @@ async fn save_list_get_round_trip_and_dedup() {
             proto::SaveAppRequest {
                 handle: "team/apps/echo".into(),
                 envelope_json: envelope.clone(),
+                source_digest: Vec::new(),
             },
             "tok-alice",
         ))
@@ -133,6 +134,7 @@ async fn save_list_get_round_trip_and_dedup() {
             proto::SaveAppRequest {
                 handle: "team/apps/echo".into(),
                 envelope_json: envelope,
+                source_digest: Vec::new(),
             },
             "tok-alice",
         ))
@@ -155,6 +157,7 @@ async fn cross_party_isolation_uniform_not_found() {
         proto::SaveAppRequest {
             handle: "team/apps/secret".into(),
             envelope_json: app_envelope("secret"),
+            source_digest: Vec::new(),
         },
         "tok-alice",
     ))
@@ -191,6 +194,7 @@ async fn cross_party_isolation_uniform_not_found() {
         proto::SaveAppRequest {
             handle: "team/apps/secret".into(),
             envelope_json: app_envelope("bobs-own"),
+            source_digest: Vec::new(),
         },
         "tok-bob",
     ))
@@ -227,10 +231,175 @@ async fn bad_envelope_is_invalid_argument() {
             proto::SaveAppRequest {
                 handle: "team/apps/bad".into(),
                 envelope_json: b"{ not an envelope".to_vec(),
+                source_digest: Vec::new(),
             },
             "tok-alice",
         ))
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::InvalidArgument);
+}
+
+/// Hex of a 32-byte content ref / digest.
+fn hex32(bytes: &[u8]) -> String {
+    kx_content::ContentRef(<[u8; 32]>::try_from(bytes).unwrap()).to_hex()
+}
+
+/// The portable-App export→import MECHANISM the CLI/SDK drive, over the live gateway:
+/// author an App that references a content blob → build a `kortecx.appbundle/v1`
+/// (envelope + closure) → import it under a DIFFERENT principal (PutContent the
+/// closure, SaveApp with a `source_digest` stamp). Proves the round-trip lands the
+/// SAME `app_digest` (SN-4 determinism), the server re-derives identical refs
+/// (content-addressed dedup), and the lineage is recorded — all with NO model.
+#[tokio::test]
+async fn bundle_export_import_round_trips_to_same_app_digest() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // Alice authors an App that references a prompt body in the content store.
+    let body = b"You are a precise assistant.".to_vec();
+    let put = c
+        .put_content(with_bearer(
+            proto::PutContentRequest {
+                payload: body.clone(),
+                media_type: String::new(),
+                filename: String::new(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let ref_hex = hex32(&put.content_ref);
+    let mut env = kx_app::AppEnvelope::new(
+        "grounded-helper",
+        serde_json::json!({"steps":[{"kind":"model","prompt":"Help."}]}),
+    );
+    env.references.prompts.push(kx_app::ArtifactRef {
+        name: "sys".into(),
+        content_ref: ref_hex.clone(),
+    });
+    let envelope = env.to_canonical_json().unwrap();
+    c.save_app(with_bearer(
+        proto::SaveAppRequest {
+            handle: "apps/local/grounded".into(),
+            envelope_json: envelope,
+            source_digest: Vec::new(),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let got = c
+        .get_app(with_bearer(
+            proto::GetAppRequest {
+                handle: "apps/local/grounded".into(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(got.found);
+    let original_digest = got.app_digest.clone();
+    assert_eq!(original_digest.len(), 32);
+
+    // EXPORT: walk the closure + build the bundle (what `kx app export --bundle` does).
+    let stored = kx_app::AppEnvelope::from_json_slice(&got.envelope_json).unwrap();
+    let mut blobs = std::collections::BTreeMap::new();
+    for hexref in stored.content_refs(true) {
+        let cref = kx_content::ContentRef::from_hex(&hexref).unwrap();
+        let blob = c
+            .get_content(with_bearer(
+                proto::GetContentRequest {
+                    content_ref: cref.0.to_vec(),
+                    instance_id: Vec::new(),
+                },
+                "tok-alice",
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!blob.payload.is_empty(), "closure blob must be fetchable");
+        blobs.insert(hexref, blob.payload);
+    }
+    let bundle = kx_appbundle::AppBundle {
+        app_digest: hex32(&original_digest),
+        source_digest: None,
+        envelope: got.envelope_json.clone(),
+        blobs,
+    };
+    let wire = bundle.to_json().unwrap();
+
+    // IMPORT under Bob (a different principal): PutContent the closure (dedup), verify
+    // the server re-derives the identical ref, then SaveApp with the lineage stamp.
+    let parsed = kx_appbundle::AppBundle::from_json(&wire).unwrap();
+    for (hexref, bytes) in &parsed.blobs {
+        let put = c
+            .put_content(with_bearer(
+                proto::PutContentRequest {
+                    payload: bytes.clone(),
+                    media_type: String::new(),
+                    filename: String::new(),
+                },
+                "tok-bob",
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            &hex32(&put.content_ref),
+            hexref,
+            "server re-derives the ref"
+        );
+    }
+    let src = kx_content::ContentRef::from_hex(&parsed.app_digest)
+        .unwrap()
+        .0
+        .to_vec();
+    c.save_app(with_bearer(
+        proto::SaveAppRequest {
+            handle: "apps/local/grounded".into(),
+            envelope_json: parsed.envelope,
+            source_digest: src.clone(),
+        },
+        "tok-bob",
+    ))
+    .await
+    .unwrap();
+    let bob = c
+        .get_app(with_bearer(
+            proto::GetAppRequest {
+                handle: "apps/local/grounded".into(),
+            },
+            "tok-bob",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(bob.found);
+    assert_eq!(
+        bob.app_digest, original_digest,
+        "export→import round-trips to the SAME app_digest"
+    );
+    assert_eq!(bob.source_digest, src, "import records the source lineage");
+    // The closure traveled: Bob can read the imported blob.
+    let bob_blob = c
+        .get_content(with_bearer(
+            proto::GetContentRequest {
+                content_ref: kx_content::ContentRef::from_hex(&ref_hex)
+                    .unwrap()
+                    .0
+                    .to_vec(),
+                instance_id: Vec::new(),
+            },
+            "tok-bob",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(bob_blob.payload, body);
 }

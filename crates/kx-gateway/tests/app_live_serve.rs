@@ -135,6 +135,7 @@ async fn app_catalog_round_trips_and_runs_on_a_live_model() {
         .save_app(proto::SaveAppRequest {
             handle: "apps/local/echo-agent".to_string(),
             envelope_json: envelope.clone(),
+            source_digest: Vec::new(),
         })
         .await
         .expect("SaveApp")
@@ -542,6 +543,7 @@ async fn runapp_connection_live(case: &ConnectorCase) {
     c.save_app(proto::SaveAppRequest {
         handle: handle_str.clone(),
         envelope_json: envelope,
+        source_digest: Vec::new(),
     })
     .await
     .expect("SaveApp")
@@ -809,6 +811,7 @@ async fn trigger_fires_connector_app_live(case: &ConnectorCase) {
     c.save_app(proto::SaveAppRequest {
         handle: handle_str.clone(),
         envelope_json: envelope,
+        source_digest: Vec::new(),
     })
     .await
     .expect("SaveApp")
@@ -1100,6 +1103,7 @@ async fn runapp_grounded_app_self_grounds_live() {
     c.save_app(proto::SaveAppRequest {
         handle: handle_str.clone(),
         envelope_json: envelope,
+        source_digest: Vec::new(),
     })
     .await
     .expect("SaveApp")
