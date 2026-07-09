@@ -23,6 +23,39 @@ check: fmt-check clippy test
 # this recipe in lock-step with ci.yml.
 ci: fmt-check clippy test eval deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke test-connector-real test-skill registry-check
 
+# Run the SDK CI gates locally — the exact `sdk-python` + `sdk-typescript` jobs from ci.yml
+# (codegen-fresh, ruff+mypy / biome+tsc, and the unit/contract tests). Run before an SDK PR:
+# the SDK gates are NOT part of `just ci` (Rust-only), so a Rust-only local pass is a false-green
+# for a formatting/typing miss. Assumes the dev extras are installed (`uv pip install -e
+# 'bindings/python[dev]'` + `npm ci` in bindings/typescript). Keep in lock-step with ci.yml.
+pre-push-sdk:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ sdk-python — codegen-fresh + ruff + mypy + pytest"
+    ( cd bindings/python && ./codegen.sh >/dev/null \
+        && { git diff --quiet -- src/kortecx/v1 || { echo "✗ python stubs drifted — commit codegen.sh output"; exit 1; }; } \
+        && python -m ruff check . \
+        && python -m ruff format --check src tests examples \
+        && python -m mypy src \
+        && python -m pytest -q )
+    echo "▶ sdk-typescript — codegen-fresh + biome + tsc + vitest"
+    ( cd bindings/typescript && ./codegen.sh >/dev/null \
+        && { git diff --quiet -- src/gen || { echo "✗ TS stubs drifted — commit codegen.sh output"; exit 1; }; } \
+        && npx biome ci . \
+        && npx tsc --noEmit \
+        && npx vitest run )
+    echo "✓ SDK gates green"
+
+# Run the UI CI gates locally — the `ui` job from ci.yml minus Playwright (biome + tsc + vitest +
+# build + bundle-size). Run before a UI PR. Assumes `npm ci` was run in ui/ (and the TS SDK built).
+# `npx playwright test` is CI-only here (needs a browser + a live serve). Keep in lock-step with ci.yml.
+pre-push-ui:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ ui — biome + tsc + vitest + build + size"
+    ( cd ui && npx biome ci . && npx tsc --noEmit && npx vitest run && npm run build && npm run size )
+    echo "✓ UI gates green (run \`cd ui && npx playwright test\` for the e2e — CI does this)"
+
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
     cargo fmt --all -- --check
