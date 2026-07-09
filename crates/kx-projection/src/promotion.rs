@@ -15,7 +15,9 @@
 //! verdict does not decode to a different decision — it fails to decode (treated
 //! as "not Valid" → withhold), fail-closed.
 
-use kx_content::{ContentRef, ContentStore};
+use std::sync::Arc;
+
+use kx_content::{ContentRef, ContentStore, SharedContent};
 use kx_critic_types::CriticVerdict;
 use kx_mote::MoteId;
 
@@ -47,6 +49,29 @@ impl<S: ContentStore> ContentStoreVerdicts<S> {
 }
 
 impl<S: ContentStore> VerdictLookup for ContentStoreVerdicts<S> {
+    fn verdict(&self, r: &ContentRef) -> Option<CriticVerdict> {
+        let bytes = self.store.get(r).ok()?;
+        CriticVerdict::decode(&bytes).ok()
+    }
+}
+
+/// Production resolver backed by the type-erased [`SharedContent`] seam
+/// (D181.4). Identical read to [`ContentStoreVerdicts`], but over the
+/// runtime's shared `Arc<dyn SharedContent>` handle so the commit-time critic
+/// gate resolves verdicts through whichever backend (local FS or S3) is wired,
+/// without the coordinator naming the concrete store type.
+pub struct SharedContentVerdicts {
+    store: Arc<dyn SharedContent>,
+}
+
+impl SharedContentVerdicts {
+    /// Wrap a shared content handle as a verdict source.
+    pub fn new(store: Arc<dyn SharedContent>) -> Self {
+        Self { store }
+    }
+}
+
+impl VerdictLookup for SharedContentVerdicts {
     fn verdict(&self, r: &ContentRef) -> Option<CriticVerdict> {
         let bytes = self.store.get(r).ok()?;
         CriticVerdict::decode(&bytes).ok()

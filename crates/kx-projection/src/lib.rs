@@ -144,7 +144,7 @@ pub use errors::ProjectionError;
 pub use materializer::{derive_child_identity, DefaultTopologyMaterializer, TopologyMaterializer};
 pub use mote_def_registry::{InMemoryMoteDefRegistry, MoteDefRegistry};
 pub use projection::Projection;
-pub use promotion::{ContentStoreVerdicts, VerdictLookup};
+pub use promotion::{ContentStoreVerdicts, SharedContentVerdicts, VerdictLookup};
 pub use register::RegisterMote;
 pub use run_metadata::{fold_run_metadata, RunMetadata, RunMetadataFold, RunRecord};
 pub use snapshot::Snapshot;

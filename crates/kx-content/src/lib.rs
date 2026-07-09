@@ -73,6 +73,7 @@ use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
+pub use bytes::Bytes;
 pub use crate::in_memory::InMemoryContentStore;
 pub use crate::local_fs::LocalFsContentStore;
 pub use crate::sniff::{sniff_image_format, ImageFormat};
@@ -327,9 +328,92 @@ impl<S: ContentStore + ?Sized> ContentStore for std::sync::Arc<S> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SharedContent — the object-safe erasure seam (D181.4)
+// ---------------------------------------------------------------------------
+
+/// The narrow, object-safe view of a [`ContentStore`] that the runtime holds
+/// type-erased behind a trait object.
+///
+/// [`ContentStore`] itself is NOT object-safe — its `type Payload` associated
+/// type makes `dyn ContentStore` illegal (the established `BodyResolver` /
+/// `ContentStoreBodyResolver<S>` pattern in `kx-executor` exists for exactly
+/// this reason). `SharedContent` sidesteps that by committing the seam to the
+/// canonical `Bytes` payload and exposing only the three methods the worker
+/// and coordinator actually use (`get`/`put`/`contains` — never `delete` /
+/// `list_refs`). It is `Send + Sync` (mirroring `BodyResolver`) so the fleet
+/// can share one store across `tokio::spawn`ed workers.
+///
+/// Any `ContentStore<Payload = Bytes>` (the local FS store, the in-memory test
+/// store, and the cloud S3 store all qualify) is a `SharedContent` via the
+/// blanket impl below, so `Arc<ConcreteStore>` unsize-coerces to
+/// [`SharedStore`] at every call site with no per-site change. This is what
+/// keeps the OSS/cloud content split a config flag rather than a fork.
+pub trait SharedContent: Send + Sync {
+    /// Read the payload at `r`. See [`ContentStore::get`].
+    fn get(&self, r: &ContentRef) -> Result<Bytes, NotFound>;
+
+    /// Write `bytes`, returning the resulting [`ContentRef`]. See
+    /// [`ContentStore::put`].
+    fn put(&self, bytes: &[u8]) -> Result<ContentRef, StoreError>;
+
+    /// `true` if the store currently has an object at `r`. See
+    /// [`ContentStore::contains`].
+    fn contains(&self, r: &ContentRef) -> bool;
+}
+
+/// Blanket impl: every `Send + Sync` content store over the canonical `Bytes`
+/// payload is a [`SharedContent`]. Additive; delegates verbatim to the
+/// underlying [`ContentStore`] methods (byte-identical behavior). The `?Sized`
+/// bound lets an `Arc<dyn ContentStore<…>>` also satisfy it, harmlessly.
+impl<S: ContentStore<Payload = Bytes> + Send + Sync + ?Sized> SharedContent for S {
+    fn get(&self, r: &ContentRef) -> Result<Bytes, NotFound> {
+        ContentStore::get(self, r)
+    }
+
+    fn put(&self, bytes: &[u8]) -> Result<ContentRef, StoreError> {
+        ContentStore::put(self, bytes)
+    }
+
+    fn contains(&self, r: &ContentRef) -> bool {
+        ContentStore::contains(self, r)
+    }
+}
+
+/// A type-erased, shareable content handle — the runtime's store type once the
+/// concrete backend (local FS or S3) has been chosen at the edge. Holds only
+/// the [`SharedContent`] surface (`get`/`put`/`contains`).
+pub type SharedStore = std::sync::Arc<dyn SharedContent>;
+
 #[cfg(test)]
 mod tests {
     use super::ContentRef;
+
+    #[test]
+    fn shared_content_erasure_roundtrips_and_is_digest_stable() {
+        use std::sync::Arc;
+
+        use super::{ContentStore, InMemoryContentStore, SharedStore};
+
+        let bytes = b"content-store bridge D181.4";
+
+        // Baseline: the concrete store's ContentRef for these bytes.
+        let concrete = InMemoryContentStore::new();
+        let concrete_ref = concrete.put(bytes).unwrap();
+
+        // The same backend, type-erased to the runtime's `SharedStore` handle
+        // (this is the coercion every Worker / CoordinatorService call site does).
+        let shared: SharedStore = Arc::new(InMemoryContentStore::new());
+        let shared_ref = shared.put(bytes).unwrap();
+
+        // The erasure moves no bytes: identical ContentRef (digest-stable),
+        // identical payload on read-back, and `contains` agrees — proving the
+        // seam delegates verbatim to `ContentStore`.
+        assert_eq!(shared_ref, concrete_ref, "erased put must be digest-identical");
+        assert_eq!(&shared.get(&shared_ref).unwrap()[..], &bytes[..]);
+        assert!(shared.contains(&shared_ref));
+        assert!(!shared.contains(&ContentRef::from_bytes([0x00; 32])));
+    }
 
     #[test]
     fn from_hex_roundtrips_and_is_fail_closed() {

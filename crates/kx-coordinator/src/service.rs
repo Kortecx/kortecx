@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use kx_audit::{AuditEvent, AuditSink, DispatchKind};
-use kx_content::LocalFsContentStore;
+use kx_content::SharedStore;
 use kx_journal::{FailureReason, Journal, JournalEntry};
 use kx_mote::{Mote, MoteId, NdClass};
 use kx_projection::MoteState;
@@ -60,7 +60,7 @@ impl CoordinatorService {
     /// published), and the same content-addressed store is where peers read results.
     pub fn with_store<J: Journal + Send + 'static>(
         journal: J,
-        store: Arc<LocalFsContentStore>,
+        store: SharedStore,
     ) -> Self {
         Self::build(
             journal,
@@ -82,7 +82,7 @@ impl CoordinatorService {
     /// [`with_store_shaper_and_tools`]: CoordinatorService::with_store_shaper_and_tools
     pub fn with_store_and_tools<J: Journal + Send + 'static>(
         journal: J,
-        store: Arc<LocalFsContentStore>,
+        store: SharedStore,
         tool_registry: Arc<dyn ToolRegistry>,
     ) -> Self {
         Self::with_tool_registry_and_seams(
@@ -101,7 +101,7 @@ impl CoordinatorService {
     /// *and* the store's phantom-ref guard.
     pub fn with_store_and_registry<J: Journal + Send + 'static>(
         journal: J,
-        store: Arc<LocalFsContentStore>,
+        store: SharedStore,
         registry: Arc<dyn WorkerRegistry>,
     ) -> Self {
         Self::build(journal, registry, Some(store))
@@ -115,7 +115,7 @@ impl CoordinatorService {
     pub fn with_seams<J: Journal + Send + 'static>(
         journal: J,
         registry: Arc<dyn WorkerRegistry>,
-        store: Option<Arc<LocalFsContentStore>>,
+        store: Option<SharedStore>,
         clock: Arc<dyn Clock>,
         nonce: Arc<dyn RunNonceSource>,
     ) -> Self {
@@ -142,7 +142,7 @@ impl CoordinatorService {
     pub fn with_tool_registry_and_seams<J: Journal + Send + 'static>(
         journal: J,
         registry: Arc<dyn WorkerRegistry>,
-        store: Option<Arc<LocalFsContentStore>>,
+        store: Option<SharedStore>,
         clock: Arc<dyn Clock>,
         nonce: Arc<dyn RunNonceSource>,
         tool_registry: Arc<dyn ToolRegistry>,
@@ -176,7 +176,7 @@ impl CoordinatorService {
     pub fn with_shaper_materialization<J: Journal + Send + 'static>(
         journal: J,
         registry: Arc<dyn WorkerRegistry>,
-        store: Arc<LocalFsContentStore>,
+        store: SharedStore,
         clock: Arc<dyn Clock>,
         nonce: Arc<dyn RunNonceSource>,
         tool_registry: Arc<dyn ToolRegistry>,
@@ -203,7 +203,7 @@ impl CoordinatorService {
     /// constructor the gateway uses under `--features inference`.
     pub fn with_store_and_shaper_materialization<J: Journal + Send + 'static>(
         journal: J,
-        store: Arc<LocalFsContentStore>,
+        store: SharedStore,
         shaper_roles: Arc<dyn kx_warrant::RoleRegistry>,
     ) -> Self {
         Self::with_shaper_materialization(
@@ -226,7 +226,7 @@ impl CoordinatorService {
     /// [`with_store_and_shaper_materialization`]: CoordinatorService::with_store_and_shaper_materialization
     pub fn with_store_shaper_and_tools<J: Journal + Send + 'static>(
         journal: J,
-        store: Arc<LocalFsContentStore>,
+        store: SharedStore,
         shaper_roles: Arc<dyn kx_warrant::RoleRegistry>,
         tool_registry: Arc<dyn ToolRegistry>,
     ) -> Self {
@@ -244,7 +244,7 @@ impl CoordinatorService {
     fn build<J: Journal + Send + 'static>(
         journal: J,
         registry: Arc<dyn WorkerRegistry>,
-        store: Option<Arc<LocalFsContentStore>>,
+        store: Option<SharedStore>,
     ) -> Self {
         Self::with_seams(
             journal,
