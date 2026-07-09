@@ -38,6 +38,35 @@ def pretty_json(envelope: Mapping[str, Any]) -> str:
     return json.dumps(envelope, sort_keys=True, indent=2, ensure_ascii=False) + "\n"
 
 
+def content_refs(envelope: Mapping[str, Any], *, include_datasets: bool = False) -> List[str]:
+    """Every content-store ref an App envelope references — the transitive export
+    closure (and the seed for the future GC reachability set). Returns sorted,
+    deduplicated 64-hex refs. ``include_datasets`` gates the (potentially large) RAG
+    dataset payload refs. Mirrors Rust ``AppEnvelope::content_refs`` byte-for-byte."""
+    refs: set[str] = set()
+    references = envelope.get("references", {}) or {}
+    for item in references.get("context", []) or []:
+        if item.get("content_ref"):
+            refs.add(item["content_ref"])
+    for rail in ("prompts", "rules", "memory"):
+        for item in references.get(rail, []) or []:
+            if item.get("content_ref"):
+                refs.add(item["content_ref"])
+    for item in references.get("skills", []) or []:
+        if item.get("instructions_ref"):
+            refs.add(item["instructions_ref"])
+    steering_context = (envelope.get("steering_config", {}) or {}).get("context", {}) or {}
+    for ref in steering_context.get("context_refs", []) or []:
+        if ref:
+            refs.add(ref)
+    if include_datasets:
+        for dataset in references.get("datasets", []) or []:
+            for ref in dataset.get("cas_refs", []) or []:
+                if ref:
+                    refs.add(ref)
+    return sorted(refs)
+
+
 def default_handle(name: str) -> str:
     """Derive the default 3-segment catalog handle ``apps/local/<sanitized>`` from an
     App name (mirrors the ``kx app`` CLI). Lowercases, maps invalid chars to ``-``,
@@ -138,6 +167,9 @@ class StoredApp:
     # identical for byte-identical envelopes regardless of the handle they are stored
     # under (contrast ``summary.app_ref``, which is handle-scoped). "" when not found.
     app_digest: str
+    # OPTIONAL 64-hex lineage hint — the ``app_digest`` this App was imported/cloned
+    # from ("" ⇒ authored-here). Off-identity; a provenance hint, never authenticity.
+    source_digest: str = ""
 
     @classmethod
     def from_proto(cls, r: "_g.GetAppResponse") -> "StoredApp":
@@ -146,6 +178,7 @@ class StoredApp:
             summary=AppSummary.from_proto(r.summary),
             envelope=envelope,
             app_digest=hexids.encode(r.app_digest),
+            source_digest=hexids.encode(r.source_digest),
         )
 
 

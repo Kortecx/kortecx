@@ -68,6 +68,42 @@ export function defaultHandle(name: string): string {
   return `apps/local/${san || "app"}`;
 }
 
+/**
+ * Every content-store ref an App envelope references — the transitive export closure
+ * (and the seed for the future GC reachability set). Returns sorted, deduplicated
+ * 64-hex refs; `includeDatasets` gates the (potentially large) RAG dataset payload
+ * refs. Mirrors Rust `AppEnvelope::content_refs` byte-for-byte.
+ */
+export function contentRefs(envelope: unknown, includeDatasets = false): string[] {
+  const env = (envelope ?? {}) as Record<string, unknown>;
+  const references = (env.references ?? {}) as Record<string, unknown>;
+  const refs = new Set<string>();
+  const addField = (list: unknown, key: string): void => {
+    for (const item of (list as unknown[]) ?? []) {
+      const r = (item as Record<string, unknown> | null)?.[key];
+      if (typeof r === "string" && r) refs.add(r);
+    }
+  };
+  addField(references.context, "content_ref");
+  for (const rail of ["prompts", "rules", "memory"]) addField(references[rail], "content_ref");
+  addField(references.skills, "instructions_ref");
+  const steering = ((env.steering_config as Record<string, unknown>)?.context ?? {}) as Record<
+    string,
+    unknown
+  >;
+  for (const r of (steering.context_refs as unknown[]) ?? []) {
+    if (typeof r === "string" && r) refs.add(r);
+  }
+  if (includeDatasets) {
+    for (const d of (references.datasets as unknown[]) ?? []) {
+      for (const r of ((d as Record<string, unknown> | null)?.cas_refs as unknown[]) ?? []) {
+        if (typeof r === "string" && r) refs.add(r);
+      }
+    }
+  }
+  return [...refs].sort();
+}
+
 /** A skill: a named (instructions + tool wish SET) bundle ≈ a reusable Agent. */
 export interface Skill {
   name: string;
@@ -160,6 +196,11 @@ export class StoredApp {
      * Empty string when not found.
      */
     readonly appDigest: string,
+    /**
+     * OPTIONAL 64-hex lineage hint — the `appDigest` this App was imported/cloned
+     * from (empty ⇒ authored-here). Off-identity; a provenance hint, never authenticity.
+     */
+    readonly sourceDigest: string = "",
   ) {}
 
   static fromProto(r: PbGetAppResponse): StoredApp {
@@ -170,6 +211,6 @@ export class StoredApp {
     const summary = r.summary
       ? AppSummary.fromProto(r.summary)
       : new AppSummary("", "", "", "", "", [], 0, false);
-    return new StoredApp(summary, envelope, encode(r.appDigest));
+    return new StoredApp(summary, envelope, encode(r.appDigest), encode(r.sourceDigest));
   }
 }

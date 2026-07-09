@@ -24,9 +24,10 @@ blueprint and re-resolves *every* warrant from your own grants (SN-8). Saving an
 running an App can never widen what you are allowed to do.
 
 The catalog is **caller-scoped** and lives in an off-journal `apps.db` sidecar; the
-server derives the App's identity (`app_ref`) from the canonical envelope. Apps are
-local to one runtime in this release — cross-instance import (sharing) is a Cloud
-capability.
+server derives the App's identity (`app_ref`) from the canonical envelope. An App is
+**portable**: you can export it (with its content closure) to a `.kxapp` bundle,
+import that bundle under your own account, or clone an App locally — all fail-closed
+and single-runtime. (Signed provenance across untrusted parties is a Cloud capability.)
 
 ## Author in Python
 
@@ -78,7 +79,13 @@ kx app save echo.app.json            # persist (handle defaults apps/local/echo-
 kx app list                          # browse the catalog
 kx app get apps/local/echo-demo      # show the summary (--output writes the envelope)
 kx app run apps/local/echo-demo --wait   # compile the blueprint + run it
-kx app export apps/local/echo-demo --output echo.app.json   # the round-trip artifact
+kx app export apps/local/echo-demo --output echo.app.json   # the by-ref envelope
+
+# Portable Apps — export a self-contained bundle, import it, or clone locally:
+kx app export apps/local/echo-demo --bundle echo.kxapp   # envelope + content closure
+kx app export apps/local/echo-demo --bundle echo.kxapp --with-data   # + RAG payloads
+kx app import echo.kxapp                    # reconcile under YOUR account (fail-closed)
+kx app clone apps/local/echo-demo my-copy   # a local frozen copy (records lineage)
 
 # POC-5a — agentically scaffold the App's project tree into its CoW branch:
 kx app scaffold apps/local/echo-demo --goal "Echo the user's input" --wait
@@ -92,6 +99,35 @@ kx app unlock apps/local/echo-demo
 
 `kx app run` is "the runtime as a function": it fetches the saved App's blueprint and
 submits it; the server warrants every step from your grants.
+
+## Portable Apps — bundle, import & clone
+
+An App references its content (prompts, rules, context, skill instructions, RAG data)
+**by content-store ref**, so the plain envelope isn't self-contained. A
+**`kortecx.appbundle/v1` bundle** packages the canonical envelope **plus its
+transitive content closure** into a single portable `.kxapp` file:
+
+- `kx app export <handle> --bundle <file>` writes the bundle. It walks the envelope's
+  content refs, fetches each blob at full size, and names the bundle by the App's
+  handle-free `app_digest`. `--with-data` also inlines RAG dataset payloads (they can be
+  large, so they are opt-in). The same bundle format is emitted byte-identically by the
+  Python (`App.export(bundle=…)`) and TypeScript (`App.export(path, { bundle: true })`)
+  SDKs — pinned by `tests/golden/apps/bundle_corpus.json`.
+- `kx app import <bundle>` reconciles a bundle **fail-closed under your own account**:
+  it re-validates the envelope, verifies the declared `app_digest`, shows the carried
+  instruction bodies for review (pass `--yes` to skip the prompt non-interactively),
+  uploads each blob (the server re-derives an identical content ref and dedups), then
+  saves the App under a new local handle with a `source_digest` lineage stamp.
+- `kx app clone <handle> <newname>` makes a **local frozen copy** under a new name
+  (content is already resident, so nothing transfers) and records the source lineage.
+
+**Connections and secrets never travel in a bundle.** An App carries only a credential
+**name** and a userinfo-free connector descriptor; the importer re-registers the
+connection by name (`kx connections add`). Until then the App fails closed at run with
+`missing integration`. The envelope itself can carry no warrant, grant, secret, or
+credential value — the server re-validates it on import, so importing an App can never
+widen what you are allowed to do. `source_digest` is a **lineage hint, not a signature**
+(unauthenticated provenance in this release).
 
 ## The envelope format
 
@@ -281,9 +317,11 @@ on a locked App, but the runtime is the authoritative gate.
 
 ## The Apps console
 
-Open **Apps** in the sidebar. Browse your saved Apps, **Inspect** the full envelope,
-**Run** one (it routes to the live run), click **New App** to scaffold a fresh App, or
-**Open** an App into the file tree + editor. **Share** is a Cloud capability (shown
+Open **Apps** in the sidebar. Browse your saved Apps and **Run** one (it routes to the
+live run). Each card's overflow (⋯) menu holds **View details**, **Open project**,
+**Inspect** the envelope, **Download** a portable `.kxapp` bundle, and **Duplicate**
+(clone locally). **Import** a bundle from the section header; click **New App** to
+scaffold a fresh App. **Share** across parties is a Cloud capability (shown
 honest-disabled). Per-App locks live in the **Policies** section
 ([policies.md](./policies.md)).
 

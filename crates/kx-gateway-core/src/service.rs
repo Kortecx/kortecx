@@ -2669,9 +2669,19 @@ impl KxGateway for GatewayService {
                 ));
             }
         }
+        // OPTIONAL lineage hint (import/clone stamps the source's app_digest). A
+        // present hint must be a well-formed 32-byte digest; empty ⇒ authored-here.
+        // Off-identity — it never enters the app_ref preimage.
+        if !req.source_digest.is_empty() && req.source_digest.len() != 32 {
+            return Err(Status::invalid_argument(
+                "source_digest, when set, must be a 32-byte app_digest",
+            ));
+        }
+        let source_digest = (!req.source_digest.is_empty()).then_some(req.source_digest.as_slice());
         // The host validates + canonicalizes the envelope and derives app_ref +
         // the summary (it carries NO authority — a bad envelope ⇒ InvalidArgument).
-        let (record, deduplicated) = apps.save(&principal, &req.handle, &req.envelope_json)?;
+        let (record, deduplicated) =
+            apps.save(&principal, &req.handle, &req.envelope_json, source_digest)?;
         Ok(Response::new(proto::SaveAppResponse {
             app_ref: record.app_ref.to_vec(),
             handle: record.handle,
@@ -2731,6 +2741,9 @@ impl KxGateway for GatewayService {
         // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
         match apps.get(&principal, &req.handle)? {
             Some((record, envelope_json)) => {
+                // OPTIONAL lineage hint (empty ⇒ authored-here); a provenance display
+                // signal only, never authenticity.
+                let source_digest = record.source_digest.clone().unwrap_or_default();
                 let mut summary = app_record_to_proto(record);
                 if let Some(l) = self.locks.as_ref() {
                     summary.locked = l.is_locked(&principal, &summary.handle).unwrap_or(false);
@@ -2742,6 +2755,7 @@ impl KxGateway for GatewayService {
                     envelope_json,
                     summary: Some(summary),
                     app_digest,
+                    source_digest,
                 }))
             }
             None => Ok(Response::new(proto::GetAppResponse {
@@ -2749,6 +2763,7 @@ impl KxGateway for GatewayService {
                 envelope_json: Vec::new(),
                 summary: None,
                 app_digest: Vec::new(),
+                source_digest: Vec::new(),
             })),
         }
     }

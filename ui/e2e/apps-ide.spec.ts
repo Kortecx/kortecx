@@ -45,9 +45,10 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
 
   await connectConsole(page, gw);
 
-  // Reach the IDE via the Apps section → Open.
+  // Reach the IDE via the Apps section → the card's overflow menu → Open project.
   await gotoViaPalette(page, "apps");
   await expect(page.getByTestId("apps-section")).toBeVisible();
+  await page.getByTestId(`app-menu-${HANDLE}`).click();
   await page.getByTestId(`app-open-${HANDLE}`).click();
 
   // The full-screen IDE shell + the 3 tabs.

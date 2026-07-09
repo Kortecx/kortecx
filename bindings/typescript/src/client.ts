@@ -13,6 +13,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 import { createClient } from "@connectrpc/connect";
 import type { Client, Transport } from "@connectrpc/connect";
 import { AlertSummary, type AlertsPage } from "./alerts.js";
+import { AppBundle, MAX_BUNDLE_CLOSURE_BYTES, MAX_BUNDLE_REFS } from "./appbundle.js";
 import { PendingApprovalRow, type PendingApprovalsPage } from "./approvals.js";
 import {
   AppSummary,
@@ -20,6 +21,7 @@ import {
   type ScaffoldStatus,
   StoredApp,
   canonicalJson,
+  contentRefs,
   defaultHandle,
   scaffoldPhaseName,
 } from "./apps.js";
@@ -46,6 +48,7 @@ import {
   KxConnectError,
   KxError,
   KxFailedPrecondition,
+  KxNotFound,
   KxRunFailed,
   KxUnimplemented,
   KxUsage,
@@ -714,11 +717,20 @@ export abstract class KxClientBase {
    * NO authority. `handle` defaults to `apps/local/<sanitized-name>`. An old gateway
    * throws {@link KxUnimplemented}.
    */
-  async saveApp(envelope: unknown, opts: { handle?: string } = {}): Promise<SaveAppResult> {
+  async saveApp(
+    envelope: unknown,
+    opts: { handle?: string; sourceDigest?: Uint8Array } = {},
+  ): Promise<SaveAppResult> {
     const name = String((envelope as Record<string, unknown>)?.name ?? "app");
     const handle = opts.handle ?? defaultHandle(name);
     const envelopeJson = new TextEncoder().encode(canonicalJson(envelope));
-    const resp = await rpc(this.grpc.saveApp({ handle, envelopeJson }));
+    const resp = await rpc(
+      this.grpc.saveApp({
+        handle,
+        envelopeJson,
+        sourceDigest: opts.sourceDigest ?? new Uint8Array(),
+      }),
+    );
     return SaveAppResult.fromProto(resp);
   }
 
@@ -735,6 +747,87 @@ export abstract class KxClientBase {
   async getApp(handle: string): Promise<StoredApp | null> {
     const resp = await rpc(this.grpc.getApp({ handle }));
     return resp.found ? StoredApp.fromProto(resp) : null;
+  }
+
+  /**
+   * Export a saved App as a portable `kortecx.appbundle/v1` archive — the canonical
+   * envelope PLUS its transitive content-store closure (each blob fetched at FULL
+   * size via {@link getContent}). `withData` includes RAG dataset payloads. Returns
+   * the wire string; write it to a `.kxapp` file. Throws {@link KxNotFound} if the
+   * App is absent, {@link KxUsage} if a referenced blob is missing.
+   */
+  async exportAppBundle(handle: string, opts: { withData?: boolean } = {}): Promise<string> {
+    const stored = await this.getApp(handle);
+    if (stored === null) throw new KxNotFound(`app ${JSON.stringify(handle)} not found`);
+    const blobs = new Map<string, Uint8Array>();
+    for (const ref of contentRefs(stored.envelope, opts.withData ?? false)) {
+      const body = await this.getContent(ref);
+      if (body.length === 0) {
+        throw new KxUsage(
+          `content ${ref} is missing or unreadable — cannot export a faithful bundle`,
+        );
+      }
+      blobs.set(ref, body);
+    }
+    const envelope = new TextEncoder().encode(canonicalJson(stored.envelope));
+    return new AppBundle(stored.appDigest, envelope, blobs).toJson();
+  }
+
+  /**
+   * Import a `kortecx.appbundle/v1` archive under YOUR OWN principal (fail-closed):
+   * putContent the content closure (the server re-derives + dedups each ref) then
+   * saveApp with a `sourceDigest` lineage stamp. Connections/secrets never travel —
+   * re-register them by name (the App fails closed at run until then). `force`
+   * overwrites an existing same-handle App. Throws {@link KxUsage} on a
+   * malformed/oversized/corrupt bundle or an existing App.
+   */
+  async importApp(bundle: string, opts: { force?: boolean } = {}): Promise<SaveAppResult> {
+    const parsed = AppBundle.fromJson(bundle);
+    if (parsed.blobCount() > MAX_BUNDLE_REFS) {
+      throw new KxUsage(`bundle carries ${parsed.blobCount()} blobs (ceiling ${MAX_BUNDLE_REFS})`);
+    }
+    if (parsed.totalBlobBytes() > MAX_BUNDLE_CLOSURE_BYTES) {
+      throw new KxUsage(
+        `bundle closure is ${parsed.totalBlobBytes()} bytes (ceiling ${MAX_BUNDLE_CLOSURE_BYTES})`,
+      );
+    }
+    const envelope = JSON.parse(new TextDecoder().decode(parsed.envelope)) as Record<
+      string,
+      unknown
+    >;
+    const handle = defaultHandle(String(envelope.name ?? "app"));
+    if (!(opts.force ?? false) && (await this.getApp(handle)) !== null) {
+      throw new KxUsage(`app ${JSON.stringify(handle)} already exists — pass force to overwrite`);
+    }
+    for (const [ref, body] of parsed.blobs) {
+      const got = (await this.putContent(body)).contentRef;
+      if (got !== ref) {
+        throw new KxUsage(
+          `corrupt bundle: a blob was declared as ${ref} but the store derived ${got}`,
+        );
+      }
+    }
+    return this.saveApp(envelope, { handle, sourceDigest: decode(parsed.appDigest) });
+  }
+
+  /**
+   * Clone one of your Apps locally under a new name (a frozen copy; content is
+   * already resident, so no transfer). Records the source's `appDigest` lineage.
+   * Throws {@link KxNotFound} if the source is absent, {@link KxUsage} if the target
+   * exists.
+   */
+  async cloneApp(handle: string, newname: string): Promise<SaveAppResult> {
+    const stored = await this.getApp(handle);
+    if (stored === null) throw new KxNotFound(`app ${JSON.stringify(handle)} not found`);
+    const envelope = { ...stored.envelope, name: newname };
+    const newHandle = defaultHandle(newname);
+    if ((await this.getApp(newHandle)) !== null) {
+      throw new KxUsage(
+        `app ${JSON.stringify(newHandle)} already exists — choose a different newname`,
+      );
+    }
+    const sourceDigest = stored.appDigest ? decode(stored.appDigest) : new Uint8Array();
+    return this.saveApp(envelope, { handle: newHandle, sourceDigest });
   }
 
   // ----- Skills (add / list / show / remove; off-journal skills.db catalog) -----

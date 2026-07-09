@@ -1,21 +1,27 @@
-//! `kx app new | save | list | get | run | export` — author, persist, browse, and
-//! RUN a durable App (a `kortecx.app/v1` envelope: a portable blueprint wrapped
-//! with by-reference context/tool/connection/dataset references, a minimal
-//! prompt/rule/skill/memory rail, a 4-axis steering config, and per-step replay
-//! intent). Tri-surface parity with the SDK + UI.
+//! `kx app new | save | list | get | run | export | import | clone` — author,
+//! persist, browse, RUN, and make PORTABLE a durable App (a `kortecx.app/v1`
+//! envelope: a portable blueprint wrapped with by-reference context/tool/connection/
+//! dataset references, a minimal prompt/rule/skill/memory rail, a 4-axis steering
+//! config, and per-step replay intent). Tri-surface parity with the SDK + UI.
 //!
 //! The catalog lives in an off-journal `apps.db` sidecar; the server derives
 //! `app_ref` (SN-8) and scopes every App to the authoring party. The envelope
 //! carries NO authority — `kx app run` re-compiles the blueprint through the same
 //! `to_request` path as `kx blueprint run`, and the server re-resolves EVERY
-//! warrant from the caller's own grants (SN-8 / BLOCKER #5). There is NO
-//! cross-instance import entrypoint (a sharing feature, deferred post-POC).
+//! warrant from the caller's own grants (SN-8 / BLOCKER #5). Import/clone are LOCAL
+//! and client-orchestrated (PutContent the closure, then SaveApp under the importer's
+//! OWN principal with a `source_digest` lineage stamp) — connections/secrets never
+//! travel; the importer re-registers them by name (fail-closed at run until then).
 //!
 //! - `new <name> --from-blueprint <file>` authors an envelope locally (offline; no
 //!   gateway) — steering + tags + an optional `--branch` handle — and writes it.
 //! - `save <file>` validates + canonicalizes the envelope and `SaveApp`s it.
 //! - `list` / `get <handle>` browse the catalog; `export <handle> --output` writes
-//!   the pretty envelope back out (the round-trip artifact).
+//!   the pretty envelope (by-reference), or `--bundle <file>` a portable
+//!   `kortecx.appbundle/v1` archive (envelope + its content closure; `--with-data`
+//!   also includes RAG payloads).
+//! - `import <bundle>` reconciles a bundle fail-closed under your own principal;
+//!   `clone <handle> <newname>` makes a local frozen copy.
 //! - `run <handle>` compiles the envelope's blueprint and submits it (exactly-once).
 
 use std::path::PathBuf;
@@ -26,6 +32,7 @@ use kx_proto::proto;
 
 use crate::client::{next_value, ClientCommon};
 use crate::error::CliError;
+use crate::verbs::app_bundle;
 use crate::verbs::blueprint::{to_request, DagSpec};
 use crate::{format, verbs, wait};
 
@@ -69,12 +76,42 @@ pub enum AppSub {
         /// model step prompt (an "Inputs" block). Requires a RunApp-capable server.
         args: Vec<(String, String)>,
     },
-    /// Write one App's pretty envelope JSON to `--output` (the round-trip artifact).
+    /// Write one App out. `--output <file>` writes the pretty envelope (by-reference
+    /// round-trip artifact); `--bundle <file>` writes a portable `kortecx.appbundle/v1`
+    /// archive (the envelope PLUS its transitive content-store closure), optionally
+    /// `--with-data` to include RAG dataset payloads.
     Export {
         /// The catalog handle.
         handle: String,
-        /// The destination file.
-        output: PathBuf,
+        /// Write the pretty envelope JSON here (by-reference).
+        output: Option<PathBuf>,
+        /// Write a portable content-closure bundle here.
+        bundle: Option<PathBuf>,
+        /// Include RAG dataset payloads in the bundle closure.
+        with_data: bool,
+        /// Proceed even if a blob body looks like it carries a secret.
+        force: bool,
+    },
+    /// Import a portable `kortecx.appbundle/v1` archive under YOUR OWN principal
+    /// (fail-closed): PutContent the content closure, then SaveApp with a local
+    /// lineage stamp. The envelope is re-validated server-side; referenced
+    /// connections/tools/datasets are re-registered locally (reported, fail-closed
+    /// at run until then).
+    Import {
+        /// The bundle file.
+        bundle: PathBuf,
+        /// Skip the interactive review confirmation (required non-interactively).
+        yes: bool,
+        /// Overwrite an existing App at the same handle.
+        force: bool,
+    },
+    /// Clone one of YOUR Apps locally under a new name (a frozen copy; content is
+    /// already resident, so no transfer). Records the source's `app_digest` lineage.
+    Clone {
+        /// The source catalog handle.
+        handle: String,
+        /// The clone's new name (its handle is derived from this).
+        newname: String,
     },
     /// POC-5a: agentically scaffold an EXISTING App's fixed-skeleton project tree
     /// into its CoW branch (server-side; the host is never written). `--wait` polls
@@ -182,8 +219,8 @@ fn parse_u32(raw: &str, flag: &str) -> Result<u32, CliError> {
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
         CliError::Usage(
-            "app needs a subcommand (new|save|list|get|run|export|scaffold|files|cat|\
-             structure|edit|lock|unlock)"
+            "app needs a subcommand (new|save|list|get|run|export|import|clone|scaffold|\
+             files|cat|structure|edit|lock|unlock)"
                 .into(),
         )
     })?;
@@ -206,6 +243,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
     let mut wait_flag = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
     let mut app_args: Vec<(String, String)> = Vec::new();
+    let mut bundle: Option<PathBuf> = None;
+    let mut with_data = false;
+    let mut yes = false;
+    let mut force = false;
 
     while let Some(flag) = args.next() {
         if common.try_consume(&flag, &mut args)? {
@@ -224,6 +265,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             }
             "--handle" => handle = Some(next_value(&mut args, "--handle")?),
             "--output" => output = Some(PathBuf::from(next_value(&mut args, "--output")?)),
+            "--bundle" => bundle = Some(PathBuf::from(next_value(&mut args, "--bundle")?)),
+            "--with-data" => with_data = true,
+            "--yes" => yes = true,
+            "--force" => force = true,
             "--out" => out = Some(PathBuf::from(next_value(&mut args, "--out")?)),
             "--from" => from = Some(PathBuf::from(next_value(&mut args, "--from")?)),
             "--model" => model = Some(next_value(&mut args, "--model")?),
@@ -281,12 +326,17 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             timeout_secs,
             app_args,
             skills,
+            bundle,
+            with_data,
+            yes,
+            force,
         },
     )?;
     Ok(AppArgs { sub, common })
 }
 
 /// The accumulated `app` flags, dispatched to a subcommand by [`assemble_sub`].
+#[allow(clippy::struct_excessive_bools)] // a flat flag accumulator (the verbs' convention)
 struct Flags {
     positional: Option<String>,
     positional2: Option<String>,
@@ -306,9 +356,14 @@ struct Flags {
     timeout_secs: u64,
     app_args: Vec<(String, String)>,
     skills: Vec<String>,
+    bundle: Option<PathBuf>,
+    with_data: bool,
+    yes: bool,
+    force: bool,
 }
 
 /// Validate the accumulated flags against the verb and build the subcommand.
+#[allow(clippy::too_many_lines)] // a flat per-verb validation dispatcher (the verbs' convention)
 fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
     let require_pos = |p: Option<String>, what: &str| -> Result<String, CliError> {
         p.filter(|s| !s.is_empty())
@@ -345,11 +400,40 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             out: f.out,
             args: f.app_args,
         }),
-        "export" => Ok(AppSub::Export {
+        "export" => {
+            let handle = require_pos(f.positional, "a <handle>")?;
+            if f.output.is_none() && f.bundle.is_none() {
+                return Err(CliError::Usage(
+                    "app export requires --output <file> (pretty envelope) or \
+                     --bundle <file> (portable content-closure archive)"
+                        .into(),
+                ));
+            }
+            Ok(AppSub::Export {
+                handle,
+                output: f.output,
+                bundle: f.bundle,
+                with_data: f.with_data,
+                force: f.force,
+            })
+        }
+        "import" => {
+            let bundle = f
+                .bundle
+                .or_else(|| f.positional.filter(|s| !s.is_empty()).map(PathBuf::from))
+                .ok_or_else(|| CliError::Usage("app import requires a <bundle> file".into()))?;
+            Ok(AppSub::Import {
+                bundle,
+                yes: f.yes,
+                force: f.force,
+            })
+        }
+        "clone" => Ok(AppSub::Clone {
             handle: require_pos(f.positional, "a <handle>")?,
-            output: f
-                .output
-                .ok_or_else(|| CliError::Usage("app export requires --output <file>".into()))?,
+            newname: f
+                .positional2
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| CliError::Usage("app clone requires a <newname> argument".into()))?,
         }),
         "scaffold" => Ok(AppSub::Scaffold {
             handle: require_pos(f.positional, "a <handle>")?,
@@ -389,13 +473,13 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
         }),
         other => Err(CliError::Usage(format!(
             "unknown app subcommand {other:?} (expected new | save | list | get | run | \
-             export | scaffold | files | cat | structure | edit | lock | unlock)"
+             export | import | clone | scaffold | files | cat | structure | edit | lock | unlock)"
         ))),
     }
 }
 
 /// Sanitise an App name into a 3-segment default catalog handle `apps/local/<name>`.
-fn default_handle(name: &str) -> String {
+pub(super) fn default_handle(name: &str) -> String {
     let mut san: String = name
         .chars()
         .map(|c| {
@@ -532,6 +616,7 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                 .save_app(resolved.request(proto::SaveAppRequest {
                     handle,
                     envelope_json: canonical,
+                    source_digest: Vec::new(), // authored-here (no lineage)
                 })?)
                 .await
                 .map_err(CliError::from_status)?
@@ -559,14 +644,39 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
             println!("{}", format::render_get_app(&resp, json));
             Ok(())
         }
-        AppSub::Export { handle, output } => {
-            let resp = fetch_app(&mut client, &resolved, &handle).await?;
-            if !resp.found {
-                return Err(CliError::Usage(format!("app {handle:?} not found")));
+        AppSub::Export {
+            handle,
+            output,
+            bundle,
+            with_data,
+            force,
+        } => {
+            if let Some(bundle_path) = bundle {
+                app_bundle::export_bundle(
+                    &mut client,
+                    &resolved,
+                    &handle,
+                    with_data,
+                    force,
+                    &bundle_path,
+                )
+                .await?;
             }
-            write_pretty_envelope(&resp.envelope_json, &output)?;
-            println!("wrote {}", output.display());
+            if let Some(output) = output {
+                let resp = fetch_app(&mut client, &resolved, &handle).await?;
+                if !resp.found {
+                    return Err(CliError::Usage(format!("app {handle:?} not found")));
+                }
+                write_pretty_envelope(&resp.envelope_json, &output)?;
+                println!("wrote {}", output.display());
+            }
             Ok(())
+        }
+        AppSub::Import { bundle, yes, force } => {
+            app_bundle::import_bundle(&mut client, &resolved, &bundle, yes, force).await
+        }
+        AppSub::Clone { handle, newname } => {
+            app_bundle::clone_app(&mut client, &resolved, &handle, &newname).await
         }
         AppSub::Run {
             handle,
@@ -818,7 +928,7 @@ async fn poll_scaffold(
 }
 
 /// `GetApp` for `(handle)` — uniform not-found (no oracle).
-async fn fetch_app(
+pub(super) async fn fetch_app(
     client: &mut proto::kx_gateway_client::KxGatewayClient<tonic::transport::Channel>,
     resolved: &crate::client::Resolved,
     handle: &str,
@@ -944,8 +1054,82 @@ mod tests {
     }
 
     #[test]
-    fn parse_export_requires_output() {
+    fn parse_export_requires_output_or_bundle() {
         let err = parse(["export", "apps/local/x"].iter().map(ToString::to_string)).unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn parse_export_bundle_with_data() {
+        match parse_ok(&[
+            "export",
+            "apps/local/x",
+            "--bundle",
+            "x.kxapp",
+            "--with-data",
+        ])
+        .sub
+        {
+            AppSub::Export {
+                handle,
+                output,
+                bundle,
+                with_data,
+                force,
+            } => {
+                assert_eq!(handle, "apps/local/x");
+                assert!(output.is_none());
+                assert_eq!(bundle.as_deref(), Some(std::path::Path::new("x.kxapp")));
+                assert!(with_data);
+                assert!(!force);
+            }
+            other => panic!("expected Export, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_export_output_still_works() {
+        match parse_ok(&["export", "apps/local/x", "--output", "x.json"]).sub {
+            AppSub::Export { output, bundle, .. } => {
+                assert_eq!(output.as_deref(), Some(std::path::Path::new("x.json")));
+                assert!(bundle.is_none());
+            }
+            other => panic!("expected Export, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_import_positional_and_flags() {
+        match parse_ok(&["import", "my.kxapp", "--yes"]).sub {
+            AppSub::Import { bundle, yes, force } => {
+                assert_eq!(bundle.as_path(), std::path::Path::new("my.kxapp"));
+                assert!(yes);
+                assert!(!force);
+            }
+            other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_import_requires_bundle() {
+        let err = parse(["import"].iter().map(ToString::to_string)).unwrap_err();
+        assert!(matches!(err, CliError::Usage(_)));
+    }
+
+    #[test]
+    fn parse_clone_handle_and_newname() {
+        match parse_ok(&["clone", "apps/local/echo", "my-copy"]).sub {
+            AppSub::Clone { handle, newname } => {
+                assert_eq!(handle, "apps/local/echo");
+                assert_eq!(newname, "my-copy");
+            }
+            other => panic!("expected Clone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_clone_requires_newname() {
+        let err = parse(["clone", "apps/local/echo"].iter().map(ToString::to_string)).unwrap_err();
         assert!(matches!(err, CliError::Usage(_)));
     }
 

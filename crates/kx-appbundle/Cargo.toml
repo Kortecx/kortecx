@@ -1,0 +1,24 @@
+[package]
+name         = "kx-appbundle"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx.appbundle/v1 — the portable App archive codec. A canonical-JSON container carrying an App envelope (verbatim canonical bytes) plus its base64-encoded content-store blob closure. Byte-deterministic + cross-language (Rust/Python/TypeScript emit identical bytes). A pure container-format crate: validates structure (schema tag, 64-hex refs, base64) but never cryptographic identity — the runtime re-derives every ref and re-validates the envelope server-side."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+base64     = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

@@ -282,6 +282,7 @@ async fn save_app_is_refused_on_a_locked_app_then_unlock_restores() {
         proto::SaveAppRequest {
             handle: handle.clone(),
             envelope_json: minimal_envelope("Lineage"),
+            source_digest: Vec::new(),
         },
         "tok-alice",
     ))
@@ -304,6 +305,7 @@ async fn save_app_is_refused_on_a_locked_app_then_unlock_restores() {
             proto::SaveAppRequest {
                 handle: handle.clone(),
                 envelope_json: minimal_envelope("Lineage v2"),
+                source_digest: Vec::new(),
             },
             "tok-alice",
         ))
@@ -330,6 +332,7 @@ async fn save_app_is_refused_on_a_locked_app_then_unlock_restores() {
         proto::SaveAppRequest {
             handle: handle.clone(),
             envelope_json: minimal_envelope("Lineage v3"),
+            source_digest: Vec::new(),
         },
         "tok-alice",
     ))
@@ -352,6 +355,7 @@ async fn save_app_lock_is_caller_scoped() {
         proto::SaveAppRequest {
             handle: handle.clone(),
             envelope_json: minimal_envelope("Scoped"),
+            source_digest: Vec::new(),
         },
         "tok-alice",
     ))
@@ -373,6 +377,7 @@ async fn save_app_lock_is_caller_scoped() {
         proto::SaveAppRequest {
             handle: handle.clone(),
             envelope_json: minimal_envelope("Scoped v2"),
+            source_digest: Vec::new(),
         },
         "tok-alice",
     ))

@@ -16,6 +16,7 @@ from .agent import Agent
 from .agent_result import AgentResult, AuditedAction
 from .alerts import AlertsPage, AlertSummary
 from .app import App, app, minimal_app_envelope
+from .appbundle import AppBundle
 from .approvals import PendingApproval, PendingApprovalsPage
 from .apps import AppSummary, SaveAppResult, ScaffoldLaunch, ScaffoldStatus, Skill, StoredApp
 from .blueprints import BlueprintBuilder, EdgeInput, StepInput
@@ -184,6 +185,7 @@ __all__ = [
     "SkillWish",
     "AddSkillResult",
     "AppSummary",
+    "AppBundle",
     "SaveAppResult",
     "StoredApp",
     # POC-5a App scaffold + IDE

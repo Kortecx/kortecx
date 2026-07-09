@@ -89,6 +89,7 @@ async fn scaffold_writes_the_skeleton_then_lock_refuses_edit() {
     c.save_app(proto::SaveAppRequest {
         handle: handle.clone(),
         envelope_json: minimal_app_envelope("PDF Summarizer", "Summarize uploaded PDF documents"),
+        source_digest: Vec::new(),
     })
     .await
     .expect("SaveApp")

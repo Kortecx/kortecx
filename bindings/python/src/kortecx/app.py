@@ -369,10 +369,24 @@ class App:
             env["branch_handle"] = self._branch_handle
         return env
 
-    def export(self, path) -> None:
-        """Write the pretty envelope JSON to ``path`` (the round-trip artifact)."""
+    def export(self, path, *, bundle: bool = False, client=None, with_data: bool = False) -> None:
+        """Write this App to ``path``. By default writes the pretty envelope JSON (the
+        by-reference round-trip artifact, offline). With ``bundle=True`` (requires a
+        ``client``) it SAVES the App — uploading any pending bodies — then writes a
+        portable ``kortecx.appbundle/v1`` archive: the envelope PLUS its content-store
+        closure (``with_data`` also includes RAG dataset payloads)."""
+        if not bundle:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(pretty_json(self.to_envelope()))
+            return
+        if client is None:
+            raise ValueError(
+                "export(bundle=True) requires a client (it fetches the content closure)"
+            )
+        saved = self.save(client=client)
+        wire = client.export_app_bundle(saved.handle, with_data=with_data)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(pretty_json(self.to_envelope()))
+            f.write(wire)
 
     def _resolve_pending(self, client) -> None:
         """Upload pending text bodies to the content store, turning them into refs."""

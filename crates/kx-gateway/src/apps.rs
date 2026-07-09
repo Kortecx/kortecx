@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS apps (
     tags_json     TEXT NOT NULL,   -- JSON [string] (denormalized summary)
     step_count    INTEGER NOT NULL,-- blueprint step count (display)
     envelope_json TEXT NOT NULL,   -- the CANONICAL kortecx.app/v1 envelope bytes
+    source_digest BLOB,            -- OPTIONAL 32B lineage hint (import/clone source app_digest); NULL = authored-here. Off-identity/off-journal/off-digest.
     PRIMARY KEY (principal, handle)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -98,6 +99,11 @@ impl AppsDb {
         }
         conn.execute_batch(SCHEMA)
             .map_err(|e| GatewayError::Catalog(format!("apps schema: {e}")))?;
+        // Additive lineage column — migrate an existing v1 catalog in place WITHOUT a
+        // version bump (a bump would drop saved apps). Old binaries ignore the unknown
+        // column (named-column SELECT/INSERT).
+        Self::ensure_source_digest_column(&conn)
+            .map_err(|e| GatewayError::Catalog(format!("apps migrate source_digest: {e}")))?;
         conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
             params![SCHEMA_VERSION],
@@ -114,6 +120,23 @@ impl AppsDb {
         Ok(conn)
     }
 
+    /// Idempotently add the nullable `source_digest` column (portable-App lineage).
+    /// A no-op when already present (a fresh catalog gets it from [`SCHEMA`]; an
+    /// existing v1 catalog gets it via `ALTER TABLE ADD COLUMN`). Additive, never a
+    /// `SCHEMA_VERSION` bump — saved apps survive the upgrade.
+    fn ensure_source_digest_column(conn: &Connection) -> rusqlite::Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(apps)")?;
+        let present = stmt
+            .query_map([], |r| r.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|col| col == "source_digest");
+        drop(stmt);
+        if !present {
+            conn.execute("ALTER TABLE apps ADD COLUMN source_digest BLOB", [])?;
+        }
+        Ok(())
+    }
+
     fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
         conn.query_row(
             "SELECT value FROM meta WHERE key = 'schema_version'",
@@ -127,6 +150,7 @@ impl AppsDb {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn row_to_record(
         handle: String,
         app_ref: &[u8],
@@ -135,6 +159,7 @@ impl AppsDb {
         description: String,
         tags_json: &str,
         step_count: i64,
+        source_digest: Option<Vec<u8>>,
     ) -> AppRecord {
         let mut id = [0u8; 16];
         let n = app_ref.len().min(16);
@@ -147,6 +172,7 @@ impl AppsDb {
             description,
             tags: serde_json::from_str(tags_json).unwrap_or_default(),
             step_count: u32::try_from(step_count).unwrap_or(u32::MAX),
+            source_digest,
         }
     }
 }
@@ -157,6 +183,7 @@ impl AppCatalog for AppsDb {
         principal: &str,
         handle: &str,
         envelope_json: &[u8],
+        source_digest: Option<&[u8]>,
     ) -> Result<(AppRecord, bool), CoreError> {
         // Validate + canonicalize the envelope (it carries NO authority); a bad
         // envelope is a client error, not an internal one.
@@ -187,9 +214,11 @@ impl AppCatalog for AppsDb {
             })
             .map_err(|e| CoreError::Internal(format!("apps dedup probe: {e}")))?;
         let deduplicated = existing.as_deref() == Some(&app_ref[..]);
+        let source_digest = source_digest.map(<[u8]>::to_vec);
         conn.execute(
             "INSERT OR REPLACE INTO apps(principal, handle, app_ref, name, version, description, \
-             tags_json, step_count, envelope_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             tags_json, step_count, envelope_json, source_digest) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 principal,
                 handle,
@@ -200,6 +229,7 @@ impl AppCatalog for AppsDb {
                 tags_json,
                 i64::from(summary.step_count),
                 canonical_str,
+                source_digest,
             ],
         )
         .map_err(|e| CoreError::Internal(format!("apps upsert: {e}")))?;
@@ -212,6 +242,7 @@ impl AppCatalog for AppsDb {
                 description: summary.description,
                 tags: summary.tags,
                 step_count: summary.step_count,
+                source_digest,
             },
             deduplicated,
         ))
@@ -230,7 +261,8 @@ impl AppCatalog for AppsDb {
         let cursor = after_handle.unwrap_or("");
         let mut stmt = conn
             .prepare(
-                "SELECT handle, app_ref, name, version, description, tags_json, step_count \
+                "SELECT handle, app_ref, name, version, description, tags_json, step_count, \
+                 source_digest \
                  FROM apps WHERE principal = ?1 AND handle > ?2 ORDER BY handle ASC LIMIT ?3",
             )
             .map_err(|e| CoreError::Internal(format!("apps list prepare: {e}")))?;
@@ -247,6 +279,7 @@ impl AppCatalog for AppsDb {
                     r.get::<_, String>(4)?,
                     &tags_json,
                     r.get::<_, i64>(6)?,
+                    r.get::<_, Option<Vec<u8>>>(7)?,
                 ))
             })
             .map_err(|e| CoreError::Internal(format!("apps list query: {e}")))?;
@@ -269,7 +302,8 @@ impl AppCatalog for AppsDb {
             .lock()
             .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
         conn.query_row(
-            "SELECT handle, app_ref, name, version, description, tags_json, step_count, envelope_json \
+            "SELECT handle, app_ref, name, version, description, tags_json, step_count, envelope_json, \
+             source_digest \
              FROM apps WHERE principal = ?1 AND handle = ?2",
             params![principal, handle],
             |r| {
@@ -283,6 +317,7 @@ impl AppCatalog for AppsDb {
                     r.get::<_, String>(4)?,
                     &tags_json,
                     r.get::<_, i64>(6)?,
+                    r.get::<_, Option<Vec<u8>>>(8)?,
                 );
                 let envelope_json = r.get::<_, String>(7)?.into_bytes();
                 Ok((record, envelope_json))
@@ -336,14 +371,14 @@ mod tests {
         let dir = tmp_dir();
         let db = AppsDb::open(&dir).unwrap();
         let (rec, dedup) = db
-            .save("alice", "team/apps/echo", &envelope("echo"))
+            .save("alice", "team/apps/echo", &envelope("echo"), None)
             .unwrap();
         assert!(!dedup);
         assert_eq!(rec.name, "echo");
         assert_eq!(rec.step_count, 0);
         // identical re-save dedups.
         let (_, dedup2) = db
-            .save("alice", "team/apps/echo", &envelope("echo"))
+            .save("alice", "team/apps/echo", &envelope("echo"), None)
             .unwrap();
         assert!(dedup2);
         // get returns the canonical bytes.
@@ -361,7 +396,7 @@ mod tests {
     fn cross_party_isolation_is_uniform_not_found() {
         let dir = tmp_dir();
         let db = AppsDb::open(&dir).unwrap();
-        db.save("alice", "team/apps/secret", &envelope("secret"))
+        db.save("alice", "team/apps/secret", &envelope("secret"), None)
             .unwrap();
         // bob cannot see alice's app (uniform not-found).
         assert!(db.get("bob", "team/apps/secret").unwrap().is_none());
@@ -374,8 +409,92 @@ mod tests {
     fn a_bad_envelope_is_invalid_argument() {
         let dir = tmp_dir();
         let db = AppsDb::open(&dir).unwrap();
-        let err = db.save("alice", "team/apps/bad", b"{not json").unwrap_err();
+        let err = db
+            .save("alice", "team/apps/bad", b"{not json", None)
+            .unwrap_err();
         assert!(matches!(err, CoreError::InvalidArgument(_)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_digest_round_trips_and_is_off_identity() {
+        let dir = tmp_dir();
+        let db = AppsDb::open(&dir).unwrap();
+        let sd = vec![0x22u8; 32];
+        // Save WITH a lineage hint (import/clone stamps the source app_digest).
+        let (with_hint, _) = db
+            .save("alice", "team/apps/x", &envelope("x"), Some(&sd))
+            .unwrap();
+        assert_eq!(with_hint.source_digest.as_deref(), Some(&sd[..]));
+        // get + list surface it.
+        let (got, _) = db.get("alice", "team/apps/x").unwrap().unwrap();
+        assert_eq!(got.source_digest.as_deref(), Some(&sd[..]));
+        let (apps, _) = db.list("alice", 100, None).unwrap();
+        assert_eq!(apps[0].source_digest.as_deref(), Some(&sd[..]));
+        // Off-identity: the SAME envelope re-saved WITHOUT a hint yields the SAME
+        // app_ref (source_digest is not in the preimage) and dedups.
+        let (no_hint, dedup) = db
+            .save("alice", "team/apps/x", &envelope("x"), None)
+            .unwrap();
+        assert_eq!(
+            with_hint.app_ref, no_hint.app_ref,
+            "source_digest must not affect app_ref"
+        );
+        assert!(
+            dedup,
+            "identical envelope dedups regardless of source_digest"
+        );
+        // INSERT OR REPLACE writes exactly what's passed — a plain re-save clears the hint.
+        assert!(no_hint.source_digest.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn existing_v1_db_migrates_in_place_without_wipe() {
+        let dir = tmp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("apps.db");
+        // Hand-build the OLD v1 catalog (9 columns, no source_digest) + a saved row.
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE apps (principal TEXT NOT NULL, handle TEXT NOT NULL, \
+                 app_ref BLOB NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL, \
+                 description TEXT NOT NULL, tags_json TEXT NOT NULL, step_count INTEGER NOT NULL, \
+                 envelope_json TEXT NOT NULL, PRIMARY KEY (principal, handle));
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);",
+            )
+            .unwrap();
+            let canonical =
+                String::from_utf8(kx_app::canonical_json(&envelope("legacy")).unwrap()).unwrap();
+            conn.execute(
+                "INSERT INTO apps(principal, handle, app_ref, name, version, description, \
+                 tags_json, step_count, envelope_json) \
+                 VALUES ('alice','team/apps/legacy', x'00', 'legacy','1','','[]',0, ?1)",
+                params![canonical],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO meta(key,value) VALUES ('schema_version', 1)",
+                [],
+            )
+            .unwrap();
+        }
+        // Open with the new binary — version is still 1, so NO wipe; the column is added.
+        let db = AppsDb::open(&dir).unwrap();
+        let (apps, _) = db.list("alice", 100, None).unwrap();
+        assert_eq!(apps.len(), 1, "legacy apps must survive the migration");
+        assert_eq!(apps[0].name, "legacy");
+        assert!(
+            apps[0].source_digest.is_none(),
+            "legacy rows read as authored-here (NULL)"
+        );
+        // A new lineage-stamped save now works (the column is present).
+        let sd = vec![0x33u8; 32];
+        db.save("alice", "team/apps/new", &envelope("new"), Some(&sd))
+            .unwrap();
+        let (got, _) = db.get("alice", "team/apps/new").unwrap().unwrap();
+        assert_eq!(got.source_digest.as_deref(), Some(&sd[..]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -384,7 +503,8 @@ mod tests {
         let dir = tmp_dir();
         {
             let db = AppsDb::open(&dir).unwrap();
-            db.save("alice", "team/apps/x", &envelope("x")).unwrap();
+            db.save("alice", "team/apps/x", &envelope("x"), None)
+                .unwrap();
         }
         // Corrupt the meta version → reopen recreates EMPTY (rebuildable-to-empty).
         {

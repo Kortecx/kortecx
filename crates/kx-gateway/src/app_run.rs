@@ -1165,7 +1165,12 @@ mod tests {
     fn save_app(host: &HostAppAuthor, env: &AppEnvelope) -> String {
         let handle = "team/apps/t".to_string();
         host.apps
-            .save("alice@acme", &handle, &env.to_canonical_json().unwrap())
+            .save(
+                "alice@acme",
+                &handle,
+                &env.to_canonical_json().unwrap(),
+                None,
+            )
             .unwrap();
         handle
     }

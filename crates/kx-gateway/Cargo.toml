@@ -285,6 +285,8 @@ keyring = { workspace = true, features = ["windows-native"] }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio    = { workspace = true, features = ["time"] }
+# Portable-App bundle codec — the export→import round-trip e2e (app_catalog_e2e).
+kx-appbundle = { workspace = true }
 # `nix::sys::signal::raise(SIGTERM)` (a SAFE wrapper — kx-gateway is
 # `#![forbid(unsafe_code)]`) for the graceful-shutdown signal test. Unix-only,
 # test-only; stays out of the FFI-free normal closure `build-no-inference` asserts.

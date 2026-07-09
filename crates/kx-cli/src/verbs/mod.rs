@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod alerts;
 pub mod app;
+pub mod app_bundle;
 pub mod approvals;
 pub mod blueprint;
 pub mod branch;
