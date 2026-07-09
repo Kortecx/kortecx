@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
+use kx_content::{ContentRef, SharedStore};
 use kx_journal::{
     approval_request_id, ApprovalState, FailureReason, IdempotencyClassTag, Journal, JournalEntry,
     ReRankOutcome, ReactBranch, RepudiationReason, ResolvedCapabilityRecord, ResolvedKindTag,
@@ -32,7 +32,7 @@ use kx_mote::{
     RERANK_CANDIDATES_KEY, RERANK_TURN_KEY, TOOL_ARGS_KEY,
 };
 use kx_projection::{
-    ContentStoreVerdicts, MoteState, Projection, ReRankRoundRecord, ReactRoundRecord, RegisterMote,
+    SharedContentVerdicts, MoteState, Projection, ReRankRoundRecord, ReactRoundRecord, RegisterMote,
     ReplanRoundRecord,
 };
 use kx_refusal::{validate_mote_submission, ToolResolution};
@@ -270,7 +270,7 @@ impl CoreHandle {
     /// placement policy ranks over (D56).
     pub(crate) fn spawn<J: Journal + Send + 'static>(
         journal: J,
-        store: Option<Arc<LocalFsContentStore>>,
+        store: Option<SharedStore>,
         registry: Arc<dyn WorkerRegistry>,
         clock: Arc<dyn Clock>,
         nonce: Arc<dyn RunNonceSource>,
@@ -286,7 +286,7 @@ impl CoreHandle {
         std::thread::spawn(move || {
             core_loop(
                 &journal,
-                store.as_deref(),
+                store.as_ref(),
                 &*registry,
                 &*clock,
                 &*nonce,
@@ -652,7 +652,7 @@ fn serve_lease<J: Journal>(
     registry: &dyn WorkerRegistry,
     dispatch: &mut Dispatch,
     req: &LeaseReq,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     tool_registry: &dyn ToolRegistry,
 ) -> LeasedWork {
     reap_dead_workers(
@@ -703,10 +703,10 @@ fn serve_lease<J: Journal>(
 /// gate is a pure deterministic fold of the journal, never dependent on a store
 /// handle being wired (B2). Used by BOTH `lease_ready` and the `ReadySet` command
 /// arm so they can never disagree (H4).
-fn gated_ready_set(projection: &Projection, store: Option<&LocalFsContentStore>) -> Vec<MoteId> {
+fn gated_ready_set(projection: &Projection, store: Option<&SharedStore>) -> Vec<MoteId> {
     match store {
         Some(s) => {
-            let verdicts = ContentStoreVerdicts::new(s.clone());
+            let verdicts = SharedContentVerdicts::new(s.clone());
             projection.ready_set_auto(Some(&verdicts))
         }
         None => projection.ready_set_auto(None),
@@ -726,7 +726,7 @@ fn lease_ready(
     worker: WorkerId,
     executor_class: ExecutorClass,
     max: usize,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     tool_registry: &dyn ToolRegistry,
 ) -> Vec<LeasedItem> {
     let placement = LoadAwarePlacement::new(registry, executor_class);
@@ -957,7 +957,7 @@ fn resolve_tool_args(
     mote: &Mote,
     warrant: &WarrantSpec,
     projection: &Projection,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     tool_registry: &dyn ToolRegistry,
 ) -> ArgResolution {
     // Transient I/O: a missing store, a parent not yet folded, or a store read
@@ -1304,7 +1304,7 @@ fn resolve_parent_context(
     mote: &Mote,
     projection: &Projection,
     submitted_defs: &BTreeMap<MoteId, (Mote, WarrantSpec)>,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
 ) -> Vec<(MoteId, ContentRef)> {
     // PR-2c-3 critic-live (B1): a native deterministic critic evaluates its declared
     // check over EXACTLY its producer's committed bytes (`critic_for`) — byte-for-byte
@@ -1755,7 +1755,7 @@ struct Dispatch {
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn core_loop<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     registry: &dyn WorkerRegistry,
     clock: &dyn Clock,
     nonce: &dyn RunNonceSource,
@@ -1906,7 +1906,7 @@ fn core_loop<J: Journal>(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn handle_command<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
@@ -2270,7 +2270,7 @@ fn register_run<J: Journal>(
 #[allow(clippy::too_many_arguments)]
 fn submit_and_capture<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
@@ -2490,7 +2490,7 @@ fn submit_and_capture<J: Journal>(
 /// rebuildable — a re-submit/recovery re-put is an idempotent no-op).
 /// BEST-EFFORT: the blob feeds a display-only read surface, so a store fault
 /// must never fail admission (the read side answers `def_found = false`).
-fn persist_def(store: Option<&LocalFsContentStore>, def: &MoteDef) {
+fn persist_def(store: Option<&SharedStore>, def: &MoteDef) {
     let Some(store) = store else {
         return; // storeless coordinator (harness/tests) — nothing to persist
     };
@@ -2506,7 +2506,7 @@ fn persist_def(store: Option<&LocalFsContentStore>, def: &MoteDef) {
 fn materialize_committed_shaper(
     projection: &mut Projection,
     dispatch: &mut Dispatch,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     roles: &dyn RoleRegistry,
     shaper_mote_id: MoteId,
     shaper_def: &MoteDef,
@@ -2563,7 +2563,7 @@ fn is_terminal(state: MoteState) -> bool {
 fn materialize_replan_shaper(
     projection: &mut Projection,
     dispatch: &mut Dispatch,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     shaper: &Mote,
     warrant_ref: ContentRef,
     warrant: WarrantSpec,
@@ -2592,7 +2592,7 @@ fn materialize_replan_shaper(
 /// submits are untouched (this is gated on `is_topology_shaper` + a present prompt).
 fn write_replan_anchor<J: Journal>(
     journal: &J,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &mut Projection,
     folded_through: &mut u64,
     shaper_id: MoteId,
@@ -2652,7 +2652,7 @@ fn write_replan_anchor<J: Journal>(
 /// provision), so non-replan runs + the canonical demo are byte-untouched.
 fn settle_replan_rounds<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -2792,7 +2792,7 @@ fn settle_replan_rounds<J: Journal>(
 /// as PR-2b recovery. Rounds ≥1 are fully self-contained here.)
 fn recover_replan_chain<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,
@@ -3005,7 +3005,7 @@ fn react_anchor_clone(dispatched: &Mote, anchor_cfg: &[(ConfigKey, kx_mote::Conf
 #[allow(clippy::too_many_arguments)]
 fn write_react_anchor<J: Journal>(
     journal: &J,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &mut Projection,
     folded_through: &mut u64,
     instance_id: [u8; INSTANCE_ID_LEN],
@@ -3133,7 +3133,7 @@ fn write_react_anchor<J: Journal>(
 fn materialize_react_turn(
     projection: &mut Projection,
     dispatch: &mut Dispatch,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     turn: &Mote,
     warrant_ref: ContentRef,
     warrant: WarrantSpec,
@@ -3165,7 +3165,7 @@ fn materialize_react_turn(
 fn materialize_react_tool(
     projection: &mut Projection,
     dispatch: &mut Dispatch,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     obs: &Mote,
     warrant_ref: ContentRef,
     warrant: WarrantSpec,
@@ -3195,7 +3195,7 @@ fn materialize_react_tool(
 #[allow(clippy::too_many_arguments)]
 fn run_settle_passes<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -3273,7 +3273,7 @@ enum ReactChainStatus {
 /// of the harness `react.rs` (`>=`, tool-budget-then-turn-budget).
 fn settle_react_rounds<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -3329,7 +3329,7 @@ fn settle_react_rounds<J: Journal>(
 #[allow(clippy::too_many_arguments)]
 fn settle_react_chain<J: Journal>(
     journal: &J,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -3404,7 +3404,7 @@ fn chain_is_agentic_launch(
 /// so the re-decode is cheap. Used to fail-closed a redundant re-proposal (the
 /// minimal dedup slice).
 fn collect_prior_fired_calls(
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &Projection,
     rounds: &[ReactRoundRecord],
     this_turn: u32,
@@ -3454,7 +3454,7 @@ fn collect_prior_fired_calls(
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 fn drive_react_chain<J: Journal>(
     journal: &J,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -3971,7 +3971,7 @@ fn react_projected_spend_micro_usd(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn progress_tool_batch<J: Journal>(
     journal: &J,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -4247,7 +4247,7 @@ fn append_react_branch<J: Journal>(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn advance_react_chain<J: Journal>(
     journal: &J,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -4449,7 +4449,7 @@ fn advance_react_chain<J: Journal>(
 #[allow(clippy::too_many_arguments)]
 fn finalize_agentic_launch<J: Journal>(
     journal: &J,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -4620,7 +4620,7 @@ fn dead_letter_agentic_launch<J: Journal>(
 #[allow(clippy::too_many_lines)] // D114: + the require_approval threading.
 fn settle_agentic_launches<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -4753,7 +4753,7 @@ fn settle_agentic_launches<J: Journal>(
 /// folded react facts (the `has_react_turn` sentinel).
 fn recover_react_chain<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -4964,7 +4964,7 @@ fn pending_rerank_frontier(projection: &Projection) -> Vec<ReRankRoundRecord> {
 /// Zero-cost when no rerank is pending.
 fn settle_rerank_rounds<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
 ) {
@@ -5030,7 +5030,7 @@ fn settle_rerank_rounds<J: Journal>(
 /// register+admit (the rerank Mote is edge-free like a react turn).
 fn recover_rerank_chain<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -5135,7 +5135,7 @@ fn reorder_retrieval_observation(obs_bytes: &[u8], permutation: &[u32]) -> Optio
 /// `None` (base order). Cheap early-out when the run wrote no rerank.
 fn rerank_delivered_ref(
     projection: &Projection,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     instance_id: &[u8; INSTANCE_ID_LEN],
     obs_ref: ContentRef,
 ) -> Option<ContentRef> {
@@ -5163,7 +5163,7 @@ fn rerank_delivered_ref(
 #[allow(clippy::too_many_arguments)]
 fn maybe_gate_on_rerank<J: Journal>(
     journal: &J,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -5299,7 +5299,7 @@ fn is_chat_rag_rerank_answer(mote: &Mote) -> bool {
 /// items (nothing to reorder) or a store fault. `query` = the answer's `PROMPT`.
 fn chat_rag_rerank_prep(
     mote: &Mote,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
 ) -> Option<(ContentRef, ContentRef, u32)> {
     let bundle = mote
         .def
@@ -5365,7 +5365,7 @@ fn chat_rag_rerank_id(
     mote: &Mote,
     warrant: &WarrantSpec,
     projection: &Projection,
-    store: &LocalFsContentStore,
+    store: &SharedStore,
 ) -> Option<(MoteId, ContentRef, ContentRef, u32, [u8; INSTANCE_ID_LEN])> {
     let (instance_id, _) = projection.run_registration()?;
     let (base_ref, query_ref, n) = chat_rag_rerank_prep(mote, store)?;
@@ -5388,7 +5388,7 @@ fn chat_rag_rerank_holds(
     mote: &Mote,
     warrant: &WarrantSpec,
     projection: &Projection,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
 ) -> bool {
     if !serve_llm_rerank_enabled() || !is_chat_rag_rerank_answer(mote) {
         return false;
@@ -5414,7 +5414,7 @@ fn chat_rag_delivered_context(
     mote: &Mote,
     warrant: &WarrantSpec,
     projection: &Projection,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
 ) -> Option<ContentRef> {
     if !serve_llm_rerank_enabled() || !is_chat_rag_rerank_answer(mote) {
         return None;
@@ -5439,7 +5439,7 @@ fn chat_rag_delivered_context(
 /// is admitted. Idempotent (anchor + stage dedup on the durable fact).
 fn settle_chat_rag_reranks<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     projection: &mut Projection,
     folded_through: &mut u64,
     dispatch: &mut Dispatch,
@@ -5639,7 +5639,7 @@ fn handle_submit(
     scheduler: &mut Scheduler<LocalPlacement>,
     projection: &mut Projection,
     dispatch: &mut Dispatch,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     mote: Mote,
     warrant: WarrantSpec,
 ) -> SubmitOutcome {
@@ -5811,7 +5811,7 @@ fn committed_entry(proposal: CommitProposal) -> JournalEntry {
 #[allow(clippy::too_many_arguments)]
 fn flush_commits<J: Journal>(
     journal: &J,
-    store: Option<&LocalFsContentStore>,
+    store: Option<&SharedStore>,
     shaper_roles: Option<&dyn RoleRegistry>,
     projection: &mut Projection,
     folded_through: &mut u64,

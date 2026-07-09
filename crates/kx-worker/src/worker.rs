@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use kx_capability::{CapabilityBroker, INSTANCE_ID_LEN};
-use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
+use kx_content::{ContentRef, SharedStore};
 use kx_executor::{LocalResourceManager, MoteExecutor};
 use kx_mote::{ConfigKey, Mote, MoteId, NdClass, REACT_TURN_KEY, RERANK_TURN_KEY};
 use kx_proto::proto;
@@ -48,7 +48,7 @@ pub struct Worker {
     executor_class: ExecutorClass,
     executor: Arc<dyn MoteExecutor>,
     resource_manager: LocalResourceManager,
-    store: Arc<LocalFsContentStore>,
+    store: SharedStore,
     /// Fires WORLD-MUTATING / READ-ONLY-NONDET effects (P3.6b, D58): staging the
     /// response bytes into the shared `store` (data plane). PURE Motes never touch it.
     /// One worker can run both classes, so the field is always present even on a
@@ -101,7 +101,7 @@ impl Worker {
         endpoint: impl Into<String>,
         executor: Arc<dyn MoteExecutor>,
         resource_manager: LocalResourceManager,
-        store: Arc<LocalFsContentStore>,
+        store: SharedStore,
         broker: Arc<dyn CapabilityBroker>,
         max_lease: u32,
     ) -> Result<Self, WorkerError> {

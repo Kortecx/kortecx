@@ -17,7 +17,7 @@
 //! and dispatch resumes correctly (R49: the decision is served from the fact, never
 //! re-sampled).
 
-use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
+use kx_content::{ContentRef, SharedStore};
 use kx_mote::{
     EdgeKind, EdgeMeta, GraphPosition, InputDataId, ModelId, Mote, MoteDef, MoteId, ParentRef,
     TopologyDecision,
@@ -46,7 +46,7 @@ pub(crate) struct ShaperChild {
 /// inconsistency (e.g. a role the coordinator's registry does not know) — the children
 /// simply will not dispatch (degraded but safe; the shaper's commit stands).
 pub(crate) fn derive_shaper_children(
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     role_registry: &dyn RoleRegistry,
     shaper_mote_id: MoteId,
     shaper_def: &MoteDef,
@@ -140,7 +140,7 @@ pub(crate) fn derive_shaper_children(
 /// equal the recorded `shaper_mote_id` (a tampered/corrupt record, a prompt that no
 /// longer hashes to the same id, etc.). Pure over its inputs save two `store.get`s.
 pub(crate) fn rebuild_replan_shaper(
-    store: &LocalFsContentStore,
+    store: &SharedStore,
     record: &ReplanRoundRecord,
 ) -> Result<(Mote, WarrantSpec), String> {
     let prompt_bytes = store.get(&record.corrected_prompt_ref).map_err(|e| {
