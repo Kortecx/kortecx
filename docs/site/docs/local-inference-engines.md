@@ -250,6 +250,47 @@ Ollama pulls go through the daemon's `/api/pull` (the registry digest verifies t
 direct GGUF URL is `https`, allowlisted, `/resolve/`-shaped, and SHA-256-verified before
 registration (SN-8).
 
+## System requirements & performance
+
+Local inference is memory-bound: the model weights dominate. A model's memory footprint
+is roughly its **GGUF/quantized size on disk**, plus a smaller working set for the KV
+cache (grows with context length) and the runtime.
+
+| Model class (example) | ~Weights | Fits comfortably on | What to expect |
+|---|---|---|---|
+| **Tiny** (Qwen3-0.6B, Q4) | ~0.5 GB | any laptop (8 GB) | near-instant, great for tests/CI — but too weak to reliably drive tools/agents |
+| **Small** (3–4B, Q4) | ~2–3 GB | 8–16 GB | fast; usable for simple single-step Apps |
+| **Mid** (12B, Q4 — e.g. Gemma-4-12B / gemma3:12b) | ~7–8 GB | **16 GB** (close other heavy apps) or 24 GB+ | the practical floor for reliable **agentic** Apps (tool-calling, `reach`, ReAct loops) |
+| **Large** (27–32B, Q4/Q8) | ~16–35 GB | 32–64 GB | best quality; needs headroom for context + KV |
+
+**On a 16 GB Mac (Apple Silicon):** a 12B Q4 model is the sweet spot. Plan for **~10 GB
+free memory** (≈8 GB weights + KV + runtime) and close other memory-heavy apps. Measured
+single-machine wall-clock on an M-series Mac (a cold first response includes the model
+load; a single spike, not a percentile): a served single-step App answered in **~15–26 s**
+and an agentic (`reach`/tool-firing) App settled its ReAct loop in **~20–34 s** across both
+engines. The gateway itself is thin — an **idle `kx serve` uses ~30 MB** (the model is
+lazy-loaded on first inference).
+
+**Two memory profiles, same seam:**
+
+- **llama.cpp (`--features inference`)** loads the model **in-process** and memory-maps
+  the weights (on Apple Silicon they live in unified/Metal memory). The `kx serve`
+  process's resident set undercounts the mmap'd weights, so watch total system memory,
+  not just the process RSS.
+- **Ollama** runs the model in its **own daemon** (GPU-accelerated), so `kx serve` stays a
+  thin gRPC gateway and the weights sit in the Ollama runner. Easiest onboarding; check
+  `ollama ps` for the model's memory + GPU use.
+
+**Better hardware lifts every ceiling:** more RAM/VRAM ⇒ larger and less-quantized models
+(sharper reasoning + more reliable tool-calling), longer contexts, several models served
+at once (`KX_SERVE_MODELS`), and faster generation. If a model is too big for your machine,
+pick a smaller quant (Q4 over Q8) or a smaller parameter count — an App's `reach`, tools,
+and workflow are unchanged; only the model behind them differs.
+
+> **Tip:** keep your interactive/agent testing on a **12B-class** model — smaller models
+> often won't emit a tool call at all, which reads as "the App didn't work" when the real
+> cause is model capacity.
+
 ## What's served where (OSS vs Cloud)
 
 Both local engines are OSS — they run correctly on a single system. GPU-batched,
