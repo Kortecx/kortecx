@@ -32,8 +32,8 @@ use kx_mote::{
     RERANK_CANDIDATES_KEY, RERANK_TURN_KEY, TOOL_ARGS_KEY,
 };
 use kx_projection::{
-    SharedContentVerdicts, MoteState, Projection, ReRankRoundRecord, ReactRoundRecord, RegisterMote,
-    ReplanRoundRecord,
+    MoteState, Projection, ReRankRoundRecord, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
+    SharedContentVerdicts,
 };
 use kx_refusal::{validate_mote_submission, ToolResolution};
 use kx_scheduler::{LocalPlacement, Placement, Scheduler, SchedulerError, WorkerId};
@@ -5297,10 +5297,7 @@ fn is_chat_rag_rerank_answer(mote: &Mote) -> bool {
 /// synthetic `{query, passages:[{ref,text}]}` observation (so the worker + settle reuse
 /// the react-rag rerank path VERBATIM) + the query ref. `None` when the bundle has < 2
 /// items (nothing to reorder) or a store fault. `query` = the answer's `PROMPT`.
-fn chat_rag_rerank_prep(
-    mote: &Mote,
-    store: &SharedStore,
-) -> Option<(ContentRef, ContentRef, u32)> {
+fn chat_rag_rerank_prep(mote: &Mote, store: &SharedStore) -> Option<(ContentRef, ContentRef, u32)> {
     let bundle = mote
         .def
         .config_subset
