@@ -1,0 +1,18 @@
+# buf module config for the kx-proto contract (the frozen kortecx.v1 KxGateway + Coordinator surface).
+#
+# Wires `buf breaking` so a source/wire-breaking change to the contract is caught in CI. The additive-only
+# evolution discipline (D120.6) was previously CONVENTION-ONLY (stated in-proto + enforced indirectly by the
+# codegen-fresh git-diff guards + the convert.rs round-trip). This makes it a mechanical gate: a removed /
+# renumbered / renamed / retyped field on a released message fails the `proto-breaking` CI job.
+#
+# Codegen stays in bindings/{typescript,python}/buf.gen.yaml (unchanged) — this file is ONLY the module
+# definition + the breaking-change rule set. `FILE` is the strictest category: it rejects any source- or
+# wire-breaking change (removals, renumbers, renames, type changes), which is exactly the additive-only
+# contract. A deliberate, coordinated break bumps the package (kortecx.v2) — never mutates kortecx.v1.
+version: v2
+modules:
+  - path: .
+    name: buf.build/kortecx/kortecx
+breaking:
+  use:
+    - FILE
