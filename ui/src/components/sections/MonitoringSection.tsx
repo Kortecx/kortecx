@@ -17,6 +17,7 @@ import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { useMemo, useState } from "react";
 import { fadeUp, stagger } from "../../app/motion";
+import { toUiError } from "../../kx/errors";
 import { useAlerts } from "../../kx/use-alerts";
 import {
   type ApprovalDecisionArgs,
@@ -25,6 +26,7 @@ import {
   useListPendingApprovals,
 } from "../../kx/use-approvals";
 import { useCaptureRecords } from "../../kx/use-capture-records";
+import { useListMcpServers, useTestMcpServer } from "../../kx/use-connections";
 import { type RunScopedRef, useResultMapMulti } from "../../kx/use-content-batch";
 import { useEvalScore } from "../../kx/use-eval-score";
 import { useReactTurns } from "../../kx/use-react-turns";
@@ -34,8 +36,9 @@ import { useRunCost } from "../../kx/use-run-cost";
 import { useRuns } from "../../kx/use-runs";
 import { useTelemetry } from "../../kx/use-telemetry";
 import { useTelemetrySummary } from "../../kx/use-telemetry-summary";
+import { healthDot } from "../../lib/connection-health";
 import { failureReasonLabel } from "../../lib/event-format";
-import { shortHex } from "../../lib/format";
+import { formatMicroUsd, shortHex } from "../../lib/format";
 import {
   type Tally,
   rerankPermutationLabel,
@@ -67,6 +70,7 @@ const MONITOR_VIEWS = [
   "alerts",
   "approvals",
   "quality",
+  "cost",
 ] as const;
 const VIEW_LABEL: Record<string, string> = {
   overview: "Overview",
@@ -76,6 +80,7 @@ const VIEW_LABEL: Record<string, string> = {
   alerts: "Alerts",
   approvals: "Approvals",
   quality: "Quality",
+  cost: "Cost",
 };
 
 function TallyList({ tally, empty }: { tally: Tally; empty: string }) {
@@ -165,6 +170,8 @@ export function MonitoringSection({
         <ApprovalsView />
       ) : tab === "quality" ? (
         <QualityView />
+      ) : tab === "cost" ? (
+        <CostView />
       ) : (
         <OverviewView />
       )}
@@ -412,10 +419,10 @@ export function ApprovalCost({ instanceId }: { instanceId: string }) {
   if (!instanceId || notWired || !cost) {
     return <span className="muted">—</span>;
   }
-  const usd = (cost.estimatedMicroUsd / 1_000_000).toFixed(4);
+  const usd = formatMicroUsd(cost.estimatedMicroUsd);
   return (
     <span className="mono" title={`${cost.turns} turns · ${cost.toolCalls} tool calls`}>
-      {cost.turns}t/{cost.toolCalls}c{cost.estimatedMicroUsd > 0 ? ` · $${usd}` : ""}
+      {cost.turns}t/{cost.toolCalls}c{usd ? ` · ${usd}` : ""}
       {cost.overCeiling ? " ⚠" : ""}
     </span>
   );
@@ -559,6 +566,132 @@ function ApprovalsView() {
         </>
       )}
     </GlowCard>
+  );
+}
+
+/** RC6a (M11): the per-run cost / budget-guardrail readout (`GetRunCost`) — a
+ *  DISPLAY-ONLY local spend estimate over the durable turn/tool counters at
+ *  operator-set micro-USD rates. A budget guardrail, NOT Cloud per-expert billing
+ *  (the D129/GR19 boundary holds). Enter a run's instance id for its turns · tool
+ *  calls · estimated µUSD vs. ceiling. Degrades honestly: no run entered, a gateway
+ *  without the cost admin, or a zero-baseline price book (no rates set) each render
+ *  WITHOUT a fabricated dollar figure — while a PRICED run with no billable activity
+ *  shows a real $0.0000, never conflated with "unpriced" (GR15/D142). */
+function CostView() {
+  const [runId, setRunId] = useState("");
+  const [submitted, setSubmitted] = useState<string | undefined>(undefined);
+  const { cost, notWired, error, isLoading } = useRunCost(submitted);
+  const spend = cost ? formatMicroUsd(cost.estimatedMicroUsd) : "";
+  // A price book EXISTS when either rate is set. This distinguishes "priced but $0
+  // (no billable turns/tool calls yet)" — an honest real zero — from "no price book
+  // at all" (zero-baseline), which must never be shown as a $0 (GR15).
+  const hasPriceBook = cost != null && (cost.perTurnMicroUsd > 0 || cost.perToolCallMicroUsd > 0);
+  return (
+    <Panel
+      title="Run cost"
+      hint="display-only local spend over durable turn/tool counters (GetRunCost) — a budget guardrail, not billing"
+      notWired={notWired}
+    >
+      <form
+        className="quality-form"
+        data-testid="cost-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setSubmitted(runId.trim() || undefined);
+        }}
+      >
+        <input
+          className="mono"
+          aria-label="Run instance id"
+          data-testid="cost-run-input"
+          placeholder="run instance_id (32 hex chars)"
+          value={runId}
+          onChange={(e) => setRunId(e.target.value)}
+        />
+        <button type="submit" data-testid="cost-show-btn" disabled={runId.trim() === ""}>
+          Show cost
+        </button>
+      </form>
+      {error ? (
+        <p className="muted" data-testid="cost-error">
+          {error.message}
+        </p>
+      ) : null}
+      {isLoading ? <p className="muted">estimating…</p> : null}
+      {cost ? (
+        <div data-testid="cost-result">
+          {cost.overCeiling ? (
+            <p data-testid="cost-over-ceiling">
+              <span className="pill pill--failed">over ceiling ⚠</span>
+            </p>
+          ) : null}
+          <m.div
+            className="metrics-grid"
+            variants={stagger()}
+            initial="hidden"
+            animate="show"
+            data-testid="cost-kpis"
+          >
+            <MetricCard label="Turns" value={cost.turns} />
+            <MetricCard label="Tool calls" value={cost.toolCalls} />
+            {spend ? (
+              <MetricCard
+                label="Estimated spend"
+                value={spend}
+                tone={cost.overCeiling ? "failed" : "committed"}
+                sub="over durable counters"
+              />
+            ) : hasPriceBook ? (
+              <MetricCard
+                label="Estimated spend"
+                value="$0.0000"
+                sub="no billable turns / tool calls yet"
+              />
+            ) : (
+              <div className="metric-card metric-card--disabled" data-testid="cost-zero-baseline">
+                <span className="metric-card__value">—</span>
+                <span className="metric-card__label">Estimated spend</span>
+                <span className="metric-card__sub">
+                  No priced spend — the price book is zero-baseline (set{" "}
+                  <code className="mono">KX_PRICING_*</code> rates to price a run).
+                </span>
+              </div>
+            )}
+          </m.div>
+          <ul className="tally" data-testid="cost-detail">
+            <li className="tally__row">
+              <span className="tally__label">per turn</span>
+              <span className="tally__count mono">
+                {formatMicroUsd(cost.perTurnMicroUsd) || "—"}
+              </span>
+            </li>
+            <li className="tally__row">
+              <span className="tally__label">per tool call</span>
+              <span className="tally__count mono">
+                {formatMicroUsd(cost.perToolCallMicroUsd) || "—"}
+              </span>
+            </li>
+            <li className="tally__row">
+              <span className="tally__label">ceiling</span>
+              <span className="tally__count mono">
+                {cost.ceilingMicroUsd > 0
+                  ? formatMicroUsd(cost.ceilingMicroUsd)
+                  : "not enforced (OFF)"}
+              </span>
+            </li>
+            {cost.ceilingMicroUsd > 0 ? (
+              <li className="tally__row">
+                <span className="tally__label">{cost.overCeiling ? "over by" : "headroom"}</span>
+                <span className="tally__count mono">
+                  {formatMicroUsd(Math.abs(cost.ceilingMicroUsd - cost.estimatedMicroUsd)) ||
+                    "$0.0000"}
+                </span>
+              </li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
+    </Panel>
   );
 }
 
@@ -779,7 +912,80 @@ function TelemetryView() {
   );
 }
 
-/** The pre-Batch-C overview panels, unchanged. */
+/** RC6a: MCP connector health re-surfaced into Monitoring — the SAME folded health
+ *  (`ListMcpServers`) + reachability re-dial (`TestMcpServer`) the Integrations
+ *  Connections panel owns, so an operator sees connector liveness on the monitoring
+ *  surface without leaving it. Read-only + Test here (Monitoring is a pure renderer);
+ *  register / revoke / re-discover stay in Integrations → Connections (linked). Every
+ *  state honest (D142): not-wired / loading / empty / error. */
+function ConnectionsHealth() {
+  const list = useListMcpServers();
+  const test = useTestMcpServer();
+  return (
+    <div className="monitor-connections" data-testid="monitor-connections-health">
+      <div className="monitor-panel__head">
+        <h3>Connectors</h3>
+        <Link to="/tools" className="linkbtn" data-testid="monitor-connections-manage">
+          Manage in Integrations
+        </Link>
+      </div>
+      {list.notWired ? (
+        <p className="muted" data-testid="monitor-connections-not-wired">
+          MCP gateway not enabled on this serve.
+        </p>
+      ) : list.isError ? (
+        <ErrorNotice error={toUiError(list.error)} />
+      ) : list.isLoading ? (
+        <EmptyState title="Loading connectors…" />
+      ) : list.servers.length === 0 ? (
+        <p className="muted" data-testid="monitor-connections-empty">
+          No MCP connectors — add one in Integrations → Connections.
+        </p>
+      ) : (
+        <ul className="connections-list" data-testid="monitor-connections-list">
+          {list.servers.map((s) => {
+            const dot = healthDot(s.health);
+            const busy = test.isPending && test.variables === s.serverName;
+            return (
+              <li
+                key={s.connectionId}
+                className="connections-list__row"
+                data-testid={`monitor-connection-${s.serverName}`}
+              >
+                <div className="connections-list__head">
+                  <span
+                    className={`status-dot ${dot.cls}`}
+                    role="img"
+                    aria-label={dot.label}
+                    title={dot.label}
+                  />
+                  <span className="connections-list__name">{s.serverName}</span>
+                  <span className="chip chip--static">
+                    <span className="chip__label">{s.transport}</span>
+                  </span>
+                  <span className="muted">· {s.toolCount} tool(s)</span>
+                </div>
+                <div className="connections-list__actions chip-row">
+                  <button
+                    type="button"
+                    className="chip"
+                    data-testid={`monitor-connection-test-${s.serverName}`}
+                    disabled={busy}
+                    onClick={() => test.mutate(s.serverName)}
+                  >
+                    <span className="chip__label">{busy ? "Testing…" : "Test"}</span>
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** The pre-Batch-C overview panels + RC6a connector health in the Gateway-health card. */
 function OverviewView() {
   const runs = useRuns();
   const replan = useReplanRounds();
@@ -981,6 +1187,7 @@ function OverviewView() {
           <div className="monitor-health">
             <HealthIndicator />
           </div>
+          <ConnectionsHealth />
         </Panel>
       </m.div>
     </>

@@ -30,4 +30,10 @@ test("monitoring: the gateway-wide dashboard renders real telemetry", async ({ p
   await expect(page.getByRole("heading", { name: "Self-correction" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "ReAct turns" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Action capture" })).toBeVisible();
+
+  // RC6a: the Gateway-health card folds MCP connector health (read-only + Test). With
+  // no connectors registered it renders the honest empty/not-wired state (never a
+  // crash), and the manage affordance links back to Integrations (where revoke lives).
+  await expect(page.getByRole("heading", { name: "Connectors" })).toBeVisible();
+  await expect(page.getByTestId("monitor-connections-manage")).toBeVisible();
 });

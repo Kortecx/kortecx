@@ -12,9 +12,18 @@ const MonitoringSection = lazy(() =>
 );
 
 /** The Monitoring views: the overview panels, run history (POC-5c), the global live
- *  feed, the execution-telemetry table (Batch C), and the operator alerts inbox
- *  (W1a-2). URL-addressable (the run-detail tab precedent); absent = "overview". */
-const MONITOR_TABS = ["runs", "feed", "telemetry", "alerts", "approvals", "quality"] as const;
+ *  feed, the execution-telemetry table (Batch C), the operator alerts inbox (W1a-2),
+ *  the HITL approvals inbox + quality readout, and the per-run cost guardrail (RC6a).
+ *  URL-addressable (the run-detail tab precedent); absent = "overview". */
+const MONITOR_TABS = [
+  "runs",
+  "feed",
+  "telemetry",
+  "alerts",
+  "approvals",
+  "quality",
+  "cost",
+] as const;
 export type MonitorTab = (typeof MONITOR_TABS)[number];
 
 interface MonitorSearch {

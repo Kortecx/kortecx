@@ -485,11 +485,19 @@ button:disabled {
   margin: 0.75rem 0 0;
   padding: 0;
   min-inline-size: 0;
+  max-inline-size: 100%;
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
+  /* Keep the rounded segmented-control clip, but let a crowded strip (the 8-tab
+     Monitoring nav on a narrow viewport) scroll horizontally instead of overflowing
+     the page — the labels stay on one line and the active pill stays legible. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 .view-toggle button {
+  flex: 0 0 auto;
+  white-space: nowrap;
   background: var(--bg-input);
   color: var(--fg-muted);
   border: none;
@@ -3903,6 +3911,17 @@ button.card-grid__title:hover {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+.monitor-panel__head h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+/* RC6a: connector-health block folded under the Gateway-health card — a thin token
+   rule separating it from the liveness pill above. */
+.monitor-connections {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
 }
 .tally {
   list-style: none;

@@ -54,6 +54,11 @@ export interface MockClientImpl {
   approvalsGrant?: (...args: unknown[]) => Promise<unknown>;
   approvalsDeny?: (...args: unknown[]) => Promise<unknown>;
   costGetRunCost?: (...args: unknown[]) => Promise<unknown>;
+  // PR-6b-1 / RC6a: the external-MCP-gateway connection methods (flat on the client;
+  // surfaced read-only in Monitoring's connector-health panel).
+  listMcpServers?: (...args: unknown[]) => Promise<unknown>;
+  testMcpServer?: (...args: unknown[]) => Promise<unknown>;
+  deregisterMcpServer?: (...args: unknown[]) => Promise<unknown>;
 }
 
 export function makeMockClient(impl: MockClientImpl = {}) {
@@ -184,6 +189,11 @@ export function makeMockClient(impl: MockClientImpl = {}) {
         overCeiling: false,
       })),
   );
+  const listMcpServers = vi.fn(
+    impl.listMcpServers ?? (async () => ({ servers: [], hasMore: false })),
+  );
+  const testMcpServer = vi.fn(impl.testMcpServer ?? (async () => true));
+  const deregisterMcpServer = vi.fn(impl.deregisterMcpServer ?? (async () => true));
   const close = vi.fn();
   const client = {
     listSignatures,
@@ -233,6 +243,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
       deny: approvalsDeny,
     },
     cost: { getRunCost: costGetRunCost },
+    listMcpServers,
+    testMcpServer,
+    deregisterMcpServer,
     close,
     submitRun: vi.fn(),
     registerSignature: vi.fn(),
@@ -284,6 +297,9 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     approvalsGrant,
     approvalsDeny,
     costGetRunCost,
+    listMcpServers,
+    testMcpServer,
+    deregisterMcpServer,
     close,
   };
 }

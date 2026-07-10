@@ -20,3 +20,14 @@ export function formatSeq(seq: number | null | undefined): string {
 export function countSummary(done: number, total: number, noun: string): string {
   return `${done}/${total} ${noun}`;
 }
+
+/**
+ * Render a micro-USD spend as `$x.xxxx` — or the EMPTY string for a non-positive
+ * amount. Returning `""` (never `"$0.0000"`) is the single structural guard behind
+ * the GR15 "no fabricated dollar figure" rule: at a zero-baseline price book (or an
+ * unpriced run) callers render the honest "no priced spend" affordance instead of a
+ * misleading $0. Local budget-guardrail display only — NOT Cloud per-expert billing.
+ */
+export function formatMicroUsd(micro: number): string {
+  return micro > 0 ? `$${(micro / 1_000_000).toFixed(4)}` : "";
+}

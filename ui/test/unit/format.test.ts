@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countSummary, formatSeq, shortHex } from "../../src/lib/format";
+import { countSummary, formatMicroUsd, formatSeq, shortHex } from "../../src/lib/format";
 
 describe("shortHex", () => {
   it("shortens a long hex id to head…tail", () => {
@@ -30,5 +30,16 @@ describe("formatSeq", () => {
 describe("countSummary", () => {
   it("formats done/total noun", () => {
     expect(countSummary(3, 5, "committed")).toBe("3/5 committed");
+  });
+});
+
+describe("formatMicroUsd", () => {
+  it("formats a positive micro-USD amount as $x.xxxx", () => {
+    expect(formatMicroUsd(1500)).toBe("$0.0015");
+    expect(formatMicroUsd(1_000_000)).toBe("$1.0000");
+  });
+  it("returns the EMPTY string for zero / negative (GR15: never a fabricated $0.0000)", () => {
+    expect(formatMicroUsd(0)).toBe("");
+    expect(formatMicroUsd(-5)).toBe("");
   });
 });

@@ -26,6 +26,7 @@ import {
   useRegisterMcpServer,
   useTestMcpServer,
 } from "../../kx/use-connections";
+import { healthDot } from "../../lib/connection-health";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { GlowCard } from "../ds/GlowCard";
@@ -115,18 +116,6 @@ function ConnectionFireRow({ server }: { server: string }) {
       ) : null}
     </div>
   );
-}
-
-/** Map a folded health tag to an existing status-dot modifier + an a11y label. */
-function healthDot(health: string): { cls: string; label: string } {
-  switch (health) {
-    case "connected":
-      return { cls: "status-dot--online", label: "connected" };
-    case "unreachable":
-      return { cls: "status-dot--error", label: "unreachable" };
-    default:
-      return { cls: "status-dot--offline", label: "not dialed" };
-  }
 }
 
 /** G1: curated first-class Integration providers — a one-click prefill of the "Add a
