@@ -100,6 +100,16 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
   dir is recommended** on upgrade. (gateway/UI)
 - **`kx/recipes/fanout-demo` is renamed `kx/recipes/passthrough-dag`** — an honest
   multi-node fan-out → gather DAG whose every node passes its real input through.
+- **`kx-content` / `kx-projection` / `kx-coordinator` / `kx-worker` bumped to `0.2.0`.**
+  The `SharedContent` object-safe content seam (`trait SharedContent` + `type
+  SharedStore = Arc<dyn SharedContent>`) retypes **`kx-coordinator` and `kx-worker`**
+  public signatures from the concrete content-store type to `SharedStore` — a breaking
+  change under Cargo's 0.x SemVer rules (a public-signature change ⇒ `0.1.x → 0.2.0`,
+  not the `0.1.2` patch first published). `kx-content` and `kx-projection` are additive
+  (a new trait/type and a new verdict variant) but move in lockstep to keep the seam on
+  a single version line. In-tree callers are unaffected — `Arc<LocalFsContentStore>`
+  unsize-coerces to `Arc<dyn SharedContent>` — but an external `^0.1` consumer that
+  named the old concrete store type must update.
 
 ### Removed
 
