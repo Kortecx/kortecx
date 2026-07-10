@@ -58,10 +58,7 @@ impl CoordinatorService {
     /// it **verifies each committed `result_ref` against `store`** before recording
     /// the commit (D55 phantom-ref guard — a worker cannot record a result it never
     /// published), and the same content-addressed store is where peers read results.
-    pub fn with_store<J: Journal + Send + 'static>(
-        journal: J,
-        store: SharedStore,
-    ) -> Self {
+    pub fn with_store<J: Journal + Send + 'static>(journal: J, store: SharedStore) -> Self {
         Self::build(
             journal,
             Arc::new(InMemoryWorkerRegistry::new()),
