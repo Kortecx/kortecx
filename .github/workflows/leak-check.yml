@@ -1,0 +1,124 @@
+name: Private-content leak check (SN-2)
+
+# The fork-only PUBLIC leak net (risk-burndown Risk-5). A fork contributor cannot run the private
+# pre-push leak-scan, so a fork PR could add a private path / name / roadmap code that is unrecoverable
+# the instant it lands on a public repo. This job posts a BLOCKING status on every PR to the public repo
+# (including forks) and fails on a hit.
+#
+# COARSE BY DESIGN: this file is world-readable, so it holds only a safe PUBLIC SUBSET of the sentinels
+# (a competitor reads this). The PRIMARY, complete enforcement stays PRIVATE + pre-publication
+# (scripts/leak-scan.sh + its fuzzy deny-terms — never mirrored). This is the secondary net, deliberately
+# shallower than the private manifest; it must never grow to hold the full private taxonomy.
+#
+# Uses `pull_request` (NOT `pull_request_target`): it runs in the fork's context with a READ-ONLY token
+# and NO secrets — correct + safe for a diff-only scan of untrusted fork code. `pull_request_target`
+# would run in the base-repo context with a read/write token + secrets against untrusted code (a
+# code-execution-with-secrets trap); a diff scan needs neither, so it must stay `pull_request`.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  leak-check:
+    name: private-content-leak-check
+    runs-on: ubuntu-latest
+    # Meaningful only on the public repo. On a fork's own CI (github.repository == the fork) it no-ops;
+    # for a PR TO Kortecx/kortecx the event context repo IS Kortecx/kortecx, so it runs on fork PRs.
+    if: github.repository == 'Kortecx/kortecx'
+    steps:
+      - name: Checkout PR with full history for diff
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Path-based sentinel scan
+        run: |
+          set -euo pipefail
+          # Paths that MUST NOT exist in the OSS public repo (anchored). Coarse public subset.
+          read -r -d '' SENTINEL_PATHS <<'EOF' || true
+          ^docs/design/
+          ^docs/suggestions/
+          ^docs/plans/
+          ^docs/analysis/
+          ^docs/benchmarks/
+          ^docs/code-docs/
+          ^docs/training-corpus/
+          ^docs/HANDOFF\.md$
+          ^docs/HISTORY\.md$
+          ^CLAUDE\.md$
+          ^MEMORY\.md$
+          ^WARNINGS\.md$
+          ^00-vision-and-principles\.md$
+          ^01-build-sequence\.md$
+          ^02-crate-specs\.md$
+          ^03-ffi-and-inference\.md$
+          ^04-testing-and-gates\.md$
+          ^05-progress-tracker\.md$
+          ^06-language-and-sdk-strategy\.md$
+          ^07-engineering-discipline\.md$
+          ^kx-cloud/
+          EOF
+          REGEX=$(echo "$SENTINEL_PATHS" | grep -v '^$' | paste -sd'|' -)
+          CHANGED=$(git diff --name-only origin/main...HEAD)
+          echo "=== Files changed in this PR ==="; echo "$CHANGED" | sed 's/^/  /'; echo "==============================="
+          HITS=$(echo "$CHANGED" | grep -E "$REGEX" || true)
+          if [ -n "$HITS" ]; then
+            echo ""; echo "❌ SN-2 LEAK: private-only path(s) in this PR:"; echo "$HITS" | sed 's/^/    /'
+            echo ""; echo "These files must live ONLY in the private repo. Remove them from this branch."
+            exit 1
+          fi
+          echo "✅ Path-based sentinel scan clean."
+
+      - name: Content-based private-architecture + roadmap scan
+        run: |
+          set -euo pipefail
+          # Private crate names — a coarse public subset (the private-side leak-scan holds the full list).
+          read -r -d '' SENTINEL_TERMS <<'EOF' || true
+          kx-cloud-inference-vllm
+          kx-cloud-inference-sglang
+          kx-cloud-inference-triton
+          kx-cloud-coordinator
+          kx-cloud-journal-replicated
+          kx-cloud-content-s3
+          kx-cloud-broker-hardened
+          kx-cloud-resource-multitenant
+          kx-cloud-observability
+          kx-cloud-serve
+          Kortecx/kortecx-core
+          private-main
+          EOF
+          # Added-line content only (exclude the files that legitimately mention the sentinels).
+          DIFF_ADDS=$(git diff origin/main...HEAD --unified=0 \
+            -- ':(exclude).github/workflows/leak-check.yml' \
+               ':(exclude).github/pull_request_template.md' \
+            | grep -E '^\+' | grep -v -E '^\+\+\+' || true)
+          FAIL=0
+          while IFS= read -r term; do
+            [ -z "$term" ] && continue
+            if echo "$DIFF_ADDS" | grep -F "$term" > /dev/null; then
+              echo "❌ SN-2 LEAK: added line(s) reference private architecture term: '$term'"
+              echo "$DIFF_ADDS" | grep -F "$term" | head -5 | sed 's/^/    /'
+              FAIL=1
+            fi
+          done <<< "$SENTINEL_TERMS"
+          # Roadmap-code / release-plan patterns (RC-SW*/RC-UP*/Wave-N) — private planning codes.
+          if echo "$DIFF_ADDS" | grep -E 'RC-(SW|UP)[0-9]|Wave-[0-9]' > /dev/null; then
+            echo "❌ SN-2 LEAK: added line(s) reference a private roadmap code (RC-SW*/RC-UP*/Wave-N):"
+            echo "$DIFF_ADDS" | grep -E 'RC-(SW|UP)[0-9]|Wave-[0-9]' | head -5 | sed 's/^/    /'
+            FAIL=1
+          fi
+          if [ "$FAIL" -eq 1 ]; then
+            echo ""; echo "Private-architecture names / roadmap codes must not appear in OSS. Sanitize the diff"
+            echo "(vendor-agnostic language; keep strategy in the private brain)."
+            exit 1
+          fi
+          echo "✅ Content-based sentinel scan clean."
+
+      - name: Final SN-2 summary
+        run: |
+          echo "✅ SN-2 (fork-only public leak net) PASS — no private paths, names, or roadmap codes."

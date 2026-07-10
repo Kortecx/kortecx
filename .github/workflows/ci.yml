@@ -1154,3 +1154,55 @@ jobs:
           else
             echo "registry-check.sh not present — skipped; registry/index.json ships in this repo"
           fi
+
+  # cargo-semver-checks: a breaking public-API change on a Cargo 0.x crate is a MINOR bump (0.1.x -> 0.2.0),
+  # never a patch. #307 retyped kx-coordinator/kx-worker public signatures but bumped 0.1.1 -> 0.1.2 and
+  # every gate passed (the merge gate proves CI + review, not semver — L-077.a). This job fails when the
+  # public API changed with no matching version bump. FFI-free: the llama.cpp crates are excluded (they
+  # need the C++ toolchain + submodule). Git-rev baseline (origin/main) — no crates.io publish required.
+  semver-checks:
+    name: semver-checks (a breaking public API change needs a minor bump — L-077.a)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with history (origin/main is the API baseline)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Make origin/main available as the baseline rev
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-semver-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-semver-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: cargo-semver-checks vs origin/main (FFI crates excluded)
+        run: |
+          set -euo pipefail
+          # --baseline-rev compares this PR's public API against origin/main (no published crate needed).
+          # The FFI crates are excluded — they require the vendored llama.cpp submodule + a C++ toolchain,
+          # deliberately absent from this FFI-free job. If a future crate needs excluding, add it here
+          # (the "advisory first, promote to a required check once green a few runs" pattern this repo uses).
+          cargo semver-checks \
+            --baseline-rev origin/main \
+            --workspace \
+            --exclude kx-llamacpp-sys \
+            --exclude kx-llamacpp
