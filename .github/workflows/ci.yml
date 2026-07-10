@@ -1239,10 +1239,16 @@ jobs:
           restore-keys: |
             cargo-fuzz-${{ runner.os }}-
 
+      - name: Ensure the gnu (dynamic-libc) target for nightly
+        # cargo-binstall installs a MUSL-built cargo-fuzz, whose default build target is musl —
+        # static libc, which the ASAN sanitizer refuses ("sanitizer is incompatible with statically
+        # linked libc") and which isn't installed. Force the standard dynamic-libc gnu target below.
+        run: rustup target add --toolchain nightly x86_64-unknown-linux-gnu
+
       - name: Build fuzz targets (compiles against the real parse APIs)
         env:
           RUSTUP_TOOLCHAIN: nightly    # the repo pins stable via rust-toolchain.toml; fuzz needs nightly
-        run: cargo fuzz build
+        run: cargo fuzz build --target x86_64-unknown-linux-gnu
 
       - name: Smoke each target (fail on any crash/panic)
         env:
@@ -1251,6 +1257,6 @@ jobs:
           set -euo pipefail
           for t in decode_plan decode_entry fold_checkpoint; do
             echo "── fuzz-smoke: $t ──"
-            cargo fuzz run "$t" -- -max_total_time=45 -print_final_stats=1
+            cargo fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=45 -print_final_stats=1
           done
           echo "✅ fuzz-smoke clean — no crash in the smoke window (deep fuzzing is a separate scheduled run)."
