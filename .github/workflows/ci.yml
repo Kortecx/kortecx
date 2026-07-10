@@ -1194,18 +1194,29 @@ jobs:
             cargo-semver-${{ runner.os }}-
             cargo-${{ runner.os }}-
 
-      - name: cargo-semver-checks vs origin/main (FFI crates excluded)
+      - name: cargo-semver-checks vs origin/main (FFI-free public library crates)
         run: |
           set -euo pipefail
           # --baseline-rev compares this PR's public API against origin/main (no published crate needed).
-          # The FFI crates are excluded — they require the vendored llama.cpp submodule + a C++ toolchain,
-          # deliberately absent from this FFI-free job. If a future crate needs excluding, add it here
-          # (the "advisory first, promote to a required check once green a few runs" pattern this repo uses).
+          # This job is FFI-FREE (no llama.cpp submodule / C++ toolchain), so a `--workspace` check aborts
+          # building rustdoc for a crate that transitively needs the FFI (e.g. kx-cli). Instead we check an
+          # EXPLICIT set of FFI-free public LIBRARY crates — the durable contracts consumers build on. No
+          # binaries (a CLI has no semver-relevant public API) and no FFI/inference crates. Adding the
+          # FFI-dependent crates needs a separate with-submodule variant (a follow-up). The gRPC contract is
+          # additionally guarded by the proto-breaking job. "Advisory first; promote to a required check once
+          # green a few runs."
           cargo semver-checks \
             --baseline-rev origin/main \
-            --workspace \
-            --exclude kx-llamacpp-sys \
-            --exclude kx-llamacpp
+            --package kx-proto \
+            --package kx-mote \
+            --package kx-journal \
+            --package kx-content \
+            --package kx-warrant \
+            --package kx-planner \
+            --package kx-projection \
+            --package kx-workflow \
+            --package kx-toolcall \
+            --package kx-critic-types
 
   # Fuzz-smoke (risk-burndown Batch B): builds + briefly runs the cargo-fuzz targets over the untrusted-byte
   # parse paths (decode_plan / decode_entry / fold_checkpoint). A short per-PR smoke catches a NEW crash a
