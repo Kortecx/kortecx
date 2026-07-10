@@ -1,0 +1,55 @@
+name: real-model gate (Gemma-4)
+
+# READY-TO-ENABLE, INTENTIONALLY MANUAL (risk-burndown Batch C). The always-on CI real-model gate uses
+# Qwen3-0.6B — deterministic but documented as a FALSE GREEN (too weak to reliably emit a tool call), so
+# it proves plumbing, not capability. This workflow runs the SAME eval on **Gemma-4-12B** (the local
+# GR24/GR28 parity model), which is strong enough to exercise real agentic behavior — the honest capability
+# gate. It is `workflow_dispatch` only (never auto-runs on a PR) because Gemma-4-12B needs a capable
+# self-hosted runner (large RAM / GPU) + Actions minutes that the default `ubuntu-latest` runner does not
+# have. FLIP TO A REAL GATE: add a `pull_request` / `schedule` trigger once a capable runner is wired, and
+# list `real-model-gemma` in the branch-protection required checks.
+#
+# Follow-up: an external agentic benchmark (a public tool-use / task suite) that scores against an
+# EXTERNAL oracle — replacing the self-scored fixture with an independent capability signal — plugs into
+# the real-model step below. That is a larger, model-and-data-heavy effort tracked separately.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Local model tag (Gemma-4 family; NEVER Qwen3 here — that is the false-green)"
+        default: "gemma4-12b"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  real-model-gemma:
+    name: real-model gate (Gemma-4-12B — the honest capability tier)
+    # A CAPABLE self-hosted runner is REQUIRED (a 12B model does not fit the default runner). Wire one,
+    # then this runs; until then dispatching it is a no-op / fails fast on the runner label.
+    runs-on: [self-hosted, gpu]
+    steps:
+      - name: Checkout (with submodules — the FFI backend is needed for a real model)
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        run: cargo --version
+
+      - name: Deterministic eval gate first (must be green regardless of the model)
+        run: just eval
+
+      - name: Real-model eval on Gemma-4 (env-labelled; persisted to the private trend record)
+        env:
+          KX_MODEL_NAME: ${{ github.event.inputs.model }}
+          KX_EVAL_ENV_LABEL: gh-self-hosted-gpu
+        run: |
+          set -euo pipefail
+          # Serve Gemma-4 + score a live ReAct chain (Tier-B). These are env-labelled Spike metrics for the
+          # capability trend — NOT a flake-proof integer gate (that stays `just eval`). The external-agentic
+          # -benchmark scorer plugs into this step once landed.
+          just eval-real
+          echo "✅ real-model (Gemma-4) eval ran — record the env-labelled numbers for the capability trend."
