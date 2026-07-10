@@ -11,6 +11,13 @@
 # NOTE: patterns are repo-root-relative. The crates live UNDER crates/, so every rule below
 # uses the /crates/<name>/ prefix — a bare /kx-mote/ would match nothing (fixed 2026-07-06).
 
+# ----- Repo-wide default (catch-all) -----
+# Under the hardened branch protection (enforce_admins + require_code_owner_reviews +
+# require_last_push_approval, 2026-07-10), a code-owner review must be meaningful for EVERY path,
+# not just the specific rules below. This catch-all makes every PR require an owner review; the
+# specific rules below still apply (last match wins) and simply restate the same owners.
+*                                      @kortecx @toolexi
+
 # ----- Identity-bearing crates (do not change MoteDef shape lightly) -----
 
 /crates/kx-mote/                       @kortecx @toolexi
