@@ -73,10 +73,10 @@ use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
-pub use bytes::Bytes;
 pub use crate::in_memory::InMemoryContentStore;
 pub use crate::local_fs::LocalFsContentStore;
 pub use crate::sniff::{sniff_image_format, ImageFormat};
+pub use bytes::Bytes;
 
 mod in_memory;
 mod local_fs;
@@ -409,7 +409,10 @@ mod tests {
         // The erasure moves no bytes: identical ContentRef (digest-stable),
         // identical payload on read-back, and `contains` agrees — proving the
         // seam delegates verbatim to `ContentStore`.
-        assert_eq!(shared_ref, concrete_ref, "erased put must be digest-identical");
+        assert_eq!(
+            shared_ref, concrete_ref,
+            "erased put must be digest-identical"
+        );
         assert_eq!(&shared.get(&shared_ref).unwrap()[..], &bytes[..]);
         assert!(shared.contains(&shared_ref));
         assert!(!shared.contains(&ContentRef::from_bytes([0x00; 32])));
