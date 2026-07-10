@@ -1206,3 +1206,51 @@ jobs:
             --workspace \
             --exclude kx-llamacpp-sys \
             --exclude kx-llamacpp
+
+  # Fuzz-smoke (risk-burndown Batch B): builds + briefly runs the cargo-fuzz targets over the untrusted-byte
+  # parse paths (decode_plan / decode_entry / fold_checkpoint). A short per-PR smoke catches a NEW crash a
+  # change introduces; deep/long fuzzing is a separate scheduled run (see fuzz/README.md). FFI-free targets
+  # only (no llama.cpp submodule). Nightly is required for the sanitizer/coverage instrumentation.
+  fuzz-smoke:
+    name: fuzz-smoke (untrusted-byte parse paths)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — FFI-free fuzz targets)
+        uses: actions/checkout@v6
+
+      - name: Install nightly (required by cargo-fuzz sanitizers)
+        run: |
+          rustup toolchain install nightly --profile minimal
+          rustup run nightly rustc --version
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache Cargo registry + fuzz target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: cargo-fuzz-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'fuzz/Cargo.toml') }}
+          restore-keys: |
+            cargo-fuzz-${{ runner.os }}-
+
+      - name: Build fuzz targets (compiles against the real parse APIs)
+        env:
+          RUSTUP_TOOLCHAIN: nightly    # the repo pins stable via rust-toolchain.toml; fuzz needs nightly
+        run: cargo fuzz build
+
+      - name: Smoke each target (fail on any crash/panic)
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+        run: |
+          set -euo pipefail
+          for t in decode_plan decode_entry fold_checkpoint; do
+            echo "── fuzz-smoke: $t ──"
+            cargo fuzz run "$t" -- -max_total_time=45 -print_final_stats=1
+          done
+          echo "✅ fuzz-smoke clean — no crash in the smoke window (deep fuzzing is a separate scheduled run)."

@@ -1,0 +1,43 @@
+# cargo-fuzz harness for the untrusted-byte parse paths (risk-burndown Batch B).
+# A STANDALONE workspace (the `[workspace]` table detaches it from the runtime workspace) so the fuzz
+# tooling never affects a normal `cargo build`. Run: `cargo +nightly fuzz run <target>`.
+[package]
+name = "kortecx-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# The FFI-free, fail-closed byte parsers that accept UNTRUSTED input. Each is documented panic-free over
+# arbitrary bytes; the fuzzer asserts that (a panic / OOM / hang is the finding).
+kx-planner = { path = "../crates/kx-planner" }
+kx-journal = { path = "../crates/kx-journal" }
+kx-projection = { path = "../crates/kx-projection" }
+
+[[bin]]
+name = "decode_plan"
+path = "fuzz_targets/decode_plan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_entry"
+path = "fuzz_targets/decode_entry.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fold_checkpoint"
+path = "fuzz_targets/fold_checkpoint.rs"
+test = false
+doc = false
+bench = false
+
+# Detach from the parent (runtime) workspace — cargo-fuzz convention.
+[workspace]
