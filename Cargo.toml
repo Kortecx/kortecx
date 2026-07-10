@@ -150,9 +150,9 @@ chrono-tz          = "0.10"
 # publish with the version requirement here. All paths point under
 # `crates/` per the workspace's parent-folder layout convention.
 kx-mote              = { path = "crates/kx-mote",              version = "0.1.1" }
-kx-content           = { path = "crates/kx-content",           version = "0.1.2" }
+kx-content           = { path = "crates/kx-content",           version = "0.2.0" }
 kx-journal           = { path = "crates/kx-journal",           version = "0.1.1" }
-kx-projection        = { path = "crates/kx-projection",        version = "0.1.2" }
+kx-projection        = { path = "crates/kx-projection",        version = "0.2.0" }
 kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.1.1" }
 kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.1.1" }
 kx-model-validator   = { path = "crates/kx-model-validator",   version = "0.1.1" }
@@ -188,8 +188,8 @@ kx-executor          = { path = "crates/kx-executor",          version = "0.1.1"
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.1.1" }
 kx-proto             = { path = "crates/kx-proto",             version = "0.1.1" }
 kx-blueprint         = { path = "crates/kx-blueprint",         version = "0.1.0" }
-kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.1.2" }
-kx-worker            = { path = "crates/kx-worker",            version = "0.1.2" }
+kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.2.0" }
+kx-worker            = { path = "crates/kx-worker",            version = "0.2.0" }
 # The single-node engine — kx-chaos reuses its topology helpers (`derive_child_motes`,
 # `demo_topology_decision`) to check child-identity determinism under a shaper death.
 kx-runtime           = { path = "crates/kx-runtime",           version = "0.1.1" }
