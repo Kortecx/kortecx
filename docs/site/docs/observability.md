@@ -33,19 +33,25 @@ not a redirect.
 
 ## Monitoring
 
-The **Monitoring** section is the deeper, gateway-wide view, with three
-URL-addressable tabs:
+The **Monitoring** section is the deeper, gateway-wide view. Its tabs are
+URL-addressable (the active view rides the `?tab=` query param):
 
 - **Overview** — cross-run rollups: run counts by blueprint, the self-correction
   trails (`ListReplanRounds` / `ListReactTurns`), the action-capture stream
-  (`ListCaptureRecords`), and gateway health. Each panel degrades to an honest
-  "not wired on this gateway" note rather than a hollow placeholder.
+  (`ListCaptureRecords`), and gateway health — including **MCP connector health**
+  (each registered connector's folded liveness dot + a reachability re-dial;
+  registering / revoking a connector stays in **Integrations → Connections**). Each
+  panel degrades to an honest "not wired on this gateway" note rather than a hollow
+  placeholder.
 - **Live feed** — the continuous cross-run event tail (`StreamAllEvents`), newest
   first, each row attributed to its run. The feed is **triage-able**: toggle kind
   chips (with per-kind count badges), filter by run id / mote / reason free-text,
   and **export the filtered buffer as NDJSON**.
 - **Telemetry** — the host-measured execution exhaust (`ListMoteTelemetry`):
   wall-clock, model/tool usage, and the committed `seq`, cursor-paged.
+- **Cost** — a per-run **spend guardrail** readout (`GetRunCost`): enter a run's
+  instance id for its turns · tool calls · estimated micro-USD against its ceiling.
+  Display-only and honest — see [Run cost (guardrail)](#run-cost-guardrail).
 
 ### Live-feed triage
 
@@ -103,6 +109,29 @@ delta — no durable counterfactual baseline exists, so none is invented (a run'
 reasoning mode is recoverable per-mote from its definition, but no aggregate
 savings number is computable). **Cost / $** stays the disabled
 [Cloud](https://github.com/Kortecx/kortecx#cloud) tile.
+
+### Run cost (guardrail) {#run-cost-guardrail}
+
+The **Cost** tab reads `GetRunCost` for one run — the turns and tool calls it has
+committed, priced at the serve's **micro-USD** rates against an optional **ceiling**.
+It is a **local budget guardrail, not billing**: a display-only estimate over the
+durable counters, with an operator-set price book
+(`KX_PRICING_PER_TURN_MICRO_USD` / `KX_PRICING_PER_TOOL_CALL_MICRO_USD`; the ceiling
+defaults to `0` = OFF). Tri-surface parity — CLI, SDK, and the console read the same RPC:
+
+```bash
+kx cost <instance-hex16>          # turns · tool calls · estimated µUSD vs. ceiling
+kx cost <instance-hex16> --json   # instance_id · turns · tool_calls · estimated_micro_usd · …
+```
+
+The same estimate is available from the SDK — `client.cost.get_run_cost(instance_id)`
+(Python) and `client.cost.getRunCost(instanceId)` (TypeScript).
+
+The readout is **honest** at every state (GR15): a **zero-baseline** price book (rates
+unset) shows the counts with **no fabricated dollar figure**; a run over its ceiling is
+flagged; a serve without the cost admin degrades to a not-wired note. Per-token /
+per-expert **billing** — priced input tokens, invoices, credits — is a
+[Cloud](https://github.com/Kortecx/kortecx#cloud) capability, never invented in OSS.
 
 ## Failure triage
 
