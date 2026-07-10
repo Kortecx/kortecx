@@ -1154,3 +1154,142 @@ jobs:
           else
             echo "registry-check.sh not present — skipped; registry/index.json ships in this repo"
           fi
+
+  # cargo-semver-checks: a breaking public-API change on a Cargo 0.x crate is a MINOR bump (0.1.x -> 0.2.0),
+  # never a patch. #307 retyped kx-coordinator/kx-worker public signatures but bumped 0.1.1 -> 0.1.2 and
+  # every gate passed (the merge gate proves CI + review, not semver — L-077.a). This job fails when the
+  # public API changed with no matching version bump. FFI-free: the llama.cpp crates are excluded (they
+  # need the C++ toolchain + submodule). Git-rev baseline (origin/main) — no crates.io publish required.
+  semver-checks:
+    name: semver-checks (a breaking public API change needs a minor bump — L-077.a)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with history (origin/main is the API baseline)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Make origin/main available as the baseline rev
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-semver-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-semver-${{ runner.os }}-
+            cargo-${{ runner.os }}-
+
+      - name: cargo-semver-checks vs origin/main (FFI-free public library crates)
+        run: |
+          set -euo pipefail
+          # --baseline-rev compares this PR's public API against origin/main (no published crate needed).
+          # This job is FFI-FREE (no llama.cpp submodule / C++ toolchain), so a `--workspace` check aborts
+          # building rustdoc for a crate that transitively needs the FFI (e.g. kx-cli). Instead we check an
+          # EXPLICIT set of FFI-free public LIBRARY crates — the durable contracts consumers build on. No
+          # binaries (a CLI has no semver-relevant public API) and no FFI/inference crates. Adding the
+          # FFI-dependent crates needs a separate with-submodule variant (a follow-up). The gRPC contract is
+          # additionally guarded by the proto-breaking job. "Advisory first; promote to a required check once
+          # green a few runs."
+          cargo semver-checks \
+            --baseline-rev origin/main \
+            --package kx-proto \
+            --package kx-mote \
+            --package kx-journal \
+            --package kx-content \
+            --package kx-warrant \
+            --package kx-planner \
+            --package kx-projection \
+            --package kx-workflow \
+            --package kx-toolcall \
+            --package kx-critic-types
+
+  # Fuzz-smoke (risk-burndown Batch B): builds + briefly runs the cargo-fuzz targets over the untrusted-byte
+  # parse paths (decode_plan / decode_entry / fold_checkpoint). A short per-PR smoke catches a NEW crash a
+  # change introduces; deep/long fuzzing is a separate scheduled run (see fuzz/README.md). FFI-free targets
+  # only (no llama.cpp submodule). Nightly is required for the sanitizer/coverage instrumentation.
+  fuzz-smoke:
+    name: fuzz-smoke (untrusted-byte parse paths)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — FFI-free fuzz targets)
+        uses: actions/checkout@v6
+
+      - name: Install nightly (required by cargo-fuzz sanitizers)
+        run: |
+          rustup toolchain install nightly --profile minimal
+          rustup run nightly rustc --version
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache Cargo registry + fuzz target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            fuzz/target
+          key: cargo-fuzz-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'fuzz/Cargo.toml') }}
+          restore-keys: |
+            cargo-fuzz-${{ runner.os }}-
+
+      - name: Ensure the gnu (dynamic-libc) target for nightly
+        # cargo-binstall installs a MUSL-built cargo-fuzz, whose default build target is musl —
+        # static libc, which the ASAN sanitizer refuses ("sanitizer is incompatible with statically
+        # linked libc") and which isn't installed. Force the standard dynamic-libc gnu target below.
+        run: rustup target add --toolchain nightly x86_64-unknown-linux-gnu
+
+      - name: Build fuzz targets (compiles against the real parse APIs)
+        env:
+          RUSTUP_TOOLCHAIN: nightly    # the repo pins stable via rust-toolchain.toml; fuzz needs nightly
+        run: cargo fuzz build --target x86_64-unknown-linux-gnu
+
+      - name: Smoke each target (fail on any crash/panic)
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+        run: |
+          set -euo pipefail
+          for t in decode_plan decode_entry fold_checkpoint; do
+            echo "── fuzz-smoke: $t ──"
+            cargo fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=45 -print_final_stats=1
+          done
+          echo "✅ fuzz-smoke clean — no crash in the smoke window (deep fuzzing is a separate scheduled run)."
+
+  # proto-breaking: the kortecx.v1 gRPC contract (KxGateway + Coordinator) is additive-only (D120.6). That
+  # was convention-only + the codegen-fresh guards; this makes it a mechanical gate — a removed / renumbered
+  # / renamed / retyped field on a released message fails against origin/main. Only on a PR (the baseline is
+  # main). Config: crates/kx-proto/proto/buf.yaml (breaking: FILE). A deliberate break bumps kortecx.v2.
+  proto-breaking:
+    name: proto-breaking (kx-proto additive-only — D120.6)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with history (origin/main is the proto baseline)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Make origin/main available as the baseline
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - name: Install buf
+        uses: bufbuild/buf-setup-action@v1
+        with:
+          github_token: ${{ github.token }}
+      - name: buf breaking (kx-proto) vs origin/main
+        run: buf breaking crates/kx-proto/proto --against '.git#ref=refs/remotes/origin/main,subdir=crates/kx-proto/proto'
