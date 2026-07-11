@@ -15,6 +15,7 @@ import {
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppViewPopover } from "../apps/AppViewPopover";
+import { ApprovalsInbox } from "../apps/ApprovalsInbox";
 import { CodeViewer } from "../editor/CodeViewer";
 import { Icon } from "../shell/Icon";
 import { Popover } from "../shell/Popover";
@@ -34,7 +35,22 @@ import { NewAppForm } from "./NewAppForm";
  * fake controls. Nothing currently exposed disappears: Apps is ADDITIVE alongside
  * Workflows/Blueprints (the consolidation rides the deferred redesign).
  */
-export function AppsSection() {
+/** The Apps section views: the App catalog (default) and the cross-App HITL
+ *  approvals inbox (a single pending queue across every App). */
+export type AppsTab = "catalog" | "approvals";
+
+const APPS_TABS: ReadonlyArray<{ id: AppsTab; label: string }> = [
+  { id: "catalog", label: "Catalog" },
+  { id: "approvals", label: "Approvals" },
+];
+
+export function AppsSection({
+  tab = "catalog",
+  onTab,
+}: {
+  tab?: AppsTab;
+  onTab?: (tab: AppsTab) => void;
+} = {}) {
   const navigate = useNavigate();
   const { apps, notWired, isLoading, isError, error, refetch } = useApps();
   const runApp = useRunApp();
@@ -160,84 +176,107 @@ export function AppsSection() {
         </div>
       </div>
 
-      {notice ? (
-        <output className="muted" data-testid="apps-notice">
-          {notice}
-        </output>
-      ) : null}
-      {importApp.error ? (
-        <ErrorNotice error={toUiError(importApp.error)} onRetry={() => importApp.reset()} />
-      ) : null}
-      {exportBundle.error ? (
-        <ErrorNotice error={toUiError(exportBundle.error)} onRetry={() => exportBundle.reset()} />
-      ) : null}
+      <fieldset className="view-toggle" aria-label="Apps view" data-testid="apps-tabs">
+        {APPS_TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            data-testid={`apps-tab-${t.id}`}
+            aria-pressed={tab === t.id}
+            onClick={() => onTab?.(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </fieldset>
 
-      {creating ? <NewAppForm onClose={() => setCreating(false)} /> : null}
-
-      {isLoading ? <EmptyState title="Loading apps…" /> : null}
-
-      {notWired ? (
-        <EmptyState
-          title="Apps not available"
-          detail="This gateway does not expose the App catalog (an older build, or the apps.db sidecar is absent)."
-        />
-      ) : isError ? (
-        <ErrorNotice error={toUiError(error)} onRetry={() => void refetch()} />
-      ) : !isLoading && apps.length === 0 ? (
-        <EmptyState
-          title="No apps yet"
-          detail="Author an App with `kx app save <file>` or the `app()` SDK builder, then it appears here to inspect and run."
-        />
-      ) : null}
-
-      {apps.length > 0 ? (
-        <m.div
-          className="card-grid"
-          data-testid="apps-catalog"
-          variants={stagger()}
-          initial="hidden"
-          animate="show"
-        >
-          {apps.map((a) => (
-            <AppCard
-              key={a.handle}
-              app={a}
-              pending={runApp.isPending}
-              downloadPending={exportBundle.isPending}
-              onRun={run}
-              onView={setSummaryFor}
-              onInspect={setViewing}
-              onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
-              onDownload={download}
-              onDuplicate={setDuplicating}
+      {tab === "approvals" ? (
+        <ApprovalsInbox />
+      ) : (
+        <>
+          {notice ? (
+            <output className="muted" data-testid="apps-notice">
+              {notice}
+            </output>
+          ) : null}
+          {importApp.error ? (
+            <ErrorNotice error={toUiError(importApp.error)} onRetry={() => importApp.reset()} />
+          ) : null}
+          {exportBundle.error ? (
+            <ErrorNotice
+              error={toUiError(exportBundle.error)}
+              onRetry={() => exportBundle.reset()}
             />
-          ))}
-        </m.div>
-      ) : null}
+          ) : null}
 
-      {runError ? (
-        <ErrorNotice error={runError} onRetry={() => runApp.reset()} action={runAction} />
-      ) : null}
+          {creating ? <NewAppForm onClose={() => setCreating(false)} /> : null}
 
-      {cloneApp.error ? (
-        <ErrorNotice error={toUiError(cloneApp.error)} onRetry={() => cloneApp.reset()} />
-      ) : null}
+          {isLoading ? <EmptyState title="Loading apps…" /> : null}
 
-      {summaryFor ? (
-        <AppViewPopover handle={summaryFor} onClose={() => setSummaryFor(null)} />
-      ) : null}
-      {viewing ? <AppDetailDrawer handle={viewing} onClose={() => setViewing(null)} /> : null}
-      {duplicating ? (
-        <DuplicateDialog
-          handle={duplicating}
-          pending={cloneApp.isPending}
-          onSubmit={duplicate}
-          onClose={() => {
-            setDuplicating(null);
-            cloneApp.reset();
-          }}
-        />
-      ) : null}
+          {notWired ? (
+            <EmptyState
+              title="Apps not available"
+              detail="This gateway does not expose the App catalog (an older build, or the apps.db sidecar is absent)."
+            />
+          ) : isError ? (
+            <ErrorNotice error={toUiError(error)} onRetry={() => void refetch()} />
+          ) : !isLoading && apps.length === 0 ? (
+            <EmptyState
+              title="No apps yet"
+              detail="Author an App with `kx app save <file>` or the `app()` SDK builder, then it appears here to inspect and run."
+            />
+          ) : null}
+
+          {apps.length > 0 ? (
+            <m.div
+              className="card-grid"
+              data-testid="apps-catalog"
+              variants={stagger()}
+              initial="hidden"
+              animate="show"
+            >
+              {apps.map((a) => (
+                <AppCard
+                  key={a.handle}
+                  app={a}
+                  pending={runApp.isPending}
+                  downloadPending={exportBundle.isPending}
+                  onRun={run}
+                  onView={setSummaryFor}
+                  onInspect={setViewing}
+                  onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
+                  onDownload={download}
+                  onDuplicate={setDuplicating}
+                />
+              ))}
+            </m.div>
+          ) : null}
+
+          {runError ? (
+            <ErrorNotice error={runError} onRetry={() => runApp.reset()} action={runAction} />
+          ) : null}
+
+          {cloneApp.error ? (
+            <ErrorNotice error={toUiError(cloneApp.error)} onRetry={() => cloneApp.reset()} />
+          ) : null}
+
+          {summaryFor ? (
+            <AppViewPopover handle={summaryFor} onClose={() => setSummaryFor(null)} />
+          ) : null}
+          {viewing ? <AppDetailDrawer handle={viewing} onClose={() => setViewing(null)} /> : null}
+          {duplicating ? (
+            <DuplicateDialog
+              handle={duplicating}
+              pending={cloneApp.isPending}
+              onSubmit={duplicate}
+              onClose={() => {
+                setDuplicating(null);
+                cloneApp.reset();
+              }}
+            />
+          ) : null}
+        </>
+      )}
     </section>
   );
 }
@@ -279,7 +318,7 @@ function AppCard({
           <span
             className="chip chip--tag"
             data-testid={`app-card-locked-${app.handle}`}
-            title="This App is locked — agentic in-CAS edits are refused (manage in Policies)"
+            title="This App is locked — agentic in-CAS edits are refused (manage from the App page)"
           >
             🔒 Locked
           </span>

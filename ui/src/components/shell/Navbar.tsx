@@ -4,7 +4,6 @@ import { ConnectionStatus } from "./ConnectionStatus";
 import { GlobalControls } from "./GlobalControls";
 import { Icon } from "./Icon";
 import { SearchTrigger } from "./SearchTrigger";
-import { SystemStatus } from "./SystemStatus";
 
 /**
  * The top bar (the inverted-L's horizontal arm — starts where the sidebar ends):
@@ -60,7 +59,6 @@ export function Navbar({
       >
         <Icon name={resolved === "dark" ? "sun" : "moon"} />
       </button>
-      <SystemStatus />
       <ConnectionStatus />
     </header>
   );

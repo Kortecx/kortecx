@@ -18,10 +18,12 @@ import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
 import { REACT_RECIPE_HANDLE, type UseChat, useChat } from "../../kx/use-chat";
+import { useListMcpServers } from "../../kx/use-connections";
 import { useContextBundles } from "../../kx/use-context-bundles";
 import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
 import { useRecipes } from "../../kx/use-recipes";
+import { useDiscoverTools } from "../../kx/use-tool-registry";
 import {
   type SavedChat,
   autoNameFrom,
@@ -71,6 +73,13 @@ export interface ChatController {
   readonly contextBundles: ReturnType<typeof useContextBundles>;
   readonly pendingContext: readonly string[];
   readonly toggleContext: (handle: string) => void;
+  /** Per-message tools attached to the next turn, keyed `${toolName}@${toolVersion}`. */
+  readonly pendingTools: readonly string[];
+  readonly toggleTool: (id: string) => void;
+  /** The registry inventory that backs the composer's tool picker. */
+  readonly toolRegistry: ReturnType<typeof useDiscoverTools>;
+  /** MCP connection status shown as honest chips (connection, not a fire guarantee). */
+  readonly mcpServers: ReturnType<typeof useListMcpServers>;
   readonly chatName: string;
   readonly setChatName: (name: string) => void;
   readonly onChatNameInput: (name: string) => void;
@@ -143,6 +152,12 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
     setPendingContext((prev) =>
       prev.includes(handle) ? prev.filter((h) => h !== handle) : [...prev, handle],
     );
+  }
+  const toolRegistry = useDiscoverTools();
+  const mcpServers = useListMcpServers();
+  const [pendingTools, setPendingTools] = useState<readonly string[]>([]);
+  function toggleTool(id: string): void {
+    setPendingTools((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]));
   }
 
   const autosave = config.autosave ?? true;
@@ -220,9 +235,10 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
         mediaType: a.mediaType,
         objectUrl: a.objectUrl,
       }));
-    void chat.send(text, ready, pendingContext);
+    void chat.send(text, ready, pendingContext, pendingTools);
     attach.clear();
     setPendingContext([]);
+    setPendingTools([]);
   }
 
   return {
@@ -241,6 +257,10 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
     contextBundles,
     pendingContext,
     toggleContext,
+    pendingTools,
+    toggleTool,
+    toolRegistry,
+    mcpServers,
     chatName,
     setChatName,
     onChatNameInput,

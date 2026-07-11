@@ -25,14 +25,6 @@ export const queryKeys = {
   /** A run's captured Invoke args (`GetRunInputs`, PR-D "Re-run with changes"). */
   runInputs: (endpoint: string, instanceId: string) =>
     ["kx", endpoint, "run-inputs", instanceId] as const,
-  /** The teams the gateway knows (`ListTeams`). */
-  teams: (endpoint: string) => ["kx", endpoint, "teams"] as const,
-  /** One team's members (`ListTeamMembers`); `assetRef` distinguishes the resolved view. */
-  teamMembers: (endpoint: string, teamId: string, assetRef?: string) =>
-    ["kx", endpoint, "team-members", teamId, assetRef ?? "none"] as const,
-  /** The active grants on an asset (`ListAssetGrants`), scoped by asset ref. */
-  assetGrants: (endpoint: string, assetRef: string) =>
-    ["kx", endpoint, "asset-grants", assetRef] as const,
   /** The advisory tool manifests (`ListToolManifests`) — display-only, never authority. */
   toolManifests: (endpoint: string) => ["kx", endpoint, "tool-manifests"] as const,
   /** The durable tools-registry inventory (`DiscoverTools`, PR-6a) — the governance
@@ -122,9 +114,6 @@ export const queryKeys = {
   /** The capture-record stream (`ListCaptureRecords`); `instanceId` scopes to one run. */
   captureRecords: (endpoint: string, instanceId: string | undefined, limit: number) =>
     ["kx", endpoint, "capture-records", instanceId ?? "all", limit] as const,
-  /** The per-run quality readout (`ScoreRun`, RC1/D172); scoped to one run. */
-  evalScore: (endpoint: string, instanceId: string) =>
-    ["kx", endpoint, "eval-score", instanceId] as const,
   /** The discoverable models (`ListModels`) — display-only (SN-8). */
   models: (endpoint: string) => ["kx", endpoint, "models"] as const,
   /** A batched content fetch (`GetContentBatch`), scoped by run + a stable refs key.
@@ -135,26 +124,10 @@ export const queryKeys = {
    *  COMMITTED def hash — content-addressed ⇒ immutable (cache forever). */
   moteDetail: (endpoint: string, instanceId: string, moteId: string, defHash: string) =>
     ["kx", endpoint, "mote-detail", instanceId, moteId, defHash] as const,
-  /** The mote execution-telemetry pages (`ListMoteTelemetry`, Batch C);
-   *  `instanceId` scopes to one run; cursor pages live inside the one key. */
-  telemetry: (endpoint: string, instanceId: string | undefined, pageSize: number) =>
-    ["kx", endpoint, "telemetry", instanceId ?? "all", pageSize] as const,
-  /** The exact per-model token-economy rollup (`ListTelemetrySummary`, W1a-3);
-   *  `instanceId` scopes to one run (else all runs). One unary call, no cursor. */
-  telemetrySummary: (endpoint: string, instanceId: string | undefined) =>
-    ["kx", endpoint, "telemetry-summary", instanceId ?? "all"] as const,
-  /** The operator alerts inbox pages (`ListAlerts`, W1a-2); terminal-failure
-   *  facts folded newest-first; cursor pages live inside the one key. */
-  alerts: (endpoint: string, instanceId: string | undefined, pageSize: number) =>
-    ["kx", endpoint, "alerts", instanceId ?? "all", pageSize] as const,
   /** RC6a: the pending HITL approvals inbox (`ListPendingApprovals`, D114) — the
    *  govern surface over withheld world-mutating actions. Polled (approvals are NOT
    *  on the event stream); `limit` scopes the page. `requestId` is server-derived
    *  (SN-8); a grant/deny releases a staged action, never mints a warrant. */
   pendingApprovals: (endpoint: string, limit: number) =>
     ["kx", endpoint, "pending-approvals", limit] as const,
-  /** RC6a: a run's local spend estimate (`GetRunCost`, M11) — display-only over the
-   *  durable turn/tool counters at operator-set rates (a guardrail, not billing). */
-  runCost: (endpoint: string, instanceId: string) =>
-    ["kx", endpoint, "run-cost", instanceId] as const,
 };

@@ -910,46 +910,6 @@ button:disabled {
   flex-direction: column;
   gap: 0.15rem;
 }
-.sidebar__footer {
-  margin-top: auto;
-  padding: 0.4rem 0.6rem 0.2rem;
-}
-.sidebar__footer-label {
-  font-size: 0.6rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-3);
-  margin: 0;
-}
-.sidebar__footer-value {
-  font-size: 0.95rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-1);
-  margin: 0.1rem 0 0;
-}
-.sidebar__footer-empty {
-  font-size: 0.72rem;
-  color: var(--text-3);
-  margin: 0.1rem 0 0;
-}
-
-/* ---- topbar system-status box (PR-B / D150) ---- */
-.status-box {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.2rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-elev, var(--bg-input));
-  font-size: 0.72rem;
-  color: var(--text-2);
-}
-.status-box__label {
-  font-weight: 600;
-}
 /* navbar icon buttons pick up a gentle accent on hover (PR-B polish) */
 .navbar .iconbtn:hover {
   color: var(--accent);
@@ -2098,23 +2058,6 @@ select {
   }
 }
 
-/* ---- UI-3: Systems (teams) + Sharing (grants) viewers ---- */
-.systems-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.5rem;
-  margin-top: 1.25rem;
-}
-@media (min-width: 1100px) {
-  .systems-grid {
-    grid-template-columns: 1fr 1fr;
-    align-items: start;
-  }
-}
-.systems-grid h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1.05rem;
-}
 .chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -2370,14 +2313,7 @@ select {
 .warrant-row dd {
   margin: 0;
 }
-/* W1 design pass: the gateway facts tile + inline status dots in the systems tables. */
-.systems-facts-card {
-  margin-top: 1rem;
-  max-width: 720px;
-}
-.systems-facts-card .facts {
-  margin: 0;
-}
+/* W1 design pass: inline status dots in the data tables. */
 .data-table .status-dot {
   margin-right: 0.4rem;
 }
@@ -3821,72 +3757,7 @@ button.card-grid__title:hover {
   color: var(--text-3);
 }
 
-/* ---- Dashboard landing (PR-C1) ---- */
-.dashboard-cols {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.75rem;
-  margin-top: 0.85rem;
-}
-@media (min-width: 1000px) {
-  .dashboard-cols {
-    grid-template-columns: 1.6fr 1fr;
-    align-items: start;
-  }
-}
-.quickstart-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 0.6rem;
-  margin-top: 0.85rem;
-}
-.quickstart-card {
-  display: block;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: inherit;
-  text-decoration: none;
-}
-.quickstart-card:hover {
-  border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
-  box-shadow: 0 4px 20px rgba(240, 69, 0, 0.1);
-}
-.quickstart-card__title {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-.quickstart-card__hint {
-  color: var(--text-3);
-  font-size: 0.72rem;
-  margin-top: 0.15rem;
-}
-.dashboard-runs {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.dashboard-runs__row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.6rem;
-  padding: 0.35rem 0;
-  border-bottom: 1px solid var(--border);
-}
-.dashboard-runs__handle {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dashboard-runs__time {
-  color: var(--text-3);
-  font-size: 0.72rem;
-}
-
-/* ---- Monitoring dashboard ---- */
+/* ---- self-correction trails grid (Workflows) ---- */
 .monitor-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -3907,21 +3778,9 @@ button.card-grid__title:hover {
   margin: 0;
   font-size: 0.95rem;
 }
-.monitor-health {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
 .monitor-panel__head h3 {
   margin: 0;
   font-size: 0.85rem;
-}
-/* RC6a: connector-health block folded under the Gateway-health card — a thin token
-   rule separating it from the liveness pill above. */
-.monitor-connections {
-  margin-top: 0.85rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border);
 }
 .tally {
   list-style: none;

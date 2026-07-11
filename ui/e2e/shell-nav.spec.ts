@@ -9,7 +9,7 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-/** The eight flat sections (POC-5c / D168), in nav order, with their panel + crumb. */
+/** The seven flat sections (POC-5c / D168), in nav order, with their panel + crumb. */
 const SECTIONS: Array<[string, string, string]> = [
   ["nav-chat", "chat-panel", "New Chat"],
   ["nav-apps", "apps-section", "Apps"],
@@ -17,7 +17,6 @@ const SECTIONS: Array<[string, string, string]> = [
   ["nav-context", "context-section", "Context"],
   ["nav-tools", "tools-section", "Integrations"],
   ["nav-models", "models-section", "Models"],
-  ["nav-monitor", "monitoring-section", "Monitoring"],
   ["nav-systems", "systems-section", "Security"],
 ];
 
@@ -64,14 +63,10 @@ test("the sidebar is a FLAT list — no groups, no Cloud/Coming, demoted routes 
     await expect(page.getByTestId(`nav-group-${g}`)).toHaveCount(0);
   }
   await expect(page.getByTestId("cloud-sharing")).toHaveCount(0);
-  // The five demoted sections are NOT sidebar buttons.
-  for (const id of ["dashboard", "recipes", "datasets", "branches", "policies"]) {
+  // The demoted sections are NOT sidebar buttons.
+  for (const id of ["recipes", "datasets", "branches"]) {
     await expect(page.getByTestId(`nav-${id}`)).toHaveCount(0);
   }
-
-  // The topbar system-status box reports REAL health (live on a reachable serve).
-  await expect(page.getByTestId("system-status")).toBeVisible();
-  await expect(page.getByTestId("system-status")).toHaveAttribute("data-health", "live");
 
   // The New flyout opens and routes to a real target.
   await page.getByTestId("sidebar-new").click();
@@ -83,8 +78,6 @@ test("the sidebar is a FLAT list — no groups, no Cloud/Coming, demoted routes 
   // The demoted sections stay reachable (NO capability regression) via the ⌘K palette.
   await gotoViaPalette(page, "recipes");
   await expect(page.getByTestId("recipes-section")).toBeVisible({ timeout: 15_000 });
-  await gotoViaPalette(page, "policies");
-  await expect(page.getByTestId("policies-section")).toBeVisible({ timeout: 15_000 });
 });
 
 test("every flat section renders under BOTH themes (D142 / GR13)", async ({ page }) => {

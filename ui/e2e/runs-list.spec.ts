@@ -16,12 +16,12 @@ test("runs: a submitted run appears in the run list and re-opens", async ({ page
   await runRecipe(page, { fields: { topic: "for the run list" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 
-  // POC-5c: run history moved to Monitoring → Runs; the run is listed as a TABLE
-  // row (durable ListRuns + session record).
-  await page.getByTestId("nav-monitor").click();
-  await expect(page.getByTestId("monitoring-section")).toBeVisible();
-  await page.getByTestId("monitor-tab-runs").click();
-  await expect(page.getByTestId("monitor-runs")).toBeVisible({ timeout: 15_000 });
+  // Run history lives in Workflows → Runs; the run is listed as a TABLE row
+  // (durable ListRuns + session record).
+  await page.getByTestId("nav-runs").click();
+  await expect(page.getByTestId("runs-section")).toBeVisible();
+  await page.getByTestId("workflows-tab-runs").click();
+  await expect(page.getByTestId("workflows-runs")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("run-list")).toContainText("kx/recipes/echo");
 

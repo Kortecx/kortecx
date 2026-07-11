@@ -26,6 +26,7 @@ import { ChatSettingsPanel } from "./ChatSettings";
 import { Composer } from "./Composer";
 import { DatasetPicker } from "./DatasetPicker";
 import { DegradeNotice } from "./DegradeNotice";
+import { McpConnectionChips } from "./McpConnectionChips";
 import { MessageList } from "./MessageList";
 import { ModelPicker } from "./ModelPicker";
 import { StatusLoop } from "./StatusLoop";
@@ -72,6 +73,10 @@ export function ChatSurface({
     contextBundles,
     pendingContext,
     toggleContext,
+    pendingTools,
+    toggleTool,
+    toolRegistry,
+    mcpServers,
     chatName,
     onChatNameInput,
     commitName,
@@ -254,6 +259,7 @@ export function ChatSurface({
           ))}
         </div>
       ) : null}
+      {showPickers ? <McpConnectionChips servers={mcpServers.servers} /> : null}
       <Composer
         disabled={chat.busy}
         sendBlocked={attach.uploading}
@@ -266,6 +272,18 @@ export function ChatSurface({
                 attached: pendingContext,
                 notWired: contextBundles.notWired,
                 onToggle: toggleContext,
+              }
+            : undefined
+        }
+        tools={
+          showPickers
+            ? {
+                options: toolRegistry.tools
+                  .filter((t) => t.registrationStatus === "Approved")
+                  .map((t) => `${t.toolName}@${t.toolVersion}`),
+                attached: pendingTools,
+                notWired: toolRegistry.notWired,
+                onToggle: toggleTool,
               }
             : undefined
         }
