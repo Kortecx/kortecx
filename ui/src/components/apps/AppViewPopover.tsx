@@ -1,93 +1,12 @@
 import { m } from "framer-motion";
 import { useEffect } from "react";
 import { toUiError } from "../../kx/errors";
-import { type ManifestRow, useAppManifest } from "../../kx/use-app-manifest";
 import { useApp } from "../../kx/use-apps";
 import { useBranches } from "../../kx/use-branches";
 import { shortHex } from "../../lib/format";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
-
-/** The status chip class + label for one tool row ("satisfied" / "missing" / "inherited"). */
-function toolStatus(row: ManifestRow, needsOnly: boolean): { cls: string; label: string } {
-  if (needsOnly) return { cls: "chip chip--static", label: "needs" };
-  if (!row.requested && row.inherited)
-    return { cls: "chip chip--static chip--tag", label: "inherited" };
-  if (row.inPolicy) return { cls: "chip chip--static chip--active", label: "satisfied" };
-  return { cls: "chip chip--static chip--danger", label: "missing" };
-}
-
-/** The read-only capability manifest section — needs vs. what you have. */
-function ManifestSection({ handle }: { handle: string }) {
-  const { view, isLoading } = useAppManifest(handle);
-  return (
-    <>
-      <h3 className="node-drawer__section">Capability manifest</h3>
-      {isLoading ? <p className="muted">Resolving…</p> : null}
-      {!view && !isLoading ? (
-        <p className="muted" data-testid="app-manifest-empty">
-          No capability manifest.
-        </p>
-      ) : null}
-      {view ? (
-        <div data-testid="app-manifest">
-          {view.needsOnly ? (
-            <p className="muted">Server can’t resolve your policy — showing declared needs only.</p>
-          ) : null}
-          <dl className="facts">
-            <dt>Model</dt>
-            <dd>
-              {view.modelRoute === "" ? "(served default)" : view.modelRoute}
-              {view.needsOnly ? null : (
-                <span
-                  className={`chip chip--static chip--tag ${
-                    view.modelRouteServed ? "chip--active" : "chip--danger"
-                  }`}
-                  data-testid="app-manifest-model-status"
-                >
-                  {view.modelRouteServed ? "served" : "not served"}
-                </span>
-              )}
-            </dd>
-            <dt>Tool reach</dt>
-            <dd>{view.reachInherit ? "inherit principal" : "explicit"}</dd>
-          </dl>
-          {view.tools.length > 0 ? (
-            <div className="chip-row" data-testid="app-manifest-tools">
-              {view.tools.map((t) => {
-                const s = toolStatus(t, view.needsOnly);
-                return (
-                  <span key={`${t.id}@${t.version}`} className={s.cls} title={s.label}>
-                    <code className="mono">
-                      {t.id}@{t.version}
-                    </code>
-                    <small>{s.label}</small>
-                  </span>
-                );
-              })}
-            </div>
-          ) : null}
-          {view.connections.length > 0 ? (
-            <div className="chip-row" data-testid="app-manifest-connections">
-              {view.connections.map((c) => (
-                <span
-                  key={c.id}
-                  className={`chip chip--static ${
-                    view.needsOnly ? "" : c.inPolicy ? "chip--active" : "chip--danger"
-                  }`}
-                  title={view.needsOnly ? "needs" : c.inPolicy ? "registered" : "missing"}
-                >
-                  <code className="mono">{c.id}</code>
-                  <small>{view.needsOnly ? "needs" : c.inPolicy ? "registered" : "missing"}</small>
-                </span>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </>
-  );
-}
+import { AppManifestPanel } from "./AppManifestPanel";
 
 /**
  * POC-5c: the Apps "View" popup — a READ-ONLY, at-a-glance summary of one App: its
@@ -203,7 +122,7 @@ export function AppViewPopover({ handle, onClose }: { handle: string; onClose: (
               </p>
             )}
 
-            <ManifestSection handle={handle} />
+            <AppManifestPanel handle={handle} />
           </>
         ) : null}
       </m.aside>

@@ -29,6 +29,7 @@ import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { FileTree } from "../apps/FileTree";
+import { LockControl } from "../apps/LockControl";
 import { SkillsRail } from "../apps/SkillsRail";
 import { AppChat } from "../chat/AppChat";
 import { CodeViewer } from "../editor/CodeViewer";
@@ -102,15 +103,7 @@ export function AppDetailSection({
           </code>
         </div>
         <div className="screen__head-actions">
-          {locked ? (
-            <span
-              className="chip chip--tag"
-              data-testid="app-detail-locked"
-              title="Edits are refused"
-            >
-              🔒 Locked
-            </span>
-          ) : null}
+          <LockControl handle={handle} locked={locked} />
           <button
             type="button"
             className="btn-ghost"
@@ -290,7 +283,7 @@ function FilePane({
         <code className="mono app-file__path">{path}</code>
         {locked ? (
           <span className="muted app-file__locked" data-testid="app-locked-notice" role="note">
-            This App is locked — edits are refused. Unlock it in Security › Policies to edit.
+            This App is locked — edits are refused. Unlock it from this App's header to edit.
           </span>
         ) : mode === "view" ? (
           <div className="app-file__actions">

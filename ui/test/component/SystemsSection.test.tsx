@@ -1,136 +1,69 @@
-import {
-  AssetGrants,
-  GrantView,
-  KxNotFound,
-  KxUnimplemented,
-  TeamMember,
-  TeamMembers,
-  TeamSummary,
-  WarrantView,
-} from "@kortecx/sdk/web";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
-import { SystemsSection } from "../../src/components/sections/SystemsSection";
-import { connectedWrapper } from "../mocks/harness";
-import { makeMockClient } from "../mocks/kx-client";
+/**
+ * Security section: the single-user capability-manifest surface. An app picker (chips)
+ * selects the App whose resolved warrant (reach / capability ceiling / model route) the
+ * manifest panel renders. Honest empty / not-wired states; no cross-party RBAC.
+ */
 
-const demoTeam = new TeamSummary("kx/teams/workspace", "Workspace", "kx-gateway", 3);
-const members = new TeamMembers("kx-gateway", [
-  new TeamMember(
-    "alice@acme",
-    "demo-delegate",
-    ["Read", "Use", "Delegate"],
-    new WarrantView("Bwrap", "m ×3 (4096/512 tok)", "None", "/tmp/in:ReadOnly", 3, 1000, 30000),
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../src/components/apps/AppManifestPanel", () => ({
+  AppManifestPanel: ({ handle }: { handle: string }) => (
+    <div data-testid="manifest-panel">{handle}</div>
   ),
-  new TeamMember("bob@acme", "demo-member", ["Read", "Use"], null),
-]);
-const echoGrants = new AssetGrants("kx-gateway", [
-  new GrantView("kx-gateway", "kx/teams/workspace", ["Read", "Use"], "demo", true, false),
-  new GrantView("kx-gateway", "alice@acme", ["Read", "Use"], "demo", true, false),
-]);
+}));
 
-function fullMock() {
-  return makeMockClient({
-    listSignatures: async () => [],
-    listTeams: async () => [demoTeam],
-    listTeamMembers: async () => members,
-    listRecipes: async () => ["kx/recipes/echo"],
-    listAssetGrants: async () => echoGrants,
-  });
-}
+let appsState: {
+  apps: Array<{ handle: string; name: string }>;
+  notWired: boolean;
+  isLoading: boolean;
+};
+vi.mock("../../src/kx/use-apps", () => ({
+  useApps: () => appsState,
+}));
 
-describe("SystemsSection", () => {
-  it("renders the team, its members, and a delegate badge", async () => {
-    const { client } = fullMock();
-    render(<SystemsSection />, { wrapper: connectedWrapper(client) });
+import { SystemsSection } from "../../src/components/sections/SystemsSection";
 
-    expect(screen.getByTestId("teams-panel")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByTestId("team-pick-kx/teams/workspace")).toBeInTheDocument(),
-    );
-    // The row assertions must be EVENTUAL, not just gated on the table: the grant
-    // inspector's asset auto-select RE-KEYS useTeamMembers(team, assetRef), which
-    // briefly swaps the already-rendered table back to "Loading members…" — a bare
-    // getByTestId after the table waitFor races that window (a CI-reproduced flake).
-    await waitFor(() => {
-      expect(screen.getByTestId("member-table")).toBeInTheDocument();
-      expect(screen.getByTestId("member-row-alice@acme")).toBeInTheDocument();
-      // alice is a delegate → the delegate badge.
-      expect(document.querySelectorAll(".role-badge--delegate")).toHaveLength(1);
-    });
-  });
-
-  it("shows the grants inspector with the team grant on echo", async () => {
-    const { client } = fullMock();
-    render(<SystemsSection />, { wrapper: connectedWrapper(client) });
-
-    expect(screen.getByTestId("grant-inspector")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByTestId("grant-asset-pick-kx/recipes/echo")).toBeInTheDocument(),
-    );
-    await waitFor(() => expect(screen.getByTestId("grant-table")).toBeInTheDocument());
-    const teamGrant = screen.getByTestId("grant-row-kx/teams/workspace");
-    expect(teamGrant).toBeInTheDocument();
-    expect(teamGrant).toHaveTextContent("Root");
-  });
-
-  it("selecting an asset resolves each member's warrant on it", async () => {
-    const user = userEvent.setup();
-    const { client, listTeamMembers } = fullMock();
-    render(<SystemsSection />, { wrapper: connectedWrapper(client) });
-    await waitFor(() =>
-      expect(screen.getByTestId("grant-asset-pick-kx/recipes/echo")).toBeInTheDocument(),
-    );
-    // Clicking the asset chip lifts the assetRef → the member table resolves warrants.
-    await user.click(screen.getByTestId("grant-asset-pick-kx/recipes/echo"));
-    await waitFor(() =>
-      expect(screen.getByTestId("member-warrant-alice@acme")).toBeInTheDocument(),
-    );
-    // The member-members call was made WITH an asset_ref at least once.
-    await waitFor(() =>
-      expect(
-        listTeamMembers.mock.calls.some((c) => (c[1] as { assetRef?: string })?.assetRef),
-      ).toBe(true),
-    );
-  });
-
-  it("degrades gracefully when the teams view is not wired", async () => {
-    const { client } = makeMockClient({
-      listSignatures: async () => [],
-      listTeams: async () => {
-        throw new KxUnimplemented("ListTeams not wired");
-      },
-      listRecipes: async () => [],
-    });
-    render(<SystemsSection />, { wrapper: connectedWrapper(client) });
-    await waitFor(() => expect(screen.getByText(/teams not available here/i)).toBeInTheDocument());
-    // No crash — the section still renders.
+describe("SystemsSection (Security = capability manifest)", () => {
+  it("keeps the Security heading + section handle", () => {
+    appsState = { apps: [], notWired: false, isLoading: false };
+    render(<SystemsSection />);
     expect(screen.getByTestId("systems-section")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Security" })).toBeInTheDocument();
   });
 
-  it("shows an empty state when there are no teams", async () => {
-    const { client } = makeMockClient({
-      listSignatures: async () => [],
-      listTeams: async () => [],
-      listRecipes: async () => [],
-    });
-    render(<SystemsSection />, { wrapper: connectedWrapper(client) });
-    await waitFor(() => expect(screen.getByText("No teams")).toBeInTheDocument());
+  it("shows the honest empty state when there are no apps", () => {
+    appsState = { apps: [], notWired: false, isLoading: false };
+    render(<SystemsSection />);
+    expect(screen.getByText(/No apps yet/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("manifest-panel")).toBeNull();
   });
 
-  it("an unknown team surfaces an error notice, not a crash", async () => {
-    const { client } = makeMockClient({
-      listSignatures: async () => [],
-      listTeams: async () => [demoTeam],
-      listTeamMembers: async () => {
-        throw new KxNotFound("team not found");
-      },
-      listRecipes: async () => [],
-    });
-    render(<SystemsSection />, { wrapper: connectedWrapper(client) });
-    // The member table renders an ErrorNotice (the honest not-found), not a crash.
-    await waitFor(() => expect(screen.getByText("Not found")).toBeInTheDocument());
-    expect(screen.getByTestId("systems-section")).toBeInTheDocument();
+  it("defaults to the first app's manifest; a picker chip reports a new selection", () => {
+    appsState = {
+      apps: [
+        { handle: "apps/local/echo", name: "Echo" },
+        { handle: "apps/local/sum", name: "Summarize" },
+      ],
+      notWired: false,
+      isLoading: false,
+    };
+    const onHandle = vi.fn();
+    render(<SystemsSection onHandle={onHandle} />);
+    // Default = the first app.
+    expect(screen.getByTestId("manifest-panel")).toHaveTextContent("apps/local/echo");
+    expect(screen.getByTestId("security-app-apps/local/echo")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // Picking another chip reports the handle (the route drives the selection).
+    fireEvent.click(screen.getByTestId("security-app-apps/local/sum"));
+    expect(onHandle).toHaveBeenCalledWith("apps/local/sum");
+  });
+
+  it("honest-degrades when manifests are unsupported", () => {
+    appsState = { apps: [], notWired: true, isLoading: false };
+    render(<SystemsSection />);
+    expect(screen.getByText(/need a newer gateway/i)).toBeInTheDocument();
   });
 });

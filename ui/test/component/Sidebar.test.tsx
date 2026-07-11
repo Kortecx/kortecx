@@ -13,13 +13,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-// The token footer reads live telemetry (react-query + connection); stub the hook
-// so the sidebar renders without a provider tree (the footer's own test covers it).
-vi.mock("../../src/kx/use-telemetry", () => ({
-  useTelemetry: () => ({ rows: [], notWired: false, isLoading: false }),
-}));
-
-// RC6a: the Monitoring nav badge reads pending approvals (react-query + connection).
+// RC6a: the nav badge reads pending approvals (react-query + connection).
 // Stub it (overridable per test) so the sidebar renders without a provider tree.
 const { mockPending } = vi.hoisted(() => ({
   mockPending: vi.fn(() => ({ count: 0, approvals: [], notWired: false })),
@@ -35,7 +29,7 @@ describe("Sidebar (POC-5c / D168 flat IA)", () => {
 
   it("renders a plain-button item with a label for every flat section when expanded", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    for (const id of ["chat", "apps", "runs", "context", "tools", "models", "monitor", "systems"]) {
+    for (const id of ["chat", "apps", "runs", "context", "tools", "models", "systems"]) {
       expect(screen.getByTestId(`nav-${id}`)).toBeInTheDocument();
     }
     expect(screen.getByText("New Chat")).toBeInTheDocument();
@@ -58,9 +52,9 @@ describe("Sidebar (POC-5c / D168 flat IA)", () => {
     for (const p of ["sharing", "federation", "experts"]) {
       expect(screen.queryByTestId(`cloud-${p}`)).toBeNull();
     }
-    // The five demoted sections are NOT sidebar buttons (folded into a section/tab;
+    // The demoted sections are NOT sidebar buttons (folded into a section/tab;
     // still reachable via ⌘K + deep link).
-    for (const id of ["dashboard", "recipes", "datasets", "branches", "policies"]) {
+    for (const id of ["recipes", "datasets", "branches"]) {
       expect(screen.queryByTestId(`nav-${id}`)).toBeNull();
     }
     // Activity / Artifacts were never flat sections.
@@ -68,21 +62,16 @@ describe("Sidebar (POC-5c / D168 flat IA)", () => {
     expect(screen.queryByTestId("nav-artifacts")).toBeNull();
   });
 
-  it("hosts the New flyout trigger and the token footer", () => {
+  it("hosts the New flyout trigger", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
     expect(screen.getByTestId("sidebar-new")).toBeInTheDocument();
-    expect(screen.getByTestId("token-usage")).toBeInTheDocument();
-    // No telemetry rows in the stub → honest-empty readout (never a fabricated 0).
-    expect(screen.getByTestId("token-usage-empty")).toBeInTheDocument();
   });
 
-  it("hides labels and the footer (icon rail) when collapsed", () => {
+  it("hides labels (icon rail) when collapsed", () => {
     render(<Sidebar collapsed={true} onToggle={() => {}} />);
     // The items remain (icons), but the text labels are not rendered.
     expect(screen.getByTestId("nav-chat")).toBeInTheDocument();
     expect(screen.queryByText("New Chat")).not.toBeInTheDocument();
-    // The token footer drops away on the rail.
-    expect(screen.queryByTestId("token-usage")).not.toBeInTheDocument();
     expect(screen.getByTestId("sidebar")).toHaveAttribute("data-collapsed", "true");
     // Collapsed rail keeps the brand icon, drops the wordmark.
     expect(screen.getByTestId("brand")).toBeInTheDocument();
@@ -97,12 +86,12 @@ describe("Sidebar (POC-5c / D168 flat IA)", () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it("badges the Monitoring nav item with the pending-approval count (RC6a)", () => {
+  it("badges the Apps nav item with the pending-approval count (RC6a)", () => {
     mockPending.mockReturnValue({ count: 3, approvals: [], notWired: false });
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    expect(screen.getByTestId("nav-badge-monitor")).toHaveTextContent("3");
-    // Only Monitoring carries the badge — no other section is decorated.
-    for (const id of ["chat", "apps", "runs", "context", "tools", "models", "systems"]) {
+    expect(screen.getByTestId("nav-badge-apps")).toHaveTextContent("3");
+    // Only Apps carries the badge — no other section is decorated.
+    for (const id of ["chat", "runs", "context", "tools", "models", "systems"]) {
       expect(screen.queryByTestId(`nav-badge-${id}`)).toBeNull();
     }
   });
@@ -110,12 +99,12 @@ describe("Sidebar (POC-5c / D168 flat IA)", () => {
   it("shows no nav badge when nothing is awaiting approval", () => {
     mockPending.mockReturnValue({ count: 0, approvals: [], notWired: false });
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    expect(screen.queryByTestId("nav-badge-monitor")).toBeNull();
+    expect(screen.queryByTestId("nav-badge-apps")).toBeNull();
   });
 
   it("keeps the badge on the collapsed icon rail (rides the icon)", () => {
     mockPending.mockReturnValue({ count: 7, approvals: [], notWired: false });
     render(<Sidebar collapsed={true} onToggle={() => {}} />);
-    expect(screen.getByTestId("nav-badge-monitor")).toHaveTextContent("7");
+    expect(screen.getByTestId("nav-badge-apps")).toHaveTextContent("7");
   });
 });

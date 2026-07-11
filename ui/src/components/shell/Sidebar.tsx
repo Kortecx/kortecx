@@ -4,20 +4,18 @@ import { Brand } from "./Brand";
 import { Icon } from "./Icon";
 import { NavItem } from "./NavItem";
 import { Popover } from "./Popover";
-import { TokenUsageFooter } from "./TokenUsageFooter";
 import { NAV_SECTIONS, SETTINGS_SECTION } from "./nav-model";
 
 /**
  * The persistent section navigation (POC-5c / D168 flat IA). Header = the brand (the
  * console's single logo anchor) + collapse hamburger; a primary "New" flyout (real
- * targets only); the EIGHT FLAT sections as plain buttons (no groups, no Cloud/Coming
- * placeholders, no Dashboard); a real-or-honest-empty token footer; Settings pinned
- * bottom-left. Collapsed → an icon rail (labels + footer drop away).
+ * targets only); the flat sections as plain buttons (no groups, no Coming
+ * placeholders); Settings pinned bottom-left. Collapsed → an icon rail (labels drop away).
  */
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  // RC6a: surface the count of world-mutating actions awaiting an operator decision
-  // on the Monitoring nav item (its Approvals tab). Approvals are not on the event
-  // stream, so this polls; it degrades to 0 (no badge) when disconnected / not wired.
+  // RC6a: surface the count of world-mutating actions awaiting your decision on the
+  // Apps nav item (its Approvals inbox). Approvals are not on the event stream, so
+  // this polls; it degrades to 0 (no badge) when disconnected / not wired.
   const { count: pendingApprovals } = useListPendingApprovals();
   return (
     <nav
@@ -101,12 +99,11 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
             key={section.id}
             section={section}
             collapsed={collapsed}
-            badge={section.id === "monitor" ? pendingApprovals : undefined}
+            badge={section.id === "apps" ? pendingApprovals : undefined}
           />
         ))}
       </div>
 
-      {collapsed ? null : <TokenUsageFooter />}
       <div className="sidebar__settings">
         <NavItem section={SETTINGS_SECTION} collapsed={collapsed} />
       </div>

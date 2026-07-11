@@ -33,6 +33,13 @@ vi.mock("../../src/kx/use-apps", () => ({
   }),
 }));
 
+// The header lock control's mutations are inert here (its own test drives lock/unlock);
+// stub them so the shell test needs no live connection provider.
+vi.mock("../../src/kx/use-app-lock", () => ({
+  useLockApp: () => ({ mutate: vi.fn(), isPending: false, variables: undefined, error: null }),
+  useUnlockApp: () => ({ mutate: vi.fn(), isPending: false, variables: undefined, error: null }),
+}));
+
 // The SkillsRail rides the detail shell; an empty catalog keeps these
 // shell tests focused on the IDE affordances.
 vi.mock("../../src/kx/use-skills", () => ({
@@ -118,6 +125,8 @@ describe("App IDE shell (POC-5d)", () => {
     expect(screen.getByTestId("app-tab-files")).toBeInTheDocument();
     expect(screen.getByTestId("app-tab-lineage")).toBeInTheDocument();
     expect(screen.getByTestId("app-tab-chat")).toBeInTheDocument();
+    // The per-App lock control lives in the header (unlocked ⇒ offers Lock).
+    expect(screen.getByTestId("app-lock-apps/local/echo")).toBeInTheDocument();
   });
 
   it("unlocked: a selected file exposes direct + agentic edit", () => {
@@ -130,10 +139,13 @@ describe("App IDE shell (POC-5d)", () => {
     expect(screen.getByTestId("app-file-save")).toBeInTheDocument();
   });
 
-  it("LOCKED: shows the lock chip + an honest notice, NO write affordances (GR15)", () => {
+  it("LOCKED: shows the lock control + an honest notice, NO write affordances (GR15)", () => {
     LOCKED = true;
     render(<AppDetailSection handle="apps/local/echo" path="README.md" />);
-    expect(screen.getByTestId("app-detail-locked")).toBeInTheDocument();
+    // The lock control's state chip reports locked (its Unlock button is the control).
+    const lockState = screen.getByTestId("app-lock-state-apps/local/echo");
+    expect(lockState).toHaveAttribute("data-locked", "true");
+    expect(screen.getByTestId("app-unlock-apps/local/echo")).toBeInTheDocument();
     expect(screen.getByTestId("app-locked-notice")).toBeInTheDocument();
     // The runtime refuses writes; the UI must never offer a control that can't fire.
     expect(screen.queryByTestId("app-file-edit-direct")).toBeNull();

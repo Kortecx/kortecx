@@ -9,12 +9,9 @@ import { branchesRoute } from "./routes/branches";
 import { chatRoute } from "./routes/chat";
 import { connectRoute } from "./routes/connect";
 import { contextRoute } from "./routes/context";
-import { dashboardRoute } from "./routes/dashboard";
 import { datasetsRoute } from "./routes/datasets";
 import { indexRoute } from "./routes/index";
 import { modelsRoute } from "./routes/models";
-import { monitorRoute } from "./routes/monitor";
-import { policiesRoute } from "./routes/policies";
 import { recipesRoute } from "./routes/recipes";
 import { runDetailRedirectRoute, runsRoute } from "./routes/runs";
 import { settingsRoute } from "./routes/settings";
@@ -31,11 +28,9 @@ const routeTree = rootRoute.addChildren([
   workflowsRoute,
   workflowDetailRoute,
   activityRoute,
-  dashboardRoute,
   chatRoute,
   appsRoute,
   appDetailRoute,
-  policiesRoute,
   runsRoute,
   runDetailRedirectRoute,
   recipesRoute,
@@ -46,7 +41,6 @@ const routeTree = rootRoute.addChildren([
   datasetsRoute,
   toolsRoute,
   modelsRoute,
-  monitorRoute,
   systemsRoute,
   settingsRoute,
 ]);

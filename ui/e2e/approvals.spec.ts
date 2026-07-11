@@ -9,7 +9,7 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("monitoring/approvals: URL-addressable tab, honest empty inbox, no false nav badge, both themes", async ({
+test("apps/approvals: URL-addressable inbox, honest empty state, no false nav badge, both themes", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -21,18 +21,18 @@ test("monitoring/approvals: URL-addressable tab, honest empty inbox, no false na
   await runRecipe(page, { handle: "kx/recipes/echo", fields: { topic: "ok" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 
-  // No pending approvals ⇒ the Monitoring nav item carries NO badge (a false badge
+  // No pending approvals ⇒ the Apps nav item carries NO badge (a false badge
   // would misreport that an autonomous run is blocked awaiting a decision).
-  await expect(page.getByTestId("nav-badge-monitor")).toHaveCount(0);
+  await expect(page.getByTestId("nav-badge-apps")).toHaveCount(0);
 
-  await page.getByTestId("nav-monitor").click();
-  await expect(page.getByTestId("monitoring-section")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("nav-apps").click();
+  await expect(page.getByTestId("apps-section")).toBeVisible({ timeout: 15_000 });
 
-  // The Approvals tab is URL-addressable (the run-detail tab precedent).
-  await page.getByTestId("monitor-tab-approvals").click();
-  await expect(page).toHaveURL(/\/monitor\?tab=approvals$/);
-  await expect(page.getByTestId("monitor-tab-approvals")).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByTestId("monitor-approvals")).toBeVisible();
+  // The Approvals inbox is a URL-addressable Apps tab (the run-detail tab precedent).
+  await page.getByTestId("apps-tab-approvals").click();
+  await expect(page).toHaveURL(/\/apps\?tab=approvals$/);
+  await expect(page.getByTestId("apps-tab-approvals")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("apps-approvals")).toBeVisible();
 
   // A serve with the approval admin wired but nothing withheld ⇒ the honest
   // actionable empty state (NOT the not-wired note, NOT a fabricated row).
@@ -46,7 +46,7 @@ test("monitoring/approvals: URL-addressable tab, honest empty inbox, no false na
   await page.getByTestId("theme-toggle").click();
   await expect(page.getByText(/No actions awaiting approval/).first()).toBeVisible();
 
-  // Tab click rewrites the URL back to overview (drops the param).
-  await page.getByTestId("monitor-tab-overview").click();
-  await expect(page).toHaveURL(/\/monitor$/);
+  // Tab click rewrites the URL back to the catalog (drops the param).
+  await page.getByTestId("apps-tab-catalog").click();
+  await expect(page).toHaveURL(/\/apps$/);
 });

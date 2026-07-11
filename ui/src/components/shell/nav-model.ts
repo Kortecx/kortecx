@@ -6,22 +6,21 @@
  * `path` MUST match a route registered in `router/router.tsx`; `icon` MUST be a key
  * in `shell/Icon.tsx`. The `nav-model` unit test pins both invariants.
  *
- * POC-5c (D168): the console is EIGHT FLAT plain-button sections — New Chat · Apps ·
- * Workflows · Context · Tools · Models · Monitoring · Security — with NO sidebar
- * groups, NO "Coming" / Cloud placeholders, and NO Dashboard landing. Display labels
- * rename freely; section IDS/icons stay on the frozen wire-legacy handles
- * (`chat`/`runs`/`recipes`/`systems` — test-ids, RPC names never rename, the D136
- * Blueprints precedent). The D168 section moves fold the five demoted sections in
- * WITHOUT losing any capability: Datasets → a Context tab, Policies → a Security tab,
- * run-history → a Monitoring tab, Blueprints → the Workflows catalog, Branches → the
- * App window. Their ROUTES stay registered and remain breadcrumb- + ⌘K-reachable via
- * {@link HIDDEN_SECTIONS}. Activity is the navbar drawer (not a section); `/` redirects
- * to Chat (D137 — New Chat is the landing).
+ * POC-5c (D168): the console is a flat set of plain-button sections — New Chat · Apps ·
+ * Workflows · Context · Integrations · Models · Security — with NO sidebar groups and
+ * NO "Coming" placeholders. Display labels rename freely; section IDS/icons stay on the
+ * frozen wire-legacy handles (`chat`/`runs`/`recipes`/`systems` — test-ids, RPC names
+ * never rename, the D136 Blueprints precedent). The section moves fold the demoted
+ * sections in WITHOUT losing any capability: Datasets → a Context tab, run history +
+ * self-correction trails → Workflows tabs, Blueprints → the Workflows catalog, Branches
+ * → the App window, HITL approvals + per-App policies → Apps. Their ROUTES stay
+ * registered and remain breadcrumb- + ⌘K-reachable via {@link HIDDEN_SECTIONS}.
+ * Activity is the navbar drawer (not a section); `/` redirects to Chat (D137 — New Chat
+ * is the landing).
  */
 
 export type IconName =
   | "activity"
-  | "monitor"
   | "chat"
   | "runs"
   | "recipes"
@@ -42,8 +41,6 @@ export type IconName =
  * are still reachable (deep link, breadcrumb, ⌘K) via {@link HIDDEN_SECTIONS}.
  */
 export type RoutePath =
-  | "/dashboard"
-  | "/monitor"
   | "/chat"
   | "/apps"
   | "/workflows"
@@ -54,7 +51,6 @@ export type RoutePath =
   | "/tools"
   | "/models"
   | "/systems"
-  | "/policies"
   | "/settings";
 
 export interface NavSection {
@@ -70,7 +66,7 @@ export interface NavSection {
   readonly hint: string;
 }
 
-/** The eight flat sections, in the D168 order. New Chat is the landing (D137); `/`
+/** The flat sections, in the D168 order. New Chat is the landing (D137); `/`
  *  redirects to Chat, unchanged. No groups, no placeholders. */
 export const NAV_SECTIONS: readonly NavSection[] = [
   {
@@ -93,9 +89,9 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   },
   {
     // POC-5c: Workflows is the runnable CATALOG — browse a blueprint and trigger a
-    // single run (OSS runs ONE App/blueprint at a time; multi-app orchestration is
-    // Cloud, D129/GR19). Run HISTORY lives in Monitoring → Runs. The id/icon stay on
-    // the frozen `runs` handle (test-ids, telemetry never rename); /runs redirects.
+    // single run — plus your own run history and the self-correction trails (its Runs
+    // and Trails tabs). The id/icon stay on the frozen `runs` handle (test-ids,
+    // telemetry never rename); /runs redirects.
     id: "runs",
     label: "Workflows",
     path: "/workflows",
@@ -133,43 +129,26 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     hint: "Models serving this gateway — pick the default",
   },
   {
-    // POC-5c: Monitoring is telemetry + audit — gateway-wide metrics, the live feed,
-    // self-correction trails, alerts, AND run history (the Runs tab; the live-DAG
-    // detail stays at /workflows/$instanceId).
-    id: "monitor",
-    label: "Monitoring",
-    path: "/monitor",
-    icon: "monitor",
-    hint: "Metrics, run history & self-correction trails",
-  },
-  {
-    // Display says "Security"; the id/path stay on the frozen `systems` handle. Teams
-    // & grants viewers today, plus the per-App Policies tab (POC-5c fold); roles land
-    // with PR-8.
+    // Display says "Security"; the id/path stay on the frozen `systems` handle. The
+    // single-user capability-manifest surface — an App's resolved reach, capability
+    // ceiling, and model route.
     id: "systems",
     label: "Security",
     path: "/systems",
     icon: "systems",
-    hint: "Teams, grants & per-App policies",
+    hint: "App capability manifests — reach, ceiling & model route",
   },
 ] as const;
 
 /**
  * Routes that are REACHABLE but not sidebar sections (deep links, breadcrumbs and
- * ⌘K only). POC-5c (D168): the five demoted sections live here so nothing exposed
+ * ⌘K only). POC-5c (D168): the demoted sections live here so nothing exposed
  * disappears — each is folded into a flat section's tab/catalog (Datasets → Context,
- * Policies → Security, Blueprints → Workflows, Branches → the App window, Dashboard →
- * Monitoring's overview) yet keeps its own route + breadcrumb + ⌘K jump-to. The
- * data is verbatim from the pre-flat NAV_SECTIONS (frozen ids/paths/icons).
+ * Blueprints → Workflows, Branches → the App window, Policies → Apps) yet keeps its own
+ * route + breadcrumb + ⌘K jump-to. The data is verbatim from the pre-flat NAV_SECTIONS
+ * (frozen ids/paths/icons).
  */
 export const HIDDEN_SECTIONS: readonly NavSection[] = [
-  {
-    id: "dashboard",
-    label: "Dashboard",
-    path: "/dashboard",
-    icon: "activity",
-    hint: "A live at-a-glance overview of this gateway",
-  },
   {
     id: "recipes",
     label: "Blueprints",
@@ -190,13 +169,6 @@ export const HIDDEN_SECTIONS: readonly NavSection[] = [
     path: "/branches",
     icon: "branches",
     hint: "Snapshot & edit files as content-addressed branches",
-  },
-  {
-    id: "policies",
-    label: "Policies",
-    path: "/policies",
-    icon: "systems",
-    hint: "Per-App locks — the agent-write policy gate",
   },
 ] as const;
 

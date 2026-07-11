@@ -29,14 +29,14 @@ test("Data Lab Agent Outputs: a committed run's outputs are reviewable in the mu
   await expect(page.getByTestId("datasets-section")).toBeVisible();
   await expect(page.getByTestId("agent-outputs")).toBeVisible();
 
-  // The capture fold is a fast background poller; re-navigate (Monitoring↔Data Lab)
+  // The capture fold is a fast background poller; re-navigate (Chat ↔ Data Lab)
   // inside the poll to force a fresh fetch until the committed outputs appear (no
   // page reload — the console token is held in memory only).
   const rows = page.locator('[data-testid^="agent-output-"]');
   await expect
     .poll(
       async () => {
-        await page.getByTestId("nav-monitor").click();
+        await page.getByTestId("nav-chat").click();
         await gotoViaPalette(page, "datasets");
         return rows.count();
       },

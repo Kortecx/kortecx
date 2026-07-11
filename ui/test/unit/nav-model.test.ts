@@ -6,7 +6,7 @@ import {
 } from "../../src/components/shell/nav-model";
 
 describe("NAV_SECTIONS (POC-5c / D168 flat IA)", () => {
-  it("has the eight flat sections in the D168 order", () => {
+  it("has the seven flat sections in the D168 order", () => {
     expect(NAV_SECTIONS.map((s) => s.id)).toEqual([
       "chat",
       "apps",
@@ -14,7 +14,6 @@ describe("NAV_SECTIONS (POC-5c / D168 flat IA)", () => {
       "context",
       "tools",
       "models",
-      "monitor",
       "systems",
     ]);
   });
@@ -70,14 +69,8 @@ describe("NAV_SECTIONS (POC-5c / D168 flat IA)", () => {
 });
 
 describe("HIDDEN_SECTIONS (POC-5c: demoted-but-reachable — deep link + breadcrumb + ⌘K)", () => {
-  it("holds the five demoted sections so no capability disappears (D168 no-regression)", () => {
-    expect(HIDDEN_SECTIONS.map((s) => s.id)).toEqual([
-      "dashboard",
-      "recipes",
-      "datasets",
-      "branches",
-      "policies",
-    ]);
+  it("holds the demoted sections so no capability disappears (D168 no-regression)", () => {
+    expect(HIDDEN_SECTIONS.map((s) => s.id)).toEqual(["recipes", "datasets", "branches"]);
   });
 
   it("keeps the demoted sections' frozen routes (deep links stay valid)", () => {
@@ -86,8 +79,6 @@ describe("HIDDEN_SECTIONS (POC-5c: demoted-but-reachable — deep link + breadcr
     expect(byId.get("recipes")?.label).toBe("Blueprints");
     expect(byId.get("datasets")?.path).toBe("/datasets");
     expect(byId.get("branches")?.path).toBe("/branches");
-    expect(byId.get("policies")?.path).toBe("/policies");
-    expect(byId.get("dashboard")?.path).toBe("/dashboard");
   });
 
   it("none of the demoted sections appear in NAV_SECTIONS", () => {

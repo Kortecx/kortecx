@@ -187,6 +187,7 @@ describe("context bundles (PR-7b)", () => {
       text: "hi",
       attachments: [],
       context: ["team/ctx/spec"],
+      tools: [],
     });
   });
 

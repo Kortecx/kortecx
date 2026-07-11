@@ -57,6 +57,17 @@ function makeController(): ChatController {
     } as unknown as ChatController["contextBundles"],
     pendingContext: [],
     toggleContext: vi.fn(),
+    pendingTools: [],
+    toggleTool: vi.fn(),
+    toolRegistry: {
+      tools: [],
+      hasMore: false,
+      notWired: false,
+    } as unknown as ChatController["toolRegistry"],
+    mcpServers: {
+      servers: [],
+      notWired: false,
+    } as unknown as ChatController["mcpServers"],
     chatName: "App chat",
     setChatName: vi.fn(),
     onChatNameInput: vi.fn(),

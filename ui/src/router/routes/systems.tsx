@@ -9,12 +9,10 @@ const SystemsSection = lazy(() =>
   import("../../components/sections/SystemsSection").then((m) => ({ default: m.SystemsSection })),
 );
 
-/** The Security tabs (POC-5c / D168): teams & grants (default, absent) and the
- *  per-App Policies lock surface. */
-export type SecurityTab = "teams" | "policies";
+/** The selected App whose capability manifest the Security section resolves; absent =
+ *  the first App. */
 interface SecuritySearch {
-  /** The active tab; absent = the Teams & grants viewers. */
-  tab?: "policies";
+  handle?: string;
 }
 
 function SystemsScreen() {
@@ -27,8 +25,8 @@ function SystemsScreen() {
   return (
     <Suspense fallback={<EmptyState title="Loading…" />}>
       <SystemsSection
-        tab={search.tab ?? "teams"}
-        onTab={(tab) => void navigate({ search: tab === "policies" ? { tab } : {}, replace: true })}
+        handle={search.handle}
+        onHandle={(handle) => void navigate({ search: { handle }, replace: true })}
       />
     </Suspense>
   );
@@ -39,5 +37,5 @@ export const systemsRoute = createRoute({
   path: "/systems",
   component: SystemsScreen,
   validateSearch: (search: Record<string, unknown>): SecuritySearch =>
-    search.tab === "policies" ? { tab: "policies" } : {},
+    typeof search.handle === "string" ? { handle: search.handle } : {},
 });

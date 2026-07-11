@@ -1,7 +1,8 @@
-import { createRoute } from "@tanstack/react-router";
+import { createRoute, useNavigate, useSearch } from "@tanstack/react-router";
 import { Suspense, lazy } from "react";
 import { ConnectGate } from "../../components/ConnectGate";
 import { EmptyState } from "../../components/EmptyState";
+import type { WorkflowsTab } from "../../components/sections/RunsSection";
 import { useConnection } from "../../kx/connection-context";
 import { rootRoute } from "./__root";
 
@@ -10,19 +11,30 @@ const RunsSection = lazy(() =>
 );
 
 /**
- * The Workflows section home (POC-5c / D168): the runnable blueprint CATALOG. Run
- * history moved to Monitoring → Runs, so the old `?view=runs` toggle is gone — the
- * search param is accepted-but-ignored so stale `/workflows?view=runs` deep links
- * land here (the catalog) instead of 404ing. The frozen section id stays `runs`.
+ * The Workflows section home (POC-5c / D168): absent = the runnable blueprint/App
+ * CATALOG, `runs` = your own run history, `trails` = the self-correction trails.
+ * A stale `?view=` deep link (D141.1 era) is dropped, landing on the catalog. The
+ * frozen section id stays `runs`.
  */
+interface WorkflowsSearch {
+  tab?: "runs" | "trails";
+}
+
 function WorkflowsScreen() {
   const { status } = useConnection();
+  const search = useSearch({ from: "/workflows" });
+  const navigate = useNavigate({ from: "/workflows" });
   if (status !== "connected") {
     return <ConnectGate />;
   }
   return (
     <Suspense fallback={<EmptyState title="Loading workflows…" />}>
-      <RunsSection />
+      <RunsSection
+        tab={search.tab ?? "catalog"}
+        onTab={(tab: WorkflowsTab) =>
+          void navigate({ search: tab === "catalog" ? {} : { tab }, replace: true })
+        }
+      />
     </Suspense>
   );
 }
@@ -30,8 +42,7 @@ function WorkflowsScreen() {
 export const workflowsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workflows",
-  // Tolerant of stale `?view=` deep links (D141.1 era): accept any search and
-  // drop it — the Workflows section is now the catalog only (run history → Monitoring).
-  validateSearch: (): Record<string, never> => ({}),
+  validateSearch: (search: Record<string, unknown>): WorkflowsSearch =>
+    search.tab === "runs" || search.tab === "trails" ? { tab: search.tab } : {},
   component: WorkflowsScreen,
 });

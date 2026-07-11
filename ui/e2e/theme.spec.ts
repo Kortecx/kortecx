@@ -40,10 +40,10 @@ test("the theme toggle switches palettes and persists across reload (pre-paint)"
   await gotoViaPalette(page, "recipes");
   await expect(page.getByTestId("recipe-catalog")).toBeVisible({ timeout: 30_000 });
 
-  // The PR-C1 Dashboard landing renders under the dark palette (KPI accent bars +
-  // metric tones re-resolve; the contrast lock covers the text tiers).
-  await gotoViaPalette(page, "dashboard");
-  await expect(page.getByTestId("dashboard-kpis")).toBeVisible({ timeout: 15_000 });
+  // The Apps catalog renders under the dark palette (card + chip tones re-resolve;
+  // the contrast lock covers the text tiers).
+  await gotoViaPalette(page, "apps");
+  await expect(page.getByTestId("apps-section")).toBeVisible({ timeout: 15_000 });
 
   // Back to system → light again (and the chip state follows).
   await page.getByTestId("nav-settings").click();

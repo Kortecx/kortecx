@@ -15,7 +15,7 @@
  * This hook owns the I/O only; the thread state lives in the pure `chatReducer`.
  */
 
-import type { RecipeForm } from "@kortecx/sdk/web";
+import { type RecipeForm, chainFrom, task } from "@kortecx/sdk/web";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
   type ChatMessage,
@@ -32,6 +32,7 @@ import { type UiError, toUiError } from "./errors";
 import { useInvoke } from "./use-invoke";
 import { type ProjectionVM, runSettled, useProjection } from "./use-projection";
 import { type ReactTurnVM, useReactProgress } from "./use-react-progress";
+import { useSubmitAgentTurn } from "./use-submit-agent-turn";
 import { useTokenStream } from "./use-token-stream";
 
 const COMMITTED = 3;
@@ -129,6 +130,7 @@ export interface UseChat {
     text: string,
     attachments?: readonly MessageAttachment[],
     context?: readonly string[],
+    tools?: readonly string[],
   ): Promise<void>;
   /** Re-dispatch a FAILED turn with its identical args. */
   retry(assistantId: string): Promise<void>;
@@ -150,10 +152,64 @@ const TERMINAL_FAILED: UiError = {
   retryable: false,
 };
 
-/** The invoke plan for one turn: which recipe, with which (form-gated) args. */
-interface TurnPlan {
-  readonly handle: string;
-  readonly args: Record<string, unknown>;
+/** The plan for one turn: either a recipe Invoke (plain / vision / dataset / agent)
+ *  or — when tools are attached — a single-MODEL-step agentic workflow submit. */
+type TurnPlan =
+  | { readonly route: "invoke"; readonly handle: string; readonly args: Record<string, unknown> }
+  | {
+      readonly route: "agentTools";
+      readonly prompt: string;
+      readonly toolContract: Record<string, string>;
+      readonly maxTurns: number;
+      readonly maxToolCalls: number;
+    };
+
+/** The bounded-loop budget a tool-attached chat turn requests (mirrors the react
+ *  recipe's anchored defaults; the coordinator clamps out-of-range values). */
+const TOOL_TURN_MAX_TURNS = 8;
+const TOOL_TURN_MAX_TOOL_CALLS = 6;
+
+/**
+ * Split the picked `${name}@${version}` tool keys into the `{ name: version }`
+ * contract a MODEL step carries (the LAST `@` separates the version; a bare name
+ * defaults to `"1"`, the `@tool` grammar default). Pure — unit-testable.
+ */
+export function toolContractFrom(tools: readonly string[]): Record<string, string> {
+  const contract: Record<string, string> = {};
+  for (const key of tools) {
+    const at = key.lastIndexOf("@");
+    if (at <= 0) {
+      contract[key] = "1";
+    } else {
+      // An empty version (a trailing `@`) falls back to the `@tool` grammar default.
+      contract[key.slice(0, at)] = key.slice(at + 1) || "1";
+    }
+  }
+  return contract;
+}
+
+/**
+ * Lower a tool-attached turn to a single-MODEL-step workflow request carrying the
+ * tool contract + the bounded-loop budget (as canonical `params`), threaded with
+ * the request-level context union. Built with `task` / `chainFrom` (the eager chain
+ * surface) — NOT `flow()` (a lazy split chunk that would bloat the eager bundle).
+ * Pure — unit-testable.
+ */
+export function buildAgentTurnRequest(
+  prompt: string,
+  toolContract: Record<string, string>,
+  maxTurns: number,
+  maxToolCalls: number,
+  modelId: string | undefined,
+  context: readonly string[],
+) {
+  let chain = chainFrom(
+    task.model(modelId ?? "", prompt, {}, { tools: toolContract, maxTurns, maxToolCalls }),
+  );
+  if (context.length > 0) {
+    chain = chain.context(...context);
+  }
+  return chain.build();
 }
 
 /**
@@ -279,6 +335,7 @@ export function useChat({
 }: UseChatOptions): UseChat {
   const { client } = useConnection();
   const invoke = useInvoke();
+  const submitAgent = useSubmitAgentTurn();
   const [thread, dispatch] = useReducer(chatReducer, EMPTY_THREAD);
   const [active, setActive] = useState<ActiveTurn | null>(null);
   const [degraded, setDegraded] = useState<UiError | null>(null);
@@ -508,7 +565,23 @@ export function useChat({
 
   /** Plan the turn: agent task (+ image → vision agent) → react loop; image → vision; else chat. */
   const planTurn = useCallback(
-    async (text: string, attachments: readonly MessageAttachment[]): Promise<TurnPlan> => {
+    async (
+      text: string,
+      attachments: readonly MessageAttachment[],
+      tools: readonly string[],
+    ): Promise<TurnPlan> => {
+      // A picked tool set routes the turn to a bounded agentic tool loop (a single
+      // MODEL step carrying the tool contract) — highest precedence, overriding the
+      // vision / dataset / agent routes for THIS turn (a tool turn does not compose).
+      if (tools.length > 0) {
+        return {
+          route: "agentTools",
+          prompt: text,
+          toolContract: toolContractFrom(tools),
+          maxTurns: TOOL_TURN_MAX_TURNS,
+          maxToolCalls: TOOL_TURN_MAX_TOOL_CALLS,
+        };
+      }
       if (agentMode) {
         const image = attachments.find((a) => a.mediaType.startsWith("image/"));
         // AGENTIC-VISION: agent mode + an attached image → the image-grounded react loop,
@@ -519,7 +592,7 @@ export function useChat({
           if (vform) {
             const args = planReactVisionArgs(vform, text, image.ref);
             if (args !== null) {
-              return { handle: REACT_VISION_RECIPE_HANDLE, args };
+              return { route: "invoke", handle: REACT_VISION_RECIPE_HANDLE, args };
             }
           }
         }
@@ -531,7 +604,7 @@ export function useChat({
           if (rform) {
             const args = planReactRagArgs(rform, text, dataset);
             if (args !== null) {
-              return { handle: REACT_RAG_RECIPE_HANDLE, args };
+              return { route: "invoke", handle: REACT_RAG_RECIPE_HANDLE, args };
             }
           }
         }
@@ -539,7 +612,7 @@ export function useChat({
         if (form) {
           const args = planReactArgs(form, text);
           if (args !== null) {
-            return { handle: REACT_RECIPE_HANDLE, args };
+            return { route: "invoke", handle: REACT_RECIPE_HANDLE, args };
           }
         }
       }
@@ -559,7 +632,7 @@ export function useChat({
               CHAT_RAG_DEFAULT_K,
             );
             if (args !== null) {
-              return { handle: VISION_RAG_RECIPE_HANDLE, args };
+              return { route: "invoke", handle: VISION_RAG_RECIPE_HANDLE, args };
             }
           }
         }
@@ -567,7 +640,7 @@ export function useChat({
         if (form) {
           const args = planVisionArgs(form, text, image.ref, modelId);
           if (args !== null) {
-            return { handle: VISION_RECIPE_HANDLE, args };
+            return { route: "invoke", handle: VISION_RECIPE_HANDLE, args };
           }
         }
       }
@@ -576,11 +649,12 @@ export function useChat({
       // retrieved refs; a missing/empty dataset degrades to a plain answer).
       if (dataset) {
         return {
+          route: "invoke",
           handle: CHAT_RAG_RECIPE_HANDLE,
           args: { [promptKey]: text, dataset, k: CHAT_RAG_DEFAULT_K },
         };
       }
-      return { handle, args: { [promptKey]: text } };
+      return { route: "invoke", handle, args: { [promptKey]: text } };
     },
     [
       handle,
@@ -602,26 +676,63 @@ export function useChat({
       text: string,
       attachments: readonly MessageAttachment[],
       context: readonly string[],
+      tools: readonly string[],
     ): Promise<void> => {
       try {
-        const plan = await planTurn(text, attachments);
+        const plan = await planTurn(text, attachments, tools);
         // PR-7b: context is request-level — it attaches to the run regardless of
-        // which recipe route (chat / vision / react) the plan picked. POC-5d:
+        // which route (chat / vision / react / tool loop) the plan picked. POC-5d:
         // App-fixed `contextRefs` ride EVERY turn, unioned with per-message
         // context (dedup-stable; existing callers pass none ⇒ unchanged).
         const merged =
           contextRefs && contextRefs.length > 0
             ? [...new Set([...contextRefs, ...context])]
             : context;
-        const { instanceId, terminalMoteId, reactChainSalt } = await invoke.mutateAsync({
-          ...plan,
-          context: merged.length > 0 ? merged : undefined,
-        });
-        dispatch({ type: "turn_started", assistantId, instanceId, terminalMoteId });
         // A retried assistant id must be re-finalizable.
         if (finalizedRef.current === assistantId) {
           finalizedRef.current = null;
         }
+        if (plan.route === "agentTools") {
+          // A tool-attached turn submits a single-MODEL-step workflow and waits by
+          // the run's `react_chain_salt` (exactly-once) — the SAME salt-scoped
+          // ListReactTurns poll an agent turn uses; there is no static terminal Mote.
+          const request = buildAgentTurnRequest(
+            plan.prompt,
+            plan.toolContract,
+            plan.maxTurns,
+            plan.maxToolCalls,
+            modelId,
+            merged,
+          );
+          const { instanceId, reactChainSalt } = await submitAgent.mutateAsync(request);
+          if (reactChainSalt === "") {
+            // The gateway accepted the workflow but did not scope this tool-carrying
+            // MODEL step as an agentic chain, so its answer can't be located exactly-once.
+            // Fail honestly rather than hang waiting for react rounds that never arrive.
+            dispatch({
+              type: "turn_failed",
+              assistantId,
+              error: {
+                code: "tool_turn_unscoped",
+                kind: "generic",
+                title: "Tool turn not supported here",
+                message:
+                  "This gateway ran the turn but did not scope it for tool use. Send again without tools attached.",
+                retryable: false,
+              },
+            });
+            return;
+          }
+          dispatch({ type: "turn_started", assistantId, instanceId, terminalMoteId: "" });
+          setActive({ assistantId, instanceId, terminalMoteId: "", react: true, reactChainSalt });
+          return;
+        }
+        const { instanceId, terminalMoteId, reactChainSalt } = await invoke.mutateAsync({
+          handle: plan.handle,
+          args: plan.args,
+          context: merged.length > 0 ? merged : undefined,
+        });
+        dispatch({ type: "turn_started", assistantId, instanceId, terminalMoteId });
         setActive({
           assistantId,
           instanceId,
@@ -638,7 +749,7 @@ export function useChat({
         }
       }
     },
-    [invoke, planTurn, contextRefs],
+    [invoke, submitAgent, planTurn, contextRefs, modelId],
   );
 
   const send = useCallback(
@@ -646,6 +757,7 @@ export function useChat({
       text: string,
       attachments: readonly MessageAttachment[] = [],
       context: readonly string[] = [],
+      tools: readonly string[] = [],
     ): Promise<void> => {
       const trimmed = text.trim();
       if (trimmed === "") {
@@ -661,8 +773,9 @@ export function useChat({
         text: trimmed,
         attachments: attachments.length > 0 ? attachments : undefined,
         context: context.length > 0 ? context : undefined,
+        tools: tools.length > 0 ? tools : undefined,
       });
-      await startTurn(assistantId, trimmed, attachments, context);
+      await startTurn(assistantId, trimmed, attachments, context, tools);
     },
     [startTurn],
   );
@@ -675,7 +788,7 @@ export function useChat({
       }
       setDegraded(null);
       dispatch({ type: "turn_retry", assistantId });
-      await startTurn(assistantId, source.text, source.attachments, source.context);
+      await startTurn(assistantId, source.text, source.attachments, source.context, source.tools);
     },
     [thread, startTurn],
   );

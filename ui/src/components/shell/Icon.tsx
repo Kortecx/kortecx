@@ -11,7 +11,6 @@ export type Glyph =
   | "activity"
   | "attach"
   | "history"
-  | "monitor"
   | "chat"
   | "chevron-right"
   | "context"
@@ -47,7 +46,6 @@ const PATHS: Record<Glyph, string> = {
   attach:
     "M21 12.5l-8.5 8.5a6 6 0 01-8.5-8.5L12.5 4a4 4 0 015.7 5.7L9.7 18.2a2 2 0 01-2.9-2.9L15 7",
   history: "M3 12a9 9 0 109-9 9.7 9.7 0 00-7 3.2M3 4v4h4M12 7v5l3.5 2",
-  monitor: "M3 3v18h18M8 16V9m4 7V5m4 11v-4",
   chat: "M4 5h16v11H9l-4 4v-4H4z",
   "chevron-right": "M9 6l6 6-6 6",
   runs: "M6 4v16l13-8z",

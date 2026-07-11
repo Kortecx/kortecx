@@ -7,6 +7,7 @@ export interface MockClientImpl {
   listSignatures?: () => Promise<unknown>;
   getProjection?: (...args: unknown[]) => Promise<unknown>;
   invoke?: (...args: unknown[]) => Promise<unknown>;
+  submitWorkflow?: (...args: unknown[]) => Promise<unknown>;
   getContent?: (...args: unknown[]) => Promise<unknown>;
   getSignature?: (...args: unknown[]) => Promise<unknown>;
   /** An async-iterable of `Delta`s (the live WS tail). */
@@ -73,6 +74,12 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     impl.invoke ??
       (async () => {
         throw new Error("invoke not stubbed");
+      }),
+  );
+  const submitWorkflow = vi.fn(
+    impl.submitWorkflow ??
+      (async () => {
+        throw new Error("submitWorkflow not stubbed");
       }),
   );
   const getContent = vi.fn(impl.getContent ?? (async () => new Uint8Array()));
@@ -199,6 +206,7 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listSignatures,
     getProjection,
     invoke,
+    submitWorkflow,
     getContent,
     getSignature,
     wsEvents,
@@ -257,6 +265,7 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listSignatures,
     getProjection,
     invoke,
+    submitWorkflow,
     getContent,
     getSignature,
     wsEvents,

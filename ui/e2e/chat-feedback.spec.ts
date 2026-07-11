@@ -56,7 +56,7 @@ test("a settled answer carries copy + 👍/👎; rating SENDS SubmitFeedback to 
   await page.getByTestId("msg-copy").click();
 });
 
-test("the attach button opens a menu: Upload + Context are live, Blueprint/Dataset/Tool are honest-disabled", async ({
+test("the attach button opens a menu: Upload + Context + Tools are live, Blueprint/Dataset are honest-disabled", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -71,8 +71,12 @@ test("the attach button opens a menu: Upload + Context are live, Blueprint/Datas
   // it shows the honest "no bundles" row, never a fake.
   await expect(page.getByTestId("attach-context-group")).toBeVisible();
   await expect(page.getByTestId("attach-context-empty")).toBeVisible();
+  // The Tools category is LIVE — the group renders (an option row per fireable
+  // tool, or the honest empty/not-wired row), never a fake.
+  await expect(page.getByTestId("attach-tool-group")).toBeVisible();
   // The remaining not-yet-wired categories stay honest-disabled (don't-fake-gaps).
-  await expect(page.getByTestId("attach-tool")).toBeDisabled();
+  await expect(page.getByTestId("attach-blueprint")).toBeDisabled();
+  await expect(page.getByTestId("attach-dataset")).toBeDisabled();
 
   // Escape closes the menu.
   await page.keyboard.press("Escape");

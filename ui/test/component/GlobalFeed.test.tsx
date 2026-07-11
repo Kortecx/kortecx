@@ -1,79 +1,16 @@
 /**
- * Batch C — the Monitoring tabs, telemetry table states, and the global feed.
- * Every D142.3 state is pinned: rows / empty / not-wired degrade for telemetry;
- * empty + rows + run-attribution for the global feed; the tab fieldset's
- * aria-pressed + onTab contract.
+ * The global live-event feed (Batch C) — used by the navbar Activity drawer. Pins
+ * every D142.3 state: attributed rows (run starts labelled, commits linked to their
+ * run), the run-chip drill-in, the quiet "listening" empty state, and the honest
+ * degrade when the live stream fails before any frame.
  */
 
-import { GlobalDelta, MoteTelemetryRow } from "@kortecx/sdk/web";
+import { GlobalDelta } from "@kortecx/sdk/web";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { GlobalFeed } from "../../src/components/activity/GlobalFeed";
-import { MonitoringSection } from "../../src/components/sections/MonitoringSection";
 import { connectedWrapper } from "../mocks/harness";
 import { makeMockClient } from "../mocks/kx-client";
-
-function unimplemented(): never {
-  throw Object.assign(new Error("not wired"), { code: "unimplemented" });
-}
-
-/** Rows are UNATTRIBUTED ("" instance → the "—" cell) here: the attributed
- *  variant renders a router Link, which the monitoring-feed Playwright spec
- *  covers against the real router. */
-function telemetryRow(seq: number): MoteTelemetryRow {
-  return new MoteTelemetryRow(
-    "ab".repeat(32),
-    "",
-    7,
-    null,
-    42,
-    "kx-serve:qwen3",
-    "mcp-echo@1",
-    1_700_000_000_000,
-    seq,
-  );
-}
-
-describe("MonitoringSection (Batch C tabs)", () => {
-  it("the telemetry tab renders joined rows + load-more on hasMore", async () => {
-    const mock = makeMockClient({
-      listMoteTelemetry: async () => ({ rows: [telemetryRow(9), telemetryRow(8)], hasMore: true }),
-    });
-    render(<MonitoringSection tab="telemetry" />, { wrapper: connectedWrapper(mock.client) });
-    await waitFor(() => expect(screen.getAllByTestId("telemetry-row")).toHaveLength(2));
-    // Real exhaust fields, honestly rendered; the unattributed run cell is "—".
-    expect(screen.getAllByText("kx-serve:qwen3").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("mcp-echo@1").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
-    expect(screen.getByTestId("telemetry-load-more")).toBeInTheDocument();
-  });
-
-  it("telemetry degrades to the honest not-wired note on an old gateway", async () => {
-    const mock = makeMockClient({ listMoteTelemetry: async () => unimplemented() });
-    render(<MonitoringSection tab="telemetry" />, { wrapper: connectedWrapper(mock.client) });
-    await waitFor(() => expect(screen.getByText(/Not wired on this gateway/i)).toBeInTheDocument());
-  });
-
-  it("telemetry shows the actionable empty state when no mote has executed", async () => {
-    const mock = makeMockClient();
-    render(<MonitoringSection tab="telemetry" />, { wrapper: connectedWrapper(mock.client) });
-    await waitFor(() => expect(screen.getByText(/No telemetry yet/i)).toBeInTheDocument());
-  });
-
-  it("the tab fieldset reflects the active tab and reports clicks via onTab", async () => {
-    const onTab = vi.fn();
-    const mock = makeMockClient();
-    render(<MonitoringSection tab="feed" onTab={onTab} />, {
-      wrapper: connectedWrapper(mock.client),
-    });
-    expect(screen.getByTestId("monitor-tab-feed")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("monitor-tab-overview")).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(screen.getByTestId("monitor-tab-telemetry"));
-    expect(onTab).toHaveBeenCalledWith("telemetry");
-    fireEvent.click(screen.getByTestId("monitor-tab-overview"));
-    expect(onTab).toHaveBeenCalledWith(undefined);
-  });
-});
 
 describe("GlobalFeed (Batch C)", () => {
   it("renders attributed rows — run starts labelled, commits linked to their run", async () => {
@@ -101,7 +38,7 @@ describe("GlobalFeed (Batch C)", () => {
       },
     });
     // The handler variant renders run chips as buttons (the Link variant needs
-    // a real router — covered by the monitoring-feed Playwright spec).
+    // a real router — covered by the activity-global Playwright spec).
     render(<GlobalFeed onSelectRun={() => {}} />, { wrapper: connectedWrapper(mock.client) });
     await waitFor(() => expect(screen.getAllByTestId("global-event-row")).toHaveLength(2));
     // Scope to the row PILL — the W1a-3 triage toolbar also renders a "RUN STARTED"

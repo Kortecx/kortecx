@@ -5,12 +5,11 @@ import { Icon } from "../shell/Icon";
 import { Popover } from "../shell/Popover";
 
 /** Attach categories not yet wired — shown in the menu as honest-disabled rows so
- *  the surface is complete but never fakes a capability that does not exist yet
- *  (D142 don't-fake-gaps). Context is LIVE (PR-7b) and rendered separately. */
+ *  the surface is complete but never fakes a capability that does not exist yet.
+ *  Context and Tools are LIVE and rendered separately. */
 const SOON_CATEGORIES: ReadonlyArray<{ label: string; testId: string }> = [
   { label: "Blueprint", testId: "attach-blueprint" },
   { label: "Dataset", testId: "attach-dataset" },
-  { label: "Tool", testId: "attach-tool" },
 ];
 
 /** PR-7b: the context-bundle picker state the parent (ChatPanel) owns + passes in.
@@ -21,6 +20,18 @@ export interface ContextPickerProps {
   readonly attached: readonly string[];
   readonly notWired: boolean;
   readonly onToggle: (handle: string) => void;
+}
+
+/** The tool picker state the parent owns + passes in. `options` are the fireable
+ *  registry tools keyed `${toolName}@${toolVersion}`; toggling attaches/detaches
+ *  one to the NEXT turn (multi-select — the menu stays open). A picked tool is a
+ *  request, never a fire guarantee — authority is re-checked per turn. Absent ⇒
+ *  no picker. */
+export interface ToolPickerProps {
+  readonly options: readonly string[];
+  readonly attached: readonly string[];
+  readonly notWired: boolean;
+  readonly onToggle: (id: string) => void;
 }
 
 /**
@@ -36,6 +47,7 @@ export function Composer({
   onSend,
   onPickFiles,
   context,
+  tools,
 }: {
   disabled: boolean;
   /** Extra send-only block (e.g. an attachment upload still in flight). */
@@ -44,6 +56,8 @@ export function Composer({
   onPickFiles?: (files: ArrayLike<File>) => void;
   /** PR-7b: the context-bundle picker (the attach-menu "Context" category). */
   context?: ContextPickerProps;
+  /** The tool picker (the attach-menu "Tools" category). */
+  tools?: ToolPickerProps;
 }) {
   const [text, setText] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -176,7 +190,62 @@ export function Composer({
                       )}
                     </div>
                   ) : null}
-                  {/* Attaching a Blueprint/Dataset/Tool as message context is not yet
+                  {/* The LIVE Tools category — attach fireable tools to the next
+                      turn (multi-select; the menu stays open). A picked tool is a
+                      request, not a fire guarantee. */}
+                  {tools ? (
+                    <div className="popover__group" data-testid="attach-tool-group">
+                      <div className="popover__group-label">Tools</div>
+                      {tools.notWired ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="popover__item popover__item--disabled"
+                          data-testid="attach-tool-not-wired"
+                          disabled
+                          aria-disabled="true"
+                          title="Tool discovery needs a newer gateway"
+                        >
+                          <span>Needs a newer gateway</span>
+                        </button>
+                      ) : tools.options.length === 0 ? (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="popover__item popover__item--disabled"
+                          data-testid="attach-tool-empty"
+                          disabled
+                          aria-disabled="true"
+                          title="Register tools in the Integrations section"
+                        >
+                          <span>No tools — add in Integrations</span>
+                        </button>
+                      ) : (
+                        tools.options.map((id) => {
+                          const on = tools.attached.includes(id);
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              role="menuitemcheckbox"
+                              aria-checked={on}
+                              className={`popover__item${on ? " popover__item--active" : ""}`}
+                              data-testid={`attach-tool-option-${id}`}
+                              onClick={() => tools.onToggle(id)}
+                            >
+                              <span className="mono">{id}</span>
+                              {on ? (
+                                <span className="popover__check" aria-hidden="true">
+                                  ✓
+                                </span>
+                              ) : null}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  ) : null}
+                  {/* Attaching a Blueprint/Dataset as message context is not yet
                       wired — shown but honest-disabled so the menu is complete
                       without faking the gap. */}
                   {SOON_CATEGORIES.map((c) => (

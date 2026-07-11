@@ -1,9 +1,8 @@
 /**
- * POC-5c (D168): the /workflows page is now the runnable CATALOG only — browse a
- * blueprint (workflow definition) and trigger a single run from its popup. Run
- * HISTORY moved to Monitoring → Runs (the OSS-Workflows-one-App reframe; multi-app
- * orchestration is Cloud). This spec pins the catalog + the definition popup, and
- * that run history is reachable from Monitoring.
+ * The /workflows page has a view-toggle: the runnable CATALOG (default) — browse a
+ * blueprint (workflow definition) and trigger a single run from its popup — plus your
+ * own run HISTORY (Runs) and the self-correction TRAILS. This spec pins the catalog +
+ * the definition popup, and that run history is reachable from the Runs tab.
  */
 
 import { expect, test } from "@playwright/test";
@@ -24,8 +23,9 @@ test("workflows page: the runnable catalog + the workflow-definition popup", asy
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("runs-section")).toBeVisible();
 
-  // No view-toggle anymore — the section IS the definitions catalog (rows).
-  await expect(page.getByTestId("workflows-tab-runs")).toHaveCount(0);
+  // The section has a view-toggle (Catalog / Runs / Trails); the catalog is default.
+  await expect(page.getByTestId("workflows-tabs")).toBeVisible();
+  await expect(page.getByTestId("workflows-tab-runs")).toBeVisible();
   await expect(page.getByTestId("workflows-list")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("workflows-list")).toContainText("kx/recipes/echo");
 
@@ -46,13 +46,14 @@ test("workflows page: the runnable catalog + the workflow-definition popup", asy
   await expect(page).toHaveURL(/\/recipes\?handle=/);
 });
 
-test("run history is reachable from Monitoring → Runs (POC-5c move)", async ({ page }) => {
+test("run history is reachable from the Workflows → Runs tab", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
-  await page.getByTestId("nav-monitor").click();
-  await expect(page.getByTestId("monitoring-section")).toBeVisible();
-  await page.getByTestId("monitor-tab-runs").click();
-  // The run-history table (RunsTable) lives here now.
-  await expect(page.getByTestId("monitor-runs")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("nav-runs").click();
+  await expect(page.getByTestId("runs-section")).toBeVisible();
+  await page.getByTestId("workflows-tab-runs").click();
+  // The run-history table (RunsTable) lives here now (populated-table assertions
+  // live in runs-list.spec.ts, which submits a run first).
+  await expect(page.getByTestId("workflows-runs")).toBeVisible({ timeout: 15_000 });
 });
