@@ -5,6 +5,7 @@ import { memo } from "react";
 import { statePulse } from "../../app/motion";
 import { isTerminalState, stateVisual } from "../../lib/colors";
 import { shortHex } from "../../lib/format";
+import { STEP_LABEL } from "../../lib/step-kind";
 import { AnomalyBadge } from "../AnomalyBadge";
 import { NdClassBadge } from "../NdClassBadge";
 import { ResultPreview } from "../ResultPreview";
@@ -20,7 +21,7 @@ import type { MoteFlowNode } from "./flow";
  * The whole card is clickable (reactflow `onNodeClick` opens the detail drawer).
  */
 function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
-  const { mote, resultContent, resultMissing, resultLoading, swarmRole } = data;
+  const { mote, resultContent, resultMissing, resultLoading, swarmRole, stepType } = data;
   const { tone } = stateVisual(mote.stateCode);
   const inFlight = !isTerminalState(mote.stateCode);
   return (
@@ -52,6 +53,15 @@ function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
       <div className="dag-node__row">
         <StatePill stateCode={mote.stateCode} />
         <NdClassBadge ndClass={mote.ndClass} />
+        {stepType ? (
+          <span
+            className={`chip chip--static dag-node__step dag-node__step--${stepType}`}
+            data-testid="dag-node-step"
+            data-step={stepType}
+          >
+            {STEP_LABEL[stepType]}
+          </span>
+        ) : null}
       </div>
       {mote.resultRef ? (
         <div className="dag-node__result">

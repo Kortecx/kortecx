@@ -10,6 +10,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useResultMap } from "../../kx/use-content-batch";
 import type { ProjectionVM } from "../../kx/use-projection";
+import { useRunStepKinds } from "../../kx/use-run-step-kinds";
 import { EmptyState } from "../EmptyState";
 import { MoteTable } from "../MoteTable";
 import { MoteNode } from "./MoteNode";
@@ -66,10 +67,13 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
   // doesn't re-create nodes — node DATA only re-merges when results actually land.
   const refs = useMemo(() => motes.flatMap((m) => (m.resultRef ? [m.resultRef] : [])), [motes]);
   const { byRef, isLoading } = useResultMap(projection.instanceId, refs);
-  // Node DATA (state/anomaly + resolved result) re-merges every poll WITHOUT relayout.
+  // PR-D: each committed Mote's high-level step type (model/MCP/connector/tool/action)
+  // for the read-only review labels — shares the inspector's `moteDetail` cache.
+  const stepKinds = useRunStepKinds(projection.instanceId, motes);
+  // Node DATA (state/anomaly + resolved result + step type) re-merges each poll WITHOUT relayout.
   const nodes = useMemo(
-    () => buildFlowNodes(motes, positions, { byRef, loading: isLoading }, gatherId),
-    [motes, positions, byRef, isLoading, gatherId],
+    () => buildFlowNodes(motes, positions, { byRef, loading: isLoading }, gatherId, stepKinds),
+    [motes, positions, byRef, isLoading, gatherId, stepKinds],
   );
 
   // Refit the viewport when the topology grows (dynamic children appear) AND once
