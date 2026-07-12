@@ -8,14 +8,17 @@ import { MarkerType } from "@xyflow/react";
 import type { Edge } from "@xyflow/react";
 import type { GraphEdge } from "./dag-graph";
 
-/** Map one DAG edge to its styled reactflow edge. */
-export function toRfEdge(e: GraphEdge): Edge {
+/** Map one DAG edge to its styled reactflow edge. `branch` marks a swarm
+ *  branch→gather fan-in edge (PR-B) so the fan-in reads at a glance; the default
+ *  path is byte-identical to before. */
+export function toRfEdge(e: GraphEdge, opts: { branch?: boolean } = {}): Edge {
   const isControl = e.edgeKind === "control";
+  const branch = opts.branch ? " dag-edge--branch" : "";
   return {
     id: e.id,
     source: e.source,
     target: e.target,
-    className: `dag-edge dag-edge--${e.edgeKind}${e.nonCascade ? " dag-edge--noncascade" : ""}`,
+    className: `dag-edge dag-edge--${e.edgeKind}${e.nonCascade ? " dag-edge--noncascade" : ""}${branch}`,
     markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
     style: {
       strokeDasharray: isControl ? "5 4" : undefined,

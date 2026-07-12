@@ -14,10 +14,12 @@ import { EmptyState } from "../EmptyState";
 import { MoteTable } from "../MoteTable";
 import { MoteNode } from "./MoteNode";
 import { NodeDetailDrawer } from "./NodeDetailDrawer";
+import { SwarmOverview } from "./SwarmOverview";
 import { buildEdges, topologyHash } from "./dag-graph";
 import { buildFlowEdges, buildFlowNodes, miniMapColor } from "./flow";
 import type { MoteFlowNode } from "./flow";
 import { layoutGraph } from "./layout";
+import { branchEdgeIds, detectSwarm } from "./swarm-shape";
 
 /**
  * Above this many Motes the DAG falls back to the table. All nodes within the cap
@@ -51,9 +53,14 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
       ),
     [topoHash],
   );
-  // Edges are topology — recompute only on a topology change.
+  // The swarm shape (gather + branch fan-in) is topology-derived — recompute only on
+  // a topology change; the branch/gather STRUCTURE is stable across a state-only poll.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: structure depends on topology only (same justification as positions/edges).
+  const swarmStructure = useMemo(() => detectSwarm(motes), [topoHash]);
+  const gatherId = swarmStructure?.gatherId;
+  // Edges are topology — recompute only on a topology change; branch fan-in edges are highlighted.
   // biome-ignore lint/correctness/useExhaustiveDependencies: edges depend on topology only (same justification as positions).
-  const edges = useMemo(() => buildFlowEdges(motes), [topoHash]);
+  const edges = useMemo(() => buildFlowEdges(motes, branchEdgeIds(swarmStructure)), [topoHash]);
   // Batch-resolve every committed result (one RPC, shared with the table). `byRef`
   // is reference-stable across an unchanged poll (memoized in useResultMap), so it
   // doesn't re-create nodes — node DATA only re-merges when results actually land.
@@ -61,8 +68,8 @@ function DagFlow({ projection }: { projection: ProjectionVM }) {
   const { byRef, isLoading } = useResultMap(projection.instanceId, refs);
   // Node DATA (state/anomaly + resolved result) re-merges every poll WITHOUT relayout.
   const nodes = useMemo(
-    () => buildFlowNodes(motes, positions, { byRef, loading: isLoading }),
-    [motes, positions, byRef, isLoading],
+    () => buildFlowNodes(motes, positions, { byRef, loading: isLoading }, gatherId),
+    [motes, positions, byRef, isLoading, gatherId],
   );
 
   // Refit the viewport when the topology grows (dynamic children appear) AND once
@@ -142,6 +149,7 @@ export function MoteDag({ projection }: { projection: ProjectionVM }) {
   if (projection.motes.length > MAX_DAG_NODES) {
     return (
       <div data-testid="dag-fallback">
+        <SwarmOverview projection={projection} />
         <p className="muted">
           Graph hidden for {projection.motes.length} Motes — showing the table (the DAG renders for
           runs up to {MAX_DAG_NODES} Motes).
@@ -151,15 +159,18 @@ export function MoteDag({ projection }: { projection: ProjectionVM }) {
     );
   }
   return (
-    <div
-      className="dag-canvas"
-      data-testid="mote-dag"
-      role="img"
-      aria-label={`Execution DAG of ${projection.motes.length} Motes`}
-    >
-      <ReactFlowProvider>
-        <DagFlow projection={projection} />
-      </ReactFlowProvider>
-    </div>
+    <>
+      <SwarmOverview projection={projection} />
+      <div
+        className="dag-canvas"
+        data-testid="mote-dag"
+        role="img"
+        aria-label={`Execution DAG of ${projection.motes.length} Motes`}
+      >
+        <ReactFlowProvider>
+          <DagFlow projection={projection} />
+        </ReactFlowProvider>
+      </div>
+    </>
   );
 }

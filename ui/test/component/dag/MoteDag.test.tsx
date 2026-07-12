@@ -31,7 +31,9 @@ import { toProjectionVM } from "../../../src/kx/use-projection";
 import { connectedWrapper } from "../../mocks/harness";
 import { makeMockClient } from "../../mocks/kx-client";
 import {
+  chainProjection,
   diamondProjection,
+  fanInProjection,
   growsBetweenPolls,
   largeProjection,
   projection,
@@ -91,5 +93,17 @@ describe("MoteDag", () => {
     rerender(<MoteDag projection={vm(grown)} />); // two children appear
     expect(spy.mock.calls.length).toBeGreaterThan(afterFirst);
     spy.mockRestore();
+  });
+
+  it("renders the swarm overview for a fan-in run (branch rows per branch)", () => {
+    render(<MoteDag projection={vm(fanInProjection(3))} />, { wrapper });
+    expect(screen.getByTestId("swarm-overview")).toBeInTheDocument();
+    expect(screen.getByTestId("swarm-pattern-badge")).toBeInTheDocument();
+    expect(screen.getAllByTestId("swarm-branch-row")).toHaveLength(3);
+  });
+
+  it("shows NO swarm overview for a plain linear run", () => {
+    render(<MoteDag projection={vm(chainProjection(4))} />, { wrapper });
+    expect(screen.queryByTestId("swarm-overview")).not.toBeInTheDocument();
   });
 });

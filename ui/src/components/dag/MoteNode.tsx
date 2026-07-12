@@ -20,15 +20,16 @@ import type { MoteFlowNode } from "./flow";
  * The whole card is clickable (reactflow `onNodeClick` opens the detail drawer).
  */
 function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
-  const { mote, resultContent, resultMissing, resultLoading } = data;
+  const { mote, resultContent, resultMissing, resultLoading, swarmRole } = data;
   const { tone } = stateVisual(mote.stateCode);
   const inFlight = !isTerminalState(mote.stateCode);
   return (
     <m.div
-      className={`dag-node dag-node--${tone}`}
+      className={`dag-node dag-node--${tone}${swarmRole ? " dag-node--swarm" : ""}`}
       data-testid="mote-node"
       data-mote={mote.moteId}
       data-state={mote.stateCode}
+      data-swarm-role={swarmRole}
       initial={statePulse.initial}
       animate={statePulse.animate}
       transition={statePulse.transition}
@@ -44,6 +45,9 @@ function MoteNodeImpl({ data }: NodeProps<MoteFlowNode>) {
         <span className="dag-node__id mono" title={mote.moteId}>
           {shortHex(mote.moteId)}
         </span>
+        {swarmRole === "gather" ? (
+          <span className="chip chip--static dag-node__role">gather</span>
+        ) : null}
       </div>
       <div className="dag-node__row">
         <StatePill stateCode={mote.stateCode} />

@@ -42,4 +42,13 @@ describe("toRfEdge", () => {
     expect(rf.id).toContain("->");
     expect(rf.markerEnd).toBeTruthy();
   });
+
+  it("PR-B: a swarm branch edge adds dag-edge--branch; the default path is unchanged", () => {
+    const dataEdge = edges.find((x) => x.edgeKind === "data" && !x.nonCascade);
+    if (dataEdge === undefined) {
+      throw new Error("no data edge in fixture");
+    }
+    expect(toRfEdge(dataEdge).className).not.toContain("dag-edge--branch");
+    expect(toRfEdge(dataEdge, { branch: true }).className).toContain("dag-edge--branch");
+  });
 });

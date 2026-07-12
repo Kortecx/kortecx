@@ -582,6 +582,60 @@ button:disabled {
 .dag-edge--noncascade {
   stroke-dasharray: 5 4;
 }
+/* PR-B: the swarm branch→gather fan-in reads at a glance (accent stroke). */
+.dag-edge--branch {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.dag-node--swarm {
+  border-color: var(--accent);
+}
+.dag-node__role {
+  margin-left: auto;
+  font-size: 0.66rem;
+}
+
+/* ---- Swarm run overview (PR-B): a fan-in roll-up above the DAG ---- */
+.swarm-overview {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-elev);
+}
+.swarm-overview__head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.swarm-overview__summary {
+  font-size: 0.8rem;
+}
+.swarm-overview__branches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.swarm-branch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+.swarm-branch__id {
+  font-size: 0.76rem;
+  color: var(--fg-muted);
+}
+.swarm-branch__won {
+  font-size: 0.66rem;
+}
 
 /* ---- projection summary ---- */
 .proj-summary {
