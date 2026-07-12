@@ -45,17 +45,19 @@ test("Context: author a bundle from an uploaded file, see it listed, attach it i
   await expect(card.getByTestId("digest-chip").first()).toBeVisible();
   await expect(card).toContainText("spec.md");
 
-  // The chat composer's LIVE Context attach category lists the bundle; attaching
-  // it shows the pending-context chip (the wire from the section to the turn).
+  // The read-only chat's grounding bar lists the bundle in its "+ Context" picker;
+  // attaching it shows the pending-context chip (the wire from the section to the turn).
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
-  await page.getByTestId("attach-btn").click();
-  await expect(page.getByTestId("attach-context-group")).toBeVisible();
-  await page.getByTestId(`attach-context-option-${HANDLE}`).click();
-  await expect(page.getByTestId(`chat-context-${HANDLE}`)).toBeVisible();
-  // Detaching clears the chip.
-  await page.getByTestId(`chat-context-remove-${HANDLE}`).click();
-  await expect(page.getByTestId(`chat-context-${HANDLE}`)).toHaveCount(0);
+  await page.getByTestId("chat-grounding-add").click();
+  await expect(page.getByTestId("chat-grounding-menu")).toBeVisible();
+  await page.getByTestId(`chat-grounding-option-${HANDLE}`).click();
+  await expect(page.getByTestId(`chat-grounding-context-${HANDLE}`)).toBeVisible();
+  // Dismiss the (multi-select) picker, then detach the chip — Escape closes the menu.
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("chat-grounding-menu")).toHaveCount(0);
+  await page.getByTestId(`chat-grounding-context-remove-${HANDLE}`).click();
+  await expect(page.getByTestId(`chat-grounding-context-${HANDLE}`)).toHaveCount(0);
 
   // Delete the bundle from the section → it leaves the list.
   await page.getByTestId("nav-context").click();

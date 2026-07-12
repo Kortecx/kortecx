@@ -56,7 +56,7 @@ test("a settled answer carries copy + 👍/👎; rating SENDS SubmitFeedback to 
   await page.getByTestId("msg-copy").click();
 });
 
-test("the attach button opens a menu: Upload + Context + Tools are live, Blueprint/Dataset are honest-disabled", async ({
+test("PR-A: New Chat is read-only + RAG-grounded — a grounding bar, no Agent toggle, and an attach menu with no tools/context/dataset placeholder", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -64,23 +64,32 @@ test("the attach button opens a menu: Upload + Context + Tools are live, Bluepri
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
+  // The grounding bar (dataset + context files) is the headline read-only affordance,
+  // and there is NO Agent-task toggle — the mutate-capable agentic chat lives in Apps.
+  await expect(page.getByTestId("chat-grounding")).toBeVisible();
+  await expect(page.getByTestId("chat-grounding-summary")).toBeVisible();
+  await expect(page.getByTestId("chat-mode")).toHaveCount(0);
+
   await page.getByTestId("attach-btn").click();
   await expect(page.getByTestId("attach-menu")).toBeVisible();
   await expect(page.getByTestId("attach-upload")).toBeEnabled();
-  // PR-7b: the Context category is LIVE — on a fresh serve (no bundles authored)
-  // it shows the honest "no bundles" row, never a fake.
-  await expect(page.getByTestId("attach-context-group")).toBeVisible();
-  await expect(page.getByTestId("attach-context-empty")).toBeVisible();
-  // The Tools category is LIVE — the group renders (an option row per fireable
-  // tool, or the honest empty/not-wired row), never a fake.
-  await expect(page.getByTestId("attach-tool-group")).toBeVisible();
-  // The remaining not-yet-wired categories stay honest-disabled (don't-fake-gaps).
+  // Read-only: NO Tools category (the mutate path is gone), NO Context category
+  // (context selection moved to the grounding bar), NO "Dataset" placeholder
+  // (grounding is first-class). Blueprint stays honest-disabled (don't-fake-gaps).
+  await expect(page.getByTestId("attach-tool-group")).toHaveCount(0);
+  await expect(page.getByTestId("attach-context-group")).toHaveCount(0);
+  await expect(page.getByTestId("attach-dataset")).toHaveCount(0);
   await expect(page.getByTestId("attach-blueprint")).toBeDisabled();
-  await expect(page.getByTestId("attach-dataset")).toBeDisabled();
 
   // Escape closes the menu.
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("attach-menu")).toHaveCount(0);
+
+  // The grounding bar's "+ Context" popover lists context files (honest empty on a
+  // fresh serve) — the first-class replacement for the old attach-menu category.
+  await page.getByTestId("chat-grounding-add").click();
+  await expect(page.getByTestId("chat-grounding-menu")).toBeVisible();
+  await expect(page.getByTestId("chat-grounding-empty")).toBeVisible();
 });
 
 test("Export downloads the chat as JSON", async ({ page }) => {

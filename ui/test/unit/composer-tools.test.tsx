@@ -48,10 +48,12 @@ describe("Composer tool picker (A2)", () => {
     expect(screen.queryByTestId("attach-tool-empty")).toBeNull();
   });
 
-  it("keeps Blueprint/Dataset honest-disabled and drops the old attach-tool row", () => {
+  it("keeps Blueprint honest-disabled (Dataset is now first-class) and drops the old attach-tool row", () => {
     openWithTools({ options: [], attached: [], notWired: false, onToggle: vi.fn() });
     expect(screen.getByTestId("attach-blueprint")).toBeDisabled();
-    expect(screen.getByTestId("attach-dataset")).toBeDisabled();
+    // Datasets are no longer a "soon" attach row — grounding is first-class in the
+    // read-only chat's grounding bar, so the misleading placeholder is gone.
+    expect(screen.queryByTestId("attach-dataset")).toBeNull();
     expect(screen.queryByTestId("attach-tool")).toBeNull();
   });
 });

@@ -124,6 +124,12 @@ export const queryKeys = {
    *  COMMITTED def hash — content-addressed ⇒ immutable (cache forever). */
   moteDetail: (endpoint: string, instanceId: string, moteId: string, defHash: string) =>
     ["kx", endpoint, "mote-detail", instanceId, moteId, defHash] as const,
+  /** PR-A: a read-only chat turn's grounding sources — the exact chunk refs the
+   *  runtime folded into the answer Mote's `config_subset["kx.context.items"]`,
+   *  read via `GetMoteDetail`. Keyed by run + terminal Mote; content-addressed
+   *  answer ⇒ immutable (cache forever). */
+  groundingSources: (endpoint: string, instanceId: string, moteId: string) =>
+    ["kx", endpoint, "grounding-sources", instanceId, moteId] as const,
   /** RC6a: the pending HITL approvals inbox (`ListPendingApprovals`, D114) — the
    *  govern surface over withheld world-mutating actions. Polled (approvals are NOT
    *  on the event stream); `limit` scopes the page. `requestId` is server-derived
