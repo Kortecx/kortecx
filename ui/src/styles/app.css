@@ -594,6 +594,10 @@ button:disabled {
   margin-left: auto;
   font-size: 0.66rem;
 }
+/* PR-D: the high-level step-type label on a review-DAG node (model/MCP/connector/…). */
+.dag-node__step {
+  font-size: 0.62rem;
+}
 
 /* ---- Swarm run overview (PR-B): a fan-in roll-up above the DAG ---- */
 .swarm-overview {

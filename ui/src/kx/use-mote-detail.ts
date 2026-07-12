@@ -35,7 +35,9 @@ export interface MoteDetailVM {
   readonly schemaVersion: number;
 }
 
-function toVM(d: MoteDetail): MoteDetailVM {
+/** Map the SDK {@link MoteDetail} to the plain VM. Exported so a batch resolver
+ *  (`useRunStepKinds`) can share the SAME `moteDetail` cache key + value shape. */
+export function moteDetailToVM(d: MoteDetail): MoteDetailVM {
   return {
     defFound: d.defFound,
     moteDefHash: d.moteDefHash,
@@ -69,7 +71,7 @@ export function useMoteDetail(instanceId: string, moteId: string, defHash: strin
       if (!client) {
         throw new Error("not connected");
       }
-      return toVM(await client.getMoteDetail(instanceId, moteId));
+      return moteDetailToVM(await client.getMoteDetail(instanceId, moteId));
     },
   });
 }

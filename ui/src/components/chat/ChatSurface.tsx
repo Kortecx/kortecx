@@ -43,6 +43,9 @@ export interface ChatSurfaceProps {
   showHistory?: boolean;
   /** Show the read-only RAG grounding bar (dataset + context files). */
   showGrounding?: boolean;
+  /** Show the in-flight run graph (the "DAG-of-thought"). Off for the read-only New
+   *  Chat — graphs live on the run-review surface, never in the chat window. */
+  showThinkingGraph?: boolean;
   /** A caller-supplied head; when omitted the standalone editable name head shows. */
   header?: React.ReactNode;
   /** The section testid (the standalone keeps `chat-panel`; AppChat uses `app-chat`). */
@@ -54,6 +57,7 @@ export function ChatSurface({
   showPickers = true,
   showHistory = true,
   showGrounding = false,
+  showThinkingGraph = true,
   header,
   sectionTestId = "chat-panel",
 }: ChatSurfaceProps) {
@@ -211,7 +215,7 @@ export function ChatSurface({
           return (
             <>
               <StatusLoop chat={chat} />
-              {settings.showThinking && chat.activeProjection ? (
+              {showThinkingGraph && settings.showThinking && chat.activeProjection ? (
                 <ThinkingTrace projection={chat.activeProjection} />
               ) : null}
             </>

@@ -26,6 +26,7 @@ export function ChatPanel() {
       showPickers
       showHistory
       showGrounding
+      showThinkingGraph={false}
       sectionTestId="chat-panel"
     />
   );
