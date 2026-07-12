@@ -43,6 +43,8 @@ export interface MoteNodeData {
   readonly resultMissing?: boolean;
   /** The batch is still resolving (show `resolving…`). */
   readonly resultLoading?: boolean;
+  /** PR-B: this Mote is the swarm gather (fan-in) sink — marks it on the canvas. */
+  readonly swarmRole?: "gather";
   readonly [key: string]: unknown;
 }
 
@@ -64,6 +66,7 @@ export function buildFlowNodes(
   motes: readonly MoteVM[],
   positions: ReadonlyMap<string, XY>,
   results?: ResultLookup,
+  gatherId?: string,
 ): MoteFlowNode[] {
   return motes.map((m) => {
     const vm = m.resultRef ? results?.byRef.get(m.resultRef) : undefined;
@@ -76,13 +79,18 @@ export function buildFlowNodes(
         resultContent: vm?.content,
         resultMissing: vm?.missing ?? false,
         resultLoading: m.resultRef ? (results?.loading ?? false) : false,
+        swarmRole: m.moteId === gatherId ? "gather" : undefined,
       },
       draggable: false,
     };
   });
 }
 
-/** Styled reactflow edges from the Motes' parent links (dangling dropped). */
-export function buildFlowEdges(motes: readonly MoteVM[]): Edge[] {
-  return buildEdges(motes).map(toRfEdge);
+/** Styled reactflow edges from the Motes' parent links (dangling dropped). PR-B:
+ *  `branchEdges` (edge ids) mark the swarm branch→gather fan-in for highlighting. */
+export function buildFlowEdges(
+  motes: readonly MoteVM[],
+  branchEdges?: ReadonlySet<string>,
+): Edge[] {
+  return buildEdges(motes).map((e) => toRfEdge(e, { branch: branchEdges?.has(e.id) ?? false }));
 }
