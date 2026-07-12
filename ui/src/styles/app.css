@@ -3506,6 +3506,67 @@ button.card-grid__title:hover {
   color: var(--fg-muted);
 }
 
+/* ---- PR-F: New Chat chrome — the orange New-chat CTA + colorful composer + code ---- */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.36rem 0.72rem;
+  border: 1px solid var(--primary-h);
+  border-radius: var(--radius);
+  background: var(--primary-h);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat__context-btn {
+  color: var(--accent);
+}
+/* Colorful, aligned composer actions: send is accent-filled, attach is accent-outlined. */
+.composer__send:not(:disabled) {
+  color: var(--accent-fg);
+  background: var(--primary-h);
+  border-color: var(--primary-h);
+}
+.composer__send:not(:disabled):hover {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.composer__attach {
+  color: var(--accent);
+}
+.composer__attach:hover {
+  color: var(--primary-h);
+  border-color: var(--primary-h);
+}
+/* Styled code blocks in chat responses — a distinct, both-theme code surface. */
+.md-pre {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elev);
+  overflow-x: auto;
+}
+.md-code {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--fg);
+  white-space: pre;
+}
+:root[data-theme="dark"] .md-pre {
+  background: var(--bg);
+}
+
 /* ---- MCP Connections (PR-6b-1: the live external-MCP-gateway govern surface) ---- */
 .connections-list {
   list-style: none;
