@@ -70,8 +70,10 @@ test("New App: author a grounded App (dataset chip + guidance rule) and the rail
   const refs = (stored?.envelope as { references?: Record<string, unknown> }).references ?? {};
   expect(refs.datasets).toEqual([{ dataset_ref: "research" }]);
   const rules = refs.rules as { name: string; content_ref: string }[];
-  expect(rules).toHaveLength(1);
-  expect(rules[0]?.content_ref ?? "").toHaveLength(64); // the guidance body → a CAS ref
+  // PR-G: every App now carries a "capabilities" rule; the authored guidance rides alongside.
+  expect(rules.map((r) => r.name).sort()).toEqual(["capabilities", "guidance"]);
+  const guidance = rules.find((r) => r.name === "guidance");
+  expect(guidance?.content_ref ?? "").toHaveLength(64); // the guidance body → a CAS ref
   // The secret-leak invariant: the rule BODY never inlines into the envelope.
   expect(JSON.stringify(stored?.envelope)).not.toContain("Always cite");
 
