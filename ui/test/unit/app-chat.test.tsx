@@ -25,6 +25,7 @@ function makeController(): ChatController {
       reactTurns: undefined,
       send: vi.fn(async () => {}),
       retry: vi.fn(async () => {}),
+      cancel: vi.fn(),
       loadThread: vi.fn(),
       reset: vi.fn(),
     },

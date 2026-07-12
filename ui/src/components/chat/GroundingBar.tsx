@@ -26,21 +26,21 @@ export function GroundingBar({ dataset, onDataset, attached, onToggleContext }: 
       <div className="chat-grounding__controls">
         <DatasetPicker value={dataset} onChange={onDataset} />
       </div>
-      <p className="chat-grounding__summary muted" data-testid="chat-grounding-summary">
-        {dataset ? (
-          <>
-            Grounded on dataset <strong data-testid="chat-grounded-on">{dataset}</strong>
-          </>
-        ) : (
-          <>Not grounded — pick a dataset to answer from your own data</>
-        )}
-        {n > 0 ? (
-          <>
-            {" · "}
-            {n} context file{n === 1 ? "" : "s"}
-          </>
-        ) : null}
-      </p>
+      {dataset || n > 0 ? (
+        <p className="chat-grounding__summary muted" data-testid="chat-grounding-summary">
+          {dataset ? (
+            <>
+              Grounded on dataset <strong data-testid="chat-grounded-on">{dataset}</strong>
+            </>
+          ) : null}
+          {dataset && n > 0 ? " · " : null}
+          {n > 0 ? (
+            <>
+              {n} context file{n === 1 ? "" : "s"}
+            </>
+          ) : null}
+        </p>
+      ) : null}
       {n > 0 ? (
         <div className="context-strip" data-testid="chat-grounding-context-strip">
           {attached.map((handle) => (

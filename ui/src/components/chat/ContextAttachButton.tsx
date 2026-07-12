@@ -28,11 +28,11 @@ export function ContextAttachButton({
       trigger={
         <>
           <Icon name="context" />
-          <span>Context{n > 0 ? ` (${n})` : ""}</span>
+          {n > 0 ? <span className="chat__context-count">{n}</span> : null}
         </>
       }
-      triggerClassName="btn-ghost chat__context-btn"
-      triggerLabel="Attach context files"
+      triggerClassName="iconbtn chat__context-btn"
+      triggerLabel={`Attach context files${n > 0 ? ` (${n} attached)` : ""}`}
       triggerTestId="chat-grounding-add"
       align="right"
       direction="down"

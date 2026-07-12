@@ -23,6 +23,7 @@ function makeController(): ChatController {
       reactTurns: undefined,
       send: vi.fn(async () => {}),
       retry: vi.fn(async () => {}),
+      cancel: vi.fn(),
       loadThread: vi.fn(),
       reset: vi.fn(),
     },
@@ -79,7 +80,6 @@ describe("New Chat read-only RAG surface (PR-A)", () => {
     renderPanel();
     expect(screen.getByTestId("chat-panel")).toBeInTheDocument();
     expect(screen.getByTestId("chat-grounding")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-grounding-summary")).toBeInTheDocument();
     // The mutate-capable agentic toggle is gone from the read-only chat.
     expect(screen.queryByTestId("chat-mode")).toBeNull();
   });

@@ -257,7 +257,9 @@ export function ChatSurface({
       <Composer
         disabled={chat.busy}
         sendBlocked={attach.uploading}
+        busy={chat.busy}
         onSend={sendWithAttachments}
+        onStop={() => chat.cancel()}
         onPickFiles={showPickers ? attach.addFiles : undefined}
         context={
           // Context selection moves to the grounding bar when grounding is on;

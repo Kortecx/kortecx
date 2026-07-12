@@ -1,5 +1,23 @@
+import type { ModelSummary } from "@kortecx/sdk/web";
 import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
+
+/** The honest, existing specs for a model — only fields ListModels actually returns
+ *  (no params/quantization on this wire). Joined for a hover tooltip. */
+function modelSpecs(m: ModelSummary): string {
+  return [
+    m.description && m.description !== m.modelId ? m.description : null,
+    m.engine ? m.engine.replace(/^kx-/, "") : null,
+    m.modalities.includes("image") ? "vision" : null,
+    m.contextLen ? `${m.contextLen.toLocaleString()} ctx` : null,
+    m.source || null,
+    m.canEmbed ? "embedder" : null,
+    m.active ? "active" : null,
+    m.loaded ? "loaded" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 
 /**
  * The composer model control (Batch A): a dropdown over `ListModels`, ALWAYS
@@ -48,15 +66,14 @@ export function ModelPicker({
         value={selected?.modelId ?? ""}
         onChange={(e) => onChange(e.target.value)}
         aria-label="Model"
+        // The specs (engine · vision · context · …) surface on hover — the picker
+        // itself tooltips the SELECTED model (native <option title> is unreliable).
+        title={selected ? modelSpecs(selected) || undefined : undefined}
         data-testid="model-picker-select"
       >
         {models.map((m) => (
-          <option key={m.modelId} value={m.modelId}>
+          <option key={m.modelId} value={m.modelId} title={modelSpecs(m) || undefined}>
             {m.modelId}
-            {m.engine ? ` · ${m.engine.replace(/^kx-/, "")}` : ""}
-            {m.modalities.includes("image") ? " (vision)" : ""}
-            {m.active ? " · active" : ""}
-            {m.loaded ? " · loaded" : ""}
           </option>
         ))}
       </select>

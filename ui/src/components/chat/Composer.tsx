@@ -44,7 +44,9 @@ export interface ToolPickerProps {
 export function Composer({
   disabled,
   sendBlocked,
+  busy,
   onSend,
+  onStop,
   onPickFiles,
   context,
   tools,
@@ -52,7 +54,11 @@ export function Composer({
   disabled: boolean;
   /** Extra send-only block (e.g. an attachment upload still in flight). */
   sendBlocked?: boolean;
+  /** A turn is generating — swap Send for Stop. */
+  busy?: boolean;
   onSend: (text: string) => void;
+  /** Stop the in-flight generation (shown while `busy`). */
+  onStop?: () => void;
   onPickFiles?: (files: ArrayLike<File>) => void;
   /** PR-7b: the context-bundle picker (the attach-menu "Context" category). */
   context?: ContextPickerProps;
@@ -86,16 +92,29 @@ export function Composer({
         />
       </div>
       <div className="composer__actions">
-        <button
-          type="button"
-          className="iconbtn composer__send"
-          disabled={disabled || sendBlocked || text.trim() === ""}
-          onClick={doSend}
-          aria-label="Send message"
-          data-testid="send"
-        >
-          <Icon name="send" />
-        </button>
+        {busy && onStop ? (
+          <button
+            type="button"
+            className="iconbtn composer__stop"
+            onClick={onStop}
+            aria-label="Stop generating"
+            title="Stop generating"
+            data-testid="stop"
+          >
+            <Icon name="stop" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="iconbtn composer__send"
+            disabled={disabled || sendBlocked || text.trim() === ""}
+            onClick={doSend}
+            aria-label="Send message"
+            data-testid="send"
+          >
+            <Icon name="send" />
+          </button>
+        )}
         {onPickFiles ? (
           <>
             <input
