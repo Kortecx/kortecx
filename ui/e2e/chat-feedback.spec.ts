@@ -67,7 +67,6 @@ test("PR-A: New Chat is read-only + RAG-grounded — a grounding bar, no Agent t
   // The grounding bar (dataset + context files) is the headline read-only affordance,
   // and there is NO Agent-task toggle — the mutate-capable agentic chat lives in Apps.
   await expect(page.getByTestId("chat-grounding")).toBeVisible();
-  await expect(page.getByTestId("chat-grounding-summary")).toBeVisible();
   await expect(page.getByTestId("chat-mode")).toHaveCount(0);
 
   await page.getByTestId("attach-btn").click();

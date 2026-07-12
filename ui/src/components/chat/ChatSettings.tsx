@@ -49,6 +49,7 @@ export function ChatSettingsPanel({
           type="button"
           className="linkbtn chat-settings__advanced-toggle"
           aria-expanded={advanced}
+          data-testid="chat-settings-advanced"
           onClick={() => setAdvanced((a) => !a)}
         >
           {advanced ? "Hide advanced" : "Advanced (developer)"}
