@@ -3365,6 +3365,89 @@ button.card-grid__title:hover {
   color: var(--fg);
 }
 
+/* ---- Read-only RAG chat: the grounding bar + answer sources (PR-A) ---- */
+.chat-grounding {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-elev);
+}
+.chat-grounding__controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.chat-grounding__add {
+  cursor: pointer;
+}
+.chat-grounding__summary {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.chat-sources {
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+.chat-sources__summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  user-select: none;
+}
+.chat-sources__count {
+  display: inline-block;
+  min-width: 1.1rem;
+  margin-left: 0.3rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--primary-dim);
+  color: var(--accent);
+  font-size: 0.72rem;
+  text-align: center;
+}
+.chat-sources__list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.chat-sources__item {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.chat-sources__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+.chat-sources__label {
+  overflow: hidden;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-sources__snippet {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--fg-muted);
+}
+
 /* ---- MCP Connections (PR-6b-1: the live external-MCP-gateway govern surface) ---- */
 .connections-list {
   list-style: none;

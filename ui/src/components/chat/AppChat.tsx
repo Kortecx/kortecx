@@ -43,7 +43,6 @@ export function AppChat({
       controller={controller}
       showPickers={false}
       showHistory={false}
-      showModeToggle={false}
       header={
         <div className="screen__head chat__head" data-testid="app-chat-head">
           <span className="muted">

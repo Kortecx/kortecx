@@ -12,18 +12,23 @@
  * App-fixed bundle handles attached to every turn (additive over the per-message
  * context). Everything ChatPanel previously computed inline is returned here, so
  * ChatPanel becomes a thin wrapper that renders `<ChatSurface>` with the result.
+ *
+ * PR-A: the standalone New Chat is now READ-ONLY, RAG-grounded. The
+ * interactive Agent-task toggle + the per-turn tool picker + the MCP chips are gone
+ * from the standalone surface (mutate-capable agentic chat lives in App chat); this
+ * hook keeps only the read-only grounding levers (dataset + context bundles). The
+ * agentic path stays for AppChat via `config.agentMode` (an agentic App's react
+ * loop) — the capability is relocated, never crippled (Principle 3).
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
 import { REACT_RECIPE_HANDLE, type UseChat, useChat } from "../../kx/use-chat";
-import { useListMcpServers } from "../../kx/use-connections";
 import { useContextBundles } from "../../kx/use-context-bundles";
 import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
 import { useRecipes } from "../../kx/use-recipes";
-import { useDiscoverTools } from "../../kx/use-tool-registry";
 import {
   type SavedChat,
   autoNameFrom,
@@ -47,7 +52,8 @@ export interface ChatControllerConfig {
   readonly backing?: { readonly handle: string; readonly promptKey: string };
   /** Pin the model id (AppChat). Omit to drive from ChatSettings (the picker). */
   readonly modelId?: string;
-  /** Force agent mode on/off. Omit for the interactive toggle (standalone). */
+  /** Force agent mode on (an agentic App's react loop). Omit ⇒ read-only chat
+   *  (the standalone New Chat never enables the mutate-capable agent path). */
   readonly agentMode?: boolean;
   /** Force a grounding dataset (rare). Omit for the interactive picker. */
   readonly dataset?: string;
@@ -61,9 +67,8 @@ export interface ChatController {
   readonly chat: UseChat;
   readonly settings: ChatSettings;
   readonly updateSettings: (next: ChatSettings) => void;
-  readonly agentMode: boolean;
-  readonly setAgentMode: (v: boolean) => void;
-  readonly agentAvailable: boolean;
+  /** True when THIS turn runs the agent loop (AppChat's agentic apps). The
+   *  standalone read-only chat never enables it. */
   readonly agentTurn: boolean;
   readonly dataset: string | undefined;
   readonly setDataset: (v: string | undefined) => void;
@@ -73,13 +78,6 @@ export interface ChatController {
   readonly contextBundles: ReturnType<typeof useContextBundles>;
   readonly pendingContext: readonly string[];
   readonly toggleContext: (handle: string) => void;
-  /** Per-message tools attached to the next turn, keyed `${toolName}@${toolVersion}`. */
-  readonly pendingTools: readonly string[];
-  readonly toggleTool: (id: string) => void;
-  /** The registry inventory that backs the composer's tool picker. */
-  readonly toolRegistry: ReturnType<typeof useDiscoverTools>;
-  /** MCP connection status shown as honest chips (connection, not a fire guarantee). */
-  readonly mcpServers: ReturnType<typeof useListMcpServers>;
   readonly chatName: string;
   readonly setChatName: (name: string) => void;
   readonly onChatNameInput: (name: string) => void;
@@ -93,7 +91,6 @@ export interface ChatController {
 export function useChatController(config: ChatControllerConfig = {}): ChatController {
   const { endpoint } = useConnection();
   const [settings, setSettings] = useState<ChatSettings>(() => loadChatSettings());
-  const [interactiveAgentMode, setInteractiveAgentMode] = useState(false);
   const [interactiveDataset, setInteractiveDataset] = useState<string | undefined>(undefined);
 
   const recipes = useRecipes();
@@ -124,9 +121,10 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
     backingHandle: backing.handle,
   });
 
-  // Agent mode + dataset are forced by config or driven interactively.
-  const agentMode = config.agentMode ?? interactiveAgentMode;
-  const setAgentMode = (v: boolean) => setInteractiveAgentMode(v);
+  // Agent mode is forced by config only (AppChat's agentic apps). The read-only
+  // standalone chat never enables it — there is no interactive toggle. The dataset
+  // is forced by config or driven interactively (the grounding bar).
+  const agentMode = config.agentMode ?? false;
   const dataset = config.dataset ?? interactiveDataset;
   const setDataset = (v: string | undefined) => setInteractiveDataset(v);
 
@@ -152,12 +150,6 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
     setPendingContext((prev) =>
       prev.includes(handle) ? prev.filter((h) => h !== handle) : [...prev, handle],
     );
-  }
-  const toolRegistry = useDiscoverTools();
-  const mcpServers = useListMcpServers();
-  const [pendingTools, setPendingTools] = useState<readonly string[]>([]);
-  function toggleTool(id: string): void {
-    setPendingTools((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]));
   }
 
   const autosave = config.autosave ?? true;
@@ -235,19 +227,17 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
         mediaType: a.mediaType,
         objectUrl: a.objectUrl,
       }));
-    void chat.send(text, ready, pendingContext, pendingTools);
+    // Read-only turn: no per-message tools are attached (the mutate-capable tool
+    // picker is gone from the standalone chat — grounding is dataset + context).
+    void chat.send(text, ready, pendingContext, []);
     attach.clear();
     setPendingContext([]);
-    setPendingTools([]);
   }
 
   return {
     chat,
     settings,
     updateSettings,
-    agentMode,
-    setAgentMode,
-    agentAvailable,
     agentTurn,
     dataset,
     setDataset,
@@ -257,10 +247,6 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
     contextBundles,
     pendingContext,
     toggleContext,
-    pendingTools,
-    toggleTool,
-    toolRegistry,
-    mcpServers,
     chatName,
     setChatName,
     onChatNameInput,

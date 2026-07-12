@@ -2,16 +2,16 @@
  * POC-5d: the chat PRESENTATION surface, extracted verbatim from `ChatPanel` so
  * the standalone New Chat route and the embedded `AppChat` share one body with no
  * drift. Driven by a {@link ChatController} (the orchestration hook) plus flags:
- *   - showModeToggle — the Chat / Agent-task fieldset (standalone only)
- *   - showPickers    — the model + dataset composer controls + attach (standalone)
+ *   - showPickers    — the model composer control + file attach (standalone)
  *   - showHistory    — the Export / History / New-chat head actions + slide-over
+ *   - showGrounding  — the read-only RAG grounding bar (dataset + context files)
  *   - header         — a caller-supplied head block (AppChat); else the standalone
  *                      editable chat-name + actions head.
  *
- * EVERY existing chat testid lands on the SAME DOM node as before (chat-panel is
- * the section, chat-name/chat-export/chat-history-toggle/chat-new in the head,
- * chat-mode-*, chat-context-*, composer/message testids) — the standalone path is
- * byte-identical (the regression gate).
+ * PR-A: the standalone New Chat is READ-ONLY, RAG-grounded — no Agent
+ * toggle, no tool picker, no MCP chips; dataset + context selection is the headline
+ * {@link GroundingBar}, and a settled grounded answer renders its {@link
+ * MessageSources}. The mutate-capable agentic chat lives in App chat (unchanged).
  */
 
 import { m } from "framer-motion";
@@ -19,6 +19,7 @@ import { useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { CHAT_RAG_RECIPE_HANDLE, REACT_RECIPE_HANDLE } from "../../kx/use-chat";
+import type { ChatMessage } from "../../lib/chat-thread";
 import { Icon } from "../shell/Icon";
 import { AttachmentStrip } from "./AttachmentStrip";
 import { ChatHistory } from "./ChatHistory";
@@ -26,8 +27,9 @@ import { ChatSettingsPanel } from "./ChatSettings";
 import { Composer } from "./Composer";
 import { DatasetPicker } from "./DatasetPicker";
 import { DegradeNotice } from "./DegradeNotice";
-import { McpConnectionChips } from "./McpConnectionChips";
+import { GroundingBar } from "./GroundingBar";
 import { MessageList } from "./MessageList";
+import { MessageSources } from "./MessageSources";
 import { ModelPicker } from "./ModelPicker";
 import { StatusLoop } from "./StatusLoop";
 import { ThinkingTrace } from "./ThinkingTrace";
@@ -35,12 +37,12 @@ import type { ChatController } from "./useChatController";
 
 export interface ChatSurfaceProps {
   controller: ChatController;
-  /** Show the model + dataset composer controls (+ attach menu). */
+  /** Show the model composer control (+ the file attach menu). */
   showPickers?: boolean;
   /** Show the Export / History / New-chat head actions + the history slide-over. */
   showHistory?: boolean;
-  /** Show the Chat / Agent-task mode fieldset. */
-  showModeToggle?: boolean;
+  /** Show the read-only RAG grounding bar (dataset + context files). */
+  showGrounding?: boolean;
   /** A caller-supplied head; when omitted the standalone editable name head shows. */
   header?: React.ReactNode;
   /** The section testid (the standalone keeps `chat-panel`; AppChat uses `app-chat`). */
@@ -51,7 +53,7 @@ export function ChatSurface({
   controller,
   showPickers = true,
   showHistory = true,
-  showModeToggle = true,
+  showGrounding = false,
   header,
   sectionTestId = "chat-panel",
 }: ChatSurfaceProps) {
@@ -61,9 +63,6 @@ export function ChatSurface({
     chat,
     settings,
     updateSettings,
-    agentMode,
-    setAgentMode,
-    agentAvailable,
     agentTurn,
     dataset,
     setDataset,
@@ -73,10 +72,6 @@ export function ChatSurface({
     contextBundles,
     pendingContext,
     toggleContext,
-    pendingTools,
-    toggleTool,
-    toolRegistry,
-    mcpServers,
     chatName,
     onChatNameInput,
     commitName,
@@ -173,26 +168,15 @@ export function ChatSurface({
         )}
       </p>
 
-      {showModeToggle && agentAvailable ? (
-        <fieldset className="view-toggle" aria-label="Chat mode" data-testid="chat-mode">
-          <button
-            type="button"
-            aria-pressed={!agentMode}
-            data-testid="chat-mode-chat"
-            onClick={() => setAgentMode(false)}
-          >
-            Chat
-          </button>
-          <button
-            type="button"
-            aria-pressed={agentMode}
-            data-testid="chat-mode-agent"
-            onClick={() => setAgentMode(true)}
-            title="Give the agent a task — it loops (reason → tool → observe) until it answers"
-          >
-            Agent task
-          </button>
-        </fieldset>
+      {showGrounding ? (
+        <GroundingBar
+          dataset={dataset}
+          onDataset={setDataset}
+          bundles={contextBundles.bundles.map((b) => b.handle)}
+          attached={pendingContext}
+          notWired={contextBundles.notWired}
+          onToggleContext={toggleContext}
+        />
       ) : null}
 
       {showPickers ? <ChatSettingsPanel settings={settings} onChange={updateSettings} /> : null}
@@ -209,6 +193,17 @@ export function ChatSurface({
         onRetry={(id) => void chat.retry(id)}
         recipeHandle={backingHandle}
         modelId={settings.modelId}
+        renderSources={
+          showGrounding
+            ? (msg: ChatMessage) => (
+                <MessageSources
+                  instanceId={msg.instanceId}
+                  moteId={msg.terminalMoteId}
+                  active={msg.status === "done"}
+                />
+              )
+            : undefined
+        }
         renderTrace={(id) => {
           if (id !== chat.activeAssistantId) {
             return null;
@@ -230,60 +225,31 @@ export function ChatSurface({
             value={settings.modelId}
             onChange={(modelId) => updateSettings({ ...settings, modelId })}
           />
-          {agentTurn ? null : <DatasetPicker value={dataset} onChange={setDataset} />}
+          {/* The dataset control lives in the grounding bar when grounding is on
+              (the read-only chat); otherwise it sits inline (unless this is an
+              agent turn, which grounds via the react-rag `retrieve` tool). */}
+          {agentTurn || showGrounding ? null : (
+            <DatasetPicker value={dataset} onChange={setDataset} />
+          )}
         </div>
       ) : null}
       {showPickers ? (
         <AttachmentStrip attachments={attach.attachments} onRemove={attach.remove} />
       ) : null}
-      {pendingContext.length > 0 ? (
-        <div className="context-strip" data-testid="chat-context-strip">
-          <span className="context-strip__label muted">Context:</span>
-          {pendingContext.map((handle) => (
-            <span
-              key={handle}
-              className="context-strip__chip"
-              data-testid={`chat-context-${handle}`}
-            >
-              <span className="mono">{handle}</span>
-              <button
-                type="button"
-                className="context-strip__remove"
-                aria-label={`Detach ${handle}`}
-                data-testid={`chat-context-remove-${handle}`}
-                onClick={() => toggleContext(handle)}
-              >
-                ✕
-              </button>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {showPickers ? <McpConnectionChips servers={mcpServers.servers} /> : null}
       <Composer
         disabled={chat.busy}
         sendBlocked={attach.uploading}
         onSend={sendWithAttachments}
         onPickFiles={showPickers ? attach.addFiles : undefined}
         context={
-          showPickers
+          // Context selection moves to the grounding bar when grounding is on;
+          // otherwise it stays in the composer attach menu.
+          showPickers && !showGrounding
             ? {
                 bundles: contextBundles.bundles.map((b) => b.handle),
                 attached: pendingContext,
                 notWired: contextBundles.notWired,
                 onToggle: toggleContext,
-              }
-            : undefined
-        }
-        tools={
-          showPickers
-            ? {
-                options: toolRegistry.tools
-                  .filter((t) => t.registrationStatus === "Approved")
-                  .map((t) => `${t.toolName}@${t.toolVersion}`),
-                attached: pendingTools,
-                notWired: toolRegistry.notWired,
-                onToggle: toggleTool,
               }
             : undefined
         }

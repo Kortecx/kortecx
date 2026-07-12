@@ -38,6 +38,7 @@ export function MessageBubble({
   message,
   showReasoning = true,
   trace,
+  sources,
   onRetry,
   recipeHandle,
   modelId,
@@ -46,6 +47,9 @@ export function MessageBubble({
   /** Show the model's leading `<think>` reasoning as a collapsed disclosure (T-FEAT1). */
   showReasoning?: boolean;
   trace?: ReactNode;
+  /** PR-A: the grounded-answer sources disclosure (read-only RAG); renders nothing
+   *  for an ungrounded/unsettled turn. */
+  sources?: ReactNode;
   onRetry?: (assistantId: string) => void;
   /** The chat backing handle/model — advisory context on 👍/👎 feedback (PR-4.1). */
   recipeHandle?: string;
@@ -142,6 +146,9 @@ export function MessageBubble({
             <FeedbackButtons message={message} recipeHandle={recipeHandle} modelId={modelId} />
           </div>
         ) : null}
+        {/* PR-A: the grounded-answer sources (read-only RAG) — a compact disclosure
+            below the answer; renders nothing when the turn is ungrounded. */}
+        {message.role === "assistant" ? sources : null}
         {message.error ? <ErrorNotice error={message.error} /> : null}
         {message.status === "failed" && onRetry ? (
           <button

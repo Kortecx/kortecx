@@ -6,10 +6,10 @@ import { Popover } from "../shell/Popover";
 
 /** Attach categories not yet wired — shown in the menu as honest-disabled rows so
  *  the surface is complete but never fakes a capability that does not exist yet.
- *  Context and Tools are LIVE and rendered separately. */
+ *  (Datasets are no longer "soon" — grounding over a dataset is first-class in the
+ *  read-only chat's grounding bar; Context is LIVE and rendered separately.) */
 const SOON_CATEGORIES: ReadonlyArray<{ label: string; testId: string }> = [
   { label: "Blueprint", testId: "attach-blueprint" },
-  { label: "Dataset", testId: "attach-dataset" },
 ];
 
 /** PR-7b: the context-bundle picker state the parent (ChatPanel) owns + passes in.

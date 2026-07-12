@@ -1,15 +1,18 @@
 /**
- * The agentic chat (standalone New Chat route). A message runs the configured
- * recipe; the reply is the run's committed result; the DAG-of-thought shows the
- * run executing. Attach images (the vision route, form-gated), pick the model,
- * ground over a dataset (chat-rag), give the agent a task (the react loop), or
- * attach context bundles. Every thread autosaves to the client-local per-endpoint
- * history. Degrades to a guidance notice when no chat recipe/model is provisioned.
+ * The READ-ONLY, RAG-grounded New Chat (standalone route). A message retrieves over
+ * the user's own DATASETS + CONTEXT FILES (picked in the {@link GroundingBar}) and
+ * the model answers grounded on the retrieved documents (chat-rag); a settled
+ * grounded answer shows its source citations. Read-only: it retrieves + reasons over
+ * stored context, never mutating it — the mutate-capable agentic chat (agent task +
+ * tools) lives in App chat — the capability is relocated, not crippled.
+ * Pick the model, attach an image (the vision route, form-gated), and every thread
+ * autosaves to the client-local per-endpoint history. Degrades to a guidance notice
+ * when no chat recipe/model is provisioned.
  *
- * POC-5d: the orchestration moved into {@link useChatController} and the body into
+ * POC-5d: the orchestration lives in {@link useChatController} and the body in
  * {@link ChatSurface} (shared with the embedded {@link AppChat}); this panel is a
- * thin wrapper that drives the full interactive surface. The DOM + every testid
- * are byte-identical to the pre-refactor panel (the regression gate).
+ * thin wrapper. The frozen `chat-panel` section id + the head/composer testids are
+ * unchanged (the regression gate).
  */
 
 import { ChatSurface } from "./ChatSurface";
@@ -22,7 +25,7 @@ export function ChatPanel() {
       controller={controller}
       showPickers
       showHistory
-      showModeToggle
+      showGrounding
       sectionTestId="chat-panel"
     />
   );

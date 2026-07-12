@@ -1,5 +1,5 @@
 import { type ReactNode, useEffect, useRef } from "react";
-import type { ChatThread } from "../../lib/chat-thread";
+import type { ChatMessage, ChatThread } from "../../lib/chat-thread";
 import { EmptyState } from "../EmptyState";
 import { MessageBubble } from "./MessageBubble";
 
@@ -9,6 +9,7 @@ export function MessageList({
   autoscroll,
   showReasoning,
   renderTrace,
+  renderSources,
   onRetry,
   recipeHandle,
   modelId,
@@ -18,6 +19,9 @@ export function MessageList({
   /** Show the model's `<think>` reasoning disclosure above the answer (T-FEAT1). */
   showReasoning: boolean;
   renderTrace?: (assistantId: string) => ReactNode;
+  /** PR-A: the grounded-answer sources for a settled assistant turn (read-only RAG).
+   *  Returns nothing for an ungrounded/unsettled turn — never a faked citation. */
+  renderSources?: (message: ChatMessage) => ReactNode;
   onRetry?: (assistantId: string) => void;
   /** The chat backing handle/model — advisory context on 👍/👎 feedback (PR-4.1). */
   recipeHandle?: string;
@@ -49,6 +53,7 @@ export function MessageList({
           message={m}
           showReasoning={showReasoning}
           trace={m.role === "assistant" ? renderTrace?.(m.id) : undefined}
+          sources={m.role === "assistant" ? renderSources?.(m) : undefined}
           onRetry={m.role === "assistant" ? onRetry : undefined}
           recipeHandle={recipeHandle}
           modelId={modelId}
