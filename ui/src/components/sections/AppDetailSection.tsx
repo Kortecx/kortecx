@@ -25,27 +25,30 @@ import { useApp, useExportAppBundle, useSaveApp } from "../../kx/use-apps";
 import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
 import { buildFileTree } from "../../lib/file-tree";
 import { inferLanguageFromPath } from "../../lib/monaco/infer-language";
+import { loadFlag, persistFlag } from "../../lib/ui-flags";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { AppChatEditDrawer } from "../apps/AppChatEditDrawer";
 import { AppManifestPanel } from "../apps/AppManifestPanel";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { FileTree } from "../apps/FileTree";
 import { LockControl } from "../apps/LockControl";
 import { SkillsRail } from "../apps/SkillsRail";
-import { AppChat } from "../chat/AppChat";
 import { CodeViewer } from "../editor/CodeViewer";
 import { DiffViewer } from "../editor/DiffViewer";
 import { MonacoMount } from "../editor/MonacoMount";
 import { Icon } from "../shell/Icon";
 import { AppLineageSection } from "./AppLineageSection";
 
-const TABS = ["files", "lineage", "chat", "skills", "capabilities"] as const;
+const TABS = ["files", "lineage", "skills", "capabilities"] as const;
 export type IdeTab = (typeof TABS)[number];
+
+/** The Files rail's collapsed state is remembered across reloads (like the shell nav). */
+const FILES_RAIL_KEY = "kortecx.ui.app-files-rail";
 
 const TAB_LABELS: Record<IdeTab, string> = {
   files: "Files",
   lineage: "Lineage",
-  chat: "Chat",
   skills: "Skills",
   capabilities: "Capabilities",
 };
@@ -120,6 +123,14 @@ export function AppDetailSection({
   const setPath = (p: string | undefined) => (onPath ? onPath(p) : setPathState(p));
 
   const [runOpen, setRunOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [filesCollapsed, setFilesCollapsed] = useState<boolean>(() => loadFlag(FILES_RAIL_KEY));
+  const toggleFiles = () =>
+    setFilesCollapsed((v) => {
+      const next = !v;
+      persistFlag(FILES_RAIL_KEY, next);
+      return next;
+    });
 
   const branch = useAppBranch(handle);
   const items = branch.data?.items ?? [];
@@ -167,6 +178,16 @@ export function AppDetailSection({
           <button
             type="button"
             className="iconbtn"
+            data-testid="app-detail-chat"
+            title="Chat with the agent to understand or modify this App"
+            aria-label="Chat and edit"
+            onClick={() => setChatOpen(true)}
+          >
+            <Icon name="chat" size={18} />
+          </button>
+          <button
+            type="button"
+            className="iconbtn"
             data-testid="app-detail-run"
             title="Run this App"
             aria-label="Run"
@@ -203,9 +224,7 @@ export function AppDetailSection({
         ))}
       </fieldset>
 
-      {tab === "chat" ? (
-        <AppChat recipeHandle={handle} />
-      ) : tab === "lineage" ? (
+      {tab === "lineage" ? (
         <AppLineageSection handle={handle} />
       ) : tab === "skills" ? (
         app.data ? (
@@ -225,13 +244,35 @@ export function AppDetailSection({
           detail="This App has no scaffolded project branch. Use New App to scaffold one, or run kx app scaffold."
         />
       ) : (
-        <div className="app-detail__panes" data-testid="app-detail-panes">
-          <aside className="app-detail__tree">
-            <FileTree
-              nodes={tree}
-              selectedPath={selected?.path ?? null}
-              onSelect={(path) => setPath(path)}
-            />
+        <div
+          className="app-detail__panes"
+          data-testid="app-detail-panes"
+          data-collapsed={filesCollapsed ? "true" : "false"}
+        >
+          <aside className="app-detail__tree" data-testid="app-files-sidebar">
+            <div className="app-detail__tree-head">
+              <span className="app-detail__tree-title">Files</span>
+              <button
+                type="button"
+                className="iconbtn iconbtn--sm app-detail__tree-toggle"
+                data-testid="app-files-collapse"
+                aria-label={filesCollapsed ? "Show files" : "Hide files"}
+                aria-expanded={!filesCollapsed}
+                title={filesCollapsed ? "Show files" : "Hide files"}
+                onClick={toggleFiles}
+              >
+                <span className="app-detail__chevron" aria-hidden="true">
+                  <Icon name="chevron-right" size={16} />
+                </span>
+              </button>
+            </div>
+            {filesCollapsed ? null : (
+              <FileTree
+                nodes={tree}
+                selectedPath={selected?.path ?? null}
+                onSelect={(path) => setPath(path)}
+              />
+            )}
           </aside>
           <div className="app-detail__file">
             {selected ? (
@@ -253,6 +294,9 @@ export function AppDetailSection({
       )}
 
       {runOpen ? <AppRunDrawer handle={handle} onClose={() => setRunOpen(false)} /> : null}
+      {chatOpen ? (
+        <AppChatEditDrawer handle={handle} locked={locked} onClose={() => setChatOpen(false)} />
+      ) : null}
     </section>
   );
 }

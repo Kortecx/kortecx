@@ -859,6 +859,10 @@ button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* A compact icon button for dense rails (the Files sidebar collapse toggle). */
+.iconbtn--sm {
+  padding: 0.2rem;
+}
 /* A non-interactive icon (a state indicator, e.g. an App's lock) — no hover chrome. */
 .iconbtn--static {
   cursor: default;
@@ -1533,17 +1537,69 @@ select {
 }
 /* Bound the shell to the viewport ONLY on the chat route so `.chat` can own the
  * scroll. The navbar is already position:sticky; the sidebar scrolls internally. */
-.shell:has(.chat) {
+/* The full-viewport chat layout applies to the /chat ROUTE only. When a `.chat` lives
+   inside the App "Chat & edit" slide-over (`.app-chat-drawer`), the `:not()` guard keeps
+   the underlying page (e.g. the App detail) scrolling normally. */
+.shell:has(.chat):not(:has(.app-chat-drawer)) {
   height: 100vh;
 }
-.shell:has(.chat) .shell__main {
+.shell:has(.chat):not(:has(.app-chat-drawer)) .shell__main {
   min-height: 0;
   overflow: hidden;
 }
-.shell:has(.chat) .shell__main > div {
+.shell:has(.chat):not(:has(.app-chat-drawer)) .shell__main > div {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+/* The App "Chat & edit" slide-over: wider than a plain drawer, scrollable, with a
+   bounded chat pane above the propose→diff→approve edit section. */
+.app-chat-drawer {
+  width: min(560px, 94vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow-y: auto;
+}
+.app-chat-drawer__chat {
+  flex: 0 0 auto;
+  height: 46vh;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.app-chat-drawer__chat .chat {
+  height: 100%;
+}
+.app-chat-drawer__edit,
+.app-chat-drawer__review {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.app-chat-drawer__edit {
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.app-chat-drawer__edit-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.app-chat-drawer__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.app-chat-drawer__review-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.app-chat-drawer__locked {
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
 }
 .bubble {
   max-width: 760px;
@@ -4801,16 +4857,25 @@ button.card-grid__title:hover {
   cursor: default;
   opacity: 0.85;
 }
+/* Files view: a collapsible left rail (the file tree) + the file pane. The rail is a
+ * sidebar continuous with the shell nav to its left; collapsing it hands the full width
+ * to the pane and remembers the choice (FILES_RAIL_KEY). */
 .app-detail__panes {
   display: grid;
-  grid-template-columns: minmax(180px, 260px) 1fr;
+  grid-template-columns: minmax(180px, 240px) 1fr;
   gap: 1rem;
   margin-top: 0.75rem;
   align-items: start;
 }
+.app-detail__panes[data-collapsed="true"] {
+  grid-template-columns: auto 1fr;
+}
 @media (max-width: 760px) {
   .app-detail__panes {
     grid-template-columns: 1fr;
+  }
+  .app-detail__panes[data-collapsed="true"] {
+    grid-template-columns: auto;
   }
 }
 .app-detail__tree {
@@ -4819,7 +4884,37 @@ button.card-grid__title:hover {
   background: var(--surface);
   padding: 0.5rem;
   overflow: auto;
-  max-height: 70vh;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.app-detail__panes[data-collapsed="true"] .app-detail__tree {
+  overflow: visible;
+}
+.app-detail__tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.app-detail__tree-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.app-detail__panes[data-collapsed="true"] .app-detail__tree-title {
+  display: none;
+}
+.app-detail__chevron {
+  display: inline-flex;
+  transition: transform 140ms ease;
+}
+/* Expanded ⇒ the chevron points left ("collapse toward the rail"); collapsed ⇒ right. */
+.app-detail__panes:not([data-collapsed="true"]) .app-detail__chevron {
+  transform: rotate(180deg);
 }
 .app-detail__file {
   min-width: 0;

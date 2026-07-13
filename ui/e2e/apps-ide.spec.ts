@@ -60,11 +60,26 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await page.getByTestId(`app-menu-${HANDLE}`).click();
   await page.getByTestId(`app-open-${HANDLE}`).click();
 
-  // The full-screen IDE shell + the 3 tabs.
+  // The full-screen IDE shell + the tabs (Chat is a HEADER ACTION now, not a tab).
   await expect(page.getByTestId("app-detail")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("app-tab-files")).toBeVisible();
   await expect(page.getByTestId("app-tab-lineage")).toBeVisible();
-  await expect(page.getByTestId("app-tab-chat")).toBeVisible();
+  await expect(page.getByTestId("app-tab-chat")).toHaveCount(0);
+
+  // The Chat header action opens the agentic "Chat & edit" drawer (converse + the
+  // propose→diff→approve edit gate); close it before continuing.
+  await page.getByTestId("app-detail-chat").click();
+  await expect(page.getByTestId("app-chat-drawer")).toBeVisible();
+  await expect(page.getByTestId("app-edit-propose")).toBeVisible();
+  await page.getByLabel("Close chat").click();
+  await expect(page.getByTestId("app-chat-drawer")).toHaveCount(0);
+
+  // Files: the tree is a collapsible sidebar rail (collapse hides it, expand restores it).
+  await expect(page.getByTestId("app-files-sidebar")).toBeVisible();
+  await page.getByTestId("app-files-collapse").click();
+  await expect(page.getByTestId("file-README.md")).toHaveCount(0);
+  await page.getByTestId("app-files-collapse").click();
+  await expect(page.getByTestId("file-README.md")).toBeVisible();
 
   // Files: select README → the viewer renders → direct-edit + agentic-review affordances.
   await page.getByTestId("file-README.md").click();
