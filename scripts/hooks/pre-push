@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# scripts/hooks/pre-push — local pre-push quality gate for this repo.
+#
+# Installed by `just install-hooks` (sets core.hooksPath=scripts/hooks); `just setup` installs it too.
+# It runs the fast CI-equivalent checks on your machine BEFORE a push, so a formatting / type / test /
+# bundle-size regression is caught locally instead of burning a CI cycle on the PR.
+#
+# Scope honesty: this catches ACCIDENTAL breakage, not a determined actor. `git push --no-verify`
+# bypasses it, and a fresh clone that never ran `just install-hooks` has no hook at all — CI is the
+# authoritative gate. Every check is best-effort, offline-tolerant (it degrades to the local base if
+# `git fetch` fails), and only runs when the relevant paths changed, so an unrelated push stays fast.
+set -uo pipefail
+# Clear the git env `git push` injects (GIT_DIR / GIT_INDEX_FILE / …). Left set, a subprocess `git`
+# (e.g. a tool that shells `git rev-parse`) would resolve against the push's index instead of the
+# worktree — a false failure that appears only when pushing from a `git worktree`.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_QUARANTINE_PATH || true
+ROOT="$(git rev-parse --show-toplevel)"; cd "$ROOT"
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+fail=0
+echo "── pre-push gates (branch: $branch) ──"
+
+# Self-check: reaching this hook means core.hooksPath is set — warn if it drifted.
+hp="$(git config --get core.hooksPath || true)"
+[ "$hp" = "scripts/hooks" ] || echo "  ⚠ core.hooksPath='$hp' (expected 'scripts/hooks') — re-run 'just install-hooks'"
+
+run() { # run <label> <cmd...> — record failure but keep going so every gate reports
+  local label="$1"; shift
+  if out="$("$@" 2>&1)"; then echo "  ✓ $label"; else
+    echo "  ✗ $label"; printf '%s\n' "$out" | tail -8 | sed 's/^/      /'; fail=1
+  fi
+}
+
+changed_in() { # changed_in <pathspec...> — nonempty if HEAD differs from origin/main there
+  git diff --name-only origin/main...HEAD -- "$@" 2>/dev/null
+}
+
+# Rust formatting — the CI `fmt-check` gate, pulled early. `cargo fmt --check` needs no compilation
+# (~1-2s). The heavy code gates (clippy / test / eval) stay in `just ci`; run it before a Rust PR.
+if [ -n "$(changed_in crates/)" ]; then
+  run "fmt-check" cargo fmt --all -- --check
+else
+  echo "  · fmt-check skipped (no crates/ change)"
+fi
+
+# UI — the full `ui` CI gate minus Playwright: biome + tsc + vitest + build + the eager-JS bundle-size
+# budget. This is the check most often skipped by hand; running it here keeps the size budget honest.
+if [ -n "$(changed_in ui/)" ]; then
+  if [ -d ui/node_modules ]; then
+    run "ui-gates" just pre-push-ui
+    echo "  ⚠ Playwright e2e is CI-only (needs a browser + a live serve) — run 'cd ui && npx playwright test' before you rely on this."
+  else
+    echo "  ⚠ ui/node_modules missing — run 'cd ui && npm ci' then re-push (UI gate SKIPPED; CI is the backstop)"
+  fi
+else
+  echo "  · ui-gates skipped (no ui/ change)"
+fi
+
+# SDK format/lint — the fast half of the `sdk-*` CI jobs (format/lint only; the full mypy / tsc / vitest
+# is `just pre-push-sdk`). Graceful: warn + nudge if the tool isn't installed (never blocks).
+if [ -n "$(changed_in bindings/typescript/)" ]; then
+  if [ -x bindings/typescript/node_modules/.bin/biome ]; then
+    run "sdk-ts" bash -c 'cd bindings/typescript && npx --no-install biome ci .'
+  else echo "  ⚠ biome not installed in bindings/typescript — run 'just pre-push-sdk' before the PR"; fi
+fi
+if [ -n "$(changed_in bindings/python/)" ]; then
+  if python -m ruff --version >/dev/null 2>&1; then
+    run "sdk-py" bash -c 'cd bindings/python && python -m ruff check . && python -m ruff format --check src tests examples'
+  else echo "  ⚠ ruff not installed — run 'just pre-push-sdk' before the PR"; fi
+fi
+
+# Rebase nudge (advisory): if the branch is behind origin/main, a rebase avoids a stale-merge surprise.
+git fetch -q origin main 2>/dev/null || true
+if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+  if ! git merge-base --is-ancestor origin/main HEAD 2>/dev/null; then
+    behind="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo '?')"
+    echo "  ⚠ branch is $behind commit(s) behind origin/main — consider a rebase before merge"
+  fi
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "── pre-push FAILED — fix the ✗ above, or 'git push --no-verify' (emergency only) ──"
+  exit 1
+fi
+echo "── pre-push gates clean ──"
