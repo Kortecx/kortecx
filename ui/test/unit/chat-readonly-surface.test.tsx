@@ -1,8 +1,9 @@
 /**
- * PR-A: the standalone New Chat is READ-ONLY, RAG-grounded — it shows the grounding
- * bar (dataset + context files) and EXCLUDES the mutate path: no Agent-task toggle,
- * no composer Tools/Context/Dataset categories. We mock the controller (deterministic
- * state) but render through a connected wrapper so the surface's sub-hooks are real.
+ * PR-A / Wave-4: the standalone New Chat is READ-ONLY, RAG-grounded — it grounds via
+ * the header "Context" attach button (the standalone dataset grounding bar was dropped)
+ * and EXCLUDES the mutate path: no Agent-task toggle, no composer Tools/Context/Dataset
+ * categories. We mock the controller (deterministic state) but render through a connected
+ * wrapper so the surface's sub-hooks are real.
  */
 
 import { fireEvent, render, screen } from "@testing-library/react";
@@ -76,10 +77,12 @@ function renderPanel() {
 }
 
 describe("New Chat read-only RAG surface (PR-A)", () => {
-  it("mounts the frozen section + the grounding bar, and has no Agent toggle", () => {
+  it("mounts the frozen section + the header Context attach, and has no Agent toggle", () => {
     renderPanel();
     expect(screen.getByTestId("chat-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-grounding")).toBeInTheDocument();
+    // Wave-4: the standalone grounding bar is gone; grounding is the header Context button.
+    expect(screen.queryByTestId("chat-grounding")).toBeNull();
+    expect(screen.getByTestId("chat-grounding-add")).toBeInTheDocument();
     // The mutate-capable agentic toggle is gone from the read-only chat.
     expect(screen.queryByTestId("chat-mode")).toBeNull();
   });

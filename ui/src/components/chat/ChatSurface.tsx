@@ -4,13 +4,14 @@
  * drift. Driven by a {@link ChatController} (the orchestration hook) plus flags:
  *   - showPickers    — the model composer control + file attach (standalone)
  *   - showHistory    — the Export / History / New-chat head actions + slide-over
- *   - showGrounding  — the read-only RAG grounding bar (dataset + context files)
+ *   - showGrounding  — the read-only RAG grounding: the header Context attach button
+ *                      + the attached-file chips (Wave-4 dropped the dataset bar)
  *   - header         — a caller-supplied head block (AppChat); else the standalone
  *                      editable chat-name + actions head.
  *
  * PR-A: the standalone New Chat is READ-ONLY, RAG-grounded — no Agent
- * toggle, no tool picker, no MCP chips; dataset + context selection is the headline
- * {@link GroundingBar}, and a settled grounded answer renders its {@link
+ * toggle, no tool picker, no MCP chips; context selection is the header
+ * {@link ContextAttachButton}, and a settled grounded answer renders its {@link
  * MessageSources}. The mutate-capable agentic chat lives in App chat (unchanged).
  */
 
@@ -28,7 +29,6 @@ import { Composer } from "./Composer";
 import { ContextAttachButton } from "./ContextAttachButton";
 import { DatasetPicker } from "./DatasetPicker";
 import { DegradeNotice } from "./DegradeNotice";
-import { GroundingBar } from "./GroundingBar";
 import { MessageList } from "./MessageList";
 import { MessageSources } from "./MessageSources";
 import { ModelPicker } from "./ModelPicker";
@@ -239,15 +239,34 @@ export function ChatSurface({
           )}
         </div>
       ) : null}
-      {/* Grounding (dataset + status + attached-context chips) sits above the input;
-          the Context ATTACH control lives in the header (ContextAttachButton). */}
-      {showGrounding ? (
-        <GroundingBar
-          dataset={dataset}
-          onDataset={setDataset}
-          attached={pendingContext}
-          onToggleContext={toggleContext}
-        />
+      {/* Wave-4: the standalone grounding BAR (dataset dropdown + summary box) is gone —
+          New Chat grounds via attached Context files (the header ContextAttachButton).
+          The attached files show here as removable chips, just above the input; the strip
+          renders only when something is attached, so there is no empty placeholder box. */}
+      {showGrounding && pendingContext.length > 0 ? (
+        <div
+          className="context-strip chat__context-strip"
+          data-testid="chat-grounding-context-strip"
+        >
+          {pendingContext.map((handle) => (
+            <span
+              key={handle}
+              className="context-strip__chip"
+              data-testid={`chat-grounding-context-${handle}`}
+            >
+              <span className="mono">{handle}</span>
+              <button
+                type="button"
+                className="context-strip__remove"
+                aria-label={`Detach ${handle}`}
+                data-testid={`chat-grounding-context-remove-${handle}`}
+                onClick={() => toggleContext(handle)}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
       ) : null}
       {/* Model + display settings sit JUST ABOVE the input (moved off the top). */}
       {showPickers ? <ChatSettingsPanel settings={settings} onChange={updateSettings} /> : null}

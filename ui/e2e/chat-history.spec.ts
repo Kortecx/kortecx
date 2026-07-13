@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { typeMessage } from "./fixtures/chat";
+import { seedEchoBacking, typeMessage } from "./fixtures/chat";
 import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -12,12 +12,10 @@ test.afterEach(() => {
 
 test("a chat autosaves, survives a reload, and restores from History", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await seedEchoBacking(page);
   await connectConsole(page, gw);
 
   await page.getByTestId("nav-chat").click();
-  await page.getByTestId("chat-settings").locator("summary").click();
-  await page.getByTestId("echo-preset").click();
-
   await typeMessage(page, "remember this chat");
   await page.getByTestId("send").click();
   await expect(page.getByTestId("bubble-assistant")).toHaveAttribute("data-status", "done", {

@@ -3,10 +3,15 @@ import type { ChatMessage, ChatThread } from "../../lib/chat-thread";
 import { EmptyState } from "../EmptyState";
 import { MessageBubble } from "./MessageBubble";
 
-/** How close to the bottom (px) still counts as "following" the stream. */
+/** How close to the top (px) still counts as "following" the stream. */
 const STICK_THRESHOLD = 96;
 
-/** The scrollable thread; auto-scrolls to the newest message when enabled. */
+/**
+ * The scrollable thread. Wave-4: NEWEST-AT-TOP — the freshest turn renders at the
+ * TOP and older ones flow down toward the input (the messages are rendered newest-
+ * first; the list keeps a natural `flex-direction: column`). Auto-scroll therefore
+ * follows the TOP edge (scrollTop → 0), the mirror of the old bottom-follow.
+ */
 export function MessageList({
   thread,
   autoscroll,
@@ -31,20 +36,21 @@ export function MessageList({
   modelId?: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  // Whether the user is following the tail. Starts true; a scroll-up releases it so
-  // the stream keeps flowing WITHOUT yanking the viewport back down (the reactivity
-  // fix). Scrolling back to the bottom re-arms it.
+  // Whether the user is following the head (newest-at-top). Starts true; a scroll-DOWN
+  // (away from the newest turn) releases it so the stream keeps flowing WITHOUT yanking
+  // the viewport back up. Scrolling back to the top re-arms it.
   const stuckRef = useRef(true);
 
   const onScroll = useCallback(() => {
     const el = listRef.current;
     if (el) {
-      stuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD;
+      stuckRef.current = el.scrollTop <= STICK_THRESHOLD;
     }
   }, []);
 
-  // Follow the tail only while stuck to the bottom. Keyed on the thread so it fires
-  // on every token/message update; a no-op when the user has scrolled up.
+  // Follow the head only while stuck to the top. Keyed on the thread so it fires on
+  // every token/message update; a no-op when the user has scrolled down to read older
+  // turns.
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow on any thread change.
   useEffect(() => {
     if (!autoscroll || !stuckRef.current) {
@@ -52,7 +58,7 @@ export function MessageList({
     }
     const el = listRef.current;
     if (el) {
-      el.scrollTop = el.scrollHeight; // jump the container, never scrollIntoView (no page reflow)
+      el.scrollTop = 0; // jump the container to the newest (top), never scrollIntoView
     }
   }, [thread, autoscroll]);
 
@@ -62,18 +68,23 @@ export function MessageList({
 
   return (
     <div className="chat__list" data-testid="message-list" ref={listRef} onScroll={onScroll}>
-      {thread.messages.map((m) => (
-        <MessageBubble
-          key={m.id}
-          message={m}
-          showReasoning={showReasoning}
-          trace={m.role === "assistant" ? renderTrace?.(m.id) : undefined}
-          sources={m.role === "assistant" ? renderSources?.(m) : undefined}
-          onRetry={m.role === "assistant" ? onRetry : undefined}
-          recipeHandle={recipeHandle}
-          modelId={modelId}
-        />
-      ))}
+      {/* Newest-first: render the reversed thread so the freshest turn sits at the TOP
+          (DOM order matches the visual order, keeping scroll coordinates predictable). */}
+      {thread.messages
+        .slice()
+        .reverse()
+        .map((m) => (
+          <MessageBubble
+            key={m.id}
+            message={m}
+            showReasoning={showReasoning}
+            trace={m.role === "assistant" ? renderTrace?.(m.id) : undefined}
+            sources={m.role === "assistant" ? renderSources?.(m) : undefined}
+            onRetry={m.role === "assistant" ? onRetry : undefined}
+            recipeHandle={recipeHandle}
+            modelId={modelId}
+          />
+        ))}
     </div>
   );
 }
