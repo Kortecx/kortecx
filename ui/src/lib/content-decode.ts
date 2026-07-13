@@ -18,7 +18,15 @@ import { decodeCriticVerdict } from "@kortecx/sdk/web";
 /** A media MIME sniffed from magic bytes (or supplied as an advisory hint). */
 type MediaKind = "image" | "video" | "audio";
 
-export type DecodedKind = "empty" | "json" | "text" | "markdown" | "binary" | "verdict" | MediaKind;
+export type DecodedKind =
+  | "empty"
+  | "json"
+  | "text"
+  | "markdown"
+  | "html"
+  | "binary"
+  | "verdict"
+  | MediaKind;
 
 export interface DecodedContent {
   readonly kind: DecodedKind;
@@ -122,12 +130,28 @@ export interface DecodeHints {
 }
 
 const MARKDOWN_NAME = /\.(md|markdown)$/i;
+const SVG_NAME = /\.svg$/i;
+const HTML_NAME = /\.html?$/i;
 
 function isMarkdownHint(hints: DecodeHints): boolean {
   if (hints.mediaType?.startsWith("text/markdown")) {
     return true;
   }
   return hints.filename !== undefined && MARKDOWN_NAME.test(hints.filename);
+}
+
+function isSvgHint(hints: DecodeHints): boolean {
+  if (hints.mediaType?.startsWith("image/svg+xml")) {
+    return true;
+  }
+  return hints.filename !== undefined && SVG_NAME.test(hints.filename);
+}
+
+function isHtmlHint(hints: DecodeHints): boolean {
+  if (hints.mediaType?.startsWith("text/html")) {
+    return true;
+  }
+  return hints.filename !== undefined && HTML_NAME.test(hints.filename);
 }
 
 export function decodeContent(bytes: Uint8Array, hints: DecodeHints = {}): DecodedContent {
@@ -145,9 +169,13 @@ export function decodeContent(bytes: Uint8Array, hints: DecodeHints = {}): Decod
     return { kind: "verdict", text: verdict, byteLength: bytes.length, truncated: false };
   }
 
-  // Media first: a magic-byte sniff, then an advisory image/video/audio hint. The
-  // displayable shape is the raw bytes + the resolved MIME (rendered as a blob URL).
-  const advisory = hints.mediaType && mediaKindOf(hints.mediaType) ? hints.mediaType : null;
+  // Media first: a magic-byte sniff, then an advisory image/video/audio hint — OR a
+  // `.svg` filename (SVG is text, so it never magic-byte-sniffs). All resolve to the
+  // raw bytes + MIME, rendered via a script-safe blob `<img>` (an <img>-loaded SVG
+  // cannot execute embedded scripts or fetch external refs — no sanitizer needed).
+  const advisory =
+    (hints.mediaType && mediaKindOf(hints.mediaType) ? hints.mediaType : null) ??
+    (isSvgHint(hints) ? "image/svg+xml" : null);
   const mime = sniffMediaMime(bytes) ?? advisory;
   if (mime) {
     const kind = mediaKindOf(mime);
@@ -175,10 +203,17 @@ export function decodeContent(bytes: Uint8Array, hints: DecodeHints = {}): Decod
     return { kind: "binary", text, byteLength: bytes.length, truncated };
   }
 
-  // Markdown is opt-in via a hint (a `.md` name / `text/markdown`) — never guessed
-  // from content, so a plain-text artifact never silently re-renders as markdown.
+  // Markdown + HTML are opt-in via an advisory hint (a `.md`/`.html` name or a
+  // `text/markdown`/`text/html` media type) — NEVER guessed from content, so a plain-
+  // text artifact never silently re-renders. Each keeps the decoded `text` (the source,
+  // also the inline-edit path). SVG is handled above via the blob-`<img>` media path.
   if (isMarkdownHint(hints)) {
     return { kind: "markdown", text: utf8, byteLength: bytes.length, truncated: false };
+  }
+  if (isHtmlHint(hints)) {
+    // The viewer renders HTML in a fully-sandboxed, CSP-locked iframe (no scripts, no
+    // outbound fetch); `text` is the source (the edit path renders it too).
+    return { kind: "html", text: utf8, byteLength: bytes.length, truncated: false };
   }
 
   // Only treat objects/arrays as JSON — a bare number/string is plain text.

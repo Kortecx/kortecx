@@ -1450,6 +1450,13 @@ select {
   max-height: 60vh;
   overflow: auto;
 }
+.asset-viewer__html {
+  width: 100%;
+  height: 60vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff; /* HTML previews assume a white canvas; the frame is sandboxed */
+}
 .asset-viewer__actions {
   display: flex;
   justify-content: flex-end;

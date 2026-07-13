@@ -25,7 +25,7 @@ import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { TextEditor } from "../editor/TextEditor";
 
-const EDITABLE_KINDS = new Set(["json", "text", "markdown", "empty"]);
+const EDITABLE_KINDS = new Set(["json", "text", "markdown", "html", "empty"]);
 
 function editorLanguage(kind: string): MonacoLanguage {
   if (kind === "json") {
