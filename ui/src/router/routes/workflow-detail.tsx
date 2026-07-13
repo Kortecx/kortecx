@@ -1,5 +1,5 @@
 import { createRoute, useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useState } from "react";
 import { ConnectGate } from "../../components/ConnectGate";
 import { EmptyState } from "../../components/EmptyState";
 import { ErrorNotice } from "../../components/ErrorNotice";
@@ -21,6 +21,17 @@ import { rootRoute } from "./__root";
 const MoteDag = lazy(() =>
   import("../../components/dag/MoteDag").then((m) => ({ default: m.MoteDag })),
 );
+// The WAVE-3 App Run interface (WATCH timeline + REVIEW outputs) — lazy, so it adds
+// no eager bytes and only loads when the Timeline tab is opened.
+const RunTimeline = lazy(() =>
+  import("../../components/dag/RunTimeline").then((m) => ({ default: m.RunTimeline })),
+);
+// ITERATE ("Re-run with changes") — the shipped RerunDrawer, lazy (opened on click):
+// pre-fills the run's recipe form from GetRunInputs and re-invokes, the core single-user
+// iterate loop. Reused verbatim from the Workflows list; no new component.
+const RerunDrawer = lazy(() =>
+  import("../../components/sections/RerunDrawer").then((m) => ({ default: m.RerunDrawer })),
+);
 const ArtifactGallery = lazy(() =>
   import("../../components/sections/ArtifactGallery").then((m) => ({
     default: m.ArtifactGallery,
@@ -32,9 +43,10 @@ const ArtifactView = lazy(() =>
 
 const ROUTE_ID = "/workflows/$instanceId";
 
-/** The run-detail tabs (PR-2 merge, D141.1): the DAG/table telemetry views plus
- *  the folded-in Artifacts gallery and the run-scoped Activity panel. */
-const RUN_TABS = ["graph", "table", "artifacts", "activity"] as const;
+/** The run-detail tabs (PR-2 merge, D141.1): the DAG/table telemetry views, the
+ *  WAVE-3 turn-by-turn Timeline (WATCH the ReAct chain + REVIEW the run outputs), the
+ *  folded-in Artifacts gallery, and the run-scoped Activity panel. */
+const RUN_TABS = ["graph", "timeline", "table", "artifacts", "activity"] as const;
 type RunTab = (typeof RUN_TABS)[number];
 
 interface RunSearch {
@@ -49,6 +61,7 @@ interface RunSearch {
 
 const TAB_LABEL: Record<RunTab, string> = {
   graph: "Graph",
+  timeline: "Timeline",
   table: "Table",
   artifacts: "Artifacts",
   activity: "Activity",
@@ -68,6 +81,7 @@ function WorkflowDetailContent() {
   const { atSeq, terminal } = search;
   const tab: RunTab = search.tab ?? "graph";
   const navigate = useNavigate({ from: ROUTE_ID });
+  const [rerun, setRerun] = useState(false);
   const projection = useProjection(instanceId, {
     ...(atSeq != null ? { atSeq } : {}),
     ...(terminal ? { terminalMoteId: terminal } : {}),
@@ -84,14 +98,24 @@ function WorkflowDetailContent() {
             {shortHex(instanceId)}
           </code>
         </h1>
-        <button
-          type="button"
-          className="linkbtn"
-          onClick={() => void projection.refetch()}
-          disabled={projection.isFetching}
-        >
-          Refresh
-        </button>
+        <div className="screen__head-actions">
+          <button
+            type="button"
+            className="linkbtn"
+            data-testid="run-rerun"
+            onClick={() => setRerun(true)}
+          >
+            Re-run with changes
+          </button>
+          <button
+            type="button"
+            className="linkbtn"
+            onClick={() => void projection.refetch()}
+            disabled={projection.isFetching}
+          >
+            Refresh
+          </button>
+        </div>
       </div>
       <fieldset className="view-toggle" aria-label="Run view" data-testid="run-tabs">
         {RUN_TABS.map((t) => (
@@ -131,6 +155,11 @@ function WorkflowDetailContent() {
           {tab === "graph" || tab === "table" ? (
             <RunGraph projection={data} table={tab === "table"} />
           ) : null}
+          {tab === "timeline" ? (
+            <Suspense fallback={<EmptyState title="Loading timeline…" />}>
+              <RunTimeline instanceId={instanceId} projection={data} />
+            </Suspense>
+          ) : null}
           {tab === "artifacts" ? (
             <ArtifactsTab instanceId={instanceId} contentRef={search.ref} />
           ) : null}
@@ -144,6 +173,21 @@ function WorkflowDetailContent() {
             />
           ) : null}
         </>
+      ) : null}
+      {rerun ? (
+        <Suspense fallback={null}>
+          <RerunDrawer
+            run={{
+              instanceId,
+              terminalMoteId: terminal ?? null,
+              recipeFingerprint: data?.recipeFingerprint ?? null,
+              handle: null,
+              startedAt: 0,
+              args: null,
+            }}
+            onClose={() => setRerun(false)}
+          />
+        </Suspense>
       ) : null}
     </section>
   );

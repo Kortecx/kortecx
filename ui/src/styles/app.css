@@ -4103,6 +4103,157 @@ button.card-grid__title:hover {
   font-size: 0.85em;
 }
 
+/* WAVE-3 (PR-1): the App Run interface — the ReAct chain as a timeline of cards
+ * (WATCH), and the committed outputs as an honest post-run-head review list (REVIEW).
+ * Tokens / currentColor only ⇒ both themes by construction. */
+.run-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.run-timeline__status {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+.run-timeline__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: run-timeline-pulse 1.6s ease-out infinite;
+}
+.run-timeline__pulse.is-rest {
+  background: var(--fg-muted);
+  animation: none;
+}
+@keyframes run-timeline-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-timeline__pulse {
+    animation: none;
+  }
+}
+.run-timeline__turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.run-timeline__card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  background: color-mix(in srgb, currentColor 3%, transparent);
+}
+.run-timeline__card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.run-timeline__turn {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  min-width: 3.4rem;
+}
+.run-timeline__branch {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+.run-timeline .badge[data-branch="answer"] {
+  border-color: var(--ok, var(--accent));
+}
+.run-timeline .badge[data-branch="dead_lettered"] {
+  border-color: var(--danger, currentColor);
+}
+.run-timeline .badge[data-branch="rejected"] {
+  border-color: var(--warn, var(--danger, currentColor));
+}
+.run-timeline__reason {
+  margin-top: 0.35rem;
+  cursor: pointer;
+}
+.run-timeline__reason > summary {
+  list-style: none;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+}
+.run-timeline__reason .muted {
+  display: block;
+  margin-top: 0.25rem;
+  max-width: 40rem;
+  font-size: 0.85em;
+}
+.run-changes {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.run-changes__head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.run-changes__head p {
+  margin: 0.15rem 0 0.5rem;
+  font-size: 0.8rem;
+}
+.run-changes__body {
+  display: grid;
+  grid-template-columns: minmax(11rem, 16rem) 1fr;
+  gap: 0.75rem;
+  align-items: start;
+}
+.run-changes__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.run-changes__item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.run-changes__item:hover {
+  background: color-mix(in srgb, currentColor 5%, transparent);
+}
+.run-changes__item.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.run-changes__view {
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .run-changes__body {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* POC-5c (D168): the New Chat status loop — an HONEST single-line current-phase
  * indicator (replaces the inline ReactProgress strip). The dot is the ONLY cosmetic
  * motion; the text is fact-driven (GR15). Tokens only → both themes + AA by
