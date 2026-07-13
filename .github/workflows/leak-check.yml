@@ -119,6 +119,38 @@ jobs:
           fi
           echo "✅ Content-based sentinel scan clean."
 
+      - name: PR-notes (description + commit messages) leak scan
+        if: github.event_name == 'pull_request'
+        # The PR DESCRIPTION + the commit messages are PUBLIC too, but the code-diff scans
+        # above never see them — so a PR body could leak a private name / roadmap code the
+        # net otherwise catches. Scan them here for the SAME coarse public sentinels. (The
+        # full private taxonomy stays in the private brain; this file is world-readable, so
+        # it holds only the safe public subset.) The PR body rides an env var (not string-
+        # interpolated into the script) so a crafted body cannot inject shell.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          NOTES=$(printf '%s\n' "${PR_BODY:-}"; git log origin/main...HEAD --format='%B' || true)
+          FAIL=0
+          for term in 'kx-cloud-' 'Kortecx/kortecx-core' 'private-main'; do
+            if printf '%s' "$NOTES" | grep -F "$term" > /dev/null; then
+              echo "❌ SN-2 LEAK: PR notes (description / commit messages) reference private term: '$term'"
+              FAIL=1
+            fi
+          done
+          if printf '%s' "$NOTES" | grep -E 'RC-(SW|UP)[0-9]|Wave-[0-9]' > /dev/null; then
+            echo "❌ SN-2 LEAK: PR notes reference a private roadmap code (RC-SW*/RC-UP*/Wave-N)."
+            FAIL=1
+          fi
+          if [ "$FAIL" -eq 1 ]; then
+            echo ""
+            echo "PR descriptions + commit messages are PUBLIC — keep them OSS-only (no cloud/private"
+            echo "repo names or roadmap codes). Sanitize the PR body (and the squash-merge message)."
+            exit 1
+          fi
+          echo "✅ PR-notes leak scan clean."
+
       - name: Final SN-2 summary
         run: |
-          echo "✅ SN-2 (fork-only public leak net) PASS — no private paths, names, or roadmap codes."
+          echo "✅ SN-2 (fork-only public leak net) PASS — no private paths, names, roadmap codes, or PR-note leaks."
