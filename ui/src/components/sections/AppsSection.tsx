@@ -4,16 +4,10 @@ import { m } from "framer-motion";
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
-import {
-  useApp,
-  useApps,
-  useCloneApp,
-  useExportAppBundle,
-  useImportApp,
-  useRunApp,
-} from "../../kx/use-apps";
+import { useApp, useApps, useCloneApp, useExportAppBundle, useImportApp } from "../../kx/use-apps";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { AppViewPopover } from "../apps/AppViewPopover";
 import { ApprovalsInbox } from "../apps/ApprovalsInbox";
 import { CodeViewer } from "../editor/CodeViewer";
@@ -53,7 +47,6 @@ export function AppsSection({
 } = {}) {
   const navigate = useNavigate();
   const { apps, notWired, isLoading, isError, error, refetch } = useApps();
-  const runApp = useRunApp();
   const exportBundle = useExportAppBundle();
   const importApp = useImportApp();
   const cloneApp = useCloneApp();
@@ -62,17 +55,16 @@ export function AppsSection({
   const [creating, setCreating] = useState(false);
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [runHandle, setRunHandle] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Open the typed run drawer for this App — it reads the App's `input_schema` (via
+  // GetApp) and submits with the collected args (an App with no inputs runs in one
+  // click, then routes to the live run). This replaces a direct argless
+  // `runApp.mutate({ handle })`, which silently ran any App declaring inputs with an
+  // empty prompt — a wrong run for every parameterized App.
   function run(handle: string): void {
-    runApp.mutate(
-      { handle },
-      {
-        onSuccess: ({ instanceId }) => {
-          void navigate({ to: "/workflows/$instanceId", params: { instanceId } });
-        },
-      },
-    );
+    setRunHandle(handle);
   }
 
   // Download: export the App as a portable .kxapp bundle (envelope + content closure)
@@ -123,14 +115,6 @@ export function AppsSection({
       },
     );
   }
-
-  const runError = runApp.error ? toUiError(runApp.error) : null;
-  // G2: a RunApp `missing integration: <name>` refusal is actionable — offer to open
-  // the Connections panel to register the connection the App references.
-  const missingIntegration = runError !== null && /missing integration/i.test(runError.message);
-  const runAction = missingIntegration
-    ? { label: "Set up integration", onClick: () => void navigate({ to: "/tools" }) }
-    : undefined;
 
   return (
     <section className="screen" data-testid="apps-section">
@@ -239,7 +223,7 @@ export function AppsSection({
                 <AppCard
                   key={a.handle}
                   app={a}
-                  pending={runApp.isPending}
+                  pending={false}
                   downloadPending={exportBundle.isPending}
                   onRun={run}
                   onView={setSummaryFor}
@@ -250,10 +234,6 @@ export function AppsSection({
                 />
               ))}
             </m.div>
-          ) : null}
-
-          {runError ? (
-            <ErrorNotice error={runError} onRetry={() => runApp.reset()} action={runAction} />
           ) : null}
 
           {cloneApp.error ? (
@@ -274,6 +254,9 @@ export function AppsSection({
                 cloneApp.reset();
               }}
             />
+          ) : null}
+          {runHandle ? (
+            <AppRunDrawer handle={runHandle} onClose={() => setRunHandle(null)} />
           ) : null}
         </>
       )}
