@@ -4640,42 +4640,6 @@ button.card-grid__title:hover {
   min-height: 360px;
 }
 
-/* POC-5d: the Workflows → Apps trigger list. */
-.runs-apps {
-  margin-top: 1.4rem;
-}
-.runs-apps__list {
-  list-style: none;
-  margin: 0.6rem 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-.runs-apps__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.8rem;
-  padding: 0.55rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-elev);
-}
-.runs-apps__id {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 0;
-}
-.runs-apps__name {
-  font-weight: 600;
-}
-.runs-apps__actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-}
 .app-run-drawer__noinputs {
   display: flex;
   flex-direction: column;
