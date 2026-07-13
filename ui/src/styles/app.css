@@ -1535,6 +1535,12 @@ select {
   overflow-y: auto;
   overscroll-behavior: contain; /* a thread scroll never chains to the page */
 }
+/* Empty thread: the list still fills the height (so the composer stays bottom-pinned),
+ * with the "No messages yet" state centered rather than hugging the top. */
+.chat__list--empty {
+  align-items: center;
+  justify-content: center;
+}
 /* Bound the shell to the viewport ONLY on the chat route so `.chat` can own the
  * scroll. The navbar is already position:sticky; the sidebar scrolls internally. */
 /* The full-viewport chat layout applies to the /chat ROUTE only. When a `.chat` lives

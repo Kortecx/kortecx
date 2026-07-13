@@ -61,8 +61,15 @@ export function MessageList({
     }
   }, [thread, autoscroll]);
 
+  // Always render the flex:1 `.chat__list` so the composer stays pinned to the bottom
+  // even on the empty New-Chat landing; the empty state centers within it (a bare
+  // EmptyState here would collapse the list to content height and float the composer).
   if (thread.messages.length === 0) {
-    return <EmptyState title="No messages yet" detail="Ask the runtime something below." />;
+    return (
+      <div className="chat__list chat__list--empty" data-testid="message-list">
+        <EmptyState title="No messages yet" detail="Ask the runtime something below." />
+      </div>
+    );
   }
 
   return (
