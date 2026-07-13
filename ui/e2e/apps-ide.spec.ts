@@ -102,6 +102,8 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await page.getByTestId("app-tab-lineage").click();
   await expect(page.getByTestId("app-lineage")).toBeVisible();
   await expect(page.getByTestId("lineage-readonly-notice")).toBeVisible();
+  // A clean static diagram (dagre node cards + SVG connectors), not a reactflow editor.
+  await expect(page.getByTestId("app-lineage-diagram")).toBeVisible();
   await expect(page.getByTestId("app-lineage-save")).toHaveCount(0);
   // The tab is URL-addressable (refresh-safe).
   await expect(page).toHaveURL(/[?&]tab=lineage/);

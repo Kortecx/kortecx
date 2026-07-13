@@ -1,13 +1,16 @@
 /**
  * POC-5d: the single-App IDE — a full-screen workspace (the `.screen` shell, like
- * the run detail) with three URL-addressable tabs:
- *  - **Files**: the {@link FileTree} over the App's CoW branch manifest + a file pane
- *    that VIEWS a file (read-only Monaco), edits it DIRECTLY (typed Monaco →
- *    PutContent → AdvanceBranch), or edits it AGENTICALLY with a REVIEW/DIFF GATE
- *    (propose → diff → approve/reject; closes T-AGENTIC-EDIT-REVIEW-GATE);
- *  - **Lineage**: the editable blueprint graph ({@link AppLineageSection});
- *  - **Chat**: the embedded App-scoped {@link AppChat}.
- * The header carries the App name, a Lock chip, and Run (opens {@link AppRunDrawer}).
+ * the run detail) with URL-addressable tabs:
+ *  - **Files**: the {@link FileTree} (a collapsible sidebar rail) over the App's CoW
+ *    branch manifest + a file pane that VIEWS a file (read-only Monaco), edits it
+ *    DIRECTLY (typed Monaco → PutContent → AdvanceBranch), or edits it AGENTICALLY
+ *    with a REVIEW/DIFF GATE (propose → diff → approve/reject);
+ *  - **Lineage**: a read-only diagram of the blueprint ({@link AppLineageSection});
+ *  - **Skills**: attach/detach catalog skills ({@link SkillsRail});
+ *  - **MCP Tools** / **Integrations**: the read-only capability manifest, split.
+ * The header carries the editable App name (left) and top-right actions — Chat & edit
+ * (opens {@link AppChatEditDrawer}), Run (opens {@link AppRunDrawer}), Download, and
+ * the Lock toggle.
  *
  * GR15 / D142 honesty: a LOCKED App disables every WRITE affordance (direct save +
  * agentic edit + structure save) with a clear notice — the runtime refuses the write

@@ -1,30 +1,14 @@
 /**
- * POC-5d: the single-App Lineage editor. The real reactflow canvas is covered by the
- * browser E2E (jsdom can't measure a viewport); here `@xyflow/react` is stubbed so the
- * editor's logic is asserted: an editable App exposes Save, a LOCKED App hides Save +
- * shows the honest lock notice (GR15), and an un-round-trippable (exec) blueprint is
- * read-only.
+ * POC-5d / redesign: the single-App Lineage pane — now a clean, READ-ONLY diagram
+ * (a static dagre layout of node cards + SVG connectors, no reactflow editor). The
+ * pixel layout is covered by the browser E2E; here the logic is asserted: the pane
+ * VIEWS + offers Run with NO authoring controls (relocated to Workflows), the parsed
+ * blueprint steps land on the diagram, and an un-round-trippable (exec) blueprint
+ * still renders read-only.
  */
 
 import { render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-vi.mock("@xyflow/react", () => ({
-  ReactFlow: ({ nodes }: { nodes: unknown[] }) => (
-    <div data-testid="rf" data-nodes={nodes.length} />
-  ),
-  ReactFlowProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-  Background: () => null,
-  Controls: () => null,
-  MiniMap: () => null,
-  addEdge: (_c: unknown, es: unknown[]) => es,
-  useNodesState: (initial: unknown) => [initial, vi.fn(), vi.fn()],
-  useEdgesState: (initial: unknown) => [initial, vi.fn(), vi.fn()],
-  Handle: () => null,
-  Position: { Top: "top", Bottom: "bottom" },
-  MarkerType: { ArrowClosed: "arrowclosed" },
-}));
 
 let ENVELOPE: Record<string, unknown> = {
   blueprint: { seed: 0, steps: [{ kind: "model", model_id: "m", prompt: "hi" }] },
@@ -65,7 +49,7 @@ afterEach(() => {
 });
 
 describe("App Lineage (view-only)", () => {
-  it("renders the read-only canvas + Run, with NO authoring controls (relocated to Workflows)", () => {
+  it("renders the read-only diagram + Run, with NO authoring controls (relocated to Workflows)", () => {
     render(<AppLineageSection handle="apps/local/x" />);
     expect(screen.getByTestId("app-lineage")).toBeInTheDocument();
     expect(screen.getByTestId("lineage-readonly-notice")).toBeInTheDocument();
@@ -77,10 +61,10 @@ describe("App Lineage (view-only)", () => {
     expect(screen.queryByTestId("lineage-add-tool")).toBeNull();
   });
 
-  it("lays the parsed blueprint steps onto the canvas", () => {
+  it("lays the parsed blueprint steps onto the diagram", () => {
     render(<AppLineageSection handle="apps/local/x" />);
-    // The single model step from the seeded envelope renders as one node.
-    expect(screen.getByTestId("rf")).toHaveAttribute("data-nodes", "1");
+    // The single model step from the seeded envelope renders as one diagram node.
+    expect(screen.getByTestId("app-lineage-diagram")).toHaveAttribute("data-steps", "1");
   });
 
   it("an un-round-trippable (exec) blueprint still renders view-only (no authoring)", () => {
