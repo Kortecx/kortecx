@@ -52,21 +52,40 @@ export function useDatasetQuery(
   });
 }
 
+/** A pre-read binary document — raw file bytes + advisory metadata (name/media type).
+ *  `metadata` is forward-compat (accepted on the wire, not yet persisted; SN-8) — set
+ *  so a later artifact-preview decode can hint off the name/media type. */
+export interface FileDoc {
+  readonly content: Uint8Array;
+  readonly metadata?: Readonly<Record<string, string>>;
+}
+
 export interface IngestInput {
   readonly dataset: string;
-  /** One document per entry (UTF-8 text; the server embeds it). */
-  readonly docs: readonly string[];
+  /** Text documents — one per entry (UTF-8; the server embeds each). */
+  readonly docs?: readonly string[];
+  /** Binary documents — already-read file bytes (multimodal ingest). */
+  readonly fileDocs?: readonly FileDoc[];
 }
 
 export function useIngestDocuments() {
   const { client, endpoint } = useConnection();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ dataset, docs }: IngestInput): Promise<IngestResult> => {
+    mutationFn: async ({
+      dataset,
+      docs = [],
+      fileDocs = [],
+    }: IngestInput): Promise<IngestResult> => {
       if (!client) {
         throw new Error("not connected");
       }
-      const documents = docs.map((d) => ({ content: new TextEncoder().encode(d) }));
+      // Text docs are UTF-8 encoded; file docs already carry raw bytes. Both cross the
+      // wire as `IngestDoc.content: Uint8Array` — the SAME shipped `IngestDocuments` RPC.
+      const documents = [
+        ...docs.map((d) => ({ content: new TextEncoder().encode(d) })),
+        ...fileDocs,
+      ];
       return client.ingestDocuments(dataset, documents);
     },
     onSuccess: () => {
