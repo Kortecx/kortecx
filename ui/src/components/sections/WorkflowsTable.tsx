@@ -16,6 +16,7 @@ import { humanizeHandle } from "../../lib/humanize-handle";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { Icon } from "../shell/Icon";
+import { ScheduleButton } from "./ScheduleButton";
 
 /**
  * The Workflows (definitions) TABLE (PR-A): the runnable workflow blueprints
@@ -233,6 +234,7 @@ function WorkflowDetailDrawer({
           >
             Run workflow →
           </Link>
+          <ScheduleButton recipeHandle={handle} testId={`workflow-schedule-${handle}`} />
           {/* The ONLY open-in-new-window button lives in the popup (point 4). */}
           <a
             href={`/recipes?handle=${encodeURIComponent(handle)}`}
