@@ -1,7 +1,7 @@
 /**
  * PR-2 route merge (D141.1): /workflows is the one home for run telemetry.
- * Covers the sidebar target, the detail tabs (graph/table/artifacts/activity,
- * URL-addressable), and the legacy-path redirects with search preservation
+ * Covers the sidebar target, the detail tabs (graph/timeline/table/artifacts/
+ * activity, URL-addressable), and the legacy-path redirects with search preservation
  * (the redirects are route-level, so they assert WITHOUT a live connection).
  */
 
@@ -65,6 +65,13 @@ test("workflows: sidebar lands on the run list; the detail tabs are URL-addressa
   await expect(page.getByTestId("mote-table")).toBeVisible();
   await expect(page).toHaveURL(/tab=table/);
 
+  // Timeline tab — the WAVE-3 App Run interface: WATCH (a pure-DAG run has no ReAct
+  // chain, so it shows the per-step fallback) + REVIEW (the committed run outputs).
+  await page.getByTestId("run-tab-timeline").click();
+  await expect(page.getByTestId("run-timeline")).toBeVisible();
+  await expect(page.getByTestId("run-changes")).toBeVisible();
+  await expect(page).toHaveURL(/tab=timeline/);
+
   // Artifacts tab — the folded-in gallery (no run picker: the run is in scope).
   await page.getByTestId("run-tab-artifacts").click();
   await expect(page.getByTestId("artifacts-tab")).toBeVisible();
@@ -80,4 +87,9 @@ test("workflows: sidebar lands on the run list; the detail tabs are URL-addressa
   // Back to the graph (the default tab drops the param).
   await page.getByTestId("run-tab-graph").click();
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
+
+  // ITERATE: "Re-run with changes" opens the pre-filling drawer (durable-recovery
+  // via GetRunInputs — degrades honestly if this gateway doesn't capture inputs).
+  await page.getByTestId("run-rerun").click();
+  await expect(page.getByTestId("rerun-drawer")).toBeVisible();
 });
