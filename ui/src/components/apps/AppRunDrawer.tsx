@@ -12,6 +12,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { toUiError } from "../../kx/errors";
 import { useApp, useRunApp } from "../../kx/use-apps";
 import { appInputForm } from "../../lib/app-input-schema";
@@ -56,16 +57,16 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
     );
   }
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close run"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="app-run-drawer"
         // biome-ignore lint/a11y/useSemanticElements: non-modal side panel; dialog semantics via role+aria-label (mirrors StepConfigDrawer).
         role="dialog"
@@ -116,6 +117,7 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
           )}
         </div>
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

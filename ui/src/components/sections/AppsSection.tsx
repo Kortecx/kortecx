@@ -317,9 +317,15 @@ function AppCard({
       data-testid={`app-card-${app.handle}`}
     >
       <div className="card-grid__head">
-        <span className="card-grid__title" title={app.name}>
+        <button
+          type="button"
+          className="card-grid__title card-grid__title-btn"
+          title={`${app.name} — view details`}
+          data-testid={`app-card-view-${app.handle}`}
+          onClick={() => onView(app.handle)}
+        >
           {app.name}
-        </span>
+        </button>
         <span className="chip chip--tag">v{app.version}</span>
         <div className="card-grid__head-actions">
           <button

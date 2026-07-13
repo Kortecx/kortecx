@@ -15,6 +15,7 @@
 
 import { m } from "framer-motion";
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { toUiError } from "../../kx/errors";
 import { useAppBranch } from "../../kx/use-app-files";
 import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
@@ -64,16 +65,16 @@ export function AppChatEditDrawer({
     );
   }
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close chat"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer app-chat-drawer"
+        className="node-drawer node-drawer--overlay app-chat-drawer"
         data-testid="app-chat-drawer"
         // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; non-modal side-panel semantics via role+aria-label (the NodeDetailDrawer precedent)
         role="dialog"
@@ -84,7 +85,13 @@ export function AppChatEditDrawer({
       >
         <div className="node-drawer__head">
           <strong>Chat &amp; edit</strong>
-          <button type="button" className="linkbtn" onClick={onClose} aria-label="Close">
+          <button
+            type="button"
+            className="linkbtn"
+            data-testid="app-chat-drawer-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
             ✕
           </button>
         </div>
@@ -187,6 +194,7 @@ export function AppChatEditDrawer({
           </section>
         )}
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

@@ -49,11 +49,12 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await gotoViaPalette(page, "apps");
   await expect(page.getByTestId("apps-section")).toBeVisible();
 
-  // View details → the READ-ONLY capability manifest panel (needs vs. what you have).
-  await page.getByTestId(`app-menu-${HANDLE}`).click();
-  await page.getByTestId(`app-view-${HANDLE}`).click();
+  // Clicking the App's NAME opens the READ-ONLY View popover — a glimpse of the App
+  // (summary + capability manifest); deep edit opens in a new tab from here.
+  await page.getByTestId(`app-card-view-${HANDLE}`).click();
   await expect(page.getByTestId("app-view")).toBeVisible();
   await expect(page.getByTestId("app-manifest")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId(`app-view-open-tab-${HANDLE}`)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("app-view")).toBeHidden();
 
@@ -73,7 +74,11 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await page.getByTestId("app-detail-chat").click();
   await expect(page.getByTestId("app-chat-drawer")).toBeVisible();
   await expect(page.getByTestId("app-edit-propose")).toBeVisible();
-  await page.getByLabel("Close chat").click();
+  // The scrim covers the viewport (a real dim users can click to dismiss) — clicking
+  // its top-left (clear of the right-side drawer) closes the drawer.
+  const scrimBox = await page.getByLabel("Close chat").boundingBox();
+  expect(scrimBox?.height ?? 0).toBeGreaterThan(100);
+  await page.getByLabel("Close chat").click({ position: { x: 20, y: 20 } });
   await expect(page.getByTestId("app-chat-drawer")).toHaveCount(0);
 
   // Files: the tree is a collapsible sidebar rail (collapse hides it, expand restores it).

@@ -1970,6 +1970,17 @@ select {
   align-items: center;
   gap: 0.5rem;
 }
+/* Even out mixed text + icon buttons in the header action clusters (New Chat, Apps,
+ * the App-detail header) so a primary "New …" button and the icon actions share one
+ * height and sit on a single tidy row. */
+.screen__head-actions > button,
+.screen__head-actions > a,
+.section-head__actions > button,
+.section-head__actions > a,
+.chat__head-actions > button,
+.chat__head-actions > a {
+  min-height: 32px;
+}
 .modelpicker {
   display: inline-flex;
   align-items: center;
@@ -2998,6 +3009,26 @@ select {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* The title doubles as the "open info" affordance — clicking the item name opens the
+ * read-only View popover (a glimpse; deep edit opens from there). A reset button that
+ * inherits the title's type; only font-family/chrome differ from a native button. */
+.card-grid__title-btn {
+  font-family: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.card-grid__title-btn:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.card-grid__title-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
 a.card-grid__title:hover {
   color: var(--primary-h);
   text-decoration: underline;
@@ -3999,6 +4030,11 @@ button.card-grid__title:hover {
 .node-drawer__scrim {
   position: absolute;
   inset: 0;
+  /* The scrim is a <button> — form controls take their INTRINSIC block size and do
+   * NOT stretch to top+bottom the way a <div> does (width stretches via left+right,
+   * height collapses to ~0). Force it to fill its positioned ancestor. */
+  width: 100%;
+  height: 100%;
   border: 0;
   padding: 0;
   background: var(--scrim-color);
@@ -4060,6 +4096,27 @@ button.card-grid__title:hover {
   border-left: 1px solid var(--border-md);
   box-shadow: -8px 0 28px rgba(13, 13, 13, 0.1);
 }
+/* A section-level slide-over (Apps / Workflows "View", the App Run + Chat & edit
+ * drawers) must anchor to the VIEWPORT, not the scrolled document — the base
+ * `.node-drawer` is `position:absolute` for CANVAS-scoped drawers (the DAG node
+ * drawer, the builder step/edge drawers), whose positioned canvas contains them.
+ * A section has no positioned ancestor, so absolute anchors to the document origin
+ * and the sticky navbar clips the drawer's top. `--overlay` fixes it to the viewport,
+ * full height, above the navbar (z-index 10), with the scrim dimming the whole page. */
+.node-drawer--overlay {
+  position: fixed;
+  z-index: 50;
+}
+.node-drawer__scrim--overlay {
+  position: fixed;
+  z-index: 49;
+  /* Fixed ⇒ fill the VIEWPORT (portaled to <body>, above the sticky navbar). */
+  width: 100vw;
+  height: 100vh;
+  /* A real modal backdrop (the base --scrim-color is a near-invisible 4% in light
+   * mode — too faint for a full-page overlay); dark-on-both is the scrim convention. */
+  background: rgba(10, 12, 16, 0.42);
+}
 .node-drawer__head {
   display: flex;
   align-items: center;
@@ -4068,6 +4125,13 @@ button.card-grid__title:hover {
 }
 .node-drawer__id {
   font-size: 0.95rem;
+}
+/* Right-aligned action cluster in a drawer head (Open / Open-in-new-tab / Close). */
+.node-drawer__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
 }
 /* POC-5c: a sub-heading inside the read-only App "View" popup (envelope summary +
  * project-branch lineage). Token-only ⇒ both themes + AA by construction. */
