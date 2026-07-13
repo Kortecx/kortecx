@@ -206,7 +206,7 @@ export function AppDetailSection({
       {tab === "chat" ? (
         <AppChat recipeHandle={handle} />
       ) : tab === "lineage" ? (
-        <AppLineageSection handle={handle} locked={locked} />
+        <AppLineageSection handle={handle} />
       ) : tab === "skills" ? (
         app.data ? (
           <SkillsRail handle={handle} envelope={app.data.envelope} locked={locked} />
