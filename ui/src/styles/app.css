@@ -1475,6 +1475,9 @@ select {
   padding: 0.5rem 0;
   overflow-y: auto;
   overscroll-behavior: contain; /* a thread scroll never chains to the page */
+  /* Newest-at-top (Wave-4): a fresh turn prepends at the top; disable scroll anchoring
+     so the browser never bumps scrollTop to keep an old row stationary (we pin to 0). */
+  overflow-anchor: none;
 }
 /* Bound the shell to the viewport ONLY on the chat route so `.chat` can own the
  * scroll. The navbar is already position:sticky; the sidebar scrolls internally. */

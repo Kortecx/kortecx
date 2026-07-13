@@ -143,7 +143,15 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
   if (opts.corsOrigin) {
     args.push("--cors-origin", opts.corsOrigin);
   }
-  const env = opts.fsRoot ? { ...process.env, KX_SERVE_FS_ROOT: opts.fsRoot } : process.env;
+  // Force Ollama OFF so every spawn is model-free + deterministic, MATCHING CI (which
+  // has no Ollama daemon). `KX_SERVE_OLLAMA=auto` (the default) would auto-detect a
+  // dev's ambient Ollama on :11434 and silently provision a model — flaking any spec
+  // that asserts model-free behaviour (e.g. the no-model degrade notice). The
+  // model-needing specs opt back in explicitly.
+  const env: NodeJS.ProcessEnv = { ...process.env, KX_SERVE_OLLAMA: "off" };
+  if (opts.fsRoot) {
+    env.KX_SERVE_FS_ROOT = opts.fsRoot;
+  }
   const proc = spawn(kxBin, args, { stdio: ["ignore", "pipe", "pipe"], env });
   let stopped = false;
   const stop = () => {
