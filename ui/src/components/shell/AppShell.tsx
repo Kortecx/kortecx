@@ -3,6 +3,7 @@ import { AnimatePresence, m } from "framer-motion";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { pageFade } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
+import { loadFlag, persistFlag } from "../../lib/ui-flags";
 import { DevToolsDock } from "../devtools";
 import { ActivityDrawer } from "./ActivityDrawer";
 import { Brand } from "./Brand";
@@ -13,22 +14,6 @@ import { Sidebar } from "./Sidebar";
 
 const SIDEBAR_KEY = "kortecx.ui.sidebar";
 const DEVTOOLS_KEY = "kortecx.ui.devtools";
-
-function loadFlag(key: string): boolean {
-  try {
-    return localStorage.getItem(key) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function persistFlag(key: string, value: boolean): void {
-  try {
-    localStorage.setItem(key, value ? "1" : "0");
-  } catch {
-    /* best-effort */
-  }
-}
 
 /** The animated route outlet (shared by the gate and the full shell). */
 function RouteOutlet() {

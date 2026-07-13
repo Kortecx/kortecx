@@ -2,6 +2,7 @@ import type { RecipeInfo } from "@kortecx/sdk/web";
 import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { Fragment, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
 import { useBlueprintExport } from "../../kx/use-blueprint-export";
@@ -195,16 +196,16 @@ function WorkflowDetailDrawer({
 
   const inputs = form.data ? blueprintInputs(form.data) : [];
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close workflow details"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="workflow-detail-drawer"
         // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; non-modal side-panel semantics via role+aria-label (the NodeDetailDrawer precedent)
         role="dialog"
@@ -330,6 +331,7 @@ function WorkflowDetailDrawer({
 
         {exporter.error ? <ErrorNotice error={toUiError(exporter.error)} /> : null}
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

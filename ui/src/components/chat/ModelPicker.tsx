@@ -28,10 +28,13 @@ function modelSpecs(m: ModelSummary): string {
  * ever rides as a recipe ENUM free-param the SERVER validates at binding
  * (SN-8) — picking a model here grants nothing.
  *
- * Selection precedence when the user has NOT explicitly picked (`value` unset):
- * the server's ACTIVE default (Model Control v2 — shared across surfaces), then the
- * client-local default (set in the Models section, this browser), then the first
- * listed. Each option shows its engine so an Ollama ∥ llama.cpp switch is unmistakable.
+ * Default is AUTO: the user defers the choice and the runtime picks — the server's
+ * ACTIVE default (Model Control v2 — shared across surfaces), then this browser's
+ * client-local default (Models section), then the first listed. The first option
+ * ("Auto") makes that deferral explicit and honest — it names the model the runtime
+ * would pick — and the user STEERS by choosing a concrete model instead. An empty /
+ * unset selection IS Auto (the server resolves it to the default at binding, SN-8).
+ * Each option shows its engine so an Ollama ∥ llama.cpp switch is unmistakable.
  */
 export function ModelPicker({
   value,
@@ -55,22 +58,32 @@ export function ModelPicker({
       </span>
     );
   }
-  // Precedence: explicit pick → server active → client-local default → first.
-  const serverActive = models.find((m) => m.active)?.modelId;
-  const selected =
-    models.find((m) => m.modelId === (value ?? serverActive ?? defaultModelId)) ?? models[0];
+  // The model the runtime resolves to when the user defers ("Auto"): server active,
+  // then this browser's default, then the first listed.
+  const autoResolved =
+    models.find((m) => m.active)?.modelId ?? defaultModelId ?? models[0]?.modelId ?? "";
+  // A concrete steer only when `value` names a served model; otherwise Auto (deferred).
+  const picked = value ? models.find((m) => m.modelId === value) : undefined;
+  const autoLabel = autoResolved ? `Auto · ${autoResolved}` : "Auto (runtime default)";
   return (
     <label className="modelpicker" data-testid="model-picker">
       <span className="modelpicker__label">Model</span>
       <select
-        value={selected?.modelId ?? ""}
+        value={picked?.modelId ?? ""}
         onChange={(e) => onChange(e.target.value)}
         aria-label="Model"
         // The specs (engine · vision · context · …) surface on hover — the picker
         // itself tooltips the SELECTED model (native <option title> is unreliable).
-        title={selected ? modelSpecs(selected) || undefined : undefined}
+        title={
+          picked
+            ? modelSpecs(picked) || undefined
+            : `Auto — the runtime picks ${autoResolved || "the served default"}`
+        }
         data-testid="model-picker-select"
       >
+        <option value="" title={autoResolved ? `The runtime picks ${autoResolved}` : undefined}>
+          {autoLabel}
+        </option>
         {models.map((m) => (
           <option key={m.modelId} value={m.modelId} title={modelSpecs(m) || undefined}>
             {m.modelId}

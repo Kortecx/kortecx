@@ -859,6 +859,10 @@ button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* A compact icon button for dense rails (the Files sidebar collapse toggle). */
+.iconbtn--sm {
+  padding: 0.2rem;
+}
 /* A non-interactive icon (a state indicator, e.g. an App's lock) — no hover chrome. */
 .iconbtn--static {
   cursor: default;
@@ -1530,23 +1534,78 @@ select {
   padding: 0.5rem 0;
   overflow-y: auto;
   overscroll-behavior: contain; /* a thread scroll never chains to the page */
-  /* Newest-at-top: a fresh turn prepends at the top; disable scroll anchoring
-     so the browser never bumps scrollTop to keep an old row stationary (we pin to 0). */
-  overflow-anchor: none;
+}
+/* Empty thread: the list still fills the height (so the composer stays bottom-pinned),
+ * with the "No messages yet" state centered rather than hugging the top. */
+.chat__list--empty {
+  align-items: center;
+  justify-content: center;
 }
 /* Bound the shell to the viewport ONLY on the chat route so `.chat` can own the
  * scroll. The navbar is already position:sticky; the sidebar scrolls internally. */
-.shell:has(.chat) {
+/* The full-viewport chat layout applies to the /chat ROUTE only. When a `.chat` lives
+   inside the App "Chat & edit" slide-over (`.app-chat-drawer`), the `:not()` guard keeps
+   the underlying page (e.g. the App detail) scrolling normally. */
+.shell:has(.chat):not(:has(.app-chat-drawer)) {
   height: 100vh;
 }
-.shell:has(.chat) .shell__main {
+.shell:has(.chat):not(:has(.app-chat-drawer)) .shell__main {
   min-height: 0;
   overflow: hidden;
 }
-.shell:has(.chat) .shell__main > div {
+.shell:has(.chat):not(:has(.app-chat-drawer)) .shell__main > div {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+/* The App "Chat & edit" slide-over: wider than a plain drawer, scrollable, with a
+   bounded chat pane above the propose→diff→approve edit section. */
+.app-chat-drawer {
+  width: min(560px, 94vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow-y: auto;
+}
+.app-chat-drawer__chat {
+  flex: 0 0 auto;
+  height: 46vh;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.app-chat-drawer__chat .chat {
+  height: 100%;
+}
+.app-chat-drawer__edit,
+.app-chat-drawer__review {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.app-chat-drawer__edit {
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+.app-chat-drawer__edit-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+.app-chat-drawer__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.app-chat-drawer__review-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.app-chat-drawer__locked {
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
 }
 .bubble {
   max-width: 760px;
@@ -1916,6 +1975,17 @@ select {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+/* Even out mixed text + icon buttons in the header action clusters (New Chat, Apps,
+ * the App-detail header) so a primary "New …" button and the icon actions share one
+ * height and sit on a single tidy row. */
+.screen__head-actions > button,
+.screen__head-actions > a,
+.section-head__actions > button,
+.section-head__actions > a,
+.chat__head-actions > button,
+.chat__head-actions > a {
+  min-height: 32px;
 }
 .modelpicker {
   display: inline-flex;
@@ -2944,6 +3014,26 @@ select {
   text-decoration: none;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* The title doubles as the "open info" affordance — clicking the item name opens the
+ * read-only View popover (a glimpse; deep edit opens from there). A reset button that
+ * inherits the title's type; only font-family/chrome differ from a native button. */
+.card-grid__title-btn {
+  font-family: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.card-grid__title-btn:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.card-grid__title-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 a.card-grid__title:hover {
   color: var(--primary-h);
@@ -4007,6 +4097,27 @@ button.card-grid__title:hover {
   border-left: 1px solid var(--border-md);
   box-shadow: -8px 0 28px rgba(13, 13, 13, 0.1);
 }
+/* A section-level slide-over (Apps / Workflows "View", the App Run + Chat & edit
+ * drawers) must anchor to the VIEWPORT, not the scrolled document — the base
+ * `.node-drawer` is `position:absolute` for CANVAS-scoped drawers (the DAG node
+ * drawer, the builder step/edge drawers), whose positioned canvas contains them.
+ * A section has no positioned ancestor, so absolute anchors to the document origin
+ * and the sticky navbar clips the drawer's top. `--overlay` fixes it to the viewport,
+ * full height, above the navbar (z-index 10), with the scrim dimming the whole page. */
+.node-drawer--overlay {
+  position: fixed;
+  z-index: 50;
+}
+.node-drawer__scrim--overlay {
+  position: fixed;
+  z-index: 49;
+  /* Fixed ⇒ fill the VIEWPORT (portaled to <body>, above the sticky navbar). */
+  width: 100vw;
+  height: 100vh;
+  /* A real modal backdrop (the base --scrim-color is a near-invisible 4% in light
+   * mode — too faint for a full-page overlay); dark-on-both is the scrim convention. */
+  background: rgba(10, 12, 16, 0.42);
+}
 .node-drawer__head {
   display: flex;
   align-items: center;
@@ -4015,6 +4126,13 @@ button.card-grid__title:hover {
 }
 .node-drawer__id {
   font-size: 0.95rem;
+}
+/* Right-aligned action cluster in a drawer head (Open / Open-in-new-tab / Close). */
+.node-drawer__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
 }
 /* POC-5c: a sub-heading inside the read-only App "View" popup (envelope summary +
  * project-branch lineage). Token-only ⇒ both themes + AA by construction. */
@@ -4804,16 +4922,25 @@ button.card-grid__title:hover {
   cursor: default;
   opacity: 0.85;
 }
+/* Files view: a collapsible left rail (the file tree) + the file pane. The rail is a
+ * sidebar continuous with the shell nav to its left; collapsing it hands the full width
+ * to the pane and remembers the choice (FILES_RAIL_KEY). */
 .app-detail__panes {
   display: grid;
-  grid-template-columns: minmax(180px, 260px) 1fr;
+  grid-template-columns: minmax(180px, 240px) 1fr;
   gap: 1rem;
   margin-top: 0.75rem;
   align-items: start;
 }
+.app-detail__panes[data-collapsed="true"] {
+  grid-template-columns: auto 1fr;
+}
 @media (max-width: 760px) {
   .app-detail__panes {
     grid-template-columns: 1fr;
+  }
+  .app-detail__panes[data-collapsed="true"] {
+    grid-template-columns: auto;
   }
 }
 .app-detail__tree {
@@ -4822,7 +4949,37 @@ button.card-grid__title:hover {
   background: var(--surface);
   padding: 0.5rem;
   overflow: auto;
-  max-height: 70vh;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.app-detail__panes[data-collapsed="true"] .app-detail__tree {
+  overflow: visible;
+}
+.app-detail__tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.app-detail__tree-title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.app-detail__panes[data-collapsed="true"] .app-detail__tree-title {
+  display: none;
+}
+.app-detail__chevron {
+  display: inline-flex;
+  transition: transform 140ms ease;
+}
+/* Expanded ⇒ the chevron points left ("collapse toward the rail"); collapsed ⇒ right. */
+.app-detail__panes:not([data-collapsed="true"]) .app-detail__chevron {
+  transform: rotate(180deg);
 }
 .app-detail__file {
   min-width: 0;
@@ -4961,8 +5118,72 @@ button.card-grid__title:hover {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
-.app-lineage__canvas {
-  min-height: 360px;
+/* The read-only lineage DIAGRAM: a static dagre layout (node cards + SVG connectors),
+ * scroll-contained. No editor chrome — reads as documentation, not a workspace. */
+.lineage-scroll {
+  overflow: auto;
+  max-height: 66vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0.5rem;
+}
+.lineage-diagram {
+  position: relative;
+}
+.lineage-diagram__edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+.lineage-diagram__edge {
+  stroke: var(--border-strong, var(--border));
+  stroke-width: 1.5;
+}
+.lineage-diagram__edge--control {
+  stroke-dasharray: 4 3;
+  opacity: 0.8;
+}
+.lineage-diagram__arrow {
+  fill: var(--border-strong, var(--border));
+}
+.lineage-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+  overflow: hidden;
+}
+.lineage-node[data-kind="model"] {
+  border-left-color: var(--accent);
+}
+.lineage-node[data-kind="tool"] {
+  border-left-color: var(--success, #2e9e6b);
+}
+.lineage-node[data-kind="pure"] {
+  border-left-color: var(--fg-muted);
+}
+.lineage-node__kind {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+.lineage-node__label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app-run-drawer__noinputs {

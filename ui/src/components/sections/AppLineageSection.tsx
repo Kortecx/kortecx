@@ -1,64 +1,113 @@
 /**
- * POC-5d / redesign: the single-App LINEAGE pane — a READ-ONLY view of the App's
- * portable blueprint (a `DagSpec`) rendered as a static reactflow graph: the step order,
- * parallel-vs-sequential shape, and one node per step. Structure AUTHORING (add / remove
- * / reorder / config nodes + edges, save-to-App) is relocated to the Workflows builder;
- * this pane only VIEWS (and offers a Run). Reuses the BuilderNode leaf + the pure
- * `appBlueprintToBuilderGraph` parse + the dagre `layoutGraph`.
+ * The single-App LINEAGE pane — a clean, READ-ONLY diagram of the App's portable
+ * blueprint (a `DagSpec`): step order, parallel-vs-sequential shape, one node per step.
+ * Structure AUTHORING (add / remove / reorder / config + save-to-App) lives in the
+ * Workflows builder; this pane only VIEWS (and offers a Run).
+ *
+ * The diagram is a STATIC dagre layout rendered as plain node cards + SVG connectors —
+ * no editor canvas (no grid, minimap, zoom, drag, or connect handles), so it reads as
+ * documentation, not a workspace. Reuses the pure `appBlueprintToBuilderGraph` parse
+ * and the shared `layoutGraph` (dagre), so it stays byte-faithful to the DAG the run
+ * executes without pulling reactflow into the read path.
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import {
-  Background,
-  Controls,
-  MiniMap,
-  ReactFlow,
-  ReactFlowProvider,
-  useEdgesState,
-  useNodesState,
-} from "@xyflow/react";
-import type { Edge } from "@xyflow/react";
 import { useCallback, useMemo } from "react";
 import { toUiError } from "../../kx/errors";
 import { useApp, useRunApp } from "../../kx/use-apps";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
-import { BuilderNode } from "../builder/BuilderNode";
-import type { BuilderFlowNode } from "../builder/BuilderNode";
 import { appBlueprintToBuilderGraph } from "../builder/app-blueprint";
 import type { BuilderGraph } from "../builder/builder-graph";
-import { layoutGraph } from "../dag/layout";
+import { NODE_H, NODE_W, layoutGraph } from "../dag/layout";
 
-const nodeTypes = { builder: BuilderNode };
-
-/** Lay a parsed lineage graph out via dagre (or an empty starter). */
-function seedLineage(graph: BuilderGraph): { nodes: BuilderFlowNode[]; edges: Edge[] } {
-  if (graph.steps.length === 0) {
-    return { nodes: [], edges: [] };
-  }
-  const positions = layoutGraph(
-    graph.steps.map((s) => s.id),
-    graph.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      edgeKind: e.edge === "control" ? "control" : "data",
-      nonCascade: false,
-    })),
+/** A clean static diagram: dagre-positioned node cards + SVG connectors, read-only. */
+function LineageDiagram({ graph }: { graph: BuilderGraph }) {
+  const positions = useMemo(
+    () =>
+      layoutGraph(
+        graph.steps.map((s) => s.id),
+        graph.edges.map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          edgeKind: e.edge === "control" ? "control" : "data",
+          nonCascade: false,
+        })),
+      ),
+    [graph],
   );
-  const nodes: BuilderFlowNode[] = graph.steps.map((step) => ({
-    id: step.id,
-    type: "builder",
-    position: positions.get(step.id) ?? { x: 80, y: 40 },
-    data: { step },
+  const nodes = graph.steps.map((step) => ({
+    step,
+    pos: positions.get(step.id) ?? { x: 16, y: 16 },
   }));
-  const edges: Edge[] = graph.edges.map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    data: { edge: e.edge },
-  }));
-  return { nodes, edges };
+  const width = Math.ceil(Math.max(NODE_W, ...nodes.map((n) => n.pos.x + NODE_W)) + 16);
+  const height = Math.ceil(Math.max(NODE_H, ...nodes.map((n) => n.pos.y + NODE_H)) + 16);
+
+  return (
+    <div className="lineage-scroll" data-testid="app-lineage-canvas">
+      <div
+        className="lineage-diagram"
+        data-testid="app-lineage-diagram"
+        data-steps={nodes.length}
+        style={{ width, height }}
+        role="img"
+        aria-label="App structure diagram"
+      >
+        <svg className="lineage-diagram__edges" width={width} height={height} aria-hidden="true">
+          <title>Step connections</title>
+          <defs>
+            <marker
+              id="lineage-arrow"
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" className="lineage-diagram__arrow" />
+            </marker>
+          </defs>
+          {graph.edges.map((e) => {
+            const s = positions.get(e.source);
+            const t = positions.get(e.target);
+            if (!s || !t) {
+              return null;
+            }
+            const x1 = s.x + NODE_W / 2;
+            const y1 = s.y + NODE_H;
+            const x2 = t.x + NODE_W / 2;
+            const y2 = t.y;
+            const my = (y1 + y2) / 2;
+            return (
+              <path
+                key={e.id}
+                d={`M ${x1} ${y1} C ${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`}
+                className={`lineage-diagram__edge lineage-diagram__edge--${e.edge}`}
+                markerEnd="url(#lineage-arrow)"
+                fill="none"
+              />
+            );
+          })}
+        </svg>
+        {nodes.map(({ step, pos }) => (
+          <div
+            key={step.id}
+            className="lineage-node"
+            data-kind={step.kind}
+            data-testid={`lineage-node-${step.id}`}
+            style={{ left: pos.x, top: pos.y, width: NODE_W, height: NODE_H }}
+          >
+            <span className="lineage-node__kind">{step.kind}</span>
+            <span className="lineage-node__label" title={step.label || step.id}>
+              {step.label || step.id}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function LineageView({ handle, envelope }: { handle: string; envelope: Record<string, unknown> }) {
@@ -69,9 +118,6 @@ function LineageView({ handle, envelope }: { handle: string; envelope: Record<st
     () => appBlueprintToBuilderGraph((envelope.blueprint ?? { seed: 0, steps: [] }) as never),
     [envelope.blueprint],
   );
-  const seeded = useMemo(() => seedLineage(parsed.graph), [parsed.graph]);
-  const [nodes] = useNodesState<BuilderFlowNode>(seeded.nodes);
-  const [edges] = useEdgesState<Edge>(seeded.edges);
 
   const onRun = useCallback(() => {
     runApp.mutate(
@@ -105,39 +151,16 @@ function LineageView({ handle, envelope }: { handle: string; envelope: Record<st
         <ErrorNotice error={toUiError(runApp.error)} onRetry={() => runApp.reset()} />
       ) : null}
 
-      {nodes.length === 0 ? (
+      {parsed.graph.steps.length === 0 ? (
         <EmptyState title="No steps" detail="This App's blueprint has no steps to show." />
       ) : (
-        <div
-          className="dag-canvas app-lineage__canvas"
-          data-testid="app-lineage-canvas"
-          role="application"
-          aria-label="App lineage canvas"
-        >
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            fitView
-            proOptions={{ hideAttribution: true }}
-            minZoom={0.1}
-            maxZoom={1.5}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            elementsSelectable={false}
-            deleteKeyCode={null}
-          >
-            <Background gap={20} />
-            <Controls showInteractive={false} />
-            <MiniMap pannable zoomable nodeStrokeWidth={2} className="dag-minimap" />
-          </ReactFlow>
-        </div>
+        <LineageDiagram graph={parsed.graph} />
       )}
     </div>
   );
 }
 
-/** The Lineage pane: fetch the App's full envelope, then render the read-only graph. */
+/** The Lineage pane: fetch the App's full envelope, then render the read-only diagram. */
 export function AppLineageSection({ handle }: { handle: string }) {
   const app = useApp(handle);
 
@@ -152,9 +175,5 @@ export function AppLineageSection({ handle }: { handle: string }) {
       <EmptyState title="App not found" detail="This App is not in your catalog (or not owned)." />
     );
   }
-  return (
-    <ReactFlowProvider>
-      <LineageView handle={handle} envelope={app.data.envelope} />
-    </ReactFlowProvider>
-  );
+  return <LineageView handle={handle} envelope={app.data.envelope} />;
 }

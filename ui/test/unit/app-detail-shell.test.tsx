@@ -116,18 +116,47 @@ afterEach(() => {
   LOCKED = false;
   saveFile.mockReset();
   proposeMutate.mockReset();
+  // The Files rail persists its collapsed flag to localStorage; reset between tests.
+  localStorage.clear();
 });
 
 describe("App IDE shell (POC-5d)", () => {
-  it("renders the tabs (Files / Lineage / Chat / Skills / Capabilities) + header controls", () => {
+  it("renders the tabs (Files / Lineage / Skills / MCP Tools / Integrations) + header controls", () => {
     render(<AppDetailSection handle="apps/local/echo" />);
     expect(screen.getByTestId("app-detail")).toBeInTheDocument();
-    for (const t of ["files", "lineage", "chat", "skills", "capabilities"]) {
+    for (const t of ["files", "lineage", "skills", "tools", "integrations"]) {
       expect(screen.getByTestId(`app-tab-${t}`)).toBeInTheDocument();
     }
+    // The old single "Capabilities" tab is gone (split into MCP Tools + Integrations).
+    expect(screen.queryByTestId("app-tab-capabilities")).toBeNull();
+    // Chat is a header action now (a right-side drawer), not a tab.
+    expect(screen.queryByTestId("app-tab-chat")).toBeNull();
+    expect(screen.getByTestId("app-detail-chat")).toBeInTheDocument();
     // The editable name shows the loaded envelope name; the lock control offers Lock.
     expect(screen.getByTestId("app-detail-name-input")).toHaveValue("Echo Demo");
     expect(screen.getByTestId("app-lock-apps/local/echo")).toBeInTheDocument();
+  });
+
+  it("the Chat header action opens the agentic Chat & Edit drawer (with the edit gate)", () => {
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.queryByTestId("app-chat-drawer")).toBeNull();
+    fireEvent.click(screen.getByTestId("app-detail-chat"));
+    expect(screen.getByTestId("app-chat-drawer")).toBeInTheDocument();
+    // Unlocked ⇒ the propose→diff→approve edit affordance is present.
+    expect(screen.getByTestId("app-chat-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("app-edit-propose")).toBeInTheDocument();
+  });
+
+  it("the Files rail is a collapsible sidebar (hides/shows the tree, persisted)", () => {
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.getByTestId("app-files-sidebar")).toBeInTheDocument();
+    // The tree is expanded by default (the seeded file node renders).
+    expect(screen.getByTestId("file-README.md")).toBeInTheDocument();
+    // Collapsing hides the tree; expanding restores it.
+    fireEvent.click(screen.getByTestId("app-files-collapse"));
+    expect(screen.queryByTestId("file-README.md")).toBeNull();
+    fireEvent.click(screen.getByTestId("app-files-collapse"));
+    expect(screen.getByTestId("file-README.md")).toBeInTheDocument();
   });
 
   it("unlocked: a selected file exposes direct + agentic edit", () => {

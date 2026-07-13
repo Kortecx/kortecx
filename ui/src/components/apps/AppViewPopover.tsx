@@ -1,12 +1,14 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { toUiError } from "../../kx/errors";
 import { useApp } from "../../kx/use-apps";
 import { useBranches } from "../../kx/use-branches";
 import { shortHex } from "../../lib/format";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { Icon } from "../shell/Icon";
 import { AppManifestPanel } from "./AppManifestPanel";
 
 /**
@@ -36,16 +38,16 @@ export function AppViewPopover({ handle, onClose }: { handle: string; onClose: (
 
   const summary = app.data?.summary;
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close app view"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="app-view"
         // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; non-modal side-panel semantics via role+aria-label (the AppDetailDrawer precedent)
         role="dialog"
@@ -58,20 +60,34 @@ export function AppViewPopover({ handle, onClose }: { handle: string; onClose: (
           <code className="mono node-drawer__id" title={handle}>
             {handle}
           </code>
-          <button
-            type="button"
-            className="btn-primary node-drawer__open"
-            data-testid={`app-view-open-${handle}`}
-            onClick={() => {
-              onClose();
-              void navigate({ to: "/apps/$handle", params: { handle } });
-            }}
-          >
-            Open project
-          </button>
-          <button type="button" className="linkbtn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
+          <div className="node-drawer__head-actions">
+            <button
+              type="button"
+              className="btn-primary node-drawer__open"
+              data-testid={`app-view-open-${handle}`}
+              onClick={() => {
+                onClose();
+                void navigate({ to: "/apps/$handle", params: { handle } });
+              }}
+            >
+              Open project
+            </button>
+            <Link
+              to="/apps/$handle"
+              params={{ handle }}
+              target="_blank"
+              rel="noopener"
+              className="iconbtn"
+              data-testid={`app-view-open-tab-${handle}`}
+              title="Open the project editor in a new tab"
+              aria-label="Open in new tab"
+            >
+              <Icon name="external-link" size={16} />
+            </Link>
+            <button type="button" className="linkbtn" onClick={onClose} aria-label="Close">
+              ✕
+            </button>
+          </div>
         </div>
 
         {app.isLoading ? <EmptyState title="Loading…" /> : null}
@@ -139,6 +155,7 @@ export function AppViewPopover({ handle, onClose }: { handle: string; onClose: (
           </>
         ) : null}
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }
