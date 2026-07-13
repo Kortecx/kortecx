@@ -21,12 +21,13 @@ import { useEffect, useMemo, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useAppBranch, useAppFileContent, useSaveFile } from "../../kx/use-app-files";
-import { useApp, useExportAppBundle } from "../../kx/use-apps";
+import { useApp, useExportAppBundle, useSaveApp } from "../../kx/use-apps";
 import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
 import { buildFileTree } from "../../lib/file-tree";
 import { inferLanguageFromPath } from "../../lib/monaco/infer-language";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
+import { AppManifestPanel } from "../apps/AppManifestPanel";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { FileTree } from "../apps/FileTree";
 import { LockControl } from "../apps/LockControl";
@@ -35,10 +36,19 @@ import { AppChat } from "../chat/AppChat";
 import { CodeViewer } from "../editor/CodeViewer";
 import { DiffViewer } from "../editor/DiffViewer";
 import { MonacoMount } from "../editor/MonacoMount";
+import { Icon } from "../shell/Icon";
 import { AppLineageSection } from "./AppLineageSection";
 
-const TABS = ["files", "lineage", "chat"] as const;
+const TABS = ["files", "lineage", "chat", "skills", "capabilities"] as const;
 export type IdeTab = (typeof TABS)[number];
+
+const TAB_LABELS: Record<IdeTab, string> = {
+  files: "Files",
+  lineage: "Lineage",
+  chat: "Chat",
+  skills: "Skills",
+  capabilities: "Capabilities",
+};
 
 export function AppDetailSection({
   handle,
@@ -59,6 +69,32 @@ export function AppDetailSection({
   const summary = app.data?.summary;
   const locked = summary?.locked ?? false;
   const exportBundle = useExportAppBundle();
+  const saveApp = useSaveApp();
+
+  // Editable App name (APP-9): the draft syncs to the loaded envelope name unless the
+  // user is mid-edit; committing re-saves the envelope with the new name via SaveApp
+  // (which mints a new version). Gated on `locked` (the server refuses a locked write).
+  const [nameDraft, setNameDraft] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  // Re-sync the draft to the loaded name whenever it changes AND the user isn't editing.
+  useEffect(() => {
+    if (!editingName && summary?.name !== undefined) {
+      setNameDraft(summary.name);
+    }
+  }, [summary?.name, editingName]);
+
+  function commitName(): void {
+    setEditingName(false);
+    const next = nameDraft.trim();
+    if (next === "" || next === summary?.name || !app.data) {
+      setNameDraft(summary?.name ?? "");
+      return;
+    }
+    saveApp.mutate({
+      handle,
+      envelope: { ...(app.data.envelope as Record<string, unknown>), name: next },
+    });
+  }
 
   function download(): void {
     exportBundle.mutate(
@@ -96,38 +132,62 @@ export function AppDetailSection({
   return (
     <section className="screen app-detail" data-testid="app-detail">
       <div className="screen__head">
-        <div>
-          <h1>{summary?.name ?? "App"}</h1>
-          <code className="mono app-detail__handle" title={handle}>
-            {handle}
-          </code>
+        <div className="app-detail__title">
+          <input
+            className="app-detail__name-input"
+            data-testid="app-detail-name-input"
+            value={nameDraft}
+            disabled={locked || app.isLoading}
+            aria-label="App name"
+            spellCheck={false}
+            autoComplete="off"
+            title={locked ? "Unlock the App to rename it" : "Rename this App"}
+            onChange={(e) => {
+              setEditingName(true);
+              setNameDraft(e.target.value);
+            }}
+            onBlur={commitName}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur();
+              } else if (e.key === "Escape") {
+                setEditingName(false);
+                setNameDraft(summary?.name ?? "");
+                e.currentTarget.blur();
+              }
+            }}
+          />
+          {saveApp.isError ? (
+            <span className="field-error" data-testid="app-detail-name-error" role="alert">
+              {toUiError(saveApp.error).message}
+            </span>
+          ) : null}
         </div>
         <div className="screen__head-actions">
-          <LockControl handle={handle} locked={locked} />
           <button
             type="button"
-            className="btn-ghost"
+            className="iconbtn"
+            data-testid="app-detail-run"
+            title="Run this App"
+            aria-label="Run"
+            onClick={() => setRunOpen(true)}
+          >
+            <Icon name="play" size={18} />
+          </button>
+          <button
+            type="button"
+            className="iconbtn"
             data-testid="app-detail-download"
             disabled={exportBundle.isPending}
             title="Download a portable .kxapp bundle (envelope + content closure)"
+            aria-label="Download bundle"
             onClick={download}
           >
-            {exportBundle.isPending ? "Downloading…" : "Download"}
+            <Icon name="download" size={18} />
           </button>
-          <button
-            type="button"
-            className="btn-primary"
-            data-testid="app-detail-run"
-            onClick={() => setRunOpen(true)}
-          >
-            Run
-          </button>
+          <LockControl handle={handle} locked={locked} />
         </div>
       </div>
-
-      {app.data ? (
-        <SkillsRail handle={handle} envelope={app.data.envelope} locked={locked} />
-      ) : null}
 
       <fieldset className="view-toggle" aria-label="App view" data-testid="app-detail-tabs">
         {TABS.map((t) => (
@@ -138,7 +198,7 @@ export function AppDetailSection({
             data-testid={`app-tab-${t}`}
             onClick={() => setTab(t)}
           >
-            {t === "files" ? "Files" : t === "lineage" ? "Lineage" : "Chat"}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </fieldset>
@@ -147,6 +207,14 @@ export function AppDetailSection({
         <AppChat recipeHandle={handle} />
       ) : tab === "lineage" ? (
         <AppLineageSection handle={handle} locked={locked} />
+      ) : tab === "skills" ? (
+        app.data ? (
+          <SkillsRail handle={handle} envelope={app.data.envelope} locked={locked} />
+        ) : (
+          <EmptyState title="Loading skills…" />
+        )
+      ) : tab === "capabilities" ? (
+        <AppManifestPanel handle={handle} />
       ) : branch.isLoading ? (
         <EmptyState title="Loading project…" />
       ) : branch.isError ? (

@@ -65,7 +65,7 @@ test("New Chat is read-only + RAG-grounded — header Context attach, no Agent t
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
-  // Wave-4: the header "Context" attach button is the read-only grounding affordance
+  // The header "Context" attach button is the read-only grounding affordance
   // (the standalone dataset grounding bar is gone), and there is NO Agent-task toggle —
   // the mutate-capable agentic chat lives in Apps.
   await expect(page.getByTestId("chat-grounding")).toHaveCount(0);

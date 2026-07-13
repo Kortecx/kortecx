@@ -859,6 +859,32 @@ button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* A non-interactive icon (a state indicator, e.g. an App's lock) — no hover chrome. */
+.iconbtn--static {
+  cursor: default;
+}
+.iconbtn--static:hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+.iconbtn--static[data-locked="true"] {
+  color: var(--fg);
+}
+/* An honest-disabled icon (a Cloud-only capability) — grayed, never clickable. */
+.iconbtn--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.iconbtn--disabled:hover {
+  background: transparent;
+  color: var(--fg-muted);
+}
+/* The "Open project" CTA in the App view popover head. */
+.node-drawer__open {
+  margin-left: auto;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+}
 .controls {
   display: inline-flex;
   gap: 0.25rem;
@@ -1482,7 +1508,7 @@ select {
   padding: 0.5rem 0;
   overflow-y: auto;
   overscroll-behavior: contain; /* a thread scroll never chains to the page */
-  /* Newest-at-top (Wave-4): a fresh turn prepends at the top; disable scroll anchoring
+  /* Newest-at-top: a fresh turn prepends at the top; disable scroll anchoring
      so the browser never bumps scrollTop to keep an old row stationary (we pin to 0). */
   overflow-anchor: none;
 }
@@ -2881,6 +2907,14 @@ select {
   justify-content: space-between;
   gap: 0.5rem;
 }
+/* The App card's top-right action cluster (▶ run · lock · share · download · kebab);
+   margin-left:auto keeps the name + version grouped left, the actions right. */
+.card-grid__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  margin-left: auto;
+}
 .card-grid__title {
   font-weight: 600;
   font-size: 0.98rem;
@@ -2928,6 +2962,37 @@ button.card-grid__title:hover {
 .card-grid__handle {
   font-size: 0.72rem;
   color: var(--text-3);
+}
+/* List layout (the box/list toggle): one card per row, laid out horizontally. */
+.card-grid--list {
+  grid-template-columns: 1fr;
+}
+.card-grid--list .card-grid__card {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  padding-block: 0.6rem;
+}
+.card-grid--list .card-grid__head {
+  flex: 1 1 16rem;
+}
+.card-grid--list .card-grid__sub {
+  flex: 100 1 12rem;
+  margin: 0;
+}
+.card-grid--list .card-grid__tags {
+  flex: 0 1 auto;
+}
+.card-grid--list .card-grid__handle {
+  flex: 0 0 100%;
+  order: 5;
+}
+/* A smaller, left-aligned view-toggle (the catalog box/list switch). */
+.view-toggle--compact {
+  align-self: flex-start;
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.8rem;
 }
 .card-grid__time {
   color: var(--text-3);
@@ -4684,6 +4749,38 @@ button.card-grid__title:hover {
 .app-detail__handle {
   color: var(--fg-muted);
   font-size: 0.8rem;
+}
+.app-detail__title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+/* The editable App name reads as a heading; borderless until hover/focus (mirrors the
+   chat name input). Disabled (a locked App) stays flat, no edit affordance. */
+.app-detail__name-input {
+  width: 100%;
+  max-width: 32rem;
+  margin: 0;
+  padding: 0.15rem 0.4rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.app-detail__name-input:hover:not(:disabled) {
+  border-color: var(--border);
+}
+.app-detail__name-input:focus {
+  background: var(--bg-input);
+  border-color: var(--accent);
+  outline: none;
+}
+.app-detail__name-input:disabled {
+  cursor: default;
+  opacity: 0.85;
 }
 .app-detail__panes {
   display: grid;

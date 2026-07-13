@@ -13,7 +13,7 @@ export async function typeMessage(page: Page, text: string): Promise<void> {
 }
 
 /**
- * Seed the persisted chat backing BEFORE the app loads. Wave-4 removed the in-panel
+ * Seed the persisted chat backing BEFORE the app loads. The redesign removed the in-panel
  * `echo`-preset button + the Advanced recipe-handle reveal (New Chat is a chat, not a
  * recipe console), so a test points chat at a specific backing by seeding the same
  * `kortecx.ui.chat` localStorage schema that `loadChatSettings` reads on mount. Registers

@@ -1,7 +1,7 @@
 import type { ChatSettings as Settings } from "../../lib/chat-settings";
 
 /**
- * Chat settings, sitting just above the input. Wave-4: a CLEAN panel — just the two
+ * Chat settings, sitting just above the input. A CLEAN panel — just the two
  * honest DISPLAY toggles (show reasoning, auto-scroll). The old model-free `echo`
  * preset button + the "Advanced (developer)" recipe-handle reveal are gone (New Chat
  * is a chat, not a recipe console; the `echo` backing is still selectable via the

@@ -3,7 +3,7 @@ import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 /**
- * Wave-4: New Chat is READ-ONLY, RAG-grounded — but the standalone dataset grounding
+ * New Chat is READ-ONLY, RAG-grounded — but the standalone dataset grounding
  * BAR is gone (dataset-grounded RAG relocates to Apps, Principle-3). Grounding is now
  * the header "Context" attach button + the attached-file chips. This spec asserts the
  * clean read-only SHAPE in BOTH themes (the GR13 both-theme gate) over a real gateway.

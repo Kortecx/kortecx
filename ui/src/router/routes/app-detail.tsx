@@ -7,7 +7,7 @@ import { useConnection } from "../../kx/connection-context";
 import { rootRoute } from "./__root";
 
 const ROUTE_ID = "/apps/$handle";
-const IDE_TABS = ["files", "lineage", "chat"] as const;
+const IDE_TABS = ["files", "lineage", "chat", "skills", "capabilities"] as const;
 
 /** POC-5d: the App IDE's URL state — the active tab + the selected file path are
  *  addressable so refresh / back-forward / deep links survive. */

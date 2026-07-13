@@ -7,7 +7,7 @@ import { MessageBubble } from "./MessageBubble";
 const STICK_THRESHOLD = 96;
 
 /**
- * The scrollable thread. Wave-4: NEWEST-AT-TOP — the freshest turn renders at the
+ * The scrollable thread. NEWEST-AT-TOP — the freshest turn renders at the
  * TOP and older ones flow down toward the input (the messages are rendered newest-
  * first; the list keeps a natural `flex-direction: column`). Auto-scroll therefore
  * follows the TOP edge (scrollTop → 0), the mirror of the old bottom-follow.

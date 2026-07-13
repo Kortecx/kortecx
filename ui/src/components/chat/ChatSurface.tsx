@@ -5,7 +5,7 @@
  *   - showPickers    — the model composer control + file attach (standalone)
  *   - showHistory    — the Export / History / New-chat head actions + slide-over
  *   - showGrounding  — the read-only RAG grounding: the header Context attach button
- *                      + the attached-file chips (Wave-4 dropped the dataset bar)
+ *                      + the attached-file chips (the redesign dropped the dataset bar)
  *   - header         — a caller-supplied head block (AppChat); else the standalone
  *                      editable chat-name + actions head.
  *
@@ -239,7 +239,7 @@ export function ChatSurface({
           )}
         </div>
       ) : null}
-      {/* Wave-4: the standalone grounding BAR (dataset dropdown + summary box) is gone —
+      {/* The standalone grounding BAR (dataset dropdown + summary box) is gone —
           New Chat grounds via attached Context files (the header ContextAttachButton).
           The attached files show here as removable chips, just above the input; the strip
           renders only when something is attached, so there is no empty placeholder box. */}
