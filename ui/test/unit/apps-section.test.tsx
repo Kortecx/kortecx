@@ -138,7 +138,7 @@ describe("Apps section (catalog + POC-5a New App)", () => {
     expect(screen.getByText(/no apps yet/i)).toBeInTheDocument();
   });
 
-  it("Run fires runApp for the App's handle", () => {
+  it("Run opens the typed drawer, and Run now fires runApp WITH an args map", () => {
     APPS = [
       {
         handle: "apps/local/pure",
@@ -152,9 +152,16 @@ describe("Apps section (catalog + POC-5a New App)", () => {
       },
     ];
     render(<AppsSection />);
-    screen.getByTestId("app-run-apps/local/pure").click();
+    // The catalog Run button opens the typed AppRunDrawer — it does NOT run directly
+    // (a direct argless run silently ran any App with an input_schema on an empty prompt).
+    expect(screen.queryByTestId("app-run-drawer")).toBeNull();
+    fireEvent.click(screen.getByTestId("app-run-apps/local/pure"));
+    expect(screen.getByTestId("app-run-drawer")).toBeInTheDocument();
+    // This App has no input_schema (mocked useApp → data:null ⇒ no form), so it runs in
+    // one click; the drawer submits with an explicit (empty) args map, not bare { handle }.
+    fireEvent.click(screen.getByTestId("app-run-now"));
     expect(mutate).toHaveBeenCalledWith(
-      { handle: "apps/local/pure" },
+      { handle: "apps/local/pure", args: {} },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
