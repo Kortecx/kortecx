@@ -81,10 +81,11 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await expect(page.getByTestId("app-file-propose")).toBeVisible();
   await page.getByTestId("app-file-cancel").click();
 
-  // Lineage: the editable graph + Save-to-App (the App has a pure-step blueprint).
+  // Lineage: a READ-ONLY view of the App's structure (authoring lives in the builder).
   await page.getByTestId("app-tab-lineage").click();
   await expect(page.getByTestId("app-lineage")).toBeVisible();
-  await expect(page.getByTestId("app-lineage-save")).toBeVisible();
+  await expect(page.getByTestId("lineage-readonly-notice")).toBeVisible();
+  await expect(page.getByTestId("app-lineage-save")).toHaveCount(0);
   // The tab is URL-addressable (refresh-safe).
   await expect(page).toHaveURL(/[?&]tab=lineage/);
 

@@ -1,3 +1,4 @@
+import { useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { useEffect } from "react";
 import { toUiError } from "../../kx/errors";
@@ -18,6 +19,7 @@ import { AppManifestPanel } from "./AppManifestPanel";
  * lineage snapshot is found by handle (an honest empty state when not yet scaffolded).
  */
 export function AppViewPopover({ handle, onClose }: { handle: string; onClose: () => void }) {
+  const navigate = useNavigate();
   const app = useApp(handle);
   const { branches, notWired: branchesNotWired } = useBranches();
   const branch = branches.find((b) => b.handle === handle);
@@ -56,6 +58,17 @@ export function AppViewPopover({ handle, onClose }: { handle: string; onClose: (
           <code className="mono node-drawer__id" title={handle}>
             {handle}
           </code>
+          <button
+            type="button"
+            className="btn-primary node-drawer__open"
+            data-testid={`app-view-open-${handle}`}
+            onClick={() => {
+              onClose();
+              void navigate({ to: "/apps/$handle", params: { handle } });
+            }}
+          >
+            Open project
+          </button>
           <button type="button" className="linkbtn" onClick={onClose} aria-label="Close">
             ✕
           </button>

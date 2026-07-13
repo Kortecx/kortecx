@@ -110,6 +110,25 @@ describe("decodeContent", () => {
     expect(decodeContent(utf8("# Title"), { filename: "readme.md" }).kind).toBe("markdown");
     expect(decodeContent(utf8("hi"), { mediaType: "text/markdown" }).kind).toBe("markdown");
   });
+
+  it("a `.svg` filename (no media type) promotes SVG text to the script-safe image path", () => {
+    const d = decodeContent(utf8("<svg xmlns='http://www.w3.org/2000/svg'/>"), {
+      filename: "diagram.svg",
+    });
+    expect(d.kind).toBe("image");
+    expect(d.mediaType).toBe("image/svg+xml");
+    expect(d.bytes).toBeDefined();
+  });
+
+  it("HTML is opt-in via a hint (its own sandboxed kind), never guessed from content", () => {
+    // No hint → plain text (fail-closed; never silently rendered as live HTML).
+    expect(decodeContent(utf8("<h1>hi</h1>")).kind).toBe("text");
+    expect(decodeContent(utf8("<h1>hi</h1>"), { filename: "report.html" }).kind).toBe("html");
+    expect(decodeContent(utf8("<x>"), { filename: "a.htm" }).kind).toBe("html");
+    expect(decodeContent(utf8("<b>hi</b>"), { mediaType: "text/html" }).kind).toBe("html");
+    // The source is kept for the inline-edit path.
+    expect(decodeContent(utf8("<h1>hi</h1>"), { filename: "r.html" }).text).toBe("<h1>hi</h1>");
+  });
 });
 
 describe("sniffMediaMime / mediaKindOf", () => {

@@ -1,12 +1,13 @@
 /**
- * POC-5b: the per-App lock control — CHIP/BUTTON controls (NEVER a `<select>`;
- * Playwright can't drive a controlled React select). A locked App shows a
- * "Locked" chip + an "Unlock" button; an unlocked App shows a "Lock" button.
- * Locking REFUSES agentic in-CAS edits at the runtime advance() chokepoint.
+ * POC-5b: the per-App lock control — a single REACTIVE icon toggle (a padlock
+ * that flips lock↔unlock on click). Locking REFUSES agentic in-CAS edits at the runtime
+ * advance() chokepoint; the icon reflects the current state (`data-locked`). NEVER a
+ * `<select>` (Playwright can't drive a controlled React select).
  */
 
 import { toUiError } from "../../kx/errors";
 import { useLockApp, useUnlockApp } from "../../kx/use-app-lock";
+import { Icon } from "../shell/Icon";
 
 export function LockControl({ handle, locked }: { handle: string; locked: boolean }) {
   const lock = useLockApp();
@@ -17,46 +18,29 @@ export function LockControl({ handle, locked }: { handle: string; locked: boolea
   const error = lock.error ?? unlock.error;
 
   return (
-    <span className="lock-control">
-      <span
-        className={
-          locked
-            ? "chip chip--tag lock-control__state--locked"
-            : "chip lock-control__state--unlocked"
-        }
-        data-testid={`app-lock-state-${handle}`}
+    <>
+      <button
+        type="button"
+        className="iconbtn"
+        data-testid={locked ? `app-unlock-${handle}` : `app-lock-${handle}`}
         data-locked={locked}
+        aria-pressed={locked}
+        disabled={pending}
+        title={
+          locked
+            ? "Locked — click to unlock (re-enable agentic in-CAS edits)"
+            : "Unlocked — click to lock (refuse agentic in-CAS edits)"
+        }
+        aria-label={locked ? "Unlock App" : "Lock App"}
+        onClick={() => (locked ? unlock.mutate({ handle }) : lock.mutate({ handle }))}
       >
-        {locked ? "🔒 Locked" : "Unlocked"}
-      </span>
-      {locked ? (
-        <button
-          type="button"
-          className="btn-ghost"
-          data-testid={`app-unlock-${handle}`}
-          disabled={pending}
-          title="Re-enable agentic in-CAS edits for this App"
-          onClick={() => unlock.mutate({ handle })}
-        >
-          {pending ? "…" : "Unlock"}
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="btn-ghost"
-          data-testid={`app-lock-${handle}`}
-          disabled={pending}
-          title="Refuse agentic in-CAS edits for this App"
-          onClick={() => lock.mutate({ handle })}
-        >
-          {pending ? "…" : "Lock"}
-        </button>
-      )}
+        <Icon name={locked ? "lock" : "unlock"} size={16} />
+      </button>
       {error ? (
         <span className="field-error" data-testid={`app-lock-error-${handle}`} role="alert">
           {toUiError(error).message}
         </span>
       ) : null}
-    </span>
+    </>
   );
 }

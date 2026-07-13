@@ -119,13 +119,14 @@ afterEach(() => {
 });
 
 describe("App IDE shell (POC-5d)", () => {
-  it("renders the 3 tabs (Files / Lineage / Chat)", () => {
+  it("renders the tabs (Files / Lineage / Chat / Skills / Capabilities) + header controls", () => {
     render(<AppDetailSection handle="apps/local/echo" />);
     expect(screen.getByTestId("app-detail")).toBeInTheDocument();
-    expect(screen.getByTestId("app-tab-files")).toBeInTheDocument();
-    expect(screen.getByTestId("app-tab-lineage")).toBeInTheDocument();
-    expect(screen.getByTestId("app-tab-chat")).toBeInTheDocument();
-    // The per-App lock control lives in the header (unlocked ⇒ offers Lock).
+    for (const t of ["files", "lineage", "chat", "skills", "capabilities"]) {
+      expect(screen.getByTestId(`app-tab-${t}`)).toBeInTheDocument();
+    }
+    // The editable name shows the loaded envelope name; the lock control offers Lock.
+    expect(screen.getByTestId("app-detail-name-input")).toHaveValue("Echo Demo");
     expect(screen.getByTestId("app-lock-apps/local/echo")).toBeInTheDocument();
   });
 
@@ -142,10 +143,11 @@ describe("App IDE shell (POC-5d)", () => {
   it("LOCKED: shows the lock control + an honest notice, NO write affordances (GR15)", () => {
     LOCKED = true;
     render(<AppDetailSection handle="apps/local/echo" path="README.md" />);
-    // The lock control's state chip reports locked (its Unlock button is the control).
-    const lockState = screen.getByTestId("app-lock-state-apps/local/echo");
-    expect(lockState).toHaveAttribute("data-locked", "true");
-    expect(screen.getByTestId("app-unlock-apps/local/echo")).toBeInTheDocument();
+    // The lock toggle reports locked (its Unlock affordance is the control); the name
+    // input is disabled (a locked App can't be renamed — the server refuses the write).
+    const lockToggle = screen.getByTestId("app-unlock-apps/local/echo");
+    expect(lockToggle).toHaveAttribute("data-locked", "true");
+    expect(screen.getByTestId("app-detail-name-input")).toBeDisabled();
     expect(screen.getByTestId("app-locked-notice")).toBeInTheDocument();
     // The runtime refuses writes; the UI must never offer a control that can't fire.
     expect(screen.queryByTestId("app-file-edit-direct")).toBeNull();

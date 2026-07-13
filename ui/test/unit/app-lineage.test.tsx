@@ -64,51 +64,30 @@ afterEach(() => {
   ENVELOPE = { blueprint: { seed: 0, steps: [{ kind: "model", model_id: "m", prompt: "hi" }] } };
 });
 
-describe("App Lineage editor (POC-5d)", () => {
-  it("editable App: renders the canvas + Save-to-App + add controls", () => {
-    render(<AppLineageSection handle="apps/local/x" locked={false} />);
+describe("App Lineage (view-only)", () => {
+  it("renders the read-only canvas + Run, with NO authoring controls (relocated to Workflows)", () => {
+    render(<AppLineageSection handle="apps/local/x" />);
     expect(screen.getByTestId("app-lineage")).toBeInTheDocument();
-    expect(screen.getByTestId("app-lineage-save")).toBeInTheDocument();
-    expect(screen.getByTestId("lineage-add-agent")).toBeInTheDocument();
-    expect(screen.queryByTestId("lineage-locked-notice")).toBeNull();
-  });
-
-  it("LOCKED App: no Save, an honest lock notice (GR15)", () => {
-    render(<AppLineageSection handle="apps/local/x" locked={true} />);
-    expect(screen.getByTestId("lineage-locked-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("lineage-readonly-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("app-lineage-run")).toBeInTheDocument();
+    // Structure authoring lives in the Workflows builder now — none of it here.
     expect(screen.queryByTestId("app-lineage-save")).toBeNull();
     expect(screen.queryByTestId("lineage-add-agent")).toBeNull();
+    expect(screen.queryByTestId("lineage-add-pure")).toBeNull();
+    expect(screen.queryByTestId("lineage-add-tool")).toBeNull();
   });
 
-  it("served-model agentic App (empty modelId): Save is enabled, not blocked on a model", () => {
-    // The portable App convention — an agentic step binds the SERVED model (no
-    // model_id). The lineage editor must NOT flag "needs a model" (it would block
-    // every real served-model App from re-saving). Regression for the live-review find.
-    ENVELOPE = {
-      blueprint: {
-        seed: 0,
-        steps: [
-          {
-            kind: "model",
-            prompt: "Use the echo tool.",
-            tool_contract: { "mcp-echo/echo": "1" },
-            params: { max_turns: "4", max_tool_calls: "2" },
-          },
-        ],
-      },
-    };
-    render(<AppLineageSection handle="apps/local/x" locked={false} />);
-    const save = screen.getByTestId("app-lineage-save");
-    expect(save).toBeInTheDocument();
-    expect(save).not.toBeDisabled();
-    expect(screen.queryByTestId("lineage-validation")).toBeNull();
+  it("lays the parsed blueprint steps onto the canvas", () => {
+    render(<AppLineageSection handle="apps/local/x" />);
+    // The single model step from the seeded envelope renders as one node.
+    expect(screen.getByTestId("rf")).toHaveAttribute("data-nodes", "1");
   });
 
-  it("un-round-trippable (exec) blueprint: read-only, no Save", () => {
+  it("an un-round-trippable (exec) blueprint still renders view-only (no authoring)", () => {
     ENVELOPE = {
       blueprint: { seed: 0, steps: [{ kind: "exec", body_signature_id: "a".repeat(64) }] },
     };
-    render(<AppLineageSection handle="apps/local/x" locked={false} />);
+    render(<AppLineageSection handle="apps/local/x" />);
     expect(screen.getByTestId("lineage-readonly-notice")).toBeInTheDocument();
     expect(screen.queryByTestId("app-lineage-save")).toBeNull();
   });

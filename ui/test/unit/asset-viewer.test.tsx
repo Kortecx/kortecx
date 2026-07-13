@@ -66,6 +66,23 @@ describe("AssetViewer", () => {
     expect(screen.getByTestId("asset-viewer-body").textContent).toContain("plain");
   });
 
+  it("renders HTML in a fully-sandboxed, CSP-locked iframe (no scripts, no outbound fetch)", () => {
+    const h: DecodedContent = {
+      kind: "html",
+      text: "<h1>hi</h1>",
+      byteLength: 11,
+      truncated: false,
+    };
+    render(<AssetViewer content={h} />);
+    const frame = screen.getByTestId("asset-html");
+    expect(frame.tagName).toBe("IFRAME");
+    // An empty sandbox disables scripts, forms, same-origin, and navigation.
+    expect(frame.getAttribute("sandbox")).toBe("");
+    const srcdoc = frame.getAttribute("srcdoc") ?? "";
+    expect(srcdoc).toContain("<h1>hi</h1>"); // the source renders
+    expect(srcdoc).toContain("default-src 'none'"); // the CSP blocks every outbound fetch
+  });
+
   it("degrades truncated media to an honest download (no broken element)", () => {
     const big: DecodedContent = {
       kind: "image",

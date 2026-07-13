@@ -73,4 +73,18 @@ test("Datasets: lists a seeded corpus + degrades cleanly without an embedder", a
   await expect(page.getByText(/no embedding model on this gateway/i).first()).toBeVisible({
     timeout: 15_000,
   });
+
+  // PR-6 multimodal: pick a FILE — it stages as a chip, and submitting sends its raw
+  // bytes as an IngestDoc over the SAME IngestDocuments RPC (same no-embedder guidance
+  // here, since this FFI-free gateway has no embedder to index the bytes).
+  await page.getByTestId("dataset-ingest-file-input").setInputFiles({
+    name: "note.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("a binary-path document\n", "utf-8"),
+  });
+  await expect(page.getByTestId("dataset-ingest-file-note.txt")).toBeVisible();
+  await page.getByTestId("dataset-ingest-submit").click();
+  await expect(page.getByText(/no embedding model on this gateway/i).first()).toBeVisible({
+    timeout: 15_000,
+  });
 });

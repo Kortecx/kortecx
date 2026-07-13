@@ -86,14 +86,15 @@ describe("Apps section (catalog + POC-5a New App)", () => {
     expect(screen.getByTestId("apps-section")).toBeInTheDocument();
     expect(screen.getByTestId("app-card-apps/local/echo")).toBeInTheDocument();
     expect(screen.getByTestId("app-run-apps/local/echo")).toBeInTheDocument();
-    // The secondary actions live behind an overflow kebab (fixes the crowded row) —
-    // View / Open / Inspect / Download / Duplicate appear once it's opened.
+    // Download lives in the card chrome (always visible); the kebab holds the secondary
+    // actions — View details / Open project / Duplicate (Inspect was folded into View).
+    expect(screen.getByTestId("app-download-apps/local/echo")).toBeInTheDocument();
     const menu = screen.getByTestId("app-menu-apps/local/echo");
     expect(menu).toBeInTheDocument();
     fireEvent.click(menu);
+    expect(screen.getByTestId("app-view-apps/local/echo")).toBeInTheDocument();
     expect(screen.getByTestId("app-open-apps/local/echo")).toBeInTheDocument();
-    expect(screen.getByTestId("app-inspect-apps/local/echo")).toBeInTheDocument();
-    expect(screen.getByTestId("app-download-apps/local/echo")).toBeInTheDocument();
+    expect(screen.queryByTestId("app-inspect-apps/local/echo")).toBeNull();
     expect(screen.getByTestId("app-duplicate-apps/local/echo")).toBeInTheDocument();
   });
 
@@ -115,7 +116,7 @@ describe("Apps section (catalog + POC-5a New App)", () => {
     expect(screen.getByTestId("new-app-submit")).toBeInTheDocument();
   });
 
-  it("shows a locked chip on a locked App", () => {
+  it("shows the lock-state icon on a locked App", () => {
     APPS = [
       {
         handle: "apps/local/locked",
@@ -129,7 +130,29 @@ describe("Apps section (catalog + POC-5a New App)", () => {
       },
     ];
     render(<AppsSection />);
-    expect(screen.getByTestId("app-card-locked-apps/local/locked")).toBeInTheDocument();
+    const lock = screen.getByTestId("app-lock-apps/local/locked");
+    expect(lock).toBeInTheDocument();
+    expect(lock).toHaveAttribute("data-locked", "true");
+  });
+
+  it("renders the box/list view toggle (defaults to box)", () => {
+    APPS = [
+      {
+        handle: "apps/local/echo",
+        appRef: "ab".repeat(16),
+        name: "Echo",
+        version: "1",
+        description: "",
+        tags: [],
+        stepCount: 1,
+        locked: false,
+      },
+    ];
+    render(<AppsSection />);
+    expect(screen.getByTestId("apps-view-toggle")).toBeInTheDocument();
+    expect(screen.getByTestId("apps-view-box")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("apps-view-list")).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("apps-catalog")).toHaveAttribute("data-view", "box");
   });
 
   it("shows an honest empty state when the catalog is empty", () => {

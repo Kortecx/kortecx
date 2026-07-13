@@ -1,19 +1,10 @@
 /**
- * POC-5d: the single-App LINEAGE editor — the App's portable blueprint (a `DagSpec`)
- * rendered as an EDITABLE reactflow graph, reusing the BlueprintBuilder leaf
- * components ({@link BuilderNode}, {@link StepConfigDrawer}) + the pure
- * {@link appBlueprintToBuilderGraph}/{@link builderGraphToBlueprint} round-trip and
- * the dagre {@link layoutGraph}. Editing the agentic structure (reorder / config /
- * add / remove nodes + edges) and saving persists a NEW App envelope version via
- * `SaveApp` — the App's blueprint is the ONLY field replaced (`{...envelope,
- * blueprint}`), every other rail (references / steering / replay / input_schema) is
- * carried verbatim.
- *
- * GR15 / D142 honesty: a LOCKED App or an un-round-trippable blueprint (`refuseEdit`
- * — an exec/binary step) renders READ-ONLY with a clear notice and NO Save control
- * (the server also refuses a locked structure save — LOCKED_BRANCH — so the gate is
- * authoritative, the UI gate is advisory). Edge instructions are a run-only fold (no
- * `DagSpec` representation) so the editor never offers that field.
+ * POC-5d / redesign: the single-App LINEAGE pane — a READ-ONLY view of the App's
+ * portable blueprint (a `DagSpec`) rendered as a static reactflow graph: the step order,
+ * parallel-vs-sequential shape, and one node per step. Structure AUTHORING (add / remove
+ * / reorder / config nodes + edges, save-to-App) is relocated to the Workflows builder;
+ * this pane only VIEWS (and offers a Run). Reuses the BuilderNode leaf + the pure
+ * `appBlueprintToBuilderGraph` parse + the dagre `layoutGraph`.
  */
 
 import { useNavigate } from "@tanstack/react-router";
@@ -23,44 +14,27 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
-  addEdge,
   useEdgesState,
   useNodesState,
 } from "@xyflow/react";
-import type { Connection, Edge, NodeMouseHandler } from "@xyflow/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import type { Edge } from "@xyflow/react";
+import { useCallback, useMemo } from "react";
 import { toUiError } from "../../kx/errors";
-import { useApp, useRunApp, useSaveApp } from "../../kx/use-apps";
-import { useModels } from "../../kx/use-models";
+import { useApp, useRunApp } from "../../kx/use-apps";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { BuilderNode } from "../builder/BuilderNode";
 import type { BuilderFlowNode } from "../builder/BuilderNode";
-import { StepConfigDrawer } from "../builder/StepConfigDrawer";
-import {
-  type UnmodeledReport,
-  appBlueprintToBuilderGraph,
-  builderGraphToBlueprint,
-} from "../builder/app-blueprint";
-import {
-  type BuilderGraph,
-  type BuilderStep,
-  type BuilderStepKind,
-  newStep,
-  validationError,
-} from "../builder/builder-graph";
-import { NODE_H, NODE_W, layoutGraph } from "../dag/layout";
+import { appBlueprintToBuilderGraph } from "../builder/app-blueprint";
+import type { BuilderGraph } from "../builder/builder-graph";
+import { layoutGraph } from "../dag/layout";
 
 const nodeTypes = { builder: BuilderNode };
 
 /** Lay a parsed lineage graph out via dagre (or an empty starter). */
-function seedLineage(graph: BuilderGraph): {
-  nodes: BuilderFlowNode[];
-  edges: Edge[];
-  nextId: number;
-} {
+function seedLineage(graph: BuilderGraph): { nodes: BuilderFlowNode[]; edges: Edge[] } {
   if (graph.steps.length === 0) {
-    return { nodes: [], edges: [], nextId: 0 };
+    return { nodes: [], edges: [] };
   }
   const positions = layoutGraph(
     graph.steps.map((s) => s.id),
@@ -84,118 +58,20 @@ function seedLineage(graph: BuilderGraph): {
     target: e.target,
     data: { edge: e.edge },
   }));
-  const used = graph.steps
-    .map((s) => Number.parseInt(s.id.replace(/^s/, ""), 10))
-    .filter((n) => Number.isFinite(n));
-  return { nodes, edges, nextId: (used.length ? Math.max(...used) : -1) + 1 };
+  return { nodes, edges };
 }
 
-function LineageEditor({
-  handle,
-  envelope,
-  locked,
-}: {
-  handle: string;
-  envelope: Record<string, unknown>;
-  locked: boolean;
-}) {
+function LineageView({ handle, envelope }: { handle: string; envelope: Record<string, unknown> }) {
   const navigate = useNavigate();
-  const { models, unsupported } = useModels();
-  const saveApp = useSaveApp();
   const runApp = useRunApp();
 
   const parsed = useMemo(
     () => appBlueprintToBuilderGraph((envelope.blueprint ?? { seed: 0, steps: [] }) as never),
     [envelope.blueprint],
   );
-  const unmodeled: UnmodeledReport = parsed.unmodeled;
-  const readOnly = locked || unmodeled.refuseEdit;
-
   const seeded = useMemo(() => seedLineage(parsed.graph), [parsed.graph]);
-  const [nodes, setNodes, onNodesChange] = useNodesState<BuilderFlowNode>(seeded.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(seeded.edges);
-  const [selNode, setSelNode] = useState<string | null>(null);
-  const idc = useRef(seeded.nextId);
-
-  const addStep = useCallback(
-    (kind: BuilderStepKind) => {
-      const id = `s${idc.current++}`;
-      setNodes((ns) => [
-        ...ns,
-        {
-          id,
-          type: "builder",
-          position: { x: 80 + (ns.length % 2) * (NODE_W + 60), y: 40 + ns.length * (NODE_H + 40) },
-          data: { step: newStep(kind, id) },
-        },
-      ]);
-      setSelNode(id);
-    },
-    [setNodes],
-  );
-
-  const updateStep = useCallback(
-    (id: string, step: BuilderStep) => {
-      setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { step } } : n)));
-    },
-    [setNodes],
-  );
-
-  const deleteStep = useCallback(
-    (id: string) => {
-      setNodes((ns) => ns.filter((n) => n.id !== id));
-      setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
-      setSelNode(null);
-    },
-    [setNodes, setEdges],
-  );
-
-  const onConnect = useCallback(
-    (c: Connection) => {
-      if (readOnly || !c.source || !c.target || c.source === c.target) {
-        return;
-      }
-      const id = `e-${c.source}-${c.target}`;
-      setEdges((es) =>
-        es.some((e) => e.id === id) ? es : addEdge({ ...c, id, data: { edge: "data" } }, es),
-      );
-    },
-    [setEdges, readOnly],
-  );
-
-  const graph: BuilderGraph = useMemo(
-    () => ({
-      steps: nodes.map((n) => n.data.step),
-      edges: edges.map((e) => ({
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        edge: ((e.data as { edge?: string } | undefined)?.edge ?? "data") as "data" | "control",
-        instruction: "",
-      })),
-    }),
-    [nodes, edges],
-  );
-  // An App's agentic step may bind the SERVED model (empty modelId) — the portable
-  // convention the server resolves at run (SN-8), so it must not block a re-save.
-  const invalid = validationError(graph, { allowEmptyModel: true });
-
-  const onNodeClick = useCallback<NodeMouseHandler>(
-    (_e, node) => {
-      if (!readOnly) {
-        setSelNode(node.id);
-      }
-    },
-    [readOnly],
-  );
-
-  const onSave = useCallback(() => {
-    if (readOnly || invalid) {
-      return;
-    }
-    const blueprint = builderGraphToBlueprint(graph, unmodeled);
-    saveApp.mutate({ handle, envelope: { ...envelope, blueprint } });
-  }, [readOnly, invalid, graph, unmodeled, saveApp, handle, envelope]);
+  const [nodes] = useNodesState<BuilderFlowNode>(seeded.nodes);
+  const [edges] = useEdgesState<Edge>(seeded.edges);
 
   const onRun = useCallback(() => {
     runApp.mutate(
@@ -207,59 +83,13 @@ function LineageEditor({
     );
   }, [runApp, handle, navigate]);
 
-  const selectedStep = selNode ? (nodes.find((n) => n.id === selNode)?.data.step ?? null) : null;
-
   return (
     <div className="app-lineage" data-testid="app-lineage">
       <div className="app-lineage__toolbar">
-        {readOnly ? (
-          <span
-            className="muted"
-            data-testid={locked ? "lineage-locked-notice" : "lineage-readonly-notice"}
-            role="note"
-          >
-            {locked
-              ? "This App is locked — structure edits are refused. Unlock it in Policies to edit."
-              : (unmodeled.reason ?? "This blueprint is read-only.")}
-          </span>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="btn-ghost"
-              data-testid="lineage-add-agent"
-              onClick={() => addStep("model")}
-            >
-              + Agent
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              data-testid="lineage-add-pure"
-              onClick={() => addStep("pure")}
-            >
-              + Pure
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              data-testid="lineage-add-tool"
-              onClick={() => addStep("tool")}
-            >
-              + Tool
-            </button>
-            <button
-              type="button"
-              className="btn-primary"
-              data-testid="app-lineage-save"
-              disabled={invalid !== null || saveApp.isPending}
-              title={invalid ?? "Save the edited structure as a new App version"}
-              onClick={onSave}
-            >
-              {saveApp.isPending ? "Saving…" : "Save to App"}
-            </button>
-          </>
-        )}
+        <span className="muted" data-testid="lineage-readonly-notice" role="note">
+          A read-only view of this App's structure (order, parallel vs. sequential, one node per
+          step). Compose or edit structure in the Workflows builder.
+        </span>
         <button
           type="button"
           className="btn-ghost"
@@ -271,14 +101,6 @@ function LineageEditor({
         </button>
       </div>
 
-      {invalid && !readOnly ? (
-        <output className="builder-validation" data-testid="lineage-validation">
-          {invalid}
-        </output>
-      ) : null}
-      {saveApp.isError ? (
-        <ErrorNotice error={toUiError(saveApp.error)} onRetry={() => saveApp.reset()} />
-      ) : null}
       {runApp.isError ? (
         <ErrorNotice error={toUiError(runApp.error)} onRetry={() => runApp.reset()} />
       ) : null}
@@ -296,18 +118,14 @@ function LineageEditor({
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
-            onNodesChange={readOnly ? undefined : onNodesChange}
-            onEdgesChange={readOnly ? undefined : onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={onNodeClick}
             fitView
             proOptions={{ hideAttribution: true }}
             minZoom={0.1}
             maxZoom={1.5}
-            nodesDraggable={!readOnly}
-            nodesConnectable={!readOnly}
-            elementsSelectable={!readOnly}
-            deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            elementsSelectable={false}
+            deleteKeyCode={null}
           >
             <Background gap={20} />
             <Controls showInteractive={false} />
@@ -315,24 +133,12 @@ function LineageEditor({
           </ReactFlow>
         </div>
       )}
-
-      {selectedStep && !readOnly ? (
-        <StepConfigDrawer
-          key={selectedStep.id}
-          step={selectedStep}
-          models={models}
-          modelsUnsupported={unsupported}
-          onChange={(s) => updateStep(selectedStep.id, s)}
-          onDelete={() => deleteStep(selectedStep.id)}
-          onClose={() => setSelNode(null)}
-        />
-      ) : null}
     </div>
   );
 }
 
-/** The Lineage pane: fetch the App's full envelope, then render the editable graph. */
-export function AppLineageSection({ handle, locked }: { handle: string; locked: boolean }) {
+/** The Lineage pane: fetch the App's full envelope, then render the read-only graph. */
+export function AppLineageSection({ handle }: { handle: string }) {
   const app = useApp(handle);
 
   if (app.isLoading) {
@@ -348,7 +154,7 @@ export function AppLineageSection({ handle, locked }: { handle: string; locked: 
   }
   return (
     <ReactFlowProvider>
-      <LineageEditor handle={handle} envelope={app.data.envelope} locked={locked} />
+      <LineageView handle={handle} envelope={app.data.envelope} />
     </ReactFlowProvider>
   );
 }
