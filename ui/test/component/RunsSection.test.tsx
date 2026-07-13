@@ -16,10 +16,6 @@ vi.mock("../../src/components/sections/RunsTable", () => ({
 vi.mock("../../src/components/sections/WorkflowTrails", () => ({
   WorkflowTrails: () => <div data-testid="workflows-trails" />,
 }));
-vi.mock("../../src/components/apps/AppRunDrawer", () => ({
-  AppRunDrawer: () => <div data-testid="stub-run-drawer" />,
-}));
-vi.mock("../../src/kx/use-apps", () => ({ useApps: () => ({ apps: [], notWired: false }) }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ to, children, ...rest }: any) => (
     <a href={typeof to === "string" ? to : "#"} {...rest}>

@@ -96,7 +96,7 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await expect(page).toHaveURL(/\/workflows\//, { timeout: 30_000 });
 });
 
-test("Workflows → Apps (POC-5d): a saved App is triggerable from the Workflows catalog", async ({
+test("Workflows → Apps (WAVE-3): the catalog links to the Apps section (Apps have one home)", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -114,9 +114,13 @@ test("Workflows → Apps (POC-5d): a saved App is triggerable from the Workflows
   await connectConsole(page, gw);
   await gotoViaPalette(page, "runs");
   await expect(page.getByTestId("runs-section")).toBeVisible();
-  await expect(page.getByTestId("runs-apps")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("runs-app-run-apps/local/trigger-demo").click();
-  await expect(page.getByTestId("app-run-drawer")).toBeVisible();
-  await page.getByTestId("app-run-now").click();
-  await expect(page).toHaveURL(/\/workflows\//, { timeout: 30_000 });
+  // WAVE-3: saved Apps are no longer duplicated in the Workflows catalog — the
+  // catalog links to the Apps section, where an App runs from its typed drawer.
+  await expect(page.getByTestId("runs-apps")).toHaveCount(0);
+  await page.getByTestId("workflows-apps-link").click();
+  await expect(page).toHaveURL(/\/apps$/);
+  await expect(page.getByTestId("apps-section")).toBeVisible();
+  await expect(page.getByTestId("app-run-apps/local/trigger-demo")).toBeVisible({
+    timeout: 30_000,
+  });
 });
