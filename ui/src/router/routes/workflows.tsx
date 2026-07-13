@@ -11,13 +11,13 @@ const RunsSection = lazy(() =>
 );
 
 /**
- * The Workflows section home (POC-5c / D168): absent = the runnable blueprint/App
- * CATALOG, `runs` = your own run history, `trails` = the self-correction trails.
- * A stale `?view=` deep link (D141.1 era) is dropped, landing on the catalog. The
- * frozen section id stays `runs`.
+ * The Workflows section home (POC-5c / D168): absent = the runnable workflow
+ * CATALOG, `runs` = your one-time run history, `templates` = the reusable-templates
+ * placeholder. Stale deep links (`?view=`, the retired `?tab=trails`) are dropped,
+ * landing on the catalog. The frozen section id stays `runs`.
  */
 interface WorkflowsSearch {
-  tab?: "runs" | "trails";
+  tab?: "runs" | "templates";
 }
 
 function WorkflowsScreen() {
@@ -43,6 +43,6 @@ export const workflowsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/workflows",
   validateSearch: (search: Record<string, unknown>): WorkflowsSearch =>
-    search.tab === "runs" || search.tab === "trails" ? { tab: search.tab } : {},
+    search.tab === "runs" || search.tab === "templates" ? { tab: search.tab } : {},
   component: WorkflowsScreen,
 });
