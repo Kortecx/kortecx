@@ -71,7 +71,9 @@ test("a failed turn offers retry with identical args and recovers when the gatew
   await page.getByTestId("chat-settings").locator("summary").click();
   await page.getByTestId("echo-preset").click();
 
-  // Fail the first turn by pointing chat at a recipe the gateway cannot run.
+  // Fail the first turn by pointing chat at a recipe the gateway cannot run. The
+  // blueprint handle lives behind the settings' "Advanced (developer)" reveal.
+  await page.getByTestId("chat-settings-advanced").click();
   await page.getByLabel(/blueprint handle/i).fill("kx/recipes/does-not-exist");
   await typeMessage(page, "retry me");
   await page.getByTestId("send").click();

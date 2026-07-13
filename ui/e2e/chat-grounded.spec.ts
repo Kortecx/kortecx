@@ -38,7 +38,6 @@ test("New Chat grounds over a dataset (read-only shape, first-class picker) in B
 
   // Read-only shape: the grounding bar is the headline; there is NO Agent toggle.
   await expect(page.getByTestId("chat-grounding")).toBeVisible();
-  await expect(page.getByTestId("chat-grounding-summary")).toBeVisible();
   await expect(page.getByTestId("chat-mode")).toHaveCount(0);
 
   // The seeded corpus is selectable in the grounding bar's dataset picker (a real

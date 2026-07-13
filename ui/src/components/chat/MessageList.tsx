@@ -1,7 +1,10 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useRef } from "react";
 import type { ChatMessage, ChatThread } from "../../lib/chat-thread";
 import { EmptyState } from "../EmptyState";
 import { MessageBubble } from "./MessageBubble";
+
+/** How close to the bottom (px) still counts as "following" the stream. */
+const STICK_THRESHOLD = 96;
 
 /** The scrollable thread; auto-scrolls to the newest message when enabled. */
 export function MessageList({
@@ -27,17 +30,29 @@ export function MessageList({
   recipeHandle?: string;
   modelId?: string;
 }) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // Whether the user is following the tail. Starts true; a scroll-up releases it so
+  // the stream keeps flowing WITHOUT yanking the viewport back down (the reactivity
+  // fix). Scrolling back to the bottom re-arms it.
+  const stuckRef = useRef(true);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on any thread change.
+  const onScroll = useCallback(() => {
+    const el = listRef.current;
+    if (el) {
+      stuckRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD;
+    }
+  }, []);
+
+  // Follow the tail only while stuck to the bottom. Keyed on the thread so it fires
+  // on every token/message update; a no-op when the user has scrolled up.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: follow on any thread change.
   useEffect(() => {
-    if (!autoscroll) {
+    if (!autoscroll || !stuckRef.current) {
       return;
     }
-    try {
-      endRef.current?.scrollIntoView({ block: "end" });
-    } catch {
-      /* jsdom has no layout — harmless */
+    const el = listRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight; // jump the container, never scrollIntoView (no page reflow)
     }
   }, [thread, autoscroll]);
 
@@ -46,7 +61,7 @@ export function MessageList({
   }
 
   return (
-    <div className="chat__list" data-testid="message-list">
+    <div className="chat__list" data-testid="message-list" ref={listRef} onScroll={onScroll}>
       {thread.messages.map((m) => (
         <MessageBubble
           key={m.id}
@@ -59,7 +74,6 @@ export function MessageList({
           modelId={modelId}
         />
       ))}
-      <div ref={endRef} />
     </div>
   );
 }

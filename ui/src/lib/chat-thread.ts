@@ -11,8 +11,10 @@
 import type { UiError } from "../kx/errors";
 
 export type ChatRole = "user" | "assistant";
-/** pending = invoking; thinking = run in flight; done/failed = terminal. */
-export type ChatStatus = "pending" | "thinking" | "done" | "failed";
+/** pending = invoking; thinking = run in flight; done/failed/stopped = terminal.
+ *  `stopped` = the user pressed Stop — the client stopped following the run (the
+ *  server run may still be completing, unobserved); any partial answer is kept. */
+export type ChatStatus = "pending" | "thinking" | "done" | "failed" | "stopped";
 
 /** One attachment riding a user message (Batch A): the SERVER-derived upload
  *  ref + advisory display fields. `objectUrl` is the session-local `blob:`
@@ -77,6 +79,8 @@ export type ChatAction =
   | { type: "token_streamed"; assistantId: string; text: string; target: "answer" | "reasoning" }
   | { type: "turn_done"; assistantId: string; text: string }
   | { type: "turn_failed"; assistantId: string; error: UiError }
+  /** The user pressed Stop: mark the turn stopped, keep any partial streamed answer. */
+  | { type: "turn_cancelled"; assistantId: string }
   /** Re-dispatch a FAILED turn with its identical args (Batch A idempotent-run
    *  UX: content-addressed refs + server dedup make the re-run safe). */
   | { type: "turn_retry"; assistantId: string }
@@ -146,6 +150,13 @@ export function chatReducer(state: ChatThread, action: ChatAction): ChatThread {
         status: "failed",
         error: action.error,
       }));
+    case "turn_cancelled":
+      // Only an in-flight turn stops; keep the partial `text`, drop the live trace.
+      return patch(state, action.assistantId, (m) =>
+        m.status === "pending" || m.status === "thinking"
+          ? { ...m, status: "stopped", streamingReasoning: undefined }
+          : m,
+      );
     case "turn_retry":
       // Only a FAILED turn re-arms (a done/in-flight turn is not retryable).
       return patch(state, action.assistantId, (m) =>

@@ -30,6 +30,7 @@ export type Glyph =
   | "refresh"
   | "search"
   | "send"
+  | "stop"
   | "settings"
   | "terminal"
   | "copy"
@@ -70,6 +71,7 @@ const PATHS: Record<Glyph, string> = {
   refresh: "M20 11a8 8 0 10-2.3 6.3M20 6v5h-5",
   search: "M11 19a8 8 0 100-16 8 8 0 000 16zm10 2l-5-5",
   send: "M4 12l16-7-7 16-2-7z",
+  stop: "M8 8h8v8H8z",
   settings:
     "M12 9a3 3 0 100 6 3 3 0 000-6zM19 12a7 7 0 00-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 00-1.7-1l-.3-2.6h-4l-.3 2.6a7 7 0 00-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 000 2l-2 1.5 2 3.4 2.3-1a7 7 0 001.7 1l.3 2.6h4l.3-2.6a7 7 0 001.7-1l2.3 1 2-3.4-2-1.5a7 7 0 00.1-1z",
   terminal: "M4 17l6-5-6-5M12 19h8",

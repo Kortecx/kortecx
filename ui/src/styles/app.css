@@ -1562,28 +1562,37 @@ select {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.bubble__md code {
-  font-family: var(--mono);
-  font-size: 0.85em;
-  padding: 0.1em 0.35em;
-  border-radius: 4px;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-}
-.bubble__md pre {
-  margin: 0.5rem 0;
-  padding: 0.6rem 0.8rem;
+/* PR-F: chat code — a framed, CONTRASTING surface in both themes. `--surface-elev`
+   differs from the assistant bubble surface (which was invisibly equal to
+   `--bg-input`); scoped `.bubble__md .md-pre` beats the generic `.bubble__md pre`. */
+.bubble__md .md-pre {
+  margin: 0.6rem 0;
+  padding: 0.7rem 0.85rem;
   overflow-x: auto;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--surface-elev);
+  border: 1px solid var(--border-md);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
 }
-.bubble__md pre code {
-  padding: 0;
-  border: 0;
-  background: none;
-  font-size: 0.85rem;
+.bubble__md .md-code {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
   line-height: 1.5;
+  color: var(--fg);
+  white-space: pre;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+/* Inline code — a subtle tinted chip, distinct from the bubble surface. */
+.bubble__md code:not(.md-code) {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0.12em 0.4em;
+  border-radius: var(--radius-sm);
+  background: var(--surface-elev);
+  border: 1px solid var(--border-md);
+  color: var(--accent);
 }
 .bubble__md blockquote {
   margin: 0.5rem 0;
@@ -1652,8 +1661,34 @@ select {
   outline: none;
 }
 .chat__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   margin-left: auto;
   flex-shrink: 0;
+}
+/* Keep every header action the same height so the orange CTA, the icon Context, and
+   the icon Export/History line up on one row (PR-F alignment fix). */
+.chat__head-actions > button,
+.chat__head-actions .popover > button {
+  height: 32px;
+}
+.chat__context-btn {
+  position: relative;
+}
+.chat__context-count {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--primary-h);
+  color: var(--accent-fg);
+  font-size: 0.6rem;
+  line-height: 15px;
+  text-align: center;
 }
 /* A clean, token-driven ghost button — reuses the .iconbtn interaction language
  * (transparent → hover surface), so it's a REUSED pattern, not a new one. */
@@ -3505,6 +3540,59 @@ button.card-grid__title:hover {
   line-height: 1.4;
   color: var(--fg-muted);
 }
+
+/* ---- PR-F: New Chat chrome — the orange New-chat CTA + colorful composer + code ---- */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.36rem 0.72rem;
+  border: 1px solid var(--primary-h);
+  border-radius: var(--radius);
+  background: var(--primary-h);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.chat__context-btn {
+  color: var(--accent);
+}
+/* Colorful, aligned composer actions: send is accent-filled, attach is accent-outlined. */
+.composer__send:not(:disabled) {
+  color: var(--accent-fg);
+  background: var(--primary-h);
+  border-color: var(--primary-h);
+}
+/* Stop = a clear halt affordance while generating (the failed-state tone). */
+.composer__stop {
+  color: #fff;
+  background: var(--t-failed);
+  border-color: var(--t-failed);
+}
+.composer__stop:hover {
+  filter: brightness(0.94);
+}
+.composer__send:not(:disabled):hover {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.composer__attach {
+  color: var(--accent);
+}
+.composer__attach:hover {
+  color: var(--primary-h);
+  border-color: var(--primary-h);
+}
+/* (Chat code-block styling lives with the .bubble__md rules — see .bubble__md .md-pre.) */
 
 /* ---- MCP Connections (PR-6b-1: the live external-MCP-gateway govern surface) ---- */
 .connections-list {

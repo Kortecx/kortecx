@@ -25,6 +25,7 @@ import { AttachmentStrip } from "./AttachmentStrip";
 import { ChatHistory } from "./ChatHistory";
 import { ChatSettingsPanel } from "./ChatSettings";
 import { Composer } from "./Composer";
+import { ContextAttachButton } from "./ContextAttachButton";
 import { DatasetPicker } from "./DatasetPicker";
 import { DegradeNotice } from "./DegradeNotice";
 import { GroundingBar } from "./GroundingBar";
@@ -119,28 +120,7 @@ export function ChatSurface({
             <div className="screen__head-actions chat__head-actions">
               <button
                 type="button"
-                className="btn-ghost"
-                onClick={exportChat}
-                disabled={chat.thread.messages.length === 0}
-                title="Export this chat as JSON"
-                data-testid="chat-export"
-              >
-                <Icon name="download" />
-                <span>Export</span>
-              </button>
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={() => setHistoryOpen(true)}
-                title="Chat history"
-                data-testid="chat-history-toggle"
-              >
-                <Icon name="history" />
-                <span>History</span>
-              </button>
-              <button
-                type="button"
-                className="btn-ghost"
+                className="btn-primary chat__new"
                 onClick={newChat}
                 disabled={chat.thread.messages.length === 0}
                 title="Start a new chat"
@@ -149,41 +129,63 @@ export function ChatSurface({
                 <Icon name="plus" />
                 <span>New chat</span>
               </button>
+              {showGrounding ? (
+                <ContextAttachButton
+                  bundles={contextBundles.bundles.map((b) => b.handle)}
+                  attached={pendingContext}
+                  notWired={contextBundles.notWired}
+                  onToggle={toggleContext}
+                />
+              ) : null}
+              <button
+                type="button"
+                className="iconbtn"
+                onClick={exportChat}
+                disabled={chat.thread.messages.length === 0}
+                title="Export this chat as JSON"
+                aria-label="Export chat"
+                data-testid="chat-export"
+              >
+                <Icon name="download" />
+              </button>
+              <button
+                type="button"
+                className="iconbtn"
+                onClick={() => setHistoryOpen(true)}
+                title="Chat history"
+                aria-label="Chat history"
+                data-testid="chat-history-toggle"
+              >
+                <Icon name="history" />
+              </button>
             </div>
           ) : null}
         </div>
       )}
-      <p className="muted">
-        {agentTurn ? (
-          <>
-            Each message is a TASK for the agent loop (<code>{REACT_RECIPE_HANDLE}</code>): the
-            model reasons and fires tools until it answers.
-          </>
-        ) : dataset ? (
-          <>
-            Each message runs <code>{CHAT_RAG_RECIPE_HANDLE}</code>, grounded on dataset{" "}
-            <strong data-testid="chat-grounded-on">{dataset}</strong> — the retrieved documents fold
-            into the prompt before the model answers (plain chat if the dataset is empty).
-          </>
-        ) : (
-          <>
-            Each message runs <code>{backingHandle}</code>; the reply is the run's committed result.
-          </>
-        )}
-      </p>
-
-      {showGrounding ? (
-        <GroundingBar
-          dataset={dataset}
-          onDataset={setDataset}
-          bundles={contextBundles.bundles.map((b) => b.handle)}
-          attached={pendingContext}
-          notWired={contextBundles.notWired}
-          onToggleContext={toggleContext}
-        />
+      {/* The recipe-mechanics note is dev context — hidden on the read-only New Chat
+          (grounding + the answer speak for themselves); kept for the embedded App chat. */}
+      {!showGrounding ? (
+        <p className="muted">
+          {agentTurn ? (
+            <>
+              Each message is a TASK for the agent loop (<code>{REACT_RECIPE_HANDLE}</code>): the
+              model reasons and fires tools until it answers.
+            </>
+          ) : dataset ? (
+            <>
+              Each message runs <code>{CHAT_RAG_RECIPE_HANDLE}</code>, grounded on dataset{" "}
+              <strong>{dataset}</strong> — the retrieved documents fold into the prompt before the
+              model answers (plain chat if the dataset is empty).
+            </>
+          ) : (
+            <>
+              Each message runs <code>{backingHandle}</code>; the reply is the run's committed
+              result.
+            </>
+          )}
+        </p>
       ) : null}
 
-      {showPickers ? <ChatSettingsPanel settings={settings} onChange={updateSettings} /> : null}
       {chat.degraded ? (
         <DegradeNotice error={chat.degraded} />
       ) : promptNoModel ? (
@@ -237,13 +239,27 @@ export function ChatSurface({
           )}
         </div>
       ) : null}
+      {/* Grounding (dataset + status + attached-context chips) sits above the input;
+          the Context ATTACH control lives in the header (ContextAttachButton). */}
+      {showGrounding ? (
+        <GroundingBar
+          dataset={dataset}
+          onDataset={setDataset}
+          attached={pendingContext}
+          onToggleContext={toggleContext}
+        />
+      ) : null}
+      {/* Model + display settings sit JUST ABOVE the input (moved off the top). */}
+      {showPickers ? <ChatSettingsPanel settings={settings} onChange={updateSettings} /> : null}
       {showPickers ? (
         <AttachmentStrip attachments={attach.attachments} onRemove={attach.remove} />
       ) : null}
       <Composer
         disabled={chat.busy}
         sendBlocked={attach.uploading}
+        busy={chat.busy}
         onSend={sendWithAttachments}
+        onStop={() => chat.cancel()}
         onPickFiles={showPickers ? attach.addFiles : undefined}
         context={
           // Context selection moves to the grounding bar when grounding is on;

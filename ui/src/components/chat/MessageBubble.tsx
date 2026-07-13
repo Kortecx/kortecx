@@ -71,9 +71,11 @@ export function MessageBubble({
         data-testid={`bubble-${message.role}`}
         data-status={message.status}
       >
-        {message.role === "assistant" && inFlight ? (
+        {/* Reactive live-state caption: Thinking → Reasoning → (hidden once the answer
+            starts streaming word-by-word). Advances with the actual generation state. */}
+        {message.role === "assistant" && inFlight && !message.text ? (
           <span className="bubble__pending" data-testid="bubble-thinking">
-            thinking…
+            {message.streamingReasoning ? "Reasoning…" : "Thinking…"}
           </span>
         ) : null}
         {/* PR-4.2 (T-STREAM1): an agent chain's LIVE reasoning/acting text streams

@@ -134,6 +134,8 @@ export interface UseChat {
   ): Promise<void>;
   /** Re-dispatch a FAILED turn with its identical args. */
   retry(assistantId: string): Promise<void>;
+  /** Stop the in-flight turn (client-side: stops following + marks it stopped). */
+  cancel(): void;
   /** Restore a saved thread (chat history) — replaces the live one. */
   loadThread(messages: readonly ChatMessage[]): void;
   reset(): void;
@@ -341,6 +343,9 @@ export function useChat({
   const [degraded, setDegraded] = useState<UiError | null>(null);
   // The assistant id whose result we've already finalized (no double-fetch).
   const finalizedRef = useRef<string | null>(null);
+  // Assistant ids the user pressed Stop on during the pre-`active` Invoke window —
+  // `startTurn` bails after its awaits so a cancelled turn never starts following.
+  const cancelledRef = useRef<Set<string>>(new Set());
   // The vision form, fetched once per session (`null` = probed and absent).
   const visionFormRef = useRef<RecipeForm | null | undefined>(undefined);
   // The react form likewise (agent mode probes the declared slots).
@@ -723,6 +728,10 @@ export function useChat({
             });
             return;
           }
+          if (cancelledRef.current.has(assistantId)) {
+            cancelledRef.current.delete(assistantId); // Stop pressed during Invoke → don't follow
+            return;
+          }
           dispatch({ type: "turn_started", assistantId, instanceId, terminalMoteId: "" });
           setActive({ assistantId, instanceId, terminalMoteId: "", react: true, reactChainSalt });
           return;
@@ -732,6 +741,10 @@ export function useChat({
           args: plan.args,
           context: merged.length > 0 ? merged : undefined,
         });
+        if (cancelledRef.current.has(assistantId)) {
+          cancelledRef.current.delete(assistantId); // Stop pressed during Invoke → don't follow
+          return;
+        }
         dispatch({ type: "turn_started", assistantId, instanceId, terminalMoteId });
         setActive({
           assistantId,
@@ -807,6 +820,24 @@ export function useChat({
     dispatch({ type: "reset" });
   }, []);
 
+  // Stop the in-flight turn. No server cancel RPC exists, so this is an HONEST
+  // client stop: it stops following (kills the projection/react polls + closes the
+  // token socket via `setActive(null)`), blocks a late finalize, and marks the turn
+  // `stopped` (keeping any partial answer). The server run may still complete unobserved.
+  const cancel = useCallback((): void => {
+    const inFlight = thread.messages.find(
+      (m) => m.role === "assistant" && (m.status === "pending" || m.status === "thinking"),
+    );
+    if (!inFlight) {
+      return;
+    }
+    const id = inFlight.id;
+    cancelledRef.current.add(id); // bail the pre-`active` Invoke window in startTurn
+    finalizedRef.current = id; // block the finalize effects on a late settle
+    setActive(null); // stop the polls + close the token socket
+    dispatch({ type: "turn_cancelled", assistantId: id });
+  }, [thread]);
+
   return {
     thread,
     busy: isTurnInFlight(thread),
@@ -816,6 +847,7 @@ export function useChat({
     reactTurns: active?.react ? reactProgress.turns : undefined,
     send,
     retry,
+    cancel,
     loadThread,
     reset,
   };
