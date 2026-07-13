@@ -2460,6 +2460,51 @@ select {
   min-height: 4.5rem;
   font-family: var(--font-mono, ui-monospace, monospace);
 }
+.dataset-ingest__files {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  align-items: flex-start;
+}
+.dataset-ingest__addfiles {
+  cursor: pointer;
+}
+.dataset-ingest__filelist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+}
+.dataset-ingest__file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+  font-size: 0.85rem;
+}
+.dataset-ingest__file .mono {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dataset-ingest__file-remove {
+  border: none;
+  background: none;
+  color: var(--text-muted, inherit);
+  cursor: pointer;
+  padding: 0 0.2rem;
+  line-height: 1;
+}
+.dataset-ingest__file-remove:hover {
+  color: var(--danger, #c0392b);
+}
 .dataset-hits {
   list-style: none;
   margin: 0.5rem 0 0;
