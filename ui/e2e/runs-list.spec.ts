@@ -23,11 +23,13 @@ test("runs: a submitted run appears in the run list and re-opens", async ({ page
   await page.getByTestId("workflows-tab-runs").click();
   await expect(page.getByTestId("workflows-runs")).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("run-list")).toContainText("kx/recipes/echo");
+  // High-level only: the friendly (humanized) name shows — never the raw handle.
+  await expect(page.getByTestId("run-list")).toContainText("Echo");
+  await expect(page.getByTestId("run-list")).not.toContainText("kx/recipes");
 
   // The filter narrows the list (and an unmatched query empties it).
   await page.getByTestId("runs-filter").fill("echo");
-  await expect(page.getByTestId("run-list")).toContainText("kx/recipes/echo");
+  await expect(page.getByTestId("run-list")).toContainText("Echo");
   await page.getByTestId("runs-filter").fill("zzz-no-match");
   await expect(page.getByTestId("run-list")).toHaveCount(0);
 

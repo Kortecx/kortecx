@@ -1,8 +1,10 @@
 /**
- * The /workflows page has a view-toggle: the runnable CATALOG (default) — browse a
- * blueprint (workflow definition) and trigger a single run from its popup — plus your
- * own run HISTORY (Runs) and the self-correction TRAILS. This spec pins the catalog +
- * the definition popup, and that run history is reachable from the Runs tab.
+ * The /workflows section: three tabs (Catalog / Runs / Templates), a top-right
+ * Refresh + New-workflow cluster, and a high-level catalog of workflow CARDS
+ * (name · description · Run / Schedule / Share + a kebab). This pins the tab
+ * structure, the card action affordances (run form, schedule popover, edit-in-
+ * builder), the Templates placeholder, the top-right actions, and a dark-theme
+ * render. (Populated Runs-table assertions live in runs-list.spec.ts.)
  */
 
 import { expect, test } from "@playwright/test";
@@ -16,41 +18,75 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("workflows page: the runnable catalog + the workflow-definition popup", async ({ page }) => {
+test("workflows catalog: high-level cards with Run form, Schedule, and Edit-in-builder", async ({
+  page,
+}) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("runs-section")).toBeVisible();
 
-  // The section has a view-toggle (Catalog / Runs / Trails); the catalog is default.
+  // Three tabs; the catalog is default and renders a CARD GRID (not a raw table).
   await expect(page.getByTestId("workflows-tabs")).toBeVisible();
+  await expect(page.getByTestId("workflows-tab-catalog")).toBeVisible();
   await expect(page.getByTestId("workflows-tab-runs")).toBeVisible();
-  await expect(page.getByTestId("workflows-list")).toBeVisible({ timeout: 30_000 });
-  // The row shows the display NAME now (the raw handle path was dropped from the list);
-  // the handle lives on the row's open-button testid.
-  await expect(page.getByTestId("workflow-open-kx/recipes/echo")).toBeVisible();
+  await expect(page.getByTestId("workflows-tab-templates")).toBeVisible();
+  await expect(page.getByTestId("workflows-catalog")).toBeVisible({ timeout: 30_000 });
 
-  // Click a workflow row → the definition popup: contract + view + the new-window
-  // button (which lives ONLY in the popup).
-  await page.getByTestId("workflow-open-kx/recipes/echo").click();
-  const drawer = page.getByTestId("workflow-detail-drawer");
-  await expect(drawer).toBeVisible();
-  // The definition popup lists the workflow's INPUTS (echo has a `topic` param), not raw
-  // JSON; the handle still shows in the drawer head; per-item Schedule is offered (a
-  // LOCAL CRON trigger — no cloud).
-  await expect(drawer.getByTestId("workflow-definition")).toContainText("topic", {
-    timeout: 30_000,
-  });
-  await expect(drawer).toContainText("kx/recipes/echo");
-  await expect(drawer.getByTestId("workflow-schedule-kx/recipes/echo")).toBeVisible();
-  const newtab = drawer.getByTestId("workflow-open-newtab");
-  await expect(newtab).toHaveAttribute("target", "_blank");
-  await expect(newtab).toHaveAttribute("rel", "noopener noreferrer");
+  // The echo workflow shows as a card with its clean name — no raw handle on the card.
+  const card = page
+    .getByTestId("workflow-card")
+    .filter({ has: page.getByTestId("workflow-open-kx/recipes/echo") });
+  await expect(card).toBeVisible();
+  await expect(card).not.toContainText("kx/recipes/echo");
 
-  // The popup's Run links to the Blueprints run form for that workflow.
-  await drawer.getByTestId("workflow-run").click();
-  await expect(page).toHaveURL(/\/recipes\?handle=/);
+  // Run → the input form drawer opens (echo has a `topic` param); Escape closes it.
+  await card.getByTestId("workflow-run-kx/recipes/echo").click();
+  await expect(page.getByTestId("blueprint-form-drawer")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("field-topic")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("blueprint-form-drawer")).toBeHidden();
+
+  // Schedule → the local CRON trigger popover (no cloud).
+  await card.getByTestId("workflow-schedule-kx/recipes/echo").click();
+  await expect(page.getByTestId("schedule-name")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // Kebab → Edit in builder links to the visual builder; Open-in-new-tab is a new window.
+  await card.getByTestId("workflow-menu-kx/recipes/echo").click();
+  await expect(card.getByTestId("workflow-edit")).toHaveAttribute("href", /\/blueprints\/new/);
+  await expect(card.getByTestId("workflow-open-newtab")).toHaveAttribute("target", "_blank");
+});
+
+test("workflows: the top-right Refresh + New-workflow actions", async ({ page }) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
+
+  await page.getByTestId("nav-runs").click();
+  await expect(page.getByTestId("workflows-catalog")).toBeVisible({ timeout: 30_000 });
+
+  // Refresh re-pulls the catalog without error (the grid stays visible).
+  await page.getByTestId("workflows-refresh").click();
+  await expect(page.getByTestId("workflows-catalog")).toBeVisible({ timeout: 30_000 });
+
+  // New workflow opens the visual builder.
+  await page.getByTestId("workflows-new").click();
+  await expect(page).toHaveURL(/\/blueprints\/new/);
+  await expect(page.getByTestId("builder-canvas")).toBeVisible({ timeout: 30_000 });
+});
+
+test("workflows: the Templates tab shows the honest 'coming next' placeholder", async ({
+  page,
+}) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
+
+  await page.getByTestId("nav-runs").click();
+  await page.getByTestId("workflows-tab-templates").click();
+  await expect(page.getByTestId("workflows-templates")).toBeVisible();
+  await expect(page.getByTestId("workflows-templates-placeholder")).toBeVisible();
+  await expect(page.getByTestId("workflows-catalog")).toHaveCount(0);
 });
 
 test("run history is reachable from the Workflows → Runs tab", async ({ page }) => {
@@ -60,7 +96,22 @@ test("run history is reachable from the Workflows → Runs tab", async ({ page }
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("runs-section")).toBeVisible();
   await page.getByTestId("workflows-tab-runs").click();
-  // The run-history table (RunsTable) lives here now (populated-table assertions
-  // live in runs-list.spec.ts, which submits a run first).
   await expect(page.getByTestId("workflows-runs")).toBeVisible({ timeout: 15_000 });
+});
+
+test("workflows section renders under the dark theme", async ({ page }) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
+
+  const html = page.locator("html");
+  for (let i = 0; i < 3 && (await html.getAttribute("data-theme")) !== "dark"; i++) {
+    await page.getByTestId("theme-toggle").click();
+  }
+  await expect(html).toHaveAttribute("data-theme", "dark");
+
+  await page.getByTestId("nav-runs").click();
+  await expect(page.getByTestId("workflows-catalog")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("workflow-card").first()).toBeVisible();
+  await page.getByTestId("workflows-tab-templates").click();
+  await expect(page.getByTestId("workflows-templates-placeholder")).toBeVisible();
 });

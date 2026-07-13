@@ -28,9 +28,10 @@ test("workflows: a run row's detail popup clones (prefilled), renames, and clear
   await gotoRunHistory(page);
   await expect(page.getByTestId("run-list")).toBeVisible();
 
-  // The row carries its recipe handle (clean name = "Echo").
+  // The row shows the clean (humanized) name — never the raw handle.
   const row = page.getByTestId("run-row").first();
-  await expect(row).toContainText("kx/recipes/echo");
+  await expect(row).toContainText("Echo");
+  await expect(row).not.toContainText("kx/recipes");
 
   // Open the detail popup; rename (client-local) → the row shows the custom name.
   await row.getByTestId("run-open").click();
@@ -59,12 +60,12 @@ test("workflows: a run row's detail popup clones (prefilled), renames, and clear
   await expect(durable).toContainText("journal"); // the recovered-from-journal badge
   await expect(durable).toContainText("incident triage"); // renames outlive the clear
 
-  // Dropping the rename falls back to the humanized handle + its raw-handle chip.
+  // Dropping the rename falls back to the humanized name (no raw handle shown).
   await durable.getByTestId("run-open").click();
   await drawer.getByTestId("run-rename-input").fill("");
   await drawer.getByTestId("run-rename").click();
   await page.keyboard.press("Escape");
-  await expect(durable).toContainText("kx/recipes/echo");
+  await expect(durable).toContainText("Echo");
 });
 
 test("blueprints: the catalog is a card grid; the menu's View opens the contract in Monaco", async ({
