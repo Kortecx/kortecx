@@ -121,12 +121,14 @@ afterEach(() => {
 });
 
 describe("App IDE shell (POC-5d)", () => {
-  it("renders the tabs (Files / Lineage / Skills / Capabilities) + header controls", () => {
+  it("renders the tabs (Files / Lineage / Skills / MCP Tools / Integrations) + header controls", () => {
     render(<AppDetailSection handle="apps/local/echo" />);
     expect(screen.getByTestId("app-detail")).toBeInTheDocument();
-    for (const t of ["files", "lineage", "skills", "capabilities"]) {
+    for (const t of ["files", "lineage", "skills", "tools", "integrations"]) {
       expect(screen.getByTestId(`app-tab-${t}`)).toBeInTheDocument();
     }
+    // The old single "Capabilities" tab is gone (split into MCP Tools + Integrations).
+    expect(screen.queryByTestId("app-tab-capabilities")).toBeNull();
     // Chat is a header action now (a right-side drawer), not a tab.
     expect(screen.queryByTestId("app-tab-chat")).toBeNull();
     expect(screen.getByTestId("app-detail-chat")).toBeInTheDocument();

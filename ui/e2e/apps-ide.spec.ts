@@ -64,6 +64,8 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await expect(page.getByTestId("app-detail")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("app-tab-files")).toBeVisible();
   await expect(page.getByTestId("app-tab-lineage")).toBeVisible();
+  await expect(page.getByTestId("app-tab-tools")).toBeVisible();
+  await expect(page.getByTestId("app-tab-integrations")).toBeVisible();
   await expect(page.getByTestId("app-tab-chat")).toHaveCount(0);
 
   // The Chat header action opens the agentic "Chat & edit" drawer (converse + the
@@ -103,6 +105,13 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await expect(page.getByTestId("app-lineage-save")).toHaveCount(0);
   // The tab is URL-addressable (refresh-safe).
   await expect(page).toHaveURL(/[?&]tab=lineage/);
+
+  // MCP Tools + Integrations: the split, read-only capability manifest (needs vs. have).
+  await page.getByTestId("app-tab-tools").click();
+  await expect(page.getByTestId("app-manifest")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("app-tab-integrations").click();
+  await expect(page.getByTestId("app-tab-integrations")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("app-manifest")).toBeVisible();
 
   // Run: the drawer opens; with no input_schema it runs in one click and navigates to
   // the live run (the pure step commits without a model).

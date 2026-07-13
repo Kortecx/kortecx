@@ -40,7 +40,7 @@ import { MonacoMount } from "../editor/MonacoMount";
 import { Icon } from "../shell/Icon";
 import { AppLineageSection } from "./AppLineageSection";
 
-const TABS = ["files", "lineage", "skills", "capabilities"] as const;
+const TABS = ["files", "lineage", "skills", "tools", "integrations"] as const;
 export type IdeTab = (typeof TABS)[number];
 
 /** The Files rail's collapsed state is remembered across reloads (like the shell nav). */
@@ -50,7 +50,8 @@ const TAB_LABELS: Record<IdeTab, string> = {
   files: "Files",
   lineage: "Lineage",
   skills: "Skills",
-  capabilities: "Capabilities",
+  tools: "MCP Tools",
+  integrations: "Integrations",
 };
 
 export function AppDetailSection({
@@ -232,8 +233,10 @@ export function AppDetailSection({
         ) : (
           <EmptyState title="Loading skills…" />
         )
-      ) : tab === "capabilities" ? (
-        <AppManifestPanel handle={handle} />
+      ) : tab === "tools" ? (
+        <AppManifestPanel handle={handle} section="tools" />
+      ) : tab === "integrations" ? (
+        <AppManifestPanel handle={handle} section="connections" />
       ) : branch.isLoading ? (
         <EmptyState title="Loading project…" />
       ) : branch.isError ? (
