@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { typeMessage } from "./fixtures/chat";
+import { seedEchoBacking, typeMessage } from "./fixtures/chat";
 import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -10,9 +10,7 @@ test.afterEach(() => {
   gw = undefined;
 });
 
-test("chat round-trips against the model-free echo recipe (Invoke→poll→GetContent)", async ({
-  page,
-}) => {
+test("a model-free serve shows the honest no-model degrade notice", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
@@ -20,14 +18,22 @@ test("chat round-trips against the model-free echo recipe (Invoke→poll→GetCo
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
   // PR-B (GR15): on this model-free serve chat proactively shows the honest
-  // "no model — connect one" notice (instead of silently echoing).
+  // "no model — connect one" notice (the default backing, not a silent echo).
   await expect(page.getByTestId("degrade-notice")).toBeVisible();
+});
 
-  // Point chat at the deterministic, model-free echo recipe.
-  await page.getByTestId("chat-settings").locator("summary").click();
-  await page.getByTestId("echo-preset").click();
+test("chat round-trips against the model-free echo recipe (Invoke→poll→GetContent)", async ({
+  page,
+}) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  // Point chat at the deterministic, model-free echo recipe (seeded, not clicked).
+  await seedEchoBacking(page);
+  await connectConsole(page, gw);
 
-  // Picking echo is a DELIBERATE model-free choice — the notice is dismissed
+  await page.getByTestId("nav-chat").click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
+
+  // Echo is a DELIBERATE model-free choice — the no-model notice is dismissed
   // (resolveChatBacking honors echo verbatim; it no longer masks a gap).
   await expect(page.getByTestId("degrade-notice")).toHaveCount(0);
 
@@ -43,11 +49,11 @@ test("chat round-trips against the model-free echo recipe (Invoke→poll→GetCo
 
 test("a chat turn fails gracefully when the gateway is unreachable", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await seedEchoBacking(page);
   await connectConsole(page, gw);
 
   await page.getByTestId("nav-chat").click();
-  await page.getByTestId("chat-settings").locator("summary").click();
-  await page.getByTestId("echo-preset").click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
 
   // Drop the gateway, then send: the turn must fail visibly, app stays usable.
   gw.stop();

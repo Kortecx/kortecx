@@ -6,7 +6,12 @@ import { MessageBubble } from "./MessageBubble";
 /** How close to the bottom (px) still counts as "following" the stream. */
 const STICK_THRESHOLD = 96;
 
-/** The scrollable thread; auto-scrolls to the newest message when enabled. */
+/**
+ * The scrollable thread — a standard chat: oldest→newest, the freshest turn sits at
+ * the BOTTOM right above the docked input, and auto-scroll follows the tail
+ * (scrollTop → scrollHeight). Scroll up to read history; scrolling back down re-arms
+ * the follow.
+ */
 export function MessageList({
   thread,
   autoscroll,
@@ -31,9 +36,9 @@ export function MessageList({
   modelId?: string;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
-  // Whether the user is following the tail. Starts true; a scroll-up releases it so
-  // the stream keeps flowing WITHOUT yanking the viewport back down (the reactivity
-  // fix). Scrolling back to the bottom re-arms it.
+  // Whether the user is following the tail. Starts true; a scroll-UP (away from the
+  // newest turn) releases it so the stream keeps flowing WITHOUT yanking the viewport
+  // back down. Scrolling back to the bottom re-arms it.
   const stuckRef = useRef(true);
 
   const onScroll = useCallback(() => {
@@ -43,8 +48,8 @@ export function MessageList({
     }
   }, []);
 
-  // Follow the tail only while stuck to the bottom. Keyed on the thread so it fires
-  // on every token/message update; a no-op when the user has scrolled up.
+  // Follow the tail only while stuck to the bottom. Keyed on the thread so it fires on
+  // every token/message update; a no-op when the user has scrolled up to read history.
   // biome-ignore lint/correctness/useExhaustiveDependencies: follow on any thread change.
   useEffect(() => {
     if (!autoscroll || !stuckRef.current) {
@@ -52,12 +57,19 @@ export function MessageList({
     }
     const el = listRef.current;
     if (el) {
-      el.scrollTop = el.scrollHeight; // jump the container, never scrollIntoView (no page reflow)
+      el.scrollTop = el.scrollHeight; // jump the container to the newest (bottom)
     }
   }, [thread, autoscroll]);
 
+  // Always render the flex:1 `.chat__list` so the composer stays pinned to the bottom
+  // even on the empty New-Chat landing; the empty state centers within it (a bare
+  // EmptyState here would collapse the list to content height and float the composer).
   if (thread.messages.length === 0) {
-    return <EmptyState title="No messages yet" detail="Ask the runtime something below." />;
+    return (
+      <div className="chat__list chat__list--empty" data-testid="message-list">
+        <EmptyState title="No messages yet" detail="Ask the runtime something below." />
+      </div>
+    );
   }
 
   return (

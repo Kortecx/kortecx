@@ -4,13 +4,12 @@ import { m } from "framer-motion";
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
-import { useApp, useApps, useCloneApp, useExportAppBundle, useImportApp } from "../../kx/use-apps";
+import { useApps, useCloneApp, useExportAppBundle, useImportApp } from "../../kx/use-apps";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { AppViewPopover } from "../apps/AppViewPopover";
 import { ApprovalsInbox } from "../apps/ApprovalsInbox";
-import { CodeViewer } from "../editor/CodeViewer";
 import { Icon } from "../shell/Icon";
 import { Popover } from "../shell/Popover";
 import { NewAppForm } from "./NewAppForm";
@@ -20,7 +19,7 @@ import { NewAppForm } from "./NewAppForm";
  * `kortecx.app/v1` envelopes (`ListApps`). Each App is a portable blueprint
  * wrapped with by-reference references + a 4-axis steering config; Run compiles
  * its blueprint and submits it (the server re-resolves every warrant from the
- * caller's grants, SN-8). Inspect shows the full envelope (Monaco, read-only).
+ * caller's grants, SN-8). "View details" opens a read-only summary popover.
  *
  * POC-5a adds the agentic "New App" scaffold (inline panel) — author an App
  * here, the agent scaffolds a starter project tree into its CoW branch, then Open
@@ -41,16 +40,20 @@ const APPS_TABS: ReadonlyArray<{ id: AppsTab; label: string }> = [
 export function AppsSection({
   tab = "catalog",
   onTab,
+  view = "box",
+  onView,
 }: {
   tab?: AppsTab;
   onTab?: (tab: AppsTab) => void;
+  /** The catalog layout — box/card grid (default) or compact list rows. */
+  view?: "list" | "box";
+  onView?: (view: "list" | "box") => void;
 } = {}) {
   const navigate = useNavigate();
   const { apps, notWired, isLoading, isError, error, refetch } = useApps();
   const exportBundle = useExportAppBundle();
   const importApp = useImportApp();
   const cloneApp = useCloneApp();
-  const [viewing, setViewing] = useState<string | null>(null);
   const [summaryFor, setSummaryFor] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [duplicating, setDuplicating] = useState<string | null>(null);
@@ -122,10 +125,7 @@ export function AppsSection({
         <div>
           <h1>Apps</h1>
           <p className="muted">
-            Durable, reusable Apps — a portable blueprint plus its references, steering, and replay
-            intent. Create one here (the agent scaffolds a starter project tree), or author with{" "}
-            <code className="mono">kx app</code> / the <code className="mono">app()</code> SDK. Open
-            an App to browse and edit its project files.
+            Durable, reusable Apps — create one here, or open an App to run and edit it.
           </p>
         </div>
         <div className="section-head__actions">
@@ -212,28 +212,52 @@ export function AppsSection({
           ) : null}
 
           {apps.length > 0 ? (
-            <m.div
-              className="card-grid"
-              data-testid="apps-catalog"
-              variants={stagger()}
-              initial="hidden"
-              animate="show"
-            >
-              {apps.map((a) => (
-                <AppCard
-                  key={a.handle}
-                  app={a}
-                  pending={false}
-                  downloadPending={exportBundle.isPending}
-                  onRun={run}
-                  onView={setSummaryFor}
-                  onInspect={setViewing}
-                  onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
-                  onDownload={download}
-                  onDuplicate={setDuplicating}
-                />
-              ))}
-            </m.div>
+            <>
+              <fieldset
+                className="view-toggle view-toggle--compact"
+                aria-label="Catalog layout"
+                data-testid="apps-view-toggle"
+              >
+                <button
+                  type="button"
+                  data-testid="apps-view-box"
+                  aria-pressed={view === "box"}
+                  onClick={() => onView?.("box")}
+                >
+                  Box
+                </button>
+                <button
+                  type="button"
+                  data-testid="apps-view-list"
+                  aria-pressed={view === "list"}
+                  onClick={() => onView?.("list")}
+                >
+                  List
+                </button>
+              </fieldset>
+              <m.div
+                className={`card-grid${view === "list" ? " card-grid--list" : ""}`}
+                data-testid="apps-catalog"
+                data-view={view}
+                variants={stagger()}
+                initial="hidden"
+                animate="show"
+              >
+                {apps.map((a) => (
+                  <AppCard
+                    key={a.handle}
+                    app={a}
+                    pending={false}
+                    downloadPending={exportBundle.isPending}
+                    onRun={run}
+                    onView={setSummaryFor}
+                    onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
+                    onDownload={download}
+                    onDuplicate={setDuplicating}
+                  />
+                ))}
+              </m.div>
+            </>
           ) : null}
 
           {cloneApp.error ? (
@@ -243,7 +267,6 @@ export function AppsSection({
           {summaryFor ? (
             <AppViewPopover handle={summaryFor} onClose={() => setSummaryFor(null)} />
           ) : null}
-          {viewing ? <AppDetailDrawer handle={viewing} onClose={() => setViewing(null)} /> : null}
           {duplicating ? (
             <DuplicateDialog
               handle={duplicating}
@@ -264,15 +287,15 @@ export function AppsSection({
   );
 }
 
-/** One App in the catalog — name, description, version/step/tag chips, the raw
- *  handle, and Run / Inspect actions (+ honest-disabled Cloud chips). */
+/** One App in the catalog — name + version with a top-right action cluster (▶ Run,
+ *  lock state, honest-disabled Share, download, and a kebab for view/open/duplicate),
+ *  then the description, step/tag chips, and the raw handle. */
 function AppCard({
   app,
   pending,
   downloadPending,
   onRun,
   onView,
-  onInspect,
   onOpen,
   onDownload,
   onDuplicate,
@@ -282,7 +305,6 @@ function AppCard({
   downloadPending: boolean;
   onRun: (handle: string) => void;
   onView: (handle: string) => void;
-  onInspect: (handle: string) => void;
   onOpen: (handle: string) => void;
   onDownload: (handle: string) => void;
   onDuplicate: (handle: string) => void;
@@ -295,17 +317,113 @@ function AppCard({
       data-testid={`app-card-${app.handle}`}
     >
       <div className="card-grid__head">
-        <span className="card-grid__title">{app.name}</span>
+        <button
+          type="button"
+          className="card-grid__title card-grid__title-btn"
+          title={`${app.name} — view details`}
+          data-testid={`app-card-view-${app.handle}`}
+          onClick={() => onView(app.handle)}
+        >
+          {app.name}
+        </button>
         <span className="chip chip--tag">v{app.version}</span>
-        {app.locked ? (
-          <span
-            className="chip chip--tag"
-            data-testid={`app-card-locked-${app.handle}`}
-            title="This App is locked — agentic in-CAS edits are refused (manage from the App page)"
+        <div className="card-grid__head-actions">
+          <button
+            type="button"
+            className="iconbtn"
+            data-testid={`app-run-${app.handle}`}
+            disabled={pending}
+            title={pending ? "Running…" : "Run this App"}
+            aria-label="Run"
+            onClick={() => onRun(app.handle)}
           >
-            🔒 Locked
+            <Icon name="play" size={16} />
+          </button>
+          <span
+            className="iconbtn iconbtn--static"
+            data-testid={`app-lock-${app.handle}`}
+            data-locked={app.locked ? "true" : "false"}
+            title={
+              app.locked
+                ? "Locked — agentic in-CAS edits are refused (manage from the App page)"
+                : "Unlocked"
+            }
+          >
+            <Icon name={app.locked ? "lock" : "unlock"} size={16} />
           </span>
-        ) : null}
+          <span
+            className="iconbtn iconbtn--disabled"
+            aria-disabled="true"
+            title="Sharing across parties is a Cloud capability"
+          >
+            <Icon name="share" size={16} />
+          </span>
+          <button
+            type="button"
+            className="iconbtn"
+            data-testid={`app-download-${app.handle}`}
+            disabled={downloadPending}
+            title="Download a portable .kxapp bundle (envelope + content closure)"
+            aria-label="Download bundle"
+            onClick={() => onDownload(app.handle)}
+          >
+            <Icon name="download" size={16} />
+          </button>
+          <Popover
+            trigger={<Icon name="menu" size={16} />}
+            triggerClassName="iconbtn"
+            triggerLabel="App actions"
+            triggerTestId={`app-menu-${app.handle}`}
+            align="right"
+            direction="down"
+            menuTestId={`app-menu-panel-${app.handle}`}
+          >
+            {(close) => (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="popover__item"
+                  data-testid={`app-view-${app.handle}`}
+                  onClick={() => {
+                    close();
+                    onView(app.handle);
+                  }}
+                >
+                  <Icon name="recipes" size={15} />
+                  <span>View details</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="popover__item"
+                  data-testid={`app-open-${app.handle}`}
+                  onClick={() => {
+                    close();
+                    onOpen(app.handle);
+                  }}
+                >
+                  <Icon name="external-link" size={15} />
+                  <span>Open project</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="popover__item"
+                  data-testid={`app-duplicate-${app.handle}`}
+                  title="Duplicate this App locally under a new name"
+                  onClick={() => {
+                    close();
+                    onDuplicate(app.handle);
+                  }}
+                >
+                  <Icon name="copy" size={15} />
+                  <span>Duplicate</span>
+                </button>
+              </>
+            )}
+          </Popover>
+        </div>
       </div>
 
       {app.description ? <p className="card-grid__sub">{app.description}</p> : null}
@@ -324,102 +442,6 @@ function AppCard({
       <code className="mono card-grid__handle" title={app.handle}>
         {app.handle}
       </code>
-
-      <div className="card-grid__meta">
-        <button
-          type="button"
-          data-testid={`app-run-${app.handle}`}
-          disabled={pending}
-          onClick={() => onRun(app.handle)}
-        >
-          {pending ? "Running…" : "Run"}
-        </button>
-        <Popover
-          trigger={<Icon name="menu" size={16} />}
-          triggerClassName="iconbtn"
-          triggerLabel="App actions"
-          triggerTestId={`app-menu-${app.handle}`}
-          align="right"
-          direction="down"
-          menuTestId={`app-menu-panel-${app.handle}`}
-        >
-          {(close) => (
-            <>
-              <button
-                type="button"
-                role="menuitem"
-                className="popover__item"
-                data-testid={`app-view-${app.handle}`}
-                onClick={() => {
-                  close();
-                  onView(app.handle);
-                }}
-              >
-                <Icon name="recipes" size={15} />
-                <span>View details</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="popover__item"
-                data-testid={`app-open-${app.handle}`}
-                onClick={() => {
-                  close();
-                  onOpen(app.handle);
-                }}
-              >
-                <Icon name="external-link" size={15} />
-                <span>Open project</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="popover__item"
-                data-testid={`app-inspect-${app.handle}`}
-                onClick={() => {
-                  close();
-                  onInspect(app.handle);
-                }}
-              >
-                <Icon name="terminal" size={15} />
-                <span>Inspect envelope</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="popover__item"
-                data-testid={`app-download-${app.handle}`}
-                disabled={downloadPending}
-                title="Download a portable .kxapp bundle (envelope + content closure)"
-                onClick={() => {
-                  close();
-                  onDownload(app.handle);
-                }}
-              >
-                <Icon name="download" size={15} />
-                <span>{downloadPending ? "Downloading…" : "Download bundle"}</span>
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="popover__item"
-                data-testid={`app-duplicate-${app.handle}`}
-                title="Duplicate this App locally under a new name"
-                onClick={() => {
-                  close();
-                  onDuplicate(app.handle);
-                }}
-              >
-                <Icon name="copy" size={15} />
-                <span>Duplicate</span>
-              </button>
-            </>
-          )}
-        </Popover>
-        <span className="chip chip--soon" title="Sharing across parties is a Cloud capability">
-          Share · Cloud
-        </span>
-      </div>
     </m.article>
   );
 }
@@ -506,66 +528,6 @@ function DuplicateDialog({
           </div>
         </m.div>
       </div>
-    </>
-  );
-}
-
-/** A read-only slide-over showing one App's full `kortecx.app/v1` envelope
- *  (Monaco viewer; the BlueprintViewer precedent). */
-function AppDetailDrawer({ handle, onClose }: { handle: string; onClose: () => void }) {
-  const q = useApp(handle);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent): void {
-      if (e.key === "Escape") {
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const envelope = q.data ? JSON.stringify(q.data.envelope, null, 2) : null;
-
-  return (
-    <>
-      <button
-        type="button"
-        className="node-drawer__scrim"
-        aria-label="Close app view"
-        onClick={onClose}
-      />
-      <m.aside
-        className="node-drawer"
-        data-testid="app-viewer"
-        // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; non-modal side-panel semantics via role+aria-label (the NodeDetailDrawer/BlueprintViewer precedent)
-        role="dialog"
-        aria-label={`App ${handle}`}
-        initial={{ x: 24, opacity: 0 }}
-        animate={{ x: 0, opacity: 1 }}
-        transition={{ type: "spring", stiffness: 420, damping: 34 }}
-      >
-        <div className="node-drawer__head">
-          <code className="mono node-drawer__id" title={handle}>
-            {handle}
-          </code>
-          <button type="button" className="linkbtn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </div>
-        {q.isLoading ? <EmptyState title="Loading envelope…" /> : null}
-        {q.error ? <ErrorNotice error={toUiError(q.error)} /> : null}
-        {q.data === null ? <EmptyState title="Not found" /> : null}
-        {envelope ? (
-          <CodeViewer
-            value={envelope}
-            language="json"
-            testId="app-envelope"
-            ariaLabel={`App envelope ${handle}`}
-            height={Math.min(520, Math.max(160, envelope.split("\n").length * 19 + 24))}
-          />
-        ) : null}
-      </m.aside>
     </>
   );
 }

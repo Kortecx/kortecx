@@ -26,6 +26,9 @@ export type Glyph =
   | "systems"
   | "menu"
   | "plus"
+  | "play"
+  | "lock"
+  | "unlock"
   | "power"
   | "refresh"
   | "search"
@@ -67,6 +70,11 @@ const PATHS: Record<Glyph, string> = {
   moon: "M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z",
   menu: "M4 6h16M4 12h16M4 18h16",
   plus: "M12 5v14M5 12h14",
+  play: "M8 5v14l11-7z",
+  // A padlock: an arched shackle over a rounded body. `unlock` opens the shackle.
+  lock: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z",
+  unlock:
+    "M7 11V8a5 5 0 0 1 9.5-2M5 11h14a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z",
   power: "M12 3v8M17.7 6.3a8 8 0 11-11.4 0",
   refresh: "M20 11a8 8 0 10-2.3 6.3M20 6v5h-5",
   search: "M11 19a8 8 0 100-16 8 8 0 000 16zm10 2l-5-5",

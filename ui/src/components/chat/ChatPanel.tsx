@@ -1,8 +1,8 @@
 /**
  * The READ-ONLY, RAG-grounded New Chat (standalone route). A message retrieves over
- * the user's own DATASETS + CONTEXT FILES (picked in the {@link GroundingBar}) and
- * the model answers grounded on the retrieved documents (chat-rag); a settled
- * grounded answer shows its source citations. Read-only: it retrieves + reasons over
+ * the user's own CONTEXT FILES (attached via the header "Context" button) and the
+ * model answers grounded on the retrieved documents (chat-rag); a settled grounded
+ * answer shows its source citations. Read-only: it retrieves + reasons over
  * stored context, never mutating it — the mutate-capable agentic chat (agent task +
  * tools) lives in App chat — the capability is relocated, not crippled.
  * Pick the model, attach an image (the vision route, form-gated), and every thread

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { typeMessage } from "./fixtures/chat";
+import { seedEchoBacking, typeMessage } from "./fixtures/chat";
 import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -20,14 +20,13 @@ test("attach uploads a PNG (PutContent), previews it, dedups a re-pick, and send
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  // The model-free echo recipe: its form has NO image_ref slot, so the
+  // attachment must stay display-only and the send must still succeed.
+  await seedEchoBacking(page);
   await connectConsole(page, gw);
 
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
-  // The model-free echo recipe: its form has NO image_ref slot, so the
-  // attachment must stay display-only and the send must still succeed.
-  await page.getByTestId("chat-settings").locator("summary").click();
-  await page.getByTestId("echo-preset").click();
 
   // Attach → the chip appears, the upload lands, the DigestChip shows the
   // SERVER-derived ref.
@@ -65,24 +64,32 @@ test("a failed turn offers retry with identical args and recovers when the gatew
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await seedEchoBacking(page);
   await connectConsole(page, gw);
 
   await page.getByTestId("nav-chat").click();
-  await page.getByTestId("chat-settings").locator("summary").click();
-  await page.getByTestId("echo-preset").click();
+  await expect(page.getByTestId("chat-panel")).toBeVisible();
 
-  // Fail the first turn by pointing chat at a recipe the gateway cannot run. The
-  // blueprint handle lives behind the settings' "Advanced (developer)" reveal.
-  await page.getByTestId("chat-settings-advanced").click();
-  await page.getByLabel(/blueprint handle/i).fill("kx/recipes/does-not-exist");
+  // Fail ONLY the first Invoke dispatch (a network abort) then let retries through —
+  // the transient-failure analogue of the old bad-handle trick, now that the Advanced
+  // recipe-handle control is gone from the clean panel. The retry re-dispatches the
+  // SAME args against a live gateway and recovers.
+  let invokes = 0;
+  await page.route(
+    (u) => u.pathname.endsWith("/Invoke"),
+    (route) => {
+      invokes += 1;
+      return invokes === 1 ? route.abort("failed") : route.continue();
+    },
+  );
+
   await typeMessage(page, "retry me");
   await page.getByTestId("send").click();
   await expect(page.getByTestId("bubble-assistant")).toHaveAttribute("data-status", "failed", {
     timeout: 30_000,
   });
 
-  // Fix the handle, retry the SAME turn (identical text re-dispatches).
-  await page.getByTestId("echo-preset").click();
+  // Retry the SAME turn (identical text re-dispatches; the 2nd Invoke is allowed).
   await page.getByTestId("retry-turn").click();
   await expect(page.getByTestId("bubble-assistant")).toHaveAttribute("data-status", "done", {
     timeout: 30_000,

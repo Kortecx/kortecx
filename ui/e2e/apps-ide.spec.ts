@@ -49,22 +49,44 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await gotoViaPalette(page, "apps");
   await expect(page.getByTestId("apps-section")).toBeVisible();
 
-  // View details → the READ-ONLY capability manifest panel (needs vs. what you have).
-  await page.getByTestId(`app-menu-${HANDLE}`).click();
-  await page.getByTestId(`app-view-${HANDLE}`).click();
+  // Clicking the App's NAME opens the READ-ONLY View popover — a glimpse of the App
+  // (summary + capability manifest); deep edit opens in a new tab from here.
+  await page.getByTestId(`app-card-view-${HANDLE}`).click();
   await expect(page.getByTestId("app-view")).toBeVisible();
   await expect(page.getByTestId("app-manifest")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId(`app-view-open-tab-${HANDLE}`)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("app-view")).toBeHidden();
 
   await page.getByTestId(`app-menu-${HANDLE}`).click();
   await page.getByTestId(`app-open-${HANDLE}`).click();
 
-  // The full-screen IDE shell + the 3 tabs.
+  // The full-screen IDE shell + the tabs (Chat is a HEADER ACTION now, not a tab).
   await expect(page.getByTestId("app-detail")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("app-tab-files")).toBeVisible();
   await expect(page.getByTestId("app-tab-lineage")).toBeVisible();
-  await expect(page.getByTestId("app-tab-chat")).toBeVisible();
+  await expect(page.getByTestId("app-tab-tools")).toBeVisible();
+  await expect(page.getByTestId("app-tab-integrations")).toBeVisible();
+  await expect(page.getByTestId("app-tab-chat")).toHaveCount(0);
+
+  // The Chat header action opens the agentic "Chat & edit" drawer (converse + the
+  // propose→diff→approve edit gate); close it before continuing.
+  await page.getByTestId("app-detail-chat").click();
+  await expect(page.getByTestId("app-chat-drawer")).toBeVisible();
+  await expect(page.getByTestId("app-edit-propose")).toBeVisible();
+  // The scrim covers the viewport (a real dim users can click to dismiss) — clicking
+  // its top-left (clear of the right-side drawer) closes the drawer.
+  const scrimBox = await page.getByLabel("Close chat").boundingBox();
+  expect(scrimBox?.height ?? 0).toBeGreaterThan(100);
+  await page.getByLabel("Close chat").click({ position: { x: 20, y: 20 } });
+  await expect(page.getByTestId("app-chat-drawer")).toHaveCount(0);
+
+  // Files: the tree is a collapsible sidebar rail (collapse hides it, expand restores it).
+  await expect(page.getByTestId("app-files-sidebar")).toBeVisible();
+  await page.getByTestId("app-files-collapse").click();
+  await expect(page.getByTestId("file-README.md")).toHaveCount(0);
+  await page.getByTestId("app-files-collapse").click();
+  await expect(page.getByTestId("file-README.md")).toBeVisible();
 
   // Files: select README → the viewer renders → direct-edit + agentic-review affordances.
   await page.getByTestId("file-README.md").click();
@@ -81,12 +103,22 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await expect(page.getByTestId("app-file-propose")).toBeVisible();
   await page.getByTestId("app-file-cancel").click();
 
-  // Lineage: the editable graph + Save-to-App (the App has a pure-step blueprint).
+  // Lineage: a READ-ONLY view of the App's structure (authoring lives in the builder).
   await page.getByTestId("app-tab-lineage").click();
   await expect(page.getByTestId("app-lineage")).toBeVisible();
-  await expect(page.getByTestId("app-lineage-save")).toBeVisible();
+  await expect(page.getByTestId("lineage-readonly-notice")).toBeVisible();
+  // A clean static diagram (dagre node cards + SVG connectors), not a reactflow editor.
+  await expect(page.getByTestId("app-lineage-diagram")).toBeVisible();
+  await expect(page.getByTestId("app-lineage-save")).toHaveCount(0);
   // The tab is URL-addressable (refresh-safe).
   await expect(page).toHaveURL(/[?&]tab=lineage/);
+
+  // MCP Tools + Integrations: the split, read-only capability manifest (needs vs. have).
+  await page.getByTestId("app-tab-tools").click();
+  await expect(page.getByTestId("app-manifest")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("app-tab-integrations").click();
+  await expect(page.getByTestId("app-tab-integrations")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("app-manifest")).toBeVisible();
 
   // Run: the drawer opens; with no input_schema it runs in one click and navigates to
   // the live run (the pure step commits without a model).

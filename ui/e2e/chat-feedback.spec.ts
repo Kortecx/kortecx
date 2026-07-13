@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { typeMessage } from "./fixtures/chat";
+import { seedEchoBacking, typeMessage } from "./fixtures/chat";
 import { connectConsole } from "./fixtures/connect";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -10,11 +10,11 @@ test.afterEach(() => {
   gw = undefined;
 });
 
+// The echo backing is seeded via localStorage before connect (see each test) — no
+// in-panel preset button any more; this just drives a settled echo turn.
 async function sendEcho(page: import("@playwright/test").Page, text: string) {
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
-  await page.getByTestId("chat-settings").locator("summary").click();
-  await page.getByTestId("echo-preset").click();
   await typeMessage(page, text);
   await page.getByTestId("send").click();
   await expect(page.getByTestId("bubble-assistant")).toHaveAttribute("data-status", "done", {
@@ -26,6 +26,7 @@ test("a settled answer carries copy + 👍/👎; rating SENDS SubmitFeedback to 
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await seedEchoBacking(page);
   await connectConsole(page, gw);
   await sendEcho(page, "rate me");
 
@@ -56,7 +57,7 @@ test("a settled answer carries copy + 👍/👎; rating SENDS SubmitFeedback to 
   await page.getByTestId("msg-copy").click();
 });
 
-test("PR-A: New Chat is read-only + RAG-grounded — a grounding bar, no Agent toggle, and an attach menu with no tools/context/dataset placeholder", async ({
+test("New Chat is read-only + RAG-grounded — header Context attach, no Agent toggle, and an attach menu with no tools/context/dataset placeholder", async ({
   page,
 }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
@@ -64,9 +65,11 @@ test("PR-A: New Chat is read-only + RAG-grounded — a grounding bar, no Agent t
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
-  // The grounding bar (dataset + context files) is the headline read-only affordance,
-  // and there is NO Agent-task toggle — the mutate-capable agentic chat lives in Apps.
-  await expect(page.getByTestId("chat-grounding")).toBeVisible();
+  // The header "Context" attach button is the read-only grounding affordance
+  // (the standalone dataset grounding bar is gone), and there is NO Agent-task toggle —
+  // the mutate-capable agentic chat lives in Apps.
+  await expect(page.getByTestId("chat-grounding")).toHaveCount(0);
+  await expect(page.getByTestId("chat-grounding-add")).toBeVisible();
   await expect(page.getByTestId("chat-mode")).toHaveCount(0);
 
   await page.getByTestId("attach-btn").click();
@@ -93,6 +96,7 @@ test("PR-A: New Chat is read-only + RAG-grounded — a grounding bar, no Agent t
 
 test("Export downloads the chat as JSON", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await seedEchoBacking(page);
   await connectConsole(page, gw);
   await sendEcho(page, "export me");
 

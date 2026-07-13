@@ -1,7 +1,8 @@
 import type { RecipeInfo } from "@kortecx/sdk/web";
 import { Link } from "@tanstack/react-router";
 import { m } from "framer-motion";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
 import { useBlueprintExport } from "../../kx/use-blueprint-export";
@@ -15,8 +16,8 @@ import { blueprintInputs } from "../../lib/export-blueprint";
 import { humanizeHandle } from "../../lib/humanize-handle";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
-import { CodeViewer } from "../editor/CodeViewer";
 import { Icon } from "../shell/Icon";
+import { ScheduleButton } from "./ScheduleButton";
 
 /**
  * The Workflows (definitions) TABLE (PR-A): the runnable workflow blueprints
@@ -73,7 +74,6 @@ export function WorkflowsTable() {
             <tr>
               <th scope="col">Name</th>
               <th scope="col">Description</th>
-              <th scope="col">Version</th>
               <th scope="col" className="data-table__actions">
                 Actions
               </th>
@@ -120,7 +120,6 @@ function WorkflowRow({
   summary: RecipeInfo | undefined;
   onOpen: () => void;
 }) {
-  const tags = summary?.tags ?? [];
   return (
     <m.tr
       className="data-table__row"
@@ -137,21 +136,8 @@ function WorkflowRow({
         >
           {headline}
         </button>
-        <code className="mono muted card-grid__handle">{handle}</code>
       </td>
-      <td className="muted">
-        {summary?.description || "—"}
-        {tags.length > 0 ? (
-          <span className="card-grid__tags">
-            {tags.map((t) => (
-              <span key={t} className="chip chip--tag">
-                {t}
-              </span>
-            ))}
-          </span>
-        ) : null}
-      </td>
-      <td className="muted">{summary?.version ? `v${summary.version}` : "—"}</td>
+      <td className="muted">{summary?.description || "—"}</td>
       <td className="data-table__actions">
         <button
           type="button"
@@ -208,20 +194,18 @@ function WorkflowDetailDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const contract = form.data
-    ? JSON.stringify({ handle: form.data.handle, inputs: blueprintInputs(form.data) }, null, 2)
-    : null;
+  const inputs = form.data ? blueprintInputs(form.data) : [];
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close workflow details"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="workflow-detail-drawer"
         // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; non-modal side-panel semantics via role+aria-label (the NodeDetailDrawer precedent)
         role="dialog"
@@ -251,6 +235,7 @@ function WorkflowDetailDrawer({
           >
             Run workflow →
           </Link>
+          <ScheduleButton recipeHandle={handle} testId={`workflow-schedule-${handle}`} />
           {/* The ONLY open-in-new-window button lives in the popup (point 4). */}
           <a
             href={`/recipes?handle=${encodeURIComponent(handle)}`}
@@ -264,17 +249,27 @@ function WorkflowDetailDrawer({
         </div>
 
         <div className="drawer-section">
-          <span className="muted">Definition (free-param contract)</span>
+          <span className="muted">Inputs (free-param contract)</span>
           {form.isLoading ? <EmptyState title="Loading definition…" /> : null}
           {form.error ? <ErrorNotice error={toUiError(form.error)} /> : null}
-          {contract ? (
-            <CodeViewer
-              value={contract}
-              language="json"
-              testId="workflow-definition"
-              ariaLabel={`Workflow definition ${handle}`}
-              height={Math.min(360, Math.max(120, contract.split("\n").length * 19 + 24))}
-            />
+          {form.data ? (
+            inputs.length === 0 ? (
+              <p className="muted" data-testid="workflow-definition">
+                No inputs — this workflow runs as-is.
+              </p>
+            ) : (
+              <dl className="facts" data-testid="workflow-definition">
+                {inputs.map((inp) => (
+                  <Fragment key={inp.name}>
+                    <dt className="mono">{inp.name}</dt>
+                    <dd className="muted">
+                      {inp.type}
+                      {inp.required ? " · required" : " · optional"}
+                    </dd>
+                  </Fragment>
+                ))}
+              </dl>
+            )
           ) : null}
         </div>
 
@@ -336,6 +331,7 @@ function WorkflowDetailDrawer({
 
         {exporter.error ? <ErrorNotice error={toUiError(exporter.error)} /> : null}
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

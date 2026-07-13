@@ -18,6 +18,15 @@ import { EmptyState } from "./EmptyState";
 import { renderMarkdown } from "./chat/markdown";
 import { CodeViewer } from "./editor/CodeViewer";
 
+/**
+ * The CSP prepended to every sandboxed HTML preview: `default-src 'none'` blocks ALL
+ * outbound fetches (no tracking pixels / SSRF), while inline styles + data/blob images
+ * still render. Belt-and-suspenders with the iframe's empty `sandbox` (which already
+ * disables scripts, forms, same-origin, and navigation).
+ */
+const HTML_CSP =
+  "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:;\">";
+
 /** Create a `blob:` object URL for `bytes` (revoked on change/unmount). */
 function useObjectUrl(bytes: Uint8Array | undefined, mediaType: string | undefined): string | null {
   const [url, setUrl] = useState<string | null>(null);
@@ -39,8 +48,16 @@ function downloadName(stem: string, content: DecodedContent): string {
   if (content.kind === "json") {
     return `${stem}.json`;
   }
+  // SVG rides the image path with an `image/svg+xml` MIME — name it `.svg`, not the
+  // literal subtype `.svg+xml`.
+  if (content.mediaType === "image/svg+xml") {
+    return `${stem}.svg`;
+  }
   if (ext && (content.kind === "image" || content.kind === "video" || content.kind === "audio")) {
     return `${stem}.${ext}`;
+  }
+  if (content.kind === "html") {
+    return `${stem}.html`;
   }
   if (content.kind === "markdown") {
     return `${stem}.md`;
@@ -115,6 +132,14 @@ export function AssetViewer({
         ) : (
           <EmptyState title="Loading audio…" />
         )
+      ) : content.kind === "html" ? (
+        <iframe
+          className="asset-viewer__html"
+          title="HTML preview"
+          data-testid="asset-html"
+          sandbox=""
+          srcDoc={HTML_CSP + content.text}
+        />
       ) : content.kind === "markdown" ? (
         <div className="asset-viewer__markdown bubble__md" data-testid="asset-markdown">
           {renderMarkdown(content.text)}

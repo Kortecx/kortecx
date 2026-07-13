@@ -78,14 +78,14 @@ describe("BlueprintCard", () => {
     expect(onView).toHaveBeenCalledWith("kx/recipes/echo");
   });
 
-  it("Share + Schedule are honest-disabled Cloud chips", () => {
+  it("Share stays an honest-disabled Cloud chip; the stale Schedule Cloud chip is gone", () => {
     renderCard();
     fireEvent.click(screen.getByTestId("blueprint-menu"));
-    for (const id of ["blueprint-share", "blueprint-schedule"]) {
-      const item = screen.getByTestId(id);
-      expect(item).toBeDisabled();
-      expect(item).toHaveTextContent("Cloud");
-    }
+    const share = screen.getByTestId("blueprint-share");
+    expect(share).toBeDisabled();
+    expect(share).toHaveTextContent("Cloud");
+    // Scheduling is LOCAL (CRON triggers ship) — no more misleading "Schedule · Cloud".
+    expect(screen.queryByTestId("blueprint-schedule")).toBeNull();
   });
 
   it("Export sends the blueprint's metadata to the exporter", () => {

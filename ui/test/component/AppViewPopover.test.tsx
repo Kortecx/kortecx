@@ -5,6 +5,7 @@
  */
 
 import { render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const useAppMock = vi.fn();
@@ -17,6 +18,14 @@ vi.mock("../../src/kx/use-branches", () => ({
 }));
 vi.mock("../../src/kx/use-app-manifest", () => ({
   useAppManifest: (...a: unknown[]) => useAppManifestMock(...a),
+}));
+// The "Open in new tab" deep-edit link needs router context; stub it (a span suffices —
+// these tests don't navigate, and a bare <a> without href trips the a11y lint).
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => vi.fn(),
+  Link: ({ children, "data-testid": testId }: { children: ReactNode; "data-testid"?: string }) => (
+    <span data-testid={testId}>{children}</span>
+  ),
 }));
 
 beforeEach(() => {

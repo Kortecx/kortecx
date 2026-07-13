@@ -65,6 +65,37 @@ test("Context: author a bundle from an uploaded file, see it listed, attach it i
   await expect(page.getByTestId(`context-bundle-${HANDLE}`)).toHaveCount(0, { timeout: 30_000 });
 });
 
+test("Context: an uploaded .html file previews in a fully-sandboxed, CSP-locked iframe", async ({
+  page,
+}) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
+
+  await page.getByTestId("nav-context").click();
+  const handle = page.getByTestId("context-bundle-handle");
+  await handle.click();
+  await handle.pressSequentially(HANDLE);
+  await page.getByTestId("context-bundle-file-input").setInputFiles({
+    name: "report.html",
+    mimeType: "text/html",
+    buffer: Buffer.from("<h1>Quarterly report</h1>", "utf-8"),
+  });
+  await expect(page.getByTestId("context-bundle-staged")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("context-bundle-submit").click();
+  await expect(page.getByTestId(`context-bundle-${HANDLE}`)).toBeVisible({ timeout: 30_000 });
+
+  // Expand the item → the HTML renders in the sandboxed AssetViewer iframe (never live
+  // in the page). Assert the frame's empty sandbox + that its srcdoc carries the source
+  // AND the outbound-blocking CSP (no scripts, no tracking pixels / SSRF).
+  const key = `${HANDLE}-0`;
+  await page.getByTestId(`context-item-toggle-${key}`).click();
+  const frame = page.getByTestId("asset-html");
+  await expect(frame).toBeVisible({ timeout: 30_000 });
+  await expect(frame).toHaveAttribute("sandbox", "");
+  await expect(frame).toHaveAttribute("srcdoc", /Quarterly report/);
+  await expect(frame).toHaveAttribute("srcdoc", /default-src 'none'/);
+});
+
 test("Context-edit (POC-2): view an item body, edit it (ref changes), rename it, and the last item can't be removed", async ({
   page,
 }) => {

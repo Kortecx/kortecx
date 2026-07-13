@@ -116,17 +116,47 @@ afterEach(() => {
   LOCKED = false;
   saveFile.mockReset();
   proposeMutate.mockReset();
+  // The Files rail persists its collapsed flag to localStorage; reset between tests.
+  localStorage.clear();
 });
 
 describe("App IDE shell (POC-5d)", () => {
-  it("renders the 3 tabs (Files / Lineage / Chat)", () => {
+  it("renders the tabs (Files / Lineage / Skills / MCP Tools / Integrations) + header controls", () => {
     render(<AppDetailSection handle="apps/local/echo" />);
     expect(screen.getByTestId("app-detail")).toBeInTheDocument();
-    expect(screen.getByTestId("app-tab-files")).toBeInTheDocument();
-    expect(screen.getByTestId("app-tab-lineage")).toBeInTheDocument();
-    expect(screen.getByTestId("app-tab-chat")).toBeInTheDocument();
-    // The per-App lock control lives in the header (unlocked ⇒ offers Lock).
+    for (const t of ["files", "lineage", "skills", "tools", "integrations"]) {
+      expect(screen.getByTestId(`app-tab-${t}`)).toBeInTheDocument();
+    }
+    // The old single "Capabilities" tab is gone (split into MCP Tools + Integrations).
+    expect(screen.queryByTestId("app-tab-capabilities")).toBeNull();
+    // Chat is a header action now (a right-side drawer), not a tab.
+    expect(screen.queryByTestId("app-tab-chat")).toBeNull();
+    expect(screen.getByTestId("app-detail-chat")).toBeInTheDocument();
+    // The editable name shows the loaded envelope name; the lock control offers Lock.
+    expect(screen.getByTestId("app-detail-name-input")).toHaveValue("Echo Demo");
     expect(screen.getByTestId("app-lock-apps/local/echo")).toBeInTheDocument();
+  });
+
+  it("the Chat header action opens the agentic Chat & Edit drawer (with the edit gate)", () => {
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.queryByTestId("app-chat-drawer")).toBeNull();
+    fireEvent.click(screen.getByTestId("app-detail-chat"));
+    expect(screen.getByTestId("app-chat-drawer")).toBeInTheDocument();
+    // Unlocked ⇒ the propose→diff→approve edit affordance is present.
+    expect(screen.getByTestId("app-chat-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("app-edit-propose")).toBeInTheDocument();
+  });
+
+  it("the Files rail is a collapsible sidebar (hides/shows the tree, persisted)", () => {
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.getByTestId("app-files-sidebar")).toBeInTheDocument();
+    // The tree is expanded by default (the seeded file node renders).
+    expect(screen.getByTestId("file-README.md")).toBeInTheDocument();
+    // Collapsing hides the tree; expanding restores it.
+    fireEvent.click(screen.getByTestId("app-files-collapse"));
+    expect(screen.queryByTestId("file-README.md")).toBeNull();
+    fireEvent.click(screen.getByTestId("app-files-collapse"));
+    expect(screen.getByTestId("file-README.md")).toBeInTheDocument();
   });
 
   it("unlocked: a selected file exposes direct + agentic edit", () => {
@@ -142,10 +172,11 @@ describe("App IDE shell (POC-5d)", () => {
   it("LOCKED: shows the lock control + an honest notice, NO write affordances (GR15)", () => {
     LOCKED = true;
     render(<AppDetailSection handle="apps/local/echo" path="README.md" />);
-    // The lock control's state chip reports locked (its Unlock button is the control).
-    const lockState = screen.getByTestId("app-lock-state-apps/local/echo");
-    expect(lockState).toHaveAttribute("data-locked", "true");
-    expect(screen.getByTestId("app-unlock-apps/local/echo")).toBeInTheDocument();
+    // The lock toggle reports locked (its Unlock affordance is the control); the name
+    // input is disabled (a locked App can't be renamed — the server refuses the write).
+    const lockToggle = screen.getByTestId("app-unlock-apps/local/echo");
+    expect(lockToggle).toHaveAttribute("data-locked", "true");
+    expect(screen.getByTestId("app-detail-name-input")).toBeDisabled();
     expect(screen.getByTestId("app-locked-notice")).toBeInTheDocument();
     // The runtime refuses writes; the UI must never offer a control that can't fire.
     expect(screen.queryByTestId("app-file-edit-direct")).toBeNull();

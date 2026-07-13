@@ -27,16 +27,23 @@ test("workflows page: the runnable catalog + the workflow-definition popup", asy
   await expect(page.getByTestId("workflows-tabs")).toBeVisible();
   await expect(page.getByTestId("workflows-tab-runs")).toBeVisible();
   await expect(page.getByTestId("workflows-list")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("workflows-list")).toContainText("kx/recipes/echo");
+  // The row shows the display NAME now (the raw handle path was dropped from the list);
+  // the handle lives on the row's open-button testid.
+  await expect(page.getByTestId("workflow-open-kx/recipes/echo")).toBeVisible();
 
   // Click a workflow row → the definition popup: contract + view + the new-window
   // button (which lives ONLY in the popup).
   await page.getByTestId("workflow-open-kx/recipes/echo").click();
   const drawer = page.getByTestId("workflow-detail-drawer");
   await expect(drawer).toBeVisible();
-  await expect(drawer.getByTestId("workflow-definition")).toContainText("kx/recipes/echo", {
+  // The definition popup lists the workflow's INPUTS (echo has a `topic` param), not raw
+  // JSON; the handle still shows in the drawer head; per-item Schedule is offered (a
+  // LOCAL CRON trigger — no cloud).
+  await expect(drawer.getByTestId("workflow-definition")).toContainText("topic", {
     timeout: 30_000,
   });
+  await expect(drawer).toContainText("kx/recipes/echo");
+  await expect(drawer.getByTestId("workflow-schedule-kx/recipes/echo")).toBeVisible();
   const newtab = drawer.getByTestId("workflow-open-newtab");
   await expect(newtab).toHaveAttribute("target", "_blank");
   await expect(newtab).toHaveAttribute("rel", "noopener noreferrer");

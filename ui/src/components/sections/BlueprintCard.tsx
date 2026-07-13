@@ -16,8 +16,9 @@ import { Popover } from "../shell/Popover";
  * description subtitle + advisory tag/version chips (the raw handle stays a
  * secondary mono chip) + a per-card action menu (the reused `Popover`/D148).
  * "Edit in builder" is the blueprint's honest settings (the builder IS the
- * editor); Share + Schedule are cross-party / cloud (D129) → honest-disabled
- * "Cloud" chips (D142 don't-fake-gaps). The card title opens the run form.
+ * editor); Share is cross-party / cloud (D129) → an honest-disabled "Cloud" chip
+ * (D142 don't-fake-gaps). Scheduling is LOCAL (CRON triggers ship) — offered from a
+ * workflow's popup, not here. The card title opens the run form.
  */
 export function BlueprintCard({
   handle,
@@ -174,19 +175,9 @@ export function BlueprintCard({
                 <span>Share</span>
                 <span className="chip chip--soon">Cloud</span>
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="popover__item popover__item--disabled"
-                data-testid="blueprint-schedule"
-                disabled
-                aria-disabled="true"
-                title="Schedule recurring runs — a managed cloud capability"
-              >
-                <Icon name="calendar" size={15} />
-                <span>Schedule</span>
-                <span className="chip chip--soon">Cloud</span>
-              </button>
+              {/* Schedule is NOT cloud — local CRON triggers ship. Register one from a
+                  workflow's popup (Workflows → open a row → Schedule), or Tools → Triggers.
+                  The stale "Schedule · Cloud" chip was removed (it was misleading). */}
             </>
           )}
         </Popover>
