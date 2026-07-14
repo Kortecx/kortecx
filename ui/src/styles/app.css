@@ -5201,6 +5201,32 @@ button.card-grid__title:hover {
   gap: 0.6rem;
 }
 
+/* The Run-drawer feasibility preflight (advisory: will this run actually think / fire?).
+ * `.node-drawer__section` is a small-caps LABEL context — reset to readable prose here. */
+.run-preflight {
+  border: 1px solid var(--border-md);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: 1.4;
+}
+.run-preflight--ok {
+  margin: 0;
+  color: var(--fg-muted);
+}
+.run-preflight--warn {
+  border-left: 3px solid #b45309; /* amber accent — reads as advisory on both themes */
+}
+.run-preflight ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
 /* The per-App lock control (chip + button, never a select). */
 .lock-control {
   display: inline-flex;

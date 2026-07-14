@@ -18,6 +18,7 @@ import { useApp, useRunApp } from "../../kx/use-apps";
 import { appInputForm } from "../../lib/app-input-schema";
 import { ErrorNotice } from "../ErrorNotice";
 import { RecipeForm } from "../recipes/RecipeForm";
+import { RunPreflight } from "./RunPreflight";
 
 // Mirror the StepConfigDrawer slide-over motion (kept local — not exported).
 const slideIn = {
@@ -83,6 +84,7 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
         </div>
         <div className="node-drawer__section">
           <code className="mono muted">{handle}</code>
+          <RunPreflight handle={handle} />
           {runApp.isError ? (
             <ErrorNotice error={toUiError(runApp.error)} onRetry={() => runApp.reset()} />
           ) : null}
