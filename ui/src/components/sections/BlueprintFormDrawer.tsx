@@ -1,5 +1,6 @@
 import { m } from "framer-motion";
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { toUiError } from "../../kx/errors";
 import { useRecipeForm } from "../../kx/use-recipes";
 import { humanizeHandle } from "../../lib/humanize-handle";
@@ -41,16 +42,16 @@ export function BlueprintFormDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close blueprint form"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="blueprint-form-drawer"
         // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion animations; non-modal side-panel semantics declared via role+aria-label (the NodeDetailDrawer precedent)
         role="dialog"
@@ -83,6 +84,7 @@ export function BlueprintFormDrawer({
           />
         ) : null}
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

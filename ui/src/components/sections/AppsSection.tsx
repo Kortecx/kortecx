@@ -2,6 +2,7 @@ import type { AppSummary } from "@kortecx/sdk/web";
 import { useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { type ChangeEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useApps, useCloneApp, useExportAppBundle, useImportApp } from "../../kx/use-apps";
@@ -471,15 +472,15 @@ function DuplicateDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   const trimmed = name.trim();
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Cancel duplicate"
         onClick={onClose}
       />
-      <div className="dialog-center">
+      <div className="dialog-center dialog-center--overlay">
         <m.div
           className="dialog-card"
           data-testid="app-duplicate-dialog"
@@ -528,6 +529,7 @@ function DuplicateDialog({
           </div>
         </m.div>
       </div>
-    </>
+    </>,
+    document.body,
   );
 }

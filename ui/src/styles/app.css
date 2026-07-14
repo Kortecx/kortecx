@@ -4108,6 +4108,15 @@ button.card-grid__title:hover {
   position: fixed;
   z-index: 50;
 }
+/* The centered-modal wrapper (the Duplicate-App dialog), portaled to <body>: pin to
+ * the VIEWPORT above the sticky navbar. Overrides only position + z-index; inherits
+ * inset:0 + place-items:center + pointer-events:none from `.dialog-center`, so the
+ * card stays centered (z 50 > scrim 49 > navbar 10) and outside clicks fall through
+ * to the scrim. Additive — the base `.dialog-center` stays pristine. */
+.dialog-center--overlay {
+  position: fixed;
+  z-index: 50;
+}
 .node-drawer__scrim--overlay {
   position: fixed;
   z-index: 49;

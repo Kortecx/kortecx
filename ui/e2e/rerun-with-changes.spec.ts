@@ -1,5 +1,6 @@
 import { type Page, expect, test } from "@playwright/test";
 import { connectConsole, gotoRunHistory, runRecipe } from "./fixtures/connect";
+import { expectOverlayAboveNavbar } from "./fixtures/overlay";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -15,8 +16,10 @@ async function openRerun(page: Page): Promise<void> {
   await expect(page.getByTestId("run-list")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("run-open").first().click();
   await expect(page.getByTestId("run-detail-drawer")).toBeVisible();
+  await expectOverlayAboveNavbar(page, "run-detail-drawer");
   await page.getByTestId("run-rerun-changes").click();
   await expect(page.getByTestId("rerun-drawer")).toBeVisible();
+  await expectOverlayAboveNavbar(page, "rerun-drawer");
 }
 
 /** Submit the re-run form, dismissing the conservative confirm if it appears

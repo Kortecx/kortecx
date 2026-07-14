@@ -2,6 +2,7 @@ import type { RecipeInfo } from "@kortecx/sdk/web";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { type FormEvent, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { stagger } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
@@ -308,16 +309,16 @@ function BlueprintViewer({ handle, onClose }: { handle: string; onClose: () => v
     ? JSON.stringify({ handle: form.data.handle, inputs: blueprintInputs(form.data) }, null, 2)
     : null;
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close blueprint view"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="blueprint-viewer"
         // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion animations; non-modal side panel semantics declared via role+aria-label (the NodeDetailDrawer precedent)
         role="dialog"
@@ -346,7 +347,8 @@ function BlueprintViewer({ handle, onClose }: { handle: string; onClose: () => v
           />
         ) : null}
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }
 

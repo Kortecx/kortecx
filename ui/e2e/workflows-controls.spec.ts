@@ -7,6 +7,7 @@
 
 import { expect, test } from "@playwright/test";
 import { connectConsole, gotoRunHistory, gotoViaPalette, runRecipe } from "./fixtures/connect";
+import { expectOverlayAboveNavbar } from "./fixtures/overlay";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -37,6 +38,7 @@ test("workflows: a run row's detail popup clones (prefilled), renames, and clear
   await row.getByTestId("run-open").click();
   const drawer = page.getByTestId("run-detail-drawer");
   await expect(drawer).toBeVisible();
+  await expectOverlayAboveNavbar(page, "run-detail-drawer");
   await drawer.getByTestId("run-rename-input").fill("incident triage");
   await drawer.getByTestId("run-rename").click();
   await page.keyboard.press("Escape");
@@ -50,6 +52,11 @@ test("workflows: a run row's detail popup clones (prefilled), renames, and clear
     page.locator('[data-testid="recipe-form"][data-recipe="kx/recipes/echo"]'),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("field-topic")).toHaveValue("clone-me");
+
+  // The prefilled clone form is a modal overlay (its scrim dims the whole page, so the
+  // navbar is intentionally not clickable behind it) — close it before navigating.
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("blueprint-form-drawer")).toBeHidden();
 
   // Back on Workflows → Runs: clearing LOCAL history keeps the durable journal row
   // (truth stays) — and the client-local RENAME survives too (separate store).
@@ -85,6 +92,7 @@ test("blueprints: the catalog is a card grid; the menu's View opens the contract
   await bp.getByTestId("recipe-view-kx/recipes/echo").click();
   const viewer = page.getByTestId("blueprint-viewer");
   await expect(viewer).toBeVisible();
+  await expectOverlayAboveNavbar(page, "blueprint-viewer");
   await expect(viewer.getByTestId("blueprint-contract")).toContainText("kx/recipes/echo", {
     timeout: 30_000,
   });
