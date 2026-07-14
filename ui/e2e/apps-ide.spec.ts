@@ -113,12 +113,41 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   // The tab is URL-addressable (refresh-safe).
   await expect(page).toHaveURL(/[?&]tab=lineage/);
 
-  // MCP Tools + Integrations: the split, read-only capability manifest (needs vs. have).
+  // MCP Tools: the EDITABLE rail — attaching a registered tool persists via SaveApp
+  // (a wish, granted only at run) and it appears in the attached row; detach reverts.
   await page.getByTestId("app-tab-tools").click();
-  await expect(page.getByTestId("app-manifest")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("app-tools-rail")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("app-tools-attached")).toContainText("No tools attached");
+  if ((await page.getByTestId("app-tools-attachable").count()) > 0) {
+    const firstTool = page.getByTestId("app-tools-attachable").locator("button").first();
+    const toolName = ((await firstTool.textContent()) ?? "").replace(/^\+\s*/, "").trim();
+    await firstTool.click();
+    await expect(page.getByTestId(`app-tool-detach-${toolName}`)).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId(`app-tool-detach-${toolName}`).click();
+    await expect(page.getByTestId("app-tools-attached")).toContainText("No tools attached", {
+      timeout: 15_000,
+    });
+  }
+
+  // Integrations: the EDITABLE rail — bind a connector by endpoint + credential NAME
+  // (never the secret) → it persists; unbind reverts.
   await page.getByTestId("app-tab-integrations").click();
   await expect(page.getByTestId("app-tab-integrations")).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByTestId("app-manifest")).toBeVisible();
+  await expect(page.getByTestId("app-connections-rail")).toBeVisible();
+  await expect(page.getByTestId("app-connections-attached")).toContainText("No integrations bound");
+  await page.getByTestId("app-connection-descriptor").fill("https://mcp.example/sse");
+  await page.getByTestId("app-connection-credential").fill("EXAMPLE_TOKEN");
+  await page.getByTestId("app-connection-bind").click();
+  const bound = page.getByTestId("app-connection-detach-https://mcp.example/sse");
+  await expect(bound).toBeVisible({ timeout: 15_000 });
+  await expect(bound).toContainText("EXAMPLE_TOKEN");
+  await bound.click();
+  await expect(page.getByTestId("app-connections-attached")).toContainText(
+    "No integrations bound",
+    {
+      timeout: 15_000,
+    },
+  );
 
   // Run: the drawer opens; with no input_schema it runs in one click and navigates to
   // the live run (the pure step commits without a model).
