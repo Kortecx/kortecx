@@ -139,7 +139,10 @@ fn propose_blocking<B: InferenceBackend>(
                 role: s.role.clone(),
                 intent: s.intent.clone(),
                 kind: kind_str(s.kind).to_string(),
-                model_id: recipe.as_ref().map(|r| r.model_id.0.clone()).unwrap_or_default(),
+                model_id: recipe
+                    .as_ref()
+                    .map(|r| r.model_id.0.clone())
+                    .unwrap_or_default(),
                 tool_contract: recipe
                     .map(|r| {
                         r.tool_contract

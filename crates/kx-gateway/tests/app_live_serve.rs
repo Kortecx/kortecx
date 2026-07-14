@@ -1355,7 +1355,10 @@ async fn propose_workflow_authors_a_multistep_dag_and_runs_live() {
         "LIVE propose [{engine}]: {} steps, {} edges — roles {:?}",
         plan.steps.len(),
         plan.edges.len(),
-        plan.steps.iter().map(|s| s.role.as_str()).collect::<Vec<_>>()
+        plan.steps
+            .iter()
+            .map(|s| s.role.as_str())
+            .collect::<Vec<_>>()
     );
     assert!(
         plan.steps.len() >= 2,

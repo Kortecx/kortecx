@@ -75,7 +75,8 @@ pub(crate) const AUTHORING_ROLES: &[AuthoringRole] = &[
     },
     AuthoringRole {
         name: "skeptic",
-        framing: "challenges each claim: asks for evidence, what would falsify it, where it's wrong",
+        framing:
+            "challenges each claim: asks for evidence, what would falsify it, where it's wrong",
     },
     AuthoringRole {
         name: "planner",
@@ -149,7 +150,10 @@ mod tests {
     fn planner_example_decodes_and_uses_palette_roles() {
         let plan = kx_planner::decode_plan(PLANNER_EXAMPLE.as_bytes(), 8192)
             .expect("the taught example must decode via the same enforcer the runtime uses");
-        assert!(plan.steps.len() >= 2, "the example teaches a MULTI-step plan");
+        assert!(
+            plan.steps.len() >= 2,
+            "the example teaches a MULTI-step plan"
+        );
         for s in &plan.steps {
             assert!(
                 is_palette_role(&s.role),

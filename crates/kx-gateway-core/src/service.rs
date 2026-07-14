@@ -1394,7 +1394,10 @@ impl GatewayService {
     /// served-model + role-catalog backed proposer; `None` (the default) ⇒ the RPC is
     /// `unimplemented`. Validate-only, digest-invariant.
     #[must_use]
-    pub fn with_workflow_proposer(mut self, proposer: Arc<dyn crate::propose::WorkflowProposer>) -> Self {
+    pub fn with_workflow_proposer(
+        mut self,
+        proposer: Arc<dyn crate::propose::WorkflowProposer>,
+    ) -> Self {
         self.proposer = Some(proposer);
         self
     }

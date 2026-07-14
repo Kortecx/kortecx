@@ -1556,13 +1556,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(feature = "serve-engine")]
     let workflow_proposer: Option<Arc<dyn kx_gateway_core::WorkflowProposer>> =
         match (model_engine.as_ref(), serve_model.as_ref()) {
-            (Some(engine), Some(model_id)) => Some(Arc::new(
-                crate::propose_host::HostWorkflowProposer::new(
+            (Some(engine), Some(model_id)) => {
+                Some(Arc::new(crate::propose_host::HostWorkflowProposer::new(
                     engine.clone(),
                     model_id.clone(),
                     default_executor_class(),
-                ),
-            )),
+                )))
+            }
             _ => None,
         };
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
