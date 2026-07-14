@@ -24,7 +24,12 @@
  */
 
 import type { DagSpecJson, DagSpecStep } from "@kortecx/sdk/web";
-import { REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY, TOOL_ARGS_KEY } from "@kortecx/sdk/web";
+import {
+  APP_SCHEMA,
+  REACT_MAX_TOOL_CALLS_KEY,
+  REACT_MAX_TURNS_KEY,
+  TOOL_ARGS_KEY,
+} from "@kortecx/sdk/web";
 import type { BuilderEdge, BuilderGraph, BuilderStep, BuilderStepKind } from "./builder-graph";
 
 /** What the editor must preserve / refuse from a parsed blueprint. */
@@ -306,6 +311,47 @@ function parseParams(text: string): Record<string, string> {
   } catch {
     return {};
   }
+}
+
+/** The unmodeled snapshot for a BRAND-NEW App blueprint — no preserved fields (seed 0,
+ *  no exec / execution-mode / context-bundles / non-cascade edges). Read-only at use. */
+export const FRESH_UNMODELED: Pick<
+  UnmodeledReport,
+  "seed" | "executionMode" | "contextBundles" | "edgeNonCascade"
+> = {
+  seed: 0,
+  executionMode: undefined,
+  contextBundles: [],
+  edgeNonCascade: new Map<string, boolean>(),
+};
+
+/**
+ * Save-to-App (POC-5d): replace ONLY `envelope.blueprint` from the edited graph. Every
+ * other envelope region — `references` / `steering_config` / `input_schema` / `tags` /
+ * `replay` — rides VERBATIM (the lossless rule; a structure edit never corrupts a
+ * model-authored envelope beyond the intended blueprint change). NEVER call on a
+ * `refuseEdit` graph.
+ */
+export function structureSaveEnvelope(
+  envelope: Record<string, unknown>,
+  graph: BuilderGraph,
+  unmodeled: Pick<UnmodeledReport, "seed" | "executionMode" | "contextBundles" | "edgeNonCascade">,
+): Record<string, unknown> {
+  return { ...envelope, blueprint: builderGraphToBlueprint(graph, unmodeled) };
+}
+
+/**
+ * Save-as-App: mint a fresh MINIMAL `kortecx.app/v1` envelope from a graph, matching the
+ * SDK `AppBuilder.toEnvelope` minimal shape (schema + name + version + blueprint). The
+ * capability rails (tools / connections / skills) are authored afterwards on the App page.
+ */
+export function newAppEnvelope(name: string, graph: BuilderGraph): Record<string, unknown> {
+  return {
+    schema: APP_SCHEMA,
+    name,
+    version: "1",
+    blueprint: builderGraphToBlueprint(graph, FRESH_UNMODELED),
+  };
 }
 
 /** Parse a folded `kx.tool.args` JSON blob back to an args record (best-effort). */
