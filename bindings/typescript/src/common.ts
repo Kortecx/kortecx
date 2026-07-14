@@ -279,6 +279,11 @@ export {
   REACT_VISION_RECIPE_HANDLE,
 } from "./client.js";
 export type { KxClientOptions, InvokeOptions, Id, ImageInput } from "./client.js";
+export type {
+  WorkflowProposal,
+  ProposedWorkflowStep,
+  ProposedWorkflowEdge,
+} from "./client.js";
 
 export { DEFAULT_ENDPOINT, isNonloopbackPlaintext } from "./transport.js";
 export type { Args } from "./transport.js";

@@ -1549,6 +1549,22 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     } else {
         None
     };
+    // NL authoring (D209.3 / SN-8): the served-model NL→DAG proposer for `ProposeWorkflow`.
+    // Wired only when a model is served (it needs the routing backend + a resolved model);
+    // otherwise the RPC is `unimplemented` and the console hides the affordance. Validate-only
+    // (render → decode → compile), no journal write ⇒ digest-invariant.
+    #[cfg(feature = "serve-engine")]
+    let workflow_proposer: Option<Arc<dyn kx_gateway_core::WorkflowProposer>> =
+        match (model_engine.as_ref(), serve_model.as_ref()) {
+            (Some(engine), Some(model_id)) => {
+                Some(Arc::new(crate::propose_host::HostWorkflowProposer::new(
+                    engine.clone(),
+                    model_id.clone(),
+                    default_executor_class(),
+                )))
+            }
+            _ => None,
+        };
     #[cfg_attr(not(feature = "hnsw"), allow(unused_mut))]
     // `content` is cloned (cheap Arc) so it stays available for the MCP gateway's
     // diagnostic live-fire wiring below (reads the broker-staged tool result).
@@ -1750,6 +1766,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // served). Without it ScaffoldApp/GetScaffoldStatus return `unimplemented`.
     if let Some(scaffolder) = app_scaffolder {
         gateway = gateway.with_app_scaffolder(scaffolder);
+    }
+    #[cfg(feature = "serve-engine")]
+    if let Some(proposer) = workflow_proposer {
+        gateway = gateway.with_workflow_proposer(proposer);
     }
     // PR-6b-1: wire the EXTERNAL MCP gateway (the 5 MCP-server RPCs + the live
     // Connections govern surface). Opens the off-journal connections.db beside the

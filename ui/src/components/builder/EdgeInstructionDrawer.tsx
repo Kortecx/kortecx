@@ -8,6 +8,7 @@
 
 import { m } from "framer-motion";
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { MonacoMount } from "../editor/MonacoMount";
 import type { BuilderEdge, BuilderStep } from "./builder-graph";
 
@@ -49,16 +50,18 @@ export function EdgeInstructionDrawer({
   const to = steps.find((s) => s.id === edge.target)?.label ?? edge.target;
   const target = steps.find((s) => s.id === edge.target);
 
-  return (
+  // POC-C5: portal to <body> with the `--overlay` variants (see StepConfigDrawer) so the
+  // canvas-sibling drawer clears the sticky navbar instead of being clipped by it.
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close instruction editor"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="edge-instruction-drawer"
         // biome-ignore lint/a11y/useSemanticElements: non-modal side panel riding framer-motion; dialog semantics via role+aria-label.
         role="dialog"
@@ -114,6 +117,7 @@ export function EdgeInstructionDrawer({
           </button>
         </div>
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

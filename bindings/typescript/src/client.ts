@@ -270,6 +270,34 @@ export interface InvokeOptions {
   contextRefs?: readonly string[];
 }
 
+/** One step of an NL-proposed workflow (a {@link KxClientBase.proposeWorkflow} result). */
+export interface ProposedWorkflowStep {
+  /** The vetted role the step plays (a persona name — e.g. researcher / analyst / writer). */
+  role: string;
+  /** The model's per-step instruction (what this step must produce). */
+  intent: string;
+  /** The structural kind: `plain` | `critic` | `deterministic_critic` | `topology_shaper`. */
+  kind: string;
+  /** The model id the server resolved for the step (display only). */
+  modelId: string;
+  /** The resolved tool grant set (display only; empty for a pure model step). */
+  toolContract: Record<string, string>;
+}
+
+/** One dependency edge (indices into a {@link WorkflowProposal}'s `steps`). */
+export interface ProposedWorkflowEdge {
+  parent: number;
+  child: number;
+}
+
+/**
+ * The outcome of {@link KxClientBase.proposeWorkflow}: a compiled multi-step proposal to
+ * preview + confirm, or an honest rejection (no served model, an inadmissible plan, …).
+ */
+export type WorkflowProposal =
+  | { proposed: true; steps: ProposedWorkflowStep[]; edges: ProposedWorkflowEdge[] }
+  | { proposed: false; reason: string };
+
 export abstract class KxClientBase {
   readonly endpoint: string;
   protected readonly token: string | undefined;
@@ -576,6 +604,38 @@ export abstract class KxClientBase {
     }
     const outcome = await pollAny(this.grpc, handle.instanceId, opts.timeoutMs ?? 120_000);
     return this._finish(outcome);
+  }
+
+  /**
+   * NL authoring (propose-then-confirm): turn a natural-language `goal` into a PROPOSED
+   * multi-step workflow DAG. The SERVED model plans; the gateway decodes + compiles the
+   * plan through the vetted planner (the model names only role + intent + edges — every
+   * capability axis is server-vetted, SN-8). It VALIDATES ONLY — nothing runs until the
+   * caller confirms by authoring the returned steps (e.g. via the builder → `saveApp` /
+   * {@link KxClientBase.submitWorkflow}). Returns `{ proposed: false, reason }` when the
+   * gateway can't plan (no served model, an inadmissible plan). An old gateway without the
+   * seam throws {@link KxUnimplemented}.
+   */
+  async proposeWorkflow(goal: string): Promise<WorkflowProposal> {
+    const resp = await rpc(this.grpc.proposeWorkflow({ goal }));
+    const r = resp.result;
+    if (r?.case === "plan") {
+      return {
+        proposed: true,
+        steps: r.value.steps.map((s) => ({
+          role: s.role,
+          intent: s.intent,
+          kind: s.kind,
+          modelId: s.modelId,
+          toolContract: { ...s.toolContract },
+        })),
+        edges: r.value.edges.map((e) => ({ parent: e.parent, child: e.child })),
+      };
+    }
+    if (r?.case === "rejected") {
+      return { proposed: false, reason: r.value.reason };
+    }
+    return { proposed: false, reason: "the gateway returned no proposal" };
   }
 
   /**

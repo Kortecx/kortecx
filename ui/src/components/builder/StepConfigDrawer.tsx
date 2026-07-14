@@ -10,6 +10,7 @@
 import { type ModelSummary, PERSONAS, personaNames } from "@kortecx/sdk/web";
 import { m } from "framer-motion";
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useDiscoverTools } from "../../kx/use-tool-registry";
 import { JsonEditor } from "../editor/JsonEditor";
 import { MonacoMount } from "../editor/MonacoMount";
@@ -68,16 +69,22 @@ export function StepConfigDrawer({
   // PR-6b-2: the LIVE registered-tool set for a TOOL step's picker (DiscoverTools).
   const { tools, notWired: toolsNotWired } = useDiscoverTools();
 
-  return (
+  // POC-C5: portal to <body> with the `--overlay` variants (the #330 pattern, per
+  // `SaveAsAppDialog`/`BlueprintFormDrawer`). The drawer is a SIBLING of the builder
+  // canvas inside a non-positioned `.screen`/`.shell__main`, so the plain canvas-scoped
+  // `.node-drawer` (absolute, z5) fell to the document origin and the sticky navbar (z10)
+  // clipped it. `--overlay` is `position:fixed` z49/z50 — it clears the navbar. Base
+  // `.node-drawer__scrim` (shared by the canvas-scoped builder/DAG drawers) is untouched.
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close step config"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="step-config-drawer"
         data-node={step.id}
         // biome-ignore lint/a11y/useSemanticElements: non-modal side panel riding framer-motion; dialog semantics via role+aria-label (mirrors NodeDetailDrawer).
@@ -108,27 +115,24 @@ export function StepConfigDrawer({
 
         {step.kind === "model" ? (
           <>
+            {/* NL-primary (D209.3): the agent is authored FIRST in natural language — the
+                instruction leads; the model + runtime steer how it runs. Model / persona /
+                reasoning / tools are secondary knobs below. */}
             <div className="builder-field">
-              <span className="builder-field__label">Model</span>
-              {modelsUnsupported || served.length === 0 ? (
-                <p className="muted" data-testid="step-config-no-models">
-                  No model is being served. Start <code>kx serve --features inference</code> with
-                  <code>KX_SERVE_MODEL_GGUF</code> to run agent steps.
-                </p>
-              ) : (
-                <div className="builder-chips" data-testid="step-config-model">
-                  {served.map((mm) => (
-                    <button
-                      key={mm.modelId}
-                      type="button"
-                      className={`chip${step.modelId === mm.modelId ? " chip--active" : ""}`}
-                      onClick={() => onChange({ ...step, modelId: mm.modelId })}
-                    >
-                      {mm.modelId}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <span className="builder-field__label">Instruction</span>
+              <MonacoMount
+                value={step.prompt}
+                language="plaintext"
+                onChange={(v) => onChange({ ...step, prompt: v })}
+                height={160}
+                testId="step-config-prompt"
+                ariaLabel="Agent instruction"
+                placeholder="Describe what this agent should do — the runtime + model decide how."
+              />
+              <span className="builder-field__hint">
+                The primary control: author the agent in natural language. Pick a persona to prepend
+                a curated role framing; the knobs below refine model, reasoning, and tools.
+              </span>
             </div>
 
             <div className="builder-field">
@@ -164,22 +168,32 @@ export function StepConfigDrawer({
                 ))}
               </div>
               <span className="builder-field__hint">
-                A curated role. Clicking prepends its instructions to the prompt (an editable
+                A curated role. Clicking prepends its instructions to the instruction (an editable
                 template); the same as the SDK <code>kx.persona("…")</code>.
               </span>
             </div>
 
             <div className="builder-field">
-              <span className="builder-field__label">Prompt</span>
-              <MonacoMount
-                value={step.prompt}
-                language="plaintext"
-                onChange={(v) => onChange({ ...step, prompt: v })}
-                height={160}
-                testId="step-config-prompt"
-                ariaLabel="Agent prompt"
-                placeholder="What should this agent do?"
-              />
+              <span className="builder-field__label">Model</span>
+              {modelsUnsupported || served.length === 0 ? (
+                <p className="muted" data-testid="step-config-no-models">
+                  No model is being served. Start <code>kx serve --features inference</code> with
+                  <code>KX_SERVE_MODEL_GGUF</code> to run agent steps.
+                </p>
+              ) : (
+                <div className="builder-chips" data-testid="step-config-model">
+                  {served.map((mm) => (
+                    <button
+                      key={mm.modelId}
+                      type="button"
+                      className={`chip${step.modelId === mm.modelId ? " chip--active" : ""}`}
+                      onClick={() => onChange({ ...step, modelId: mm.modelId })}
+                    >
+                      {mm.modelId}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="builder-field">
@@ -354,6 +368,7 @@ export function StepConfigDrawer({
           </button>
         </div>
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

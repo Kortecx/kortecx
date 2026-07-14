@@ -4714,6 +4714,26 @@ button.card-grid__title:hover {
   color: var(--danger, #c03500);
 }
 
+/* NL propose-then-confirm plan preview (the builder "Describe a workflow" panel). */
+.propose-steps {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.propose-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.propose-step__intent {
+  font-size: 0.85rem;
+  color: var(--fg-muted, #6b7280);
+  line-height: 1.35;
+}
+
 /* Blueprint discovery (SearchRecipes) */
 .blueprint-search {
   margin: 0.5rem 0 1rem;

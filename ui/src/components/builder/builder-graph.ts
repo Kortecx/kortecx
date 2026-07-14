@@ -11,8 +11,8 @@
  * authoring (that would reopen the SubmitWorkflow admission boundary, §2.171).
  */
 
-import type { StepInput } from "@kortecx/sdk/web";
-import { BlueprintBuilder, task } from "@kortecx/sdk/web";
+import type { ProposedWorkflowStep, StepInput } from "@kortecx/sdk/web";
+import { BlueprintBuilder, PERSONAS, task } from "@kortecx/sdk/web";
 
 /** The authored step palette (EXEC is reserved server-side; the UI offers
  *  PURE / MODEL / TOOL). TOOL (PR-6b-2) fires a single REGISTERED tool: the SERVER
@@ -425,4 +425,57 @@ export function insertPattern(kind: PatternKind, startId: number, participants =
   }
 
   return { steps, edges, firstId: steps[0]?.id ?? `s${startId}`, nextId: next };
+}
+
+// -- NL-proposed workflow → builder graph ----------------------------------
+
+/** Title-case a role name for the node label ("researcher" → "Researcher"). */
+function roleLabel(role: string): string {
+  return role ? role.charAt(0).toUpperCase() + role.slice(1) : "Agent";
+}
+
+/**
+ * Lower an NL-proposed workflow (from the gateway `proposeWorkflow`) into builder steps +
+ * edges the canvas can apply. Each proposed step becomes a MODEL node labelled by its role,
+ * with the role's curated persona framing prepended to the intent — the SAME client-side,
+ * identity-bearing fold the persona chip applies (`StepConfigDrawer`), so an applied step is
+ * byte-identical to one a user hand-authored with that persona. Edges map by proposed step
+ * index (out-of-range / self edges dropped). Pure + total — the server still COMPILES +
+ * warrants the confirmed DAG (SN-8); this only shapes what is proposed onto the canvas.
+ */
+export function proposalToBuilderGraph(
+  steps: readonly ProposedWorkflowStep[],
+  edges: readonly { readonly parent: number; readonly child: number }[],
+  startId: number,
+): PatternInsert {
+  let next = startId;
+  const ids: string[] = [];
+  const outSteps: BuilderStep[] = steps.map((s) => {
+    const id = `s${next++}`;
+    ids.push(id);
+    const framing = PERSONAS[s.role] ?? "";
+    const intent = s.intent.trim();
+    const prompt = framing ? (intent ? `${framing}\n\n${intent}` : framing) : intent;
+    return {
+      ...newStep("model", id),
+      label: roleLabel(s.role),
+      prompt,
+      modelId: s.modelId,
+      toolContract: { ...s.toolContract },
+    };
+  });
+  const outEdges: BuilderEdge[] = [];
+  for (const e of edges) {
+    const source = ids[e.parent];
+    const target = ids[e.child];
+    if (source && target && source !== target) {
+      outEdges.push(dataEdge(source, target));
+    }
+  }
+  return {
+    steps: outSteps,
+    edges: outEdges,
+    firstId: outSteps[0]?.id ?? `s${startId}`,
+    nextId: next,
+  };
 }

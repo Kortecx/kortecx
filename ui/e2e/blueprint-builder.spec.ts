@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { connectConsole, gotoViaPalette } from "./fixtures/connect";
+import { expectOverlayAboveNavbar } from "./fixtures/overlay";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -32,6 +33,11 @@ test("builder: author + interact + validate, then submit a PURE blueprint to a l
   await expect(page.getByTestId("step-config-drawer")).toBeVisible();
   // Model-free ⇒ the honest "no model served" state (don't-fake-gaps).
   await expect(page.getByTestId("step-config-no-models")).toBeVisible();
+  // C5: the drawer is a canvas SIBLING inside a non-positioned `.screen` — before the
+  // `--overlay` portal fix its absolute scrim fell to the document origin and the sticky
+  // navbar (z10) clipped it. `toBeVisible` passed on a clipped drawer, so assert the
+  // occlusion guard: the portaled overlay paints OVER the navbar.
+  await expectOverlayAboveNavbar(page, "step-config-drawer");
 
   // Delete the agent and author a model-free PURE step instead.
   await page.getByTestId("step-config-delete").click();
@@ -63,6 +69,12 @@ test("builder: connect two agents into a chain (an edge appears)", async ({ page
   await page.getByTestId("builder-add-agent").click();
   await expect(page.getByTestId("builder-node")).toHaveCount(2);
 
+  // Adding a node auto-opens its config drawer, now a portaled `--overlay` modal whose
+  // full-viewport scrim would intercept the canvas drag — close it first (the established
+  // "Escape to interact with the canvas" pattern the other builder specs use).
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("step-config-drawer")).toHaveCount(0);
+
   // Drag from the first node's source handle to the second node's target handle.
   const nodes = page.getByTestId("builder-node");
   const source = nodes.nth(0).locator(".react-flow__handle-bottom");
@@ -71,4 +83,30 @@ test("builder: connect two agents into a chain (an edge appears)", async ({ page
 
   // An edge now connects them (reactflow renders edge paths under .react-flow__edge).
   await expect(page.locator(".react-flow__edge")).toHaveCount(1, { timeout: 10_000 });
+});
+
+test("builder: the step-config drawer clears the navbar in both themes (C5)", async ({ page }) => {
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await connectConsole(page, gw);
+  await gotoViaPalette(page, "recipes");
+  await page.getByTestId("new-blueprint").click();
+  await expect(page.getByTestId("builder-canvas")).toBeVisible({ timeout: 30_000 });
+
+  // BOTH THEMES (D142.1 / GR13): the fixed `--overlay` positioning is theme-independent,
+  // but prove the occlusion guard holds under each palette (the drawer paints over the navbar).
+  // Toggle the theme with the drawer CLOSED — an open drawer's full-viewport scrim occludes
+  // the navbar's own theme-toggle button (that occlusion is exactly what the fix creates).
+  for (const theme of ["light", "dark"] as const) {
+    const current = await page.locator("html").getAttribute("data-theme");
+    if (current !== theme) {
+      await page.getByTestId("theme-toggle").click();
+    }
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    await page.getByTestId("builder-node").first().click();
+    await expect(page.getByTestId("step-config-drawer")).toBeVisible();
+    await expectOverlayAboveNavbar(page, "step-config-drawer");
+    // Close so the next iteration's theme toggle can reach the navbar.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("step-config-drawer")).toHaveCount(0);
+  }
 });

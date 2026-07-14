@@ -1013,6 +1013,62 @@ message SubmitWorkflowRequest {
 }
 
 // ---------------------------------------------------------------------------
+// NL workflow authoring — propose-then-confirm (D209.3 / SN-8). ProposeWorkflow
+// runs the SERVED model ONCE to turn a natural-language goal into a PROPOSED
+// multi-step DAG, then decodes + compiles it through the vetted kx-planner path:
+// the model names ONLY role + intent + edges (the minimal trust surface); every
+// capability axis (model_id, tool_contract, nd_class, …) comes from a
+// server-vetted RoleRecipe keyed by exact role name, and `intersect(parent,
+// role)` narrows-only (the planner can never escalate privilege). It VALIDATES
+// ONLY (`compile_plan`) — it registers nothing and writes no journal (so it is
+// unaffected by the run-registration dedup, and is digest-invariant). The client
+// PREVIEWS the proposal and, on confirm, authors it via the normal builder →
+// SaveApp / SubmitWorkflow path (which re-compiles server-side). Needs a served
+// model (an `inference` / `serve-engine` build with a resolved model); with none
+// it returns `rejected` (don't-fake-gaps, D142).
+// ---------------------------------------------------------------------------
+message ProposeWorkflowRequest {
+  string goal = 1;                       // the natural-language objective (size-capped server-side)
+}
+
+// One proposed step. role/intent/kind are the model's plan (minimal trust
+// surface); model_id + tool_contract are the SERVER-resolved recipe axes,
+// returned for DISPLAY only so the client can render the granted capabilities —
+// the authoritative axes are re-derived server-side at author/run (SN-8).
+message ProposedStep {
+  string role   = 1;                     // the vetted role name this step plays
+  string intent = 2;                     // the model's free-form per-step instruction
+  string kind   = 3;                     // structural kind: plain | critic | deterministic_critic | topology_shaper
+  string model_id = 4;                   // resolved from the role recipe (display only)
+  map<string, string> tool_contract = 5; // resolved grant set {tool_id: version} (display only)
+}
+
+// One proposed dependency edge (indices into ProposedPlan.steps[]).
+message ProposedEdge {
+  uint32 parent = 1;
+  uint32 child  = 2;
+}
+
+message ProposedPlan {
+  repeated ProposedStep steps = 1;
+  repeated ProposedEdge edges = 2;
+}
+
+// The proposal was refused — no served model, an unknown/ungrantable role or
+// tool, or a structurally invalid plan (cyclic / bad critic precedence). The
+// reason is human-readable (surfaced to the author; never parsed for enforcement).
+message ProposalRejected {
+  string reason = 1;
+}
+
+message ProposeWorkflowResponse {
+  oneof result {
+    ProposedPlan plan         = 1;
+    ProposalRejected rejected = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Batch A — client uploads + batch content reads + model discovery. Additive
 // RPCs (D120.6). PutContent is a CONTENT-STORE write, never a journal write:
 // the returned ref is SERVER-DERIVED blake3 over the payload bytes (SN-8 — the
@@ -2283,6 +2339,10 @@ service KxGateway {
   // Blueprint-builder additive (D120.6): author a Tier-1 DAG (vetted palette) and
   // run it — server-compiled identity + server-built warrants + R-1..R-15 admission.
   rpc SubmitWorkflow(SubmitWorkflowRequest) returns (RunHandle);
+  // NL authoring additive (D209.3 / SN-8): propose a multi-step DAG from a
+  // natural-language goal (served model → vetted kx-planner compile). Validates
+  // only — never registers or runs; the client confirms via SubmitWorkflow/SaveApp.
+  rpc ProposeWorkflow(ProposeWorkflowRequest) returns (ProposeWorkflowResponse);
   // Batch A additive (D120.6): client uploads (content-store write, never a
   // journal write) + batch content reads + model discovery (display only).
   rpc PutContent(PutContentRequest) returns (PutContentResponse);

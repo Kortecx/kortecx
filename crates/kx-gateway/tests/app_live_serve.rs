@@ -1309,6 +1309,134 @@ async fn swarm_runs_parallel_agents_and_gathers_live() {
     running.shutdown().await.unwrap();
 }
 
+/// C4 / Rule-41 (D209.3, SN-8): NL authoring end-to-end on a live model. A natural-language
+/// GOAL is turned into a PROPOSED multi-step DAG by `ProposeWorkflow` (the served model plans;
+/// the gateway decodes + compiles the plan through the vetted `kx-planner` path — the model
+/// names only role + intent + edges, every capability axis comes from the vetted role catalog).
+/// Then the CONFIRMED DAG (authored from the proposal, exactly the console apply→submit path)
+/// runs and settles on the live model. Fresh serve per test (the App/fire dedup — L-097). The
+/// proposal is model-nondeterministic, so a `Rejected` outcome is LOGGED + the run leg skipped;
+/// a `Plan` MUST be a real multi-step DAG that then commits. Per-step tools are the C3 surface,
+/// so the proposed steps are pure model roles here (real multi-agent reasoning, not a tool fire).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally); opt in with --ignored"]
+async fn propose_workflow_authors_a_multistep_dag_and_runs_live() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // ---- NL → a proposed multi-step DAG (propose-then-confirm, VALIDATE-ONLY) ----
+    let goal = "Research the top 3 durable-execution engines and write a short comparison.";
+    let resp = c
+        .propose_workflow(proto::ProposeWorkflowRequest {
+            goal: goal.to_string(),
+        })
+        .await
+        .expect("ProposeWorkflow")
+        .into_inner();
+    let plan = match resp.result {
+        Some(proto::propose_workflow_response::Result::Plan(p)) => p,
+        Some(proto::propose_workflow_response::Result::Rejected(r)) => {
+            // Honest (D142): the model on this build did not return an admissible plan. The
+            // RPC + decode + compile path was still exercised; skip the run leg.
+            eprintln!("LIVE propose [{engine}]: rejected — {}", r.reason);
+            running.shutdown().await.unwrap();
+            return;
+        }
+        None => panic!("ProposeWorkflow returned neither a plan nor a rejection"),
+    };
+    eprintln!(
+        "LIVE propose [{engine}]: {} steps, {} edges — roles {:?}",
+        plan.steps.len(),
+        plan.edges.len(),
+        plan.steps
+            .iter()
+            .map(|s| s.role.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        plan.steps.len() >= 2,
+        "the model proposed a MULTI-step plan on the live model [{engine}] (got {})",
+        plan.steps.len()
+    );
+    // Every proposed step resolved a vetted role (SN-8 — the model cannot invent one).
+    for s in &plan.steps {
+        assert!(!s.role.is_empty(), "each proposed step names a vetted role");
+    }
+
+    // ---- confirm: author the proposed DAG (the console apply→submit path) + run it ----
+    // Prepend a brevity directive to each step's prompt: the proposal's INTENTS can be
+    // verbose, and 5 sequential 12B generations would blow the poll window — a test-speed
+    // knob only (the DAG shape + roles are the model's proposal). Empty model_id ⇒ the
+    // served default binds (the swarm witness precedent).
+    let steps: Vec<proto::WorkflowStep> = plan
+        .steps
+        .iter()
+        .map(|s| proto::WorkflowStep {
+            kind: proto::WorkflowStepKind::Model as i32,
+            model_id: String::new(),
+            prompt: format!("Reply in one or two short sentences.\n\n{}", s.intent),
+            body_signature_id: Vec::new(),
+            tool_contract: HashMap::new(), // pure model roles (per-step tools = C3)
+            params: HashMap::new(),
+        })
+        .collect();
+    let n = steps.len();
+    let edges: Vec<proto::WorkflowEdge> = plan
+        .edges
+        .iter()
+        .map(|e| orch_edge(e.parent, e.child))
+        .collect();
+    let handle = c
+        .submit_workflow(proto::SubmitWorkflowRequest {
+            seed: 0,
+            steps,
+            edges,
+            execution_mode: proto::WorkflowExecutionMode::Frozen as i32,
+            context_bundles: vec![],
+        })
+        .await
+        .expect("SubmitWorkflow of the proposed DAG")
+        .into_inner();
+    assert_eq!(handle.instance_id.len(), 16);
+
+    // Poll the projection: pure model steps commit directly, so the DAG settles when every
+    // step's mote commits (the swarm-witness observation pattern).
+    let mut committed = 0usize;
+    for _ in 0..2400 {
+        let view = c
+            .get_projection(proto::GetProjectionRequest {
+                instance_id: handle.instance_id.clone(),
+                at_seq: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        committed = view
+            .motes
+            .iter()
+            .filter(|m| m.state == proto::MoteSnapshotState::Committed as i32)
+            .count();
+        if committed >= n {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    eprintln!("LIVE propose→run [{engine}]: {committed}/{n} steps committed");
+    assert!(
+        committed >= n,
+        "the NL-proposed DAG's {n} steps all committed on the live model [{engine}] (got {committed})"
+    );
+
+    running.shutdown().await.unwrap();
+}
+
 /// A WIDER swarm: `n_leaves` INDEPENDENT parallel MODEL leaves fanned into one MODEL gather
 /// (a Data edge from every leaf). More parallel leaves ⇒ the worker pool has real
 /// wall-clock room to overlap them.

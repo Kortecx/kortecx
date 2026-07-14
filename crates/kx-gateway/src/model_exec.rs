@@ -264,6 +264,53 @@ pub(crate) fn worker_recipes(model_id: &ModelId) -> Arc<dyn RoleRecipeResolver> 
     Arc::new(recipes)
 }
 
+/// The vetted PURE-model recipe every authoring role lowers through: a no-tool model step
+/// routed to the served model (the `worker` shape). Shared by the NL-planner role catalog;
+/// per-role behaviour comes from the plan's intent (+ the client-side persona framing), not
+/// from the recipe — so every authoring role carries the identical least-privilege recipe.
+fn pure_model_recipe(model_id: &ModelId) -> RoleRecipe {
+    RoleRecipe {
+        logic_ref: LogicRef::from_bytes([0x77; 32]),
+        model_id: model_id.clone(),
+        prompt_template_hash: PromptTemplateHash::from_bytes([0u8; 32]),
+        tool_contract: BTreeMap::new(),
+        capability: ToolName("kx-model".into()),
+        nd_class: NdClass::Pure,
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        inference_params: InferenceParams::default(),
+        deterministic_check: None,
+    }
+}
+
+/// Build the vetted role catalog the NL planner (`ProposeWorkflow`) compiles a proposal
+/// against: the curated [`crate::prompt_library::AUTHORING_ROLES`], each registered in BOTH
+/// the warrant `RoleRegistry` (a model-only, least-privilege `shaper_warrant`, intersected
+/// with the parent at lowering — narrowing-only, D75) AND the `RoleRecipeResolver` (a PURE
+/// model recipe). Every `tool_contract` is empty ⇒ always grantable (per-step tools/policy
+/// are attached later in the builder — the C3 surface). SN-8: the model names a role; the
+/// runtime supplies every capability axis from this catalog, never from model output.
+pub(crate) fn build_authoring_role_catalog(
+    model_id: &ModelId,
+    exec_class: ExecutorClass,
+) -> (Arc<dyn RoleRegistry>, Arc<dyn RoleRecipeResolver>) {
+    let warrant = shaper_warrant(model_id, exec_class);
+    let role_registry = InMemoryRoleRegistry::new();
+    let recipes = InMemoryRoleRecipes::new();
+    for role in crate::prompt_library::AUTHORING_ROLES {
+        role_registry.register(
+            RoleId(role.name.into()),
+            Role {
+                name: role.name.into(),
+                version: 1,
+                spec: warrant.clone(),
+                description: String::new(),
+            },
+        );
+        recipes.register(RoleId(role.name.into()), pure_model_recipe(model_id));
+    }
+    (Arc::new(role_registry), Arc::new(recipes))
+}
+
 /// The provisioned serve backend + its model catalog — the UNION of the in-process
 /// llama.cpp GGUF models (only on the `inference` build) and an auto-detected Ollama
 /// daemon's models (the FFI-free path), built once at startup.

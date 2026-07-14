@@ -83,6 +83,7 @@ mod model_pull;
 mod models_view;
 mod mote_def_view;
 mod mote_detail;
+mod propose;
 mod react;
 mod reader;
 mod replan;
@@ -128,6 +129,7 @@ pub use memory::{
     memory_namespace, DecayCandidateEntry, DecayReportEntry, MemoryEntry, MemoryError,
     MemoryHitEntry, MemoryKindTag, MemoryStatsEntry, MemoryView, MemoryWrite, StoreMemoryOutcome,
 };
+pub use propose::{ProposedStep, WorkflowProposal, WorkflowProposer};
 pub use scaffold::{
     authoring_prompt, body_is_empty, derive_phase, split_done_pending, try_committed_body,
     AppScaffolder, ScaffoldFile, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,
