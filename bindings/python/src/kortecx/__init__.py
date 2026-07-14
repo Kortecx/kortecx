@@ -117,6 +117,7 @@ from .memory import (
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
 from .personas import PERSONAS, persona, persona_names
+from .propose import ProposedWorkflowStep, WorkflowProposal
 from .react import ReactTurn, ReactTurnPage
 from .recipes import (
     BlueprintForm,
@@ -364,6 +365,9 @@ __all__ = [
     "PendingApproval",
     "PendingApprovalsPage",
     "RunCost",
+    # NL authoring (D209.3): ProposeWorkflow — a natural-language goal → a proposed DAG
+    "WorkflowProposal",
+    "ProposedWorkflowStep",
     # RC1 (D172) agentic-evaluation per-run quality readout (ScoreRun)
     "RunScore",
     # D170 / MM-3 operator secret store (PutSecret / ListSecretNames / DeleteSecret)

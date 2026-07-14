@@ -70,6 +70,7 @@ from .grants import AssetGrants
 from .memory import DecayReport, Memory, MemoryHit, MemoryKind, MemoryStats, StoreResult
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteDetail
+from .propose import WorkflowProposal
 from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
 from .replan import ReplanRound, ReplanRoundPage
@@ -953,6 +954,22 @@ class KxClient:
             return self._await_react(handle.instance_id, handle.react_chain_salt, timeout)
         outcome = _wait.poll_any(self._stub, self._md, handle.instance_id, timeout)
         return self._finish(outcome)
+
+    def propose_workflow(self, goal: str) -> WorkflowProposal:
+        """NL authoring (propose-then-confirm): turn a natural-language ``goal`` into a
+        PROPOSED multi-step workflow DAG. The served model plans; the gateway decodes +
+        compiles the plan through the vetted planner (the model names only role + intent +
+        edges — every capability axis is server-vetted, SN-8). VALIDATE-ONLY: nothing runs
+        until the caller authors the returned steps (e.g. via a builder / :meth:`save_app`
+        / :meth:`submit_workflow`). Returns ``proposed=False`` with a ``reason`` when the
+        gateway can't plan (no served model, an inadmissible plan). An old gateway without
+        the seam raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.ProposeWorkflow(
+                _g.ProposeWorkflowRequest(goal=goal), metadata=self._md
+            )
+        )
+        return WorkflowProposal.from_proto(resp)
 
     def run_chain(
         self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
@@ -3053,6 +3070,13 @@ class AsyncKxClient:
             return await self._await_react(handle.instance_id, handle.react_chain_salt, timeout)
         outcome = await _wait.apoll_any(self._stub, self._md, handle.instance_id, timeout)
         return KxClient._finish(outcome)
+
+    async def propose_workflow(self, goal: str) -> WorkflowProposal:
+        """As :meth:`KxClient.propose_workflow` — validate-only NL→DAG proposal."""
+        resp = await self._acall(
+            self._stub.ProposeWorkflow(_g.ProposeWorkflowRequest(goal=goal), metadata=self._md)
+        )
+        return WorkflowProposal.from_proto(resp)
 
     async def run_chain(
         self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
