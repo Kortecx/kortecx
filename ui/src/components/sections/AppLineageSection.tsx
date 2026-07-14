@@ -2,7 +2,9 @@
  * The single-App LINEAGE pane — a clean, READ-ONLY diagram of the App's portable
  * blueprint (a `DagSpec`): step order, parallel-vs-sequential shape, one node per step.
  * Structure AUTHORING (add / remove / reorder / config + save-to-App) lives in the
- * Workflows builder; this pane only VIEWS (and offers a Run).
+ * Workflows builder; this pane VIEWS the structure and offers Run + an "Edit structure"
+ * entry that opens the builder seeded from this App (POC-5d), unless the blueprint is
+ * un-round-trippable (exec/binary) or the App is locked.
  *
  * The diagram is a STATIC dagre layout rendered as plain node cards + SVG connectors —
  * no editor canvas (no grid, minimap, zoom, drag, or connect handles), so it reads as
@@ -110,7 +112,15 @@ function LineageDiagram({ graph }: { graph: BuilderGraph }) {
   );
 }
 
-function LineageView({ handle, envelope }: { handle: string; envelope: Record<string, unknown> }) {
+function LineageView({
+  handle,
+  envelope,
+  locked,
+}: {
+  handle: string;
+  envelope: Record<string, unknown>;
+  locked: boolean;
+}) {
   const navigate = useNavigate();
   const runApp = useRunApp();
 
@@ -118,6 +128,15 @@ function LineageView({ handle, envelope }: { handle: string; envelope: Record<st
     () => appBlueprintToBuilderGraph((envelope.blueprint ?? { seed: 0, steps: [] }) as never),
     [envelope.blueprint],
   );
+
+  // Structure is editable in the builder unless the blueprint has an un-round-trippable
+  // (exec/binary) step, or the App is locked (a locked App refuses a structure re-save).
+  const canEdit = !parsed.unmodeled.refuseEdit && !locked;
+  const notice = parsed.unmodeled.refuseEdit
+    ? "A read-only view — this App's blueprint has a step the visual editor can't edit; change it via the SDK/CLI."
+    : locked
+      ? "A read-only view — this App is locked. Unlock it to edit the structure."
+      : "This App's structure (order, parallel vs. sequential, one node per step). Edit it in the builder.";
 
   const onRun = useCallback(() => {
     runApp.mutate(
@@ -129,13 +148,27 @@ function LineageView({ handle, envelope }: { handle: string; envelope: Record<st
     );
   }, [runApp, handle, navigate]);
 
+  const onEditStructure = useCallback(() => {
+    void navigate({ to: "/blueprints/new", search: { app: handle } });
+  }, [navigate, handle]);
+
   return (
     <div className="app-lineage" data-testid="app-lineage">
       <div className="app-lineage__toolbar">
         <span className="muted" data-testid="lineage-readonly-notice" role="note">
-          A read-only view of this App's structure (order, parallel vs. sequential, one node per
-          step). Compose or edit structure in the Workflows builder.
+          {notice}
         </span>
+        {canEdit ? (
+          <button
+            type="button"
+            className="btn-ghost"
+            data-testid="lineage-edit-structure"
+            title="Open this App's structure in the visual builder"
+            onClick={onEditStructure}
+          >
+            Edit structure
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn-ghost"
@@ -175,5 +208,7 @@ export function AppLineageSection({ handle }: { handle: string }) {
       <EmptyState title="App not found" detail="This App is not in your catalog (or not owned)." />
     );
   }
-  return <LineageView handle={handle} envelope={app.data.envelope} />;
+  return (
+    <LineageView handle={handle} envelope={app.data.envelope} locked={app.data.summary.locked} />
+  );
 }

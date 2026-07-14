@@ -17,6 +17,7 @@
 
 import { app, flow } from "@kortecx/sdk/web";
 import { useMutation } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
@@ -307,6 +308,12 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
               Cancel
             </button>
           </div>
+          <p className="muted">
+            Prefer to compose the structure yourself?{" "}
+            <Link to="/blueprints/new" className="linkbtn" data-testid="new-app-build-visual">
+              Build in the visual builder →
+            </Link>
+          </p>
         </form>
       ) : (
         <ScaffoldProgress

@@ -1,8 +1,10 @@
-import { Chain, type DagSpecJson } from "@kortecx/sdk/web";
+import { APP_SCHEMA, Chain, type DagSpecJson } from "@kortecx/sdk/web";
 import { describe, expect, it } from "vitest";
 import {
   appBlueprintToBuilderGraph,
   builderGraphToBlueprint,
+  newAppEnvelope,
+  structureSaveEnvelope,
 } from "../src/components/builder/app-blueprint";
 
 /** Round-trip a blueprint through the editor model and back to a blueprint. */
@@ -149,5 +151,68 @@ describe("app-blueprint round-trip (digest-safety)", () => {
     expect(s?.reasoning).toBe("off");
     // only the genuine free param survives in the editor text
     expect(JSON.parse(s?.paramsText ?? "{}")).toEqual({ keep: "1" });
+  });
+});
+
+describe("structureSaveEnvelope (Save to App — lossless)", () => {
+  it("replaces ONLY blueprint; every other envelope region rides verbatim (by reference)", () => {
+    const references = {
+      tools: [{ tool_id: "mcp-echo/echo", tool_version: "1" }],
+      connections: [{ descriptor: "gmail", credential_ref: "work" }],
+    };
+    const steering_config = {
+      tools: { requested_grants: { "mcp-echo/echo": "1" } },
+      guards: { secret_scope: ["work"] },
+    };
+    const input_schema = { fields: [{ name: "q", type: "string" }] };
+    const envelope: Record<string, unknown> = {
+      schema: APP_SCHEMA,
+      name: "Grader",
+      version: "2",
+      blueprint: { seed: 0, steps: [{ kind: "model", model_id: "old", prompt: "old" }] },
+      references,
+      steering_config,
+      input_schema,
+      tags: ["graded"],
+    };
+
+    // Edit: swap the agent's model + prompt in the parsed graph.
+    const { graph, unmodeled } = appBlueprintToBuilderGraph(envelope.blueprint as DagSpecJson);
+    const editedGraph = {
+      ...graph,
+      steps: graph.steps.map((st) => ({ ...st, modelId: "new", prompt: "new" })),
+    };
+    const next = structureSaveEnvelope(envelope, editedGraph, unmodeled);
+
+    // Everything OUTSIDE the blueprint is the SAME object (a structure edit never
+    // clones/mutates the other rails — the lossless rule).
+    expect(next.references).toBe(references);
+    expect(next.steering_config).toBe(steering_config);
+    expect(next.input_schema).toBe(input_schema);
+    expect(next.tags).toBe(envelope.tags);
+    expect(next.schema).toBe(APP_SCHEMA);
+    expect(next.name).toBe("Grader");
+    expect(next.version).toBe("2");
+    // The original envelope is not mutated.
+    expect((envelope.blueprint as DagSpecJson).steps[0]?.model_id).toBe("old");
+    // The blueprint IS changed, and still compiles (digest-safe).
+    const bp = next.blueprint as DagSpecJson;
+    expect(bp.steps[0]?.model_id).toBe("new");
+    expect(bp.steps[0]?.prompt).toBe("new");
+    expect(() => Chain.fromBlueprint(bp)).not.toThrow();
+  });
+});
+
+describe("newAppEnvelope (Save as App — minimal SDK shape)", () => {
+  it("mints exactly { schema, name, version, blueprint } and the blueprint compiles", () => {
+    const bp: DagSpecJson = { seed: 0, steps: [{ kind: "model", model_id: "m", prompt: "hi" }] };
+    const { graph } = appBlueprintToBuilderGraph(bp);
+    const env = newAppEnvelope("My App", graph);
+    expect(env.schema).toBe(APP_SCHEMA);
+    expect(env.name).toBe("My App");
+    expect(env.version).toBe("1");
+    // No stray rails — the SDK `AppBuilder.toEnvelope` minimal shape exactly.
+    expect(Object.keys(env).sort()).toEqual(["blueprint", "name", "schema", "version"]);
+    expect(() => Chain.fromBlueprint(env.blueprint as DagSpecJson)).not.toThrow();
   });
 });

@@ -11,7 +11,8 @@
  * identity by construction). The acyclicity precheck mirrors the server's compile.
  */
 
-import { useNavigate } from "@tanstack/react-router";
+import { defaultHandle } from "@kortecx/sdk/web";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Background,
   Controls,
@@ -23,15 +24,25 @@ import {
   useNodesState,
 } from "@xyflow/react";
 import type { Connection, Edge, EdgeMouseHandler, NodeMouseHandler } from "@xyflow/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { m } from "framer-motion";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toUiError } from "../../kx/errors";
+import { useApp, useApps, useSaveApp } from "../../kx/use-apps";
 import { useModels } from "../../kx/use-models";
 import { useSubmitWorkflow } from "../../kx/use-submit-workflow";
+import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { BuilderNode } from "../builder/BuilderNode";
 import type { BuilderFlowNode } from "../builder/BuilderNode";
 import { EdgeInstructionDrawer } from "../builder/EdgeInstructionDrawer";
 import { StepConfigDrawer } from "../builder/StepConfigDrawer";
+import {
+  type UnmodeledReport,
+  appBlueprintToBuilderGraph,
+  newAppEnvelope,
+  structureSaveEnvelope,
+} from "../builder/app-blueprint";
 import {
   type BuilderEdge,
   type BuilderGraph,
@@ -44,6 +55,28 @@ import {
   validationError,
 } from "../builder/builder-graph";
 import { NODE_H, NODE_W, layoutGraph } from "../dag/layout";
+
+/**
+ * How the builder is being used (the PUBLIC prop):
+ *  - `workflow` (default) — author a one-shot DAG, "Build & run" it via `SubmitWorkflow`
+ *    (unchanged); ALSO "Save as App" (a durable, reusable `kortecx.app/v1` envelope).
+ *  - `app-edit` — edit a saved App's structure (POC-5d): pass only the `handle`; this
+ *    (lazy) builder FETCHES + parses the envelope itself, so the eager route imports
+ *    neither the App hooks nor the blueprint parser. "Save to App" replaces ONLY
+ *    `envelope.blueprint` (the lossless rule).
+ */
+export type BuilderMode = { kind: "workflow" } | { kind: "app-edit"; handle: string };
+
+/** The mode `BuilderInner` consumes — for app-edit it additionally carries the parsed
+ *  `unmodeled` snapshot (preserved blueprint-level fields) the Save re-merges. */
+type InnerMode =
+  | { kind: "workflow" }
+  | {
+      kind: "app-edit";
+      handle: string;
+      envelope: Record<string, unknown>;
+      unmodeled: UnmodeledReport;
+    };
 
 // Module-level stable reference (an inline object re-registers node types every
 // render — a reactflow perf footgun).
@@ -106,15 +139,19 @@ function toRfEdge(e: BuilderEdge): Edge {
   };
 }
 
-function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
+function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mode: InnerMode }) {
   const navigate = useNavigate();
   const { models, unsupported } = useModels();
   const submit = useSubmitWorkflow();
+  const saveApp = useSaveApp();
+  const { apps } = useApps();
   const seeded = useMemo(() => seed(initialGraph), [initialGraph]);
   const [nodes, setNodes, onNodesChange] = useNodesState<BuilderFlowNode>(seeded.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(seeded.edges);
   const [selNode, setSelNode] = useState<string | null>(null);
   const [selEdge, setSelEdge] = useState<string | null>(null);
+  const [savingAs, setSavingAs] = useState(false);
+  const [saveAsError, setSaveAsError] = useState<string | null>(null);
   const idc = useRef(seeded.nextId);
 
   const addStep = useCallback(
@@ -254,7 +291,12 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
     }),
     [nodes, edges],
   );
-  const invalid = validationError(graph);
+  // A one-shot workflow run requires an explicit model per agent; an App may leave a
+  // served-model step blank (the run binds the served model — the `allowEmptyModel`
+  // convention). The banner shows the reason for this mode's primary terminal.
+  const invalidRun = validationError(graph);
+  const invalidApp = validationError(graph, { allowEmptyModel: true });
+  const invalid = mode.kind === "app-edit" ? invalidApp : invalidRun;
 
   const onNodeClick = useCallback<NodeMouseHandler>((_e, node) => {
     setSelEdge(null);
@@ -279,6 +321,52 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
     });
   }, [graph, submit, navigate]);
 
+  // "Save to App" (app-edit): replace ONLY `envelope.blueprint` (the lossless rule,
+  // app-blueprint.ts) — everything else (references / steering_config / input_schema /
+  // tags) rides verbatim. The new structure drives the next run.
+  const onSaveToApp = useCallback(() => {
+    if (mode.kind !== "app-edit") {
+      return;
+    }
+    saveApp.mutate(
+      {
+        handle: mode.handle,
+        envelope: structureSaveEnvelope(mode.envelope, graph, mode.unmodeled),
+      },
+      {
+        onSuccess: () =>
+          void navigate({
+            to: "/apps/$handle",
+            params: { handle: mode.handle },
+            search: { tab: "lineage" },
+          }),
+      },
+    );
+  }, [mode, graph, saveApp, navigate]);
+
+  // "Save as App" (workflow): mint a fresh minimal `kortecx.app/v1` envelope from the
+  // current structure (mirrors the SDK `AppBuilder.toEnvelope` minimal shape). Refuse a
+  // handle collision (never silently clobber an existing App).
+  const onSaveAsApp = useCallback(
+    (name: string) => {
+      const handle = defaultHandle(name);
+      if (apps.some((a) => a.handle === handle)) {
+        setSaveAsError(`An App named "${name}" already exists — choose a different name.`);
+        return;
+      }
+      saveApp.mutate(
+        { handle, envelope: newAppEnvelope(name, graph) },
+        {
+          onSuccess: () => {
+            setSavingAs(false);
+            void navigate({ to: "/apps/$handle", params: { handle } });
+          },
+        },
+      );
+    },
+    [apps, graph, saveApp, navigate],
+  );
+
   const selectedStep = selNode ? (nodes.find((n) => n.id === selNode)?.data.step ?? null) : null;
   const selectedEdge = selEdge ? (graph.edges.find((e) => e.id === selEdge) ?? null) : null;
 
@@ -286,10 +374,11 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
     <section className="screen builder" data-testid="blueprint-builder">
       <header className="section-head">
         <div>
-          <h2>New blueprint</h2>
+          <h2>{mode.kind === "app-edit" ? "Edit App structure" : "New blueprint"}</h2>
           <p className="muted">
-            Drag to arrange, drag handle-to-handle to connect. The server compiles the DAG and
-            builds every warrant — you author topology + params only.
+            {mode.kind === "app-edit"
+              ? `Editing ${String(mode.envelope.name ?? mode.handle)} — arrange steps + edges, then Save to App. The saved structure drives the next run.`
+              : "Drag to arrange, drag handle-to-handle to connect. The server compiles the DAG and builds every warrant — you author topology + params only."}
           </p>
         </div>
         <div className="builder-toolbar">
@@ -354,16 +443,44 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
           >
             + Consensus · majority
           </button>
-          <button
-            type="button"
-            className="builder-submit"
-            data-testid="builder-submit"
-            disabled={invalid !== null || submit.isPending}
-            title={invalid ?? "Compile + run on the server"}
-            onClick={onSubmit}
-          >
-            {submit.isPending ? "Submitting…" : "Build & run"}
-          </button>
+          {mode.kind === "app-edit" ? (
+            <button
+              type="button"
+              className="builder-submit"
+              data-testid="builder-save-app"
+              disabled={invalidApp !== null || saveApp.isPending}
+              title={invalidApp ?? "Save this structure to the App"}
+              onClick={onSaveToApp}
+            >
+              {saveApp.isPending ? "Saving…" : "Save to App"}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn-ghost"
+                data-testid="builder-save-as-app"
+                disabled={invalidApp !== null || saveApp.isPending}
+                title={invalidApp ?? "Save this structure as a reusable App"}
+                onClick={() => {
+                  setSaveAsError(null);
+                  setSavingAs(true);
+                }}
+              >
+                Save as App
+              </button>
+              <button
+                type="button"
+                className="builder-submit"
+                data-testid="builder-submit"
+                disabled={invalidRun !== null || submit.isPending}
+                title={invalidRun ?? "Compile + run on the server"}
+                onClick={onSubmit}
+              >
+                {submit.isPending ? "Submitting…" : "Build & run"}
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -373,6 +490,7 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
         </output>
       ) : null}
       {submit.isError ? <ErrorNotice error={toUiError(submit.error)} /> : null}
+      {saveApp.isError ? <ErrorNotice error={toUiError(saveApp.error)} /> : null}
 
       <div
         className="dag-canvas builder-canvas"
@@ -417,23 +535,197 @@ function BuilderInner({ initialGraph }: { initialGraph?: BuilderGraph }) {
           key={selectedEdge.id}
           edge={selectedEdge}
           steps={graph.steps}
+          // In App modes edges are pure control/data flow: an edge instruction is a
+          // run-only fold with no DagSpec representation (app-blueprint.ts), so it would
+          // silently vanish on Save — hide the field rather than fake persistence.
+          hideInstruction={mode.kind !== "workflow"}
           onChange={(text) => updateEdgeInstruction(selectedEdge.id, text)}
           onDelete={() => deleteEdge(selectedEdge.id)}
           onClose={() => setSelEdge(null)}
+        />
+      ) : null}
+
+      {savingAs ? (
+        <SaveAsAppDialog
+          pending={saveApp.isPending}
+          error={saveAsError}
+          onSubmit={onSaveAsApp}
+          onClose={() => {
+            setSavingAs(false);
+            setSaveAsError(null);
+            saveApp.reset();
+          }}
         />
       ) : null}
     </section>
   );
 }
 
-/**
- * The builder section. `initialGraph` (optional) seeds clone-to-edit (D141.4) from
- * a committed run's reconstructed DAG; absent ⇒ a fresh single-agent blueprint.
- */
-export function BlueprintBuilderSection({ initialGraph }: { initialGraph?: BuilderGraph }) {
+/** Name + confirm a brand-new App minted from the current builder structure (a
+ *  portaled `--overlay` dialog — the `DuplicateDialog` pattern, above the navbar). */
+function SaveAsAppDialog({
+  pending,
+  error,
+  onSubmit,
+  onClose,
+}: {
+  pending: boolean;
+  error: string | null;
+  onSubmit: (name: string) => void;
+  onClose: () => void;
+}) {
+  const [name, setName] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const trimmed = name.trim();
+  return createPortal(
+    <>
+      <button
+        type="button"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
+        aria-label="Cancel save as App"
+        onClick={onClose}
+      />
+      <div className="dialog-center dialog-center--overlay">
+        <m.div
+          className="dialog-card"
+          data-testid="builder-save-as-dialog"
+          // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; modal semantics via role+aria-label (the DuplicateDialog precedent).
+          role="dialog"
+          aria-label="Save as new App"
+          initial={{ y: 12, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ type: "spring", stiffness: 420, damping: 34 }}
+        >
+          <h2 className="dialog-card__title">Save as new App</h2>
+          <p className="muted">
+            Save this structure as a durable, reusable App. The server compiles the blueprint and
+            re-resolves every warrant at run (SN-8); grant tools + connections on the App page.
+          </p>
+          <label className="dialog-card__label" htmlFor="save-as-name">
+            App name
+          </label>
+          <input
+            ref={inputRef}
+            id="save-as-name"
+            className="input"
+            data-testid="builder-save-as-name"
+            value={name}
+            placeholder="My App"
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && trimmed !== "") {
+                onSubmit(trimmed);
+              }
+            }}
+          />
+          {error ? (
+            <span className="builder-field__error" data-testid="builder-save-as-error">
+              {error}
+            </span>
+          ) : null}
+          <div className="dialog-card__actions">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              data-testid="builder-save-as-submit"
+              disabled={pending || trimmed === ""}
+              onClick={() => onSubmit(trimmed)}
+            >
+              {pending ? "Saving…" : "Save App"}
+            </button>
+          </div>
+        </m.div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+/** app-edit: fetch the App's envelope, parse its blueprint, then open the editor. An
+ *  un-round-trippable (exec/binary) blueprint refuses the editor + links back to the
+ *  read-only Lineage. All of this lives in the lazy builder chunk (never eager). */
+function AppEditLoader({ handle }: { handle: string }) {
+  const app = useApp(handle);
+  if (app.isLoading) {
+    return <EmptyState title="Loading App structure…" detail="Fetching the blueprint to edit." />;
+  }
+  if (app.isError) {
+    return <ErrorNotice error={toUiError(app.error)} onRetry={() => void app.refetch()} />;
+  }
+  if (!app.data) {
+    return (
+      <EmptyState title="App not found" detail="This App is not in your catalog (or not owned)." />
+    );
+  }
+  const envelope = app.data.envelope;
+  const parsed = appBlueprintToBuilderGraph(
+    (envelope.blueprint ?? { seed: 0, steps: [] }) as never,
+  );
+  if (parsed.unmodeled.refuseEdit) {
+    return (
+      <EmptyState
+        title="Structure can't be edited here"
+        detail={
+          parsed.unmodeled.reason ??
+          "This App's blueprint has an exec/binary step the visual editor can't safely edit."
+        }
+        action={
+          <Link
+            to="/apps/$handle"
+            params={{ handle }}
+            search={{ tab: "lineage" }}
+            className="btn-ghost"
+            data-testid="app-edit-refuse-back"
+          >
+            View in Lineage
+          </Link>
+        }
+      />
+    );
+  }
   return (
     <ReactFlowProvider>
-      <BuilderInner initialGraph={initialGraph} />
+      <BuilderInner
+        initialGraph={parsed.graph}
+        mode={{ kind: "app-edit", handle, envelope, unmodeled: parsed.unmodeled }}
+      />
+    </ReactFlowProvider>
+  );
+}
+
+/**
+ * The builder section. `initialGraph` (optional) seeds clone-to-edit (D141.4) from a
+ * committed run's reconstructed DAG; absent ⇒ a fresh single-agent blueprint. `mode`
+ * selects the terminal: a one-shot workflow run (default) with a Save-as-App option, or
+ * editing a saved App's structure (app-edit fetches + parses the App HERE, in this lazy
+ * chunk, so the eager route imports neither the App hooks nor the parser).
+ */
+export function BlueprintBuilderSection({
+  initialGraph,
+  mode = { kind: "workflow" },
+}: {
+  initialGraph?: BuilderGraph;
+  mode?: BuilderMode;
+}) {
+  if (mode.kind === "app-edit") {
+    return <AppEditLoader handle={mode.handle} />;
+  }
+  return (
+    <ReactFlowProvider>
+      <BuilderInner initialGraph={initialGraph} mode={mode} />
     </ReactFlowProvider>
   );
 }

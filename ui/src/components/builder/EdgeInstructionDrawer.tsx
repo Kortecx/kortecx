@@ -20,12 +20,17 @@ const slideIn = {
 export function EdgeInstructionDrawer({
   edge,
   steps,
+  hideInstruction = false,
   onChange,
   onDelete,
   onClose,
 }: {
   edge: BuilderEdge;
   steps: readonly BuilderStep[];
+  /** POC-5d: hide the instruction field in App modes — an edge instruction is a
+   *  run-only fold with no DagSpec representation, so it can't persist to a saved
+   *  App blueprint. The drawer stays useful for viewing the route + removing the edge. */
+  hideInstruction?: boolean;
   onChange: (text: string) => void;
   onDelete: () => void;
   onClose: () => void;
@@ -71,23 +76,32 @@ export function EdgeInstructionDrawer({
           </button>
         </div>
 
-        <div className="builder-field">
-          <span className="builder-field__label">Instruction file</span>
-          <MonacoMount
-            value={edge.instruction}
-            language="plaintext"
-            onChange={onChange}
-            height={200}
-            testId="edge-instruction"
-            ariaLabel="Edge instruction text"
-            placeholder="Context / instructions passed from the upstream step to this one…"
-          />
-          <span className="builder-field__hint">
-            {target?.kind === "model"
-              ? "Prepended to the downstream agent's prompt at run time (Tier-1)."
-              : "Carried as provenance on this edge (the downstream step is not an agent)."}
-          </span>
-        </div>
+        {hideInstruction ? (
+          <div className="builder-field">
+            <span className="builder-field__hint" data-testid="edge-instruction-app-note">
+              Edges in an App are pure control/data flow ({edge.edge}). Encode step-to-step guidance
+              in the downstream agent's prompt.
+            </span>
+          </div>
+        ) : (
+          <div className="builder-field">
+            <span className="builder-field__label">Instruction file</span>
+            <MonacoMount
+              value={edge.instruction}
+              language="plaintext"
+              onChange={onChange}
+              height={200}
+              testId="edge-instruction"
+              ariaLabel="Edge instruction text"
+              placeholder="Context / instructions passed from the upstream step to this one…"
+            />
+            <span className="builder-field__hint">
+              {target?.kind === "model"
+                ? "Prepended to the downstream agent's prompt at run time (Tier-1)."
+                : "Carried as provenance on this edge (the downstream step is not an agent)."}
+            </span>
+          </div>
+        )}
 
         <div className="node-drawer__foot">
           <button
