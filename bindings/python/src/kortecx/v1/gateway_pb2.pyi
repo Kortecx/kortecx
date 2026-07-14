@@ -1208,6 +1208,63 @@ class SubmitWorkflowRequest(_message.Message):
     context_bundles: _containers.RepeatedScalarFieldContainer[str]
     def __init__(self, seed: _Optional[int] = ..., steps: _Optional[_Iterable[_Union[WorkflowStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[WorkflowEdge, _Mapping]]] = ..., execution_mode: _Optional[_Union[WorkflowExecutionMode, str]] = ..., context_bundles: _Optional[_Iterable[str]] = ...) -> None: ...
 
+class ProposeWorkflowRequest(_message.Message):
+    __slots__ = ("goal",)
+    GOAL_FIELD_NUMBER: _ClassVar[int]
+    goal: str
+    def __init__(self, goal: _Optional[str] = ...) -> None: ...
+
+class ProposedStep(_message.Message):
+    __slots__ = ("role", "intent", "kind", "model_id", "tool_contract")
+    class ToolContractEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    ROLE_FIELD_NUMBER: _ClassVar[int]
+    INTENT_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_CONTRACT_FIELD_NUMBER: _ClassVar[int]
+    role: str
+    intent: str
+    kind: str
+    model_id: str
+    tool_contract: _containers.ScalarMap[str, str]
+    def __init__(self, role: _Optional[str] = ..., intent: _Optional[str] = ..., kind: _Optional[str] = ..., model_id: _Optional[str] = ..., tool_contract: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class ProposedEdge(_message.Message):
+    __slots__ = ("parent", "child")
+    PARENT_FIELD_NUMBER: _ClassVar[int]
+    CHILD_FIELD_NUMBER: _ClassVar[int]
+    parent: int
+    child: int
+    def __init__(self, parent: _Optional[int] = ..., child: _Optional[int] = ...) -> None: ...
+
+class ProposedPlan(_message.Message):
+    __slots__ = ("steps", "edges")
+    STEPS_FIELD_NUMBER: _ClassVar[int]
+    EDGES_FIELD_NUMBER: _ClassVar[int]
+    steps: _containers.RepeatedCompositeFieldContainer[ProposedStep]
+    edges: _containers.RepeatedCompositeFieldContainer[ProposedEdge]
+    def __init__(self, steps: _Optional[_Iterable[_Union[ProposedStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[ProposedEdge, _Mapping]]] = ...) -> None: ...
+
+class ProposalRejected(_message.Message):
+    __slots__ = ("reason",)
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    reason: str
+    def __init__(self, reason: _Optional[str] = ...) -> None: ...
+
+class ProposeWorkflowResponse(_message.Message):
+    __slots__ = ("plan", "rejected")
+    PLAN_FIELD_NUMBER: _ClassVar[int]
+    REJECTED_FIELD_NUMBER: _ClassVar[int]
+    plan: ProposedPlan
+    rejected: ProposalRejected
+    def __init__(self, plan: _Optional[_Union[ProposedPlan, _Mapping]] = ..., rejected: _Optional[_Union[ProposalRejected, _Mapping]] = ...) -> None: ...
+
 class PutContentRequest(_message.Message):
     __slots__ = ("payload", "media_type", "filename")
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]

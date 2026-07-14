@@ -819,6 +819,11 @@ pub struct GatewayService {
     /// back to the legacy `GetApp` → `SubmitWorkflow` path. Server-minted warrants
     /// (SN-8); connection/secret resolution is caller-scoped, off-journal, off-digest.
     app_runner: Option<Arc<dyn crate::apps_run::AppAuthor>>,
+    /// The optional NL→DAG workflow-proposer seam (D209.3 / SN-8 — the host injects a
+    /// served-model + vetted-role-catalog backed proposer). `None` ⇒ `ProposeWorkflow`
+    /// returns `unimplemented` (no served model). Validate-only: runs the model once and
+    /// compiles the plan, never registers/runs it — no journal write, digest-invariant.
+    proposer: Option<Arc<dyn crate::propose::WorkflowProposer>>,
     /// The optional App-manifest seam (`GetAppManifest` — the READ-ONLY capability
     /// preview). `None` ⇒ `GetAppManifest` is `unimplemented` (clients fall back to an
     /// envelope-only "needs" view). Server-authoritative + off-journal / off-digest.
@@ -925,6 +930,7 @@ impl GatewayService {
             apps: None,
             skills: None,
             app_runner: None,
+            proposer: None,
             app_manifest: None,
             locks: None,
             scaffolder: None,
@@ -1381,6 +1387,15 @@ impl GatewayService {
     #[must_use]
     pub fn with_app_runner(mut self, runner: Arc<dyn crate::apps_run::AppAuthor>) -> Self {
         self.app_runner = Some(runner);
+        self
+    }
+
+    /// Wire the NL→DAG workflow-proposer seam (`ProposeWorkflow`). The host injects a
+    /// served-model + role-catalog backed proposer; `None` (the default) ⇒ the RPC is
+    /// `unimplemented`. Validate-only, digest-invariant.
+    #[must_use]
+    pub fn with_workflow_proposer(mut self, proposer: Arc<dyn crate::propose::WorkflowProposer>) -> Self {
+        self.proposer = Some(proposer);
         self
     }
 
@@ -2183,6 +2198,56 @@ impl KxGateway for GatewayService {
             instance_id: instance_id.to_vec(),
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
             react_chain_salt,
+        }))
+    }
+
+    async fn propose_workflow(
+        &self,
+        request: Request<proto::ProposeWorkflowRequest>,
+    ) -> Result<Response<proto::ProposeWorkflowResponse>, Status> {
+        // NL authoring (D209.3 / SN-8): run the served model ONCE → decode → compile the
+        // proposed DAG through the vetted kx-planner path (VALIDATE ONLY — no register, no
+        // journal). `None` seam ⇒ no served model here (clients hide the NL affordance).
+        let proposer = self.proposer.clone().ok_or_else(|| {
+            Status::unimplemented(
+                "ProposeWorkflow: no NL planner wired on this gateway \
+                 (needs an inference/serve-engine build with a resolved model)",
+            )
+        })?;
+        let goal = request.into_inner().goal;
+        if goal.trim().is_empty() {
+            return Err(Status::invalid_argument("goal must not be empty"));
+        }
+        // The host offloads the BLOCKING model inference internally (gateway-core stays
+        // runtime-light). A planner failure is a `Rejected` outcome (honest), never a panic.
+        let outcome = proposer.propose(&goal).await;
+        let result = match outcome {
+            crate::propose::WorkflowProposal::Proposed { steps, edges } => {
+                proto::propose_workflow_response::Result::Plan(proto::ProposedPlan {
+                    steps: steps
+                        .into_iter()
+                        .map(|s| proto::ProposedStep {
+                            role: s.role,
+                            intent: s.intent,
+                            kind: s.kind,
+                            model_id: s.model_id,
+                            tool_contract: s.tool_contract.into_iter().collect(),
+                        })
+                        .collect(),
+                    edges: edges
+                        .into_iter()
+                        .map(|(parent, child)| proto::ProposedEdge { parent, child })
+                        .collect(),
+                })
+            }
+            crate::propose::WorkflowProposal::Rejected { reason } => {
+                proto::propose_workflow_response::Result::Rejected(proto::ProposalRejected {
+                    reason,
+                })
+            }
+        };
+        Ok(Response::new(proto::ProposeWorkflowResponse {
+            result: Some(result),
         }))
     }
 

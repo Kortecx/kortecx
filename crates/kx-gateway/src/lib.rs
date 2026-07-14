@@ -173,6 +173,13 @@ mod model_exec;
 // engines — llama.cpp and/or Ollama). FFI-free; rides `serve-engine`.
 #[cfg(feature = "serve-engine")]
 mod routing_backend;
+// The curated system-prompt / role library (the NL→DAG planner contract + the authoring
+// role palette) and the served-model proposer that drives `ProposeWorkflow`. Both ride
+// `serve-engine` (they need the routing backend + kx-planner). Presentation only / SN-8.
+#[cfg(feature = "serve-engine")]
+mod prompt_library;
+#[cfg(feature = "serve-engine")]
+mod propose_host;
 // PR-4.2 (T-STREAM1): the ADVISORY in-process token broker — the rendezvous
 // between the model executor (publisher) and the live-token subscribers. Only
 // a serve-engine build dispatches models + publishes tokens, so it's serve-engine-

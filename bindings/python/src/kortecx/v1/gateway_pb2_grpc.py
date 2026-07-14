@@ -204,6 +204,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
                 _registered_method=True)
+        self.ProposeWorkflow = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ProposeWorkflow',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ProposeWorkflowRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ProposeWorkflowResponse.FromString,
+                _registered_method=True)
         self.PutContent = channel.unary_unary(
                 '/kortecx.v1.KxGateway/PutContent',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.PutContentRequest.SerializeToString,
@@ -746,6 +751,15 @@ class KxGatewayServicer(object):
     def SubmitWorkflow(self, request, context):
         """Blueprint-builder additive (D120.6): author a Tier-1 DAG (vetted palette) and
         run it — server-compiled identity + server-built warrants + R-1..R-15 admission.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ProposeWorkflow(self, request, context):
+        """NL authoring additive (D209.3 / SN-8): propose a multi-step DAG from a
+        natural-language goal (served model → vetted kx-planner compile). Validates
+        only — never registers or runs; the client confirms via SubmitWorkflow/SaveApp.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1427,6 +1441,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.SubmitWorkflow,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.SerializeToString,
+            ),
+            'ProposeWorkflow': grpc.unary_unary_rpc_method_handler(
+                    servicer.ProposeWorkflow,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ProposeWorkflowRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ProposeWorkflowResponse.SerializeToString,
             ),
             'PutContent': grpc.unary_unary_rpc_method_handler(
                     servicer.PutContent,
@@ -2662,6 +2681,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/SubmitWorkflow',
             kortecx_dot_v1_dot_gateway__pb2.SubmitWorkflowRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ProposeWorkflow(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ProposeWorkflow',
+            kortecx_dot_v1_dot_gateway__pb2.ProposeWorkflowRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ProposeWorkflowResponse.FromString,
             options,
             channel_credentials,
             insecure,
