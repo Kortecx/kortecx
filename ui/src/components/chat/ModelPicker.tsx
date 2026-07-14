@@ -1,6 +1,7 @@
 import type { ModelSummary } from "@kortecx/sdk/web";
 import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
+import { resolveAutoModel } from "../../lib/auto-model";
 
 /** The honest, existing specs for a model — only fields ListModels actually returns
  *  (no params/quantization on this wire). Joined for a hover tooltip. */
@@ -59,9 +60,9 @@ export function ModelPicker({
     );
   }
   // The model the runtime resolves to when the user defers ("Auto"): server active,
-  // then this browser's default, then the first listed.
-  const autoResolved =
-    models.find((m) => m.active)?.modelId ?? defaultModelId ?? models[0]?.modelId ?? "";
+  // then this browser's default (if served), then the first listed. Shared with
+  // useChatController so this LABEL never diverges from the model actually bound.
+  const autoResolved = resolveAutoModel(models, defaultModelId) ?? "";
   // A concrete steer only when `value` names a served model; otherwise Auto (deferred).
   const picked = value ? models.find((m) => m.modelId === value) : undefined;
   const autoLabel = autoResolved ? `Auto · ${autoResolved}` : "Auto (runtime default)";

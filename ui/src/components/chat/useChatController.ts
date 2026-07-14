@@ -29,6 +29,7 @@ import { useContextBundles } from "../../kx/use-context-bundles";
 import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
 import { useRecipes } from "../../kx/use-recipes";
+import { resolveAutoModel } from "../../lib/auto-model";
 import {
   type SavedChat,
   autoNameFrom,
@@ -103,10 +104,11 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
   // let the gateway choose (GR15: never send a stale model enum). An explicit pick
   // always wins; the default just fills the gap for new chats.
   const explicitModelId = config.modelId ?? settings.modelId;
-  const defaultIsServed =
-    defaultModelId !== undefined &&
-    (models.models?.some((mm) => mm.modelId === defaultModelId) ?? false);
-  const effectiveModelId = explicitModelId ?? (defaultIsServed ? defaultModelId : undefined);
+  // Auto (no explicit pick) resolves to the SAME model the ModelPicker labels —
+  // server-active first (Model Control v2), then a served client-local default — so
+  // "Auto · X" can never diverge from the model the runtime actually binds. A stale
+  // client-local default no longer silently overrides the server-active model.
+  const effectiveModelId = explicitModelId ?? resolveAutoModel(models.models, defaultModelId);
   const chosenModel =
     models.models?.find((mm) => mm.modelId === effectiveModelId) ?? models.models?.[0];
 
