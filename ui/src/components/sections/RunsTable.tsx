@@ -16,10 +16,11 @@ import { ErrorNotice } from "../ErrorNotice";
 import { Icon } from "../shell/Icon";
 import { RerunDrawer } from "./RerunDrawer";
 
-/** A run's display shape (local rename > humanized handle > short id). */
+/** A run's display shape (local rename > humanized handle > short id). High-level
+ *  only: `blueprint` is the humanized workflow name — never the raw wire handle. */
 interface RunDisplay {
   readonly headline: string;
-  readonly rawHandle: string | null;
+  readonly blueprint: string | null;
   readonly customName: string | null;
   readonly journalOnly: boolean;
 }
@@ -56,18 +57,14 @@ export function RunsTable() {
       r.handle ?? (r.recipeFingerprint ? (fingerprintNames[r.recipeFingerprint] ?? null) : null);
     const customName = local && local.trim() !== "" ? local : null;
     const journalOnly = r.handle === null && (r.args ?? null) === null;
+    const blueprint = handleName ? humanizeHandle(handleName) : null;
     if (customName) {
-      return { headline: customName, rawHandle: handleName, customName, journalOnly };
+      return { headline: customName, blueprint, customName, journalOnly };
     }
     if (handleName) {
-      return {
-        headline: humanizeHandle(handleName),
-        rawHandle: handleName,
-        customName: null,
-        journalOnly,
-      };
+      return { headline: humanizeHandle(handleName), blueprint, customName: null, journalOnly };
     }
-    return { headline: shortHex(r.instanceId), rawHandle: null, customName: null, journalOnly };
+    return { headline: shortHex(r.instanceId), blueprint: null, customName: null, journalOnly };
   }
 
   const shown = useMemo(() => {
@@ -89,9 +86,6 @@ export function RunsTable() {
   return (
     <div data-testid="runs-tab">
       <div className="table-toolbar">
-        <button type="button" className="linkbtn" onClick={refresh}>
-          Refresh
-        </button>
         {runs.length > 0 ? (
           <>
             <input
@@ -213,12 +207,10 @@ function RunRow({
         ) : null}
       </td>
       <td>
-        {display.rawHandle ? (
-          <code className="mono muted">{display.rawHandle}</code>
+        {display.blueprint ? (
+          <span className="muted">{display.blueprint}</span>
         ) : (
-          <code className="mono muted" title={run.instanceId}>
-            {shortHex(run.instanceId)}
-          </code>
+          <span className="muted">—</span>
         )}
       </td>
       <td className="muted">{new Date(run.startedAt).toLocaleString()}</td>
@@ -330,9 +322,7 @@ function RunDetailDrawer({
         <dl className="node-drawer__meta">
           <div>
             <dt>Blueprint</dt>
-            <dd>
-              <code className="mono">{display.rawHandle ?? "—"}</code>
-            </dd>
+            <dd>{display.blueprint ?? "—"}</dd>
           </div>
           <div>
             <dt>Run id</dt>

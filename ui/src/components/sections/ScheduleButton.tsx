@@ -17,11 +17,15 @@ export function ScheduleButton({
   appHandle,
   triggerClassName = "linkbtn",
   testId,
+  iconOnly = false,
 }: {
   recipeHandle?: string;
   appHandle?: string;
   triggerClassName?: string;
   testId?: string;
+  /** Render just the calendar glyph (for a compact icon action cluster); the
+   *  accessible name still comes from `triggerLabel`. */
+  iconOnly?: boolean;
 }) {
   const register = useRegisterTrigger();
   const target = appHandle ?? recipeHandle ?? "";
@@ -51,9 +55,13 @@ export function ScheduleButton({
   return (
     <Popover
       trigger={
-        <>
-          <Icon name="calendar" size={15} /> Schedule
-        </>
+        iconOnly ? (
+          <Icon name="calendar" size={16} />
+        ) : (
+          <>
+            <Icon name="calendar" size={15} /> Schedule
+          </>
+        )
       }
       triggerClassName={triggerClassName}
       triggerLabel="Schedule recurring runs"
