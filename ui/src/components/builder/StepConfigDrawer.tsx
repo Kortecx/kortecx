@@ -10,6 +10,7 @@
 import { type ModelSummary, PERSONAS, personaNames } from "@kortecx/sdk/web";
 import { m } from "framer-motion";
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useDiscoverTools } from "../../kx/use-tool-registry";
 import { JsonEditor } from "../editor/JsonEditor";
 import { MonacoMount } from "../editor/MonacoMount";
@@ -68,16 +69,22 @@ export function StepConfigDrawer({
   // PR-6b-2: the LIVE registered-tool set for a TOOL step's picker (DiscoverTools).
   const { tools, notWired: toolsNotWired } = useDiscoverTools();
 
-  return (
+  // POC-C5: portal to <body> with the `--overlay` variants (the #330 pattern, per
+  // `SaveAsAppDialog`/`BlueprintFormDrawer`). The drawer is a SIBLING of the builder
+  // canvas inside a non-positioned `.screen`/`.shell__main`, so the plain canvas-scoped
+  // `.node-drawer` (absolute, z5) fell to the document origin and the sticky navbar (z10)
+  // clipped it. `--overlay` is `position:fixed` z49/z50 — it clears the navbar. Base
+  // `.node-drawer__scrim` (shared by the canvas-scoped builder/DAG drawers) is untouched.
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close step config"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="step-config-drawer"
         data-node={step.id}
         // biome-ignore lint/a11y/useSemanticElements: non-modal side panel riding framer-motion; dialog semantics via role+aria-label (mirrors NodeDetailDrawer).
@@ -354,6 +361,7 @@ export function StepConfigDrawer({
           </button>
         </div>
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }
