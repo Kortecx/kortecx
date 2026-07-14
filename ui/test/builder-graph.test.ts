@@ -1,4 +1,4 @@
-import { TOOL_ARGS_KEY, flow, proto } from "@kortecx/sdk/web";
+import { PERSONAS, type ProposedWorkflowStep, TOOL_ARGS_KEY, flow, proto } from "@kortecx/sdk/web";
 import { describe, expect, it } from "vitest";
 import {
   type BuilderGraph,
@@ -10,6 +10,7 @@ import {
   insertPattern,
   isJsonObject,
   newStep,
+  proposalToBuilderGraph,
   toRequest,
   validateAcyclic,
   validationError,
@@ -244,5 +245,62 @@ describe("insertPattern lowering ≡ the SDK flow() lowering (UI arm of tri-surf
     expect(sink?.kind).toBe(proto.WorkflowStepKind.PURE);
     const v = sink?.params?.[CONSENSUS_VOTE_KEY];
     expect(new TextDecoder().decode(v as Uint8Array)).toBe("majority");
+  });
+});
+
+describe("proposalToBuilderGraph — NL proposal → builder graph", () => {
+  const step = (over: Partial<ProposedWorkflowStep>): ProposedWorkflowStep => ({
+    role: "researcher",
+    intent: "Gather the facts",
+    kind: "plain",
+    modelId: "gemma",
+    toolContract: {},
+    ...over,
+  });
+
+  it("maps each proposed step to a model node, persona framing prepended to the intent", () => {
+    const p = proposalToBuilderGraph(
+      [
+        step({ role: "researcher", intent: "Gather facts" }),
+        step({ role: "writer", intent: "Write it" }),
+      ],
+      [{ parent: 0, child: 1 }],
+      0,
+    );
+    expect(p.steps).toHaveLength(2);
+    expect(p.steps[0]?.kind).toBe("model");
+    expect(p.steps[0]?.label).toBe("Researcher");
+    // The SAME identity-bearing fold the persona chip applies (StepConfigDrawer).
+    expect(p.steps[0]?.prompt).toBe(`${PERSONAS.researcher}\n\nGather facts`);
+    expect(p.steps[0]?.modelId).toBe("gemma");
+    expect(p.edges).toHaveLength(1);
+    expect(p.edges[0]?.source).toBe(p.steps[0]?.id);
+    expect(p.edges[0]?.target).toBe(p.steps[1]?.id);
+    expect(p.firstId).toBe(p.steps[0]?.id);
+  });
+
+  it("mints ids from startId and drops out-of-range / self edges", () => {
+    const p = proposalToBuilderGraph(
+      [step({ role: "analyst", intent: "a" })],
+      [
+        { parent: 0, child: 5 },
+        { parent: 0, child: 0 },
+      ],
+      3,
+    );
+    expect(p.steps[0]?.id).toBe("s3");
+    expect(p.nextId).toBe(4);
+    expect(p.edges).toHaveLength(0);
+  });
+
+  it("an unknown role keeps the bare intent (no persona) and title-cases the label", () => {
+    const p = proposalToBuilderGraph([step({ role: "wat", intent: "do a thing" })], [], 0);
+    expect(p.steps[0]?.prompt).toBe("do a thing");
+    expect(p.steps[0]?.label).toBe("Wat");
+  });
+
+  it("carries the resolved tool_contract through", () => {
+    const p = proposalToBuilderGraph([step({ toolContract: { "web.search": "1" } })], [], 0);
+    expect(p.steps[0]?.toolContract).toEqual({ "web.search": "1" });
   });
 });

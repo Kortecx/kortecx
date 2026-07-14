@@ -12,6 +12,7 @@
  */
 
 import { defaultHandle } from "@kortecx/sdk/web";
+import type { ProposedWorkflowEdge, ProposedWorkflowStep } from "@kortecx/sdk/web";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Background,
@@ -36,6 +37,7 @@ import { ErrorNotice } from "../ErrorNotice";
 import { BuilderNode } from "../builder/BuilderNode";
 import type { BuilderFlowNode } from "../builder/BuilderNode";
 import { EdgeInstructionDrawer } from "../builder/EdgeInstructionDrawer";
+import { NlProposePanel } from "../builder/NlProposePanel";
 import { StepConfigDrawer } from "../builder/StepConfigDrawer";
 import {
   type UnmodeledReport,
@@ -48,9 +50,11 @@ import {
   type BuilderGraph,
   type BuilderStep,
   type BuilderStepKind,
+  type PatternInsert,
   type PatternKind,
   insertPattern,
   newStep,
+  proposalToBuilderGraph,
   toRequest,
   validationError,
 } from "../builder/builder-graph";
@@ -152,6 +156,8 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
   const [selEdge, setSelEdge] = useState<string | null>(null);
   const [savingAs, setSavingAs] = useState(false);
   const [saveAsError, setSaveAsError] = useState<string | null>(null);
+  // NL authoring (D209.3): the "describe a workflow" propose-then-confirm panel.
+  const [proposing, setProposing] = useState(false);
   const idc = useRef(seeded.nextId);
 
   const addStep = useCallback(
@@ -180,9 +186,12 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
   // cluster lowers to the SAME DAG the SDK/CLI author (`insertPattern` mirrors
   // `flow().swarm/supervisor/consensus()`). The author then fills in each node's
   // model (validation gates submit until every agent has one).
-  const insertPatternMacro = useCallback(
-    (kind: PatternKind) => {
-      const { steps, edges: patEdges, firstId, nextId } = insertPattern(kind, idc.current);
+  // Apply a laid-out cluster (a pattern macro OR an NL-proposed plan) to the canvas:
+  // lay it out, APPEND it below any existing nodes, and select its first node (opening the
+  // config drawer). Shared by `insertPatternMacro` and `applyProposal` so both land nodes
+  // identically.
+  const applyInsert = useCallback(
+    ({ steps, edges: patEdges, firstId, nextId }: PatternInsert) => {
       idc.current = nextId;
       const layout = layoutGraph(
         steps.map((s) => s.id),
@@ -212,6 +221,20 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
       setSelNode(firstId);
     },
     [setNodes, setEdges],
+  );
+
+  const insertPatternMacro = useCallback(
+    (kind: PatternKind) => applyInsert(insertPattern(kind, idc.current)),
+    [applyInsert],
+  );
+
+  // NL authoring (D209.3): apply a proposed multi-step plan (from `proposeWorkflow`) to the
+  // canvas as editable model nodes. The server re-COMPILES + warrants the confirmed DAG at
+  // save/submit (SN-8); this only shapes what is proposed.
+  const applyProposal = useCallback(
+    (steps: readonly ProposedWorkflowStep[], edges: readonly ProposedWorkflowEdge[]) =>
+      applyInsert(proposalToBuilderGraph(steps, edges, idc.current)),
+    [applyInsert],
   );
 
   const updateStep = useCallback(
@@ -382,6 +405,16 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
           </p>
         </div>
         <div className="builder-toolbar">
+          <button
+            type="button"
+            className="btn-ghost"
+            data-testid="builder-propose"
+            title="Describe a goal; the served model proposes a multi-step plan you review + apply"
+            onClick={() => setProposing(true)}
+          >
+            ✨ Describe a workflow
+          </button>
+          <span className="builder-toolbar__divider" aria-hidden="true" />
           <button
             type="button"
             className="btn-ghost"
@@ -556,6 +589,10 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
             saveApp.reset();
           }}
         />
+      ) : null}
+
+      {proposing ? (
+        <NlProposePanel onApply={applyProposal} onClose={() => setProposing(false)} />
       ) : null}
     </section>
   );
