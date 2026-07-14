@@ -69,6 +69,12 @@ test("builder: connect two agents into a chain (an edge appears)", async ({ page
   await page.getByTestId("builder-add-agent").click();
   await expect(page.getByTestId("builder-node")).toHaveCount(2);
 
+  // Adding a node auto-opens its config drawer, now a portaled `--overlay` modal whose
+  // full-viewport scrim would intercept the canvas drag — close it first (the established
+  // "Escape to interact with the canvas" pattern the other builder specs use).
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("step-config-drawer")).toHaveCount(0);
+
   // Drag from the first node's source handle to the second node's target handle.
   const nodes = page.getByTestId("builder-node");
   const source = nodes.nth(0).locator(".react-flow__handle-bottom");
