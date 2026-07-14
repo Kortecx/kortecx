@@ -32,11 +32,12 @@ import { loadFlag, persistFlag } from "../../lib/ui-flags";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppChatEditDrawer } from "../apps/AppChatEditDrawer";
-import { AppManifestPanel } from "../apps/AppManifestPanel";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
+import { ConnectionsRail } from "../apps/ConnectionsRail";
 import { FileTree } from "../apps/FileTree";
 import { LockControl } from "../apps/LockControl";
 import { SkillsRail } from "../apps/SkillsRail";
+import { ToolsRail } from "../apps/ToolsRail";
 import { CodeViewer } from "../editor/CodeViewer";
 import { DiffViewer } from "../editor/DiffViewer";
 import { MonacoMount } from "../editor/MonacoMount";
@@ -237,9 +238,17 @@ export function AppDetailSection({
           <EmptyState title="Loading skills…" />
         )
       ) : tab === "tools" ? (
-        <AppManifestPanel handle={handle} section="tools" />
+        app.data ? (
+          <ToolsRail handle={handle} envelope={app.data.envelope} locked={locked} />
+        ) : (
+          <EmptyState title="Loading tools…" />
+        )
       ) : tab === "integrations" ? (
-        <AppManifestPanel handle={handle} section="connections" />
+        app.data ? (
+          <ConnectionsRail handle={handle} envelope={app.data.envelope} locked={locked} />
+        ) : (
+          <EmptyState title="Loading integrations…" />
+        )
       ) : branch.isLoading ? (
         <EmptyState title="Loading project…" />
       ) : branch.isError ? (

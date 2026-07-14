@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
 import { useInvoke } from "../../kx/use-invoke";
@@ -294,16 +295,16 @@ function RunDetailDrawer({
     );
   }
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close run details"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="run-detail-drawer"
         // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; non-modal side-panel semantics via role+aria-label (the NodeDetailDrawer precedent)
         role="dialog"
@@ -457,6 +458,7 @@ function RunDetailDrawer({
         {invoke.error ? <ErrorNotice error={toUiError(invoke.error)} /> : null}
         {exporter.error ? <ErrorNotice error={toUiError(exporter.error)} /> : null}
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

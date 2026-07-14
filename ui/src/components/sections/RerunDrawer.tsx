@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { toUiError } from "../../kx/errors";
 import type { StartedRun } from "../../kx/use-invoke";
 import { useInvoke } from "../../kx/use-invoke";
@@ -121,16 +122,16 @@ export function RerunDrawer({ run, onClose }: { run: RunRecord; onClose: () => v
 
   const headline = run.handle ? humanizeHandle(run.handle) : "Re-run with changes";
 
-  return (
+  return createPortal(
     <>
       <button
         type="button"
-        className="node-drawer__scrim"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
         aria-label="Close re-run"
         onClick={onClose}
       />
       <m.aside
-        className="node-drawer"
+        className="node-drawer node-drawer--overlay"
         data-testid="rerun-drawer"
         // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; non-modal side-panel semantics via role+aria-label (the NodeDetailDrawer precedent)
         role="dialog"
@@ -235,6 +236,7 @@ export function RerunDrawer({ run, onClose }: { run: RunRecord; onClose: () => v
 
         {invoke.error ? <ErrorNotice error={toUiError(invoke.error)} /> : null}
       </m.aside>
-    </>
+    </>,
+    document.body,
   );
 }

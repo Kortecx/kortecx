@@ -20,6 +20,13 @@ vi.mock("../../src/kx/use-apps", () => ({
   }),
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+// The Run preflight (advisory feasibility) reads the manifest + served models.
+vi.mock("../../src/kx/use-app-manifest", () => ({
+  useAppManifest: () => ({ view: null, notFound: false, isLoading: false, error: null }),
+}));
+vi.mock("../../src/kx/use-models", () => ({
+  useModels: () => ({ models: [], unsupported: false, loading: false }),
+}));
 
 import { AppRunDrawer } from "../../src/components/apps/AppRunDrawer";
 

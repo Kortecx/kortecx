@@ -9,6 +9,7 @@
 
 import { expect, test } from "@playwright/test";
 import { connectConsole } from "./fixtures/connect";
+import { expectOverlayAboveNavbar } from "./fixtures/overlay";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -45,6 +46,9 @@ test("workflows catalog: high-level cards with Run form, Schedule, and Edit-in-b
   await card.getByTestId("workflow-run-kx/recipes/echo").click();
   await expect(page.getByTestId("blueprint-form-drawer")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("field-topic")).toBeVisible({ timeout: 30_000 });
+  // The run-form drawer is a portaled full-viewport overlay ABOVE the sticky navbar
+  // (not clipped) — an occlusion proof `toBeVisible` can't make.
+  await expectOverlayAboveNavbar(page, "blueprint-form-drawer");
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("blueprint-form-drawer")).toBeHidden();
 
@@ -112,6 +116,18 @@ test("workflows section renders under the dark theme", async ({ page }) => {
   await page.getByTestId("nav-runs").click();
   await expect(page.getByTestId("workflows-catalog")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("workflow-card").first()).toBeVisible();
+
+  // The run-form drawer is an un-clipped full-viewport overlay in DARK too (both-theme
+  // geometry — the fix must not regress under either palette).
+  const darkCard = page
+    .getByTestId("workflow-card")
+    .filter({ has: page.getByTestId("workflow-open-kx/recipes/echo") });
+  await darkCard.getByTestId("workflow-run-kx/recipes/echo").click();
+  await expect(page.getByTestId("blueprint-form-drawer")).toBeVisible({ timeout: 30_000 });
+  await expectOverlayAboveNavbar(page, "blueprint-form-drawer");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("blueprint-form-drawer")).toBeHidden();
+
   await page.getByTestId("workflows-tab-templates").click();
   await expect(page.getByTestId("workflows-templates-placeholder")).toBeVisible();
 });
