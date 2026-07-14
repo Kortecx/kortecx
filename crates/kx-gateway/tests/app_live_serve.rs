@@ -1368,13 +1368,17 @@ async fn propose_workflow_authors_a_multistep_dag_and_runs_live() {
     }
 
     // ---- confirm: author the proposed DAG (the console apply→submit path) + run it ----
+    // Prepend a brevity directive to each step's prompt: the proposal's INTENTS can be
+    // verbose, and 5 sequential 12B generations would blow the poll window — a test-speed
+    // knob only (the DAG shape + roles are the model's proposal). Empty model_id ⇒ the
+    // served default binds (the swarm witness precedent).
     let steps: Vec<proto::WorkflowStep> = plan
         .steps
         .iter()
         .map(|s| proto::WorkflowStep {
             kind: proto::WorkflowStepKind::Model as i32,
-            model_id: String::new(), // the served default binds
-            prompt: s.intent.clone(),
+            model_id: String::new(),
+            prompt: format!("Reply in one or two short sentences.\n\n{}", s.intent),
             body_signature_id: Vec::new(),
             tool_contract: HashMap::new(), // pure model roles (per-step tools = C3)
             params: HashMap::new(),

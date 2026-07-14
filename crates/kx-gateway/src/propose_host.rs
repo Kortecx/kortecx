@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use kx_gateway_core::{ProposedStep, WorkflowProposal, WorkflowProposer};
-use kx_inference::InferenceBackend;
-use kx_mote::{ModelId, RoleId};
+use kx_inference::{InferenceBackend, InferenceInput};
+use kx_mote::{InferenceParams, ModelId, RoleId};
 use kx_planner::{
     compile_plan, decode_plan, max_plan_bytes, seed_from_plan_bytes, PlanStepKind,
     RoleRecipeResolver,
@@ -96,17 +96,28 @@ fn propose_blocking<B: InferenceBackend>(
 ) -> WorkflowProposal {
     // (1) Run the served model once with the planner contract + the goal + role palette.
     let user = planner_user_message(goal);
-    let Some(raw) = backend.render_chat(model_id, PLANNER_SYSTEM, &user) else {
+    let parent = shaper_warrant(model_id, exec_class);
+    // `render_chat` only FORMATS the prompt through the model's OWN chat template (the
+    // Gemma-4 per-arch fallback included); GENERATION is a separate `dispatch` — the exact
+    // dispatch_model / judge-turn pattern. (Returning the formatted prompt would not be a plan.)
+    let Some(rendered) = backend.render_chat(model_id, PLANNER_SYSTEM, &user) else {
         return rejected(
-            "no served model can render a plan (start `kx serve` with an inference or \
-             serve-engine build and a resolved model)",
+            "the served model could not format the planner prompt (start `kx serve` with an \
+             inference or serve-engine build and a resolved model)",
         );
+    };
+    let params = InferenceParams {
+        max_output_tokens: 512u32.min(parent.model_route.max_output_tokens),
+        ..InferenceParams::default()
+    };
+    let raw = match backend.dispatch(model_id, &InferenceInput::text(rendered), &params, &parent) {
+        Ok(out) => String::from_utf8_lossy(&out.bytes).into_owned(),
+        Err(e) => return rejected(&format!("the planner model could not generate a plan: {e}")),
     };
 
     // (2) Decode the strict `{"plan":…}` envelope (fail-closed; strips fences/reasoning/
     //     trailing prose internally) then (3) compile it — the structural gate that resolves
     //     every role against the vetted catalog and intersects each warrant (narrowing-only).
-    let parent = shaper_warrant(model_id, exec_class);
     let cap = max_plan_bytes(&parent);
     let plan = match decode_plan(raw.as_bytes(), cap) {
         Ok(p) => p,
