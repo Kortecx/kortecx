@@ -167,3 +167,40 @@ export function useCloneApp() {
     },
   });
 }
+
+/** The reserved catalog tag that marks an App as a reusable Template. */
+export const TEMPLATE_TAG = "template";
+
+/**
+ * Mark / unmark a saved App as a reusable Template — toggles the reserved
+ * {@link TEMPLATE_TAG} in the App envelope's `tags` and re-saves (`GetApp` →
+ * `SaveApp`; no new RPC). A LOCKED App refuses the save server-side. On success the
+ * App + inventory caches are invalidated so the Templates gallery updates.
+ */
+export function useToggleTemplate() {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
+  return useMutation<{ isTemplate: boolean }, unknown, { handle: string }>({
+    mutationFn: async ({ handle }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      const app = await client.getApp(handle);
+      if (!app) {
+        throw new Error("app not found");
+      }
+      const env = { ...(app.envelope as Record<string, unknown>) };
+      const tags = Array.isArray(env.tags) ? (env.tags as string[]) : [];
+      const has = tags.includes(TEMPLATE_TAG);
+      const nextTags = has ? tags.filter((t) => t !== TEMPLATE_TAG) : [...tags, TEMPLATE_TAG];
+      const { tags: _drop, ...rest } = env;
+      const nextEnv = nextTags.length > 0 ? { ...rest, tags: nextTags } : rest;
+      await client.saveApp(nextEnv, { handle });
+      return { isTemplate: !has };
+    },
+    onSuccess: (_res, { handle }) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.app(endpoint, handle) });
+      void qc.invalidateQueries({ queryKey: queryKeys.apps(endpoint) });
+    },
+  });
+}
