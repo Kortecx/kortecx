@@ -13,10 +13,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 let ENVELOPE: Record<string, unknown> = {
   blueprint: { seed: 0, steps: [{ kind: "model", model_id: "m", prompt: "hi" }] },
 };
+let LOCKED = false;
 
 vi.mock("../../src/kx/use-apps", () => ({
   useApp: () => ({
-    data: { summary: { name: "X", locked: false }, envelope: ENVELOPE },
+    data: { summary: { name: "X", locked: LOCKED }, envelope: ENVELOPE },
     isLoading: false,
     isError: false,
     error: null,
@@ -46,19 +47,33 @@ import { AppLineageSection } from "../../src/components/sections/AppLineageSecti
 
 afterEach(() => {
   ENVELOPE = { blueprint: { seed: 0, steps: [{ kind: "model", model_id: "m", prompt: "hi" }] } };
+  LOCKED = false;
 });
 
 describe("App Lineage (view-only)", () => {
-  it("renders the read-only diagram + Run, with NO authoring controls (relocated to Workflows)", () => {
+  it("renders the read-only diagram + Run, with NO inline authoring controls (relocated to Workflows)", () => {
     render(<AppLineageSection handle="apps/local/x" />);
     expect(screen.getByTestId("app-lineage")).toBeInTheDocument();
     expect(screen.getByTestId("lineage-readonly-notice")).toBeInTheDocument();
     expect(screen.getByTestId("app-lineage-run")).toBeInTheDocument();
-    // Structure authoring lives in the Workflows builder now — none of it here.
+    // Inline structure authoring lives in the Workflows builder now — none of it here.
     expect(screen.queryByTestId("app-lineage-save")).toBeNull();
     expect(screen.queryByTestId("lineage-add-agent")).toBeNull();
     expect(screen.queryByTestId("lineage-add-pure")).toBeNull();
     expect(screen.queryByTestId("lineage-add-tool")).toBeNull();
+  });
+
+  it("offers an 'Edit structure' entry (to the builder) for a round-trippable, unlocked App", () => {
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.getByTestId("lineage-edit-structure")).toBeInTheDocument();
+  });
+
+  it("hides 'Edit structure' when the App is locked", () => {
+    LOCKED = true;
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.queryByTestId("lineage-edit-structure")).toBeNull();
+    // Run stays available on a locked App (a run is not a structure write).
+    expect(screen.getByTestId("app-lineage-run")).toBeInTheDocument();
   });
 
   it("lays the parsed blueprint steps onto the diagram", () => {
@@ -74,5 +89,7 @@ describe("App Lineage (view-only)", () => {
     render(<AppLineageSection handle="apps/local/x" />);
     expect(screen.getByTestId("lineage-readonly-notice")).toBeInTheDocument();
     expect(screen.queryByTestId("app-lineage-save")).toBeNull();
+    // An un-round-trippable blueprint hides 'Edit structure' (never a lossy edit).
+    expect(screen.queryByTestId("lineage-edit-structure")).toBeNull();
   });
 });

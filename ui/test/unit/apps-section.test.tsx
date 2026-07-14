@@ -59,6 +59,10 @@ vi.mock("@kortecx/sdk/web", () => ({
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
+  // A minimal <Link> stand-in: render an anchor, dropping router-only props.
+  Link: ({ children, to, params, search, ...rest }: Record<string, unknown>) => (
+    <a {...(rest as Record<string, unknown>)}>{children as never}</a>
+  ),
 }));
 
 import { AppsSection } from "../../src/components/sections/AppsSection";
