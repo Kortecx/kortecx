@@ -62,8 +62,9 @@ use kx_app::{AppEnvelope, ConnectionRef, Reach, SkillRef};
 use kx_blueprint::{to_request, DagSpec, StepSpec};
 use kx_content::{ContentRef, ContentStore};
 use kx_gateway_core::{
-    author_steps_from_proto, AppAuthor, AppCapability, AppCatalog, AppManifest, AppManifestView,
-    AppRunError, BinderError, BoundRecipe, DatasetView, GatewayError, RegisteredToolsView,
+    app_dataset_scoped_name, author_steps_from_proto, AppAuthor, AppCapability, AppCatalog,
+    AppManifest, AppManifestView, AppRunError, BinderError, BoundRecipe, DatasetError, DatasetView,
+    GatewayError, IngestDoc, RegisteredToolsView,
 };
 use kx_mcp_gateway::SqliteConnectionStore;
 use kx_mote::{ContextItemRef, ToolName, ToolVersion, REACT_REQUIRE_APPROVAL_KEY};
@@ -72,6 +73,20 @@ use kx_warrant::{SecretRef, SecretScope};
 
 use crate::provision::{party_tool_authority, skill_union_grants, DemoLibrary, HostWorkflowAuthor};
 
+/// Ceiling on the `cas_refs` ONE declared dataset may self-ingest
+/// (`T-RUNAPP-RAG-SELF-CONTAINED`). Mirrors the CLI's `MAX_BUNDLE_REFS`, which an App can
+/// otherwise sidestep: the bundle ceilings are CLIENT-side, and a 1 MiB envelope (the
+/// server's only App cap) still names thousands of 64-hex refs. Over-ceiling ⇒ fail-soft
+/// skip, never a refusal — the App simply grounds reference-existing.
+const MAX_APP_CORPUS_REFS: usize = 4096;
+
+/// Ceiling on the total corpus BYTES one declared dataset may self-ingest. The bound that
+/// matters: every byte is chunked and synchronously EMBEDDED on first run, so the cost is
+/// model-time, not disk. Well clear of any realistic text corpus (64 MiB of prose is
+/// millions of tokens) while keeping a hand-rolled envelope from turning one run into
+/// hours of embedding.
+const MAX_APP_CORPUS_BYTES: u64 = 64 * 1024 * 1024;
+
 /// The narrow author-time content-PRESENCE check (the `instructions_ref`
 /// fail-closed gate). Blanket over any [`ContentStore`] so the host hands its
 /// `LocalFsContentStore` and tests ride the in-memory store — without forcing
@@ -79,11 +94,23 @@ use crate::provision::{party_tool_authority, skill_union_grants, DemoLibrary, Ho
 pub(crate) trait ContentPresence: Send + Sync {
     /// `true` iff the store currently holds a blob at `r`.
     fn contains_ref(&self, r: &ContentRef) -> bool;
+
+    /// The blob at `r`, or `None` when the store does not hold it.
+    ///
+    /// `T-RUNAPP-RAG-SELF-CONTAINED`: an App's declared corpus travels as
+    /// `references.datasets[].cas_refs`, so materializing it needs the BYTES, not just
+    /// presence. Same author-time posture as [`contains_ref`](Self::contains_ref) — the
+    /// refs come from the caller's OWN stored envelope, resolved against the local store.
+    fn get_ref(&self, r: &ContentRef) -> Option<Vec<u8>>;
 }
 
 impl<T: ContentStore + Send + Sync> ContentPresence for T {
     fn contains_ref(&self, r: &ContentRef) -> bool {
         self.contains(r)
+    }
+
+    fn get_ref(&self, r: &ContentRef) -> Option<Vec<u8>> {
+        self.get(r).ok().map(|p| p.to_vec())
     }
 }
 
@@ -161,33 +188,50 @@ impl HostAppAuthor {
     /// operator-provided corpora — so it is granted directly, like the recipe, rather than
     /// through the caller-Use wish intersection).
     ///
-    /// - Each named dataset must EXIST in the live store ⇒ else fail-closed `InvalidArgs`
-    ///   (a mis-authoring guard; the operator pre-ingests via `kx datasets ingest`). The
-    ///   self-contained `cas_refs` ingest is the `T-RUNAPP-RAG-SELF-CONTAINED` follow-up.
+    /// - A declared dataset carrying `cas_refs` is SELF-CONTAINED: the corpus travels in
+    ///   the App and materializes here (`T-RUNAPP-RAG-SELF-CONTAINED`, see
+    ///   [`ensure_app_dataset`](Self::ensure_app_dataset)) ⇒ an imported App grounds with
+    ///   NO source datasets present.
+    /// - Otherwise the dataset must EXIST in the live store ⇒ else fail-closed `InvalidArgs`
+    ///   (a mis-authoring guard; the operator pre-ingests via `kx datasets ingest`). This is
+    ///   also where a self-contained App lands when its blobs did not travel (an export
+    ///   without `--with-data`) — the 2a reference-existing path, unchanged.
     /// - No retrieval seam on this build (`hnsw` off ⇒ `self.datasets == None` ⇒ `retrieve@1`
     ///   is not even registered) ⇒ honest-degrade to an UNGROUNDED run (mirrors chat-rag's
     ///   no-dataset-view path), never a hard error.
     /// - No root model step to ground ⇒ the fold + steer skip (mirror `fold_skill_tools`).
-    fn fold_dataset_rag(
+    async fn fold_dataset_rag(
         &self,
-        dataset_names: &[String],
+        bindings: &[DatasetBinding],
         dag: &mut DagSpec,
     ) -> Result<(), AppRunError> {
         let Some(view) = self.datasets.as_ref() else {
             tracing::warn!(
-                count = dataset_names.len(),
+                count = bindings.len(),
                 "app declares datasets to ground over but this build has no retrieval seam \
                  (rebuild with --features hnsw); running UNGROUNDED"
             );
             return Ok(());
         };
-        let present: BTreeSet<String> = view
+        // The live embed scope keys every self-contained name (the stale-index escape).
+        // `None` ⇒ no server embedder ⇒ a server-embed ingest could not succeed anyway,
+        // so every binding takes the reference-existing path.
+        let scope_tag = view.embed_scope_tag();
+        let mut available: BTreeSet<String> = view
             .list_datasets()
             .into_iter()
             .map(|d| d.dataset_id)
             .collect();
-        for name in dataset_names {
-            if !present.contains(name) {
+
+        let mut resolved: Vec<String> = Vec::with_capacity(bindings.len());
+        for b in bindings {
+            resolved.push(
+                self.resolve_dataset(view, scope_tag.as_deref(), &mut available, b)
+                    .await?,
+            );
+        }
+        for name in &resolved {
+            if !available.contains(name) {
                 return Err(AppRunError::InvalidArgs(format!(
                     "app grounds on dataset {name:?} but no such dataset is ingested; run \
                      `kx datasets ingest {name} …` first, then re-run"
@@ -200,10 +244,172 @@ impl HostAppAuthor {
             .into_iter()
             .collect();
         fold_skill_tools(dag, &granted);
-        // Steer the entry step to USE retrieve on the named dataset(s) — steer-only DATA,
+        // Steer the entry step to USE retrieve on the RESOLVED dataset(s) — steer-only DATA,
         // never a grant (SN-8; the same class as `inject_app_args` / `fold_react_rag_dataset`).
-        steer_dataset_prompt(dag, dataset_names);
+        steer_dataset_prompt(dag, &resolved);
         Ok(())
+    }
+
+    /// The PHYSICAL dataset name one declared binding grounds on, materializing a
+    /// self-contained corpus on first use. Inserts into `available` when it ingests, so
+    /// the caller's presence check sees a just-created dataset.
+    ///
+    /// Precedence, in order:
+    /// 1. no `cas_refs` (or no embedder) ⇒ the DECLARED name — today's reference-existing path;
+    /// 2. the scoped name already exists ⇒ use it, **no ingest** — the cheap steady state
+    ///    (the host embeds BEFORE its content-addressed dedup, so a blind re-ingest would
+    ///    re-pay the whole embed cost on every run, not just the first);
+    /// 3. else ingest the corpus under the scoped name ⇒ use it;
+    /// 4. ingest skipped (blobs absent / over-ceiling / not text) ⇒ fall back to the
+    ///    DECLARED name, which is exactly (1).
+    async fn resolve_dataset(
+        &self,
+        view: &Arc<dyn DatasetView>,
+        scope_tag: Option<&str>,
+        available: &mut BTreeSet<String>,
+        binding: &DatasetBinding,
+    ) -> Result<String, AppRunError> {
+        let (Some(tag), false) = (scope_tag, binding.cas_refs.is_empty()) else {
+            return Ok(binding.declared.clone());
+        };
+        let scoped = app_dataset_scoped_name(tag, &binding.declared, &binding.cas_refs);
+        if available.contains(&scoped) {
+            return Ok(scoped);
+        }
+        if self.ensure_app_dataset(view, &scoped, binding).await? {
+            available.insert(scoped.clone());
+            return Ok(scoped);
+        }
+        Ok(binding.declared.clone())
+    }
+
+    /// `T-RUNAPP-RAG-SELF-CONTAINED`: materialize an App's declared corpus
+    /// (`references.datasets[].cas_refs`) into `scoped`, so a SHARED App grounds on the
+    /// bytes it carries instead of on the author's local datasets. Returns `true` iff the
+    /// dataset is now ingested and queryable.
+    ///
+    /// FAIL-SOFT by design — every recoverable miss returns `false` (the caller falls back
+    /// to the declared name, i.e. today's behavior), never a hard error:
+    /// - **any blob absent** — the LEGITIMATE common state: an export without `--with-data`
+    ///   still serializes `cas_refs`, it just does not ship the blobs;
+    /// - **over-ceiling** — see [`MAX_APP_CORPUS_REFS`] / [`MAX_APP_CORPUS_BYTES`];
+    /// - **not UTF-8** — a server-embed needs text, and `DatasetRef` carries no
+    ///   `media_type` to declare otherwise (App corpora are text-only);
+    /// - **no embedder / bad name / dim mismatch / stale index** — a `DatasetError` the
+    ///   scoped name is meant to prevent, but never worth bricking the run over.
+    ///
+    /// Only a genuine backend failure (`DatasetError::Internal` — a poisoned lock, a failed
+    /// write) is hard: the store is broken, and grounding on a silently-empty index would
+    /// be worse than refusing.
+    async fn ensure_app_dataset(
+        &self,
+        view: &Arc<dyn DatasetView>,
+        scoped: &str,
+        binding: &DatasetBinding,
+    ) -> Result<bool, AppRunError> {
+        let declared = &binding.declared;
+        // SORT + DEDUPE to exactly the set `app_dataset_scoped_name` hashed. Both halves of
+        // the contract must key on the SAME set: a repeated ref is ONE doc in the name, so
+        // it must be one doc in the index too — otherwise a duplicate would re-pay the embed
+        // cost (the host embeds BEFORE its content-addressed dedup) and be counted twice
+        // against the ceilings. Sorting also pins the ingest order. Cheap + bounded: the
+        // 1 MiB envelope cap bounds the raw list long before this.
+        let mut refs: Vec<&str> = binding.cas_refs.iter().map(String::as_str).collect();
+        refs.sort_unstable();
+        refs.dedup();
+
+        // Ceilings BEFORE any store read (Rule 8c — never unbounded work on untrusted
+        // input), over the DEDUPED set: it is the real work, and the raw count would reject
+        // a legal corpus that merely repeats a ref.
+        if refs.len() > MAX_APP_CORPUS_REFS {
+            tracing::warn!(
+                dataset = declared,
+                refs = refs.len(),
+                ceiling = MAX_APP_CORPUS_REFS,
+                "app corpus exceeds the cas_ref ceiling; NOT self-ingesting"
+            );
+            return Ok(false);
+        }
+        let mut blobs: Vec<Vec<u8>> = Vec::with_capacity(refs.len());
+        let mut total: u64 = 0;
+        for hexref in refs {
+            // The envelope validator pins every cas_ref to 64-hex, so a decode miss here
+            // means a store that disagrees with a validated envelope — skip, never panic.
+            let Some(cref) = ContentRef::from_hex(hexref) else {
+                tracing::warn!(dataset = declared, "app corpus names a malformed cas_ref");
+                return Ok(false);
+            };
+            let Some(bytes) = self.content.get_ref(&cref) else {
+                tracing::debug!(
+                    dataset = declared,
+                    "app corpus blob absent from the content store (exported without \
+                     --with-data?); grounding on an EXISTING dataset of that name instead"
+                );
+                return Ok(false);
+            };
+            total += bytes.len() as u64;
+            if total > MAX_APP_CORPUS_BYTES {
+                tracing::warn!(
+                    dataset = declared,
+                    ceiling = MAX_APP_CORPUS_BYTES,
+                    "app corpus exceeds the byte ceiling; NOT self-ingesting"
+                );
+                return Ok(false);
+            }
+            if std::str::from_utf8(&bytes).is_err() {
+                tracing::warn!(
+                    dataset = declared,
+                    "app corpus blob is not UTF-8 (a server-embed needs text); NOT \
+                     self-ingesting"
+                );
+                return Ok(false);
+            }
+            blobs.push(bytes);
+        }
+
+        // Embedding is a synchronous per-chunk model call and `ingest` is a sync seam;
+        // `author_app` is async, so run it OFF the reactor rather than stalling a worker.
+        let view = Arc::clone(view);
+        let name = scoped.to_string();
+        let doc_count = blobs.len();
+        let outcome = tokio::task::spawn_blocking(move || {
+            let docs: Vec<IngestDoc<'_>> = blobs
+                .iter()
+                .map(|b| IngestDoc {
+                    content: b,
+                    embedding: None,
+                })
+                .collect();
+            view.ingest(&name, &docs)
+        })
+        .await
+        .map_err(|e| AppRunError::Internal(format!("app corpus ingest panicked: {e}")))?;
+
+        match outcome {
+            Ok(o) => {
+                tracing::info!(
+                    dataset = declared,
+                    scoped,
+                    docs = doc_count,
+                    inserted = o.inserted,
+                    "self-contained app corpus ingested; grounding on the app's OWN bytes"
+                );
+                Ok(true)
+            }
+            Err(DatasetError::Internal(e)) => Err(AppRunError::Internal(format!(
+                "app corpus ingest into {scoped:?} failed: {e}"
+            ))),
+            Err(e) => {
+                tracing::warn!(
+                    dataset = declared,
+                    scoped,
+                    error = ?e,
+                    "could not self-ingest the app corpus; grounding on an EXISTING dataset \
+                     of that name instead"
+                );
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -224,23 +430,44 @@ fn steer_dataset_prompt(dag: &mut DagSpec, dataset_names: &[String]) {
     step.prompt = format!("{}\n\n{directive}", step.prompt).trim().to_string();
 }
 
+/// One dataset an App grounds over: the name it DECLARED, plus the corpus it carries
+/// for that name (empty ⇒ reference-existing; non-empty ⇒ self-contained).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DatasetBinding {
+    /// The author's declared `dataset_ref` — the reference-existing lookup key, and the
+    /// readable half of the self-contained scoped name.
+    declared: String,
+    /// The 64-hex content refs the declared dataset spans (`T-RUNAPP-RAG-SELF-CONTAINED`).
+    cas_refs: Vec<String>,
+}
+
 /// T-RUNAPP-CONTEXT-RAIL: the datasets an App grounds over — `references.datasets`
 /// dataset refs UNIONed with `steering_config.context.dataset_refs`, deduped in
-/// declaration order (empty names skipped). `cas_refs` are unused here (2a
-/// reference-existing; self-contained ingest = `T-RUNAPP-RAG-SELF-CONTAINED`). Pure.
-fn collect_dataset_names(env: &AppEnvelope) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    for d in &env.references.datasets {
-        if !d.dataset_ref.is_empty() && !names.contains(&d.dataset_ref) {
-            names.push(d.dataset_ref.clone());
+/// declaration order (empty names skipped). A steering ref names a dataset only, so it
+/// carries no corpus; a `references.datasets` entry may carry one
+/// (`T-RUNAPP-RAG-SELF-CONTAINED`). Pure.
+///
+/// First declaration wins on a duplicate name — so a corpus-bearing entry is not
+/// displaced by a later bare mention of the same name, and the order (hence the steer
+/// text) stays a pure function of the envelope ⇒ recovery-stable.
+fn collect_dataset_bindings(env: &AppEnvelope) -> Vec<DatasetBinding> {
+    let mut out: Vec<DatasetBinding> = Vec::new();
+    let mut push = |declared: &String, cas_refs: Vec<String>| {
+        if declared.is_empty() || out.iter().any(|b| &b.declared == declared) {
+            return;
         }
+        out.push(DatasetBinding {
+            declared: declared.clone(),
+            cas_refs,
+        });
+    };
+    for d in &env.references.datasets {
+        push(&d.dataset_ref, d.cas_refs.clone());
     }
     for n in &env.steering_config.context.dataset_refs {
-        if !n.is_empty() && !names.contains(n) {
-            names.push(n.clone());
-        }
+        push(n, Vec::new());
     }
-    names
+    out
 }
 
 /// Resolve an App's `references.connections` + `guards.secret_scope` against the
@@ -659,7 +886,7 @@ impl AppAuthor for HostAppAuthor {
         let mut context_items = context_rail_items(&env, self.content.as_ref())?;
         // The datasets to ground over (collected now, while `env` is fully intact — the
         // blueprint move below partially moves `env`). Empty ⇒ no RAG fold (the no-op).
-        let dataset_names = collect_dataset_names(&env);
+        let dataset_bindings = collect_dataset_bindings(&env);
 
         // (2) Resolve references.connections against the caller's OWN registry + compute
         //     the run's secret scope (a pure function over the registered creds/endpoints).
@@ -769,9 +996,10 @@ impl AppAuthor for HostAppAuthor {
 
         // (3c) T-RUNAPP-CONTEXT-RAIL: declarative RAG-on-App — the datasets the App
         //      grounds over (collected above) grant the entry step retrieve@1 + steer it to
-        //      search them. Empty ⇒ skipped (the digest no-op).
-        if !dataset_names.is_empty() {
-            self.fold_dataset_rag(&dataset_names, &mut dag)?;
+        //      search them. A binding carrying `cas_refs` materializes its own corpus first
+        //      (T-RUNAPP-RAG-SELF-CONTAINED). Empty ⇒ skipped (the digest no-op).
+        if !dataset_bindings.is_empty() {
+            self.fold_dataset_rag(&dataset_bindings, &mut dag).await?;
         }
 
         // (3d) T-APP-TRIGGER-TARGET / D114: stamp the per-run HITL posture onto the entry
@@ -1291,12 +1519,59 @@ mod tests {
         Arc::new(reg)
     }
 
-    /// A test [`DatasetView`] whose only real behavior is `list_datasets` (the App-run
-    /// presence check); ingest/query are unused by `author_app`.
-    struct FakeDatasets(Vec<String>);
+    /// A test [`DatasetView`]: `list_datasets` drives the App-run presence check, and
+    /// `ingest` RECORDS its calls so a test can assert what a self-contained App
+    /// materialized — and, just as load-bearing, that a second run re-ingests NOTHING.
+    /// `query` is unused by `author_app`.
+    struct FakeDatasets {
+        present: std::sync::Mutex<BTreeSet<String>>,
+        /// `None` models a host with NO server embedder ⇒ the self-contained path never
+        /// engages and every binding takes the reference-existing route.
+        scope_tag: Option<String>,
+        ingests: std::sync::Mutex<Vec<(String, Vec<Vec<u8>>)>>,
+        ingest_err: Option<fn() -> DatasetError>,
+    }
+
+    impl FakeDatasets {
+        /// Reference-existing only (no embed scope) — no carried corpus can engage.
+        fn new(present: &[&str]) -> Self {
+            Self {
+                present: std::sync::Mutex::new(present.iter().map(|s| (*s).to_string()).collect()),
+                scope_tag: None,
+                ingests: std::sync::Mutex::new(Vec::new()),
+                ingest_err: None,
+            }
+        }
+
+        /// A host WITH a server embedder ⇒ the self-contained corpus path is live.
+        fn embedding(present: &[&str]) -> Self {
+            Self {
+                scope_tag: Some("scope-m1".to_string()),
+                ..Self::new(present)
+            }
+        }
+
+        /// An embedding host whose ingest always fails with `err`.
+        fn failing(present: &[&str], err: fn() -> DatasetError) -> Self {
+            Self {
+                ingest_err: Some(err),
+                ..Self::embedding(present)
+            }
+        }
+
+        fn ingests(&self) -> Vec<(String, Vec<Vec<u8>>)> {
+            self.ingests.lock().unwrap().clone()
+        }
+    }
+
     impl DatasetView for FakeDatasets {
+        fn embed_scope_tag(&self) -> Option<String> {
+            self.scope_tag.clone()
+        }
         fn list_datasets(&self) -> Vec<kx_gateway_core::DatasetSummaryEntry> {
-            self.0
+            self.present
+                .lock()
+                .unwrap()
                 .iter()
                 .map(|id| kx_gateway_core::DatasetSummaryEntry {
                     dataset_id: id.clone(),
@@ -1313,11 +1588,23 @@ mod tests {
         }
         fn ingest(
             &self,
-            _dataset: &str,
-            _docs: &[kx_gateway_core::IngestDoc<'_>],
-        ) -> Result<kx_gateway_core::IngestOutcome, kx_gateway_core::DatasetError> {
-            // author_app never ingests — a benign result keeps the stub clippy-clean.
-            Err(kx_gateway_core::DatasetError::NotFound)
+            dataset: &str,
+            docs: &[kx_gateway_core::IngestDoc<'_>],
+        ) -> Result<kx_gateway_core::IngestOutcome, DatasetError> {
+            if let Some(err) = self.ingest_err {
+                return Err(err());
+            }
+            self.ingests.lock().unwrap().push((
+                dataset.to_string(),
+                docs.iter().map(|d| d.content.to_vec()).collect(),
+            ));
+            self.present.lock().unwrap().insert(dataset.to_string());
+            Ok(kx_gateway_core::IngestOutcome {
+                dataset_id: dataset.to_string(),
+                doc_count: docs.len() as u64,
+                inserted: docs.len() as u64,
+                dim: 4,
+            })
         }
         fn query(
             &self,
@@ -1327,7 +1614,7 @@ mod tests {
             _k: usize,
             _mode: kx_gateway_core::RetrievalMode,
             _rerank: Option<bool>,
-        ) -> Result<Vec<kx_gateway_core::DatasetHitEntry>, kx_gateway_core::DatasetError> {
+        ) -> Result<Vec<kx_gateway_core::DatasetHitEntry>, DatasetError> {
             Ok(Vec::new()) // author_app never queries.
         }
     }
@@ -2179,7 +2466,7 @@ mod tests {
     #[tokio::test]
     async fn author_app_with_a_dataset_grants_retrieve_and_steers() {
         let dir = tempfile::tempdir().unwrap();
-        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets(vec!["science".into()]));
+        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets::new(&["science"]));
         let (host, _c, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(ds));
         let mut env = AppEnvelope::new(
             "grounded",
@@ -2211,12 +2498,294 @@ mod tests {
         );
     }
 
+    /// The one-doc corpus a self-contained App carries in these tests.
+    const CORPUS_DOC: &[u8] = b"Water boils at 100C.";
+
+    /// [`CORPUS_DOC`]'s content ref — the content store is content-addressed, so this is
+    /// the ref ANY store derives for those bytes.
+    fn content_hex() -> String {
+        ContentRef::of(CORPUS_DOC).to_hex()
+    }
+
+    /// A `grounded` App declaring `science` over `corpus`, saved and ready to author.
+    fn grounded_app(host: &HostAppAuthor, corpus: Vec<String>) -> String {
+        let mut env = AppEnvelope::new(
+            "grounded",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "Answer." }] }),
+        );
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "science".into(),
+            cas_refs: corpus,
+        });
+        env.validate().unwrap();
+        save_app(host, &env)
+    }
+
+    /// One `science` binding over `corpus`.
+    fn science(corpus: &[String]) -> Vec<DatasetBinding> {
+        vec![DatasetBinding {
+            declared: "science".into(),
+            cas_refs: corpus.to_vec(),
+        }]
+    }
+
+    /// Fold the RAG rail over a one-model-step DAG and hand back the steered prompt.
+    /// The authored `MoteDef` carries only a `prompt_template_hash` (SN-8 — identity, not
+    /// text), so the resolved dataset NAME is only observable at the `DagSpec` level.
+    async fn fold_and_steer(
+        host: &HostAppAuthor,
+        bindings: &[DatasetBinding],
+    ) -> Result<String, AppRunError> {
+        let mut d = dag(vec![model_step("Answer.")]);
+        host.fold_dataset_rag(bindings, &mut d).await?;
+        Ok(d.steps[0].prompt.clone())
+    }
+
+    /// THE TOKEN (`T-RUNAPP-RAG-SELF-CONTAINED`): an App carrying its corpus in
+    /// `cas_refs` grounds on a host where NO dataset of that name exists — it
+    /// materializes its OWN bytes under the scoped name and steers the model at that
+    /// name. This is the whole point: a shared App is self-grounding.
+    #[tokio::test]
+    async fn author_app_self_ingests_a_carried_corpus_with_no_source_dataset() {
+        let dir = tempfile::tempdir().unwrap();
+        // NOTE: the store starts EMPTY — there is no `science` to fall back on.
+        let ds = Arc::new(FakeDatasets::embedding(&[]));
+        let view: Arc<dyn DatasetView> = ds.clone();
+        let (host, store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+        let corpus = vec![
+            store.put(b"Water boils at 100C.").unwrap().to_hex(),
+            store.put(b"Iron melts at 1538C.").unwrap().to_hex(),
+        ];
+        let handle = grounded_app(&host, corpus.clone());
+
+        // End-to-end: the run authors AND retrieve@1 is really granted, on a host with no
+        // `science` dataset — which is a fail-closed InvalidArgs without a carried corpus.
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+        let (mote, warrant) = &bound.motes[0];
+        assert!(mote
+            .def
+            .tool_contract
+            .contains_key(&kx_mote::ToolName("retrieve".into())));
+        assert!(warrant
+            .tool_grants
+            .iter()
+            .any(|g| g.tool_id.0 == "retrieve" && g.tool_version.0 == "1"));
+
+        // The corpus was ingested ONCE, under the scoped name, carrying BOTH blobs.
+        let scoped = app_dataset_scoped_name("scope-m1", "science", &corpus);
+        let ingests = ds.ingests();
+        assert_eq!(ingests.len(), 1, "exactly one ingest: {ingests:?}");
+        assert_eq!(ingests[0].0, scoped);
+        assert_eq!(ingests[0].1.len(), 2, "both carried blobs");
+        assert!(ingests[0].1.contains(&CORPUS_DOC.to_vec()));
+        assert!(
+            scoped.starts_with("science.app-"),
+            "readable-first: {scoped}"
+        );
+
+        // The steer names the PHYSICAL dataset the model must hand to `retrieve` — a name
+        // it cannot reach is a silently UNGROUNDED answer (retrieve@1 fails soft).
+        let prompt = fold_and_steer(&host, &science(&corpus)).await.unwrap();
+        assert!(prompt.contains(&scoped), "steers {scoped}: {prompt}");
+    }
+
+    /// The name is keyed on the DEDUPED corpus set, so the ingest must be too. A repeated
+    /// ref is one doc in the name; if it were N docs in the ingest we would re-pay the embed
+    /// cost N times (the host embeds BEFORE its content-addressed dedup) and count it N
+    /// times against the ceilings — while landing the identical index either way.
+    #[tokio::test]
+    async fn a_repeated_cas_ref_is_ingested_once_matching_the_scoped_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds = Arc::new(FakeDatasets::embedding(&[]));
+        let view: Arc<dyn DatasetView> = ds.clone();
+        let (host, store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+        let r = store.put(CORPUS_DOC).unwrap().to_hex();
+
+        // The same blob named three times, plus a distinct one.
+        let other = store.put(b"Iron melts at 1538C.").unwrap().to_hex();
+        let dupes = vec![r.clone(), other.clone(), r.clone(), r];
+        let prompt = fold_and_steer(&host, &science(&dupes)).await.unwrap();
+
+        let ingests = ds.ingests();
+        assert_eq!(ingests.len(), 1);
+        assert_eq!(ingests[0].1.len(), 2, "two DISTINCT docs, not four");
+        // ...and the ingested name is the one derived from the deduped set.
+        assert_eq!(
+            ingests[0].0,
+            app_dataset_scoped_name("scope-m1", "science", &dupes)
+        );
+        assert!(prompt.contains(&ingests[0].0), "{prompt}");
+        let _ = other;
+    }
+
+    /// The steady state: once the scoped dataset exists a run resolves to it and ingests
+    /// NOTHING. The host embeds BEFORE its content-addressed dedup, so a blind re-ingest
+    /// would re-pay the whole embed cost on every run, not just the first.
+    #[tokio::test]
+    async fn an_already_materialized_app_corpus_is_never_re_ingested() {
+        let dir = tempfile::tempdir().unwrap();
+        let scoped = app_dataset_scoped_name("scope-m1", "science", &[content_hex()]);
+        let ds = Arc::new(FakeDatasets::embedding(&[scoped.as_str()]));
+        let view: Arc<dyn DatasetView> = ds.clone();
+        let (host, store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+        let put = store.put(CORPUS_DOC).unwrap().to_hex();
+        assert_eq!(
+            put,
+            content_hex(),
+            "the corpus ref the scoped name was built from"
+        );
+
+        let prompt = fold_and_steer(&host, &science(&[put])).await.unwrap();
+        assert!(ds.ingests().is_empty(), "resolved to the existing index");
+        assert!(prompt.contains(&scoped), "steers {scoped}: {prompt}");
+    }
+
+    /// The LEGITIMATE no-`--with-data` state: the envelope still serializes `cas_refs`,
+    /// but the blobs never travelled. The App falls back to the DECLARED name — exactly
+    /// the plain reference-existing behavior — rather than inventing an empty index.
+    #[tokio::test]
+    async fn an_app_corpus_whose_blobs_did_not_travel_falls_back_to_the_declared_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds = Arc::new(FakeDatasets::embedding(&["science"]));
+        let view: Arc<dyn DatasetView> = ds.clone();
+        let (host, _store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+        // A well-formed ref that is NOT in the content store.
+        let prompt = fold_and_steer(&host, &science(&["ab".repeat(32)]))
+            .await
+            .unwrap();
+
+        assert!(ds.ingests().is_empty(), "nothing to ingest");
+        assert!(prompt.contains("[science]"), "declared name: {prompt}");
+        assert!(!prompt.contains(".app-"), "no scoped name: {prompt}");
+    }
+
+    /// The negative twin: blobs absent AND no local dataset of that name ⇒ today's loud,
+    /// actionable mis-authoring refusal is preserved (a carried corpus does not soften it).
+    #[tokio::test]
+    async fn an_app_corpus_that_did_not_travel_still_fails_closed_with_no_local_dataset() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets::embedding(&[]));
+        let (host, _store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(ds));
+        let handle = grounded_app(&host, vec!["ab".repeat(32)]);
+        match host.author_app("alice@acme", &handle, b"", false).await {
+            Err(AppRunError::InvalidArgs(msg)) => {
+                assert!(msg.contains("science"), "{msg}");
+                assert!(msg.contains("kx datasets ingest"), "actionable: {msg}");
+            }
+            Ok(_) => panic!("expected fail-closed on a corpus that did not travel"),
+            Err(other) => panic!("expected InvalidArgs, got {other:?}"),
+        }
+    }
+
+    /// FAIL-SOFT: a recoverable ingest failure (here: no embedder wired) falls back to
+    /// reference-existing. Never brick a run over a corpus we could not materialize —
+    /// the declared dataset may well be there.
+    #[tokio::test]
+    async fn a_recoverable_corpus_ingest_failure_falls_back_instead_of_bricking_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets::failing(&["science"], || {
+            DatasetError::EmbedderUnavailable
+        }));
+        let (host, store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(ds));
+        let corpus = vec![store.put(CORPUS_DOC).unwrap().to_hex()];
+
+        let prompt = fold_and_steer(&host, &science(&corpus)).await.unwrap();
+        assert!(prompt.contains("[science]"), "{prompt}");
+    }
+
+    /// HARD: a genuine backend failure is NOT papered over. Grounding on a store that
+    /// cannot answer would be worse than refusing.
+    #[tokio::test]
+    async fn a_corpus_ingest_backend_failure_is_a_hard_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets::failing(&["science"], || {
+            DatasetError::Internal("poisoned".into())
+        }));
+        let (host, store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(ds));
+        let corpus = vec![store.put(CORPUS_DOC).unwrap().to_hex()];
+
+        match fold_and_steer(&host, &science(&corpus)).await {
+            Err(AppRunError::Internal(msg)) => assert!(msg.contains("poisoned"), "{msg}"),
+            other => panic!("expected a hard Internal, got {other:?}"),
+        }
+    }
+
+    /// A server-embed needs TEXT, and `DatasetRef` carries no `media_type` to say
+    /// otherwise — a binary corpus skips rather than erroring out of the run.
+    #[tokio::test]
+    async fn a_non_utf8_app_corpus_is_skipped_not_fatal() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds = Arc::new(FakeDatasets::embedding(&["science"]));
+        let view: Arc<dyn DatasetView> = ds.clone();
+        let (host, store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+        let corpus = vec![store.put(&[0xff, 0xfe, 0x00]).unwrap().to_hex()];
+
+        let prompt = fold_and_steer(&host, &science(&corpus)).await.unwrap();
+        assert!(ds.ingests().is_empty(), "binary corpus not ingested");
+        assert!(prompt.contains("[science]"), "{prompt}");
+    }
+
+    /// The DoS ceiling: the CLI's bundle bounds are client-side, so a hand-rolled envelope
+    /// can name thousands of refs. Over-ceiling skips BEFORE any store read.
+    #[tokio::test]
+    async fn an_over_ceiling_app_corpus_is_skipped_before_reading_any_blob() {
+        let dir = tempfile::tempdir().unwrap();
+        let ds = Arc::new(FakeDatasets::embedding(&["science"]));
+        let view: Arc<dyn DatasetView> = ds.clone();
+        let (host, _store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+        let corpus: Vec<String> = (0..=MAX_APP_CORPUS_REFS)
+            .map(|i| format!("{i:064x}"))
+            .collect();
+
+        let prompt = fold_and_steer(&host, &science(&corpus)).await.unwrap();
+        assert!(ds.ingests().is_empty(), "over-ceiling corpus not ingested");
+        assert!(prompt.contains("[science]"), "{prompt}");
+    }
+
+    /// The bindings are a pure function of the envelope: declaration-order dedup, the
+    /// steering union, empties skipped — and FIRST declaration wins, so a bare re-mention
+    /// of a name cannot displace the corpus-bearing entry that named it first.
+    #[test]
+    fn collect_dataset_bindings_dedups_in_declaration_order_and_keeps_the_corpus() {
+        let mut env = AppEnvelope::new("a", serde_json::json!({ "steps": [] }));
+        let corpus = vec![content_hex()];
+        for (name, refs) in [
+            ("science", corpus.clone()),
+            ("", corpus.clone()),    // empty ⇒ skipped
+            ("science", Vec::new()), // dup ⇒ the corpus-bearing FIRST entry wins
+        ] {
+            env.references.datasets.push(kx_app::DatasetRef {
+                dataset_ref: name.into(),
+                cas_refs: refs,
+            });
+        }
+        env.steering_config.context.dataset_refs =
+            vec!["history".into(), "science".into(), String::new()];
+
+        assert_eq!(
+            collect_dataset_bindings(&env),
+            vec![
+                DatasetBinding {
+                    declared: "science".into(),
+                    cas_refs: corpus
+                },
+                DatasetBinding {
+                    declared: "history".into(),
+                    cas_refs: Vec::new()
+                },
+            ]
+        );
+    }
+
     /// FAIL-CLOSED: grounding on a dataset that is not ingested is a mis-authoring error
     /// (not a silently ungrounded run).
     #[tokio::test]
     async fn author_app_with_an_absent_dataset_fails_closed() {
         let dir = tempfile::tempdir().unwrap();
-        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets(vec!["science".into()]));
+        let ds: Arc<dyn DatasetView> = Arc::new(FakeDatasets::new(&["science"]));
         let (host, _c, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(ds));
         let mut env = AppEnvelope::new(
             "grounded",

@@ -689,6 +689,31 @@ impl HostDatasetView {
         None
     }
 
+    /// The live embed SCOPE tag — [`compute_fingerprint`](Self::compute_fingerprint)'s
+    /// axes with `dim` pinned to 0. `None` when there is no server embedder.
+    ///
+    /// `dim` is excluded because a caller needs this tag BEFORE any ingest, to derive the
+    /// dataset name it will ingest under — and the dimension is not known until the first
+    /// vector comes back. That is sound because `dim` is a function of the embed model,
+    /// which the tag already covers via `model_id_string` (documented as inclusive of
+    /// version and quantization).
+    ///
+    /// The bound that leaves: a model swap that changes the embedding dimension WITHOUT
+    /// changing its id string would not rotate the tag, so a derived name would resolve to
+    /// an index built in the old space and refuse at query with `StaleIndex`. Reachable
+    /// only by re-pointing an id at a different model — the same footgun a hand-ingested
+    /// dataset already has, and not one this tag can close from here.
+    #[cfg(feature = "serve-engine")]
+    fn compute_scope_tag(&self) -> Option<String> {
+        self.compute_fingerprint(0)
+    }
+
+    #[cfg(not(feature = "serve-engine"))]
+    #[allow(clippy::unused_self)]
+    fn compute_scope_tag(&self) -> Option<String> {
+        None
+    }
+
     /// Embed `text` server-side, or [`DatasetError::EmbedderUnavailable`] when no
     /// embedder is wired (an `hnsw`-only build, or `serve-engine` without a model).
     #[cfg_attr(not(feature = "serve-engine"), allow(clippy::unused_self))]
@@ -837,6 +862,10 @@ impl HostDatasetView {
 }
 
 impl DatasetView for HostDatasetView {
+    fn embed_scope_tag(&self) -> Option<String> {
+        self.compute_scope_tag()
+    }
+
     fn list_datasets(&self) -> Vec<DatasetSummaryEntry> {
         let Ok(inner) = self.inner.lock() else {
             return Vec::new();
@@ -1112,6 +1141,29 @@ fn rebuild_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kx_gateway_core::app_dataset_scoped_name;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// THE CONTRACT (SN-4 v2 #5): a scoped App-corpus name is ALWAYS accepted by the
+        /// real host validator — for any declared ref (unicode, `/`, dot-runs, absurd
+        /// length, empty) and any embed-scope tag. `app_run` derives these names without
+        /// pre-sanitizing, so a gap here would surface as a fail-SOFT ungrounded run
+        /// rather than a loud error. Binds gateway-core's `is_host_valid` restatement to
+        /// this function — if `validate_dataset_name` tightens, this fails first.
+        #[test]
+        fn a_scoped_app_dataset_name_always_passes_the_host_validator(
+            dataset_ref in ".*",
+            tag in ".*",
+            refs in prop::collection::vec("[0-9a-f]{64}", 0..4),
+        ) {
+            let name = app_dataset_scoped_name(&tag, &dataset_ref, &refs);
+            prop_assert!(
+                validate_dataset_name(&name).is_ok(),
+                "host validator rejected a derived name: {name:?}"
+            );
+        }
+    }
 
     /// A 4-dim unit-ish vector pointing mostly along axis `i` — clearly separated so
     /// the (approximate) HNSW order is unambiguous for the tiny test corpora.

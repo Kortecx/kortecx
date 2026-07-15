@@ -1021,6 +1021,23 @@ fn doc(content: &[u8]) -> proto::IngestDocument {
 /// at RunApp — declarative RAG-on-App) + `references.rules` (a guidance note that rides the
 /// entry-step context). The App declares WHAT to ground on; the server grants the tool.
 fn grounded_app_envelope(dataset: &str, rule_ref: &[u8], prompt: &str) -> Vec<u8> {
+    grounded_app_envelope_ex(dataset, rule_ref, prompt, &[])
+}
+
+/// A 32-byte content ref as the 64-hex an envelope carries.
+fn hex32(r: &[u8]) -> String {
+    r.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// [`grounded_app_envelope`] with a CARRIED corpus — `cas_refs` naming the content-store
+/// blobs the declared dataset spans (`T-RUNAPP-RAG-SELF-CONTAINED`). Empty ⇒ the
+/// reference-existing App.
+fn grounded_app_envelope_ex(
+    dataset: &str,
+    rule_ref: &[u8],
+    prompt: &str,
+    cas_refs: &[String],
+) -> Vec<u8> {
     let blueprint = serde_json::json!({
         "seed": 0,
         "steps": [{
@@ -1033,12 +1050,11 @@ fn grounded_app_envelope(dataset: &str, rule_ref: &[u8], prompt: &str) -> Vec<u8
     env.description = "an App that self-grounds on its declared dataset + rule".to_string();
     env.references.datasets.push(kx_app::DatasetRef {
         dataset_ref: dataset.to_string(),
-        cas_refs: vec![],
+        cas_refs: cas_refs.to_vec(),
     });
-    let hex: String = rule_ref.iter().map(|b| format!("{b:02x}")).collect();
     env.references.rules.push(kx_app::ArtifactRef {
         name: "brief".to_string(),
-        content_ref: hex,
+        content_ref: hex32(rule_ref),
     });
     env.to_canonical_json().unwrap()
 }
@@ -1176,6 +1192,215 @@ async fn runapp_grounded_app_self_grounds_live() {
         fired.iter().all(|id| id.is_empty() || id == "retrieve"),
         "only retrieve fires from the dataset rail; fired={fired:?}"
     );
+
+    running.shutdown().await.unwrap();
+}
+
+/// LIVE witness for `T-RUNAPP-RAG-SELF-CONTAINED` — the SELF-CONTAINED sibling of
+/// [`runapp_grounded_app_self_grounds_live`]. Same App, one difference that is the whole
+/// feature: **nothing is pre-ingested**. The corpus travels inside the envelope as
+/// `references.datasets[].cas_refs`, and the App materializes it on first run.
+///
+/// The test calls `IngestDocuments` **zero times** — `datasets.db` starts EMPTY, exactly
+/// as it would on a machine that just imported someone else's bundle. Without the carried
+/// corpus this App fails closed at RunApp ("no such dataset is ingested").
+///
+/// The load-bearing assertion is the DETERMINISTIC one: after the run, a `science.app-*`
+/// dataset exists that nobody ingested, and querying it returns NON-EMPTY passages. That
+/// is "it retrieves + grounds" without betting on model behavior — and it is the assertion
+/// that matters, because `retrieve@1` fails SOFT: a model that miscopied the scoped name
+/// would answer confidently UNGROUNDED, and an answer-only assertion would pass anyway.
+/// The agentic leg keeps the sibling's robust invariants (settles; only retrieve fires).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real LLM inference + dataset embedding; needs a served Gemma + --features inference,hnsw; opt in with --ignored"]
+async fn runapp_self_contained_app_ingests_its_carried_corpus_live() {
+    let Some(engine) = resolve_engine() else {
+        eprintln!("skipping: no serve model — set KX_SERVE_MODEL_GGUF or KX_SERVE_OLLAMA=on");
+        return;
+    };
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // A serve with no retrieval seam/embedder cannot self-ingest — skip rather than
+    // report a false negative. Probe with a throwaway dataset that the App never names.
+    if c.ingest_documents(proto::IngestDocumentsRequest {
+        dataset: "ingest-probe".to_string(),
+        documents: vec![doc(b"probe")],
+    })
+    .await
+    .is_err()
+    {
+        eprintln!("skipping: ingest unavailable (needs --features hnsw + an embedder)");
+        running.shutdown().await.unwrap();
+        return;
+    }
+
+    // The corpus travels as CONTENT — the same paraphrase set the sibling ingests by
+    // hand. The target doc never says "photosynthesis"; only a real retrieve surfaces it.
+    let mut cas_refs = Vec::new();
+    for body in [
+        &b"Plants turn sunlight, water, and carbon dioxide into sugar and oxygen inside their leaves."[..],
+        &b"The mitochondria is the powerhouse of the cell, producing ATP from glucose."[..],
+        &b"Tectonic plates drift over the mantle, causing earthquakes at their boundaries."[..],
+    ] {
+        let put = c
+            .put_content(proto::PutContentRequest {
+                payload: body.to_vec(),
+                media_type: "text/plain".to_string(),
+                filename: String::new(),
+            })
+            .await
+            .expect("PutContent a corpus doc")
+            .into_inner();
+        cas_refs.push(hex32(&put.content_ref));
+    }
+    let rule = c
+        .put_content(proto::PutContentRequest {
+            payload: b"Answer in ONE sentence, grounded in the retrieved passages.".to_vec(),
+            media_type: "text/plain".to_string(),
+            filename: String::new(),
+        })
+        .await
+        .expect("PutContent")
+        .into_inner();
+
+    // NOTE: `science` is NEVER ingested — the App carries it.
+    let before: Vec<String> = c
+        .list_datasets(proto::ListDatasetsRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .datasets
+        .into_iter()
+        .map(|d| d.name)
+        .collect();
+    assert!(
+        !before.iter().any(|n| n.starts_with("science")),
+        "no source dataset exists before the run: {before:?}"
+    );
+
+    let handle_str = "apps/local/self-contained-analyst".to_string();
+    c.save_app(proto::SaveAppRequest {
+        handle: handle_str.clone(),
+        envelope_json: grounded_app_envelope_ex(
+            "science",
+            &rule.content_ref,
+            "How do plants make energy from the sun? Use the dataset to answer.",
+            &cas_refs,
+        ),
+        source_digest: Vec::new(),
+    })
+    .await
+    .expect("SaveApp")
+    .into_inner();
+
+    let handle = match c
+        .run_app(proto::RunAppRequest {
+            handle: handle_str,
+            args: Vec::new(),
+        })
+        .await
+    {
+        Ok(h) => h.into_inner(),
+        Err(e) => {
+            // Without the carried-corpus path this is exactly where a shared App died.
+            panic!("RunApp of a self-contained App must not fail closed: {e}");
+        }
+    };
+    assert_eq!(handle.instance_id.len(), 16, "RunApp returns a run handle");
+
+    // THE PROOF (deterministic): the App materialized its OWN corpus, under the scoped
+    // name, with zero IngestDocuments for it — and that index really retrieves.
+    let scoped: Vec<String> = c
+        .list_datasets(proto::ListDatasetsRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .datasets
+        .into_iter()
+        .map(|d| d.name)
+        .filter(|n| n.starts_with("science.app-"))
+        .collect();
+    assert_eq!(
+        scoped.len(),
+        1,
+        "the carried corpus self-ingested under exactly one scoped name: {scoped:?}"
+    );
+    let hits = c
+        .query_dataset(proto::QueryDatasetRequest {
+            dataset: scoped[0].clone(),
+            query_text: "how do plants make energy from sunlight".to_string(),
+            query_embedding: Vec::new(),
+            k: 3,
+            ..Default::default()
+        })
+        .await
+        .expect("QueryDataset the self-ingested corpus")
+        .into_inner();
+    assert!(
+        !hits.hits.is_empty(),
+        "the self-ingested corpus RETRIEVES — non-empty passages [{engine}]"
+    );
+    let top = String::from_utf8_lossy(&hits.hits[0].content).to_string();
+    assert!(
+        top.contains("Plants turn sunlight"),
+        "the carried doc is what grounds the answer, got: {top}"
+    );
+
+    // The agentic leg — the sibling's robust invariants (model behavior is probabilistic).
+    let (mut answered, mut dead, mut retrieved) = (false, false, false);
+    let mut fired: Vec<String> = Vec::new();
+    for _ in 0..3000 {
+        let turns = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(handle.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        for t in &turns.turns {
+            if t.branch == "tool" && !t.tool_id.is_empty() && !fired.contains(&t.tool_id) {
+                fired.push(t.tool_id.clone());
+            }
+            if t.branch == "tool" && t.tool_id == "retrieve" {
+                retrieved = true;
+            }
+        }
+        answered = turns.turns.iter().any(|t| t.branch == "answer");
+        dead = turns.turns.iter().any(|t| t.branch == "dead_lettered");
+        if answered || dead {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    eprintln!(
+        "LIVE self-contained RunApp [{engine}]: scoped={} retrieved={retrieved} \
+         fired={fired:?} answered={answered} dead_lettered={dead}",
+        scoped[0]
+    );
+    assert!(
+        answered || dead,
+        "the self-contained App settles to a terminal on the live model [{engine}]"
+    );
+    assert!(
+        fired.iter().all(|id| id.is_empty() || id == "retrieve"),
+        "only retrieve fires from the dataset rail; fired={fired:?}"
+    );
+    // The readable-first naming bet: can the model copy the scoped name back into
+    // `retrieve`? Logged, not asserted (tool proposal is probabilistic) — but a run that
+    // NEVER retrieves across engines is the signal to move to a declared→physical alias.
+    if retrieved {
+        eprintln!("✓ self-contained RAG: the model retrieved on the SCOPED name it was steered at");
+    } else {
+        eprintln!(
+            "· note: the model answered without firing `retrieve` (check the scoped-name copy)"
+        );
+    }
 
     running.shutdown().await.unwrap();
 }

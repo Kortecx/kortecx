@@ -219,7 +219,7 @@ pub(super) async fn import_bundle(
         "imported {handle} ({} blob(s), {deduped} already present)",
         bundle.blob_count()
     );
-    report_unsatisfiable(&env);
+    report_unsatisfiable(&env, &bundle);
     Ok(())
 }
 
@@ -350,7 +350,27 @@ fn review_and_confirm(env: &AppEnvelope, bundle: &AppBundle, yes: bool) -> Resul
 
 /// Report references that don't travel (connections/tools/datasets) — the importer
 /// re-registers them locally; the App fails closed at run until then (SOFT preflight).
-fn report_unsatisfiable(env: &AppEnvelope) {
+///
+/// A dataset whose corpus TRAVELLED in the bundle is omitted: it is self-contained and
+/// materializes itself on first run (`T-RUNAPP-RAG-SELF-CONTAINED`), so listing it as a
+/// re-ingest chore would be a lie. A dataset naming `cas_refs` whose blobs did NOT travel
+/// (an export without `--with-data`) still needs a local re-ingest, and still says so.
+fn report_unsatisfiable(env: &AppEnvelope, bundle: &AppBundle) {
+    let todos = unsatisfiable_todos(env, bundle);
+    if !todos.is_empty() {
+        println!(
+            "\nThis App references integrations you may need to register locally \
+             (it fails closed at run until then):"
+        );
+        for t in &todos {
+            println!("  - {t}");
+        }
+    }
+}
+
+/// The pure half of [`report_unsatisfiable`] — the chores an import leaves behind, in
+/// declaration order. Pure ⇒ unit-testable without capturing stdout (Rule 5.2).
+fn unsatisfiable_todos(env: &AppEnvelope, bundle: &AppBundle) -> Vec<String> {
     let mut todos = Vec::new();
     for c in &env.references.connections {
         if !c.credential_ref.is_empty() {
@@ -364,17 +384,13 @@ fn report_unsatisfiable(env: &AppEnvelope) {
         todos.push(format!("tool {}@{}", t.tool_id, t.tool_version));
     }
     for d in &env.references.datasets {
-        todos.push(format!("dataset {:?} (re-ingest locally)", d.dataset_ref));
-    }
-    if !todos.is_empty() {
-        println!(
-            "\nThis App references integrations you may need to register locally \
-             (it fails closed at run until then):"
-        );
-        for t in &todos {
-            println!("  - {t}");
+        let travelled =
+            !d.cas_refs.is_empty() && d.cas_refs.iter().all(|r| bundle.blobs.contains_key(r));
+        if !travelled {
+            todos.push(format!("dataset {:?} (re-ingest locally)", d.dataset_ref));
         }
     }
+    todos
 }
 
 /// Refuse to export blobs whose bodies look like they carry a secret (bundle blob
@@ -465,5 +481,41 @@ mod tests {
         let r = ContentRef([0xabu8; 32]);
         assert_eq!(ref_hex(&r.0).unwrap(), r.to_hex());
         assert!(ref_hex(&[0u8; 16]).is_err());
+    }
+
+    /// A dataset whose corpus TRAVELLED is self-contained — it self-ingests on first run,
+    /// so telling the importer to "re-ingest locally" would be a lie. Everything that did
+    /// NOT travel still says so.
+    #[test]
+    fn a_travelled_corpus_is_not_reported_as_a_re_ingest_chore() {
+        let carried = "aa".repeat(32);
+        let stranded = "bb".repeat(32);
+        let mut env = AppEnvelope::new("a", serde_json::json!({ "steps": [] }));
+        for (name, refs) in [
+            ("carried", vec![carried.clone()]),   // travelled ⇒ omitted
+            ("stranded", vec![stranded.clone()]), // named, never shipped ⇒ listed
+            ("bare", vec![]),                     // reference-existing ⇒ listed
+        ] {
+            env.references.datasets.push(kx_app::DatasetRef {
+                dataset_ref: name.into(),
+                cas_refs: refs,
+            });
+        }
+        let mut bundle = AppBundle {
+            app_digest: String::new(),
+            source_digest: None,
+            envelope: Vec::new(),
+            blobs: BTreeMap::default(),
+        };
+        bundle.blobs.insert(carried, b"body".to_vec());
+
+        let todos = unsatisfiable_todos(&env, &bundle);
+        assert_eq!(
+            todos,
+            vec![
+                "dataset \"stranded\" (re-ingest locally)".to_string(),
+                "dataset \"bare\" (re-ingest locally)".to_string(),
+            ]
+        );
     }
 }

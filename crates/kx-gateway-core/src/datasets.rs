@@ -146,6 +146,22 @@ pub trait DatasetView: Send + Sync {
     /// Every dataset, in deterministic (name) order.
     fn list_datasets(&self) -> Vec<DatasetSummaryEntry>;
 
+    /// The LIVE embed scope — a stable tag over the current embedder + chunk config
+    /// (the same inputs as a dataset's `embed_model_fingerprint`), or `None` when the
+    /// host has no embedder to describe (the client-vector path).
+    ///
+    /// Names the space a server-embedded ingest would land in, so a caller can key a
+    /// derived dataset name on it (`app_dataset_scoped_name`) and rotate that name when
+    /// the operator swaps models — the escape from an unqueryable stale index, given
+    /// ingest refuses to MIX embed spaces and no RPC can drop a dataset. Advisory +
+    /// off-identity: never journaled, never a `MoteId` or digest input.
+    ///
+    /// Defaulted to `None` so a view that never server-embeds (a stub, a client-vector
+    /// host) opts out without a change.
+    fn embed_scope_tag(&self) -> Option<String> {
+        None
+    }
+
     /// Ingest `docs` into `dataset` (created on first ingest). A doc carrying a
     /// vector uses the client-vector path; a vector-less doc needs an embedder.
     ///
