@@ -63,6 +63,7 @@ members = [
     "crates/kx-otel",
     "crates/kx-extension-sdk",
     "crates/kx-pricing",
+    "crates/kx-flags",
     "crates/kx-eval",
     # Integrations — bundled app connectors (external MCP-server processes the
     # runtime dials). Each is a self-contained leaf with NO kx-* runtime
@@ -307,6 +308,13 @@ kx-otel              = { path = "crates/kx-otel",              version = "0.1.1"
 # kill-switch, NOT Cloud billing). Pure types + a total fold; off the journal/
 # identity path. Cloud swaps a rich per-token price-book behind the same shape.
 kx-pricing           = { path = "crates/kx-pricing",           version = "0.1.0" }
+# The feature-flag seam (the dark-launch mechanism): a registry of typed,
+# DEFAULT-OFF boolean flags resolved from the environment, so an incomplete
+# feature can land on main inert and ship as small, parallel PRs. A pure, total
+# resolver split from the env read; no global cache. A dependency-free leaf, off
+# the journal/identity path — nothing on the commit path depends on it, so it
+# cannot move the canonical digest.
+kx-flags             = { path = "crates/kx-flags",             version = "0.1.0" }
 # RC1 (D172) the agentic-evaluation harness: a thin, FFI-free leaf that scores a
 # run's TRANSCRIPT (task success / tool-call correctness / RAG groundedness / loop
 # efficiency / latency) — the measure-first yardstick (`just eval >= baseline`).

@@ -24,6 +24,9 @@ kx-proto        = { workspace = true }
 # M11 cost-spend: the integer micro-USD price-book the HostApprovalAdmin prices the
 # durable turn/tool counts with (a leaf, no deps; FFI-free).
 kx-pricing      = { workspace = true }
+# The dark-launch seam: typed, default-OFF flags resolved from the environment
+# (a leaf, no deps; FFI-free). Lets an unfinished serve path land inert on main.
+kx-flags        = { workspace = true }
 # Read-only seams the gateway folds over (a SECOND journal handle + the content store).
 kx-journal      = { workspace = true }
 kx-content      = { workspace = true }
