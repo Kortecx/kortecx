@@ -8,6 +8,17 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Self-contained portable RAG — a shared App carries its own corpus.** A dataset
+  reference may now carry the content it spans (`references.datasets[].cas_refs`, shipped
+  by `kx app export --bundle --with-data`), and an importing server **materializes that
+  corpus on first run** — so a shared App grounds on the bytes it travelled with, none of
+  the author's datasets required and nothing to pre-ingest. The physical index is scoped
+  (`<declared>.app-<hash>`, keyed on the corpus and the live embed model) so a carried
+  corpus never merges into a same-named local dataset of yours, and an embed-model swap
+  re-derives it rather than querying an incompatible index. Corpora are embedded
+  server-side, so they must be UTF-8 text. An App exported *without* `--with-data` still
+  falls back to grounding on a pre-ingested dataset of the declared name, exactly as
+  before.
 - **Integrations foundation: a local secret store, an event-trigger seam, and an
   Integrations hub.** Three additions let local agents authenticate real services and
   be driven by inbound events — the foundation for app/connector integrations.
