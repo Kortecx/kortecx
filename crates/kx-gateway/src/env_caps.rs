@@ -164,14 +164,18 @@ fn parse_bp(raw: Option<&str>, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
-/// RC5a: is the durable-MEMORY subsystem enabled? `KX_SERVE_MEMORY` (default OFF —
-/// a new per-principal state surface, opt-in). When ON (and the `hnsw` build), the
+/// RC5a: is the durable-MEMORY subsystem enabled? (default OFF — a new
+/// per-principal state surface, opt-in). When ON (and the `hnsw` build), the
 /// serve builds a `HostMemoryView`, registers the `recall@1`/`remember@1` capabilities,
 /// seeds `kx/recipes/react-memory`, and wires the memory RPCs; when OFF, the memory
 /// RPCs honestly return `unimplemented` and no memory recipe is seeded.
+///
+/// A dark-launch flag: `KX_FLAG_SERVE_MEMORY`, or the original `KX_SERVE_MEMORY`
+/// (still honored). The seam's truthy set is the same one this knob already used,
+/// so resolution is unchanged — see `kx_flags::Flag::SERVE_MEMORY`.
 #[cfg(feature = "hnsw")]
 pub(crate) fn memory_enabled() -> bool {
-    parse_bool(std::env::var("KX_SERVE_MEMORY").ok().as_deref(), false)
+    kx_flags::enabled(&kx_flags::Flag::SERVE_MEMORY)
 }
 
 /// RC5b: run a reversible TTL+salience decay sweep across all namespaces at serve open?

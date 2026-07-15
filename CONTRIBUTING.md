@@ -156,11 +156,58 @@ Many changes can land at the same time. To keep parallel PRs conflict-free:
   the dependent PR's base to `main` *before* the base PR merges (a merged-and-deleted
   base auto-closes its dependents).
 - **Land incomplete work behind a flag.** Prefer many small PRs that land dark (behind
-  an off-by-default flag) over one large PR that must land all at once.
+  an off-by-default flag) over one large PR that must land all at once. See
+  [Dark-launching a feature](#dark-launching-a-feature) for the mechanism.
 
 The required checks (build/test, `clippy`, `fmt`, `cargo-deny`, `frozen-trio`,
 `proto-breaking`, the real-model gate, and the private-content leak check) are the
 contract: green ⇒ safe to merge. If a check is red, fix the cause — never bypass it.
+
+### Dark-launching a feature
+
+`kx-flags` is how an unfinished feature lands on `main` without shipping: gate it
+behind a flag that is off unless someone deliberately turns it on. Reviewers get a
+small diff, you get to merge early and often, and nobody sees a half-built feature.
+
+Add a flag to the registry in `crates/kx-flags/src/flag.rs`:
+
+```rust
+pub const MY_FEATURE: Flag = Flag {
+    name: "my_feature",
+    env: "KX_FLAG_MY_FEATURE",
+    legacy_env: None,   // Some("KX_OLD_NAME") only when adopting a knob that already shipped
+    default: false,
+};
+```
+
+list it in `Flag::ALL`, and gate the code:
+
+```rust
+if kx_flags::enabled(&kx_flags::Flag::MY_FEATURE) {
+    // the new path — inert until someone opts in
+}
+```
+
+Then `KX_FLAG_MY_FEATURE=1` turns it on for a run. Truthy values are
+`1`/`true`/`yes`/`on`; anything unrecognized leaves the flag at its default.
+
+What the seam guarantees, and why it is shaped this way:
+
+- **Every flag defaults off, and that is tested** across `Flag::ALL`. An unset
+  process behaves exactly as it did before your flag existed — which is what makes
+  merging incomplete work safe rather than merely quiet.
+- **Flags are typed, not strings.** `Flag::MY_FEATRUE` fails the build; a mistyped
+  string key would just read `false` forever, and no test would notice.
+- **Unrecognized values fall through to the default** instead of enabling. A flag
+  that failed open on a typo would defeat the entire point.
+- **Off is not "later" — it is the deliverable.** Each PR should be green and inert
+  on its own. Removing the flag once the feature is finished is the last PR in the
+  series, not an afterthought.
+
+Flags are for *incomplete* work, so delete them once the feature is done — a
+registry full of permanently-on flags is just dead branches. A knob an operator is
+meant to keep choosing (a cap, a path, a kill-switch that defaults **on**) is not a
+dark-launch flag and does not belong here.
 
 ## A note on the design corpus
 
