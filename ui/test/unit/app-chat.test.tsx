@@ -41,6 +41,7 @@ function makeController(): ChatController {
     dataset: undefined,
     setDataset: vi.fn(),
     backingHandle: "kx/recipes/chat",
+    boundModel: undefined,
     promptNoModel: false,
     attach: {
       attachments: [],

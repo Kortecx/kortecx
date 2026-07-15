@@ -34,6 +34,7 @@ import { MessageSources } from "./MessageSources";
 import { ModelPicker } from "./ModelPicker";
 import { StatusLoop } from "./StatusLoop";
 import { ThinkingTrace } from "./ThinkingTrace";
+import { VisionNotice } from "./VisionNotice";
 import type { ChatController } from "./useChatController";
 
 export interface ChatSurfaceProps {
@@ -72,6 +73,7 @@ export function ChatSurface({
     dataset,
     setDataset,
     backingHandle,
+    boundModel,
     promptNoModel,
     attach,
     contextBundles,
@@ -272,6 +274,10 @@ export function ChatSurface({
       {showPickers ? <ChatSettingsPanel settings={settings} onChange={updateSettings} /> : null}
       {showPickers ? (
         <AttachmentStrip attachments={attach.attachments} onRemove={attach.remove} />
+      ) : null}
+      {/* Sits with the chips it is about: an attached image + a text-only bound model. */}
+      {showPickers ? (
+        <VisionNotice boundModel={boundModel} attachments={attach.attachments} />
       ) : null}
       <Composer
         disabled={chat.busy}
