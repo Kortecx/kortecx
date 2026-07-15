@@ -135,6 +135,33 @@ focused so the change says exactly what it does.
 - Be ready for review focused on the invariants above. We'd rather discuss a seam
   change up front than unwind it later.
 
+## Working in parallel
+
+Many changes can land at the same time. To keep parallel PRs conflict-free:
+
+- **One branch per concern, off `main`.** Short-lived branches that land in hours,
+  not one long-lived branch per whole feature. A `git worktree` per task keeps
+  concurrent work path-disjoint.
+- **Keep PRs additive and small.** Additive proto is fine — the `proto-breaking`
+  check keeps the wire backward-compatible; the execution kernel is frozen — the
+  `frozen-trio` check fails a PR that edits it (a deliberate kernel change updates
+  that guard in the same PR). Additive, kernel-untouching PRs don't conflict on the
+  runtime's core invariants and can be reviewed and merged independently.
+- **The merge queue is the integration point.** Once your PR is approved and green,
+  it enters the merge queue, which re-tests it against the latest `main` plus the
+  PRs ahead of it — so two PRs that are each green alone but break together are
+  caught *before* they land, not after. Nothing to do by hand; just approve + queue.
+- **Prefer independent branches over stacked PRs.** If a change genuinely depends on
+  another's code, say so; otherwise branch each from `main`. If you do stack, retarget
+  the dependent PR's base to `main` *before* the base PR merges (a merged-and-deleted
+  base auto-closes its dependents).
+- **Land incomplete work behind a flag.** Prefer many small PRs that land dark (behind
+  an off-by-default flag) over one large PR that must land all at once.
+
+The required checks (build/test, `clippy`, `fmt`, `cargo-deny`, `frozen-trio`,
+`proto-breaking`, the real-model gate, and the private-content leak check) are the
+contract: green ⇒ safe to merge. If a check is red, fix the cause — never bypass it.
+
 ## A note on the design corpus
 
 The full design rationale (the long-form "why" behind individual decisions) is

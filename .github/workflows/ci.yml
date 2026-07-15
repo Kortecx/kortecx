@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Merge queue: the queue tests each PR against the speculative latest-main (base + the PRs
+  # ahead in line) before it fast-forwards — the gate that catches "two independently-green PRs
+  # that break each other" and lets features land in parallel. Every job must run here; the
+  # diff-based jobs (frozen-trio / proto-breaking) derive their base below.
+  merge_group:
   workflow_dispatch:
 
 env:
@@ -71,7 +76,7 @@ jobs:
   # ---------------------------------------------------------------------------
   frozen-trio:
     name: frozen-trio (kernel src unchanged)
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history for the base diff)
@@ -82,7 +87,9 @@ jobs:
       - name: Assert kx-executor / kx-scheduler src + kx-inference dispatch control-flow are unchanged
         run: |
           set -euo pipefail
-          BASE="${{ github.base_ref }}"
+          # pull_request → github.base_ref ("main"); merge_group → merge_group.base_ref ("refs/heads/main").
+          BASE="${{ github.base_ref || github.event.merge_group.base_ref }}"
+          BASE="${BASE#refs/heads/}"
           git fetch --no-tags origin "$BASE"
           CHANGED="$(git diff --name-only "origin/$BASE...HEAD" -- \
             crates/kx-executor/src crates/kx-scheduler/src \
@@ -1278,7 +1285,7 @@ jobs:
   # main). Config: crates/kx-proto/proto/buf.yaml (breaking: FILE). A deliberate break bumps kortecx.v2.
   proto-breaking:
     name: proto-breaking (kx-proto additive-only — D120.6)
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout with history (origin/main is the proto baseline)

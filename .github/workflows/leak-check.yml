@@ -18,6 +18,10 @@ name: Private-content leak check (SN-2)
 on:
   pull_request:
     branches: [main]
+  # Also run inside the merge queue so the leak net stays a required gate on the speculative
+  # merge. The diff base is origin/main (works for both events); the PR-notes step is
+  # pull_request-only and skips harmlessly in a merge_group (the body was scanned on the PR).
+  merge_group:
 
 permissions:
   contents: read
