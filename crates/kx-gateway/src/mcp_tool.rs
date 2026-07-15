@@ -222,21 +222,19 @@ pub(crate) fn register_echo_capability<S: ContentStore + Send + Sync>(
 // `inference`, so the D155 branch snapshot path gets the root without a model);
 // this module's fs-list/fs-read registration receives the resolved root.
 
-/// PR-6b-4: the operator opt-in for the autonomous-loop tool AUTO-GRANT
-/// (`KX_SERVE_AUTOGRANT`). Default-OFF (unset / `"0"` / `"false"` / empty ⇒
-/// `false`) — mirrors `KX_SERVE_FS_ROOT`'s deny-by-default. ON ⇒ the
-/// `kx/recipes/react-auto` recipe is seeded + the binder rebuilds its warrant
-/// from the LIVE registry at bind (the model picks from ALL registered/dialed
-/// tools). OFF ⇒ react-auto is NOT seeded ⇒ byte-identical serve.
+/// PR-6b-4: the operator opt-in for the autonomous-loop tool AUTO-GRANT.
+/// Default-OFF (unset / `"0"` / `"false"` / empty ⇒ `false`) — mirrors
+/// `KX_SERVE_FS_ROOT`'s deny-by-default. ON ⇒ the `kx/recipes/react-auto` recipe
+/// is seeded + the binder rebuilds its warrant from the LIVE registry at bind
+/// (the model picks from ALL registered/dialed tools). OFF ⇒ react-auto is NOT
+/// seeded ⇒ byte-identical serve.
+///
+/// A dark-launch flag: `KX_FLAG_SERVE_AUTOGRANT`, or the original
+/// `KX_SERVE_AUTOGRANT` (still honored) — see `kx_flags::Flag::SERVE_AUTOGRANT`.
+/// The shared seam also accepts `yes`/`on`, which this knob used to ignore in
+/// silence; every value that already enabled it still does.
 pub(crate) fn autogrant_enabled() -> bool {
-    match std::env::var_os("KX_SERVE_AUTOGRANT") {
-        Some(v) => {
-            let v = v.to_string_lossy();
-            let v = v.trim();
-            v == "1" || v.eq_ignore_ascii_case("true")
-        }
-        None => false,
-    }
+    kx_flags::enabled(&kx_flags::Flag::SERVE_AUTOGRANT)
 }
 
 /// RC2: the operator SERVE-LEVEL kill-switch for grammar-constrained tool-calling

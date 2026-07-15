@@ -1,0 +1,20 @@
+[package]
+name         = "kx-flags"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx feature-flag seam — the dark-launch mechanism. A registry of typed, DEFAULT-OFF boolean flags resolved from the environment (`KX_FLAG_<NAME>`, with an optional legacy alias), so an incomplete feature can land on main inert and ship in small, parallel PRs. A pure, total resolver split from the env read (unit-testable without touching process-global env); no global cache, read at point-of-use. A dependency-free leaf, off the journal + identity path; the frozen trio never depends on it."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

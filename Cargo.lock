@@ -1745,6 +1745,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-flags"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "kx-fleet"
 version = "0.1.1"
 dependencies = [
@@ -1795,6 +1802,7 @@ dependencies = [
  "kx-dataset-bm25",
  "kx-dataset-hnsw",
  "kx-executor",
+ "kx-flags",
  "kx-fleet",
  "kx-gateway-core",
  "kx-grammar",
