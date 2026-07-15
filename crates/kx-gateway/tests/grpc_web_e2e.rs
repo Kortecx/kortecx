@@ -44,9 +44,25 @@ fn cfg_with_cors(dir: &TempDir, cors_origins: Vec<String>) -> GatewayConfig {
 
 /// Send one raw HTTP/1.1 request to `addr` and return the full response bytes.
 ///
-/// Reads until the peer half-closes or a short inter-read timeout elapses (hyper
-/// keep-alive holds the socket open, so the timeout is what bounds a single
-/// response). Adequate for the small gRPC-web / preflight responses asserted here.
+/// Reads to **EOF** — the protocol's own end-of-response signal here: every request
+/// this file builds goes through [`http1_message`], which sends `Connection: close`
+/// unconditionally, so the server half-closes the socket once the response is
+/// complete. One overall deadline bounds the read, and expiring it is a **test
+/// failure**, never a completion.
+///
+/// This previously read "until the peer half-closes **or** a short inter-read timeout
+/// elapses", with `Err(_) => break  // the response is complete`. That treated a 400 ms
+/// wall-clock budget as a protocol signal: on a loaded runner the first byte can arrive
+/// later than that, so the loop broke with an **empty** buffer and the caller's
+/// `assert!(text.starts_with("http/1.1 200"))` failed on `""` — pass/fail decided by
+/// machine load rather than by behaviour. It flaked twice during the 2026-07-15 parallel
+/// fan-out, and it is reachable from the **required** `test` check. (The old comment
+/// justified the timeout with "hyper keep-alive holds the socket open" — true in general,
+/// but not here: `Connection: close` is unconditional, so EOF always arrives.)
+///
+/// Why this was worth fixing before anything else: a flaky *required* check inside a
+/// merge queue is strictly worse than no queue — every spurious red evicts the PR and
+/// re-tests everything queued behind it.
 async fn http1_request(addr: SocketAddr, request: &[u8]) -> Vec<u8> {
     // `start()` returns before the listener binds (the serve task spawns), so retry
     // the connect briefly — mirrors `common::connect_client`.
@@ -66,21 +82,35 @@ async fn http1_request(addr: SocketAddr, request: &[u8]) -> Vec<u8> {
     stream.write_all(request).await.expect("write request");
     stream.flush().await.expect("flush");
 
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        match tokio::time::timeout(Duration::from_millis(400), stream.read(&mut chunk)).await {
-            Ok(Ok(0)) => break,                              // peer closed
-            Ok(Ok(n)) => buf.extend_from_slice(&chunk[..n]), // got bytes, keep reading
-            Ok(Err(e)) => panic!("read error: {e}"),
-            Err(_) => break, // inter-read timeout: the response is complete
+    // ONE deadline for the whole exchange, generous enough that only a genuinely stuck
+    // server trips it. It is a hard bound on a hang, NOT a completion signal: the response
+    // ends at EOF (`Connection: close`), so a timeout here means the server never closed —
+    // a real defect, and it fails loudly instead of silently truncating the buffer.
+    const READ_DEADLINE: Duration = Duration::from_secs(30);
+    let read_to_eof = async {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            match stream.read(&mut chunk).await {
+                Ok(0) => break,                              // EOF — the response is complete
+                Ok(n) => buf.extend_from_slice(&chunk[..n]), // got bytes, keep reading
+                Err(e) => panic!("read error: {e}"),
+            }
+            // A complete grpc-web/preflight response is small; cap to avoid a runaway.
+            if buf.len() > 1 << 20 {
+                break;
+            }
         }
-        // A complete grpc-web/preflight response is small; cap to avoid a runaway.
-        if buf.len() > 1 << 20 {
-            break;
-        }
+        buf
+    };
+    match tokio::time::timeout(READ_DEADLINE, read_to_eof).await {
+        Ok(buf) => buf,
+        Err(_) => panic!(
+            "gRPC-web response did not complete within {READ_DEADLINE:?}: the server never \
+             closed the socket despite `Connection: close`. This is a real failure — the read \
+             deadline is a hang bound, not an end-of-response signal."
+        ),
     }
-    buf
 }
 
 /// Build a raw HTTP/1.1 request: ASCII headers + an optional binary body.
