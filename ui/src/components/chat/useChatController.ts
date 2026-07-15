@@ -21,6 +21,7 @@
  * loop) — the capability is relocated, never crippled (Principle 3).
  */
 
+import type { ModelSummary } from "@kortecx/sdk/web";
 import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../../kx/connection-context";
 import { useAttachments } from "../../kx/use-attachments";
@@ -29,7 +30,7 @@ import { useContextBundles } from "../../kx/use-context-bundles";
 import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
 import { useRecipes } from "../../kx/use-recipes";
-import { resolveAutoModel } from "../../lib/auto-model";
+import { resolveBoundModel } from "../../lib/auto-model";
 import {
   type SavedChat,
   autoNameFrom,
@@ -74,6 +75,10 @@ export interface ChatController {
   readonly dataset: string | undefined;
   readonly setDataset: (v: string | undefined) => void;
   readonly backingHandle: string;
+  /** The model this turn actually BINDS (undefined ⇒ nothing served / still loading).
+   *  Surfaces read it instead of re-deriving from `settings.modelId` — re-deriving is
+   *  what let the label and the bound model drift apart. */
+  readonly boundModel: ModelSummary | undefined;
   readonly promptNoModel: boolean;
   readonly attach: ReturnType<typeof useAttachments>;
   readonly contextBundles: ReturnType<typeof useContextBundles>;
@@ -99,18 +104,22 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
   const agentAvailable = available.includes(REACT_RECIPE_HANDLE);
   const models = useModels();
   const { defaultModelId } = useDefaultModel();
-  // POC-5c: when the user has not EXPLICITLY picked a model (config or settings), fall
-  // back to the client-local default — but only if it is actually served here, else
-  // let the gateway choose (GR15: never send a stale model enum). An explicit pick
-  // always wins; the default just fills the gap for new chats.
-  const explicitModelId = config.modelId ?? settings.modelId;
-  // Auto (no explicit pick) resolves to the SAME model the ModelPicker labels —
-  // server-active first (Model Control v2), then a served client-local default — so
-  // "Auto · X" can never diverge from the model the runtime actually binds. A stale
-  // client-local default no longer silently overrides the server-active model.
-  const effectiveModelId = explicitModelId ?? resolveAutoModel(models.models, defaultModelId);
-  const chosenModel =
-    models.models?.find((mm) => mm.modelId === effectiveModelId) ?? models.models?.[0];
+  // The ONE resolution both this hook and the ModelPicker derive from, so the id a
+  // turn sends and the "Auto · X" the picker labels cannot diverge. An explicit pick
+  // (config = the AppChat pin, else the picker's persisted choice) is honored only
+  // when this serve actually serves it; otherwise Auto binds — server-active first
+  // (Model Control v2), then a served client-local default.
+  //
+  // The unserved-pick case is why `chosenModel` no longer falls back to `models[0]`:
+  // plain chat routes by `chatHandle` ALONE, so that fallback silently ran the turn
+  // on models[0] while the picker promised the resolved model. Taking both the id and
+  // the handle off one `ModelSummary` makes the two disagree-proof.
+  const bound = resolveBoundModel(
+    models.models,
+    config.modelId ?? settings.modelId,
+    defaultModelId,
+  );
+  const chosenModel = bound.model;
 
   // A pinned backing (AppChat) wins; else reconcile the persisted handle.
   const backing =
@@ -131,7 +140,10 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
   const setDataset = (v: string | undefined) => setInteractiveDataset(v);
 
   const agentTurn = agentMode && agentAvailable;
-  const modelId = effectiveModelId;
+  // Always a SERVED id or undefined — never a stale enum (GR15). Undefined lets the
+  // gateway resolve the default itself (SN-8), which is the honest answer while the
+  // model list is still loading.
+  const modelId = chosenModel?.modelId;
 
   const chat = useChat({
     handle: backing.handle,
@@ -244,6 +256,7 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
     dataset,
     setDataset,
     backingHandle: backing.handle,
+    boundModel: chosenModel,
     promptNoModel,
     attach,
     contextBundles,

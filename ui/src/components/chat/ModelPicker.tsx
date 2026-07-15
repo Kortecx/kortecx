@@ -1,7 +1,7 @@
 import type { ModelSummary } from "@kortecx/sdk/web";
 import { useDefaultModel } from "../../kx/use-default-model";
 import { useModels } from "../../kx/use-models";
-import { resolveAutoModel } from "../../lib/auto-model";
+import { resolveAutoModel, resolveBoundModel } from "../../lib/auto-model";
 
 /** The honest, existing specs for a model — only fields ListModels actually returns
  *  (no params/quantization on this wire). Joined for a hover tooltip. */
@@ -60,12 +60,23 @@ export function ModelPicker({
     );
   }
   // The model the runtime resolves to when the user defers ("Auto"): server active,
-  // then this browser's default (if served), then the first listed. Shared with
-  // useChatController so this LABEL never diverges from the model actually bound.
+  // then this browser's default (if served), then the first listed. This labels the
+  // Auto OPTION, so it names Auto's answer whether or not a steer is in effect.
   const autoResolved = resolveAutoModel(models, defaultModelId) ?? "";
-  // A concrete steer only when `value` names a served model; otherwise Auto (deferred).
-  const picked = value ? models.find((m) => m.modelId === value) : undefined;
+  // The SAME resolution useChatController binds — a steer only when `value` names a
+  // served model, else Auto. Deriving both from one fn is what stops this label from
+  // promising one model while the turn runs on another.
+  const bound = resolveBoundModel(models, value, defaultModelId);
+  const picked = bound.explicit ? bound.model : undefined;
   const autoLabel = autoResolved ? `Auto · ${autoResolved}` : "Auto (runtime default)";
+  // A pick this serve does not serve is KEPT (it is intent — it returns if the model
+  // is loaded again), so say where it went rather than letting the control silently
+  // read as Auto. Rides the existing title channel: no banner, no layout cost.
+  const staleNote = bound.stalePick
+    ? `Your pick "${bound.stalePick}" isn't served here — the runtime binds ${
+        bound.model?.modelId ?? "the served default"
+      }. Load it again and your pick returns.`
+    : undefined;
   return (
     <label className="modelpicker" data-testid="model-picker">
       <span className="modelpicker__label">Model</span>
@@ -76,11 +87,13 @@ export function ModelPicker({
         // The specs (engine · vision · context · …) surface on hover — the picker
         // itself tooltips the SELECTED model (native <option title> is unreliable).
         title={
-          picked
+          staleNote ??
+          (picked
             ? modelSpecs(picked) || undefined
-            : `Auto — the runtime picks ${autoResolved || "the served default"}`
+            : `Auto — the runtime picks ${autoResolved || "the served default"}`)
         }
         data-testid="model-picker-select"
+        data-stale-pick={bound.stalePick}
       >
         <option value="" title={autoResolved ? `The runtime picks ${autoResolved}` : undefined}>
           {autoLabel}
