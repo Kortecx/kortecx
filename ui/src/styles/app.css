@@ -5280,7 +5280,10 @@ button.card-grid__title:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 7.5rem;
+  /* Two chips + the label + a "+N" must share the card width; a long id ellipsizes
+     rather than pushing the overflow count out of the card. */
+  min-width: 0;
+  max-width: 5.75rem;
 }
 .lineage-node__tool--more {
   flex: none;

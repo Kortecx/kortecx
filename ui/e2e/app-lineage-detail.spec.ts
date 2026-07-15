@@ -204,6 +204,11 @@ test("warns when an App's attached skills have no root agent step to fold onto",
 });
 
 test("the granular diagram renders in light and dark (screenshots)", async ({ page }, testInfo) => {
+  // A tall viewport so the pane's 66vh scroll container shows the whole 6-step DAG:
+  // the evidence has to include the LOWER steps (the pure step's degradation, the tool
+  // step), not just the two that fit at 720px. (Capturing the diagram element directly
+  // does not work — the scroll ancestor clips it and the un-scrolled region shoots blank.)
+  await page.setViewportSize({ width: 1280, height: 1600 });
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await seedComplexApp(gw.endpoint);
   await connectConsole(page, gw);
@@ -222,6 +227,10 @@ test("the granular diagram renders in light and dark (screenshots)", async ({ pa
     await expect(page.getByTestId("lineage-entry-s0")).toBeVisible();
     await expect(page.getByTestId("lineage-model-s0")).toBeVisible();
     await expect(page.getByTestId("lineage-tools-s1")).toBeVisible();
+    // The lower steps are in frame too — otherwise the gallery silently shows only the
+    // top of the DAG and the degradation cases go unreviewed.
+    await expect(page.getByTestId("lineage-node-s4")).toBeVisible();
+    await expect(page.getByTestId("lineage-node-s5")).toBeVisible();
 
     const shot = testInfo.outputPath(`lineage-detail-${theme}.png`);
     await page.screenshot({ path: shot, fullPage: true });

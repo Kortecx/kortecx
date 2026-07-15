@@ -38,7 +38,10 @@ import {
  *  just a name — `layoutGraph` is given this box so dagre separates and positions against
  *  what is actually rendered. Must track the `.lineage-node` CSS. */
 const LINEAGE_NODE_W = 248;
-const LINEAGE_NODE_H = 124;
+/** Tall enough for the worst case every row present: a two-line title + model + tools +
+ *  budget. Sized from the rendered result, not arithmetic — at 124px the title clipped
+ *  through its own descenders and the model id was cut off at the card edge. */
+const LINEAGE_NODE_H = 152;
 
 /** One node card: the step's derived title plus what it binds, requests, and is budgeted
  *  for. Every row past the title is conditional — a blueprint step may carry almost
