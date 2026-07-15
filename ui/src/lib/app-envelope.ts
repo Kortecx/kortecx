@@ -48,6 +48,21 @@ export function readSecretScope(env: Env): string[] {
   return guards?.secret_scope ?? [];
 }
 
+/** The App's default model route (`steering_config.model.model_route`) — what a step
+ *  naming no model of its own binds at run. "" ⇒ unset (the served model applies). */
+export function readModelRoute(env: Env): string {
+  const model = (env.steering_config as { model?: { model_route?: string } })?.model;
+  return model?.model_route ?? "";
+}
+
+/** The names of the skills attached to the App (`references.skills`). A read-only view
+ *  needs only the names: the instructions ride in CAS, and which of a skill's tool
+ *  wishes survive is decided at run (SN-8). */
+export function readSkillNames(env: Env): string[] {
+  const skills = (env.references as { skills?: { name?: string }[] })?.skills;
+  return (skills ?? []).map((s) => s.name ?? "").filter((n) => n !== "");
+}
+
 // ---- writes (omit-empty, preserve sibling keys) ----
 
 function withReferences(env: Env, references: Env): Env {

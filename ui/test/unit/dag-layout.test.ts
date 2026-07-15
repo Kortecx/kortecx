@@ -21,6 +21,43 @@ const layoutOf = (p: ReturnType<typeof projection>) => {
   );
 };
 
+/** The custom node box (the App Lineage cards) — the existing callers pass none. */
+describe("layoutGraph node box", () => {
+  const chain = () => {
+    const motes = toProjectionVM(chainProjection(4)).motes;
+    return { ids: motes.map((m) => m.moteId), edges: buildEdges(motes) };
+  };
+
+  it("is byte-identical to the default when no box is passed (the shared callers)", () => {
+    const { ids, edges } = chain();
+    // MoteDag / the blueprint builder call the 2-arg form; adding the box parameter
+    // must not move a single node for them.
+    expect([...layoutGraph(ids, edges).entries()]).toEqual([
+      ...layoutGraph(ids, edges, {}).entries(),
+    ]);
+  });
+
+  it("positions against the box it is given, not the default footprint", () => {
+    const { ids, edges } = chain();
+    const dflt = layoutGraph(ids, edges);
+    const tall = layoutGraph(ids, edges, { nodeW: 248, nodeH: 124 });
+    const spanOf = (m: Map<string, { x: number; y: number }>) => {
+      const ys = [...m.values()].map((p) => p.y);
+      return Math.max(...ys) - Math.min(...ys);
+    };
+    // A taller card must rank further apart, or the cards would overlap.
+    expect(spanOf(tall)).toBeGreaterThan(spanOf(dflt));
+  });
+
+  it("honours a partial box (one dimension overridden)", () => {
+    const { ids, edges } = chain();
+    const pos = layoutGraph(ids, edges, { nodeH: 124 });
+    for (const id of ids) {
+      expect(pos.get(id)).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+    }
+  });
+});
+
 describe("layoutGraph", () => {
   it("returns a position for every node", () => {
     const pos = layoutOf(diamondProjection());
