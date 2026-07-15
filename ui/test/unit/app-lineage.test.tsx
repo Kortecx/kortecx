@@ -93,3 +93,117 @@ describe("App Lineage (view-only)", () => {
     expect(screen.queryByTestId("lineage-edit-structure")).toBeNull();
   });
 });
+
+/**
+ * The granular per-step detail. The view-model's branches are exhausted in
+ * `lineage-step-view.test.ts`; here the wiring is asserted — that what the model
+ * derives actually reaches the card, keyed off the real envelope.
+ */
+describe("App Lineage (per-step detail)", () => {
+  it("gives each step a DISTINCT title derived from its prompt (not N copies of 'Agent')", () => {
+    ENVELOPE = {
+      blueprint: {
+        seed: 0,
+        steps: [
+          { kind: "model", model_id: "gemma-4-12b", prompt: "Research the target" },
+          { kind: "model", model_id: "gemma-4-12b", prompt: "Draft the summary" },
+        ],
+        edges: [{ parent: 0, child: 1 }],
+      },
+    };
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.getByText("Research the target")).toBeInTheDocument();
+    expect(screen.getByText("Draft the summary")).toBeInTheDocument();
+  });
+
+  it("shows each step's bound model, requested tools and authored budget", () => {
+    ENVELOPE = {
+      blueprint: {
+        seed: 0,
+        steps: [
+          {
+            kind: "model",
+            model_id: "gemma-4-12b",
+            prompt: "Search",
+            tool_contract: { "web/search": "1" },
+            max_turns: 8,
+            max_tool_calls: 6,
+          },
+        ],
+      },
+    };
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.getByTestId("lineage-model-s0")).toHaveTextContent("gemma-4-12b");
+    // "requests", never "has" — a tool_contract is a wish the server intersects (SN-8).
+    expect(screen.getByTestId("lineage-tools-s0")).toHaveTextContent("requests");
+    expect(screen.getByTestId("lineage-tools-s0")).toHaveTextContent("web/search");
+    expect(screen.getByTestId("lineage-meta-s0")).toHaveTextContent("8 turns · 6 calls");
+  });
+
+  it("defers to the App's model_route when a step names no model of its own", () => {
+    ENVELOPE = {
+      blueprint: { seed: 0, steps: [{ kind: "model", prompt: "Go" }] },
+      steering_config: { model: { model_route: "kx-serve:gemma" } },
+    };
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.getByTestId("lineage-model-s0")).toHaveTextContent("inherits kx-serve:gemma");
+  });
+
+  it("degrades a bare pure step to its ordinal — no model, tools, or budget invented", () => {
+    ENVELOPE = { blueprint: { seed: 0, steps: [{ kind: "pure" }] } };
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.getByText("Step 1")).toBeInTheDocument();
+    expect(screen.queryByTestId("lineage-model-s0")).toBeNull();
+    expect(screen.queryByTestId("lineage-tools-s0")).toBeNull();
+    expect(screen.queryByTestId("lineage-meta-s0")).toBeNull();
+  });
+
+  it("renders NO budget when the blueprint omits it (the default is contested in-tree)", () => {
+    ENVELOPE = {
+      blueprint: {
+        seed: 0,
+        steps: [{ kind: "model", prompt: "Go", tool_contract: { "web/search": "1" } }],
+      },
+    };
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.queryByTestId("lineage-meta-s0")).toBeNull();
+  });
+
+  it("marks the entry step the server folds the App's skills + tool wishes onto", () => {
+    ENVELOPE = {
+      blueprint: {
+        seed: 0,
+        steps: [
+          { kind: "model", prompt: "First" },
+          { kind: "model", prompt: "Second" },
+        ],
+        edges: [{ parent: 0, child: 1 }],
+      },
+      references: { skills: [{ name: "summarize", instructions_ref: "a".repeat(64) }] },
+    };
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.getByTestId("lineage-entry-s0")).toBeInTheDocument();
+    expect(screen.queryByTestId("lineage-entry-s1")).toBeNull();
+    expect(screen.queryByTestId("lineage-fold-warning")).toBeNull();
+  });
+
+  it("warns when attached skills have no root agent step to fold onto (the silent drop)", () => {
+    // pure → model: the server refuses the split and drops the wishes with only a
+    // server-side warning. The Skills rail would still show them as attached.
+    ENVELOPE = {
+      blueprint: {
+        seed: 0,
+        steps: [{ kind: "pure" }, { kind: "model", prompt: "Second" }],
+        edges: [{ parent: 0, child: 1 }],
+      },
+      references: { skills: [{ name: "summarize", instructions_ref: "a".repeat(64) }] },
+      steering_config: { tools: { requested_grants: { "web/search": "1" } } },
+    };
+    render(<AppLineageSection handle="apps/local/x" />);
+    expect(screen.getByTestId("lineage-fold-warning")).toHaveTextContent(
+      "2 skill/tool wishes can't be applied",
+    );
+    expect(screen.queryByTestId("lineage-entry-s0")).toBeNull();
+    expect(screen.queryByTestId("lineage-entry-s1")).toBeNull();
+  });
+});

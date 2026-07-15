@@ -5177,13 +5177,17 @@ button.card-grid__title:hover {
 .lineage-diagram__arrow {
   fill: var(--border-strong, var(--border));
 }
+/* The granular per-step card. Sized to the LINEAGE_NODE_W/H box the section hands
+   `layoutGraph` — dagre separates against these numbers, so the two must track. Content
+   is top-aligned (rows are conditional; a sparse step must not float mid-card). Every
+   colour is a token, so both themes carry by construction (D142). */
 .lineage-node {
   position: absolute;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 0.2rem;
-  padding: 0.45rem 0.6rem;
+  justify-content: flex-start;
+  gap: 0.25rem;
+  padding: 0.5rem 0.6rem;
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius-sm);
@@ -5200,6 +5204,16 @@ button.card-grid__title:hover {
 .lineage-node[data-kind="pure"] {
   border-left-color: var(--fg-muted);
 }
+/* The entry step carries the App's whole capability rail — worth seeing at a glance. */
+.lineage-node[data-entry="true"] {
+  border-color: var(--accent);
+}
+.lineage-node__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
 .lineage-node__kind {
   font-size: 0.66rem;
   font-weight: 600;
@@ -5207,12 +5221,89 @@ button.card-grid__title:hover {
   text-transform: uppercase;
   color: var(--fg-muted);
 }
+.lineage-node__entry {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  padding: 0.05rem 0.3rem;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+}
 .lineage-node__label {
   font-size: 0.85rem;
   font-weight: 500;
+  line-height: 1.25;
+  /* Two lines of title, then clip: a derived title is a sentence fragment, and one line
+     truncates too many distinct steps to the same prefix. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lineage-node__model {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.68rem;
+  color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* A run-time binding, not an authored id — read as a deferral, not a fact. */
+.lineage-node__model--inferred {
+  font-style: italic;
+  opacity: 0.85;
+}
+.lineage-node__tools {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  overflow: hidden;
+}
+.lineage-node__toolslabel {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  flex: none;
+}
+/* A compact, card-scale chip — NOT the `.chip` component (that one is built for the
+   rails and is far too tall to sit inside a node). */
+.lineage-node__tool {
+  font-size: 0.63rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--border-strong, var(--border));
+  border-radius: 4px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 7.5rem;
+}
+.lineage-node__tool--more {
+  flex: none;
+  border-style: dashed;
+}
+.lineage-node__meta {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.62rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+/* The silent-drop warning: an App can declare skills that its structure gives the run
+   nowhere to apply. Advisory — it gates nothing. */
+.lineage-foldwarn {
+  margin: 0 0 0.5rem;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--border-strong, var(--border));
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-2);
 }
 
 .app-run-drawer__noinputs {
