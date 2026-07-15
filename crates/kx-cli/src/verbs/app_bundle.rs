@@ -388,6 +388,40 @@ fn unsatisfiable_todos(env: &AppEnvelope, bundle: &AppBundle) -> Vec<String> {
             !d.cas_refs.is_empty() && d.cas_refs.iter().all(|r| bundle.blobs.contains_key(r));
         if !travelled {
             todos.push(format!("dataset {:?} (re-ingest locally)", d.dataset_ref));
+            continue;
+        }
+        // It travelled — but "travelled" only implies "self-materializes" while it fits under
+        // the server's self-ingest ceiling. Above it, the gateway fail-soft SKIPS the ingest
+        // (`kx-gateway`'s `ensure_app_dataset`) and the App grounds on nothing — announced only
+        // by a `tracing::warn!` on a server, long after the author could act.
+        //
+        // So the doc above INVERTS here: omitting an over-ceiling dataset because "listing it
+        // would be a lie" is itself the lie. This is the one place the size is known while the
+        // user can still do something about it (split the corpus, or pre-ingest it on the
+        // target). `MAX_BUNDLE_CLOSURE_BYTES` cannot catch it — 512 MiB bounds the WHOLE
+        // closure, so a 200 MiB corpus sails through and then silently does not ground.
+        let bytes: u64 = d
+            .cas_refs
+            .iter()
+            .filter_map(|r| bundle.blobs.get(r))
+            .map(|b| b.len() as u64)
+            .sum();
+        if bytes > kx_app::MAX_APP_CORPUS_BYTES {
+            todos.push(format!(
+                "dataset {:?} carries {bytes} bytes — OVER the {} byte self-ingest ceiling, so \
+                 it will NOT materialize on first run (the App will ground on an existing \
+                 dataset of that name, or on nothing). Split the corpus or pre-ingest it.",
+                d.dataset_ref,
+                kx_app::MAX_APP_CORPUS_BYTES
+            ));
+        } else if d.cas_refs.len() > kx_app::MAX_APP_CORPUS_REFS {
+            todos.push(format!(
+                "dataset {:?} names {} refs — OVER the {} ref self-ingest ceiling, so it will \
+                 NOT materialize on first run. Split the corpus or pre-ingest it.",
+                d.dataset_ref,
+                d.cas_refs.len(),
+                kx_app::MAX_APP_CORPUS_REFS
+            ));
         }
     }
     todos
@@ -516,6 +550,61 @@ mod tests {
                 "dataset \"stranded\" (re-ingest locally)".to_string(),
                 "dataset \"bare\" (re-ingest locally)".to_string(),
             ]
+        );
+    }
+
+    /// …but "it travelled" only means "it self-materializes" while it FITS. Above the server's
+    /// self-ingest ceiling the gateway fail-soft SKIPS the ingest and the App grounds on
+    /// nothing — announced only by a `tracing::warn!` on a server, long after the author could
+    /// act. So for an over-ceiling corpus, staying silent (the case above) is the lie.
+    ///
+    /// `MAX_BUNDLE_CLOSURE_BYTES` (512 MiB, the WHOLE closure) cannot catch this: a corpus
+    /// between 64 MiB and 512 MiB exports perfectly cleanly and then never grounds. Export is
+    /// the only moment the size is known while the user can still split or pre-ingest it.
+    #[test]
+    fn a_travelled_corpus_over_the_self_ingest_ceiling_is_reported_at_export() {
+        let over = "cc".repeat(32);
+        let under = "dd".repeat(32);
+        let mut env = AppEnvelope::new("a", serde_json::json!({ "steps": [] }));
+        for (name, refs) in [
+            ("huge", vec![over.clone()]), // travelled but OVER the byte ceiling ⇒ reported
+            ("small", vec![under.clone()]), // travelled and fits ⇒ silent, as before
+        ] {
+            env.references.datasets.push(kx_app::DatasetRef {
+                dataset_ref: name.into(),
+                cas_refs: refs,
+            });
+        }
+        let mut bundle = AppBundle {
+            app_digest: String::new(),
+            source_digest: None,
+            envelope: Vec::new(),
+            blobs: BTreeMap::default(),
+        };
+        // One byte over is enough — the boundary is `>`, so exactly-at-ceiling stays silent.
+        // `try_from`, not `as`: an `as` cast silently truncates on a 32-bit target, which would
+        // turn this fixture into an UNDER-ceiling one and quietly invert the test into a green
+        // that proves the opposite. Panic loudly there instead (clippy's cast_possible_truncation
+        // caught this under CI's -D warnings).
+        let over_len = usize::try_from(kx_app::MAX_APP_CORPUS_BYTES)
+            .expect("the corpus ceiling must fit in usize on this target")
+            + 1;
+        bundle.blobs.insert(over, vec![b'x'; over_len]);
+        bundle.blobs.insert(under, b"body".to_vec());
+
+        let todos = unsatisfiable_todos(&env, &bundle);
+        assert_eq!(
+            todos.len(),
+            1,
+            "only the over-ceiling dataset is reported: {todos:?}"
+        );
+        assert!(
+            todos[0].starts_with("dataset \"huge\" carries"),
+            "{todos:?}"
+        );
+        assert!(
+            todos[0].contains("will NOT materialize on first run"),
+            "the warning must say what will HAPPEN, not just cite a number: {todos:?}"
         );
     }
 }

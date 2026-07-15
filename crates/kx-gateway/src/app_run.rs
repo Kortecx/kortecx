@@ -73,19 +73,18 @@ use kx_warrant::{SecretRef, SecretScope};
 
 use crate::provision::{party_tool_authority, skill_union_grants, DemoLibrary, HostWorkflowAuthor};
 
-/// Ceiling on the `cas_refs` ONE declared dataset may self-ingest
-/// (`T-RUNAPP-RAG-SELF-CONTAINED`). Mirrors the CLI's `MAX_BUNDLE_REFS`, which an App can
-/// otherwise sidestep: the bundle ceilings are CLIENT-side, and a 1 MiB envelope (the
-/// server's only App cap) still names thousands of 64-hex refs. Over-ceiling ⇒ fail-soft
-/// skip, never a refusal — the App simply grounds reference-existing.
-const MAX_APP_CORPUS_REFS: usize = 4096;
-
-/// Ceiling on the total corpus BYTES one declared dataset may self-ingest. The bound that
-/// matters: every byte is chunked and synchronously EMBEDDED on first run, so the cost is
-/// model-time, not disk. Well clear of any realistic text corpus (64 MiB of prose is
-/// millions of tokens) while keeping a hand-rolled envelope from turning one run into
-/// hours of embedding.
-const MAX_APP_CORPUS_BYTES: u64 = 64 * 1024 * 1024;
+/// The self-ingest ceilings (`T-RUNAPP-RAG-SELF-CONTAINED`) now live in `kx-app`, beside
+/// `DatasetRef`: they are properties of the ENVELOPE CONTRACT, not of this enforcement site.
+/// The CLI needs the SAME numbers to warn at EXPORT that a corpus will not self-ingest — the
+/// `tracing::warn!` below fires on a server long after the author could have acted — and a
+/// constant duplicated across two crates is a constant that drifts, leaving both sides
+/// confidently disagreeing about one question.
+///
+/// Enforcement here is unchanged: over-ceiling ⇒ fail-soft skip, never a refusal — the App
+/// simply grounds reference-existing. The ceilings exist because the bundle's own bounds are
+/// CLIENT-side and an App can sidestep them: a 1 MiB envelope (the server's only App cap) still
+/// names thousands of 64-hex refs.
+use kx_app::{MAX_APP_CORPUS_BYTES, MAX_APP_CORPUS_REFS};
 
 /// The narrow author-time content-PRESENCE check (the `instructions_ref`
 /// fail-closed gate). Blanket over any [`ContentStore`] so the host hands its
@@ -2742,6 +2741,66 @@ mod tests {
 
         let prompt = fold_and_steer(&host, &science(&corpus)).await.unwrap();
         assert!(ds.ingests().is_empty(), "over-ceiling corpus not ingested");
+        assert!(prompt.contains("[science]"), "{prompt}");
+    }
+
+    /// The BYTE ceiling — the ref ceiling's sibling, and the one this module's own doc calls
+    /// "the bound that matters": every byte is chunked and synchronously EMBEDDED on first run,
+    /// so an over-ceiling corpus costs model-TIME, not disk. `MAX_APP_CORPUS_REFS` cannot catch
+    /// it — a handful of huge blobs sails far under 4096 refs — so this check is the only thing
+    /// between a hand-rolled envelope and hours of embedding inside one run.
+    ///
+    /// It was UNTESTED until §2.395 while its ref sibling (above) and its UTF-8 sibling (below)
+    /// both had tests. That is the dangerous shape: all three fail-soft to the declared name, so
+    /// from the outside the three outcomes are indistinguishable — if this ceiling silently
+    /// became a no-op, not one other test would fail.
+    #[tokio::test]
+    async fn an_over_byte_ceiling_app_corpus_is_skipped() {
+        // The fixture size is PINNED, never derived from `MAX_APP_CORPUS_BYTES`. A test that
+        // sizes its input from the constant under test is not a detector: raising the constant
+        // also inflates the input, so the test dies ALLOCATING instead of failing its assertion
+        // — red either way, proving nothing. (The first cut of this test did exactly that:
+        // mutating the ceiling to `u64::MAX` panicked in `raw_vec`, not at the assert. Caught by
+        // mutation-testing the test itself — §2.395.)
+        //
+        // Pinning makes it a TWO-WAY detector:
+        //   • the ceiling VALUE moves      ⇒ the assert_eq below fires (a deliberate change must
+        //                                    be a deliberate edit here, with the cost re-thought);
+        //   • the ceiling CHECK disappears ⇒ the fixture self-ingests ⇒ `ingests()` is non-empty.
+        const PINNED_CEILING: u64 = 64 * 1024 * 1024;
+        assert_eq!(
+            MAX_APP_CORPUS_BYTES, PINNED_CEILING,
+            "the corpus byte ceiling moved — it bounds synchronous EMBEDDING time on first run, \
+             so re-examine that cost, then update PINNED_CEILING deliberately"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let ds = Arc::new(FakeDatasets::embedding(&["science"]));
+        let view: Arc<dyn DatasetView> = ds.clone();
+        let (host, store, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+
+        // Each half is just over CEILING/2, so NEITHER blob alone trips the ceiling and the sum
+        // does — pinning the check to the RUNNING TOTAL rather than to any single blob. The two
+        // must DIFFER: the store is content-addressed, so identical bytes dedup to one ref and
+        // the total would never reach the ceiling.
+        // `try_from`, not `as`: an `as` cast silently truncates on a 32-bit target, turning
+        // these into UNDER-ceiling blobs and inverting the test into a green that proves the
+        // opposite. Fail loudly there instead.
+        let half = usize::try_from(PINNED_CEILING / 2)
+            .expect("half the corpus ceiling must fit in usize on this target")
+            + 1;
+        let corpus = vec![
+            store.put(&vec![b'a'; half]).unwrap().to_hex(),
+            store.put(&vec![b'b'; half]).unwrap().to_hex(),
+        ];
+
+        let prompt = fold_and_steer(&host, &science(&corpus)).await.unwrap();
+        assert!(
+            ds.ingests().is_empty(),
+            "an over-byte-ceiling corpus must NOT self-ingest"
+        );
+        // Fail-soft, exactly like the ref/UTF-8 ceilings: the App still grounds on the declared
+        // dataset NAME rather than refusing the run.
         assert!(prompt.contains("[science]"), "{prompt}");
     }
 
