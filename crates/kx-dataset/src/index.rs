@@ -14,6 +14,7 @@
 //! same trait in a later gated step.
 
 use kx_content::ContentRef;
+use std::collections::HashMap;
 
 /// One retrieval result: a content ref and its similarity score (higher = closer).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -57,6 +58,11 @@ pub trait RetrievalIndex {
 #[derive(Default)]
 pub struct InMemoryRetrievalIndex {
     items: Vec<(ContentRef, Vec<f32>)>,
+    /// Ref -> its slot in `items`, so `insert` dedups in O(1) instead of
+    /// scanning `items`. Kept exactly in sync with `items` (every ref in
+    /// `items` has one entry here pointing at its index); it is purely an
+    /// acceleration structure and never alters iteration order or results.
+    positions: HashMap<ContentRef, usize>,
 }
 
 impl InMemoryRetrievalIndex {
@@ -91,9 +97,10 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 
 impl RetrievalIndex for InMemoryRetrievalIndex {
     fn insert(&mut self, id: ContentRef, vector: Vec<f32>) {
-        if let Some(slot) = self.items.iter_mut().find(|(existing, _)| *existing == id) {
-            slot.1 = vector;
+        if let Some(&slot) = self.positions.get(&id) {
+            self.items[slot].1 = vector;
         } else {
+            self.positions.insert(id, self.items.len());
             self.items.push((id, vector));
         }
     }

@@ -156,6 +156,37 @@ fn vector_of_returns_the_stored_vector() {
     assert_eq!(index.vector_of(&ContentRef::of(b"absent")), None);
 }
 
+// Correctness guard for the O(1) HashMap dedup: re-inserting the same ref must
+// overwrite in place (not grow the index) and preserve the exact query result /
+// ordering the brute-force index promised. Timing-free, so it lives here in the
+// default suite; the doubling-ratio scaling test is gated in `tests/scale.rs`.
+#[test]
+fn insert_dedup_overwrites_and_preserves_results() {
+    fn ref_n(i: u64) -> ContentRef {
+        let mut b = [0u8; 32];
+        b[..8].copy_from_slice(&i.to_le_bytes());
+        ContentRef::from_bytes(b)
+    }
+
+    let mut idx = InMemoryRetrievalIndex::new();
+    let a = ref_n(1);
+    let b = ref_n(2);
+    idx.insert(a, vec![1.0, 0.0]);
+    idx.insert(b, vec![0.0, 1.0]);
+    // Re-insert `a` with a new vector: must overwrite, not append.
+    idx.insert(a, vec![0.0, 1.0]);
+    assert_eq!(idx.len(), 2, "re-insert must dedup, not grow the index");
+    assert_eq!(idx.vector_of(&a), Some(vec![0.0, 1.0]));
+    assert_eq!(idx.vector_of(&b), Some(vec![0.0, 1.0]));
+    // Both now equal the query; deterministic tiebreak = ascending ref, so
+    // `a` (smaller bytes) precedes `b`.
+    let hits = idx.query(&[0.0, 1.0], 2);
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].id, a);
+    assert_eq!(hits[1].id, b);
+    assert!((hits[0].score - 1.0).abs() < 1e-6);
+}
+
 // ---- hybrid fusion (RRF) + diversity rerank (MMR) + index fingerprint ----
 
 use crate::fusion::{index_fingerprint, mmr_rerank, rrf_fuse};

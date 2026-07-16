@@ -301,3 +301,104 @@ fn concurrent_register_and_dispatch_do_not_deadlock() {
     let expected_bytes: Vec<u8> = vec![1u8 ^ 0xA5, 2u8 ^ 0xA5, 3u8 ^ 0xA5];
     assert_eq!(h.staged_ref, ContentRef::of(&expected_bytes));
 }
+
+/// A capability whose `invoke` announces it has entered the effect, then
+/// BLOCKS until the test releases it — a stand-in for a slow network effect
+/// held "in flight". Send + Sync (SyncSender<T: Send> is Sync; Mutex<Receiver>
+/// is Sync), satisfying the `Capability: Send + Sync` supertrait.
+struct SlowCapability {
+    name: ToolName,
+    version: ToolVersion,
+    patterns: Vec<EffectPattern>,
+    started: std::sync::mpsc::SyncSender<()>,
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl Capability for SlowCapability {
+    fn name(&self) -> &ToolName {
+        &self.name
+    }
+    fn version(&self) -> &ToolVersion {
+        &self.version
+    }
+    fn supported_patterns(&self) -> &[EffectPattern] {
+        &self.patterns
+    }
+    fn invoke(&self, _request: &EffectRequest) -> Result<Vec<u8>, CapabilityFailureReason> {
+        // Announce the effect is in flight, then park until released.
+        let _ = self.started.send(());
+        let _ = self.release.lock().unwrap().recv();
+        Ok(vec![0xEF])
+    }
+}
+
+/// SN-4 lock hygiene (local.rs §4): an in-flight capability effect must NOT
+/// hold the registry read lock, so `register_capability` (which needs the
+/// write lock) can proceed promptly while a slow effect is still running.
+///
+/// RED on the old code: `dispatch` holds the read guard across `cap.invoke`,
+/// so the pending write lock blocks until the effect is released and the
+/// `recv_timeout` below expires. GREEN after the fix: the guard is dropped
+/// before `invoke`, so the registration completes immediately.
+#[test]
+fn register_is_not_blocked_by_in_flight_invoke() {
+    let name = ToolName("slow".into());
+    let version = ToolVersion("1".into());
+    let mote = Arc::new(mote_with_tool(&name, &version));
+    let warrant = Arc::new(permissive_warrant_with_grant(ToolGrant {
+        tool_id: name.clone(),
+        tool_version: version.clone(),
+    }));
+    let broker = Arc::new(LocalCapabilityBroker::new(InMemoryContentStore::new()));
+
+    let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    broker.register_capability(Box::new(SlowCapability {
+        name: name.clone(),
+        version: version.clone(),
+        patterns: vec![EffectPattern::StageThenCommit],
+        started: started_tx,
+        release: std::sync::Mutex::new(release_rx),
+    }));
+
+    // Thread A: dispatch — its invoke() parks (in flight) until we release it.
+    let dispatcher = {
+        let b = Arc::clone(&broker);
+        let m = Arc::clone(&mote);
+        let w = Arc::clone(&warrant);
+        let n = name.clone();
+        thread::spawn(move || b.dispatch(&m, &w, &n, request(vec![1])))
+    };
+
+    // Wait until the effect is confirmed IN FLIGHT.
+    started_rx.recv().expect("invoke should enter the effect");
+
+    // Thread B: register a DIFFERENT capability (needs the WRITE lock).
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let register_broker = Arc::clone(&broker);
+    thread::spawn(move || {
+        register_broker.register_capability(Box::new(XorCapability {
+            name: ToolName("late".into()),
+            version: ToolVersion("1".into()),
+            patterns: vec![EffectPattern::StageThenCommit],
+        }));
+        let _ = done_tx.send(());
+    });
+
+    // The registration MUST finish while the slow effect is still in flight.
+    // Buggy code (read guard held across invoke) blocks the write lock here
+    // until the effect is released → this times out (RED).
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect(
+            "register_capability must complete while a slow effect is in flight \
+             (effects must not run under the registry lock)",
+        );
+
+    // Release the in-flight effect and let dispatch finish cleanly.
+    release_tx.send(()).expect("release the effect");
+    dispatcher
+        .join()
+        .expect("dispatcher joined")
+        .expect("dispatch ok");
+}

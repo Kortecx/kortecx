@@ -439,7 +439,7 @@ mod m7_2 {
 
     #[test]
     fn most_permissive_selects_widest_real_warrant() {
-        assert!(most_permissive(Vec::new()).is_none());
+        assert!(most_permissive(&[]).is_none());
 
         let tight = GrantWarrant::new(
             GrantId::from_bytes([1u8; 32]),
@@ -452,10 +452,44 @@ mod m7_2 {
             warrant_calls(50),
         );
         // Either input order selects the wider (real, never synthesized) warrant.
-        let w1 = most_permissive(vec![tight.clone(), wide.clone()]).unwrap();
-        let w2 = most_permissive(vec![wide, tight]).unwrap();
+        let w1 = most_permissive(&[tight.clone(), wide.clone()]).unwrap();
+        let w2 = most_permissive(&[wide, tight]).unwrap();
         assert_eq!(w1.model_route.max_calls, 50);
         assert_eq!(w1, w2, "selection is order-independent");
+    }
+
+    #[test]
+    fn most_permissive_incomparable_maxima_picks_smallest_leaf() {
+        // Three chains: A ⊆ C strictly (same executor axis, A tighter on
+        // max_calls), and B incomparable to BOTH (differs only on the executor
+        // child-set axis). The true maximal set is {B, C}; the documented winner
+        // is the SMALLEST-leaf maximum, i.e. B. A greedy single pass wrongly
+        // returns C: it retains the smaller-leaf A until C dominates A, discarding
+        // B (which was skipped as merely incomparable to A). Regression guard.
+        let mut wa = warrant_calls(2);
+        wa.executor_class = kx_warrant::ExecutorClass::Bwrap;
+        let mut wb = warrant_calls(5);
+        wb.executor_class = kx_warrant::ExecutorClass::OciDaemon;
+        let mut wc = warrant_calls(50);
+        wc.executor_class = kx_warrant::ExecutorClass::Bwrap;
+
+        let use_ = CatalogActionSet::allow([CatalogAction::Use]);
+        let a = GrantWarrant::new(GrantId::from_bytes([1u8; 32]), use_.clone(), wa);
+        let b = GrantWarrant::new(GrantId::from_bytes([2u8; 32]), use_.clone(), wb.clone());
+        let c = GrantWarrant::new(GrantId::from_bytes([3u8; 32]), use_, wc);
+
+        // Order-independent: every permutation yields the smallest-leaf maximum B.
+        for perm in [
+            vec![a.clone(), b.clone(), c.clone()],
+            vec![c.clone(), b.clone(), a.clone()],
+            vec![b.clone(), c.clone(), a.clone()],
+        ] {
+            let got = most_permissive(&perm).unwrap();
+            assert_eq!(
+                got, wb,
+                "documented tie-break = smallest-leaf maximum (B), not the greedy C"
+            );
+        }
     }
 
     // -- A small end-to-end + the multi-grant regression -----------------------
