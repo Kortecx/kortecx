@@ -1829,6 +1829,7 @@ dependencies = [
  "kx-worker",
  "kx-workflow",
  "nix 0.29.0",
+ "proptest",
  "rcgen",
  "rusqlite",
  "serde",

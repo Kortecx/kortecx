@@ -74,6 +74,32 @@ pub struct DatasetRef {
     pub cas_refs: Vec<String>,
 }
 
+/// Ceiling on the `cas_refs` one declared [`DatasetRef`] may carry for SELF-INGEST.
+///
+/// Lives here, beside [`DatasetRef`], because it is a property of the ENVELOPE CONTRACT —
+/// not of whoever happens to enforce it. Two crates need the same answer: the gateway
+/// enforces it on first run, and the CLI must warn at EXPORT that a corpus will not
+/// self-ingest. A constant duplicated in both is a constant that drifts, and the two would
+/// then disagree about the same question while both looking right.
+pub const MAX_APP_CORPUS_REFS: usize = 4096;
+
+/// Ceiling on the total corpus BYTES one declared [`DatasetRef`] may SELF-INGEST.
+///
+/// **The bound that matters:** every byte is chunked and synchronously EMBEDDED on first run,
+/// so the cost is model-TIME, not disk. 64 MiB of prose is millions of tokens — well clear of
+/// any realistic text corpus, while keeping a hand-rolled envelope from turning one run into
+/// hours of embedding.
+///
+/// **This is NOT the bundle ceiling.** `kx-cli`'s `MAX_BUNDLE_CLOSURE_BYTES` (512 MiB) bounds
+/// the WHOLE closure an export may carry — prompts, artifacts, attachments, every dataset. The
+/// two are different scopes and 512 > 64 is not a contradiction: a bundle legitimately holds
+/// far more than any single dataset's embeddable corpus. What they DO imply together is a real
+/// hazard, which is why this constant is shared rather than duplicated: a corpus between 64 MiB
+/// and 512 MiB **exports cleanly and then silently does not self-ingest**, leaving the App to
+/// ground on nothing. The export path uses this constant to say so at authoring time, when the
+/// user can still act — instead of leaving a `tracing::warn!` in a server log nobody reads.
+pub const MAX_APP_CORPUS_BYTES: u64 = 64 * 1024 * 1024;
+
 /// A named text artifact (prompt / rule / memory) stored in the content store.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtifactRef {

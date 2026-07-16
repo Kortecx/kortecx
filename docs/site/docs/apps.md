@@ -304,8 +304,32 @@ wishes are intersected server-side (`wish ∩ your grants ∩ fireable`) — a w
 authority. On a gateway built without the `hnsw` retrieval seam a declared dataset
 honest-degrades to an *ungrounded* run rather than erroring. In the **Apps** console, the
 **New App** form exposes a "Ground on dataset" chip + a guidance-rule field over these same
-rails. *(Today grounding uses the pre-ingested named dataset; carrying a corpus inside the
-envelope via `cas_refs` is a planned follow-up.)*
+rails.
+
+### Self-contained grounding (a corpus that travels)
+
+A dataset reference may **carry its own corpus**: `references.datasets[].cas_refs` names the
+content-store blobs the dataset spans, and `kx app export --bundle --with-data` ships those
+blobs inside the bundle. On the importing side the corpus **materializes itself on first
+run** — so a shared App grounds on the bytes it carries, with *none* of the author's
+datasets present. Nothing to pre-ingest, no `kx datasets ingest` chore.
+
+Details worth knowing:
+
+- **It is automatic.** The first `RunApp` ingests the carried corpus; later runs reuse the
+  index. There is no import flag, and any App already in your catalog gains this.
+- **The physical dataset is scoped**, named `<declared>.app-<hash>` — keyed on the corpus
+  bytes and on the server's live embed model. This keeps a carried corpus from silently
+  merging into a same-named local dataset of yours. It is *collision avoidance, not an
+  access boundary*: a hosted OSS server is single-tenant, and any caller can already read
+  any dataset. Swapping the embed model re-derives the name, so the App re-ingests rather
+  than querying an index built in a different embedding space.
+- **Text only.** The corpus is embedded server-side, which needs UTF-8 text; a non-text
+  blob is skipped.
+- **It degrades, never breaks.** Export *without* `--with-data` still records `cas_refs`
+  but ships no blobs; such an App falls back to grounding on a pre-ingested dataset of the
+  declared name — the behavior described above — and `kx app import` tells you which
+  datasets still need one.
 
 ## Permissions & the capability manifest
 

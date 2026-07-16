@@ -219,7 +219,7 @@ pub(super) async fn import_bundle(
         "imported {handle} ({} blob(s), {deduped} already present)",
         bundle.blob_count()
     );
-    report_unsatisfiable(&env);
+    report_unsatisfiable(&env, &bundle);
     Ok(())
 }
 
@@ -350,7 +350,27 @@ fn review_and_confirm(env: &AppEnvelope, bundle: &AppBundle, yes: bool) -> Resul
 
 /// Report references that don't travel (connections/tools/datasets) — the importer
 /// re-registers them locally; the App fails closed at run until then (SOFT preflight).
-fn report_unsatisfiable(env: &AppEnvelope) {
+///
+/// A dataset whose corpus TRAVELLED in the bundle is omitted: it is self-contained and
+/// materializes itself on first run (`T-RUNAPP-RAG-SELF-CONTAINED`), so listing it as a
+/// re-ingest chore would be a lie. A dataset naming `cas_refs` whose blobs did NOT travel
+/// (an export without `--with-data`) still needs a local re-ingest, and still says so.
+fn report_unsatisfiable(env: &AppEnvelope, bundle: &AppBundle) {
+    let todos = unsatisfiable_todos(env, bundle);
+    if !todos.is_empty() {
+        println!(
+            "\nThis App references integrations you may need to register locally \
+             (it fails closed at run until then):"
+        );
+        for t in &todos {
+            println!("  - {t}");
+        }
+    }
+}
+
+/// The pure half of [`report_unsatisfiable`] — the chores an import leaves behind, in
+/// declaration order. Pure ⇒ unit-testable without capturing stdout (Rule 5.2).
+fn unsatisfiable_todos(env: &AppEnvelope, bundle: &AppBundle) -> Vec<String> {
     let mut todos = Vec::new();
     for c in &env.references.connections {
         if !c.credential_ref.is_empty() {
@@ -364,17 +384,47 @@ fn report_unsatisfiable(env: &AppEnvelope) {
         todos.push(format!("tool {}@{}", t.tool_id, t.tool_version));
     }
     for d in &env.references.datasets {
-        todos.push(format!("dataset {:?} (re-ingest locally)", d.dataset_ref));
-    }
-    if !todos.is_empty() {
-        println!(
-            "\nThis App references integrations you may need to register locally \
-             (it fails closed at run until then):"
-        );
-        for t in &todos {
-            println!("  - {t}");
+        let travelled =
+            !d.cas_refs.is_empty() && d.cas_refs.iter().all(|r| bundle.blobs.contains_key(r));
+        if !travelled {
+            todos.push(format!("dataset {:?} (re-ingest locally)", d.dataset_ref));
+            continue;
+        }
+        // It travelled — but "travelled" only implies "self-materializes" while it fits under
+        // the server's self-ingest ceiling. Above it, the gateway fail-soft SKIPS the ingest
+        // (`kx-gateway`'s `ensure_app_dataset`) and the App grounds on nothing — announced only
+        // by a `tracing::warn!` on a server, long after the author could act.
+        //
+        // So the doc above INVERTS here: omitting an over-ceiling dataset because "listing it
+        // would be a lie" is itself the lie. This is the one place the size is known while the
+        // user can still do something about it (split the corpus, or pre-ingest it on the
+        // target). `MAX_BUNDLE_CLOSURE_BYTES` cannot catch it — 512 MiB bounds the WHOLE
+        // closure, so a 200 MiB corpus sails through and then silently does not ground.
+        let bytes: u64 = d
+            .cas_refs
+            .iter()
+            .filter_map(|r| bundle.blobs.get(r))
+            .map(|b| b.len() as u64)
+            .sum();
+        if bytes > kx_app::MAX_APP_CORPUS_BYTES {
+            todos.push(format!(
+                "dataset {:?} carries {bytes} bytes — OVER the {} byte self-ingest ceiling, so \
+                 it will NOT materialize on first run (the App will ground on an existing \
+                 dataset of that name, or on nothing). Split the corpus or pre-ingest it.",
+                d.dataset_ref,
+                kx_app::MAX_APP_CORPUS_BYTES
+            ));
+        } else if d.cas_refs.len() > kx_app::MAX_APP_CORPUS_REFS {
+            todos.push(format!(
+                "dataset {:?} names {} refs — OVER the {} ref self-ingest ceiling, so it will \
+                 NOT materialize on first run. Split the corpus or pre-ingest it.",
+                d.dataset_ref,
+                d.cas_refs.len(),
+                kx_app::MAX_APP_CORPUS_REFS
+            ));
         }
     }
+    todos
 }
 
 /// Refuse to export blobs whose bodies look like they carry a secret (bundle blob
@@ -465,5 +515,96 @@ mod tests {
         let r = ContentRef([0xabu8; 32]);
         assert_eq!(ref_hex(&r.0).unwrap(), r.to_hex());
         assert!(ref_hex(&[0u8; 16]).is_err());
+    }
+
+    /// A dataset whose corpus TRAVELLED is self-contained — it self-ingests on first run,
+    /// so telling the importer to "re-ingest locally" would be a lie. Everything that did
+    /// NOT travel still says so.
+    #[test]
+    fn a_travelled_corpus_is_not_reported_as_a_re_ingest_chore() {
+        let carried = "aa".repeat(32);
+        let stranded = "bb".repeat(32);
+        let mut env = AppEnvelope::new("a", serde_json::json!({ "steps": [] }));
+        for (name, refs) in [
+            ("carried", vec![carried.clone()]),   // travelled ⇒ omitted
+            ("stranded", vec![stranded.clone()]), // named, never shipped ⇒ listed
+            ("bare", vec![]),                     // reference-existing ⇒ listed
+        ] {
+            env.references.datasets.push(kx_app::DatasetRef {
+                dataset_ref: name.into(),
+                cas_refs: refs,
+            });
+        }
+        let mut bundle = AppBundle {
+            app_digest: String::new(),
+            source_digest: None,
+            envelope: Vec::new(),
+            blobs: BTreeMap::default(),
+        };
+        bundle.blobs.insert(carried, b"body".to_vec());
+
+        let todos = unsatisfiable_todos(&env, &bundle);
+        assert_eq!(
+            todos,
+            vec![
+                "dataset \"stranded\" (re-ingest locally)".to_string(),
+                "dataset \"bare\" (re-ingest locally)".to_string(),
+            ]
+        );
+    }
+
+    /// …but "it travelled" only means "it self-materializes" while it FITS. Above the server's
+    /// self-ingest ceiling the gateway fail-soft SKIPS the ingest and the App grounds on
+    /// nothing — announced only by a `tracing::warn!` on a server, long after the author could
+    /// act. So for an over-ceiling corpus, staying silent (the case above) is the lie.
+    ///
+    /// `MAX_BUNDLE_CLOSURE_BYTES` (512 MiB, the WHOLE closure) cannot catch this: a corpus
+    /// between 64 MiB and 512 MiB exports perfectly cleanly and then never grounds. Export is
+    /// the only moment the size is known while the user can still split or pre-ingest it.
+    #[test]
+    fn a_travelled_corpus_over_the_self_ingest_ceiling_is_reported_at_export() {
+        let over = "cc".repeat(32);
+        let under = "dd".repeat(32);
+        let mut env = AppEnvelope::new("a", serde_json::json!({ "steps": [] }));
+        for (name, refs) in [
+            ("huge", vec![over.clone()]), // travelled but OVER the byte ceiling ⇒ reported
+            ("small", vec![under.clone()]), // travelled and fits ⇒ silent, as before
+        ] {
+            env.references.datasets.push(kx_app::DatasetRef {
+                dataset_ref: name.into(),
+                cas_refs: refs,
+            });
+        }
+        let mut bundle = AppBundle {
+            app_digest: String::new(),
+            source_digest: None,
+            envelope: Vec::new(),
+            blobs: BTreeMap::default(),
+        };
+        // One byte over is enough — the boundary is `>`, so exactly-at-ceiling stays silent.
+        // `try_from`, not `as`: an `as` cast silently truncates on a 32-bit target, which would
+        // turn this fixture into an UNDER-ceiling one and quietly invert the test into a green
+        // that proves the opposite. Panic loudly there instead (clippy's cast_possible_truncation
+        // caught this under CI's -D warnings).
+        let over_len = usize::try_from(kx_app::MAX_APP_CORPUS_BYTES)
+            .expect("the corpus ceiling must fit in usize on this target")
+            + 1;
+        bundle.blobs.insert(over, vec![b'x'; over_len]);
+        bundle.blobs.insert(under, b"body".to_vec());
+
+        let todos = unsatisfiable_todos(&env, &bundle);
+        assert_eq!(
+            todos.len(),
+            1,
+            "only the over-ceiling dataset is reported: {todos:?}"
+        );
+        assert!(
+            todos[0].starts_with("dataset \"huge\" carries"),
+            "{todos:?}"
+        );
+        assert!(
+            todos[0].contains("will NOT materialize on first run"),
+            "the warning must say what will HAPPEN, not just cite a number: {todos:?}"
+        );
     }
 }

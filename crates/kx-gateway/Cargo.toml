@@ -286,6 +286,10 @@ keyring = { workspace = true, features = ["linux-native"] }
 keyring = { workspace = true, features = ["windows-native"] }
 
 [dev-dependencies]
+# Pins the REAL `validate_dataset_name` against `app_dataset_scoped_name`'s totality
+# over the arbitrary-input space. gateway-core can only assert a RESTATEMENT of that
+# contract (the crate dep runs host→core, never back), so the binding test lives here.
+proptest = { workspace = true }
 tempfile = { workspace = true }
 tokio    = { workspace = true, features = ["time"] }
 # Portable-App bundle codec — the export→import round-trip e2e (app_catalog_e2e).
