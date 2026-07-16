@@ -1,0 +1,105 @@
+name: Advance the front-running PR
+
+# WHY THIS EXISTS
+#
+# `main` requires branches to be up to date before merging. That is a strong guarantee — a pull
+# request can only land after it has been rebuilt on the exact `main` it will land on, and all
+# required checks have passed against that tree. Nothing untested reaches `main`.
+#
+# The cost is latency, not safety. Every time `main` moves, every approved-and-waiting PR goes out
+# of date and needs someone to press "Update branch" before its checks re-run. On a day with a few
+# merges that is most of the wall-clock between "approved" and "landed", and none of it is thinking
+# time.
+#
+# This workflow presses that button. When `main` moves it picks the SINGLE front-running pull
+# request — the oldest one that is approved, has auto-merge armed, and is behind `main` — and
+# updates it from the base. Its checks re-run against the new `main`; when they pass, auto-merge
+# lands it; that push fires this workflow again and the next PR advances. One at a time, in order,
+# with no human in the loop after the review.
+#
+# WHY EXACTLY ONE
+#
+# Updating every out-of-date PR would multiply CI across the whole fleet on every merge, and all but
+# one of those runs would be thrown away the moment the front-runner lands and invalidates them
+# again. Serial is not a limitation here — it is the point. The one-at-a-time discipline is what
+# keeps total CI proportional to merges instead of to (merges x open PRs).
+#
+# WHAT THIS DOES NOT WEAKEN
+#
+# Nothing. Updating a branch from its base does not dismiss an approving review (GitHub only
+# dismisses on a push that changes the PR's own content), so the human review gate is untouched:
+# every merge still needs all required checks green plus a non-author approval. This workflow cannot
+# merge anything and cannot approve anything — it only presses "Update branch" on a PR a human has
+# already approved. Auto-merge, which the author arms, is what finally lands it, and auto-merge
+# honours every branch-protection requirement.
+#
+# SAFETY PROPERTIES
+#   • `expected_head_sha` — if the PR head moves between our read and our write, GitHub returns 422
+#     and we skip rather than clobber someone's push.
+#   • drafts, conflicted PRs, and PRs without auto-merge are skipped, not retried.
+#   • it never force-pushes and never rewrites history; the update API creates an ordinary merge
+#     commit from the base.
+#   • a failure here is always safe: nothing is merged, and the PR simply waits for a human to
+#     press the button, exactly as today.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Only what is needed: read the repo, and update a pull request branch.
+permissions:
+  contents: read
+  pull-requests: write
+
+# One advance at a time. If two merges land close together, the second run waits rather than racing
+# the first — and never cancels it, because a cancelled advance would strand the front-runner.
+concurrency:
+  group: advance-front-runner
+  cancel-in-progress: false
+
+jobs:
+  advance:
+    name: advance the front-running PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update the oldest approved, auto-merge-armed PR that is behind main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          # The front-runner is the OLDEST such PR: oldest-first is the only ordering that cannot
+          # starve a PR, and it matches the order a merge queue would have used.
+          prs="$(gh pr list --repo "$REPO" --state open --base main \
+                   --json number,createdAt,isDraft,mergeable,mergeStateStatus,reviewDecision,autoMergeRequest,headRefOid \
+                   --jq 'map(select(
+                           .isDraft == false
+                           and .reviewDecision == "APPROVED"
+                           and .autoMergeRequest != null
+                           and .mergeStateStatus == "BEHIND"
+                         )) | sort_by(.createdAt)')"
+
+          count="$(printf '%s' "$prs" | jq 'length')"
+          if [ "${count:-0}" -eq 0 ]; then
+            echo "No PR is waiting to advance: none is simultaneously approved, auto-merge-armed, and behind main."
+            echo "Nothing to do — this is the normal state."
+            exit 0
+          fi
+
+          num="$(printf '%s' "$prs" | jq -r '.[0].number')"
+          sha="$(printf '%s' "$prs" | jq -r '.[0].headRefOid')"
+          echo "Front-runner: #$num (head $sha). $count PR(s) are waiting; advancing ONLY the oldest."
+          echo "The rest stay untouched — updating them all would multiply CI and be discarded anyway."
+
+          # `expected_head_sha` makes this a compare-and-swap: if the author pushed between our read
+          # and this write, GitHub refuses (422) and we leave their work alone.
+          if gh api --method PUT "repos/$REPO/pulls/$num/update-branch" \
+               -f expected_head_sha="$sha" --silent 2>/tmp/upd.err; then
+            echo "Updated #$num from main. Its checks will re-run; auto-merge lands it when they pass."
+          else
+            echo "Did not update #$num — leaving it for a human. Reason:"
+            sed 's/^/  /' /tmp/upd.err | head -5
+            echo "This is not a failure: the PR simply waits, exactly as it would without this workflow."
+          fi

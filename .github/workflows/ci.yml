@@ -12,6 +12,21 @@ on:
   merge_group:
   workflow_dispatch:
 
+# Cancel a PR's in-flight run when a newer commit supersedes it. "Require branches to be up to date
+# before merging" means every PR is re-pushed onto the latest main before it can land, so on a busy
+# day the same PR is tested several times over — and each superseded run is testing a sha that can
+# now never merge. Cancelling those is free: their result was unusable either way.
+#
+# `cancel-in-progress` is deliberately PULL-REQUEST-ONLY:
+#   • push:main   — main's run IS the branch's recorded check history; cancelling it would leave
+#                   commits on the default branch with no result.
+#   • merge_group — a queue entry's run IS the merge gate; cancelling it would drop the entry.
+# Both run to completion. The group key falls back to `github.ref` so those events get one group per
+# ref instead of sharing (and cancelling) one another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
