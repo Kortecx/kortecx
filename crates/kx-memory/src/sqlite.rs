@@ -535,9 +535,16 @@ impl MemoryStore for SqliteMemoryStore {
                     )));
                 }
             }
+            // Over-fetch by the tombstone count so lingering forgotten/decayed
+            // index vectors (their content is dropped, but the vector survives
+            // until the next cold rebuild) cannot crowd live hits out of the
+            // top-k: recall returns min(k, live), never fewer. The tombstone
+            // count is exactly the index/content-map size delta (they are
+            // inserted in lockstep; only content is removed on forget/decay).
+            let over_k = k.saturating_add(state.index.len().saturating_sub(state.content.len()));
             state
                 .index
-                .query(query_vec, k)
+                .query(query_vec, over_k)
                 .into_iter()
                 .filter_map(|h| {
                     // Skip a forgotten OR decayed memory (its index vector lingers
@@ -549,6 +556,7 @@ impl MemoryStore for SqliteMemoryStore {
                         score: h.score,
                     })
                 })
+                .take(k)
                 .collect()
         };
         // Salience (RC5b): bump `access_count` / `last_accessed_ms` for the recalled

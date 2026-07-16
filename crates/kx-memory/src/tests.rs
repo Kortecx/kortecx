@@ -631,3 +631,40 @@ fn decay_all_sweeps_every_namespace() {
     assert!(s.list("mem::a", None, 100, false).unwrap().is_empty());
     assert!(s.list("mem::b", None, 100, false).unwrap().is_empty());
 }
+
+#[test]
+fn recall_returns_min_k_live_when_a_tombstone_crowds_the_topk() {
+    let s = SqliteMemoryStore::open_ephemeral().unwrap();
+    // Three live memories with orthogonal vectors.
+    s.store(req(NS, b"apple is a fruit", &[1.0, 0.0, 0.0]))
+        .unwrap();
+    s.store(req(NS, b"banana is yellow", &[0.0, 1.0, 0.0]))
+        .unwrap();
+    s.store(req(NS, b"cherry is red", &[0.0, 0.0, 1.0]))
+        .unwrap();
+
+    // Forget the memory that ranks FIRST for the query below. Its index vector
+    // lingers as a tombstone until the next cold rebuild; two live memories
+    // (banana, cherry) remain.
+    assert!(s.forget(NS, &memory_id(b"apple is a fruit")).unwrap());
+
+    // Query similarity order: apple (gone) > banana > cherry.
+    let hits = s.recall(NS, &[0.95, 0.90, 0.05], 2, "fp-a").unwrap();
+
+    // min(k, live) = min(2, 2) = 2. TODAY this is 1: query(k=2) returns
+    // [apple, banana]; apple is a tombstone and is dropped, leaving only
+    // banana. After the over-fetch fix it returns [banana, cherry].
+    assert_eq!(
+        hits.len(),
+        2,
+        "recall must return min(k, live) live memories, not fewer, when a \
+         tombstone crowds the top-k"
+    );
+    let got: Vec<&[u8]> = hits.iter().map(|h| h.content.as_slice()).collect();
+    assert!(got.contains(&b"banana is yellow".as_slice()));
+    assert!(got.contains(&b"cherry is red".as_slice()));
+    assert!(
+        !got.contains(&b"apple is a fruit".as_slice()),
+        "a forgotten memory is never surfaced"
+    );
+}
