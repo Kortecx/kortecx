@@ -275,13 +275,13 @@ impl Journal for SqliteJournal {
             })?
             .collect::<Result<_, _>>()?;
         // Eagerly collect to release the SQLite statement lock before returning.
+        // A corrupt/truncated on-disk entry surfaces as a typed `JournalError::Decode`
+        // (fail-closed), mirroring `ReplayJournal::read_entries_by_seq`, rather than
+        // panicking the read/recovery path.
         let decoded: Vec<JournalEntry> = rows
             .into_iter()
-            .map(|(b, dh)| {
-                decode_entry_with_def_hash(&b, vec_to_mote_def_hash(dh))
-                    .expect("on-disk entry decodes")
-            })
-            .collect();
+            .map(|(b, dh)| decode_entry_with_def_hash(&b, vec_to_mote_def_hash(dh)))
+            .collect::<Result<_, _>>()?;
         Ok(Box::new(decoded.into_iter()))
     }
 
@@ -291,18 +291,17 @@ impl Journal for SqliteJournal {
         let conn = self.conn.lock().expect("poisoned mutex");
         let mut stmt =
             conn.prepare("SELECT entry_bytes FROM entries WHERE kind = ?1 ORDER BY seq ASC")?;
-        let entries: Vec<JournalEntry> = stmt
-            .query_map(params![KIND_COMMITTED as i64], |r| {
-                let bytes: Vec<u8> = r.get(0)?;
-                Ok(bytes)
-            })?
-            .filter_map(Result::ok)
+        let rows: Vec<Vec<u8>> = stmt
+            .query_map(params![KIND_COMMITTED as i64], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        let entries: Vec<JournalEntry> = rows
+            .into_iter()
             .map(|bytes| {
                 // mote_def_hash is irrelevant for ref enumeration; pass zeros.
+                // A corrupt entry is a typed `JournalError::Decode`, not a panic.
                 decode_entry_with_def_hash(&bytes, MoteDefHash::from_bytes([0u8; 32]))
-                    .expect("on-disk entry decodes")
             })
-            .collect();
+            .collect::<Result<_, _>>()?;
         let refs: Vec<ContentRef> = entries
             .into_iter()
             .filter_map(|e| match e {
@@ -334,11 +333,8 @@ impl Journal for SqliteJournal {
             .collect::<Result<_, _>>()?;
         let decoded: Vec<JournalEntry> = rows
             .into_iter()
-            .map(|(b, dh)| {
-                decode_entry_with_def_hash(&b, vec_to_mote_def_hash(dh))
-                    .expect("on-disk entry decodes")
-            })
-            .collect();
+            .map(|(b, dh)| decode_entry_with_def_hash(&b, vec_to_mote_def_hash(dh)))
+            .collect::<Result<_, _>>()?;
         Ok(Box::new(decoded.into_iter()))
     }
 
@@ -844,5 +840,47 @@ fn remove_sqlite_family(path: &Path) {
         let mut sibling = path.as_os_str().to_owned();
         sibling.push(suffix);
         let _ = std::fs::remove_file(PathBuf::from(sibling));
+    }
+}
+
+#[cfg(test)]
+mod decode_error_tests {
+    use super::*;
+    use crate::entry::KIND_COMMITTED;
+    use crate::Journal;
+
+    /// A corrupt / truncated `entry_bytes` on the current-version bulk read path must
+    /// surface as a typed `JournalError::Decode`, never panic the process.
+    #[test]
+    fn read_entries_by_seq_corrupt_returns_decode_error() {
+        let journal = SqliteJournal::open_in_memory().unwrap();
+
+        // Inject a row whose entry_bytes cannot decode (shorter than a header).
+        {
+            let conn = journal.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO entries
+                     (seq, kind, mote_id, idempotency_key, nondeterminism, mote_def_hash, entry_bytes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    1_i64,
+                    KIND_COMMITTED as i64,
+                    vec![0u8; 32],
+                    vec![0u8; 32],
+                    0_i64,
+                    Some(vec![0u8; 32]),
+                    vec![0xFFu8; 3], // garbage: shorter than HEADER_LEN => DecodeError
+                ],
+            )
+            .unwrap();
+        }
+
+        // Today: the `.expect("on-disk entry decodes")` panics here (test = RED).
+        // After the patch: iterator construction returns Err(JournalError::Decode) (GREEN).
+        match journal.read_entries_by_seq(0..10) {
+            Err(JournalError::Decode(_)) => {}
+            Err(other) => panic!("expected JournalError::Decode, got {other:?}"),
+            Ok(_) => panic!("expected JournalError::Decode, got Ok(iterator)"),
+        };
     }
 }

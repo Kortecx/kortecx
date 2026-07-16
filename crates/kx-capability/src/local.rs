@@ -2,7 +2,7 @@
 //! [`crate::CapabilityBroker`]. In-process; no sandboxing; single-tenant.
 
 use std::collections::BTreeMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use kx_content::ContentStore;
 use kx_mote::{Mote, ToolName};
@@ -50,15 +50,19 @@ use crate::request::{BrokerHandle, EffectRequest};
 ///    `CapabilityBroker` impl in tests/), `StageWriteFailed` (CAP-11
 ///    fixture using a failing content-store impl).
 /// 4. The single-writer registry (the `RwLock` around the BTreeMap)
-///    holds the write lock only for the duration of a `BTreeMap::insert`;
-///    invocations and probes hold the READ lock for as briefly as
-///    possible (drop before any I/O — see `dispatch` and
-///    `probe_readback`). This composes with the workspace's
+///    holds the write lock only for the duration of a `BTreeMap::insert`.
+///    `dispatch`/`probe_readback`/`compensate` hold the READ lock ONLY
+///    long enough to clone the `Arc<dyn Capability>` handle out of the
+///    map; the guard is dropped BEFORE the capability effect
+///    (`invoke`/`probe`/`compensate`, which may perform network I/O) and
+///    before staging. External effects thus never run under the registry
+///    lock, so a stream of in-flight effects cannot delay
+///    `register_capability`. This composes with the workspace's
 ///    concurrency-test discipline (SN-4 v2 #6) which the integration
 ///    tests exercise.
 pub struct LocalCapabilityBroker<S: ContentStore + Send + Sync> {
     pub(crate) store: S,
-    capabilities: RwLock<BTreeMap<ToolName, Box<dyn Capability>>>,
+    capabilities: RwLock<BTreeMap<ToolName, Arc<dyn Capability>>>,
 }
 
 impl<S: ContentStore + Send + Sync> std::fmt::Debug for LocalCapabilityBroker<S> {
@@ -103,7 +107,7 @@ impl<S: ContentStore + Send + Sync> LocalCapabilityBroker<S> {
             .capabilities
             .write()
             .expect("RwLock poisoned (prior registration panicked)");
-        guard.insert(name, capability);
+        guard.insert(name, Arc::from(capability));
     }
 
     /// Number of currently-registered capabilities (useful for tests and
@@ -148,13 +152,13 @@ impl<S: ContentStore + Send + Sync> LocalCapabilityBroker<S> {
     /// Associated function (not `&self`) because the checks read only
     /// from the capabilities map handed in and the request — `self` is
     /// not needed.
-    fn precheck<'a>(
-        capabilities: &'a BTreeMap<ToolName, Box<dyn Capability>>,
+    fn precheck(
+        capabilities: &BTreeMap<ToolName, Arc<dyn Capability>>,
         mote: &Mote,
         warrant: &WarrantSpec,
         capability_name: &ToolName,
         request: &EffectRequest,
-    ) -> Result<&'a dyn Capability, BrokerError> {
+    ) -> Result<Arc<dyn Capability>, BrokerError> {
         // (1) capability declared in MoteDef.tool_contract
         if !mote.def.tool_contract.contains_key(capability_name) {
             return Err(BrokerError::UnknownCapability {
@@ -223,7 +227,7 @@ impl<S: ContentStore + Send + Sync> LocalCapabilityBroker<S> {
             });
         }
 
-        Ok(&**capability)
+        Ok(Arc::clone(capability))
     }
 
     /// Internal: stage response bytes to the content store and build a
@@ -267,19 +271,22 @@ impl<S: ContentStore + Send + Sync> CapabilityBroker for LocalCapabilityBroker<S
         capability: &ToolName,
         request: EffectRequest,
     ) -> Result<BrokerHandle, BrokerError> {
-        let (cap_name, cap_version, invocation) = {
+        // Resolve the capability handle UNDER the read lock, then RELEASE the
+        // guard before `invoke` — the external effect (network I/O) must never
+        // run under the registry lock, or a stream of in-flight effects would
+        // delay `register_capability` (SN-4 lock hygiene; see the type doc §4).
+        let cap = {
             let guard = self.capabilities.read().expect("RwLock poisoned");
-            let cap = Self::precheck(&guard, mote, warrant, capability, &request)?;
-            let cap_name = cap.name().clone();
-            let cap_version = cap.version().clone();
-            let invocation = cap.invoke(&request);
-            // Drop the read lock BEFORE staging — staging is I/O.
-            (cap_name, cap_version, invocation)
+            Self::precheck(&guard, mote, warrant, capability, &request)?
         };
-        let bytes = invocation.map_err(|reason| BrokerError::CapabilityFailure {
-            capability: cap_name.clone(),
-            reason,
-        })?;
+        let cap_name = cap.name().clone();
+        let cap_version = cap.version().clone();
+        let bytes = cap
+            .invoke(&request)
+            .map_err(|reason| BrokerError::CapabilityFailure {
+                capability: cap_name.clone(),
+                reason,
+            })?;
         self.stage(&cap_name, &cap_version, bytes)
     }
 
@@ -299,12 +306,15 @@ impl<S: ContentStore + Send + Sync> CapabilityBroker for LocalCapabilityBroker<S
         capability: &ToolName,
         probe: EffectRequest,
     ) -> Result<Option<BrokerHandle>, BrokerError> {
-        let guard = self.capabilities.read().expect("RwLock poisoned");
-        let cap = Self::precheck(&guard, mote, warrant, capability, &probe)?;
+        // Resolve the handle under the read lock, then RELEASE it before
+        // `probe` (I/O) — effects never run under the registry lock (§4).
+        let cap = {
+            let guard = self.capabilities.read().expect("RwLock poisoned");
+            Self::precheck(&guard, mote, warrant, capability, &probe)?
+        };
         let cap_name = cap.name().clone();
         let cap_version = cap.version().clone();
         let probe_outcome = cap.probe(&probe);
-        drop(guard);
         let bytes = match probe_outcome {
             Ok(Some(b)) => b,
             Ok(None) => return Ok(None),
@@ -336,13 +346,15 @@ impl<S: ContentStore + Send + Sync> CapabilityBroker for LocalCapabilityBroker<S
     ) -> Result<Option<BrokerHandle>, BrokerError> {
         // SAME per-call contract gate as dispatch/probe_readback — compensation
         // is a world-mutating undo and must not bypass the warrant (D65 / M2.3b).
-        let guard = self.capabilities.read().expect("RwLock poisoned");
-        let cap = Self::precheck(&guard, mote, warrant, capability, &request)?;
+        // Resolve the handle under the read lock, then RELEASE it before
+        // `compensate` (I/O) — effects never run under the registry lock (§4).
+        let cap = {
+            let guard = self.capabilities.read().expect("RwLock poisoned");
+            Self::precheck(&guard, mote, warrant, capability, &request)?
+        };
         let cap_name = cap.name().clone();
         let cap_version = cap.version().clone();
         let outcome = cap.compensate(&request);
-        // Drop the read lock BEFORE staging — staging is I/O.
-        drop(guard);
         let bytes = match outcome {
             Ok(Some(b)) => b,
             Ok(None) => return Ok(None),
