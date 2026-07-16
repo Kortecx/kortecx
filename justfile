@@ -16,7 +16,7 @@ default:
 
 # Quick local sweep — fmt + clippy + test. The recipe a developer runs
 # before pushing. Fast subset of `ci`; skips deny/doc/ffi-link/reproducible.
-check: fmt-check clippy test
+check: fmt-check clippy test lease-test
 
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
@@ -360,6 +360,12 @@ fetch-2nd-model:
 serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch-agent-model console-dist
     #!/usr/bin/env bash
     set -euo pipefail
+    LABEL="${KX_LEASE_LABEL:-$(basename "$PWD")}"
+    # Rule 44: serialize on the ONE GPU / Ollama (:11434) / default serve ports (:50151/:50152/:8888).
+    # --wait BLOCKS until a peer session's live serve/proof releases, so we never bind under another
+    # session (closes L-104: a proof that silently runs against another session's build).
+    bash scripts/model-lease.sh acquire --label "$LABEL" --purpose "serve-inference" --wait
+    trap 'bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true' EXIT
     mkdir -p "$(dirname "{{journal}}")" "{{content}}"
     export KX_SERVE_MODEL_GGUF="${KX_AGENT_MODEL_DEST:-$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf}"
     echo " ▶ inference serve (model: $KX_SERVE_MODEL_GGUF)"
@@ -382,6 +388,13 @@ review-serve journal="target/serve/kx.db" content="target/serve/blobs": fetch-ag
     #!/usr/bin/env bash
     set -euo pipefail
     PORT=8888; GRPC="http://127.0.0.1:50151"
+    LABEL="${KX_LEASE_LABEL:-$(basename "$PWD")}"
+    # Rule 44: serialize on the ONE GPU / Ollama (:11434) / default serve ports. --wait BLOCKS until a
+    # peer session's live proof releases, so the lsof-kill below can't murder a concurrent serve and we
+    # never bind :8888 under another session (closes L-104: a proof that silently runs against its build).
+    bash scripts/model-lease.sh acquire --label "$LABEL" --purpose "review-serve" --wait
+    SERVE_PID=""
+    trap 'kill ${SERVE_PID:-} 2>/dev/null || true; bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true' EXIT
     MODEL="${KX_AGENT_MODEL_DEST:-$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf}"
     test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }
     cargo build --release -p kx-cli --features inference,hnsw,console --bin kx
@@ -392,7 +405,7 @@ review-serve journal="target/serve/kx.db" content="target/serve/blobs": fetch-ag
     export KX_SERVE_MODEL_GGUF="$MODEL"
     echo " ▶ review serve (model: $KX_SERVE_MODEL_GGUF)"
     "$KX" serve --journal "{{journal}}" --content "{{content}}" --dev-allow-local &
-    SERVE_PID=$!; trap 'kill $SERVE_PID 2>/dev/null || true' EXIT
+    SERVE_PID=$!
     for i in $(seq 1 60); do curl -fsS "http://127.0.0.1:$PORT/" -o /dev/null 2>/dev/null && break; sleep 1; done
     # (a) stale-embed catch — served console index == the just-built ui/dist.
     SERVED="$(curl -fsS "http://127.0.0.1:$PORT/" | shasum -a 256 | cut -d' ' -f1)"
@@ -427,6 +440,13 @@ review-serve-gemma journal="target/serve/kx.db" content="target/serve/blobs": fe
     #!/usr/bin/env bash
     set -euo pipefail
     PORT=8888; GRPC="http://127.0.0.1:50151"
+    LABEL="${KX_LEASE_LABEL:-$(basename "$PWD")}"
+    # Rule 44: serialize on the ONE GPU / Ollama (:11434) / default serve ports. --wait BLOCKS until a
+    # peer session's live proof releases, so the lsof-kill below can't murder a concurrent serve and we
+    # never bind :8888 under another session (closes L-104: a proof that silently runs against its build).
+    bash scripts/model-lease.sh acquire --label "$LABEL" --purpose "review-serve-gemma" --wait
+    SERVE_PID=""
+    trap 'kill ${SERVE_PID:-} 2>/dev/null || true; bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true' EXIT
     MODEL="${KX_GEMMA_MODEL_DEST:-$(pwd)/target/models/gemma-4-12b-it-q4_k_m.gguf}"
     MMPROJ="${KX_GEMMA_MMPROJ_DEST:-$(pwd)/target/models/gemma-4-12b-it-mmproj-f16.gguf}"
     test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }
@@ -439,7 +459,7 @@ review-serve-gemma journal="target/serve/kx.db" content="target/serve/blobs": fe
     export KX_SERVE_MODEL_GGUF="$MODEL" KX_SERVE_MMPROJ_GGUF="$MMPROJ"
     echo " ▶ Gemma review serve (model: $MODEL  +  vision mmproj: $MMPROJ)"
     "$KX" serve --journal "{{journal}}" --content "{{content}}" --dev-allow-local &
-    SERVE_PID=$!; trap 'kill $SERVE_PID 2>/dev/null || true' EXIT
+    SERVE_PID=$!
     for i in $(seq 1 120); do curl -fsS "http://127.0.0.1:$PORT/" -o /dev/null 2>/dev/null && break; sleep 1; done
     SERVED="$(curl -fsS "http://127.0.0.1:$PORT/" | shasum -a 256 | cut -d' ' -f1)"
     DISK="$(shasum -a 256 ui/dist/index.html | cut -d' ' -f1)"
@@ -475,12 +495,58 @@ console-dist:
 console-build: console-dist
     cargo build --release -p kx-cli --features console,hnsw
 
+# Hermetic proof of the local model back-pressure lease (scripts/model-lease.sh, Rule 44): two
+# callers cannot both hold it, --wait serializes (queues then proceeds after release), a non-holder
+# cannot steal it, and a crashed holder's lease drains on its own via TTL (no manual reap). This is
+# the dogfood of the collision the lease exists to stop (L-104: a proof that silently runs against
+# another session's build). PURE filesystem mutex — no GPU / model / network — so it runs on any CI
+# runner (it rides the verify-quickstart job below). Mirrors the mktemp+trap+hard-assert shape of
+# verify-quickstart. Isolated under a throwaway KX_LEASE_DIR so it never touches a real dev lease.
+lease-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export KX_LEASE_DIR="$(mktemp -d)/leases"
+    trap 'rm -rf "$(dirname "$KX_LEASE_DIR")"' EXIT
+    LEASE="bash {{justfile_directory()}}/scripts/model-lease.sh"
+    fail() { echo " ✗ FAIL: $*" >&2; exit 1; }
+
+    # (1) mutual exclusion — A holds; B --try is REFUSED (exit 1), not granted.
+    $LEASE acquire --label A --purpose t1 --try >/dev/null || fail "A could not acquire a free lease"
+    if $LEASE acquire --label B --purpose t1 --try >/dev/null 2>&1; then fail "B --try acquired while A holds"; fi
+    echo " ✓ mutual exclusion — B --try refused while A holds"
+
+    # (2) --wait SERIALIZES — release A after a beat; B --wait queues then wins (never collides).
+    ( sleep 2; $LEASE release --label A >/dev/null ) &
+    $LEASE acquire --label B --purpose t2 --wait --timeout 30 >/dev/null || fail "B --wait never acquired after A released"
+    HOLDER="$($LEASE status | awk 'NR==1{print $2}')"
+    [ "$HOLDER" = "B" ] || fail "holder is '$HOLDER', expected B after wait-acquire"
+    echo " ✓ --wait serialized — B queued then acquired after A released"
+    $LEASE release --label B >/dev/null
+
+    # (3) ownership — C holds; a non-holder D cannot release it without --force (no silent steal).
+    $LEASE acquire --label C --purpose t3 --try >/dev/null || fail "C could not acquire"
+    if $LEASE release --label D >/dev/null 2>&1; then fail "non-holder D released C's lease without --force"; fi
+    $LEASE release --label C >/dev/null
+    echo " ✓ ownership — non-holder release refused"
+
+    # (4) TTL self-heal — E acquires with a 1s ttl, we wait it out; F reclaims the EXPIRED lease with
+    #     no manual reap (proves a hard-killed proof cannot wedge the machine forever).
+    $LEASE acquire --label E --purpose t4 --ttl 1 --try >/dev/null || fail "E could not acquire"
+    sleep 2
+    $LEASE acquire --label F --purpose t4 --try >/dev/null 2>&1 || fail "F could not reclaim E's EXPIRED lease (TTL self-heal broken)"
+    $LEASE release --label F >/dev/null
+    echo " ✓ TTL self-heal — expired lease reclaimed without a manual reap"
+
+    echo ""
+    echo " ✓ lease-test PASS — mutual exclusion · --wait serialize · ownership · TTL drain"
+
 # Docs-as-test gate: run the README quickstart end to end and assert the canonical
 # projection digest. Builds the FFI-free `kx` binary (no C++ toolchain) and drives
 # run → crash → replay → digest over temp dirs, asserting the canonical digest
 # (8/8 committed) at every step. Cleans up. Fails LOUDLY on any drift — this is the
 # gate that keeps the README honest. NOT part of `just ci` (a separate, fast gate).
-verify-quickstart:
+# Prereqs lease-test so the back-pressure mutex is proven in the same (GPU-free) CI job.
+verify-quickstart: lease-test
     #!/usr/bin/env bash
     set -euo pipefail
     CANON="7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9"
