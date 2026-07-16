@@ -357,19 +357,25 @@ pub(crate) fn warrant_within(a: &WarrantSpec, b: &WarrantSpec) -> bool {
 /// `intersect(owner_root, …chain…)`, hence `⊆ owner_root`), so this can neither
 /// escalate past the owner nor compose axes across grants the grantors did not
 /// jointly authorize. `None` when there are no candidates.
-pub(crate) fn most_permissive(mut candidates: Vec<GrantWarrant>) -> Option<WarrantSpec> {
-    candidates.sort_by(|x, y| x.leaf.as_bytes().cmp(y.leaf.as_bytes()));
-    let mut best: Option<&GrantWarrant> = None;
-    for c in &candidates {
-        best = match best {
-            None => Some(c),
-            // `best ⊆ c` ⇒ c is at least as permissive ⇒ prefer c. Otherwise keep
-            // best (it has the smaller GrantId, since `candidates` is sorted).
-            Some(b) if warrant_within(b.warrant(), c.warrant()) => Some(c),
-            Some(b) => Some(b),
-        };
-    }
-    best.map(|gw| gw.warrant.clone())
+pub(crate) fn most_permissive(candidates: &[GrantWarrant]) -> Option<WarrantSpec> {
+    // A candidate is MAXIMAL iff no OTHER candidate is strictly more permissive
+    // (`c.warrant ⊆ d.warrant` while NOT `d.warrant ⊆ c.warrant`). A greedy
+    // single pass is wrong here: it can discard a smaller-leaf maximum after a
+    // later candidate dominates a DIFFERENT (also-smaller-leaf) chain. So compute
+    // the TRUE maximal set, then pick the documented winner — the
+    // lexicographically-smallest leaf GrantId among the maxima. Equal warrants
+    // (neither strictly dominates the other) both survive as maxima, so the
+    // smallest-leaf rule breaks those ties identically.
+    candidates
+        .iter()
+        .filter(|c| {
+            !candidates.iter().any(|d| {
+                warrant_within(c.warrant(), d.warrant())
+                    && !warrant_within(d.warrant(), c.warrant())
+            })
+        })
+        .min_by(|x, y| x.leaf.as_bytes().cmp(y.leaf.as_bytes()))
+        .map(|gw| gw.warrant.clone())
 }
 
 /// The grant-ledger seam — backend-agnostic (in-memory now; durable / cloud
@@ -454,7 +460,7 @@ pub trait GrantLedger {
             .into_iter()
             .filter(|gw| gw.conveys(action))
             .collect();
-        Ok(most_permissive(candidates))
+        Ok(most_permissive(&candidates))
     }
 
     /// The most-permissive REAL warrant across ALL active chains, action-agnostic
@@ -471,7 +477,7 @@ pub trait GrantLedger {
         owner_root: &WarrantSpec,
     ) -> Result<Option<WarrantSpec>, NarrowingError> {
         Ok(most_permissive(
-            self.effective_grant_warrants(party, asset, owner_root)?,
+            &self.effective_grant_warrants(party, asset, owner_root)?,
         ))
     }
 
