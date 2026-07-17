@@ -386,11 +386,23 @@ impl McpGateway {
     /// registration failure is logged + skipped (best-effort) rather than failing
     /// the whole dial, so `count` (and the folded health) reflect what truly
     /// registered — never a hard zero while some tools are live (review #7).
+    ///
+    /// Re-vets the egress host against the LIVE allowlist on EVERY (re-)dial — the
+    /// shared path behind `discover` and `redial_persisted` — so an operator's
+    /// allowlist tightening is retroactive on the next dial/restart, not just at
+    /// first admission. A redial is a fresh admission, not an inherited grant.
     fn dial_and_register(
         &self,
         conn: &Connection,
         wall_clock_ms: u64,
     ) -> Result<u32, GatewayError> {
+        // Re-vet BEFORE acquiring a rate-limit token or opening a session, so a
+        // now-disallowed host is refused without consuming either. Stdio has no
+        // egress (`egress_host() == None`) and is skipped, as at admission. The
+        // register_server admission re-vet is idempotent (same host, same list).
+        if let Some(host) = conn.egress_host() {
+            vet_registration_host(&host, &self.allowlist).map_err(GatewayError::HostRejected)?;
+        }
         if !self.rate_limiter.try_acquire(&conn.name) {
             return Err(GatewayError::RateLimited(conn.name.clone()));
         }
