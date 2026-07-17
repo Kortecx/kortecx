@@ -1,5 +1,5 @@
 /**
- * Property / fuzz tests for the Chains string-DSL parser + lowering (SN-4 v2 #5).
+ * Property / fuzz tests for the Chains string-DSL parser + lowering.
  *
  * The Chains DSL accepts user-supplied text, so it gets round-trip + robustness
  * invariants asserted across the input space — not just the golden corpus cases in
