@@ -1,8 +1,9 @@
 //! Live agentic-RAG e2e witness — `kx serve` drives a chain where the model
 //! autonomously searches a dataset with the `retrieve` tool and answers grounded in
-//! what it found. The hard assertion is that the chain ANSWERS; whether the model
-//! fired `retrieve` is logged (a live tool proposal is probabilistic — the
-//! deterministic wiring is unit-tested in `retrieve_tool` + `provision`).
+//! what it found. Two hard assertions: the chain ANSWERS, and the model FIRED the
+//! `retrieve` tool — the corpus paraphrases the question, so a grounded answer is only
+//! reachable by searching, and a capable served model reliably fires it. (The
+//! deterministic wiring is additionally unit-tested in `retrieve_tool` + `provision`.)
 //!
 //! ```text
 //! Flow: ingest a paraphrase corpus (server-embed) -> Invoke kx/recipes/react-rag
@@ -37,16 +38,14 @@ use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
 
-/// The serve model GGUF (llama.cpp path): `KX_SERVE_MODEL_GGUF` if set, else the
-/// public stand-in. `None` ⇒ runtime-skip (unless an Ollama serve is configured).
+/// The serve model GGUF (llama.cpp path): `KX_SERVE_MODEL_GGUF` if set, else `None`
+/// ⇒ runtime-skip (unless an Ollama serve is configured). There is deliberately NO weak
+/// public stand-in: this test HARD-asserts the model autonomously fires the `retrieve`
+/// tool, which a tiny model cannot reliably do — so it must run against a capable served
+/// model (Gemma) or skip, never silently "pass" by degrading the assert back to a log.
 fn serve_model() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("KX_SERVE_MODEL_GGUF") {
-        let p = PathBuf::from(p);
-        return p.is_file().then_some(p);
-    }
-    let standin = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/models/qwen3-0.6b-q4_k_m.gguf");
-    standin.is_file().then_some(standin)
+    let p = PathBuf::from(std::env::var_os("KX_SERVE_MODEL_GGUF")?);
+    p.is_file().then_some(p)
 }
 
 async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
@@ -169,14 +168,18 @@ async fn react_rag_chain_searches_a_dataset_and_answers() {
         answered,
         "the live agentic-RAG chain settled a terminal Answer"
     );
-    // The agentic-RAG proof: did the model AUTONOMOUSLY call retrieve? Logged, not
-    // hard-required (a live model's tool-proposal is probabilistic — RC3 menu + RC2
-    // grammar make it likely; the deterministic wiring is unit-tested elsewhere).
-    if retrieved {
-        eprintln!("✓ agentic RAG: the model fired the `retrieve` tool autonomously");
-    } else {
-        eprintln!("· note: the model answered without firing `retrieve` (check the prompt/menu)");
-    }
+    // The agentic-RAG proof (D216): the model must AUTONOMOUSLY fire the `retrieve` tool.
+    // The corpus paraphrases the question, so a grounded answer is only reachable by
+    // searching the dataset — a capable served model + the RC3 menu + RC2 grammar make the
+    // call reliable, so a run that answers WITHOUT retrieving is a real regression, not
+    // noise. HARD-assert it (the connector-tool-fire proof shape from `app_live_serve`);
+    // this is why `serve_model` refuses the weak stand-in that could not fire it.
+    assert!(
+        retrieved,
+        "the live agentic-RAG chain must FIRE the `retrieve` tool autonomously \
+         (the corpus paraphrases the question — a grounded answer needs a search); \
+         answered={answered} retrieved={retrieved}"
+    );
 
     running.shutdown().await.unwrap();
 }
