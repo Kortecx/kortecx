@@ -22,13 +22,16 @@ From source (Rust 1.94+; each variant adds a capability):
 
 ```bash
 git clone https://github.com/Kortecx/kortecx.git && cd kortecx
-cargo install --path crates/kx-cli                            # the core runtime — no C++, no node
-cargo install --path crates/kx-cli --features hnsw            # + Datasets/RAG (still no C++)
-cargo install --path crates/kx-cli --features inference,hnsw  # + local LLM inference (needs a C++ toolchain)
+cargo install --path crates/kx-cli                               # the core runtime — no C++, no node
+cargo install --path crates/kx-cli --features hnsw               # + Datasets/RAG (still no C++)
+cargo install --path crates/kx-cli --features serve-engine,hnsw  # + serve local models via Ollama (still no C++)
+cargo install --path crates/kx-cli --features inference,hnsw     # + in-process llama.cpp inference (needs a C++ toolchain)
 ```
 
-Plain `cargo install` never needs node or C++. Local LLM inference (Tier 1)
-additionally needs a C++ toolchain (CMake, clang/libclang) and a GGUF model.
+Plain `cargo install` never needs node or C++. The `serve-engine` build serves
+local models via a running **Ollama** daemon with no C++ toolchain; the
+`inference` build (Tier 1) adds self-contained in-process llama.cpp and needs a
+C++ toolchain (CMake, clang/libclang) plus a GGUF model.
 
 ## Prove exactly-once
 
@@ -120,7 +123,7 @@ lowers identically across the CLI and both SDKs.
 ```bash
 # A fan-out → gather chain: `a` feeds both `b` and `c`.
 kx chain run "a > [b & c]" \
-  --task a=pure --task b=pure --task c=pure \
+  --task a='{"kind":"pure"}' --task b='{"kind":"pure"}' --task c='{"kind":"pure"}' \
   --wait
 ```
 

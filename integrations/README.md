@@ -25,6 +25,8 @@ and gate with its `run_conformance` harness (Extension Acceptance Gate items
 |---|---|---|---|
 | `kx-connector-gmail` | Gmail | `search` · `read` · `draft` · `send` | connector shipped (PR-G0); core wiring pending (below) |
 | `kx-connector-discord` | Discord | `send_message` · `read_channel` · `list_channels` | connector shipped; core wiring pending (below) |
+| `kx-connector-slack` | Slack | `post_message` · `read_channel` · `search` · `list_channels` | connector shipped; core wiring pending (below) |
+| `kx-connector-notion` | Notion | `search` · `read_page` · `create_page` · `append_block` | connector shipped; core wiring pending (below) |
 
 ### `kx-connector-gmail`
 
@@ -78,6 +80,61 @@ Offline/CI mode: set `KX_DISCORD_FAKE=1` for deterministic canned responses (no
 network, no credential) — used by the unit tests and the conformance gate. A live
 GR15/GR24 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real bot token +
 `KX_DISCORD_TEST_GUILD_ID`).
+
+### `kx-connector-slack`
+
+A newline-delimited JSON-RPC 2.0 stdio MCP server. Credential-by-reference (D81):
+a Slack **bot token** (`xoxb-…`) is injected out-of-band as the env var
+`KX_SLACK_CREDENTIAL` (JSON `{"bot_token":"…"}`); the connector calls the Slack Web
+API with an `Authorization: Bearer <token>` header **inside its own process**. The
+secret value never appears in a reply, a log, or an error.
+
+Register it against a running `kx serve`:
+
+```sh
+kx secrets set --name KX_SLACK_CREDENTIAL \
+  --value '{"bot_token":"xoxb-…"}'
+kx connections add --name slack \
+  --command kx-connector-slack \
+  --credential-ref KX_SLACK_CREDENTIAL
+# an agent granted slack/* can now fire the tools:
+kx connections fire --name slack --tool list_channels --args '{}'
+kx connections fire --name slack --tool post_message \
+  --args '{"channel":"C0123ABCD","text":"hello from kortecx"}'
+```
+
+Offline/CI mode: set `KX_SLACK_FAKE=1` for deterministic canned responses (no
+network, no credential) — used by the unit tests and the conformance gate. A live
+GR15 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real bot token in
+`KX_SLACK_CREDENTIAL`).
+
+### `kx-connector-notion`
+
+A newline-delimited JSON-RPC 2.0 stdio MCP server. Credential-by-reference (D81):
+a Notion **integration token** is injected out-of-band as the env var
+`KX_NOTION_CREDENTIAL` (JSON `{"token":"…"}`); the connector calls the Notion REST
+API with an `Authorization: Bearer <token>` header plus the required
+`Notion-Version` header **inside its own process**. The secret value never appears
+in a reply, a log, or an error.
+
+Register it against a running `kx serve`:
+
+```sh
+kx secrets set --name KX_NOTION_CREDENTIAL \
+  --value '{"token":"secret_…"}'
+kx connections add --name notion \
+  --command kx-connector-notion \
+  --credential-ref KX_NOTION_CREDENTIAL
+# an agent granted notion/* can now fire the tools:
+kx connections fire --name notion --tool search --args '{"query":"roadmap"}'
+kx connections fire --name notion --tool append_block \
+  --args '{"page_id":"…","text":"a note from kortecx"}'
+```
+
+Offline/CI mode: set `KX_NOTION_FAKE=1` for deterministic canned responses (no
+network, no credential) — used by the unit tests and the conformance gate. A live
+GR15 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real integration token
+in `KX_NOTION_CREDENTIAL` + `KX_NOTION_TEST_PAGE_ID`).
 
 ### App-pointer run — build an App that USES the connection (G1 + G2, landed)
 

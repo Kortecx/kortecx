@@ -52,7 +52,7 @@ cargo run -p kx-workflow --example author_a_workflow
 ```
 
 To exercise the core *guarantee* (exactly-once across a crash), run the
-crash-and-replay demo in the [README](README.md#install--quick-start).
+crash-and-replay demo in the [README](README.md#quick-start-prove-exactly-once).
 
 ## The pre-merge gate (run it before you push)
 
