@@ -577,6 +577,24 @@ impl AppEnvelope {
         for r in &self.steering_config.context.context_refs {
             check_ref("steering.context_ref", r)?;
         }
+        // Tool rails: every wished/displayed tool id is well-formed and its version is
+        // an integer — across `references.tools`, each skill's wish set, and the
+        // steering-config grant wish. Left unvalidated, a hand-authored envelope could
+        // carry a malformed id or DISPLAY a tool it never legitimately requests (SN-8).
+        for t in &self.references.tools {
+            check_tool_id("references.tools.tool_id", &t.tool_id)?;
+            check_integer("references.tools.tool_version", &t.tool_version)?;
+        }
+        for s in &self.references.skills {
+            for (id, version) in &s.tools {
+                check_tool_id("skill.tools", id)?;
+                check_integer(&format!("skill.tools[{id}]"), version)?;
+            }
+        }
+        for (id, version) in &self.steering_config.tools.requested_grants {
+            check_tool_id("steering.requested_grants", id)?;
+            check_integer(&format!("steering.requested_grants[{id}]"), version)?;
+        }
         // No floats anywhere (the whole serialized tree, incl. the opaque blueprint).
         let value = serde_json::to_value(self)?;
         reject_floats(&value)?;
@@ -625,19 +643,56 @@ fn check_bare_name(field: &str, name: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Reject a connection descriptor that smuggles URL userinfo (`scheme://user:pw@host`).
+/// A wished/displayed tool id: one or two non-empty `[a-z0-9._-]` segments, e.g.
+/// `retrieve` (a bundled capability) or `gmail/search` (a connector tool). Mirrors
+/// the same check in `kx-skill`'s manifest so the two rails agree on what a tool id is.
+fn check_tool_id(field: &str, id: &str) -> Result<(), AppError> {
+    let segments: Vec<&str> = id.split('/').collect();
+    let valid = id.len() <= 128
+        && (1..=2).contains(&segments.len())
+        && segments.iter().all(|s| {
+            !s.is_empty()
+                && s.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+                })
+        });
+    if !valid {
+        return Err(AppError::Invalid(format!(
+            "{field} must be a tool id ('name' or 'server/name' of [a-z0-9._-]), got {id:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// A tool version must be an integer string (e.g. `"1"`) — never a float or free text.
+fn check_integer(field: &str, v: &str) -> Result<(), AppError> {
+    if v.parse::<u64>().is_err() {
+        return Err(AppError::Invalid(format!(
+            "{field} must be an integer string, got {v:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// Reject a connection descriptor that smuggles URL userinfo (`user:pw@host`), with
+/// or without a `scheme://` prefix. Keying on the presence of `://` missed
+/// scheme-less/opaque authorities (`user:pw@host/mcp`), which carry userinfo in the
+/// same position — so the authority is ALWAYS derived and scanned for '@'.
 fn check_descriptor_no_userinfo(descriptor: &str) -> Result<(), AppError> {
-    if let Some(after_scheme) = descriptor.split_once("://").map(|(_, rest)| rest) {
-        // authority ends at the first '/', '?', or '#'.
-        let authority = after_scheme
-            .split(['/', '?', '#'])
-            .next()
-            .unwrap_or(after_scheme);
-        if authority.contains('@') {
-            return Err(AppError::Invalid(format!(
-                "connection descriptor must not carry URL userinfo, got {descriptor:?}"
-            )));
-        }
+    // Strip an OPTIONAL `scheme://`, falling through to the whole descriptor when it
+    // is absent — a scheme-less authority carries userinfo just the same.
+    let after_scheme = descriptor
+        .split_once("://")
+        .map_or(descriptor, |(_, rest)| rest);
+    // The authority ends at the first '/', '?', or '#'.
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(after_scheme);
+    if authority.contains('@') {
+        return Err(AppError::Invalid(format!(
+            "connection descriptor must not carry URL userinfo, got {descriptor:?}"
+        )));
     }
     Ok(())
 }
@@ -823,6 +878,101 @@ mod tests {
             credential_ref: String::new(),
         });
         assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_schemeless_userinfo() {
+        // A scheme-less `user:pw@host` descriptor carries userinfo in the same
+        // authority position as a `scheme://` URL. Before the fix the guard only
+        // fired on `://`, so this smuggled a secret past validate().
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.references.connections.push(ConnectionRef {
+            descriptor: "user:pw@evil.example/mcp".into(),
+            credential_ref: String::new(),
+        });
+        assert!(
+            env.validate().is_err(),
+            "scheme-less userinfo must be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_clean_schemeless_descriptor() {
+        // A clean scheme-less descriptor (no userinfo) still validates — the widened
+        // guard must add no false positive.
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.references.connections.push(ConnectionRef {
+            descriptor: "mcp-echo/echo".into(),
+            credential_ref: String::new(),
+        });
+        env.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_malformed_references_tool_id() {
+        // `references.tools` was never validated: a three-segment / uppercase id is
+        // not a tool id and must be refused.
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.references.tools.push(ToolRef {
+            tool_id: "Bad/ID/x".into(),
+            tool_version: "1".into(),
+        });
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_non_integer_tool_version() {
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.references.tools.push(ToolRef {
+            tool_id: "mcp-echo/echo".into(),
+            tool_version: "v1".into(),
+        });
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_malformed_skill_tool_id() {
+        // A skill's tool wish set was also unvalidated (only its instructions_ref was).
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.references.skills.push(SkillRef {
+            name: "s".into(),
+            instructions_ref: hexref(0xaa),
+            tools: [("BAD".to_string(), "1".to_string())].into_iter().collect(),
+        });
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_malformed_requested_grant_id() {
+        // The load-bearing grant wish: a hand-authored envelope could "request" a
+        // tool whose id is not even a tool id.
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.steering_config.tools.requested_grants = [("bad id".to_string(), "1".to_string())]
+            .into_iter()
+            .collect();
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_wellformed_tool_rails() {
+        // Well-formed ids/versions across all three tool rails validate cleanly.
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.references.tools.push(ToolRef {
+            tool_id: "mcp-echo/echo".into(),
+            tool_version: "1".into(),
+        });
+        env.references.skills.push(SkillRef {
+            name: "s".into(),
+            instructions_ref: hexref(0xbb),
+            tools: [("retrieve".to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+        });
+        env.steering_config.tools.requested_grants =
+            [("gmail/search".to_string(), "3".to_string())]
+                .into_iter()
+                .collect();
+        env.validate().unwrap();
     }
 
     #[test]
