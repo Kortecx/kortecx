@@ -14,6 +14,12 @@ import { Code, ConnectError } from "@connectrpc/connect";
  *
  * Consistent across the Python and TypeScript SDKs and the CLI `--json` surface.
  * Branch on these, not on human-readable messages.
+ *
+ * @example
+ * ```ts
+ * ErrorCode.PermissionDenied; // "permission_denied"
+ * ErrorCode.CatchupRequired;  // "catchup_required" (gRPC RESOURCE_EXHAUSTED)
+ * ```
  */
 export enum ErrorCode {
   Unauthenticated = "unauthenticated",
@@ -33,7 +39,16 @@ export enum ErrorCode {
   Usage = "usage",
 }
 
-/** Base class for every error raised by the SDK. */
+/**
+ * Base class for every error raised by the SDK.
+ *
+ * @example
+ * ```ts
+ * const err = new KxPermissionDenied("nope");
+ * err.code === ErrorCode.PermissionDenied; // true
+ * String(err);                             // "[permission_denied] nope"
+ * ```
+ */
 export class KxError extends Error {
   /** The stable {@link ErrorCode}. */
   readonly code: ErrorCode;

@@ -636,7 +636,18 @@ class Flow:
 
 def flow(*, seed: int = 0) -> Flow:
     """Start a fluent chain: ``kx.flow().agent(...).then(...).run()``. The headline
-    authoring surface — reads top-to-bottom, IDE-discoverable, defaults filled in."""
+    authoring surface — reads top-to-bottom, IDE-discoverable, defaults filled in.
+
+    A :class:`Flow` lowers byte-identically to the equivalent operator/DSL chain, so
+    you can inspect the topology it will submit without a server:
+
+    >>> from kortecx.flow import flow
+    >>> low = flow().agent("Research the topic").then("Critique it").lowering()
+    >>> [s["kind"] for s in low["steps"]]
+    ['model', 'model']
+    >>> low["edges"]
+    [{'parent': 0, 'child': 1, 'edge': 'data'}]
+    """
     return Flow(seed=seed)
 
 
