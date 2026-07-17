@@ -6,11 +6,18 @@
  * so the agentic-edit propose/diff and the lineage save are asserted as WIRED (their
  * model-driven behaviour is covered by the Rust live-Gemma e2e); the pure-step Run
  * actually executes + navigates.
+ *
+ * The SECOND test turns that WIRED-only propose→diff→approve gate into a real red/green
+ * BEHAVIOURAL net: the model-inference RPCs are stubbed model-free (`stubReactEdit`) while
+ * the branch mutation stays REAL, so `approve` is proven to advance the actual manifest —
+ * a regression in the propose or approve wiring fails a check (deleting an assertion can't
+ * stay green, because each asserts a consequence of real server state, not a rendered node).
  */
 
 import { KxClient } from "@kortecx/sdk/node";
 import { expect, test } from "@playwright/test";
 import { connectConsole, gotoViaPalette } from "./fixtures/connect";
+import { stubReactEdit } from "./fixtures/grpc-stub";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -155,6 +162,79 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await expect(page.getByTestId("app-run-drawer")).toBeVisible();
   await page.getByTestId("app-run-now").click();
   await expect(page).toHaveURL(/\/workflows\//, { timeout: 30_000 });
+});
+
+test("App IDE agentic edit: the propose→diff→approve gate is a real behavioural net (model-free)", async ({
+  page,
+}) => {
+  const EDIT_HANDLE = "apps/local/edit-net";
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+
+  // Seed the App + a one-file branch, AND pre-seed the agent's "proposed" rewrite as a real
+  // content-store blob, so approve can advance the REAL manifest to a REAL ref.
+  const seed = new KxClient(gw.endpoint);
+  await seed.saveApp(
+    {
+      schema: "kortecx.app/v1",
+      name: "Edit Net",
+      blueprint: { seed: 0, steps: [{ kind: "pure", params: { note: "demo" } }] },
+    },
+    { handle: EDIT_HANDLE },
+  );
+  await seed.createBranch(EDIT_HANDLE);
+  const original = await seed.putContent(
+    new TextEncoder().encode("# Readme\nhello from the IDE.\n"),
+    {
+      filename: "README.md",
+    },
+  );
+  await seed.advanceBranch(EDIT_HANDLE, "README.md", original.contentRef);
+  const proposedBytes = new TextEncoder().encode(
+    "# Readme\n\nAGENT_EDIT_MARKER: validation note added by the agent.\n",
+  );
+  const proposed = await seed.putContent(proposedBytes, { filename: "README.md" });
+
+  // Stub ONLY the model-inference RPCs of editBranchPropose; AdvanceBranch/GetBranchContent stay real.
+  await stubReactEdit(page, { resultRef: proposed.contentRef, proposedBytes });
+
+  await connectConsole(page, gw);
+  await gotoViaPalette(page, "apps");
+  await expect(page.getByTestId("apps-section")).toBeVisible();
+  await page.getByTestId(`app-menu-${EDIT_HANDLE}`).click();
+  await page.getByTestId(`app-open-${EDIT_HANDLE}`).click();
+  await expect(page.getByTestId("app-detail")).toBeVisible({ timeout: 30_000 });
+
+  // Open the Chat & edit drawer and drive the gate for real.
+  await page.getByTestId("app-detail-chat").click();
+  await expect(page.getByTestId("app-chat-drawer")).toBeVisible();
+  await page.getByTestId("app-edit-target").selectOption("README.md");
+  await page.getByTestId("app-edit-instruction").fill("add a validation note");
+  await page.getByTestId("app-edit-propose").click();
+
+  // BEHAVIOUR 1: the whole propose composite ran (GetBranch → Invoke → GetProjection →
+  // GetContent → GetBranchContent) and produced a diff whose proposed ≠ current, so the
+  // review gate opens and approve enables. A bare "the button is visible" check can't see this.
+  await expect(page.getByTestId("app-edit-review")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("app-edit-diff")).toBeVisible();
+  await expect(page.getByTestId("app-edit-approve")).toBeEnabled();
+
+  // BEHAVIOUR 2: approve applies against the REAL gateway (unstubbed AdvanceBranch); on
+  // success the drawer resets the proposal and the review gate closes.
+  await page.getByTestId("app-edit-approve").click();
+  await expect(page.getByTestId("app-edit-review")).toHaveCount(0, { timeout: 15_000 });
+
+  // BEHAVIOUR 3 (ground truth): the REAL branch manifest now resolves README.md to the
+  // approved body — read straight from the gateway (the node client bypasses the browser stub).
+  await expect
+    .poll(
+      async () => {
+        const body = await seed.getBranchContent(EDIT_HANDLE, "README.md");
+        return body ? new TextDecoder().decode(body) : "";
+      },
+      { timeout: 15_000 },
+    )
+    .toContain("AGENT_EDIT_MARKER");
+  seed.close();
 });
 
 test("Workflows → Apps (WAVE-3): the catalog links to the Apps section (Apps have one home)", async ({
