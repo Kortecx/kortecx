@@ -8,6 +8,62 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Apps — the durable, shareable unit of agentic capability.** An App is a
+  `kortecx.app/v1` envelope that wraps a portable blueprint with by-reference
+  context / tool / connection / dataset references, a prompt/rule/skill/memory
+  rail, and a steering config (model, max turns, max tool calls).
+  `kx app new/save/list/get/run/export/import/clone` — plus the `kx.app(...)` /
+  `app(...)` builders in the Python and TypeScript SDKs and the console **Apps**
+  section — author, run, and share them. An App carries **no authority**: `run`
+  and `import` re-resolve every warrant from the caller's own grants, and a shared
+  bundle re-registers connections/secrets by name so it resolves each operator's
+  own credentials. Off-journal + additive (the canonical projection digest is
+  unchanged). (cli/sdk/ui)
+
+- **Chains — a string-DSL for composing published task handles into a DAG.**
+  `kx chain run "<dsl>"` (and `chain(...)` in both SDKs) lowers an expression built
+  from `>` (sequential — a data edge), `&` / `|` (parallel merge), and `[ … ]`
+  (grouping) through the **same** compile + warrant path as a blueprint — a chain
+  only changes how the topology is authored. `--emit-blueprint` writes a portable
+  blueprint; `--dry-run` lowers + validates offline. (cli/sdk)
+
+- **Swarms — multi-agent patterns without hand-writing the DSL.** `kx swarm` (and
+  `swarm()` / `supervisor()` / `consensus()` / `team()` in both SDKs) compose N
+  agents into a fan-out → gather, a lead-plans / team-executes / lead-integrates
+  topology, or a best-of-N vote (an LLM judge or an exact-equality majority). Pure
+  client composition — the server compiles + warrants every step. (cli/sdk)
+
+- **Skills — declarative capability bundles (`kortecx.skill/v1`).** A skill is
+  instructions plus a tool grant-*wish* set; `kx skills add/list/show/remove` and
+  `kx new skill` manage the per-principal catalog (mirrored in both SDKs). Adding a
+  skill grants nothing — at run the server intersects the wish against your grants
+  and the live broker (wish ∩ grants ∩ fireable), and attaches it to an App via
+  `kx app new --skill` or the SDK `.skill(...)` builders. (cli/sdk)
+
+- **Durable agentic memory (`kx memory`).** `add / list / recall / forget / decay /
+  stats / restore / consolidate` (mirrored in both SDKs) let an agent remember
+  facts and recall them across runs. Server-embedded and scoped to the caller's
+  principal; recall scores are display-only and never an identity input. Enabled on
+  an inference build with `KX_SERVE_MEMORY=1`. (cli/sdk)
+
+- **Observability, cost & metrics surfaces.** Per-mote execution telemetry and a
+  per-model token rollup (`kx telemetry`), a per-run local spend estimate
+  (`kx cost`), a terminal-failure alerts inbox (`kx alerts`), 👍/👎 feedback
+  (`kx feedback`), and an **opt-in Prometheus `/metrics`** endpoint
+  (`--metrics-listen`, RED metrics, FFI-free). All audit/display-only — never
+  truth, identity, or a projection-digest input; input-token counts are not
+  measured in the OSS backend. (serve/cli/sdk/ui)
+
+- **Bundled Slack and Notion MCP connectors.** `kx-connector-slack`
+  (`post_message` / `read_channel` / `search` / `list_channels`) and
+  `kx-connector-notion` (`search` / `read_page` / `create_page` / `append_block`)
+  join Gmail and Discord under `integrations/`. Each is a standalone stdio MCP
+  server the runtime dials via `kx connections add` (curated one-click
+  `--provider slack` / `--provider notion`), authenticates by-reference (the secret
+  is injected by name and never leaves the connector's own process), and ships an
+  offline `*_FAKE` mode for tests. No `kx-*` runtime dependency, so building or
+  running one cannot move the projection digest. (integrations)
+
 - **Self-contained portable RAG — a shared App carries its own corpus.** A dataset
   reference may now carry the content it spans (`references.datasets[].cas_refs`, shipped
   by `kx app export --bundle --with-data`), and an importing server **materializes that
