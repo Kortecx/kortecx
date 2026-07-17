@@ -11,6 +11,7 @@ input** are the highest-value review + fuzz surface. This is a [`cargo-fuzz`](ht
 | `decode_plan` | `kx_planner::decode_plan` | a model's PROPOSED plan bytes (the SN-8 fence) |
 | `decode_entry` | `kx_journal::decode_entry` | a journal-entry record (the synchronization substrate) |
 | `fold_checkpoint` | `kx_projection::FoldCheckpoint::from_bytes` | a projection checkpoint a recovering runtime folds |
+| `parse_tool_call` | `kx_toolcall::parse_tool_call` / `parse_tool_calls` | untrusted model tool-call output, warrant-gated (SN-8) |
 
 Each function is documented **total + panic-free over arbitrary bytes** with DoS caps; the fuzzer asserts
 that — a panic / OOM / hang is a finding.
@@ -29,7 +30,8 @@ RUSTUP_TOOLCHAIN=nightly cargo fuzz run decode_plan -- -max_total_time=60   # bo
 
 CI runs a short **fuzz-smoke** (~45 s/target) on every PR to catch a newly-introduced crash; deep/long
 fuzzing (hours, a persisted corpus) is a separate scheduled run. Smoke baseline at introduction:
-~10.7 M total executions across the three targets, **0 crashes**.
+~10.7 M total executions across the original three targets, **0 crashes** (`parse_tool_call` was
+added afterward and smokes clean).
 
 ## Not yet covered (follow-ups, tracked honestly)
 
@@ -37,8 +39,6 @@ fuzzing (hours, a persisted corpus) is a separate scheduled run. Smoke baseline 
   image/`mmproj` decoders (`kx_llamacpp::mtmd`). Highest value (they run *below* the Rust safety model),
   but they need the C++ toolchain + the vendored submodule, so they build in a separate FFI-enabled fuzz
   profile — not in this FFI-free smoke.
-- **`kx_toolcall::parse_tool_call`** — parses untrusted model tool-call output, but takes a `WarrantSpec`
-  (it early-returns with no grants); a target needs a fixed non-empty warrant fixture.
 - **`kx_content` rkyv zero-copy access** — currently exercised only in a unit test; add a target when a
   production `rkyv::access` call site lands.
 

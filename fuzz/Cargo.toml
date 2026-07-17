@@ -17,6 +17,12 @@ libfuzzer-sys = "0.4"
 kx-planner = { path = "../crates/kx-planner" }
 kx-journal = { path = "../crates/kx-journal" }
 kx-projection = { path = "../crates/kx-projection" }
+# The tool-call authority gate + the types to build a non-empty warrant fixture (an empty warrant
+# short-circuits the parser). serde_json rebuilds the canonical envelope for the round-trip fixpoint.
+kx-toolcall = { path = "../crates/kx-toolcall" }
+kx-warrant = { path = "../crates/kx-warrant" }
+kx-mote = { path = "../crates/kx-mote" }
+serde_json = "1"
 
 [[bin]]
 name = "decode_plan"
@@ -35,6 +41,13 @@ bench = false
 [[bin]]
 name = "fold_checkpoint"
 path = "fuzz_targets/fold_checkpoint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_tool_call"
+path = "fuzz_targets/parse_tool_call.rs"
 test = false
 doc = false
 bench = false
