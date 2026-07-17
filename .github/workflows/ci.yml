@@ -1288,7 +1288,7 @@ jobs:
           RUSTUP_TOOLCHAIN: nightly
         run: |
           set -euo pipefail
-          for t in decode_plan decode_entry fold_checkpoint; do
+          for t in decode_plan decode_entry fold_checkpoint parse_tool_call; do
             echo "── fuzz-smoke: $t ──"
             cargo fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time=45 -print_final_stats=1
           done
