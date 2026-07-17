@@ -761,6 +761,25 @@ def chain(
     group, :class:`UnknownHandleError` on a handle absent from ``tasks``, and
     (at lowering time) :class:`ChainCycleError` on a cycle / self-loop. Tasks
     defined but unused are ignored.
+
+    >>> from kortecx.chains import chain, model, pure
+    >>> tasks = {"a": model(prompt="research"), "b": pure()}
+    >>> low = chain("a > b", tasks).lowering()
+    >>> [s["kind"] for s in low["steps"]]
+    ['model', 'pure']
+    >>> low["edges"]
+    [{'parent': 0, 'child': 1, 'edge': 'data'}]
+
+    ``&`` / ``|`` fan tasks in parallel (no edge); ``[ ]`` groups; ``handle@tool``
+    tags a MODEL step with a bounded tool grant (order-preserving, deduped):
+
+    >>> agentic = chain("m@web-search@web-search", {"m": model(prompt="go")})
+    >>> agentic.lowering()["steps"][0]["tool_contract"]
+    {'web-search': '1'}
+    >>> chain("a > a", {"a": model(prompt="x")}).lowering()  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ...
+    kortecx.chains.ChainCycleError: chain has a cycle
     """
     if not expr.strip():
         raise ChainParseError("empty chain expression")

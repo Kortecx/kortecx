@@ -19,7 +19,12 @@ REF_LEN = 32
 
 
 def encode(data: bytes) -> str:
-    """Render server bytes as lowercase hex (the SDK's display form for ids)."""
+    """Render server bytes as lowercase hex (the SDK's display form for ids).
+
+    >>> from kortecx.hexids import encode
+    >>> encode(bytes([0xde, 0xad, 0xbe, 0xef]))
+    'deadbeef'
+    """
     return data.hex()
 
 
@@ -29,7 +34,16 @@ def encode_opt(data: "bytes | None") -> "str | None":
 
 
 def decode(s: str) -> bytes:
-    """Decode a hex string to bytes, raising :class:`KxUsage` on bad hex."""
+    """Decode a hex string to bytes, raising :class:`KxUsage` on bad hex.
+
+    >>> from kortecx.hexids import decode
+    >>> decode("deadbeef")
+    b'\\xde\\xad\\xbe\\xef'
+    >>> decode("nothex")  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ...
+    kortecx.errors.KxUsage: invalid hex
+    """
     s = s.strip()
     try:
         return bytes.fromhex(s)
@@ -60,6 +74,12 @@ def as_bytes(value: "str | bytes", n: int) -> bytes:
 
     This lets every SDK method take an id as the hex the rest of the SDK prints,
     *or* as the raw bytes a previous response carried — both server-derived.
+
+    >>> from kortecx.hexids import as_bytes
+    >>> as_bytes("00112233445566778899aabbccddeeff", 16).hex()
+    '00112233445566778899aabbccddeeff'
+    >>> as_bytes(b"\\x00" * 16, 16) == bytes(16)
+    True
     """
     if isinstance(value, str):
         return decode_fixed(value, n)

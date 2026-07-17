@@ -64,6 +64,7 @@ usage: kx <command> [args]
     kx events --all [--since N] [--follow] [--kind committed,failed,...]   (the global cross-run event tail)
     kx telemetry list [--instance <hex16>] [--mote <hex32>] [--limit N] [--before-seq N]
     kx telemetry summary [--instance <hex16>]    (the per-model output-token rollup)
+    kx cost <INSTANCE_ID>                        (a run's DISPLAY-ONLY local spend estimate; alias `kx runs cost`)
     kx feedback submit --rating up|down --message-id <id> [--instance <hex16>] [--comment <s>]
     kx feedback list [--instance <hex16>] [--limit N] [--before-rowid N]
     kx replan list [--limit N]                   (re-plan rounds, newest-first)
@@ -71,6 +72,7 @@ usage: kx <command> [args]
     kx rerank list [--instance <hex16>] [--limit N]   (LLM-rerank turns, newest-first)
     kx capture list [--instance <hex16>] [--limit N]   (captured actions, newest-first)
     kx alerts list [--instance <hex16>] [--limit N] [--before-seq N]   (terminal-failure alerts, newest-first)
+    kx approvals list | grant <REQUEST_ID> | deny <REQUEST_ID> [--reason <s>]   (D114 HITL gate: release/refuse a staged world-mutating action)
     kx signatures list | get --id <hex32> | register --manifest-file <path>
     kx tools list | score --intent <text> --tool <id>@<ver>... | discover | register | deregister
     kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
@@ -82,7 +84,8 @@ usage: kx <command> [args]
     kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--out <file>] | export <handle> (--output <file> | --bundle <file> [--with-data]) | import <bundle> [--yes] | clone <handle> <newname>   (Apps — kortecx.app/v1 envelopes)
     kx branch create <handle> [--parent <handle>] [--description <s>] | snapshot <handle> --path <p>... [--parent <handle>] | list | get <handle> | remove <handle>   (D155 file branches)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
-    kx models list|load <id>|offload <id>       (model discovery + local lifecycle)
+    kx models list|load <id>|offload <id>|pull <tag|--url U --sha256 H>|use <id|--clear>
+                                                 (model discovery, RAM lifecycle, pull-to-register + active default)
     kx datasets list | ingest <name> (--text <s>|--file <p>)... | query <name> --text <q> [--k N]   (RAG corpora)
     kx memory add <text> | list | recall --text <q> | forget <id> | decay | stats | restore <id> | consolidate   (durable cross-run agent memory)
     kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
@@ -815,12 +818,20 @@ kx recipe search <intent> [--keyword <k>]... [--limit N] [client flags]
             .into(),
         "models" => "\
 kx models list | load <id> | offload <id> [client flags]
+kx models pull <tag> | pull --url <url> --sha256 <hex> [client flags]
+kx models use <id> | use --clear [client flags]
   list: display-only model discovery — the models the connected gateway serves
   (id, modalities, context window, serving + loaded flags). An FFI-free serve
   lists nothing. load/offload (POC-3): warm/evict a REGISTERED local model in RAM
   (real load / llama_model_free); an unregistered id is a fail-closed `not found`.
+  pull (Model Control v2): download + runtime-register a model — either an Ollama
+  registry <tag>, or a direct GGUF --url with a REQUIRED --sha256 (the download is
+  verified; deny-by-default when downloads are disabled or the host is not
+  allowlisted). The CLI polls the background pull to a terminal Done/Failed.
+  use (Model Control v2): set the server's active default model to <id>, or --clear
+  to fall back to the primary.
   SN-8: listing a model never routes one — selection stays a recipe ENUM free-param
-  validated server-side; load/offload only manage RAM residency, never authority."
+  validated server-side; load/offload/use manage RAM residency + the default, never authority."
             .into(),
         "app" => "\
 kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>]
@@ -910,6 +921,84 @@ kx triggers rm   --name <N> [client flags]
   resolves, payload binds) WITHOUT firing; `fire` is the inbound grpc event verb
   (--idempotency-key dedups a replayed event to a no-op). SN-8: trigger_id is
   server-derived; the run binds under the REGISTRANT's party."
+            .into(),
+        "alerts" => "\
+kx alerts list [--instance <hex16>] [--limit N] [--before-seq N] [client flags]
+  The operator alerts inbox (W1a-2, read-only): a page over the host's alerts.db
+  read-cache, FOLDED from the journal's TERMINAL Failed facts (dead-letters +
+  worker-reported terminal failures). Newest-first; --instance scopes to one run;
+  --limit caps the page (server clamps 1..=500, default 200); --before-seq pages
+  older rows (pass the last page's lowest seq). Journal-DERIVED — display/triage
+  only, never truth or identity. The triage lifecycle (ack/resolve), the alert-rule
+  engine, and notifications are a Cloud capability (D156/D129) — no ack/resolve here.
+  A pre-W1a-2 gateway answers Unimplemented (rendered honestly)."
+            .into(),
+        "approvals" => "\
+kx approvals list [client flags]
+kx approvals grant <REQUEST_ID> [--reason <s>] [client flags]
+kx approvals deny  <REQUEST_ID> [--reason <s>] [client flags]
+  The HITL pre-action approval gate's operator control plane (D114). A world-mutating
+  tool call on a chain that requires approval is held staged-not-committed until an
+  operator GRANTS it (it then fires exactly once) or DENIES it (the chain dead-letters
+  fail-closed). `list` shows the withheld actions (the server-derived <REQUEST_ID> hex,
+  tool@version, intent); grant/deny take that id positionally (or --request-id) plus an
+  optional --reason. SN-8: grant/deny are operator decisions over the server-derived
+  request_id — they never mint a client warrant."
+            .into(),
+        "cost" => "\
+kx cost <INSTANCE_ID> [--json] [client flags]
+  A run's DISPLAY-ONLY local spend estimate (M11; alias `kx runs cost <INSTANCE_ID>`).
+  Prices the run's durable turn/tool-call counters at the operator's micro-USD rates
+  (KX_PRICING_PER_TURN_MICRO_USD / KX_PRICING_PER_TOOL_CALL_MICRO_USD) and reports
+  turns, tool_calls, the estimate, the ceiling, and whether it is over the ceiling. A
+  BUDGET GUARDRAIL readout, NOT Cloud per-expert billing."
+            .into(),
+        "context" => "\
+kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] [client flags]
+kx context list [client flags]
+kx context get <handle> [--output <dir>] [client flags]
+kx context edit <handle> (--item <name> | --index <n>) --file <path> [--name <new>] [client flags]
+kx context remove-item <handle> (--item <name> | --index <n>) [client flags]
+kx context describe <handle> --description <text> [client flags]
+kx context remove <handle> [client flags]
+  Author + govern PR-7 context bundles — named, content-addressed collections a caller
+  attaches to a run via `kx invoke --context <handle>`. The manifest lives in an
+  off-journal bundles.db sidecar; the server derives bundle_ref (SN-8) and scopes every
+  bundle to the authoring party. `add` upserts (--item attaches an existing content ref;
+  --file uploads then attaches). Because the store is IMMUTABLE, `edit` is a client
+  compose (Get -> PutContent new bytes -> re-upsert with that item re-pointed);
+  `remove-item` drops one item; `describe` re-sets the description; `get --output <dir>`
+  exports each item body + a manifest.json; `remove` unbinds the handle (its CAS blobs
+  stay). All off-journal -> digest-invariant."
+            .into(),
+        "branch" => "\
+kx branch create <handle> [--parent <handle>] [--description <s>] [client flags]
+kx branch snapshot <handle> --path <subpath>... [--parent <handle>] [--description <s>] [client flags]
+kx branch list [client flags]
+kx branch get <handle> [client flags]
+kx branch edit <handle> --path <subpath> --instruction <text> [--timeout-secs N] [client flags]
+kx branch advance <handle> --path <subpath> --ref <hex32> [client flags]
+kx branch remove <handle> [client flags]
+  Author + govern D155 branches — named, content-addressed {path -> ref} manifests over
+  operator-approved host files. A branch lives in an off-journal branches.db sidecar; the
+  server derives branch_ref (SN-8) and scopes every branch to the authoring party.
+  `snapshot` reads confined host files (under KX_SERVE_FS_ROOT, default-OFF) INTO the
+  content store and records the manifest — the host is never written (Phase-A); `create
+  --parent` forks a point-in-time CoW sub-branch. `edit` (Phase-3) agentically rewrites
+  one file IN-CAS via a single model step and advances the manifest to the new body
+  (fails closed on an empty rewrite; the host is never written); `advance` re-points a
+  path to an EXISTING ref (power-user). `remove` unbinds the handle (its CAS blobs stay)."
+            .into(),
+        "eval" => "\
+kx eval run [--tolerance <per_mille>] [--json]
+kx eval score <INSTANCE_ID> [--json] [client flags]
+  The measure-first eval surface (RC1, D172). `run` runs the golden gate LOCALLY — it
+  scores the embedded golden-v1 corpus against the committed baseline (no gateway, no
+  model, cannot flake) and exits non-zero on any regression (the same ratchet `just eval`
+  enforces); --tolerance <per_mille> is the allowed slack below baseline before a gate
+  counts as a regression. `score` reads a live run's expectation-free quality summary
+  (terminal reached, turns / tool-calls, budget burn, rejections) via the ScoreRun
+  gateway RPC."
             .into(),
         other => format!("no help for {other:?}; try `kx --help`"),
     }
@@ -1082,6 +1171,77 @@ mod tests {
             assert!(
                 require_auth_posture(&[flag.to_string()]).is_ok(),
                 "{flag} is an accepted auth posture"
+            );
+        }
+    }
+
+    /// HONESTY (rc-fix): every dispatchable client verb is DISCOVERABLE — the four
+    /// previously-hidden shipped capabilities (approvals, cost, and the models
+    /// pull/use subcommands) now appear in the USAGE block, and `kx help <verb>`
+    /// resolves to a REAL arm (never the "no help for" fallback) for EVERY verb,
+    /// including the six that had no arm (alerts, context, branch, approvals, cost,
+    /// eval). A regression guard for the help/usage honesty surface.
+    #[test]
+    fn every_verb_is_discoverable_in_usage_and_help() {
+        // The four capabilities that `kx --help` used to hide are now named in USAGE.
+        for needle in ["approvals", "kx cost", "pull", "use <id"] {
+            assert!(
+                USAGE.contains(needle),
+                "USAGE must mention {needle:?} (no hidden shipped capability)"
+            );
+        }
+        // Every verb `from_args` dispatches resolves to a real `kx help <verb>` arm.
+        for verb in [
+            "run",
+            "replay",
+            "digest",
+            "serve",
+            "chat",
+            "agent",
+            "invoke",
+            "blueprint",
+            "chain",
+            "swarm",
+            "projection",
+            "runs",
+            "recipe",
+            "mote",
+            "content",
+            "events",
+            "telemetry",
+            "feedback",
+            "replan",
+            "react",
+            "rerank",
+            "capture",
+            "alerts",
+            "signatures",
+            "tools",
+            "connections",
+            "skills",
+            "new",
+            "context",
+            "app",
+            "branch",
+            "models",
+            "datasets",
+            "memory",
+            "health",
+            "info",
+            "secrets",
+            "triggers",
+            "approvals",
+            "cost",
+            "eval",
+        ] {
+            let help = help_for(verb);
+            assert!(
+                !help.starts_with("no help for"),
+                "`kx help {verb}` must resolve to a real help arm, got: {help:?}"
+            );
+            assert!(
+                help.contains(verb),
+                "the `{verb}` help arm should name the verb it documents"
             );
         }
     }

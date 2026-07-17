@@ -28,16 +28,41 @@ const STATE_NAMES: Record<number, string> = {
   [MoteSnapshotState.INCONSISTENT]: "INCONSISTENT",
 };
 
-/** Map a `MoteSnapshotState` discriminant to a stable name (`UNKNOWN` if new). */
+/**
+ * Map a `MoteSnapshotState` discriminant to a stable name (`UNKNOWN` if new).
+ *
+ * @example
+ * ```ts
+ * stateName(MoteSnapshotState.COMMITTED); // "COMMITTED"
+ * stateName(999);                         // "UNKNOWN" (forward-compatible, never throws)
+ * ```
+ */
 export function stateName(state: number): string {
   return STATE_NAMES[state] ?? "UNKNOWN";
 }
 
+/**
+ * True iff `state` is the terminal COMMITTED discriminant.
+ *
+ * @example
+ * ```ts
+ * isCommitted(MoteSnapshotState.COMMITTED); // true
+ * isCommitted(MoteSnapshotState.PENDING);   // false
+ * ```
+ */
 export function isCommitted(state: number): boolean {
   return state === MoteSnapshotState.COMMITTED;
 }
 
-/** True for a not-yet-terminal state (keep polling). */
+/**
+ * True for a not-yet-terminal state (keep polling).
+ *
+ * @example
+ * ```ts
+ * isPending(MoteSnapshotState.SCHEDULED); // true
+ * isPending(MoteSnapshotState.COMMITTED); // false
+ * ```
+ */
 export function isPending(state: number): boolean {
   return state === MoteSnapshotState.PENDING || state === MoteSnapshotState.SCHEDULED;
 }

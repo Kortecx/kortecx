@@ -28,16 +28,38 @@ _STATE_NAMES: "dict[int, str]" = {
 
 
 def state_name(state: int) -> str:
-    """Map a ``MoteSnapshotState`` discriminant to a stable name (``UNKNOWN`` if new)."""
+    """Map a ``MoteSnapshotState`` discriminant to a stable name (``UNKNOWN`` if new).
+
+    >>> from kortecx.types import state_name
+    >>> state_name(3)
+    'COMMITTED'
+    >>> state_name(999)  # a future/unknown discriminant never crashes
+    'UNKNOWN'
+    """
     return _STATE_NAMES.get(state, "UNKNOWN")
 
 
 def is_committed(state: int) -> bool:
+    """True iff ``state`` is the terminal COMMITTED discriminant.
+
+    >>> from kortecx.types import is_committed
+    >>> is_committed(3)
+    True
+    >>> is_committed(1)
+    False
+    """
     return state == _g.MoteSnapshotState.MOTE_SNAPSHOT_STATE_COMMITTED
 
 
 def is_pending(state: int) -> bool:
-    """True for a not-yet-terminal state (keep polling)."""
+    """True for a not-yet-terminal state (keep polling).
+
+    >>> from kortecx.types import is_pending
+    >>> is_pending(1), is_pending(2)   # PENDING, SCHEDULED
+    (True, True)
+    >>> is_pending(3)                  # COMMITTED is terminal
+    False
+    """
     return state in (
         _g.MoteSnapshotState.MOTE_SNAPSHOT_STATE_PENDING,
         _g.MoteSnapshotState.MOTE_SNAPSHOT_STATE_SCHEDULED,

@@ -53,7 +53,9 @@ See [`examples/`](./examples) for `invoke_wait.ts`, `stream_events.ts`,
 
 ## API surface
 
-The eight frozen `KxGateway` RPCs, plus a high-level `invoke(..., { wait: true })`:
+One async-first `KxClient` wraps **every one of the frozen `KxGateway` contract's 98
+RPCs** (95 unary + 3 server-streaming) — a complete client, not a subset — with a
+high-level `invoke(..., { wait: true })` on top:
 
 - `invoke(handle, args, opts?)` → a `Run` handle, or (with `wait: true`) a `Result`
 - `submitRun(request, opts?)` — low-level propose-proxy submit
@@ -66,6 +68,41 @@ The eight frozen `KxGateway` RPCs, plus a high-level `invoke(..., { wait: true }
 A `Run` handle exposes `.wait()`, `.result()`, `.projection()`, `.content()`,
 `.events()`. A `Result` exposes `.ok`, `.text`, `.bytes`, `.toJSON()` (the same
 shape as `kx … --wait --json`).
+
+### The full capability map
+
+The `invoke` / `chat` / `flow(...)` ergonomics sit on the *complete* contract. Beyond
+durable submission + reads, `KxClient` exposes flat camelCase methods plus verb
+namespaces that mirror the `kx` CLI (`kx.memory`, `kx.secrets`, `kx.triggers`,
+`kx.approvals`, `kx.cost`, `kx.eval`, `kx.connections`, `kx.skills`):
+
+| Area | Surface |
+|---|---|
+| **Durable execution (core)** | `submitRun`, `invoke`, `submitWorkflow`, `proposeWorkflow`, `runChain`, `getProjection`, `getContent`, `getContentBatch`, `putContent`, `getMoteDetail`, `getRunInputs`, `listRuns` |
+| **Live events** | `streamEvents`, `streamAllEvents` (cross-run tail), `streamModelTokens` (advisory token stream), `wsEvents` (browser WS bridge) |
+| **Recipes & discovery** | `listRecipes`, `getRecipeForm`, `searchRecipes`, `listSignatures` / `getSignature` / `registerSignature` |
+| **Apps** | `saveApp`, `listApps`, `getApp`, `getAppManifest`, `runApp`, `scaffoldApp` / `getScaffoldStatus`, `lockApp` / `unlockApp`, `exportAppBundle` / `importApp` / `cloneApp` |
+| **Chains & flows** | `chain(...)` string DSL + `chainFrom(...)` combinators + `flow()` builder → `runChain` / `submitWorkflow` (`@kortecx/sdk/chains`) |
+| **Agentic patterns** | `flow().agent(...)`, `swarm(...)`, `team(...)`, `supervisor(...)`, `consensus(...)`, `mapReduce(...)`, `fanOutGather(...)`, `reviewLoop(...)`, `Agent`, `persona(...)` |
+| **Agentic observability** | `listReactTurns`, `listReplanRounds`, `listRerankTurns`, `scoreRun` |
+| **Models** | `listModels`, `loadModel` / `offloadModel`, `pullModel` / `getPullStatus`, `setActiveModel` |
+| **Memory** (`kx.memory`) | `store` / `list` / `recall` / `forget` / `decay` / `stats` / `restore` / `consolidate` |
+| **HITL approvals** (`kx.approvals`) | `listPending` / `grant` / `deny` |
+| **Cost** (`kx.cost`) · **Eval** (`kx.eval`) | `getRunCost` (per-run local spend estimate) · `scoreRun` (expectation-free quality readout) |
+| **Tools + MCP** (`kx.connections`) | `registerTool` / `deregisterTool` / `discoverTools`, `listToolManifests` / `scoreTaskBundle`, connector `add` / `list` / `test` / `discover` / `remove` / `fire`, `callMcpTool` |
+| **Datasets (RAG)** | `listDatasets`, `ingestDocuments`, `queryDataset`, `fuzzyDiscovery` |
+| **Triggers** (`kx.triggers`) | `add` / `list` / `test` / `fire` / `remove` (webhook / cron / gRPC event ingress) |
+| **Secrets** (`kx.secrets`) | `set` / `list` / `remove` (names + audit timestamps only; the value never returns) |
+| **Branches** | `createBranch`, `snapshotInto`, `listBranches`, `getBranch`, `deleteBranch`, `advanceBranch`, `getBranchContent` |
+| **Context bundles** | `putContextBundle`, `listContextBundles`, `getContextBundle`, `deleteContextBundle` |
+| **Feedback** | `submitFeedback`, `listFeedback` |
+| **Telemetry & alerts** | `listMoteTelemetry`, `listTelemetrySummary`, `listAlerts`, `listCaptureRecords` |
+| **Teams & grants** | `listTeams`, `listTeamMembers`, `listAssetGrants` (read-only viewers) |
+| **Skills** (`kx.skills`) | `add` / `list` / `show` / `remove` |
+| **Server info** | `getServerInfo` (non-secret resolved config + auth/TLS posture) |
+
+Every id you pass is one the runtime handed you back — identity is **server-derived**
+(SN-8); the SDK never mints one.
 
 ### Parity with the Python SDK
 
