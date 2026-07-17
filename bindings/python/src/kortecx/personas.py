@@ -91,7 +91,14 @@ PERSONAS: "dict[str, str]" = {
 
 
 def persona_names() -> "List[str]":
-    """The sorted names in the curated persona library."""
+    """The sorted names in the curated persona library.
+
+    >>> from kortecx.personas import persona_names
+    >>> persona_names()[:3]
+    ['analyst', 'critic', 'editor']
+    >>> "researcher" in persona_names()
+    True
+    """
     return sorted(PERSONAS)
 
 
@@ -112,7 +119,18 @@ def persona(
     ...)``), bind a task (``persona("researcher").on("topic")``), or run it standalone
     (``persona("writer").run("draft the intro")``). Raises :class:`KeyError` for an
     unknown name — pass ``Agent(instructions=...)`` with your own string for a bespoke
-    role."""
+    role.
+
+    >>> from kortecx.personas import persona
+    >>> persona("researcher").instructions.startswith("You are a meticulous")
+    True
+    >>> persona("critic", tools=["web-search"]).tools
+    ['web-search']
+    >>> persona("nope")  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ...
+    KeyError: unknown persona
+    """
     from .agent import Agent
 
     if name not in PERSONAS:

@@ -15,7 +15,14 @@ export const INSTANCE_LEN = 16;
 /** Length in bytes of a content ref / Mote id / signature id / digest. */
 export const REF_LEN = 32;
 
-/** Render server bytes as lowercase hex (the SDK's display form for ids). */
+/**
+ * Render server bytes as lowercase hex (the SDK's display form for ids).
+ *
+ * @example
+ * ```ts
+ * encode(new Uint8Array([0xde, 0xad, 0xbe, 0xef])); // "deadbeef"
+ * ```
+ */
 export function encode(data: Uint8Array): string {
   let s = "";
   for (const b of data) {
@@ -29,7 +36,15 @@ export function encodeOpt(data: Uint8Array | null | undefined): string | null {
   return data == null ? null : encode(data);
 }
 
-/** Decode a hex string to bytes, throwing {@link KxUsage} on bad hex. */
+/**
+ * Decode a hex string to bytes, throwing {@link KxUsage} on bad hex.
+ *
+ * @example
+ * ```ts
+ * decode("deadbeef");         // Uint8Array [0xde, 0xad, 0xbe, 0xef]
+ * decode("nothex");           // throws KxUsage("invalid hex: nothex")
+ * ```
+ */
 export function decode(s: string): Uint8Array {
   const t = s.trim();
   if (t.length % 2 !== 0 || (t.length > 0 && !/^[0-9a-fA-F]+$/.test(t))) {
@@ -56,6 +71,12 @@ export function decodeFixed(s: string, n: number): Uint8Array {
  *
  * This lets every SDK method take an id as the hex the rest of the SDK prints,
  * *or* as the raw bytes a previous response carried — both server-derived.
+ *
+ * @example
+ * ```ts
+ * asBytes("00112233445566778899aabbccddeeff", 16); // 16-byte Uint8Array
+ * asBytes(someResponse.instanceId, 16);            // raw bytes pass through
+ * ```
  */
 export function asBytes(value: string | Uint8Array, n: number): Uint8Array {
   if (typeof value === "string") {

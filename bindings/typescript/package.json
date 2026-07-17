@@ -60,6 +60,7 @@
     "@bufbuild/protoc-gen-es": "^2.2.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
+    "fast-check": "^3.23.0",
     "tsup": "^8.3.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",

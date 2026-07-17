@@ -49,6 +49,9 @@ dev = [
     "grpcio-tools==1.67.1",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    # Property/fuzz tests for the Chains DSL parser (SN-4 v2 #5); pure-stdlib target,
+    # so this is a test-only dependency.
+    "hypothesis>=6.0",
     "mypy>=1.8",
     "ruff>=0.4",
     "websockets>=12.0",
@@ -65,6 +68,10 @@ packages = ["src/kortecx"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Doctest flags for `python -m pytest --doctest-modules` over the pure src modules
+# (ids/personas/types/errors/chains/flow carry copy-pasteable `>>>` examples). The
+# same flags are applied by tests/test_doctests.py under a plain `pytest` run.
+doctest_optionflags = ["ELLIPSIS", "IGNORE_EXCEPTION_DETAIL"]
 
 [tool.ruff]
 line-length = 100

@@ -64,14 +64,31 @@ export const PERSONAS: Readonly<Record<string, string>> = {
     "rest, and never introduce information that was not present.",
 };
 
-/** The sorted names in the curated persona library. */
+/**
+ * The sorted names in the curated persona library.
+ *
+ * @example
+ * ```ts
+ * personaNames().slice(0, 3);      // ["analyst", "critic", "editor"]
+ * personaNames().includes("researcher"); // true
+ * ```
+ */
 export function personaNames(): string[] {
   return Object.keys(PERSONAS).sort();
 }
 
-/** Return an {@link Agent} preset with the curated `name` role. Layer `tools` to make
- *  it a bounded reason→tool→observe agent. Throws for an unknown name — pass
- *  `new Agent(instructions, ...)` with your own string for a bespoke role. */
+/**
+ * Return an {@link Agent} preset with the curated `name` role. Layer `tools` to make
+ * it a bounded reason→tool→observe agent. Throws for an unknown name — pass
+ * `new Agent(instructions, ...)` with your own string for a bespoke role.
+ *
+ * @example
+ * ```ts
+ * persona("researcher").instructions.startsWith("You are a meticulous"); // true
+ * persona("critic", { tools: ["web-search"] });  // a tool-bearing agent preset
+ * persona("nope");                               // throws "unknown persona 'nope'"
+ * ```
+ */
 export function persona(name: string, opts: AgentOptions = {}): Agent {
   const base = PERSONAS[name];
   if (base === undefined) {

@@ -24,6 +24,12 @@ class ErrorCode(str, Enum):
     These are part of the SDK contract — consistent across the Python and
     TypeScript SDKs and the CLI ``--json`` surface. Branch on these, not on
     human-readable messages.
+
+    >>> from kortecx.errors import ErrorCode
+    >>> ErrorCode.PERMISSION_DENIED.value
+    'permission_denied'
+    >>> ErrorCode.CATCHUP_REQUIRED.value   # gRPC RESOURCE_EXHAUSTED
+    'catchup_required'
     """
 
     UNAUTHENTICATED = "unauthenticated"
@@ -51,6 +57,13 @@ class KxError(Exception):
     grpc_code:
         The originating gRPC status code name (e.g. ``"PERMISSION_DENIED"``),
         when the error came from the wire; ``None`` for client-side errors.
+
+    >>> from kortecx.errors import KxPermissionDenied, ErrorCode
+    >>> err = KxPermissionDenied("nope")
+    >>> err.code is ErrorCode.PERMISSION_DENIED
+    True
+    >>> str(err)
+    '[permission_denied] nope'
     """
 
     code: ErrorCode = ErrorCode.INTERNAL

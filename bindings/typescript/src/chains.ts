@@ -855,7 +855,16 @@ export class Chain {
     return new Chain(this.nodes, this.edgePairs, this.seed, [...this.contextBundles, ...handles]);
   }
 
-  /** The canonical lowering (the corpus snake_case shape; `params` values are strings). */
+  /**
+   * The canonical lowering (the corpus snake_case shape; `params` values are strings).
+   *
+   * @example
+   * ```ts
+   * const low = chain("a > b", { tasks: { a: task.model("", "hi"), b: task.pure() } }).lower();
+   * low.steps.map((s) => s.kind); // ["model", "pure"]
+   * low.edges;                    // [{ parent: 0, child: 1, edge: "data" }]
+   * ```
+   */
   lower(): Lowered {
     return {
       steps: this.nodes.map((t) => taskToLoweredStep(t)),

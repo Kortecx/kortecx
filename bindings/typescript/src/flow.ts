@@ -665,8 +665,20 @@ export class Flow {
   }
 }
 
-/** Start a fluent chain: `flow().agent(...).then(...).run({ client })`. The headline
- * authoring surface — reads top-to-bottom, IDE-discoverable, defaults filled in. */
+/**
+ * Start a fluent chain: `flow().agent(...).then(...).run({ client })`. The headline
+ * authoring surface — reads top-to-bottom, IDE-discoverable, defaults filled in.
+ *
+ * A `Flow` lowers byte-identically to the equivalent DSL chain, so you can inspect the
+ * topology it will submit without a server:
+ *
+ * @example
+ * ```ts
+ * const low = flow().agent("Research the topic").then("Critique it").lower();
+ * low.steps.map((s) => s.kind); // ["model", "model"]
+ * low.edges;                    // [{ parent: 0, child: 1, edge: "data" }]
+ * ```
+ */
 export function flow(opts: { seed?: number } = {}): Flow {
   return new Flow(opts);
 }
