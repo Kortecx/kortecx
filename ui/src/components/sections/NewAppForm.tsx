@@ -15,7 +15,7 @@
  * (one-App-one-branch), so the scaffold + progress poll key on it.
  */
 
-import { app, flow } from "@kortecx/sdk/web";
+import { type WorkflowProposal, app, flow } from "@kortecx/sdk/web";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
@@ -25,10 +25,31 @@ import { toUiError } from "../../kx/errors";
 import { useAttachments } from "../../kx/use-attachments";
 import { useDatasets } from "../../kx/use-datasets";
 import { useModels } from "../../kx/use-models";
+import { useProposeWorkflow } from "../../kx/use-propose-workflow";
 import { useScaffoldApp } from "../../kx/use-scaffold-app";
 import { composeCapabilityPrompt } from "../../lib/app-capability-prompt";
+import { FRESH_UNMODELED, builderGraphToBlueprint } from "../builder/app-blueprint";
+import { proposalToBuilderGraph } from "../builder/builder-graph";
 import { GlowCard } from "../ds/GlowCard";
 import { ScaffoldProgress } from "./ScaffoldProgress";
+
+type ProposedPlan = Extract<WorkflowProposal, { proposed: true }>;
+
+/**
+ * Bridge a multi-step NL WorkflowProposal → an App blueprint source. Reuses the SAME
+ * persona-framing fold the visual builder applies (`proposalToBuilderGraph`), then lowers
+ * it to the portable `DagSpecJson` the App envelope carries (`builderGraphToBlueprint`, the
+ * same path the "Save as App" flow uses). The server still re-compiles + re-warrants the
+ * DAG at RunApp (SN-8) — this only shapes what gets authored.
+ */
+function proposalBlueprint(plan: ProposedPlan) {
+  const insert = proposalToBuilderGraph(plan.steps, plan.edges, 0);
+  const dag = builderGraphToBlueprint(
+    { steps: insert.steps, edges: insert.edges },
+    FRESH_UNMODELED,
+  );
+  return { toBlueprint: () => dag };
+}
 
 export function NewAppForm({ onClose }: { onClose: () => void }) {
   const { client } = useConnection();
@@ -36,6 +57,8 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
   const datasets = useDatasets();
   const models = useModels();
   const attach = useAttachments();
+  const propose = useProposeWorkflow();
+  const [proposal, setProposal] = useState<WorkflowProposal | null>(null);
   const [name, setName] = useState("");
   const [goal, setGoal] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -61,9 +84,13 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
       const promptText = prompt.trim() || goal.trim();
       // Attachments already uploaded (PutContent) ride as by-reference context files.
       const readyFiles = attach.attachments.filter((a) => a.status === "ready" && a.ref);
+      // 5b: if the author proposed + previewed a multi-step plan, author the App as that
+      // MULTI-STEP blueprint (each step keeps its role/intent/model); otherwise fall back to
+      // today's single agent step over the prompt. The capability rule co-lands on both.
+      const proposed = proposal?.proposed === true && proposal.steps.length > 0 ? proposal : null;
       let builder = app(name.trim())
         .describe(goal.trim())
-        .blueprint(flow().agent(promptText))
+        .blueprint(proposed ? proposalBlueprint(proposed) : flow().agent(promptText))
         .rule("capabilities", {
           body: composeCapabilityPrompt(
             goal.trim(),
@@ -132,6 +159,7 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
 
   const saveErr = save.error ? toUiError(save.error) : null;
   const scaffoldErr = scaffold.error ? toUiError(scaffold.error) : null;
+  const proposeErr = propose.error ? toUiError(propose.error) : null;
 
   return (
     <GlowCard hover={false} variants={fadeUp} data-testid="new-app-form">
@@ -170,10 +198,64 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
             placeholder="Goal — what should this App do? (e.g. 'Summarize a changelog into release notes')"
             rows={2}
             value={goal}
-            onChange={(e) => setGoal(e.target.value)}
+            onChange={(e) => {
+              setGoal(e.target.value);
+              setProposal(null); // a new goal invalidates any previewed plan
+            }}
             aria-label="App goal"
             disabled={busy}
           />
+
+          {/* 5b: NL multi-step authoring — ask the served model to plan a workflow for the
+              goal, preview it, then author the App as that multi-step blueprint. Falls back
+              to a single agent step when there is no plan (e.g. no served model). */}
+          <div className="register-tool-form__row">
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="new-app-propose"
+              onClick={() => propose.mutate(goal.trim(), { onSuccess: setProposal })}
+              disabled={!goalOk || busy || propose.isPending}
+              title="Plan a multi-step workflow for this goal. You preview it before authoring."
+            >
+              {propose.isPending ? "Proposing…" : "Propose steps"}
+            </button>
+            {proposal?.proposed === true ? (
+              <button
+                type="button"
+                className="linkbtn"
+                data-testid="new-app-proposal-clear"
+                onClick={() => setProposal(null)}
+                disabled={busy}
+              >
+                Clear plan (author a single step)
+              </button>
+            ) : null}
+          </div>
+          {proposal?.proposed === true ? (
+            <fieldset className="new-app-form__rail" data-testid="new-app-proposal">
+              <legend className="muted">Proposed plan ({proposal.steps.length} steps)</legend>
+              <ol>
+                {proposal.steps.map((s, i) => (
+                  <li key={`${s.role}-${i}`} data-testid={`new-app-proposal-step-${i}`}>
+                    <strong>{s.role}</strong>
+                    {s.modelId ? <span className="mono"> · {s.modelId}</span> : null}
+                    <div className="muted">{s.intent}</div>
+                  </li>
+                ))}
+              </ol>
+            </fieldset>
+          ) : proposal?.proposed === false ? (
+            <output className="muted" data-testid="new-app-proposal-rejected">
+              No multi-step plan: {proposal.reason} — authoring a single agent step over the goal.
+            </output>
+          ) : null}
+          {proposeErr ? (
+            <p className="field-error" data-testid="new-app-propose-error" role="alert">
+              {proposeErr.message}
+            </p>
+          ) : null}
+
           <textarea
             className="input"
             data-testid="new-app-prompt"
