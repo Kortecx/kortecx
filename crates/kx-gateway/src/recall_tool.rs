@@ -41,6 +41,13 @@ const DEFAULT_K: usize = 5;
 /// The hard top-k ceiling.
 const MAX_K: usize = 64;
 
+/// The maximum total payload bytes of the folded memories (a defensive clamp so the
+/// recall fold can never overflow the model's input window; the tail is dropped with
+/// an honest note). Mirrors the accepted `consolidate@1` pattern (`consolidate_tool.rs`).
+/// Budgets the raw memory TEXT bytes, keeping the front (most-relevant) memories — the
+/// common case (Σ ≤ cap) is byte-identical to the pre-clamp observation.
+const MAX_BUNDLE_BYTES: usize = 24 * 1024;
+
 /// The bundled read-only memory-recall capability (`recall@1`), bound to the serve's
 /// memory namespace (verdict #5 — the model never scopes it).
 pub(crate) struct RecallCapability {
@@ -109,17 +116,32 @@ impl Capability for RecallCapability {
         // query_embedding = None ⇒ the host embeds `query` internally.
         match self.memory.recall(&self.namespace, None, &args.query, k) {
             Ok(hits) => {
-                let memories = hits
-                    .into_iter()
-                    .map(|h| Recalled {
+                // Bytes-budget clamp (the accepted `consolidate@1` pattern): keep the
+                // front (most-relevant) memories, drop the tail so the fold can never
+                // overflow the model's input window. The first memory is always kept.
+                // Σ ≤ cap ⇒ byte-identical to the pre-clamp observation (the common case).
+                let mut used = 0usize;
+                let mut truncated = false;
+                let mut memories: Vec<Recalled> = Vec::with_capacity(hits.len());
+                for h in hits {
+                    used += h.content.len();
+                    if !memories.is_empty() && used > MAX_BUNDLE_BYTES {
+                        truncated = true;
+                        break;
+                    }
+                    memories.push(Recalled {
                         r#ref: ContentRef::from_bytes(h.memory_id).to_hex(),
                         text: String::from_utf8_lossy(&h.content).into_owned(),
                         // h.score is intentionally DROPPED here (SN-8).
-                    })
-                    .collect::<Vec<_>>();
-                let note = memories
-                    .is_empty()
-                    .then(|| "no relevant memories found".to_string());
+                    });
+                }
+                let note = if memories.is_empty() {
+                    Some("no relevant memories found".to_string())
+                } else if truncated {
+                    Some("memories truncated to fit the input window".to_string())
+                } else {
+                    None
+                };
                 encode(&Observation {
                     query: args.query,
                     memories,
@@ -341,6 +363,56 @@ mod tests {
         assert!(
             !String::from_utf8_lossy(&out).contains("score"),
             "the committed observation must not carry a similarity score (SN-8)"
+        );
+    }
+
+    #[test]
+    fn small_k_observation_is_byte_identical_to_the_unclamped_encoding() {
+        // The COMMON case (Σ ≤ MAX_BUNDLE_BYTES) must be byte-for-byte identical to the
+        // pre-clamp observation — the byte budget only bites at large k.
+        let cap = RecallCapability::new(
+            StubView::ok(vec![
+                hit(1, "the deadline is march 3rd", 0.91),
+                hit(2, "the client prefers email", 0.74),
+            ]),
+            "mem::local-dev".into(),
+        );
+        let out = cap.invoke(&req(br#"{"query":"deadline"}"#)).unwrap();
+        let expected = format!(
+            "{{\"query\":\"deadline\",\"memories\":[\
+             {{\"ref\":\"{r1}\",\"text\":\"the deadline is march 3rd\"}},\
+             {{\"ref\":\"{r2}\",\"text\":\"the client prefers email\"}}]}}",
+            r1 = ContentRef::from_bytes([1; 32]).to_hex(),
+            r2 = ContentRef::from_bytes([2; 32]).to_hex(),
+        );
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            expected,
+            "a small-k observation must encode byte-identically (note absent, no clamp)"
+        );
+    }
+
+    #[test]
+    fn many_large_memories_are_clamped_to_the_byte_budget_with_a_note() {
+        // 20 × 4KB memories = 80KB un-clamped; the byte budget keeps only the front
+        // (≤ MAX_BUNDLE_BYTES) and appends an honest truncation note.
+        let hits: Vec<_> = (1u8..=20).map(|t| hit(t, &"a".repeat(4096), 0.5)).collect();
+        let cap = RecallCapability::new(StubView::ok(hits), "mem::x".into());
+        let out = cap.invoke(&req(br#"{"query":"q"}"#)).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let mems = v["memories"].as_array().unwrap();
+        assert!(mems.len() < 20, "the tail must be dropped, kept {}", mems.len());
+        assert!(!mems.is_empty(), "the front is always kept");
+        let text_bytes: usize = mems.iter().map(|m| m["text"].as_str().unwrap().len()).sum();
+        assert!(
+            text_bytes <= MAX_BUNDLE_BYTES,
+            "kept text {text_bytes}B must be within the {MAX_BUNDLE_BYTES}B budget"
+        );
+        assert_eq!(v["note"], "memories truncated to fit the input window");
+        assert!(
+            out.len() < 40 * 1024,
+            "clamped encode {}B must be well under the ~80KB un-clamped fold",
+            out.len()
         );
     }
 
