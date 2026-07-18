@@ -335,9 +335,15 @@ mod tests {
 
         let first = assemble_from_parent_results(&parents, &store).unwrap();
         let second = assemble_from_parent_results(&parents, &store).unwrap();
-        assert_eq!(first, second, "the render is deterministic across two calls");
+        assert_eq!(
+            first, second,
+            "the render is deterministic across two calls"
+        );
         // No 16-hex label survives (neither the full ref hex nor its 16-char prefix).
-        assert!(!first.contains("parent."), "the parent. hash label is gone: {first}");
+        assert!(
+            !first.contains("parent."),
+            "the parent. hash label is gone: {first}"
+        );
         assert!(
             !first.contains(&ref_a.to_hex()[..16]),
             "no hex prefix in the label: {first}"
@@ -351,7 +357,10 @@ mod tests {
 
         // The trajectory twin holds the SAME no-hash parity.
         let traj = assemble_trajectory(&parents, &store).unwrap();
-        assert!(!traj.contains("parent."), "trajectory label hash-free: {traj}");
+        assert!(
+            !traj.contains("parent."),
+            "trajectory label hash-free: {traj}"
+        );
         assert!(traj.contains("[context 1]"), "trajectory ordinal: {traj}");
         assert_eq!(
             traj,

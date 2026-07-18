@@ -555,7 +555,10 @@ mod tool_menu_tests {
 
         // Truncated to exactly 400 chars + a single-char ellipsis.
         let capped = format!("{}…", "x".repeat(400));
-        assert!(out.contains(&capped), "description capped + ellipsized: {out}");
+        assert!(
+            out.contains(&capped),
+            "description capped + ellipsized: {out}"
+        );
         assert!(
             !out.contains(&long),
             "the full 500-char description body must not survive"

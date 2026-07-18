@@ -401,7 +401,11 @@ mod tests {
         let out = cap.invoke(&req(br#"{"query":"q"}"#)).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
         let mems = v["memories"].as_array().unwrap();
-        assert!(mems.len() < 20, "the tail must be dropped, kept {}", mems.len());
+        assert!(
+            mems.len() < 20,
+            "the tail must be dropped, kept {}",
+            mems.len()
+        );
         assert!(!mems.is_empty(), "the front is always kept");
         let text_bytes: usize = mems.iter().map(|m| m["text"].as_str().unwrap().len()).sum();
         assert!(

@@ -203,8 +203,12 @@ fn assemble_two_parents_one_tool() {
     assert_eq!(ctx.items[0].label, "parent.1");
     assert_eq!(ctx.items[1].label, "parent.2");
     // No hex hash survives in either parent label.
-    assert!(!ctx.items[0].label.contains(&ctx.items[0].source_ref.to_hex()[..16]));
-    assert!(!ctx.items[1].label.contains(&ctx.items[1].source_ref.to_hex()[..16]));
+    assert!(!ctx.items[0]
+        .label
+        .contains(&ctx.items[0].source_ref.to_hex()[..16]));
+    assert!(!ctx.items[1]
+        .label
+        .contains(&ctx.items[1].source_ref.to_hex()[..16]));
     // Tool comes after.
     assert_eq!(ctx.items[2].label, "tool.fs-read@1");
     // Parent bytes are resolved content (NEVER hashes).
