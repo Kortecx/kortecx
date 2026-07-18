@@ -22,7 +22,9 @@
 //!   also includes RAG payloads).
 //! - `import <bundle>` reconciles a bundle fail-closed under your own principal;
 //!   `clone <handle> <newname>` makes a local frozen copy.
-//! - `run <handle>` compiles the envelope's blueprint and submits it (exactly-once).
+//! - `run <handle>` compiles the envelope's blueprint and submits it (exactly-once);
+//!   `--require-approval` runs it under the per-run HITL gate, so an irreversible
+//!   tool call pauses for `kx approvals grant` before it fires (opt-in; off by default).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -82,6 +84,10 @@ pub enum AppSub {
         /// Optional `--arg k=v` entry inputs, folded server-side into the App's entry
         /// model step prompt (an "Inputs" block). Requires a RunApp-capable server.
         args: Vec<(String, String)>,
+        /// `--require-approval`: run under the per-run human-in-the-loop gate, so an
+        /// irreversible / world-mutating tool call pauses for an explicit grant (via
+        /// `kx approvals`) before it fires. Off by default (autonomous).
+        require_approval: bool,
     },
     /// Write one App out. `--output <file>` writes the pretty envelope (by-reference
     /// round-trip artifact); `--bundle <file>` writes a portable `kortecx.appbundle/v1`
@@ -254,6 +260,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
     let mut with_data = false;
     let mut yes = false;
     let mut force = false;
+    let mut require_approval = false;
 
     while let Some(flag) = args.next() {
         if common.try_consume(&flag, &mut args)? {
@@ -297,6 +304,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             "--branch" => branch = Some(next_value(&mut args, "--branch")?),
             "--goal" => goal = Some(next_value(&mut args, "--goal")?),
             "--wait" => wait_flag = true,
+            "--require-approval" => require_approval = true,
             "--timeout-secs" => {
                 timeout_secs = u64::from(parse_u32(
                     &next_value(&mut args, "--timeout-secs")?,
@@ -337,6 +345,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             with_data,
             yes,
             force,
+            require_approval,
         },
     )?;
     Ok(AppArgs { sub, common })
@@ -367,6 +376,7 @@ struct Flags {
     with_data: bool,
     yes: bool,
     force: bool,
+    require_approval: bool,
 }
 
 /// Validate the accumulated flags against the verb and build the subcommand.
@@ -409,6 +419,7 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             timeout_secs: f.timeout_secs,
             out: f.out,
             args: f.app_args,
+            require_approval: f.require_approval,
         }),
         "export" => {
             let handle = require_pos(f.positional, "a <handle>")?;
@@ -724,6 +735,7 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
             timeout_secs,
             out,
             args,
+            require_approval,
         } => {
             // `--arg k=v` → a canonical JSON object the server folds into the entry
             // model step (empty ⇒ no args). Sorted by BTreeMap for a stable payload.
@@ -742,11 +754,20 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                 .run_app(resolved.request(proto::RunAppRequest {
                     handle: handle.clone(),
                     args: args_bytes.clone(),
+                    require_approval,
                 })?)
                 .await
             {
                 Ok(resp) => resp.into_inner(),
                 Err(status) if status.code() == tonic::Code::Unimplemented => {
+                    if require_approval {
+                        return Err(CliError::Usage(
+                            "this server does not support `kx app run --require-approval` \
+                             (RunApp unavailable); the legacy fallback cannot gate approvals — \
+                             upgrade the server, or run without --require-approval"
+                                .into(),
+                        ));
+                    }
                     if !args_bytes.is_empty() {
                         return Err(CliError::Usage(
                             "this server does not support `kx app run --arg` (RunApp \
@@ -1096,11 +1117,29 @@ mod tests {
                 handle,
                 wait,
                 timeout_secs,
+                require_approval,
                 ..
             } => {
                 assert_eq!(handle, "apps/local/echo");
                 assert!(wait);
                 assert_eq!(timeout_secs, 30);
+                // Absent ⇒ autonomous (opt-in only).
+                assert!(!require_approval);
+            }
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_run_with_require_approval() {
+        match parse_ok(&["run", "apps/local/echo", "--require-approval"]).sub {
+            AppSub::Run {
+                handle,
+                require_approval,
+                ..
+            } => {
+                assert_eq!(handle, "apps/local/echo");
+                assert!(require_approval);
             }
             other => panic!("expected Run, got {other:?}"),
         }

@@ -187,7 +187,7 @@ kx-ollama            = { path = "crates/kx-ollama",            version = "0.1.0"
 kx-capability        = { path = "crates/kx-capability",        version = "0.1.1" }
 kx-executor          = { path = "crates/kx-executor",          version = "0.1.1" }
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.1.1" }
-kx-proto             = { path = "crates/kx-proto",             version = "0.2.0" }
+kx-proto             = { path = "crates/kx-proto",             version = "0.3.0" }
 kx-blueprint         = { path = "crates/kx-blueprint",         version = "0.1.0" }
 kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.2.0" }
 kx-worker            = { path = "crates/kx-worker",            version = "0.2.0" }

@@ -11,7 +11,7 @@
 
 import { useNavigate } from "@tanstack/react-router";
 import { m } from "framer-motion";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { toUiError } from "../../kx/errors";
 import { useApp, useRunApp } from "../../kx/use-apps";
@@ -35,6 +35,9 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
   const app = useApp(handle);
   const inputSchema = (app.data?.envelope.input_schema ?? null) as unknown;
   const form = useMemo(() => appInputForm(handle, inputSchema), [handle, inputSchema]);
+  // Opt-in per-run HITL: when on, the run authors under the approval gate so a
+  // world-mutating tool call surfaces in the approvals inbox before it fires.
+  const [requireApproval, setRequireApproval] = useState(false);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
@@ -47,15 +50,14 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
   }, [onClose]);
 
   function run(args: Record<string, string>): void {
-    runApp.mutate(
-      { handle, args },
-      {
-        onSuccess: ({ instanceId }) => {
-          onClose();
-          void navigate({ to: "/workflows/$instanceId", params: { instanceId } });
-        },
+    // Send the opt-in HITL flag only when the user checked it (mirrors the `args`
+    // idiom) — an unchecked run keeps today's payload, so the server default applies.
+    runApp.mutate(requireApproval ? { handle, args, requireApproval } : { handle, args }, {
+      onSuccess: ({ instanceId }) => {
+        onClose();
+        void navigate({ to: "/workflows/$instanceId", params: { instanceId } });
       },
-    );
+    });
   }
 
   return createPortal(
@@ -85,6 +87,16 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
         <div className="node-drawer__section">
           <code className="mono muted">{handle}</code>
           <RunPreflight handle={handle} />
+          <label className="app-run-drawer__approval">
+            <input
+              type="checkbox"
+              data-testid="app-run-require-approval"
+              checked={requireApproval}
+              onChange={(e) => setRequireApproval(e.target.checked)}
+              disabled={runApp.isPending}
+            />{" "}
+            Require approval before irreversible actions
+          </label>
           {runApp.isError ? (
             <ErrorNotice error={toUiError(runApp.error)} onRetry={() => runApp.reset()} />
           ) : null}

@@ -459,7 +459,14 @@ class App:
         expected: an ``App`` is an explicitly-named durable object (``kx.app(name)`` /
         ``flow().as_app(name)``); the save is idempotent (content-addressed envelope +
         handle upsert). The server re-resolves every warrant from the caller's grants
-        (SN-8)."""
+        (SN-8).
+
+        Per-run human-in-the-loop: the wire field ``RunAppRequest.require_approval``
+        gates a run behind the approval inbox — an irreversible / world-mutating tool
+        call pauses for an explicit grant before it fires. It is opt-in (default
+        autonomous) and settable today from the CLI (``kx app run --require-approval``)
+        and the console run drawer; a ``require_approval=`` keyword on this method is a
+        planned follow-up (the client ``run_app`` builder does not thread it yet)."""
         from .defaults import default_client
 
         kx = client if client is not None else default_client()
