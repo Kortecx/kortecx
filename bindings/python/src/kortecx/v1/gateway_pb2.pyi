@@ -72,6 +72,16 @@ class WorkflowExecutionMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     WORKFLOW_EXECUTION_MODE_FROZEN: _ClassVar[WorkflowExecutionMode]
     WORKFLOW_EXECUTION_MODE_DYNAMIC: _ClassVar[WorkflowExecutionMode]
 
+class HostedAppState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    HOSTED_APP_STATE_UNSPECIFIED: _ClassVar[HostedAppState]
+    HOSTED_STOPPED: _ClassVar[HostedAppState]
+    HOSTED_MATERIALIZING: _ClassVar[HostedAppState]
+    HOSTED_INSTALLING: _ClassVar[HostedAppState]
+    HOSTED_STARTING: _ClassVar[HostedAppState]
+    HOSTED_RUNNING: _ClassVar[HostedAppState]
+    HOSTED_FAILED: _ClassVar[HostedAppState]
+
 class FeedbackRating(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     FEEDBACK_RATING_UNSPECIFIED: _ClassVar[FeedbackRating]
@@ -129,6 +139,13 @@ WORKFLOW_STEP_KIND_TOOL: WorkflowStepKind
 WORKFLOW_EXECUTION_MODE_UNSPECIFIED: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_FROZEN: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_DYNAMIC: WorkflowExecutionMode
+HOSTED_APP_STATE_UNSPECIFIED: HostedAppState
+HOSTED_STOPPED: HostedAppState
+HOSTED_MATERIALIZING: HostedAppState
+HOSTED_INSTALLING: HostedAppState
+HOSTED_STARTING: HostedAppState
+HOSTED_RUNNING: HostedAppState
+HOSTED_FAILED: HostedAppState
 FEEDBACK_RATING_UNSPECIFIED: FeedbackRating
 FEEDBACK_RATING_UP: FeedbackRating
 FEEDBACK_RATING_DOWN: FeedbackRating
@@ -1454,7 +1471,7 @@ class SetActiveModelResponse(_message.Message):
     def __init__(self, active_model_id: _Optional[str] = ...) -> None: ...
 
 class AppSummary(_message.Message):
-    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked")
+    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked", "kind")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     APP_REF_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -1463,6 +1480,7 @@ class AppSummary(_message.Message):
     TAGS_FIELD_NUMBER: _ClassVar[int]
     STEP_COUNT_FIELD_NUMBER: _ClassVar[int]
     LOCKED_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
     handle: str
     app_ref: bytes
     name: str
@@ -1471,7 +1489,8 @@ class AppSummary(_message.Message):
     tags: _containers.RepeatedScalarFieldContainer[str]
     step_count: int
     locked: bool
-    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ...) -> None: ...
+    kind: str
+    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ..., kind: _Optional[str] = ...) -> None: ...
 
 class SaveAppRequest(_message.Message):
     __slots__ = ("handle", "envelope_json", "source_digest")
@@ -1648,6 +1667,60 @@ class UnlockAppResponse(_message.Message):
     UNLOCKED_FIELD_NUMBER: _ClassVar[int]
     unlocked: bool
     def __init__(self, unlocked: bool = ...) -> None: ...
+
+class HostedAppStatus(_message.Message):
+    __slots__ = ("handle", "state", "url", "recent_logs", "framework", "port", "detail")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    URL_FIELD_NUMBER: _ClassVar[int]
+    RECENT_LOGS_FIELD_NUMBER: _ClassVar[int]
+    FRAMEWORK_FIELD_NUMBER: _ClassVar[int]
+    PORT_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    state: HostedAppState
+    url: str
+    recent_logs: _containers.RepeatedScalarFieldContainer[str]
+    framework: str
+    port: int
+    detail: str
+    def __init__(self, handle: _Optional[str] = ..., state: _Optional[_Union[HostedAppState, str]] = ..., url: _Optional[str] = ..., recent_logs: _Optional[_Iterable[str]] = ..., framework: _Optional[str] = ..., port: _Optional[int] = ..., detail: _Optional[str] = ...) -> None: ...
+
+class StartHostedAppRequest(_message.Message):
+    __slots__ = ("handle", "rebuild")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    REBUILD_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    rebuild: bool
+    def __init__(self, handle: _Optional[str] = ..., rebuild: bool = ...) -> None: ...
+
+class StopHostedAppRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class StopHostedAppResponse(_message.Message):
+    __slots__ = ("stopped",)
+    STOPPED_FIELD_NUMBER: _ClassVar[int]
+    stopped: bool
+    def __init__(self, stopped: bool = ...) -> None: ...
+
+class GetHostedAppStatusRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class ListHostedAppsRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class ListHostedAppsResponse(_message.Message):
+    __slots__ = ("apps",)
+    APPS_FIELD_NUMBER: _ClassVar[int]
+    apps: _containers.RepeatedCompositeFieldContainer[HostedAppStatus]
+    def __init__(self, apps: _Optional[_Iterable[_Union[HostedAppStatus, _Mapping]]] = ...) -> None: ...
 
 class SkillSummary(_message.Message):
     __slots__ = ("skill_ref", "name", "version", "description", "instructions_ref", "tools", "tags")

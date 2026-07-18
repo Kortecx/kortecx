@@ -5354,3 +5354,66 @@ button.card-grid__title:hover {
 .lock-control__state--unlocked {
   color: var(--fg-muted);
 }
+
+/* D213 — navbar approvals bell + drawer cards. The bell wraps the iconbtn so the
+   absolutely-positioned .navitem__badge anchors to it. */
+.approvals-bell {
+  position: relative;
+  display: inline-flex;
+}
+.approval-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.approval-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.approval-card .approval-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+/* D213 — the right-aligned box/table icon view toggle + the Apps table layout. */
+.view-toggle--icons {
+  margin-left: auto;
+}
+.view-toggle--icons button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.apps-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.apps-table th,
+.apps-table td {
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.apps-table th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+.apps-table .app-row__actions {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+.apps-section__panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}

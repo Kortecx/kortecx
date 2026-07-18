@@ -1,0 +1,18 @@
+{
+  "schema": "kortecx.skill/v1",
+  "name": "author-scheduled-app",
+  "version": "1",
+  "description": "Author a comprehensive SCHEDULED (functional) app: a durable blueprint that runs unattended on a cron/webhook/gRPC trigger, wiring the tools, connections and integrations it needs to do real work. Read/draft-biased — it deliberately never wishes for an irreversible send.",
+  "tags": ["authoring", "scheduled", "functional", "trigger", "automation"],
+  "tools": {
+    "gmail/search": "1",
+    "gmail/read": "1",
+    "gmail/draft": "1",
+    "notion/search": "1",
+    "notion/read_page": "1",
+    "notion/create_page": "1",
+    "slack/read_channel": "1",
+    "discord/read_channel": "1",
+    "retrieve": "1"
+  }
+}

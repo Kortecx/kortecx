@@ -6,11 +6,11 @@ import { createPortal } from "react-dom";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useApps, useCloneApp, useExportAppBundle, useImportApp } from "../../kx/use-apps";
+import { useHostedAppStatus, useStartHostedApp } from "../../kx/use-hosted-app";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { AppViewPopover } from "../apps/AppViewPopover";
-import { ApprovalsInbox } from "../apps/ApprovalsInbox";
 import { Icon } from "../shell/Icon";
 import { Popover } from "../shell/Popover";
 import { NewAppForm } from "./NewAppForm";
@@ -29,26 +29,36 @@ import { NewAppForm } from "./NewAppForm";
  * fake controls. Nothing currently exposed disappears: Apps is ADDITIVE alongside
  * Workflows/Blueprints (the consolidation rides the deferred redesign).
  */
-/** The Apps section views: the App catalog (default) and the cross-App HITL
- *  approvals inbox (a single pending queue across every App). */
-export type AppsTab = "catalog" | "approvals";
+/** The two Apps sections (D213): SCHEDULED = functional automation apps (run on a
+ *  trigger, pluggable into workflows); HOSTED = experience apps (a real web app the
+ *  runtime serves on a local port). Cross-App HITL approvals moved to the navbar bell. */
+export type AppsSectionKind = "scheduled" | "hosted";
 
-const APPS_TABS: ReadonlyArray<{ id: AppsTab; label: string }> = [
-  { id: "catalog", label: "Catalog" },
-  { id: "approvals", label: "Approvals" },
+const APPS_SECTIONS: ReadonlyArray<{ id: AppsSectionKind; label: string; hint: string }> = [
+  {
+    id: "scheduled",
+    label: "Scheduled",
+    hint: "Automation apps — run on a trigger / in workflows",
+  },
+  { id: "hosted", label: "Hosted", hint: "Web apps the runtime scaffolds and serves on a port" },
 ];
 
+/** Route an App to its section by the backend lane (defaults to scheduled/functional). */
+function sectionOf(app: AppSummary): AppsSectionKind {
+  return app.kind === "experience" ? "hosted" : "scheduled";
+}
+
 export function AppsSection({
-  tab = "catalog",
-  onTab,
+  section = "scheduled",
+  onSection,
   view = "box",
   onView,
 }: {
-  tab?: AppsTab;
-  onTab?: (tab: AppsTab) => void;
-  /** The catalog layout — box/card grid (default) or compact list rows. */
-  view?: "list" | "box";
-  onView?: (view: "list" | "box") => void;
+  section?: AppsSectionKind;
+  onSection?: (section: AppsSectionKind) => void;
+  /** The catalog layout — box/card grid (default) or a scannable table. */
+  view?: "box" | "table";
+  onView?: (view: "box" | "table") => void;
 } = {}) {
   const navigate = useNavigate();
   const { apps, notWired, isLoading, isError, error, refetch } = useApps();
@@ -61,6 +71,8 @@ export function AppsSection({
   const [notice, setNotice] = useState<string | null>(null);
   const [runHandle, setRunHandle] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sectioned = apps.filter((a) => sectionOf(a) === section);
+  const hosted = section === "hosted";
 
   // Open the typed run drawer for this App — it reads the App's `input_schema` (via
   // GetApp) and submits with the collected args (an App with no inputs runs in one
@@ -161,129 +173,143 @@ export function AppsSection({
         </div>
       </div>
 
-      <fieldset className="view-toggle" aria-label="Apps view" data-testid="apps-tabs">
-        {APPS_TABS.map((t) => (
+      <fieldset className="view-toggle" aria-label="Apps section" data-testid="apps-sections">
+        {APPS_SECTIONS.map((s) => (
           <button
-            key={t.id}
+            key={s.id}
             type="button"
-            data-testid={`apps-tab-${t.id}`}
-            aria-pressed={tab === t.id}
-            onClick={() => onTab?.(t.id)}
+            data-testid={`apps-section-${s.id}`}
+            aria-pressed={section === s.id}
+            title={s.hint}
+            onClick={() => onSection?.(s.id)}
           >
-            {t.label}
+            {s.label}
           </button>
         ))}
       </fieldset>
 
-      {tab === "approvals" ? (
-        <ApprovalsInbox />
-      ) : (
+      {notice ? (
+        <output className="muted" data-testid="apps-notice">
+          {notice}
+        </output>
+      ) : null}
+      {importApp.error ? (
+        <ErrorNotice error={toUiError(importApp.error)} onRetry={() => importApp.reset()} />
+      ) : null}
+      {exportBundle.error ? (
+        <ErrorNotice error={toUiError(exportBundle.error)} onRetry={() => exportBundle.reset()} />
+      ) : null}
+
+      {creating ? <NewAppForm onClose={() => setCreating(false)} initialKind={section} /> : null}
+
+      {isLoading ? <EmptyState title="Loading apps…" /> : null}
+
+      {notWired ? (
+        <EmptyState
+          title="Apps not available"
+          detail="This gateway does not expose the App catalog (an older build, or the apps.db sidecar is absent)."
+        />
+      ) : isError ? (
+        <ErrorNotice error={toUiError(error)} onRetry={() => void refetch()} />
+      ) : !isLoading && sectioned.length === 0 ? (
+        <EmptyState
+          title={hosted ? "No hosted apps yet" : "No scheduled apps yet"}
+          detail={
+            hosted
+              ? "Create a hosted web app with New App — the runtime scaffolds a React / Next.js project and serves it on a local port."
+              : "Author an automation app with `kx app save <file>`, the `app()` SDK builder, or New App — then run it on a trigger or in a workflow."
+          }
+        />
+      ) : null}
+
+      {sectioned.length > 0 ? (
         <>
-          {notice ? (
-            <output className="muted" data-testid="apps-notice">
-              {notice}
-            </output>
-          ) : null}
-          {importApp.error ? (
-            <ErrorNotice error={toUiError(importApp.error)} onRetry={() => importApp.reset()} />
-          ) : null}
-          {exportBundle.error ? (
-            <ErrorNotice
-              error={toUiError(exportBundle.error)}
-              onRetry={() => exportBundle.reset()}
-            />
-          ) : null}
-
-          {creating ? <NewAppForm onClose={() => setCreating(false)} /> : null}
-
-          {isLoading ? <EmptyState title="Loading apps…" /> : null}
-
-          {notWired ? (
-            <EmptyState
-              title="Apps not available"
-              detail="This gateway does not expose the App catalog (an older build, or the apps.db sidecar is absent)."
-            />
-          ) : isError ? (
-            <ErrorNotice error={toUiError(error)} onRetry={() => void refetch()} />
-          ) : !isLoading && apps.length === 0 ? (
-            <EmptyState
-              title="No apps yet"
-              detail="Author an App with `kx app save <file>` or the `app()` SDK builder, then it appears here to inspect and run."
-            />
-          ) : null}
-
-          {apps.length > 0 ? (
-            <>
-              <fieldset
-                className="view-toggle view-toggle--compact"
-                aria-label="Catalog layout"
-                data-testid="apps-view-toggle"
+          <div className="apps-section__panel-head">
+            <span className="muted">
+              {sectioned.length} {section} app{sectioned.length === 1 ? "" : "s"}
+            </span>
+            <fieldset
+              className="view-toggle view-toggle--compact view-toggle--icons"
+              aria-label="Apps layout"
+              data-testid="apps-view-toggle"
+            >
+              <button
+                type="button"
+                data-testid="apps-view-box"
+                aria-pressed={view === "box"}
+                title="Card view"
+                onClick={() => onView?.("box")}
               >
-                <button
-                  type="button"
-                  data-testid="apps-view-box"
-                  aria-pressed={view === "box"}
-                  onClick={() => onView?.("box")}
-                >
-                  Box
-                </button>
-                <button
-                  type="button"
-                  data-testid="apps-view-list"
-                  aria-pressed={view === "list"}
-                  onClick={() => onView?.("list")}
-                >
-                  List
-                </button>
-              </fieldset>
-              <m.div
-                className={`card-grid${view === "list" ? " card-grid--list" : ""}`}
-                data-testid="apps-catalog"
-                data-view={view}
-                variants={stagger()}
-                initial="hidden"
-                animate="show"
+                <Icon name="grid" size={15} />
+              </button>
+              <button
+                type="button"
+                data-testid="apps-view-table"
+                aria-pressed={view === "table"}
+                title="Table view"
+                onClick={() => onView?.("table")}
               >
-                {apps.map((a) => (
-                  <AppCard
-                    key={a.handle}
-                    app={a}
-                    pending={false}
-                    downloadPending={exportBundle.isPending}
-                    onRun={run}
-                    onView={setSummaryFor}
-                    onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
-                    onDownload={download}
-                    onDuplicate={setDuplicating}
-                  />
-                ))}
-              </m.div>
-            </>
-          ) : null}
-
-          {cloneApp.error ? (
-            <ErrorNotice error={toUiError(cloneApp.error)} onRetry={() => cloneApp.reset()} />
-          ) : null}
-
-          {summaryFor ? (
-            <AppViewPopover handle={summaryFor} onClose={() => setSummaryFor(null)} />
-          ) : null}
-          {duplicating ? (
-            <DuplicateDialog
-              handle={duplicating}
-              pending={cloneApp.isPending}
-              onSubmit={duplicate}
-              onClose={() => {
-                setDuplicating(null);
-                cloneApp.reset();
-              }}
+                <Icon name="table" size={15} />
+              </button>
+            </fieldset>
+          </div>
+          {view === "box" ? (
+            <m.div
+              className="card-grid"
+              data-testid="apps-catalog"
+              data-view="box"
+              variants={stagger()}
+              initial="hidden"
+              animate="show"
+            >
+              {sectioned.map((a) => (
+                <AppCard
+                  key={a.handle}
+                  app={a}
+                  hosted={hosted}
+                  downloadPending={exportBundle.isPending}
+                  onRun={run}
+                  onView={setSummaryFor}
+                  onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
+                  onDownload={download}
+                  onDuplicate={setDuplicating}
+                />
+              ))}
+            </m.div>
+          ) : (
+            <AppsTable
+              apps={sectioned}
+              hosted={hosted}
+              downloadPending={exportBundle.isPending}
+              onRun={run}
+              onView={setSummaryFor}
+              onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
+              onDownload={download}
+              onDuplicate={setDuplicating}
             />
-          ) : null}
-          {runHandle ? (
-            <AppRunDrawer handle={runHandle} onClose={() => setRunHandle(null)} />
-          ) : null}
+          )}
         </>
-      )}
+      ) : null}
+
+      {cloneApp.error ? (
+        <ErrorNotice error={toUiError(cloneApp.error)} onRetry={() => cloneApp.reset()} />
+      ) : null}
+
+      {summaryFor ? (
+        <AppViewPopover handle={summaryFor} onClose={() => setSummaryFor(null)} />
+      ) : null}
+      {duplicating ? (
+        <DuplicateDialog
+          handle={duplicating}
+          pending={cloneApp.isPending}
+          onSubmit={duplicate}
+          onClose={() => {
+            setDuplicating(null);
+            cloneApp.reset();
+          }}
+        />
+      ) : null}
+      {runHandle ? <AppRunDrawer handle={runHandle} onClose={() => setRunHandle(null)} /> : null}
     </section>
   );
 }
@@ -293,7 +319,7 @@ export function AppsSection({
  *  then the description, step/tag chips, and the raw handle. */
 function AppCard({
   app,
-  pending,
+  hosted,
   downloadPending,
   onRun,
   onView,
@@ -302,7 +328,7 @@ function AppCard({
   onDuplicate,
 }: {
   app: AppSummary;
-  pending: boolean;
+  hosted: boolean;
   downloadPending: boolean;
   onRun: (handle: string) => void;
   onView: (handle: string) => void;
@@ -329,17 +355,20 @@ function AppCard({
         </button>
         <span className="chip chip--tag">v{app.version}</span>
         <div className="card-grid__head-actions">
-          <button
-            type="button"
-            className="iconbtn"
-            data-testid={`app-run-${app.handle}`}
-            disabled={pending}
-            title={pending ? "Running…" : "Run this App"}
-            aria-label="Run"
-            onClick={() => onRun(app.handle)}
-          >
-            <Icon name="play" size={16} />
-          </button>
+          {hosted ? (
+            <HostedControls handle={app.handle} />
+          ) : (
+            <button
+              type="button"
+              className="iconbtn"
+              data-testid={`app-run-${app.handle}`}
+              title="Run this App"
+              aria-label="Run"
+              onClick={() => onRun(app.handle)}
+            >
+              <Icon name="play" size={16} />
+            </button>
+          )}
           <span
             className="iconbtn iconbtn--static"
             data-testid={`app-lock-${app.handle}`}
@@ -444,6 +473,180 @@ function AppCard({
         {app.handle}
       </code>
     </m.article>
+  );
+}
+
+/** D213 — a hosted app's live status pill (running / starting / stopped / failed). */
+function HostedStatusPill({ handle }: { handle: string }) {
+  const { status } = useHostedAppStatus(handle, true);
+  const state = status?.state ?? "stopped";
+  const tone =
+    state === "running"
+      ? "committed"
+      : state === "failed"
+        ? "failed"
+        : state === "stopped"
+          ? "unknown"
+          : "pending";
+  return (
+    <span
+      className={`pill pill--${tone}`}
+      data-testid={`hosted-status-${handle}`}
+      title={status?.detail || state}
+    >
+      {state}
+    </span>
+  );
+}
+
+/** D213 — the hosted-app Run control: start the dev server + open it in a new tab. */
+function HostedRunButton({ handle }: { handle: string }) {
+  const start = useStartHostedApp();
+  function run(): void {
+    start.mutate(
+      { handle },
+      {
+        onSuccess: (s) => {
+          if (s.url) {
+            window.open(s.url, "_blank", "noopener");
+          }
+        },
+      },
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="iconbtn"
+      data-testid={`hosted-run-${handle}`}
+      disabled={start.isPending}
+      title="Run this hosted app (opens in a new tab)"
+      aria-label="Run hosted app"
+      onClick={run}
+    >
+      <Icon name="external-link" size={16} />
+    </button>
+  );
+}
+
+/** The hosted-app card cluster: a status pill + the Run-in-new-tab control. */
+function HostedControls({ handle }: { handle: string }) {
+  return (
+    <>
+      <HostedStatusPill handle={handle} />
+      <HostedRunButton handle={handle} />
+    </>
+  );
+}
+
+/** The Apps TABLE layout — a scannable alternative to the card grid. Hosted rows carry a
+ *  live status column; every row shares the run/open/download/duplicate action cluster. */
+function AppsTable({
+  apps,
+  hosted,
+  downloadPending,
+  onRun,
+  onView,
+  onOpen,
+  onDownload,
+  onDuplicate,
+}: {
+  apps: AppSummary[];
+  hosted: boolean;
+  downloadPending: boolean;
+  onRun: (handle: string) => void;
+  onView: (handle: string) => void;
+  onOpen: (handle: string) => void;
+  onDownload: (handle: string) => void;
+  onDuplicate: (handle: string) => void;
+}) {
+  return (
+    <table className="trail-table apps-table" data-testid="apps-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Version</th>
+          <th>Steps</th>
+          <th>Tags</th>
+          {hosted ? <th>Status</th> : null}
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {apps.map((a) => (
+          <tr key={a.handle} data-testid={`app-row-${a.handle}`}>
+            <td>
+              <button
+                type="button"
+                className="linkbtn"
+                data-testid={`app-card-view-${a.handle}`}
+                onClick={() => onView(a.handle)}
+              >
+                {a.name}
+              </button>
+              <div>
+                <code className="mono muted">{a.handle}</code>
+              </div>
+            </td>
+            <td>v{a.version}</td>
+            <td>{a.stepCount}</td>
+            <td>{a.tags.join(", ") || "—"}</td>
+            {hosted ? (
+              <td>
+                <HostedStatusPill handle={a.handle} />
+              </td>
+            ) : null}
+            <td className="app-row__actions">
+              {hosted ? (
+                <HostedRunButton handle={a.handle} />
+              ) : (
+                <button
+                  type="button"
+                  className="iconbtn"
+                  data-testid={`app-run-${a.handle}`}
+                  title="Run this App"
+                  aria-label="Run"
+                  onClick={() => onRun(a.handle)}
+                >
+                  <Icon name="play" size={16} />
+                </button>
+              )}
+              <button
+                type="button"
+                className="iconbtn"
+                data-testid={`app-open-${a.handle}`}
+                title="Open project"
+                aria-label="Open project"
+                onClick={() => onOpen(a.handle)}
+              >
+                <Icon name="external-link" size={15} />
+              </button>
+              <button
+                type="button"
+                className="iconbtn"
+                data-testid={`app-download-${a.handle}`}
+                disabled={downloadPending}
+                title="Download a portable .kxapp bundle"
+                aria-label="Download bundle"
+                onClick={() => onDownload(a.handle)}
+              >
+                <Icon name="download" size={16} />
+              </button>
+              <button
+                type="button"
+                className="iconbtn"
+                data-testid={`app-duplicate-${a.handle}`}
+                title="Duplicate locally"
+                aria-label="Duplicate"
+                onClick={() => onDuplicate(a.handle)}
+              >
+                <Icon name="copy" size={15} />
+              </button>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

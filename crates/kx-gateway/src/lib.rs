@@ -106,6 +106,13 @@ mod scaffold;
 // unchanged). Off-journal, off-digest, rebuildable-to-empty.
 #[cfg(feature = "embedded-worker")]
 mod branches;
+// D213 Experience lane: the hosted-app run/build/serve supervisor — materializes a
+// hosted app's branch file tree to disk, `npm install`s, and runs a dev server on a
+// loopback port as a supervised child. A plain host subprocess (never a Mote / never
+// through kx-executor / never journaled), so the frozen executor digest is untouched.
+// Behind `hosted-apps` (implies `embedded-worker` for the branch/content seams).
+#[cfg(feature = "hosted-apps")]
+mod hostsupervisor;
 // The Morphic Data Engine (campaign Batch 2): the durable serve-path capture
 // projection (capture.db sidecar folded from the read-only journal handle).
 // Always-on, off-truth-path; FFI-free (rusqlite is already in the closure).

@@ -22,7 +22,13 @@
  * corpus). PURE DATA (web-safe); `save`/`run`/`export` resolve a client at call time.
  */
 
-import { APP_SCHEMA, type SaveAppResult, type Skill, prettyJson } from "./apps.js";
+import {
+  APP_SCHEMA,
+  EXPERIENCE_SCHEMA,
+  type SaveAppResult,
+  type Skill,
+  prettyJson,
+} from "./apps.js";
 import type { DagSpecJson } from "./chains.js";
 import { getDefaultClient } from "./default-client.js";
 import { KxUsage } from "./errors.js";
@@ -134,6 +140,10 @@ export class AppBuilder {
   private _maxTurns?: number;
   private _maxToolCalls?: number;
   private _branchHandle = "";
+  /** D213: when set, this is an Experience (hosted) App — a real web project served by
+   * the runtime, not a blueprint. Set via {@link AppBuilder.hosted}; mutually exclusive
+   * with {@link AppBuilder.blueprint}. */
+  private _hosted?: { framework: string };
   /** Imperative pre-run registrations carried from a Flow via {@link Flow.asApp}
    * (with_mcp connectors / with_memory facts). {@link run} executes them before RunApp.
    * Never part of the envelope (off the golden digest). */
@@ -371,6 +381,16 @@ export class AppBuilder {
     return this;
   }
 
+  /** D213: make this an Experience (hosted) App — a real Vite-React / Next.js web project
+   * the runtime scaffolds into `branchHandle` and serves on a local port. Mutually exclusive
+   * with {@link AppBuilder.blueprint} (a hosted app carries no blueprint, so it is never
+   * schedulable). `framework` is `"auto"` (the model chooses) | `"vite_react"` | `"next_js"`. */
+  hosted(framework: "auto" | "vite_react" | "next_js", branchHandle: string): this {
+    this._hosted = { framework };
+    this._branchHandle = branchHandle;
+    return this;
+  }
+
   private referencesDict(): Record<string, unknown> {
     const refs: Record<string, unknown> = {};
     if (this._context.length) refs.context = this._context;
@@ -407,14 +427,38 @@ export class AppBuilder {
    * byte-shape). Requires the blueprint and NO pending body uploads — use
    * {@link AppBuilder.save} (which uploads pending bodies first) or pass artifacts by `ref`. */
   toEnvelope(): Record<string, unknown> {
-    if (this._blueprint === undefined) {
-      throw new KxUsage("app needs a blueprint — call .blueprint(flow()/chain(...))");
-    }
     if (this._pending.length > 0) {
       const names = this._pending.map((p) => `${p.rail}:${p.name}`).join(", ");
       throw new KxUsage(
         `toEnvelope() cannot resolve pending body uploads (${names}); use .save({ client }) or pass artifacts by ref`,
       );
+    }
+    // D213 Experience (hosted) App — no blueprint; the project file tree lives in the
+    // branch. The server scaffolds + serves it; it is never schedulable.
+    if (this._hosted !== undefined) {
+      if (this._blueprint !== undefined) {
+        throw new KxUsage("a hosted app must not also carry a blueprint (.hosted vs .blueprint)");
+      }
+      if (!this._branchHandle) {
+        throw new KxUsage("a hosted app needs a branch handle — .hosted(framework, branchHandle)");
+      }
+      const env: Record<string, unknown> = {
+        schema: EXPERIENCE_SCHEMA,
+        name: this._name,
+        version: this._version,
+        hosted: { framework: this._hosted.framework },
+        branch_handle: this._branchHandle,
+      };
+      if (this._description) env.description = this._description;
+      if (this._tags.length) env.tags = [...this._tags];
+      const refs = this.referencesDict();
+      if (Object.keys(refs).length) env.references = refs;
+      const steer = this.steeringDict();
+      if (Object.keys(steer).length) env.steering_config = steer;
+      return env;
+    }
+    if (this._blueprint === undefined) {
+      throw new KxUsage("app needs a blueprint — call .blueprint(flow()/chain(...))");
     }
     const env: Record<string, unknown> = {
       schema: APP_SCHEMA,

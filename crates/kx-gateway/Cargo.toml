@@ -16,6 +16,13 @@ path = "src/lib.rs"
 name = "kx-gateway"
 path = "src/main.rs"
 
+# A std-only fake dev-server used ONLY by the hosted-app supervisor e2e (stands in for
+# `vite`/`next dev` so the lifecycle test needs no Node/npm). Built only with `hosted-apps`.
+[[bin]]
+name = "hosted_fake_server"
+path = "tests/fixtures/hosted_fake_server.rs"
+required-features = ["hosted-apps"]
+
 [dependencies]
 # The KxGateway backend (read-fold + propose-proxy) being hosted + the generated
 # tonic server/client stubs. Always required (the gateway is always hosted).
@@ -362,6 +369,14 @@ hnsw = ["dep:kx-dataset-hnsw", "dep:kx-dataset-bm25", "dep:kx-memory"]
 # hyper stack is now NON-optional (shared with the always-on `/metrics` endpoint),
 # so this feature only gates the console module + build.rs SPA embedding.
 console = []
+# D213 Experience lane: the hosted-app run/build/serve supervisor. `StartHostedApp` &
+# friends materialize a hosted app's branch file tree to disk, `npm install`, and run a
+# dev server (`next dev`/`vite`) on a loopback port as a supervised child, exposed
+# directly (`http://127.0.0.1:<port>`). A plain host subprocess — NEVER a Mote, never
+# routed through kx-executor, never journaled (the frozen executor digest is untouched).
+# OFF by default (adds `tokio/process`); the RPCs return `unimplemented` without it.
+# Node/npm are a RUNTIME dependency of a hosted app, not a build dependency of the gateway.
+hosted-apps = ["embedded-worker", "tokio/process", "tokio/io-util"]
 
 [lints]
 workspace = true

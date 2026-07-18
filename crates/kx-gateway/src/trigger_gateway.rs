@@ -18,8 +18,9 @@ use std::sync::Arc;
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    AppAuthor, AppRunError, BinderError, RecipeBinder, RegisteredToolsView, RunSubmitter,
-    TriggerAdmin, TriggerAdminError, TriggerFireOutcome, TriggerRegistration, TriggerView,
+    AppAuthor, AppCatalog, AppRunError, BinderError, RecipeBinder, RegisteredToolsView,
+    RunSubmitter, TriggerAdmin, TriggerAdminError, TriggerFireOutcome, TriggerRegistration,
+    TriggerView,
 };
 
 use crate::triggers_store::{trigger_id_of, TriggerRow, TriggersDb};
@@ -39,6 +40,11 @@ pub(crate) struct HostTriggerAdmin {
     /// (an App blueprint is client-authored, so a grant the broker never registered must
     /// fail closed here). `Some` exactly when `app_author` is `Some`.
     fireable: Option<Arc<dyn RegisteredToolsView>>,
+    /// The App catalog, for the register-time hosted-app guard (D213): a hosted
+    /// (Experience) App has no blueprint and can never be run via `RunApp`, so it must
+    /// not be accepted as a trigger target. `None` ⇒ the guard is skipped (the fire path
+    /// still fails closed via `author_app`).
+    app_catalog: Option<Arc<dyn AppCatalog>>,
 }
 
 impl HostTriggerAdmin {
@@ -49,6 +55,7 @@ impl HostTriggerAdmin {
         react_supported: bool,
         app_author: Option<Arc<dyn AppAuthor>>,
         fireable: Option<Arc<dyn RegisteredToolsView>>,
+        app_catalog: Option<Arc<dyn AppCatalog>>,
     ) -> Self {
         Self {
             triggers,
@@ -57,6 +64,7 @@ impl HostTriggerAdmin {
             react_supported,
             app_author,
             fireable,
+            app_catalog,
         }
     }
 
@@ -128,6 +136,24 @@ impl TriggerAdmin for HostTriggerAdmin {
                  (build --features mcp-gateway with a connections.db)"
                     .into(),
             ));
+        }
+        // D213: a hosted (Experience) App carries no blueprint and is served by the
+        // hosted-app supervisor, never scheduled — refuse it as a trigger target at
+        // REGISTER (fail fast) rather than dead-lettering every fire. Skipped when the
+        // catalog is unwired; a not-found app is left to the fire path.
+        if is_app {
+            if let Some(catalog) = self.app_catalog.as_ref() {
+                if let Ok(Some((record, _))) = catalog.get(&reg.owner_party, reg.app_handle.trim())
+                {
+                    if record.kind == "experience" {
+                        return Err(TriggerAdminError::InvalidArgument(
+                            "hosted (experience) apps are not schedulable; scheduling requires \
+                             a functional app"
+                                .into(),
+                        ));
+                    }
+                }
+            }
         }
         // Validate auth posture: an HMAC/bearer webhook needs a secret ref to verify against.
         if matches!(reg.auth.as_str(), "hmac_sha256" | "bearer") && reg.auth_secret_ref.is_empty() {

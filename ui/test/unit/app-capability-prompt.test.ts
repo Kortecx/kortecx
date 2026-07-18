@@ -50,4 +50,26 @@ describe("composeCapabilityPrompt (PR-G)", () => {
     // The prompt's own honesty clause is preserved verbatim.
     expect(p).toContain("do not invent a capability that is not offered");
   });
+
+  it("scheduled variant: adds the unattended-trigger + staged-approval note (D213)", () => {
+    const p = composeCapabilityPrompt("goal", [], "scheduled");
+    expect(p).toContain(CAPABILITY_PROMPT);
+    expect(p).toMatch(/unattended/i);
+    expect(p).toMatch(/staged for human approval/i);
+    // still honest — no writable branch.
+    expect(p).not.toMatch(/read and write/i);
+    expect(p).toMatch(/no writable project branch/i);
+  });
+
+  it("hosted variant: a local-port web project, no live-data over-promise (D213 honesty)", () => {
+    const p = composeCapabilityPrompt("goal", [], "hosted");
+    expect(p).toMatch(/hosted/i);
+    expect(p).toMatch(/local port/i);
+    expect(p).toMatch(/vite|next/i);
+    // honesty: never claims live data / internet / tool access.
+    expect(p).toMatch(/does not have baked access|only through the governed request seam/i);
+    expect(p).toMatch(/never a public url/i);
+    // it is NOT the agent-loop base prompt.
+    expect(p).not.toContain("the reason → act → observe loop");
+  });
 });

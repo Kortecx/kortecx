@@ -1241,6 +1241,7 @@ message AppSummary {
   repeated string tags = 6;  // catalog tags
   uint32 step_count    = 7;  // blueprint step count (display only)
   bool   locked        = 8;  // POC-5b: the App's project branch is locked (agentic edits refused); false when no branch / not locked / lock store unwired
+  string kind          = 9;  // D213 lane: "functional" (schedulable capability) or "experience" (hosted web app); empty on an old server ⇒ treat as functional
 }
 message SaveAppRequest {
   string handle        = 1;  // catalog key (upsert key within the caller's scope)
@@ -1354,6 +1355,36 @@ message LockAppRequest   { string branch_handle = 1; }  // lock the App's projec
 message LockAppResponse  { bool locked = 1; }
 message UnlockAppRequest { string branch_handle = 1; }
 message UnlockAppResponse{ bool unlocked = 1; }
+
+// D213 Experience lane — the hosted-app supervisor. A hosted (experience) App is a real
+// Vite-React / Next.js project scaffolded into the App's branch; the supervisor materializes
+// that file tree to disk, installs deps, runs a dev server on a loopback port, and reverse-
+// proxies it. Off-journal / off-digest (a plain host subprocess, never a Mote). Unimplemented
+// when the hosted-apps seam is absent (built without the `hosted-apps` feature).
+enum HostedAppState {
+  HOSTED_APP_STATE_UNSPECIFIED = 0;
+  HOSTED_STOPPED               = 1;  // not running (never started, or explicitly stopped)
+  HOSTED_MATERIALIZING         = 2;  // writing the branch file tree to the working dir
+  HOSTED_INSTALLING            = 3;  // `npm install` (first run / package.json changed)
+  HOSTED_STARTING              = 4;  // dev server spawned, not yet accepting connections
+  HOSTED_RUNNING               = 5;  // dev server accepting connections; `url` is live
+  HOSTED_FAILED                = 6;  // install/start failed (detail carries the advisory reason)
+}
+message HostedAppStatus {
+  string handle              = 1;  // the saved App handle
+  HostedAppState state       = 2;
+  string url                 = 3;  // the gateway-proxied path when running (e.g. "/apps/<handle>/live/"); empty otherwise
+  repeated string recent_logs = 4; // tail of the install/dev-server logs (advisory)
+  string framework           = 5;  // "vite_react" | "next_js"
+  uint32 port                = 6;  // the loopback dev-server port (0 when not running)
+  string detail              = 7;  // advisory status / failure text (never authority)
+}
+message StartHostedAppRequest { string handle = 1; bool rebuild = 2; }  // rebuild ⇒ force re-materialize + re-install
+message StopHostedAppRequest  { string handle = 1; }
+message StopHostedAppResponse { bool stopped = 1; }
+message GetHostedAppStatusRequest { string handle = 1; }
+message ListHostedAppsRequest {}
+message ListHostedAppsResponse { repeated HostedAppStatus apps = 1; }
 
 // ---------------------------------------------------------------------------
 // Additive (D120.6/D175) — the per-principal SKILL catalog (skills.db,
@@ -2533,6 +2564,16 @@ service KxGateway {
   // branch store. Off-journal, off-digest.
   rpc ScaffoldApp(ScaffoldAppRequest) returns (ScaffoldAppResponse);
   rpc GetScaffoldStatus(GetScaffoldStatusRequest) returns (GetScaffoldStatusResponse);
+
+  // D213 Experience lane — the hosted-app run/build/serve supervisor. Start materializes
+  // the App's branch file tree to disk, `npm install`s, and runs a dev server on a loopback
+  // port, reverse-proxied at `/apps/<handle>/live/`; Stop kills + reaps the child; Get/List
+  // report state + the live URL + recent logs. A plain host subprocess — never a Mote, never
+  // journaled, off-digest. Unimplemented when built without the `hosted-apps` feature.
+  rpc StartHostedApp(StartHostedAppRequest) returns (HostedAppStatus);
+  rpc StopHostedApp(StopHostedAppRequest) returns (StopHostedAppResponse);
+  rpc GetHostedAppStatus(GetHostedAppStatusRequest) returns (HostedAppStatus);
+  rpc ListHostedApps(ListHostedAppsRequest) returns (ListHostedAppsResponse);
 
   // POC-5b (Policies "per-App lock") — lock / unlock the App's project branch.
   // A locked branch refuses agentic in-CAS edits at the AdvanceBranch chokepoint

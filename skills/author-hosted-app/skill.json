@@ -1,0 +1,11 @@
+{
+  "schema": "kortecx.skill/v1",
+  "name": "author-hosted-app",
+  "version": "1",
+  "description": "Author a comprehensive HOSTED (experience) app: a real Vite-React or Next.js web project the runtime scaffolds into a branch file tree and serves on a local port. Read-only wishes — a hosted app reaches runtime capabilities only via the governed request seam, never a baked tool grant.",
+  "tags": ["authoring", "hosted", "experience", "webapp"],
+  "tools": {
+    "retrieve": "1",
+    "fs-read": "1"
+  }
+}

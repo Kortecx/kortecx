@@ -17,12 +17,17 @@ import type {
   AppSummary as PbAppSummary,
   GetAppManifestResponse as PbGetAppManifestResponse,
   GetAppResponse as PbGetAppResponse,
+  HostedAppStatus as PbHostedAppStatus,
   SaveAppResponse as PbSaveAppResponse,
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { encode } from "./hexids.js";
 
-/** The envelope schema/version tag — readers fail closed on a mismatch. */
+/** The envelope schema/version tag for a Functional App — readers fail closed on a mismatch. */
 export const APP_SCHEMA = "kortecx.app/v1";
+
+/** The envelope schema/version tag for an Experience (hosted) App (D213). Distinct by
+ * construction: an Experience App carries no blueprint, so it can never be scheduled. */
+export const EXPERIENCE_SCHEMA = "kortecx.experience/v1";
 
 /** Recursively sort object keys (the canonical-JSON precondition). */
 function sortValue(v: unknown): unknown {
@@ -130,6 +135,12 @@ export class AppSummary {
     readonly stepCount: number,
     /** POC-5b: the App's project branch is locked (agentic in-CAS edits refused). */
     readonly locked: boolean,
+    /**
+     * D213 lane: `"functional"` (a schedulable capability) or `"experience"` (a hosted
+     * web app). `""` on an old server ⇒ treat as functional. The console routes an App
+     * to its Scheduled / Hosted section by this field.
+     */
+    readonly kind: string = "",
   ) {}
 
   static fromProto(s: PbAppSummary): AppSummary {
@@ -142,6 +153,7 @@ export class AppSummary {
       [...s.tags],
       s.stepCount,
       s.locked,
+      s.kind,
     );
   }
 }
@@ -171,6 +183,61 @@ export function scaffoldPhaseName(phase: number): ScaffoldPhase {
     default:
       return "unspecified";
   }
+}
+
+/** D213 Experience lane — a hosted app's dev-server lifecycle state. */
+export type HostedAppStateName =
+  | "stopped"
+  | "materializing"
+  | "installing"
+  | "starting"
+  | "running"
+  | "failed"
+  | "unspecified";
+
+/** Map the wire `HostedAppState` enum to a stable name. */
+export function hostedAppStateName(state: number): HostedAppStateName {
+  switch (state) {
+    case 1:
+      return "stopped";
+    case 2:
+      return "materializing";
+    case 3:
+      return "installing";
+    case 4:
+      return "starting";
+    case 5:
+      return "running";
+    case 6:
+      return "failed";
+    default:
+      return "unspecified";
+  }
+}
+
+/** D213 Experience lane — a hosted app's live status (state + proxied URL + logs). */
+export interface HostedAppStatus {
+  readonly handle: string;
+  readonly state: HostedAppStateName;
+  /** The gateway-proxied path when running (e.g. `/apps/<handle>/live/`); `""` otherwise. */
+  readonly url: string;
+  readonly recentLogs: string[];
+  readonly framework: string;
+  readonly port: number;
+  readonly detail: string;
+}
+
+/** Convert a wire `HostedAppStatus` to the SDK shape. */
+export function hostedAppStatusFromProto(s: PbHostedAppStatus): HostedAppStatus {
+  return {
+    handle: s.handle,
+    state: hostedAppStateName(s.state),
+    url: s.url,
+    recentLogs: [...s.recentLogs],
+    framework: s.framework,
+    port: s.port,
+    detail: s.detail,
+  };
 }
 
 /** The outcome of a `SaveApp` upsert (server-derived ref + dedup signal). */

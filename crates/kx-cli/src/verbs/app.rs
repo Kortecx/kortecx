@@ -798,8 +798,15 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                         )));
                     }
                     // Compile the blueprint through the ONE canonical path; the server
-                    // re-resolves every warrant from the caller's grants (SN-8).
-                    let dag: DagSpec = serde_json::from_value(env.blueprint).map_err(|e| {
+                    // re-resolves every warrant from the caller's grants (SN-8). A hosted
+                    // (experience) app has no blueprint and is not runnable this way.
+                    let blueprint = env.blueprint.ok_or_else(|| {
+                        CliError::Usage(format!(
+                            "app {handle:?} is a hosted (experience) app with no blueprint; \
+                             it cannot be run"
+                        ))
+                    })?;
+                    let dag: DagSpec = serde_json::from_value(blueprint).map_err(|e| {
                         CliError::Usage(format!("app blueprint is not a DagSpec: {e}"))
                     })?;
                     let req = to_request(dag)?;
@@ -920,13 +927,16 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
             let env = AppEnvelope::from_json_slice(&resp.envelope_json)
                 .map_err(|e| CliError::Usage(format!("stored envelope is invalid: {e}")))?;
             // The blueprint IS the App's portable DagSpec structure. Validate it parses
-            // (the lineage editor renders exactly this) before dumping it.
-            let dag: DagSpec = serde_json::from_value(env.blueprint.clone())
+            // (the lineage editor renders exactly this) before dumping it. A hosted
+            // (experience) app has no blueprint structure to render.
+            let blueprint = env.blueprint.clone().ok_or_else(|| {
+                CliError::Usage(format!(
+                    "app {handle:?} is a hosted (experience) app with no blueprint structure"
+                ))
+            })?;
+            let dag: DagSpec = serde_json::from_value(blueprint.clone())
                 .map_err(|e| CliError::Usage(format!("app blueprint is not a DagSpec: {e}")))?;
-            println!(
-                "{}",
-                render_app_structure(&handle, &dag, &env.blueprint, json)
-            );
+            println!("{}", render_app_structure(&handle, &dag, &blueprint, json));
             Ok(())
         }
         AppSub::EditFile { handle, path, from } => {

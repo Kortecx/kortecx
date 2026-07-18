@@ -139,7 +139,7 @@ describe("Apps section (catalog + POC-5a New App)", () => {
     expect(lock).toHaveAttribute("data-locked", "true");
   });
 
-  it("renders the box/list view toggle (defaults to box)", () => {
+  it("renders the box/table view toggle (defaults to box)", () => {
     APPS = [
       {
         handle: "apps/local/echo",
@@ -155,14 +155,22 @@ describe("Apps section (catalog + POC-5a New App)", () => {
     render(<AppsSection />);
     expect(screen.getByTestId("apps-view-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("apps-view-box")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("apps-view-list")).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("apps-view-table")).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByTestId("apps-catalog")).toHaveAttribute("data-view", "box");
   });
 
-  it("shows an honest empty state when the catalog is empty", () => {
+  it("renders the two Scheduled/Hosted section tabs (D213)", () => {
     APPS = [];
     render(<AppsSection />);
-    expect(screen.getByText(/no apps yet/i)).toBeInTheDocument();
+    expect(screen.getByTestId("apps-section-scheduled")).toBeInTheDocument();
+    expect(screen.getByTestId("apps-section-hosted")).toBeInTheDocument();
+  });
+
+  it("shows an honest per-section empty state when the catalog is empty", () => {
+    APPS = [];
+    render(<AppsSection />);
+    // Default section is Scheduled → its empty state (not a generic "no apps").
+    expect(screen.getByText(/no scheduled apps yet/i)).toBeInTheDocument();
   });
 
   it("Run opens the typed drawer, and Run now fires runApp WITH an args map", () => {

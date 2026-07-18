@@ -909,7 +909,15 @@ impl AppAuthor for HostAppAuthor {
         )?;
 
         // (3) Lower the blueprint through the canonical path (+ optional arg injection).
-        let mut dag: DagSpec = serde_json::from_value(env.blueprint).map_err(|e| {
+        //     An Experience (hosted) App carries no blueprint — it is not runnable via RunApp
+        //     (it is served by the hosted-app supervisor, never scheduled — D213). Fail closed.
+        let blueprint = env.blueprint.ok_or_else(|| {
+            AppRunError::InvalidArgs(
+                "this is a hosted (experience) app with no blueprint; it cannot be run via RunApp"
+                    .to_string(),
+            )
+        })?;
+        let mut dag: DagSpec = serde_json::from_value(blueprint).map_err(|e| {
             AppRunError::InvalidArgs(format!("app blueprint is not a DagSpec: {e}"))
         })?;
         inject_app_args(&mut dag, args)?;

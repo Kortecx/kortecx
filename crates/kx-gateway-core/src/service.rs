@@ -840,6 +840,11 @@ pub struct GatewayService {
     /// / `GetScaffoldStatus` return `unimplemented` (no served model / branch store).
     /// Off-journal, off-digest.
     scaffolder: Option<Arc<dyn crate::scaffold::AppScaffolder>>,
+    /// D213 Experience lane: the optional hosted-app supervisor seam behind
+    /// `StartHostedApp` / `StopHostedApp` / `GetHostedAppStatus` / `ListHostedApps`.
+    /// `None` ⇒ those RPCs return `unimplemented` (built without the `hosted-apps`
+    /// feature). A plain host subprocess — never a Mote. Off-journal, off-digest.
+    hosted: Option<Arc<dyn crate::hosted_view::HostedAppSupervisor>>,
     /// Model Control v2: the optional model-acquisition orchestrator seam behind
     /// `PullModel` / `GetPullStatus` (download + runtime-register a model). `None` ⇒
     /// both RPCs return `unimplemented`. The host impl owns the deny-by-default
@@ -934,6 +939,7 @@ impl GatewayService {
             app_manifest: None,
             locks: None,
             scaffolder: None,
+            hosted: None,
             model_puller: None,
             active_model: None,
         }
@@ -1433,6 +1439,17 @@ impl GatewayService {
         self.scaffolder = Some(scaffolder);
         self
     }
+
+    /// D213: wire the hosted-app supervisor seam (kx-gateway `hostsupervisor`, behind the
+    /// `hosted-apps` feature). Absent ⇒ the four hosted RPCs return `unimplemented`.
+    #[must_use]
+    pub fn with_hosted_supervisor(
+        mut self,
+        hosted: Arc<dyn crate::hosted_view::HostedAppSupervisor>,
+    ) -> Self {
+        self.hosted = Some(hosted);
+        self
+    }
 }
 
 /// The structured-refusal metadata key (PR-2). The value is
@@ -1798,6 +1815,31 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // App — the one-App-one-branch model). The list/get handlers OVERRIDE this
         // from the wired LockStore; `false` here = unlocked / no branch / unwired.
         locked: false,
+        // D213 lane label ("functional"/"experience"); empty ⇒ functional on an old row.
+        kind: r.kind,
+    }
+}
+
+fn hosted_state_to_proto(s: crate::HostedState) -> proto::HostedAppState {
+    match s {
+        crate::HostedState::Stopped => proto::HostedAppState::HostedStopped,
+        crate::HostedState::Materializing => proto::HostedAppState::HostedMaterializing,
+        crate::HostedState::Installing => proto::HostedAppState::HostedInstalling,
+        crate::HostedState::Starting => proto::HostedAppState::HostedStarting,
+        crate::HostedState::Running => proto::HostedAppState::HostedRunning,
+        crate::HostedState::Failed => proto::HostedAppState::HostedFailed,
+    }
+}
+
+fn hosted_status_to_proto(s: crate::HostedStatus) -> proto::HostedAppStatus {
+    proto::HostedAppStatus {
+        handle: s.handle,
+        state: hosted_state_to_proto(s.state) as i32,
+        url: s.url,
+        recent_logs: s.recent_logs,
+        framework: s.framework,
+        port: s.port,
+        detail: s.detail,
     }
 }
 
@@ -4587,7 +4629,7 @@ impl KxGateway for GatewayService {
         let principal = caller_principal(&request)?;
         let req = request.into_inner();
         // The App must exist + be caller-owned (uniform not-found — no oracle).
-        let Some((record, _envelope)) = apps.get(&principal, &req.handle)? else {
+        let Some((record, envelope)) = apps.get(&principal, &req.handle)? else {
             return Err(Status::not_found("app not found"));
         };
         // One-App-one-branch: the project branch defaults to the App's own handle.
@@ -4616,9 +4658,17 @@ impl KxGateway for GatewayService {
         } else {
             req.instruction.clone()
         };
-        // The host driver creates/resumes the branch + spawns the background loop and
-        // returns immediately (progress via GetScaffoldStatus + GetBranch).
-        let resumed = scaffolder.start(&principal, &branch_handle, &goal)?;
+        // D213: a hosted (experience) app scaffolds its framework template's authored
+        // files (page + README) into the branch — the static config is template-owned
+        // (written to disk by the supervisor). The host parses the framework from the
+        // opaque envelope bytes (gateway-core keeps app bytes opaque).
+        let resumed = if record.kind == "experience" {
+            scaffolder.start_hosted(&principal, &branch_handle, &envelope, &goal)?
+        } else {
+            // The host driver creates/resumes the branch + spawns the background loop and
+            // returns immediately (progress via GetScaffoldStatus + GetBranch).
+            scaffolder.start(&principal, &branch_handle, &goal)?
+        };
         Ok(Response::new(proto::ScaffoldAppResponse {
             // Multi-run by design — correlate by `branch_handle` (poll GetScaffoldStatus
             // + GetBranch). Left empty rather than asserting a single run id (GR15).
@@ -4644,6 +4694,65 @@ impl KxGateway for GatewayService {
             files_pending: status.files_pending,
             detail: status.detail,
         }))
+    }
+
+    // D213 Experience lane — the hosted-app supervisor. The contract (proto + envelope kind)
+    // lands here; the host supervisor + reverse-proxy are wired behind the `hosted-apps`
+    // feature (kx-gateway `hostsupervisor.rs`). Until then these degrade to `unimplemented`,
+    // the standard optional-seam posture — the browser feature-detects and hides the controls.
+    async fn start_hosted_app(
+        &self,
+        request: Request<proto::StartHostedAppRequest>,
+    ) -> Result<Response<proto::HostedAppStatus>, Status> {
+        let hosted = self.hosted.as_ref().ok_or_else(|| {
+            Status::unimplemented("StartHostedApp: no hosted-app supervisor wired")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let status = hosted.start(&principal, &req.handle, req.rebuild)?;
+        Ok(Response::new(hosted_status_to_proto(status)))
+    }
+
+    async fn stop_hosted_app(
+        &self,
+        request: Request<proto::StopHostedAppRequest>,
+    ) -> Result<Response<proto::StopHostedAppResponse>, Status> {
+        let hosted = self.hosted.as_ref().ok_or_else(|| {
+            Status::unimplemented("StopHostedApp: no hosted-app supervisor wired")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let stopped = hosted.stop(&principal, &req.handle)?;
+        Ok(Response::new(proto::StopHostedAppResponse { stopped }))
+    }
+
+    async fn get_hosted_app_status(
+        &self,
+        request: Request<proto::GetHostedAppStatusRequest>,
+    ) -> Result<Response<proto::HostedAppStatus>, Status> {
+        let hosted = self.hosted.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetHostedAppStatus: no hosted-app supervisor wired")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let status = hosted.status(&principal, &req.handle)?;
+        Ok(Response::new(hosted_status_to_proto(status)))
+    }
+
+    async fn list_hosted_apps(
+        &self,
+        request: Request<proto::ListHostedAppsRequest>,
+    ) -> Result<Response<proto::ListHostedAppsResponse>, Status> {
+        let hosted = self.hosted.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListHostedApps: no hosted-app supervisor wired")
+        })?;
+        let principal = caller_principal(&request)?;
+        let apps = hosted
+            .list(&principal)?
+            .into_iter()
+            .map(hosted_status_to_proto)
+            .collect();
+        Ok(Response::new(proto::ListHostedAppsResponse { apps }))
     }
 
     async fn list_tool_manifests(
