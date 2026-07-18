@@ -1180,7 +1180,7 @@ impl DemoLibrary {
         // server-minted Pure/no-tools warrant + env-knob token caps as react-edit.
         // Seeded only when a model is served (default-OFF ⇒ digest unchanged).
         if let Some(model_id) = serve_model {
-            let scaffold_w = react_edit_warrant(exec_class, model_id);
+            let scaffold_w = scaffold_write_warrant(exec_class, model_id);
             let scaffold_h = app_scaffold_write_handle()?;
             seed_recipe(
                 &versions,
@@ -3461,6 +3461,20 @@ pub(crate) fn react_edit_warrant(exec_class: ExecutorClass, model_id: &ModelId) 
     }
 }
 
+/// POC-5a: the warrant for the `app-scaffold-write` step. Identical to
+/// [`react_edit_warrant`] EXCEPT for a larger output-token budget — a scaffolded project
+/// page is a full file body and a reasoning model spends part of the budget on a stripped
+/// `<think>` block, so the shared react-edit ceiling (3072) truncated hosted pages mid-file
+/// on Gemma-4 in live testing. This gives the scaffold path its own headroom while leaving
+/// the react-edit ceiling untouched (operator-overridable via
+/// `KX_SERVE_SCAFFOLD_MAX_OUTPUT_TOKENS`; default-preserving, seeded only when a model is
+/// served ⇒ the canonical digest is unaffected).
+pub(crate) fn scaffold_write_warrant(exec_class: ExecutorClass, model_id: &ModelId) -> WarrantSpec {
+    let mut w = react_edit_warrant(exec_class, model_id);
+    w.model_route.max_output_tokens = crate::env_caps::scaffold_max_output_tokens();
+    w
+}
+
 fn react_edit_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(REACT_EDIT_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid react-edit recipe handle".into()))
@@ -3609,6 +3623,13 @@ fn app_scaffold_write_body(warrant: &WarrantSpec) -> WorkflowDef {
         ConfigKey(REASONING_CONFIG_KEY.into()),
         ConfigVal(REASONING_STRIP.as_bytes().to_vec()),
     );
+    // The DECLARED per-mote output budget is what the executor actually uses — the
+    // warrant's `model_route.max_output_tokens` is only the CEILING it is checked against
+    // (`inference_params_from_mote` reads the mote's declared params, D35). The synthesis
+    // default is 512 tokens, which truncated Gemma-authored scaffold pages mid-file (a full
+    // `App.tsx`/`App.svelte`/`app/page.tsx` needs far more). Declare the warrant's scaffold
+    // budget so the whole file can be emitted; still bounded by that same ceiling.
+    step.inference_params.max_output_tokens = warrant.model_route.max_output_tokens;
     wf.add_step(step);
     wf
 }
@@ -5939,7 +5960,7 @@ mod tests {
         let scaffold_handle = kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE;
         assert!(lib.recipe_handles().contains(&scaffold_handle.to_string()));
         let fp = |h: &str| lib.recipe_fingerprint(h).unwrap();
-        // Distinct from react-edit (own logic ref) despite the same warrant shape.
+        // Distinct from react-edit (own logic ref + its own larger output budget).
         assert_ne!(fp(scaffold_handle), fp(REACT_EDIT_RECIPE_HANDLE));
         // The published form is the single-step `prompt` contract.
         let form = lib
@@ -5980,6 +6001,56 @@ mod tests {
         assert!(
             w.resource_ceiling.wall_clock_ms >= 300_000,
             "the wall clock must comfortably exceed a full-budget greedy decode"
+        );
+    }
+
+    #[test]
+    fn scaffold_write_warrant_gives_more_output_headroom_than_react_edit() {
+        // The scaffold path authors a full page body and a reasoning model burns part of
+        // the budget on a stripped `<think>` block — so it needs MORE output headroom than
+        // a react-edit, while keeping every other rail identical (single Pure, no tools).
+        let model = ModelId("m".to_string());
+        let edit = react_edit_warrant(ExecutorClass::Bwrap, &model);
+        let scaffold = scaffold_write_warrant(ExecutorClass::Bwrap, &model);
+        assert!(
+            scaffold.model_route.max_output_tokens > edit.model_route.max_output_tokens,
+            "scaffold write needs more output headroom than a react-edit"
+        );
+        assert_eq!(scaffold.mote_class, MoteClass::Pure);
+        assert!(
+            scaffold.tool_grants.is_empty(),
+            "no tool grant (single step)"
+        );
+        assert!(scaffold.fs_scope.mounts.is_empty(), "no fs scope");
+        assert_eq!(scaffold.net_scope, NetScope::None, "scaffold has no egress");
+        // Everything except the output budget matches react-edit exactly.
+        assert_eq!(
+            scaffold.model_route.max_input_tokens,
+            edit.model_route.max_input_tokens
+        );
+        assert_eq!(
+            scaffold.resource_ceiling.wall_clock_ms,
+            edit.resource_ceiling.wall_clock_ms
+        );
+    }
+
+    #[test]
+    fn app_scaffold_write_body_declares_the_warrant_output_budget_not_512() {
+        // Regression for the truncation bug: the executor uses the MOTE's DECLARED
+        // `inference_params.max_output_tokens` (the warrant is only the ceiling —
+        // `inference_params_from_mote`). The synthesis default is 512, which capped a
+        // Gemma-authored scaffold page mid-file regardless of the warrant. The scaffold
+        // body MUST declare the full scaffold budget so a whole file can be emitted.
+        let w = scaffold_write_warrant(ExecutorClass::Bwrap, &ModelId("m".to_string()));
+        let compiled = compile(&app_scaffold_write_body(&w)).expect("scaffold body compiles");
+        let mote = compiled.motes.first().expect("one scaffold mote");
+        assert_eq!(
+            mote.mote.def.inference_params.max_output_tokens, w.model_route.max_output_tokens,
+            "the scaffold mote must DECLARE the warrant's output budget (not the 512 default)"
+        );
+        assert!(
+            mote.mote.def.inference_params.max_output_tokens > 512,
+            "a 512-token declared cap truncates a full scaffolded file mid-body"
         );
     }
 

@@ -70,10 +70,10 @@ test("New App: propose → preview → author a MULTI-STEP App (stubbed ProposeW
   await page.getByTestId("new-app").click();
   await expect(page.getByTestId("new-app-form")).toBeVisible();
 
-  const HANDLE = "apps/local/nl-multistep-e2e";
+  // The handle is derived from the name (defaultHandle) — no handle field.
+  const HANDLE = "apps/local/release-notes-writer";
   await page.getByTestId("new-app-name").fill("Release Notes Writer");
   await page.getByTestId("new-app-goal").fill("Summarize a changelog into release notes.");
-  await page.getByTestId("new-app-handle").fill(HANDLE);
 
   // Propose → the 3-step plan previews.
   await page.getByTestId("new-app-propose").click();
