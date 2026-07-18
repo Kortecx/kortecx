@@ -241,7 +241,7 @@ export function NewAppForm({
       <p className="muted" data-testid="new-app-lede">
         {kind === "hosted"
           ? "Describe the web app and its goal. We save a durable App envelope, then scaffold a real framework project into the App's own content-addressed branch — browse, edit, and serve it on a local port."
-          : "Describe the App and its goal. We save a durable App envelope, then the agent scaffolds a starter project tree (README, prompts, guardrails, skills) into the App's own content-addressed branch — browse and edit it after."}
+          : "Describe the App and its goal. We save a durable App envelope, then the agent plans a complete project tailored to your goal and scaffolds it — streaming each file in live — into the App's own content-addressed branch. Browse and edit it after."}
       </p>
 
       {scaffolding === null ? (
