@@ -98,6 +98,7 @@ mod locks;
 // (it binds + submits recipes + folds the projection to await each step).
 #[cfg(feature = "embedded-worker")]
 mod manifest;
+#[cfg(feature = "embedded-worker")]
 mod scaffold;
 // D155 Phase-A: the branches.db sidecar (the BranchStore seam) — CreateBranch /
 // SnapshotInto manifests of {host-path -> ContentRef}. SnapshotInto reads confined
