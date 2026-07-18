@@ -211,6 +211,98 @@ fn cap_1_dispatch_returns_content_addressed_handle() {
     assert_eq!(handle.capability_version, version);
 }
 
+// -- CAP-FSWRITE — fs-write@1 dispatches through the broker + writes a confined
+// file (the full runtime path: precheck `request ⊆ warrant` → confine → write →
+// content-addressed commit — not just the capability unit). --------------------
+
+#[test]
+fn cap_fs_write_dispatch_writes_a_confined_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = tool_name("fs-write");
+    let version = tool_version("1");
+    let mote = mote_with_tool(&name, &version);
+
+    // A warrant granting fs-write@1 with a ReadWrite mount of the real tempdir.
+    let mut warrant = permissive_warrant_with_grant(ToolGrant {
+        tool_id: name.clone(),
+        tool_version: version.clone(),
+    });
+    warrant.fs_scope = FsScope {
+        mounts: BTreeMap::from([(dir.path().to_path_buf(), FsMode::ReadWrite)]),
+    };
+
+    let broker = LocalCapabilityBroker::new(InMemoryContentStore::new());
+    broker.register_capability(Box::new(FsWriteCapability::new()));
+
+    // The per-call request carries the tool's own scope (⊆ warrant) — the exact
+    // dispatch shape a served ReAct loop / the executor builds.
+    let content = "shipped: two-lane apps\nnext: hosted export";
+    let payload =
+        serde_json::to_vec(&serde_json::json!({ "path": "notes/summary.md", "content": content }))
+            .unwrap();
+    std::fs::create_dir(dir.path().join("notes")).unwrap();
+    let req = EffectRequest {
+        payload,
+        pattern: EffectPattern::StageThenCommit,
+        idempotency_key: None,
+        net_scope: NetScope::None,
+        fs_scope: FsScope {
+            mounts: BTreeMap::from([(dir.path().to_path_buf(), FsMode::ReadWrite)]),
+        },
+        secret_scope: kx_warrant::SecretScope::None,
+    };
+    let handle = broker
+        .dispatch(&mote, &warrant, &name, req)
+        .expect("fs-write dispatch ok");
+
+    // The file landed under the confined root with the exact bytes.
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("notes/summary.md")).unwrap(),
+        content
+    );
+    // The committed staged_ref IS the confirmation the capability returned.
+    let confirm = serde_json::to_vec(
+        &serde_json::json!({ "path": "notes/summary.md", "bytes_written": content.len() }),
+    )
+    .unwrap();
+    assert_eq!(handle.staged_ref, ContentRef::of(&confirm));
+    assert_eq!(handle.capability, name);
+}
+
+#[test]
+fn cap_fs_write_precheck_refuses_a_request_exceeding_the_warrant() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = tool_name("fs-write");
+    let version = tool_version("1");
+    let mote = mote_with_tool(&name, &version);
+    // The warrant grants NO writable mount (empty fs_scope) — the operator did not
+    // opt into a write root.
+    let mut warrant = permissive_warrant_with_grant(ToolGrant {
+        tool_id: name.clone(),
+        tool_version: version.clone(),
+    });
+    warrant.fs_scope = FsScope::empty();
+    let broker = LocalCapabilityBroker::new(InMemoryContentStore::new());
+    broker.register_capability(Box::new(FsWriteCapability::new()));
+    let req = EffectRequest {
+        payload: br#"{"path":"x.md","content":"y"}"#.to_vec(),
+        pattern: EffectPattern::StageThenCommit,
+        idempotency_key: None,
+        net_scope: NetScope::None,
+        fs_scope: FsScope {
+            mounts: BTreeMap::from([(dir.path().to_path_buf(), FsMode::ReadWrite)]),
+        },
+        secret_scope: kx_warrant::SecretScope::None,
+    };
+    // request.fs_scope (a RW tempdir) exceeds warrant.fs_scope (empty) ⇒ the broker
+    // precheck refuses BEFORE the capability runs — nothing is written.
+    assert!(broker.dispatch(&mote, &warrant, &name, req).is_err());
+    assert!(
+        !dir.path().join("x.md").exists(),
+        "nothing is written on a precheck refusal"
+    );
+}
+
 // -- CAP-2 — capability not in tool_contract → UnknownCapability -----
 
 #[test]
