@@ -1,4 +1,5 @@
 import { useTheme } from "../../app/use-theme";
+import { ApprovalsBell } from "./ApprovalsBell";
 import { Breadcrumb } from "./Breadcrumb";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { GlobalControls } from "./GlobalControls";
@@ -39,6 +40,7 @@ export function Navbar({
       >
         <Icon name="activity" />
       </button>
+      <ApprovalsBell />
       <button
         type="button"
         className="iconbtn"

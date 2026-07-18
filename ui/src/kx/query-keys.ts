@@ -67,6 +67,10 @@ export const queryKeys = {
    *  project branch handle. Short-poll while the scaffold is active. */
   scaffoldStatus: (endpoint: string, branchHandle: string) =>
     ["kx", endpoint, "scaffold-status", branchHandle] as const,
+  /** A hosted (experience) App's live supervisor status (`GetHostedAppStatus`, D213),
+   *  keyed by handle. Short-poll while starting/running. */
+  hostedAppStatus: (endpoint: string, handle: string) =>
+    ["kx", endpoint, "hosted-app-status", handle] as const,
   /** A context-item's FULL body (POC-2 view/edit, uploads-scope `GetContent`),
    *  keyed by its content ref — content-addressed ⇒ immutable (cache forever). */
   contextItemBody: (endpoint: string, contentRef: string) =>

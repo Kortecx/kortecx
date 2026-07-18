@@ -1,9 +1,11 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import { AnimatePresence, m } from "framer-motion";
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { ApprovalsProvider } from "../../app/approvals-context";
 import { pageFade } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { loadFlag, persistFlag } from "../../lib/ui-flags";
+import { ApprovalsDrawer } from "../apps/ApprovalsDrawer";
 import { DevToolsDock } from "../devtools";
 import { ActivityDrawer } from "./ActivityDrawer";
 import { Brand } from "./Brand";
@@ -103,29 +105,32 @@ export function AppShell() {
   }
 
   return (
-    <div
-      className={`shell${collapsed ? " shell--collapsed" : ""}${devtoolsOpen ? " shell--dock-open" : ""}`}
-      data-testid="app-shell"
-    >
-      <a href="#main" className="skip-link">
-        Skip to content
-      </a>
-      <Navbar
-        onOpenPalette={openPalette}
-        onToggleActivity={toggleActivity}
-        onToggleDevtools={toggleDevtools}
-      />
-      <Sidebar collapsed={collapsed} onToggle={toggle} />
-      <main className="shell__main" id="main">
-        <RouteOutlet />
-      </main>
-      <CommandPalette open={paletteOpen} onClose={closePalette} />
-      <ActivityDrawer open={activityOpen} onClose={closeActivity} />
-      {devtoolsOpen ? (
-        <Suspense fallback={null}>
-          <DevToolsDock onClose={toggleDevtools} />
-        </Suspense>
-      ) : null}
-    </div>
+    <ApprovalsProvider>
+      <div
+        className={`shell${collapsed ? " shell--collapsed" : ""}${devtoolsOpen ? " shell--dock-open" : ""}`}
+        data-testid="app-shell"
+      >
+        <a href="#main" className="skip-link">
+          Skip to content
+        </a>
+        <Navbar
+          onOpenPalette={openPalette}
+          onToggleActivity={toggleActivity}
+          onToggleDevtools={toggleDevtools}
+        />
+        <Sidebar collapsed={collapsed} onToggle={toggle} />
+        <main className="shell__main" id="main">
+          <RouteOutlet />
+        </main>
+        <CommandPalette open={paletteOpen} onClose={closePalette} />
+        <ActivityDrawer open={activityOpen} onClose={closeActivity} />
+        <ApprovalsDrawer />
+        {devtoolsOpen ? (
+          <Suspense fallback={null}>
+            <DevToolsDock onClose={toggleDevtools} />
+          </Suspense>
+        ) : null}
+      </div>
+    </ApprovalsProvider>
   );
 }

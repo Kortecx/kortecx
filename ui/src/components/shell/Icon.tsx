@@ -42,7 +42,10 @@ export type Glyph =
   | "external-link"
   | "calendar"
   | "thumb-up"
-  | "thumb-down";
+  | "thumb-down"
+  | "bell"
+  | "grid"
+  | "table";
 
 // 24×24 viewBox, stroke = currentColor. Multi-subpath `d` is fine.
 const PATHS: Record<Glyph, string> = {
@@ -93,6 +96,11 @@ const PATHS: Record<Glyph, string> = {
     "M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3",
   "thumb-down":
     "M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3zM17 2h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17",
+  // A bell: a domed body with a clapper (approvals nav badge).
+  bell: "M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0",
+  // A 2×2 grid (box/card layout) and a table (rows + columns) for the view toggle.
+  grid: "M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z",
+  table: "M3 5h18v14H3zM3 10h18M3 15h18M9 5v14M15 5v14",
 };
 
 const FALLBACK = "M12 12h.01";
