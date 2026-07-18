@@ -73,14 +73,16 @@ pub(crate) fn assemble_from_parent_results(
     sorted.dedup_by(|a, b| a.0 == b.0);
 
     let mut out = String::new();
-    for (_parent_id, result_ref) in &sorted {
+    for (ordinal, (_parent_id, result_ref)) in sorted.iter().enumerate() {
         let bytes = store
             .get(result_ref)
             .map_err(|_| AssembleError::UpstreamMissing(*result_ref))?;
-        let label = &result_ref.to_hex()[..16];
-        // Labeled block; UTF-8-lossy so arbitrary content bytes render deterministically.
+        // A short ORDINAL label — the model cannot dereference a content hash, so the
+        // 16-hex prefix was pure token waste. Deterministic: parents are MoteId-sorted
+        // above, so the ordinal is stable across leases + recovery re-folds (R49).
         let block = format!(
-            "[context parent.{label}]\n{}\n\n",
+            "[context {}]\n{}\n\n",
+            ordinal + 1,
             String::from_utf8_lossy(bytes.as_ref())
         );
         let needed = out.len() + block.len();
@@ -210,13 +212,15 @@ pub(crate) fn assemble_trajectory(
     // Render each entry IN ORDER (fail closed on a missing ref). No MoteId sort, no
     // dedup — the coordinator already ordered (and the trajectory has no duplicates).
     let mut blocks: Vec<String> = Vec::with_capacity(entries.len());
-    for (_mote_id, result_ref) in entries {
+    for (ordinal, (_mote_id, result_ref)) in entries.iter().enumerate() {
         let bytes = store
             .get(result_ref)
             .map_err(|_| AssembleError::UpstreamMissing(*result_ref))?;
-        let label = &result_ref.to_hex()[..16];
+        // Short ORDINAL label (no dereferenceable hash); order-preserving over the
+        // coordinator's TIME order, so the render stays deterministic (R49).
         blocks.push(format!(
-            "[context parent.{label}]\n{}\n\n",
+            "[context {}]\n{}\n\n",
+            ordinal + 1,
             String::from_utf8_lossy(bytes.as_ref())
         ));
     }
@@ -315,7 +319,54 @@ mod tests {
         let pos_a = forward.find("alpha-output").unwrap();
         let pos_b = forward.find("beta-output").unwrap();
         assert!(pos_a < pos_b, "blocks ordered by ascending MoteId");
-        assert!(forward.contains("[context parent."), "blocks are labeled");
+        // Ordinal labels (no dereferenceable hash): the two parents render 1, 2.
+        assert!(forward.contains("[context 1]"), "first block: {forward}");
+        assert!(forward.contains("[context 2]"), "second block: {forward}");
+    }
+
+    #[test]
+    fn context_labels_are_ordinal_hash_free_and_deterministic() {
+        // The model cannot dereference a content hash, so the label carries NO hex — just
+        // a short ordinal — and is byte-identical across two renders (R49 determinism).
+        let (_dir, store) = store();
+        let ref_a = store.put(b"alpha").unwrap();
+        let ref_b = store.put(b"beta").unwrap();
+        let parents = [(mote_id(0x01), ref_a), (mote_id(0x99), ref_b)];
+
+        let first = assemble_from_parent_results(&parents, &store).unwrap();
+        let second = assemble_from_parent_results(&parents, &store).unwrap();
+        assert_eq!(
+            first, second,
+            "the render is deterministic across two calls"
+        );
+        // No 16-hex label survives (neither the full ref hex nor its 16-char prefix).
+        assert!(
+            !first.contains("parent."),
+            "the parent. hash label is gone: {first}"
+        );
+        assert!(
+            !first.contains(&ref_a.to_hex()[..16]),
+            "no hex prefix in the label: {first}"
+        );
+        assert!(
+            !first.contains(&ref_b.to_hex()[..16]),
+            "no hex prefix in the label: {first}"
+        );
+        // The ordinal labels are present.
+        assert!(first.contains("[context 1]") && first.contains("[context 2]"));
+
+        // The trajectory twin holds the SAME no-hash parity.
+        let traj = assemble_trajectory(&parents, &store).unwrap();
+        assert!(
+            !traj.contains("parent."),
+            "trajectory label hash-free: {traj}"
+        );
+        assert!(traj.contains("[context 1]"), "trajectory ordinal: {traj}");
+        assert_eq!(
+            traj,
+            assemble_trajectory(&parents, &store).unwrap(),
+            "trajectory render is deterministic"
+        );
     }
 
     #[test]

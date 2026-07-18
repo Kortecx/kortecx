@@ -55,6 +55,14 @@ const DEFAULT_K: usize = 4;
 /// The hard top-k ceiling (also enforced by the typed schema + `HostDatasetView`).
 const MAX_K: usize = 64;
 
+/// The maximum total payload bytes of the folded passages (a defensive clamp so the
+/// retrieval fold can never overflow the model's input window; the tail is dropped
+/// with an honest note). Mirrors the already-accepted `consolidate@1` pattern
+/// (`consolidate_tool.rs`). At `MAX_K=64` full-text passages the un-clamped fold could
+/// reach ~64KB; this bounds it to ~24KB. Budgets the raw passage TEXT bytes, keeping
+/// the front (most-relevant) passages — the common case (Σ ≤ cap) is byte-identical.
+const MAX_BUNDLE_BYTES: usize = 24 * 1024;
+
 /// The bundled read-only dataset-retrieval capability (`retrieve@1`).
 pub(crate) struct RetrieveCapability {
     name: ToolName,
@@ -145,19 +153,35 @@ impl Capability for RetrieveCapability {
             None,
         ) {
             Ok(hits) => {
-                let passages = hits
-                    .into_iter()
-                    .map(|h| Passage {
+                // Bytes-budget clamp (the accepted `consolidate@1` pattern): keep the
+                // front (most-relevant) passages, drop the tail so the fold can never
+                // overflow the model's input window. The first passage is always kept
+                // (even if it alone exceeds the budget). Σ ≤ cap ⇒ byte-identical to the
+                // pre-clamp observation (the common small-k case must not move).
+                let mut used = 0usize;
+                let mut truncated = false;
+                let mut passages: Vec<Passage> = Vec::with_capacity(hits.len());
+                for h in hits {
+                    used += h.content.len();
+                    if !passages.is_empty() && used > MAX_BUNDLE_BYTES {
+                        truncated = true;
+                        break;
+                    }
+                    passages.push(Passage {
                         r#ref: ContentRef::from_bytes(h.content_ref).to_hex(),
                         text: String::from_utf8_lossy(&h.content).into_owned(),
                         parent_ref: ContentRef::from_bytes(h.parent_ref).to_hex(),
                         chunk_index: h.chunk_index,
                         // h.score is intentionally DROPPED here (SN-8).
-                    })
-                    .collect::<Vec<_>>();
-                let note = passages
-                    .is_empty()
-                    .then(|| "no matching passages found".to_string());
+                    });
+                }
+                let note = if passages.is_empty() {
+                    Some("no matching passages found".to_string())
+                } else if truncated {
+                    Some("passages truncated to fit the input window".to_string())
+                } else {
+                    None
+                };
                 encode(&Observation {
                     dataset: args.dataset,
                     query: args.query,
@@ -387,6 +411,76 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn small_k_observation_is_byte_identical_to_the_unclamped_encoding() {
+        // The COMMON case (Σ ≤ MAX_BUNDLE_BYTES) must be byte-for-byte identical to the
+        // pre-clamp observation — the byte budget only bites at large k. Assert the EXACT
+        // bytes so a regression that changed the common-case wire (e.g. an added field,
+        // a spurious note) is caught.
+        let cap = RetrieveCapability::new(StubView::ok(vec![
+            hit(1, "photosynthesis converts sunlight", 0.91, 0),
+            hit(2, "plants use chlorophyll", 0.74, 1),
+        ]));
+        let out = cap
+            .invoke(&req(
+                br#"{"dataset":"docs","query":"how plants make energy"}"#,
+            ))
+            .unwrap();
+        let expected = format!(
+            "{{\"dataset\":\"docs\",\"query\":\"how plants make energy\",\"passages\":[\
+             {{\"ref\":\"{r1}\",\"text\":\"photosynthesis converts sunlight\",\
+             \"parent_ref\":\"{p1}\",\"chunk_index\":0}},\
+             {{\"ref\":\"{r2}\",\"text\":\"plants use chlorophyll\",\
+             \"parent_ref\":\"{p2}\",\"chunk_index\":1}}]}}",
+            r1 = ContentRef::from_bytes([1; 32]).to_hex(),
+            p1 = ContentRef::from_bytes([101; 32]).to_hex(),
+            r2 = ContentRef::from_bytes([2; 32]).to_hex(),
+            p2 = ContentRef::from_bytes([102; 32]).to_hex(),
+        );
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            expected,
+            "a small-k observation must encode byte-identically (note absent, no clamp)"
+        );
+    }
+
+    #[test]
+    fn many_large_passages_are_clamped_to_the_byte_budget_with_a_note() {
+        // 20 × 4KB passages = 80KB un-clamped; the byte budget keeps only the front
+        // (≤ MAX_BUNDLE_BYTES) and appends an honest truncation note.
+        let hits: Vec<_> = (1u8..=20)
+            .map(|t| hit(t, &"a".repeat(4096), 0.5, u32::from(t)))
+            .collect();
+        let cap = RetrieveCapability::new(StubView::ok(hits));
+        let out = cap.invoke(&req(br#"{"dataset":"d","query":"q"}"#)).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        let passages = v["passages"].as_array().unwrap();
+        // The fold dropped the tail (fewer than the 20 offered), but kept the front.
+        assert!(
+            passages.len() < 20,
+            "the tail must be dropped, kept {}",
+            passages.len()
+        );
+        assert!(!passages.is_empty(), "the front is always kept");
+        // The kept passage TEXT bytes are within the byte budget (the clamp invariant).
+        let text_bytes: usize = passages
+            .iter()
+            .map(|p| p["text"].as_str().unwrap().len())
+            .sum();
+        assert!(
+            text_bytes <= MAX_BUNDLE_BYTES,
+            "kept text {text_bytes}B must be within the {MAX_BUNDLE_BYTES}B budget"
+        );
+        // An honest truncation note is present (never a silent drop).
+        assert_eq!(v["note"], "passages truncated to fit the input window");
+        // The encoded observation is bounded FAR below the ~80KB un-clamped fold.
+        assert!(
+            out.len() < 40 * 1024,
+            "clamped encode {}B must be well under the ~80KB un-clamped fold",
+            out.len()
         );
     }
 
