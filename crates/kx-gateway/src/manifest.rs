@@ -355,12 +355,13 @@ mod tests {
 
     #[test]
     fn decode_manifest_caps_the_file_count() {
+        use std::fmt::Write as _;
         let mut files = String::new();
         for i in 0..=MAX_MANIFEST_FILES {
             if i > 0 {
                 files.push(',');
             }
-            files.push_str(&format!("{{\"path\":\"f{i}.txt\",\"role\":\"r\"}}"));
+            let _ = write!(files, "{{\"path\":\"f{i}.txt\",\"role\":\"r\"}}");
         }
         let over = format!("{{\"manifest\":{{\"version\":1,\"files\":[{files}]}}}}");
         assert!(matches!(
