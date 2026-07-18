@@ -225,7 +225,8 @@ pub fn render_rerank_prompt(query: &str, texts: &[String]) -> String {
 /// 1. For each parent in `mote.parents` where `edge.kind == Data`:
 ///    - Look up `result_ref` via `snapshot.result_ref_of(parent_id)`.
 ///    - Fetch bytes via `store.get(result_ref)`.
-///    - Emit one `AssembledItem` with label `"parent.<hex prefix>"`.
+///    - Emit one `AssembledItem` with a short ordinal label `"parent.<N>"`
+///      (hash-free — the model cannot dereference a content hash).
 /// 2. For each `tool_grant` in `warrant.tool_grants`:
 ///    - Resolve via `registry.resolve(grant, warrant)`.
 ///    - Hash the resolved `ToolDef` via canonical bincode → `source_ref`.
@@ -279,7 +280,7 @@ pub fn assemble<S: ContentStore>(
         .collect();
     data_parents.sort_by_key(|m| m.0);
 
-    for parent_id in data_parents {
+    for (ordinal, parent_id) in data_parents.into_iter().enumerate() {
         let result_ref =
             snapshot
                 .result_ref_of(&parent_id)
@@ -292,7 +293,10 @@ pub fn assemble<S: ContentStore>(
                 content_ref: result_ref,
             })?;
         let bytes = Bytes::copy_from_slice(&payload);
-        let label = format!("parent.{}", &result_ref.to_hex()[..16]);
+        // A short ORDINAL label (hash-free) — the harness twin of the gateway serve
+        // path's `[context N]`: the model cannot dereference a content hash, so the
+        // 16-hex prefix was pure token waste. Deterministic: parents are MoteId-sorted.
+        let label = format!("parent.{}", ordinal + 1);
         items.push(AssembledItem {
             label,
             bytes,
