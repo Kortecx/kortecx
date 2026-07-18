@@ -20,10 +20,11 @@ use std::time::{Duration, Instant};
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    authoring_prompt, body_is_empty, derive_phase, split_done_pending, try_committed_body,
-    AppScaffolder, BinderError, BranchStore, ContentReader, GatewayError as CoreError,
-    JournalReader, LockStore, RecipeBinder, RunSubmitter, ScaffoldFile, ScaffoldPhase,
-    ScaffoldStatus, ScaffoldStep, APP_SCAFFOLD_WRITE_RECIPE_HANDLE, SKELETON,
+    authoring_prompt, body_is_empty, derive_phase, hosted_template, split_done_pending,
+    try_committed_body, AppScaffolder, BinderError, BranchStore, ContentReader,
+    GatewayError as CoreError, HostedFileSource, JournalReader, LockStore, RecipeBinder,
+    RunSubmitter, ScaffoldFile, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,
+    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, SKELETON,
 };
 use kx_mote::MoteId;
 
@@ -168,6 +169,74 @@ impl HostScaffolder {
         Ok(())
     }
 
+    /// Drive a HOSTED-app scaffold to terminal: author the framework template's
+    /// model-authored files (the visible page + README) into the branch. The static
+    /// config files are template-owned (the supervisor writes them to disk).
+    async fn run_hosted(self, principal: String, branch: String, framework: String, goal: String) {
+        match self
+            .run_hosted_inner(&principal, &branch, &framework, &goal)
+            .await
+        {
+            Ok(()) => self.set(&branch, ScaffoldPhase::Done, ""),
+            Err(e) => {
+                let detail = format!("{e}");
+                tracing::warn!(branch = %branch, error = %detail, "hosted-app scaffold failed");
+                self.set(&branch, ScaffoldPhase::Failed, &detail);
+            }
+        }
+    }
+
+    async fn run_hosted_inner(
+        &self,
+        principal: &str,
+        branch: &str,
+        framework: &str,
+        goal: &str,
+    ) -> Result<(), CoreError> {
+        self.branches.create(
+            principal,
+            branch,
+            None,
+            "Kortecx hosted-app project branch (agentically authored, in-CAS)",
+        )?;
+        let mut prior: Vec<String> = Vec::new();
+        for tf in hosted_template(framework) {
+            // Only the model-authored files are scaffolded here (page + README); the
+            // static config is written to disk by the supervisor from the template.
+            let HostedFileSource::Authored { role, .. } = tf.source else {
+                continue;
+            };
+            if let Some(l) = self.locks.as_ref() {
+                if l.is_locked(principal, branch)? {
+                    return Err(CoreError::FailedPrecondition(
+                        "branch is locked; the scaffold was halted",
+                    ));
+                }
+            }
+            let manifest = self
+                .branches
+                .get(principal, branch)?
+                .ok_or(CoreError::Internal(String::from(
+                    "scaffold branch vanished mid-run",
+                )))?;
+            if let Some(it) = manifest.items.iter().find(|i| i.path == tf.path) {
+                prior.push(ContentRef::from_bytes(it.content_ref).to_hex());
+                continue;
+            }
+            self.set(branch, ScaffoldPhase::Writing, tf.path);
+            // Reuse the per-file model write path via a ScaffoldFile view.
+            let file = ScaffoldFile {
+                path: tf.path,
+                role,
+            };
+            let body_ref = self.write_one(principal, &file, goal, &prior).await?;
+            self.branches
+                .advance(principal, branch, tf.path, body_ref)?;
+            prior.push(ContentRef::from_bytes(body_ref).to_hex());
+        }
+        Ok(())
+    }
+
     /// Author one skeleton file: bind + submit the scaffold-write recipe, await the
     /// terminal body. The warrant is SERVER-minted (SN-8); the prompt is DATA only.
     async fn write_one(
@@ -231,6 +300,43 @@ impl AppScaffolder for HostScaffolder {
         );
         tokio::spawn(async move {
             driver.run(p, b, g).await;
+        });
+        Ok(resumed)
+    }
+
+    fn start_hosted(
+        &self,
+        principal: &str,
+        branch_handle: &str,
+        envelope_json: &[u8],
+        goal: &str,
+    ) -> Result<bool, CoreError> {
+        // Parse the framework from the opaque envelope (the host owns the kx-app types).
+        let framework = kx_app::AppEnvelope::from_json_slice(envelope_json)
+            .ok()
+            .and_then(|e| e.hosted.map(|h| h.framework.as_str().to_string()))
+            .unwrap_or_else(|| "auto".to_string());
+        let framework = framework.as_str();
+        // Resumed iff the branch already holds ≥1 authored file for this framework.
+        let authored: BTreeSet<&str> = hosted_template(framework)
+            .iter()
+            .filter(|f| matches!(f.source, HostedFileSource::Authored { .. }))
+            .map(|f| f.path)
+            .collect();
+        let resumed = match self.branches.get(principal, branch_handle)? {
+            Some(m) => m.items.iter().any(|it| authored.contains(it.path.as_str())),
+            None => false,
+        };
+        self.set(branch_handle, ScaffoldPhase::Planning, "");
+        let driver = self.clone();
+        let (p, b, f, g) = (
+            principal.to_string(),
+            branch_handle.to_string(),
+            framework.to_string(),
+            goal.to_string(),
+        );
+        tokio::spawn(async move {
+            driver.run_hosted(p, b, f, g).await;
         });
         Ok(resumed)
     }

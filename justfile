@@ -737,6 +737,14 @@ features-guard:
     # (the W1a-1 audit-sink cfg-leak class). CI builds only the default features.
     cargo check -p kx-gateway --no-default-features
     echo " ✓ features-guard: kx-gateway --no-default-features builds"
+    # D213: the hosted-app supervisor feature builds (adds tokio/process; a plain host
+    # subprocess manager, off-journal/off-digest — never links the FFI).
+    if cargo tree -p kx-gateway --features hosted-apps -e normal | grep -qE 'kx-llamacpp'; then
+        echo " ✗ FAIL: the hosted-apps feature dragged the FFI into kx-gateway"
+        exit 1
+    fi
+    cargo check -p kx-gateway --features hosted-apps
+    echo " ✓ features-guard: kx-gateway --features hosted-apps builds (FFI-free)"
 
 # Byte-determinism check (I1.c). Two consecutive release builds must produce
 # bit-identical artifacts. Failure indicates the build is nondeterministic and

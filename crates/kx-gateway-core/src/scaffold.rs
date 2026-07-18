@@ -99,6 +99,25 @@ pub trait AppScaffolder: Send + Sync {
     fn start(&self, principal: &str, branch_handle: &str, goal: &str)
         -> Result<bool, GatewayError>;
 
+    /// D213 Experience lane: start (or resume) a HOSTED-app scaffold — author the
+    /// framework template's model-authored files (the visible page + README) into
+    /// `branch_handle` toward `goal`. `envelope_json` is the app's opaque canonical
+    /// envelope (the host parses the framework from it — gateway-core keeps app bytes
+    /// opaque). The static config files are template-owned (written to disk by the
+    /// hosted-app supervisor), so only the authored files are scaffolded here. Default
+    /// impl: `Unsupported` (a scaffolder that cannot author a model file).
+    fn start_hosted(
+        &self,
+        _principal: &str,
+        _branch_handle: &str,
+        _envelope_json: &[u8],
+        _goal: &str,
+    ) -> Result<bool, GatewayError> {
+        Err(GatewayError::FailedPrecondition(
+            "hosted-app scaffold is not supported by this scaffolder",
+        ))
+    }
+
     /// The current scaffold status for a branch (caller-scoped via the host's
     /// branch store).
     fn status(&self, principal: &str, branch_handle: &str) -> Result<ScaffoldStatus, GatewayError>;

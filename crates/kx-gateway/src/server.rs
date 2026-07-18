@@ -1573,6 +1573,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // (coordinator stays the sole journal writer; frozen trio untouched).
     let trigger_binder: Arc<dyn kx_gateway_core::RecipeBinder> = binder.clone();
     let trigger_submitter: Arc<dyn kx_gateway_core::RunSubmitter> = submitter.clone();
+    // D213 Experience lane: the hosted-app supervisor. Constructed BEFORE the builder
+    // chain consumes `branches_db`; wired onto the gateway after the chain (behind the
+    // `hosted-apps` feature). A plain host subprocess manager — off-journal, off-digest.
+    #[cfg(feature = "hosted-apps")]
+    let hosted_supervisor: Arc<dyn kx_gateway_core::HostedAppSupervisor> =
+        Arc::new(crate::hostsupervisor::HostedSupervisor::new(
+            &catalog_dir,
+            apps_db.clone(),
+            branches_db.clone(),
+            content.clone(),
+        ));
     let mut gateway = GatewayService::new(reader.clone(), submitter, content.clone())
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
@@ -1613,6 +1624,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_global_event_tailer(Arc::new(crate::live_tail::GlobalLiveTailer::new(
             live_shutdown_rx.clone(),
         )));
+    // D213: wire the hosted-app supervisor (built above; behind `hosted-apps`).
+    #[cfg(feature = "hosted-apps")]
+    {
+        gateway = gateway.with_hosted_supervisor(hosted_supervisor);
+        tracing::info!("D213: hosted-app supervisor wired (hosted-apps)");
+    }
     // MM-3 (D110): wire the LOCAL secret store admin (PutSecret/ListSecretNames/
     // DeleteSecret) over the OS keychain + the off-journal secret_index.db NAME index.
     // Secret WRITES are gated loopback-only (the local-first default): a network-exposed
