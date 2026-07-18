@@ -15,13 +15,14 @@
  * (one-App-one-branch), so the scaffold + progress poll key on it.
  */
 
-import { type WorkflowProposal, app, flow } from "@kortecx/sdk/web";
-import { useMutation } from "@tanstack/react-query";
+import { type WorkflowProposal, app, defaultHandle, flow } from "@kortecx/sdk/web";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
+import { queryKeys } from "../../kx/query-keys";
 import { useAttachments } from "../../kx/use-attachments";
 import { useDatasets } from "../../kx/use-datasets";
 import { useModels } from "../../kx/use-models";
@@ -51,13 +52,25 @@ function proposalBlueprint(plan: ProposedPlan) {
   return { toBlueprint: () => dag };
 }
 
-export function NewAppForm({ onClose }: { onClose: () => void }) {
-  const { client } = useConnection();
+/** Which lane the New App form authors (D213): a scheduled functional app or a hosted
+ *  experience (web) app. */
+export type NewAppKind = "scheduled" | "hosted";
+
+export function NewAppForm({
+  onClose,
+  initialKind = "scheduled",
+}: {
+  onClose: () => void;
+  initialKind?: NewAppKind;
+}) {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
   const scaffold = useScaffoldApp();
   const datasets = useDatasets();
   const models = useModels();
   const attach = useAttachments();
   const propose = useProposeWorkflow();
+  const [kind, setKind] = useState<NewAppKind>(initialKind);
   const [proposal, setProposal] = useState<WorkflowProposal | null>(null);
   const [name, setName] = useState("");
   const [goal, setGoal] = useState("");
@@ -81,9 +94,38 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
       // The App's agent step runs the PROMPT (the instruction); the GOAL is the
       // description. A comprehensive capability rule teaches the model what a Kortecx
       // App is + how to drive the runtime (tools/connections/datasets/skills/files).
-      const promptText = prompt.trim() || goal.trim();
       // Attachments already uploaded (PutContent) ride as by-reference context files.
       const readyFiles = attach.attachments.filter((a) => a.status === "ready" && a.ref);
+      const trimmedModel = model.trim();
+      const trimmedHandle = handle.trim();
+
+      // D213 HOSTED (experience) app: no blueprint — the runtime scaffolds a real web
+      // project into the app's branch and serves it on a local port. The branch handle IS
+      // the app handle (one-app-one-branch), so it must be resolved up front.
+      if (kind === "hosted") {
+        const h = trimmedHandle !== "" ? trimmedHandle : defaultHandle(name.trim());
+        let hb = app(name.trim())
+          .describe(goal.trim())
+          .hosted("auto", h)
+          .rule("capabilities", {
+            body: composeCapabilityPrompt(
+              goal.trim(),
+              readyFiles.map((a) => a.filename),
+              "hosted",
+            ),
+          });
+        if (trimmedModel !== "") {
+          hb = hb.steer({ model: trimmedModel });
+        }
+        for (const a of readyFiles) {
+          hb = hb.context(a.filename, a.ref as string, { mediaType: a.mediaType });
+        }
+        const hosted = await hb.save({ client, handle: h });
+        return hosted.handle;
+      }
+
+      // SCHEDULED (functional) app: an agentic blueprint over the goal/prompt.
+      const promptText = prompt.trim() || goal.trim();
       // 5b: if the author proposed + previewed a multi-step plan, author the App as that
       // MULTI-STEP blueprint (each step keeps its role/intent/model); otherwise fall back to
       // today's single agent step over the prompt. The capability rule co-lands on both.
@@ -95,9 +137,9 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
           body: composeCapabilityPrompt(
             goal.trim(),
             readyFiles.map((a) => a.filename),
+            "scheduled",
           ),
         });
-      const trimmedModel = model.trim();
       if (trimmedModel !== "") {
         builder = builder.steer({ model: trimmedModel });
       }
@@ -111,12 +153,16 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
       if (trimmedRule !== "") {
         builder = builder.rule("guidance", { body: trimmedRule });
       }
-      const trimmedHandle = handle.trim();
       const result = await builder.save({
         client,
         ...(trimmedHandle !== "" ? { handle: trimmedHandle } : {}),
       });
       return result.handle;
+    },
+    // Surface the new App in the catalog immediately (the scaffold, when it runs, also
+    // invalidates on completion; a hosted app has no blueprint scaffold to wait for).
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.apps(endpoint) });
     },
   });
 
@@ -151,6 +197,15 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
             onSuccess: ({ branchHandle }) => {
               setScaffolding({ appHandle, branchHandle });
             },
+            onError: () => {
+              // A hosted app is CREATED by SaveApp; scaffolding its page needs a served
+              // model. Without one, the app still runs with the framework's default page —
+              // close the form (the app is in the Hosted catalog). A scheduled app instead
+              // surfaces the scaffold error (its blueprint is the whole app).
+              if (kind === "hosted") {
+                onClose();
+              }
+            },
           },
         );
       },
@@ -183,6 +238,38 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
 
       {scaffolding === null ? (
         <form onSubmit={onSubmit} className="register-tool-form">
+          <fieldset
+            className="view-toggle view-toggle--compact"
+            aria-label="App kind"
+            data-testid="new-app-kind"
+          >
+            <button
+              type="button"
+              data-testid="new-app-kind-scheduled"
+              aria-pressed={kind === "scheduled"}
+              onClick={() => setKind("scheduled")}
+              disabled={busy}
+              title="An automation app — runs on a trigger / in workflows"
+            >
+              Scheduled
+            </button>
+            <button
+              type="button"
+              data-testid="new-app-kind-hosted"
+              aria-pressed={kind === "hosted"}
+              onClick={() => setKind("hosted")}
+              disabled={busy}
+              title="A hosted web app — scaffolded and served on a local port"
+            >
+              Hosted
+            </button>
+          </fieldset>
+          {kind === "hosted" ? (
+            <p className="muted" data-testid="new-app-hosted-note">
+              A hosted web app: the runtime scaffolds a React / Next.js project from your
+              description and serves it on a local port. The framework is chosen automatically.
+            </p>
+          ) : null}
           <input
             type="text"
             data-testid="new-app-name"
@@ -209,29 +296,31 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
           {/* 5b: NL multi-step authoring — ask the served model to plan a workflow for the
               goal, preview it, then author the App as that multi-step blueprint. Falls back
               to a single agent step when there is no plan (e.g. no served model). */}
-          <div className="register-tool-form__row">
-            <button
-              type="button"
-              className="btn-ghost"
-              data-testid="new-app-propose"
-              onClick={() => propose.mutate(goal.trim(), { onSuccess: setProposal })}
-              disabled={!goalOk || busy || propose.isPending}
-              title="Plan a multi-step workflow for this goal. You preview it before authoring."
-            >
-              {propose.isPending ? "Proposing…" : "Propose steps"}
-            </button>
-            {proposal?.proposed === true ? (
+          {kind === "scheduled" ? (
+            <div className="register-tool-form__row">
               <button
                 type="button"
-                className="linkbtn"
-                data-testid="new-app-proposal-clear"
-                onClick={() => setProposal(null)}
-                disabled={busy}
+                className="btn-ghost"
+                data-testid="new-app-propose"
+                onClick={() => propose.mutate(goal.trim(), { onSuccess: setProposal })}
+                disabled={!goalOk || busy || propose.isPending}
+                title="Plan a multi-step workflow for this goal. You preview it before authoring."
               >
-                Clear plan (author a single step)
+                {propose.isPending ? "Proposing…" : "Propose steps"}
               </button>
-            ) : null}
-          </div>
+              {proposal?.proposed === true ? (
+                <button
+                  type="button"
+                  className="linkbtn"
+                  data-testid="new-app-proposal-clear"
+                  onClick={() => setProposal(null)}
+                  disabled={busy}
+                >
+                  Clear plan (author a single step)
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {proposal?.proposed === true ? (
             <fieldset className="new-app-form__rail" data-testid="new-app-proposal">
               <legend className="muted">Proposed plan ({proposal.steps.length} steps)</legend>
@@ -256,16 +345,18 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
             </p>
           ) : null}
 
-          <textarea
-            className="input"
-            data-testid="new-app-prompt"
-            placeholder="Prompt (optional) — the instruction the model runs each time. Defaults to the goal. A comprehensive capability prompt (how to use the runtime's tools, connections, datasets & files) is added automatically."
-            rows={3}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            aria-label="App prompt"
-            disabled={busy}
-          />
+          {kind === "scheduled" ? (
+            <textarea
+              className="input"
+              data-testid="new-app-prompt"
+              placeholder="Prompt (optional) — the instruction the model runs each time. Defaults to the goal. A comprehensive capability prompt (how to use the runtime's tools, connections, datasets & files) is added automatically."
+              rows={3}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              aria-label="App prompt"
+              disabled={busy}
+            />
+          ) : null}
           <div className="register-tool-form__row">
             <select
               className="mono"
@@ -299,7 +390,7 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
           {/* T-RUNAPP-CONTEXT-RAIL: "Ground on dataset" — chip toggles (a controlled
               <select> can't be Playwright-driven; chips are the standing pattern). Only
               shown when a non-empty dataset exists (don't-fake-gaps). */}
-          {groundable.length > 0 ? (
+          {kind === "scheduled" && groundable.length > 0 ? (
             <fieldset className="new-app-form__rail" data-testid="new-app-datasets">
               <legend className="muted">Ground on dataset (RAG)</legend>
               <div className="chips">
@@ -323,16 +414,18 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
             </fieldset>
           ) : null}
 
-          <textarea
-            className="input"
-            data-testid="new-app-rule"
-            placeholder="Guidance rule (optional) — a behavior note the agent must follow (e.g. 'Always cite sources.')"
-            rows={2}
-            value={rule}
-            onChange={(e) => setRule(e.target.value)}
-            aria-label="Guidance rule (optional)"
-            disabled={busy}
-          />
+          {kind === "scheduled" ? (
+            <textarea
+              className="input"
+              data-testid="new-app-rule"
+              placeholder="Guidance rule (optional) — a behavior note the agent must follow (e.g. 'Always cite sources.')"
+              rows={2}
+              value={rule}
+              onChange={(e) => setRule(e.target.value)}
+              aria-label="Guidance rule (optional)"
+              disabled={busy}
+            />
+          ) : null}
 
           {/* Attachments — uploaded (PutContent) and attached to the App as
               by-reference context files the model reads at run. */}
@@ -390,12 +483,14 @@ export function NewAppForm({ onClose }: { onClose: () => void }) {
               Cancel
             </button>
           </div>
-          <p className="muted">
-            Prefer to compose the structure yourself?{" "}
-            <Link to="/blueprints/new" className="linkbtn" data-testid="new-app-build-visual">
-              Build in the visual builder →
-            </Link>
-          </p>
+          {kind === "scheduled" ? (
+            <p className="muted">
+              Prefer to compose the structure yourself?{" "}
+              <Link to="/blueprints/new" className="linkbtn" data-testid="new-app-build-visual">
+                Build in the visual builder →
+              </Link>
+            </p>
+          ) : null}
         </form>
       ) : (
         <ScaffoldProgress

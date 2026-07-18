@@ -200,7 +200,7 @@ export function AppsSection({
         <ErrorNotice error={toUiError(exportBundle.error)} onRetry={() => exportBundle.reset()} />
       ) : null}
 
-      {creating ? <NewAppForm onClose={() => setCreating(false)} /> : null}
+      {creating ? <NewAppForm onClose={() => setCreating(false)} initialKind={section} /> : null}
 
       {isLoading ? <EmptyState title="Loading apps…" /> : null}
 

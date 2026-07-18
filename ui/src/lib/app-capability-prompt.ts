@@ -37,13 +37,41 @@ Honesty:
 - Use only the tools, connections, and datasets actually available to this App. If something needed is missing, say so plainly.
 - Never fabricate a tool result, a citation, or a capability you were not given.`;
 
+/** Which lane the App is authored for — steers the capability guidance (D213). */
+export type AppPromptKind = "agent" | "scheduled" | "hosted";
+
+/** Appended for a SCHEDULED (functional) App — it may run unattended on a trigger, so
+ *  irreversible actions are STAGED for approval, never fired silently. */
+const SCHEDULED_NOTE = `
+This App may run UNATTENDED on a trigger (a cron schedule, a webhook, or a gRPC call) — no human is present at run time. Use the connected integrations and tools it was granted to carry the goal end-to-end and return the result. Any irreversible action (sending mail, posting to a channel, writing to an external system) is STAGED for human approval, not fired — do not assume it will send. This App has no writable project branch; return your work in your answer.`;
+
+/** The HOSTED (experience) App authoring prompt — a real web project, not an agent loop.
+ *  Honest by construction: a local dev server on a local port, no baked live-data access. */
+const HOSTED_PROMPT = `You are authoring a HOSTED Kortecx App — a real web application (a Vite-React or Next.js project) that the runtime scaffolds into a project tree and serves on a LOCAL port.
+
+What to produce:
+- A single, self-contained page that implements exactly what the user described, using ONLY React (and Next.js for a Next app) — no extra npm dependencies. Make it render immediately.
+- Clean, working code; prefer inline styles or the project's stylesheet over new dependencies.
+
+Boundaries (honesty):
+- This app runs as a LOCAL web app on a local port — never a public URL (that is a Cloud capability).
+- It does NOT have baked access to the user's live data, the internet, or the runtime's tools. A hosted app reaches runtime capabilities only through the governed request seam, and only when that is wired. Do not claim live data or actions it cannot perform.`;
+
 /**
  * Compose the full capability guidance for an App from the base prompt + the App's
- * goal + optional attachment filenames (so the model knows what was attached).
+ * goal + optional attachment filenames (so the model knows what was attached). `kind`
+ * selects the lane-appropriate guidance; the default (`"agent"`) is unchanged.
  */
-export function composeCapabilityPrompt(goal: string, attachments: readonly string[] = []): string {
+export function composeCapabilityPrompt(
+  goal: string,
+  attachments: readonly string[] = [],
+  kind: AppPromptKind = "agent",
+): string {
   const g = goal.trim();
-  const parts = [CAPABILITY_PROMPT];
+  const parts = [kind === "hosted" ? HOSTED_PROMPT : CAPABILITY_PROMPT];
+  if (kind === "scheduled") {
+    parts.push(SCHEDULED_NOTE);
+  }
   if (g !== "") {
     parts.push(`\nThis App's goal:\n${g}`);
   }
