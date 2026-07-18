@@ -7,10 +7,11 @@
  *    with a REVIEW/DIFF GATE (propose → diff → approve/reject);
  *  - **Lineage**: a read-only diagram of the blueprint ({@link AppLineageSection});
  *  - **Skills**: attach/detach catalog skills ({@link SkillsRail});
- *  - **MCP Tools** / **Integrations**: the read-only capability manifest, split.
- * The header carries the editable App name (left) and top-right actions — Chat & edit
- * (opens {@link AppChatEditDrawer}), Run (opens {@link AppRunDrawer}), Download, and
- * the Lock toggle.
+ *  - **MCP Tools** / **Integrations**: the editable capability rails ({@link ToolsRail}
+ *    attach/detach; {@link ConnectionsRail} bind/unbind), split.
+ * The header carries the editable App name (left) and top-right actions — Modify
+ * (opens the unified agentic-modify {@link AppChatEditDrawer}), Run (opens
+ * {@link AppRunDrawer}), Download, and the Lock toggle.
  *
  * GR15 / D142 honesty: a LOCKED App disables every WRITE affordance (direct save +
  * agentic edit + structure save) with a clear notice — the runtime refuses the write
@@ -184,8 +185,8 @@ export function AppDetailSection({
             type="button"
             className="iconbtn"
             data-testid="app-detail-chat"
-            title="Chat with the agent to understand or modify this App"
-            aria-label="Chat and edit"
+            title="Modify this App with the agent (multi-file diff with rollback)"
+            aria-label="Modify app"
             onClick={() => setChatOpen(true)}
           >
             <Icon name="chat" size={18} />
