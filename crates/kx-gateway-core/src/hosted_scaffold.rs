@@ -68,7 +68,10 @@ const VITE_REACT: &[TemplateFile] = &[
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "typescript": "^5.4.5",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0"
   }
 }
 "#,
@@ -211,6 +214,12 @@ const NEXT_JS: &[TemplateFile] = &[
     "next": "^14.2.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0"
   }
 }
 "#,
@@ -430,6 +439,33 @@ mod tests {
             assert!(
                 v["scripts"]["dev"].is_string(),
                 "package.json needs a dev script"
+            );
+        }
+    }
+
+    #[test]
+    fn every_template_declares_typescript_devdeps() {
+        // Both templates ship `.tsx` files + a tsconfig.json, so their package.json MUST
+        // declare `typescript` (+ the React type stubs) as devDependencies. Otherwise the
+        // dev server auto-installs them mid-startup — which crashed `next dev` with a
+        // require-hook TypeError (found in live hosted-app testing). Regression guard.
+        for fw in ["vite_react", "next_js"] {
+            let pkg = template(fw)
+                .iter()
+                .find(|f| f.path == "package.json")
+                .expect("a package.json");
+            let FileSource::Static(body) = pkg.source else {
+                panic!("package.json must be static");
+            };
+            let v: serde_json::Value = serde_json::from_str(body).expect("package.json parses");
+            let dev = &v["devDependencies"];
+            assert!(
+                dev["typescript"].is_string(),
+                "{fw}: package.json must declare a typescript devDependency"
+            );
+            assert!(
+                dev["@types/react"].is_string(),
+                "{fw}: package.json must declare @types/react"
             );
         }
     }
