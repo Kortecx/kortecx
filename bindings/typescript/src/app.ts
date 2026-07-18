@@ -39,10 +39,16 @@ export interface AppClient {
   putContent(payload: Uint8Array, opts?: { mediaType?: string }): Promise<{ contentRef: string }>;
   saveApp(envelope: unknown, opts?: { handle?: string }): Promise<SaveAppResult>;
   /** The App run path — SaveApp + RunApp so `references.connections` +
-   * `guards.secret_scope` reach the server (a credentialed connector can be dialed). */
+   * `guards.secret_scope` reach the server (a credentialed connector can be dialed).
+   * `requireApproval` (opt-in, default `false`) runs under the per-run HITL gate. */
   runApp(
     handle: string,
-    opts?: { wait?: boolean; timeoutMs?: number; args?: Record<string, string> },
+    opts?: {
+      wait?: boolean;
+      timeoutMs?: number;
+      args?: Record<string, string>;
+      requireApproval?: boolean;
+    },
   ): Promise<unknown>;
   /** OPTIONAL — used only when a promoting Flow (`asApp`) carried `withMcp` connectors. */
   registerMcpServer?(input: RegisterMcpServerInput): Promise<unknown>;
@@ -480,10 +486,18 @@ export class AppBuilder {
    * server and a credentialed connector (Gmail / Discord) actually fires inside the
    * agentic loop (the G2/#285 path). Saving is expected: an App is an explicitly-named
    * durable object; the save is idempotent (content-addressed envelope + handle upsert).
-   * The server re-resolves every warrant from the caller's grants (SN-8). */
+   * The server re-resolves every warrant from the caller's grants (SN-8).
+   * `requireApproval` (opt-in, default `false`) runs the entry agentic step under the
+   * per-run HITL gate, so an irreversible tool call pauses for an explicit grant/deny
+   * before it fires. */
   async run(
     args: Readonly<Record<string, unknown>> = {},
-    opts: { wait?: boolean; timeoutMs?: number; client?: AppClient } = {},
+    opts: {
+      wait?: boolean;
+      timeoutMs?: number;
+      client?: AppClient;
+      requireApproval?: boolean;
+    } = {},
   ): Promise<unknown> {
     const client = resolveClient(opts.client);
     await this.resolvePending(client);
@@ -502,6 +516,7 @@ export class AppBuilder {
       args: strArgs,
       wait: opts.wait ?? true,
       timeoutMs: opts.timeoutMs,
+      requireApproval: opts.requireApproval,
     });
   }
 }

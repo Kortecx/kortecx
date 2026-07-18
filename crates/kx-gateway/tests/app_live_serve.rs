@@ -569,6 +569,7 @@ async fn runapp_connection_live(case: &ConnectorCase) {
         .run_app(proto::RunAppRequest {
             handle: handle_str,
             args: Vec::new(),
+            require_approval: false,
         })
         .await
         .expect("RunApp of the connector App")
@@ -662,6 +663,279 @@ async fn runapp_connection_live(case: &ConnectorCase) {
     running.shutdown().await.unwrap();
     std::env::remove_var("KX_SERVE_AUTOGRANT");
     std::env::remove_var(case.fake_env);
+}
+
+/// D114 LIVE witness — the per-run HITL block→grant→fire proof over
+/// `RunApp(require_approval = true)` (the field this PR adds to the wire). Mirrors
+/// `runapp_connection_live`'s setup, but runs the App under the per-run approval posture:
+/// an MCP connector tool is world-mutating (registered `Staged` by kx-mcp-gateway), so the
+/// coordinator's approval barrier HOLDS the model's tool call staged-not-committed — a
+/// `PendingApproval` surfaces and NO tool fires — until an operator GRANTS it, after which
+/// the granted tool fires and the chain resumes. The deterministic gate coverage lives in
+/// `kx-coordinator` (`approval_gate_requests_then_grants_then_proceeds_recovery_stable`);
+/// this is the live end-to-end proof that the RunAppRequest field reaches the gate on a
+/// real model. Dual-engine (llama.cpp + Ollama); reuses a `require_fire` connector case
+/// (proven to fire on BOTH engines) so the only new variable is the approval hold.
+async fn runapp_hitl_block_grant_fire_live(case: &ConnectorCase) {
+    let Some(engine) = resolve_engine() else {
+        eprintln!(
+            "skipping: no serve model — set KX_SERVE_MODEL_GGUF (Gemma-4/Qwen3) or \
+             KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b"
+        );
+        return;
+    };
+    let Some(connector) = connector_bin(case.bin_name) else {
+        eprintln!(
+            "skipping: {} not built — `cargo build -p {}`",
+            case.bin_name, case.bin_name
+        );
+        return;
+    };
+    // AUTOGRANT auto-grants the tool WARRANT (so the model may call it); it is orthogonal to
+    // the D114 approval gate, which still pauses the world-mutating call under require_approval.
+    std::env::set_var("KX_SERVE_AUTOGRANT", "1");
+    std::env::set_var(case.fake_env, "1");
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let reg = c
+        .register_mcp_server(proto::RegisterMcpServerRequest {
+            server_name: case.server_name.to_string(),
+            transport: "stdio".to_string(),
+            endpoint: connector.to_string_lossy().into_owned(),
+            args: vec![],
+            tls_required: false,
+            credential_ref: case.credential_ref.to_string(),
+            session_mode: String::new(),
+        })
+        .await
+        .expect("RegisterMcpServer")
+        .into_inner();
+    eprintln!(
+        "{} connection: health={} discovered={}",
+        case.server_name, reg.health, reg.discovered
+    );
+    let _ = c
+        .put_secret(proto::PutSecretRequest {
+            name: case.credential_ref.to_string(),
+            value: case.credential_value.to_string(),
+        })
+        .await;
+
+    let handle_str = format!("apps/local/{}-hitl-agent", case.server_name);
+    let envelope = connector_app_envelope(
+        &connector.to_string_lossy(),
+        case.granted_tool,
+        case.credential_ref,
+        case.prompt,
+        true,
+    );
+    c.save_app(proto::SaveAppRequest {
+        handle: handle_str.clone(),
+        envelope_json: envelope,
+        source_digest: Vec::new(),
+    })
+    .await
+    .expect("SaveApp")
+    .into_inner();
+
+    if !c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+        .unwrap()
+        .into_inner()
+        .recipes
+        .iter()
+        .any(|r| r.handle == REACT_RECIPE_HANDLE)
+    {
+        eprintln!("skipping the run leg: kx/recipes/react not provisioned");
+        running.shutdown().await.unwrap();
+        std::env::remove_var("KX_SERVE_AUTOGRANT");
+        std::env::remove_var(case.fake_env);
+        return;
+    }
+
+    // Run under the per-run HITL posture — THE field this PR adds to RunAppRequest.
+    let handle = c
+        .run_app(proto::RunAppRequest {
+            handle: handle_str,
+            args: Vec::new(),
+            require_approval: true,
+        })
+        .await
+        .expect("RunApp of the connector App (require_approval)")
+        .into_inner();
+    assert_eq!(handle.instance_id.len(), 16, "RunApp returns a run handle");
+
+    // PHASE 1 — BLOCK. The model calls the world-mutating (Staged) connector tool; the
+    // approval barrier holds it staged-not-committed. Poll for the PendingApproval to
+    // surface, asserting NO tool has fired yet.
+    let mut pending: Option<proto::PendingApproval> = None;
+    let mut premature_fire = false;
+    for _ in 0..3000 {
+        let turns = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(handle.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        if turns.turns.iter().any(|t| t.branch == "tool") {
+            premature_fire = true;
+        }
+        let inbox = c
+            .list_pending_approvals(proto::ListPendingApprovalsRequest { limit: 0 })
+            .await
+            .unwrap()
+            .into_inner();
+        if let Some(p) = inbox
+            .approvals
+            .into_iter()
+            .find(|p| p.instance_id == handle.instance_id)
+        {
+            pending = Some(p);
+            break;
+        }
+        // A model that answered WITHOUT ever calling the tool never requests approval —
+        // stop waiting (the assert below then fails loudly, like a require_fire miss).
+        if turns
+            .turns
+            .iter()
+            .any(|t| t.branch == "answer" || t.branch == "dead_lettered")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    let pending = pending.unwrap_or_else(|| {
+        panic!(
+            "the {} App must PAUSE on approval before firing {} on the live model [{engine}] — \
+             no PendingApproval surfaced (require_approval did not reach the gate)",
+            case.server_name, case.granted_tool
+        )
+    });
+    assert!(
+        !premature_fire,
+        "the world-mutating tool must NOT fire before the grant [{engine}] (staged-not-committed)"
+    );
+    assert_eq!(
+        pending.tool_id, case.granted_tool,
+        "the pending approval is for the granted tool [{engine}]"
+    );
+    eprintln!(
+        "LIVE HITL {} [{engine}]: BLOCKED — pending approval for tool_id={} (request_id {}B) — no tool fired yet",
+        case.server_name,
+        pending.tool_id,
+        pending.request_id.len()
+    );
+
+    // PHASE 2 — GRANT (the operator decision).
+    let granted = c
+        .grant_approval(proto::GrantApprovalRequest {
+            request_id: pending.request_id.clone(),
+            reason: "live HITL witness: operator approves".to_string(),
+        })
+        .await
+        .expect("GrantApproval")
+        .into_inner();
+    assert!(
+        granted.granted,
+        "the grant resolves the pending request [{engine}]"
+    );
+
+    // PHASE 3 — FIRE. After the grant the granted tool fires and the chain settles.
+    let mut tool_fired = false;
+    let mut fired_tool_ids: Vec<String> = Vec::new();
+    let mut answered = false;
+    let mut dead_lettered = false;
+    for _ in 0..3000 {
+        let turns = c
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: None,
+                instance_id: Some(handle.instance_id.clone()),
+                step_salt: None,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        for t in &turns.turns {
+            if t.branch == "tool" {
+                tool_fired = true;
+                if !t.tool_id.is_empty() && !fired_tool_ids.contains(&t.tool_id) {
+                    fired_tool_ids.push(t.tool_id.clone());
+                }
+            }
+        }
+        answered = turns.turns.iter().any(|t| t.branch == "answer");
+        dead_lettered = turns.turns.iter().any(|t| t.branch == "dead_lettered");
+        if tool_fired && (answered || dead_lettered) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    eprintln!(
+        "LIVE HITL {} [{engine}]: GRANTED -> FIRED — tool_fired={tool_fired} fired_tools={fired_tool_ids:?} \
+         answered={answered} dead_lettered={dead_lettered}",
+        case.server_name
+    );
+    assert!(
+        tool_fired && fired_tool_ids.iter().any(|id| id == case.granted_tool),
+        "after the grant, the {} App must FIRE {} on the live model [{engine}] — \
+         tool_fired={tool_fired} fired={fired_tool_ids:?}",
+        case.server_name,
+        case.granted_tool
+    );
+
+    running.shutdown().await.unwrap();
+    std::env::remove_var("KX_SERVE_AUTOGRANT");
+    std::env::remove_var(case.fake_env);
+}
+
+/// D114 block→grant→fire LIVE witness over Slack (a `require_fire` case, proven to fire on
+/// BOTH engines). Under `require_approval` the fire is HELD until the operator grants.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-slack; opt in with --ignored"]
+async fn runapp_hitl_block_grant_fire_slack_live() {
+    runapp_hitl_block_grant_fire_live(&ConnectorCase {
+        server_name: "slack",
+        bin_name: "kx-connector-slack",
+        credential_ref: "KX_SLACK_CREDENTIAL",
+        credential_value: r#"{"bot_token":"x"}"#,
+        fake_env: "KX_SLACK_FAKE",
+        granted_tool: "slack/read_channel",
+        prompt: "Read the most recent messages from channel 123 using the \
+                 slack/read_channel tool, then briefly summarize them.",
+        require_fire: true,
+        require_answer: false,
+    })
+    .await;
+}
+
+/// D114 block→grant→fire LIVE witness over Notion (the other `require_fire` case) — a second
+/// connector so the proof does not hinge on one sidecar's live behavior.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "real in-process LLM inference + the built kx-connector-notion; opt in with --ignored"]
+async fn runapp_hitl_block_grant_fire_notion_live() {
+    runapp_hitl_block_grant_fire_live(&ConnectorCase {
+        server_name: "notion",
+        bin_name: "kx-connector-notion",
+        credential_ref: "KX_NOTION_CREDENTIAL",
+        credential_value: r#"{"token":"x"}"#,
+        fake_env: "KX_NOTION_FAKE",
+        granted_tool: "notion/search",
+        prompt: "Search the Notion workspace for pages about the launch using the \
+                 notion/search tool, then briefly summarize what you found.",
+        require_fire: true,
+        require_answer: false,
+    })
+    .await;
 }
 
 /// G2/#285 Gmail witness — the thin caller over the generic connector harness.
@@ -1129,6 +1403,7 @@ async fn runapp_grounded_app_self_grounds_live() {
         .run_app(proto::RunAppRequest {
             handle: handle_str,
             args: Vec::new(),
+            require_approval: false,
         })
         .await
     {
@@ -1301,6 +1576,7 @@ async fn runapp_self_contained_app_ingests_its_carried_corpus_live() {
         .run_app(proto::RunAppRequest {
             handle: handle_str,
             args: Vec::new(),
+            require_approval: false,
         })
         .await
     {

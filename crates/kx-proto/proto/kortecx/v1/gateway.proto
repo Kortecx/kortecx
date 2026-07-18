@@ -1309,6 +1309,12 @@ message GetAppManifestResponse {
 message RunAppRequest {
   string handle = 1;  // an existing saved App handle (caller-scoped)
   bytes  args   = 2;   // optional entry-arg JSON object (empty = none); merged server-side
+  // Opt-in per-run human-in-the-loop posture. true => the entry agentic step runs
+  // under the approval gate, so an irreversible / world-mutating tool call pauses
+  // (staged-not-committed) for an explicit Grant/Deny before it fires. Absent/false =>
+  // today's autonomous behavior (the serve-wide default applies) and injects nothing,
+  // so a run without this field is byte-identical to before.
+  bool require_approval = 3;
 }
 
 // ---------------------------------------------------------------------------

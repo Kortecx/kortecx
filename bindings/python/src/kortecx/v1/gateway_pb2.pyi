@@ -1566,12 +1566,14 @@ class GetAppManifestResponse(_message.Message):
     def __init__(self, found: bool = ..., reach_inherit: bool = ..., tools: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ..., connections: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ..., model_route: _Optional[str] = ..., model_route_served: bool = ...) -> None: ...
 
 class RunAppRequest(_message.Message):
-    __slots__ = ("handle", "args")
+    __slots__ = ("handle", "args", "require_approval")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     ARGS_FIELD_NUMBER: _ClassVar[int]
+    REQUIRE_APPROVAL_FIELD_NUMBER: _ClassVar[int]
     handle: str
     args: bytes
-    def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ...) -> None: ...
+    require_approval: bool
+    def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ..., require_approval: bool = ...) -> None: ...
 
 class ScaffoldAppRequest(_message.Message):
     __slots__ = ("handle", "branch_handle", "instruction")

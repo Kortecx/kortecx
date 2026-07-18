@@ -951,18 +951,32 @@ export abstract class KxClientBase {
    * On an older server without the seam (`UNIMPLEMENTED`) it falls back to the legacy
    * client-orchestrated `GetApp` → `submitWorkflow` (which drops the references). Throws
    * {@link KxUsage} if the App is not found. `args` fold server-side into the entry model
-   * step's prompt; empty/absent ⇒ byte-identical to a no-args compile.
+   * step's prompt; empty/absent ⇒ byte-identical to a no-args compile. `requireApproval`
+   * (opt-in, default `false`) runs the entry agentic step under the per-run HITL gate, so
+   * an irreversible / world-mutating tool call pauses for an explicit grant/deny (see
+   * {@link KxClient.approvals}) before it fires.
    */
   async runApp(
     handle: string,
-    opts: { wait?: boolean; timeoutMs?: number; args?: Record<string, string> } = {},
+    opts: {
+      wait?: boolean;
+      timeoutMs?: number;
+      args?: Record<string, string>;
+      requireApproval?: boolean;
+    } = {},
   ): Promise<Run | Result> {
     const hasArgs = opts.args !== undefined && Object.keys(opts.args).length > 0;
     const argsBytes = hasArgs
       ? new TextEncoder().encode(JSON.stringify(opts.args))
       : new Uint8Array(0);
     try {
-      const h = await rpc(this.grpc.runApp({ handle, args: argsBytes }));
+      const h = await rpc(
+        this.grpc.runApp({
+          handle,
+          args: argsBytes,
+          requireApproval: opts.requireApproval ?? false,
+        }),
+      );
       if (!opts.wait) {
         return new Run(this, h.instanceId, new Uint8Array(0), h.recipeFingerprint);
       }

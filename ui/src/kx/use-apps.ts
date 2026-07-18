@@ -59,14 +59,20 @@ export interface RunAppResult {
 
 export function useRunApp() {
   const { client } = useConnection();
-  return useMutation<RunAppResult, unknown, { handle: string; args?: Record<string, string> }>({
-    mutationFn: async ({ handle, args }) => {
+  return useMutation<
+    RunAppResult,
+    unknown,
+    { handle: string; args?: Record<string, string>; requireApproval?: boolean }
+  >({
+    mutationFn: async ({ handle, args, requireApproval }) => {
       if (!client) {
         throw new Error("not connected");
       }
       // No `wait` ⇒ a Run handle (its ids are already hex) — route to the live run.
       // POC-5d: `args` (the App's input_schema inputs) fold into the entry model step.
-      const run = await client.runApp(handle, args ? { args } : {});
+      // `requireApproval` (opt-in) runs the entry step under the per-run HITL gate, so a
+      // world-mutating tool call surfaces in the approvals inbox before it fires.
+      const run = await client.runApp(handle, { args, requireApproval });
       if (!("recipeFingerprint" in run)) {
         throw new Error("unexpected runApp result");
       }

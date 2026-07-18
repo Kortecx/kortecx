@@ -2282,11 +2282,12 @@ impl KxGateway for GatewayService {
         // App's declared `guards.secret_scope`. Server-minted warrants (SN-8): the
         // envelope carries NO authority.
         let bound = runner
-            // Interactive RunApp keeps today's posture (require_approval = false ⇒ the
-            // serve-wide KX_SERVE_REQUIRE_APPROVAL default applies). A per-request
-            // override field is a later additive; the per-TRIGGER posture is threaded on
-            // the App-target trigger path (T-APP-TRIGGER-TARGET).
-            .author_app(&party, &req.handle, &req.args, false)
+            // Per-run HITL: honor the request's opt-in approval posture. true ⇒ the entry
+            // agentic step is authored under the approval gate (an irreversible tool call
+            // pauses for an explicit grant before it fires); false (the default) ⇒ today's
+            // autonomous posture, where the serve-wide KX_SERVE_REQUIRE_APPROVAL default
+            // applies and nothing is injected (byte-identical to a no-field run).
+            .author_app(&party, &req.handle, &req.args, req.require_approval)
             .await
             .map_err(|e| match e {
                 crate::apps_run::AppRunError::NotAuthorized => {
