@@ -148,7 +148,8 @@ async fn app_ide_edit_lineage_files_and_run_on_a_live_model() {
     assert!(got.found);
     let mut env = kx_app::AppEnvelope::from_json_slice(&got.envelope_json).unwrap();
     // mutate the (opaque) blueprint's first step prompt — what the lineage editor does.
-    env.blueprint["steps"][0]["prompt"] = serde_json::Value::String(v2_prompt.to_string());
+    env.blueprint.as_mut().unwrap()["steps"][0]["prompt"] =
+        serde_json::Value::String(v2_prompt.to_string());
     c.save_app(proto::SaveAppRequest {
         handle: handle.clone(),
         envelope_json: env.to_canonical_json().unwrap(),
@@ -166,7 +167,7 @@ async fn app_ide_edit_lineage_files_and_run_on_a_live_model() {
         .into_inner();
     let env2 = kx_app::AppEnvelope::from_json_slice(&got2.envelope_json).unwrap();
     assert_eq!(
-        env2.blueprint["steps"][0]["prompt"].as_str(),
+        env2.blueprint.as_ref().unwrap()["steps"][0]["prompt"].as_str(),
         Some(v2_prompt),
         "the lineage structure edit persisted"
     );

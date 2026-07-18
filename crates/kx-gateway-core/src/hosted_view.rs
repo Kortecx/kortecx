@@ -48,7 +48,7 @@ pub struct HostedStatus {
 /// The host-side hosted-app supervisor seam. The host impl owns the process runtime
 /// (materialize → install → spawn+supervise the dev server → kill/reap). `start` returns
 /// immediately with the current status (the lifecycle runs in a background task); poll
-/// [`HostedAppSupervisor::status`] for progress — the [`crate::scaffold::AppScaffolder`]
+/// [`HostedAppSupervisor::status`] for progress — the [`crate::AppScaffolder`]
 /// propose-proxy contract.
 pub trait HostedAppSupervisor: Send + Sync {
     /// Start (or attach to) the hosted app `(principal, handle)`'s dev server. Idempotent:

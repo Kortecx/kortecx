@@ -494,6 +494,26 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusResponse.FromString,
                 _registered_method=True)
+        self.StartHostedApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/StartHostedApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.StartHostedAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.HostedAppStatus.FromString,
+                _registered_method=True)
+        self.StopHostedApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/StopHostedApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.StopHostedAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.StopHostedAppResponse.FromString,
+                _registered_method=True)
+        self.GetHostedAppStatus = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetHostedAppStatus',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetHostedAppStatusRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.HostedAppStatus.FromString,
+                _registered_method=True)
+        self.ListHostedApps = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListHostedApps',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListHostedAppsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListHostedAppsResponse.FromString,
+                _registered_method=True)
         self.LockApp = channel.unary_unary(
                 '/kortecx.v1.KxGateway/LockApp',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.LockAppRequest.SerializeToString,
@@ -1222,6 +1242,35 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def StartHostedApp(self, request, context):
+        """D213 Experience lane — the hosted-app run/build/serve supervisor. Start materializes
+        the App's branch file tree to disk, `npm install`s, and runs a dev server on a loopback
+        port, reverse-proxied at `/apps/<handle>/live/`; Stop kills + reaps the child; Get/List
+        report state + the live URL + recent logs. A plain host subprocess — never a Mote, never
+        journaled, off-digest. Unimplemented when built without the `hosted-apps` feature.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StopHostedApp(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetHostedAppStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListHostedApps(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def LockApp(self, request, context):
         """POC-5b (Policies "per-App lock") — lock / unlock the App's project branch.
         A locked branch refuses agentic in-CAS edits at the AdvanceBranch chokepoint
@@ -1731,6 +1780,26 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetScaffoldStatus,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusResponse.SerializeToString,
+            ),
+            'StartHostedApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.StartHostedApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.StartHostedAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.HostedAppStatus.SerializeToString,
+            ),
+            'StopHostedApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.StopHostedApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.StopHostedAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.StopHostedAppResponse.SerializeToString,
+            ),
+            'GetHostedAppStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetHostedAppStatus,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetHostedAppStatusRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.HostedAppStatus.SerializeToString,
+            ),
+            'ListHostedApps': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListHostedApps,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListHostedAppsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListHostedAppsResponse.SerializeToString,
             ),
             'LockApp': grpc.unary_unary_rpc_method_handler(
                     servicer.LockApp,
@@ -4247,6 +4316,114 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetScaffoldStatus',
             kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.GetScaffoldStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StartHostedApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/StartHostedApp',
+            kortecx_dot_v1_dot_gateway__pb2.StartHostedAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.HostedAppStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StopHostedApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/StopHostedApp',
+            kortecx_dot_v1_dot_gateway__pb2.StopHostedAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.StopHostedAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetHostedAppStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetHostedAppStatus',
+            kortecx_dot_v1_dot_gateway__pb2.GetHostedAppStatusRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.HostedAppStatus.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListHostedApps(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListHostedApps',
+            kortecx_dot_v1_dot_gateway__pb2.ListHostedAppsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListHostedAppsResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -13,9 +13,9 @@
 //! The STRUCTURE (the path set) is fixed per framework (the deterministic tests assert
 //! it); only the authored files' CONTENT varies. The generated tree is materialized to
 //! disk + `npm install`ed + dev-served by the host hosted-app supervisor (a separate,
-//! off-journal subsystem — see [`crate::scaffold`] for the agentic-app analogue).
+//! off-journal subsystem — see [`SKELETON`] for the agentic-app analogue).
 //!
-//! [`SKELETON`]: crate::scaffold::SKELETON
+//! [`SKELETON`]: crate::SKELETON
 //!
 //! The framework is passed as its stable wire label (`"vite_react"` / `"next_js"` /
 //! `"auto"`) so gateway-core stays free of the `kx-app` envelope types (it keeps app
@@ -27,7 +27,7 @@ pub enum FileSource {
     /// A fixed, byte-known body (content-addressed + advanced directly; no model call).
     Static(&'static str),
     /// A model-authored body: the scaffold write recipe fills it from the user's prompt.
-    /// `role` is woven into the authoring prompt (the [`crate::scaffold`] convention).
+    /// `role` is woven into the authoring prompt (the [`crate::SKELETON`] convention).
     /// `default` is a byte-known, RUNNABLE fallback used when no model is served (a hosted
     /// project is always valid + servable even model-free; the model only enriches the page).
     Authored {
