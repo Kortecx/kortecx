@@ -49,14 +49,14 @@ test("New App: author a grounded App (dataset chip + guidance rule) and the rail
   await expect(chip).toContainText("research");
   await expect(page.getByTestId("new-app-rule")).toBeVisible();
 
-  // Author: name, goal, ground on the dataset, add a guidance rule, pin a handle.
-  const HANDLE = "apps/local/grounded-e2e";
+  // Author: name, goal, ground on the dataset, add a guidance rule. The handle is
+  // derived from the name (defaultHandle) — no handle field.
+  const HANDLE = "apps/local/grounded-analyst";
   await page.getByTestId("new-app-name").fill("Grounded Analyst");
   await page.getByTestId("new-app-goal").fill("Answer questions grounded in the corpus.");
   await chip.click();
   await expect(chip).toHaveAttribute("aria-pressed", "true");
   await page.getByTestId("new-app-rule").fill("Always cite the retrieved passages.");
-  await page.getByTestId("new-app-handle").fill(HANDLE);
 
   await page.getByTestId("new-app-submit").click();
 

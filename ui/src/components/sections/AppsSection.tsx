@@ -356,49 +356,55 @@ function AppCard({
         <span className="chip chip--tag">v{app.version}</span>
         <div className="card-grid__head-actions">
           {hosted ? (
+            // Hosted cards carry only the live status pill + Run-in-tab; lock/share/
+            // download don't apply to a served web app (a hosted app isn't lockable and
+            // its .kxapp bundle omits the project tree today), so they'd only crowd the
+            // head. Download stays reachable via the kebab.
             <HostedControls handle={app.handle} />
           ) : (
-            <button
-              type="button"
-              className="iconbtn"
-              data-testid={`app-run-${app.handle}`}
-              title="Run this App"
-              aria-label="Run"
-              onClick={() => onRun(app.handle)}
-            >
-              <Icon name="play" size={16} />
-            </button>
+            <>
+              <button
+                type="button"
+                className="iconbtn"
+                data-testid={`app-run-${app.handle}`}
+                title="Run this App"
+                aria-label="Run"
+                onClick={() => onRun(app.handle)}
+              >
+                <Icon name="play" size={16} />
+              </button>
+              <span
+                className="iconbtn iconbtn--static"
+                data-testid={`app-lock-${app.handle}`}
+                data-locked={app.locked ? "true" : "false"}
+                title={
+                  app.locked
+                    ? "Locked — agentic in-CAS edits are refused (manage from the App page)"
+                    : "Unlocked"
+                }
+              >
+                <Icon name={app.locked ? "lock" : "unlock"} size={16} />
+              </span>
+              <span
+                className="iconbtn iconbtn--disabled"
+                aria-disabled="true"
+                title="Sharing across parties is a Cloud capability"
+              >
+                <Icon name="share" size={16} />
+              </span>
+              <button
+                type="button"
+                className="iconbtn"
+                data-testid={`app-download-${app.handle}`}
+                disabled={downloadPending}
+                title="Download a portable .kxapp bundle (envelope + content closure)"
+                aria-label="Download bundle"
+                onClick={() => onDownload(app.handle)}
+              >
+                <Icon name="download" size={16} />
+              </button>
+            </>
           )}
-          <span
-            className="iconbtn iconbtn--static"
-            data-testid={`app-lock-${app.handle}`}
-            data-locked={app.locked ? "true" : "false"}
-            title={
-              app.locked
-                ? "Locked — agentic in-CAS edits are refused (manage from the App page)"
-                : "Unlocked"
-            }
-          >
-            <Icon name={app.locked ? "lock" : "unlock"} size={16} />
-          </span>
-          <span
-            className="iconbtn iconbtn--disabled"
-            aria-disabled="true"
-            title="Sharing across parties is a Cloud capability"
-          >
-            <Icon name="share" size={16} />
-          </span>
-          <button
-            type="button"
-            className="iconbtn"
-            data-testid={`app-download-${app.handle}`}
-            disabled={downloadPending}
-            title="Download a portable .kxapp bundle (envelope + content closure)"
-            aria-label="Download bundle"
-            onClick={() => onDownload(app.handle)}
-          >
-            <Icon name="download" size={16} />
-          </button>
           <Popover
             trigger={<Icon name="menu" size={16} />}
             triggerClassName="iconbtn"
@@ -433,9 +439,27 @@ function AppCard({
                     onOpen(app.handle);
                   }}
                 >
-                  <Icon name="external-link" size={15} />
+                  {/* A distinct glyph from Run: Open browses the App's file tree / IDE,
+                      it does not launch anything (the hosted Run keeps external-link). */}
+                  <Icon name="artifacts" size={15} />
                   <span>Open project</span>
                 </button>
+                {hosted ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="popover__item"
+                    data-testid={`app-download-${app.handle}`}
+                    disabled={downloadPending}
+                    onClick={() => {
+                      close();
+                      onDownload(app.handle);
+                    }}
+                  >
+                    <Icon name="download" size={15} />
+                    <span>Download bundle</span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   role="menuitem"
@@ -457,11 +481,17 @@ function AppCard({
       </div>
 
       {app.description ? <p className="card-grid__sub">{app.description}</p> : null}
+      {hosted ? <HostedDetail handle={app.handle} /> : null}
 
       <div className="card-grid__tags">
-        <span className="chip chip--tag">
-          {app.stepCount} step{app.stepCount === 1 ? "" : "s"}
-        </span>
+        {hosted ? (
+          // A hosted app has no blueprint steps — show what it IS, not a misleading "0 steps".
+          <span className="chip chip--tag">web app</span>
+        ) : (
+          <span className="chip chip--tag">
+            {app.stepCount} step{app.stepCount === 1 ? "" : "s"}
+          </span>
+        )}
         {app.tags.map((t) => (
           <span key={t} className="chip chip--tag">
             {t}
@@ -496,6 +526,25 @@ function HostedStatusPill({ handle }: { handle: string }) {
     >
       {state}
     </span>
+  );
+}
+
+/** D213 — the hosted-app supervisor detail line (install / dev-server progress or the
+ *  failure reason). The minimal "surface the supervisor logs" affordance: it shows the
+ *  live `HostedAppStatus.detail` while the app is materializing/installing/starting or has
+ *  failed, and stays quiet once it is plainly running or stopped. React Query dedups the
+ *  poll with the status pill, so this adds no extra network. */
+function HostedDetail({ handle }: { handle: string }) {
+  const { status } = useHostedAppStatus(handle, true);
+  const detail = status?.detail?.trim();
+  const state = status?.state ?? "stopped";
+  if (!detail || state === "stopped" || state === "running") {
+    return null;
+  }
+  return (
+    <p className="card-grid__sub muted" data-testid={`hosted-detail-${handle}`}>
+      {detail}
+    </p>
   );
 }
 
@@ -589,7 +638,7 @@ function AppsTable({
               </div>
             </td>
             <td>v{a.version}</td>
-            <td>{a.stepCount}</td>
+            <td>{hosted ? "—" : a.stepCount}</td>
             <td>{a.tags.join(", ") || "—"}</td>
             {hosted ? (
               <td>
@@ -619,7 +668,7 @@ function AppsTable({
                 aria-label="Open project"
                 onClick={() => onOpen(a.handle)}
               >
-                <Icon name="external-link" size={15} />
+                <Icon name="artifacts" size={15} />
               </button>
               <button
                 type="button"

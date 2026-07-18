@@ -56,6 +56,17 @@ function proposalBlueprint(plan: ProposedPlan) {
  *  experience (web) app. */
 export type NewAppKind = "scheduled" | "hosted";
 
+/** The hosted-lane framework choices, in display order. `auto` lets the model pick; the
+ *  others pin a concrete scaffold template. The `value` is the stable wire label the
+ *  SDK's `.hosted(framework, …)` and the server template registry share. */
+const HOSTED_FRAMEWORKS = [
+  { value: "auto", label: "Auto" },
+  { value: "vite_react", label: "React" },
+  { value: "next_js", label: "Next.js" },
+  { value: "svelte", label: "Svelte" },
+] as const;
+type HostedFrameworkChoice = (typeof HOSTED_FRAMEWORKS)[number]["value"];
+
 export function NewAppForm({
   onClose,
   initialKind = "scheduled",
@@ -76,7 +87,8 @@ export function NewAppForm({
   const [goal, setGoal] = useState("");
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("");
-  const [handle, setHandle] = useState("");
+  // The hosted-lane framework selector (ignored for the scheduled lane).
+  const [framework, setFramework] = useState<HostedFrameworkChoice>("auto");
   // T-RUNAPP-CONTEXT-RAIL authoring state (the declarative rail).
   const [grounding, setGrounding] = useState<string[]>([]);
   const [rule, setRule] = useState("");
@@ -97,16 +109,15 @@ export function NewAppForm({
       // Attachments already uploaded (PutContent) ride as by-reference context files.
       const readyFiles = attach.attachments.filter((a) => a.status === "ready" && a.ref);
       const trimmedModel = model.trim();
-      const trimmedHandle = handle.trim();
 
       // D213 HOSTED (experience) app: no blueprint — the runtime scaffolds a real web
       // project into the app's branch and serves it on a local port. The branch handle IS
-      // the app handle (one-app-one-branch), so it must be resolved up front.
+      // the app handle (one-App-one-branch), derived from the name (no handle field).
       if (kind === "hosted") {
-        const h = trimmedHandle !== "" ? trimmedHandle : defaultHandle(name.trim());
+        const h = defaultHandle(name.trim());
         let hb = app(name.trim())
           .describe(goal.trim())
-          .hosted("auto", h)
+          .hosted(framework, h)
           .rule("capabilities", {
             body: composeCapabilityPrompt(
               goal.trim(),
@@ -153,10 +164,7 @@ export function NewAppForm({
       if (trimmedRule !== "") {
         builder = builder.rule("guidance", { body: trimmedRule });
       }
-      const result = await builder.save({
-        client,
-        ...(trimmedHandle !== "" ? { handle: trimmedHandle } : {}),
-      });
+      const result = await builder.save({ client });
       return result.handle;
     },
     // Surface the new App in the catalog immediately (the scaffold, when it runs, also
@@ -230,10 +238,10 @@ export function NewAppForm({
           ✕
         </button>
       </div>
-      <p className="muted">
-        Describe the App and its goal. We save a durable App envelope, then the agent scaffolds a
-        starter project tree into the App's own content-addressed branch (the host is never
-        written). Browse and edit it after.
+      <p className="muted" data-testid="new-app-lede">
+        {kind === "hosted"
+          ? "Describe the web app and its goal. We save a durable App envelope, then scaffold a real framework project into the App's own content-addressed branch — browse, edit, and serve it on a local port."
+          : "Describe the App and its goal. We save a durable App envelope, then the agent scaffolds a starter project tree (README, prompts, guardrails, skills) into the App's own content-addressed branch — browse and edit it after."}
       </p>
 
       {scaffolding === null ? (
@@ -265,10 +273,37 @@ export function NewAppForm({
             </button>
           </fieldset>
           {kind === "hosted" ? (
-            <p className="muted" data-testid="new-app-hosted-note">
-              A hosted web app: the runtime scaffolds a React / Next.js project from your
-              description and serves it on a local port. The framework is chosen automatically.
-            </p>
+            <>
+              <p className="muted" data-testid="new-app-hosted-note">
+                A hosted web app: the runtime scaffolds a real framework project from your
+                description and serves it on a local port. Pick a framework, or leave it on Auto.
+              </p>
+              <fieldset
+                className="new-app-form__rail"
+                aria-label="Framework"
+                data-testid="new-app-framework"
+              >
+                <legend className="muted">Framework</legend>
+                <div className="chips">
+                  {HOSTED_FRAMEWORKS.map((fw) => {
+                    const on = framework === fw.value;
+                    return (
+                      <button
+                        key={fw.value}
+                        type="button"
+                        className={on ? "chip chip--active" : "chip"}
+                        aria-pressed={on}
+                        data-testid={`new-app-framework-${fw.value}`}
+                        onClick={() => setFramework(fw.value)}
+                        disabled={busy}
+                      >
+                        {fw.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            </>
           ) : null}
           <input
             type="text"
@@ -375,17 +410,32 @@ export function NewAppForm({
                 </option>
               ))}
             </select>
-            <input
-              type="text"
-              className="mono"
-              data-testid="new-app-handle"
-              placeholder="handle (optional — derived from the name)"
-              value={handle}
-              onChange={(e) => setHandle(e.target.value)}
-              aria-label="App handle (optional)"
-              disabled={busy}
-            />
           </div>
+
+          {/* Container packaging — the Docker app lane ships next. Surfaced now as an
+              honest-DISABLED radio so the affordance is discoverable without faking a
+              control the runtime can't yet fulfil (GR15). The App handle is derived from
+              the name (no handle field). */}
+          <fieldset
+            className="new-app-form__rail"
+            aria-label="Packaging"
+            data-testid="new-app-packaging"
+          >
+            <legend className="muted">Packaging</legend>
+            <label>
+              <input type="radio" name="packaging" checked readOnly disabled={busy} /> Standard
+              runtime
+            </label>{" "}
+            <label className="muted" title="Container packaging — ships with the Docker app lane">
+              <input
+                type="radio"
+                name="packaging"
+                disabled
+                data-testid="new-app-packaging-docker"
+              />{" "}
+              Docker container · soon
+            </label>
+          </fieldset>
 
           {/* T-RUNAPP-CONTEXT-RAIL: "Ground on dataset" — chip toggles (a controlled
               <select> can't be Playwright-driven; chips are the standing pattern). Only

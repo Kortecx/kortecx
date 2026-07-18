@@ -18,9 +18,9 @@
 //! [`SKELETON`]: crate::SKELETON
 //!
 //! The framework is passed as its stable wire label (`"vite_react"` / `"next_js"` /
-//! `"auto"`) so gateway-core stays free of the `kx-app` envelope types (it keeps app
-//! bytes opaque — the [`crate::AppCatalog`] discipline). `"auto"` and any unknown label
-//! resolve to Vite-React (the simplest dev server).
+//! `"svelte"` / `"auto"`) so gateway-core stays free of the `kx-app` envelope types (it
+//! keeps app bytes opaque — the [`crate::AppCatalog`] discipline). `"auto"` and any unknown
+//! label resolve to Vite-React (the simplest dev server).
 
 /// How one template file's body is produced.
 pub enum FileSource {
@@ -334,22 +334,191 @@ body {
     },
 ];
 
-/// True iff `framework` is the Next.js label. Any other label (incl. `"auto"` and the
-/// empty string) is treated as Vite-React (the simplest, fastest dev server).
+/// The Vite + Svelte (TypeScript) SPA template — a lightweight React alternative with the
+/// SAME dev-server shape (Vite root server), so the supervisor and `dev_command_args`
+/// treat it exactly like Vite-React. `npm run dev` launches Vite; the supervisor appends
+/// `-- --port <p>`.
+const SVELTE: &[TemplateFile] = &[
+    TemplateFile {
+        path: "package.json",
+        source: FileSource::Static(
+            r#"{
+  "name": "kortecx-hosted-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^3.1.1",
+    "svelte": "^4.2.18",
+    "typescript": "^5.4.5",
+    "vite": "^5.4.0"
+  }
+}
+"#,
+        ),
+    },
+    TemplateFile {
+        path: "svelte.config.js",
+        source: FileSource::Static(
+            r#"import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+
+export default {
+  preprocess: vitePreprocess(),
+};
+"#,
+        ),
+    },
+    TemplateFile {
+        path: "vite.config.ts",
+        source: FileSource::Static(
+            r#"import { defineConfig } from "vite";
+import { svelte } from "@sveltejs/vite-plugin-svelte";
+
+// The kortecx hosted-app supervisor runs `npm run dev -- --port <p>` on a loopback
+// port and reverse-proxies it. `strictPort` fails loudly instead of silently drifting.
+export default defineConfig({
+  plugins: [svelte()],
+  server: { host: "127.0.0.1", strictPort: true },
+});
+"#,
+        ),
+    },
+    TemplateFile {
+        path: "tsconfig.json",
+        source: FileSource::Static(
+            r#"{
+  "compilerOptions": {
+    "target": "ESNext",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}
+"#,
+        ),
+    },
+    TemplateFile {
+        path: "index.html",
+        source: FileSource::Static(
+            r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>kortecx hosted app</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+"#,
+        ),
+    },
+    TemplateFile {
+        path: "src/vite-env.d.ts",
+        source: FileSource::Static(
+            r#"/// <reference types="svelte" />
+/// <reference types="vite/client" />
+"#,
+        ),
+    },
+    TemplateFile {
+        path: "src/main.ts",
+        source: FileSource::Static(
+            r#"import App from "./App.svelte";
+import "./app.css";
+
+const app = new App({ target: document.getElementById("app")! });
+
+export default app;
+"#,
+        ),
+    },
+    TemplateFile {
+        path: "src/app.css",
+        source: FileSource::Static(
+            r#":root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+"#,
+        ),
+    },
+    TemplateFile {
+        path: "src/App.svelte",
+        source: FileSource::Authored {
+            role: "the main Svelte component in `src/App.svelte` implementing the web app the \
+                   user described. Use ONLY `svelte` (no extra npm dependencies): a \
+                   `<script lang=\"ts\">` block, the markup, and a `<style>` block. Keep it a \
+                   single self-contained component that renders immediately.",
+            default: r#"<script lang="ts">
+  let count = 0;
+</script>
+
+<main>
+  <h1>Your hosted app is live</h1>
+  <p>
+    This is a Vite + Svelte app scaffolded and served by the kortecx runtime. Edit
+    <code>src/App.svelte</code> to build it out.
+  </p>
+  <button on:click={() => (count += 1)}>clicked {count} times</button>
+</main>
+
+<style>
+  main {
+    max-width: 680px;
+    margin: 4rem auto;
+    padding: 0 1.5rem;
+  }
+</style>
+"#,
+        },
+    },
+    TemplateFile {
+        path: "README.md",
+        source: FileSource::Authored {
+            role: "a concise README: what this hosted Svelte web app does and that it runs \
+                   locally via the kortecx runtime (Run button) or `npm install && npm run dev`.",
+            default: "# Hosted app\n\nA Vite + Svelte app scaffolded and served by the kortecx \
+                      runtime. Run it with the Run button, or `npm install && npm run dev`.\n",
+        },
+    },
+];
+
+/// True iff `framework` is the Next.js label. Any other label (incl. `"auto"`, `"svelte"`,
+/// and the empty string) uses the Vite root dev server (`--port <p>`) — see
+/// [`dev_command_args`]; only Next.js needs the distinct `-p <p>` flag.
 #[must_use]
 fn is_next(framework: &str) -> bool {
     framework == "next_js"
 }
 
-/// The template file set for `framework` (`"vite_react"` / `"next_js"` / `"auto"`).
-/// `"auto"`/unknown resolves to Vite-React (the host resolves `auto` to a concrete
-/// framework via a model pre-step BEFORE scaffolding; this is the safe fallback).
+/// The template file set for `framework` (`"vite_react"` / `"next_js"` / `"svelte"` /
+/// `"auto"`). `"auto"`/unknown resolves to Vite-React (the host resolves `auto` to a
+/// concrete framework via a model pre-step BEFORE scaffolding; this is the safe fallback).
 #[must_use]
 pub fn template(framework: &str) -> &'static [TemplateFile] {
-    if is_next(framework) {
-        NEXT_JS
-    } else {
-        VITE_REACT
+    match framework {
+        "next_js" => NEXT_JS,
+        "svelte" => SVELTE,
+        _ => VITE_REACT,
     }
 }
 
@@ -419,15 +588,35 @@ mod tests {
     }
 
     #[test]
+    fn svelte_path_set_is_stable() {
+        assert_eq!(
+            template_paths("svelte"),
+            vec![
+                "package.json",
+                "svelte.config.js",
+                "vite.config.ts",
+                "tsconfig.json",
+                "index.html",
+                "src/vite-env.d.ts",
+                "src/main.ts",
+                "src/app.css",
+                "src/App.svelte",
+                "README.md",
+            ]
+        );
+    }
+
+    #[test]
     fn auto_and_unknown_resolve_to_vite_react() {
         assert_eq!(template_paths("auto"), template_paths("vite_react"));
         assert_eq!(template_paths(""), template_paths("vite_react"));
-        assert_eq!(template_paths("svelte"), template_paths("vite_react"));
+        // An unknown label still falls back to Vite-React; `"svelte"` is now its own set.
+        assert_eq!(template_paths("preact"), template_paths("vite_react"));
     }
 
     #[test]
     fn every_static_package_json_parses_and_has_a_dev_script() {
-        for fw in ["vite_react", "next_js"] {
+        for fw in ["vite_react", "next_js", "svelte"] {
             let pkg = template(fw)
                 .iter()
                 .find(|f| f.path == "package.json")
@@ -445,11 +634,11 @@ mod tests {
 
     #[test]
     fn every_template_declares_typescript_devdeps() {
-        // Both templates ship `.tsx` files + a tsconfig.json, so their package.json MUST
-        // declare `typescript` (+ the React type stubs) as devDependencies. Otherwise the
+        // Every template ships TypeScript source, so its package.json MUST declare
+        // `typescript` as a devDependency (+ the framework's own type stubs). Otherwise the
         // dev server auto-installs them mid-startup — which crashed `next dev` with a
         // require-hook TypeError (found in live hosted-app testing). Regression guard.
-        for fw in ["vite_react", "next_js"] {
+        for fw in ["vite_react", "next_js", "svelte"] {
             let pkg = template(fw)
                 .iter()
                 .find(|f| f.path == "package.json")
@@ -463,17 +652,26 @@ mod tests {
                 dev["typescript"].is_string(),
                 "{fw}: package.json must declare a typescript devDependency"
             );
-            assert!(
-                dev["@types/react"].is_string(),
-                "{fw}: package.json must declare @types/react"
-            );
+            // The framework's own type stubs: React apps need `@types/react`; a Svelte app
+            // gets its types from the `svelte` devDependency itself.
+            if fw == "svelte" {
+                assert!(
+                    dev["svelte"].is_string(),
+                    "{fw}: package.json must declare a svelte devDependency"
+                );
+            } else {
+                assert!(
+                    dev["@types/react"].is_string(),
+                    "{fw}: package.json must declare @types/react"
+                );
+            }
         }
     }
 
     #[test]
     fn exactly_the_page_and_readme_are_authored() {
         // The visible page + README are model-authored; everything else is fixed.
-        for fw in ["vite_react", "next_js"] {
+        for fw in ["vite_react", "next_js", "svelte"] {
             let authored: Vec<&str> = template(fw)
                 .iter()
                 .filter(|f| matches!(f.source, FileSource::Authored { .. }))
@@ -493,6 +691,11 @@ mod tests {
         assert_eq!(
             dev_command_args("next_js", 4321),
             vec!["run", "dev", "--", "-p", "4321"]
+        );
+        // Svelte uses the Vite root dev server, so it takes the same `--port` flag.
+        assert_eq!(
+            dev_command_args("svelte", 4321),
+            vec!["run", "dev", "--", "--port", "4321"]
         );
     }
 }

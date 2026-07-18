@@ -21,8 +21,15 @@
 pub(crate) const DEFAULT_WINDOW_BYTES: usize = 32 * 1024;
 /// Default agentic-edit / scaffold-write input-token budget (the react-edit ceiling).
 pub(crate) const DEFAULT_EDIT_MAX_INPUT_TOKENS: u32 = 8_192;
-/// Default agentic-edit / scaffold-write output-token budget (a full file rewrite).
+/// Default agentic-edit output-token budget (a full file rewrite).
 pub(crate) const DEFAULT_EDIT_MAX_OUTPUT_TOKENS: u32 = 3_072;
+/// Default HOSTED-SCAFFOLD write output-token budget. A scaffolded project page (a full
+/// `App.tsx` / `app/page.tsx` / `App.svelte`) is bigger than a typical agentic in-CAS
+/// edit, and a reasoning model (Gemma-4) spends part of the budget on a `<think>` block
+/// that is stripped at commit — the shared react-edit ceiling (3072) truncated hosted
+/// pages mid-file in live testing. This gives the scaffold path its own headroom without
+/// moving the react-edit ceiling. Overridable via `KX_SERVE_SCAFFOLD_MAX_OUTPUT_TOKENS`.
+pub(crate) const DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS: u32 = 6_144;
 /// Default chat-RAG top-k ceiling (the untrusted `k` is clamped to this).
 pub(crate) const DEFAULT_CHAT_RAG_MAX_K: usize = 16;
 
@@ -71,13 +78,29 @@ pub(crate) fn edit_max_input_tokens() -> u32 {
     )
 }
 
-/// The agentic-edit / scaffold-write output-token budget (`KX_SERVE_EDIT_MAX_OUTPUT_TOKENS`).
+/// The agentic-edit output-token budget (`KX_SERVE_EDIT_MAX_OUTPUT_TOKENS`).
 pub(crate) fn edit_max_output_tokens() -> u32 {
     parse_cap_u32(
         std::env::var("KX_SERVE_EDIT_MAX_OUTPUT_TOKENS")
             .ok()
             .as_deref(),
         DEFAULT_EDIT_MAX_OUTPUT_TOKENS,
+        MAX_EDIT_TOKENS,
+    )
+}
+
+/// The HOSTED-SCAFFOLD write output-token budget (`KX_SERVE_SCAFFOLD_MAX_OUTPUT_TOKENS`).
+/// Larger default than the react-edit ceiling — a scaffolded page is a full file body and
+/// a reasoning model's stripped `<think>` block eats into the budget. Additive +
+/// default-preserving (unset ⇒ [`DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS`]); seeded only on a
+/// model-served build, so the model-free canonical digest is unaffected (SN-8: the
+/// executor's `inference_params_from_mote` still clamps — this only moves the seed ceiling).
+pub(crate) fn scaffold_max_output_tokens() -> u32 {
+    parse_cap_u32(
+        std::env::var("KX_SERVE_SCAFFOLD_MAX_OUTPUT_TOKENS")
+            .ok()
+            .as_deref(),
+        DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS,
         MAX_EDIT_TOKENS,
     )
 }
@@ -306,5 +329,20 @@ mod tests {
         assert_eq!(parse_cap_u32(Some("4096"), 3072, 131_072), 4096);
         assert_eq!(parse_cap_u32(Some("999999"), 3072, 131_072), 3072); // above max
         assert_eq!(parse_cap_u32(None, 3072, 131_072), 3072);
+    }
+
+    #[test]
+    fn scaffold_budget_default_is_larger_than_edit_and_within_the_ceiling() {
+        // The hosted-scaffold write path needs MORE headroom than a react-edit (a full page
+        // body + a stripped reasoning block), but both stay under the defensive cap. Assert
+        // via the resolvers (runtime values in a clean env) — not the raw consts, which
+        // clippy rejects as a constant assertion.
+        let scaffold = scaffold_max_output_tokens();
+        let edit = edit_max_output_tokens();
+        assert!(
+            scaffold > edit,
+            "scaffold {scaffold} must exceed edit {edit}"
+        );
+        assert!(scaffold <= MAX_EDIT_TOKENS);
     }
 }

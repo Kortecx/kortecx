@@ -405,6 +405,9 @@ pub enum HostedFramework {
     ViteReact,
     /// A Next.js app (choose only when SSR / route handlers / file routing are needed).
     NextJs,
+    /// A Vite + Svelte single-page app (a lightweight React alternative; same dev-server
+    /// shape as Vite-React, so the supervisor treats it identically).
+    Svelte,
 }
 
 impl HostedFramework {
@@ -415,6 +418,7 @@ impl HostedFramework {
             HostedFramework::Auto => "auto",
             HostedFramework::ViteReact => "vite_react",
             HostedFramework::NextJs => "next_js",
+            HostedFramework::Svelte => "svelte",
         }
     }
 }

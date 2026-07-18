@@ -1,7 +1,7 @@
 /**
  * D213 — the New App creation flow with a kind selector. Proves you can author BOTH a
  * scheduled (functional) app and a HOSTED (experience) app from the console: the hosted
- * kind hides the workflow-planning widgets, shows the framework note, and creates a
+ * kind hides the workflow-planning widgets, shows the framework selector, and creates a
  * `kortecx.experience/v1` app that lands in the Hosted section. Model-free — the hosted
  * app is created by SaveApp (the page scaffold, which needs a served model, is skipped
  * gracefully; the app still runs with the framework's default page).
@@ -40,11 +40,20 @@ test("new app: a hosted (experience) app is authored and lands in the Hosted sec
   await expect(page.getByTestId("new-app-propose")).toHaveCount(0);
   await expect(page.getByTestId("new-app-prompt")).toHaveCount(0);
 
-  // Author the hosted app (explicit handle so we can assert its card).
-  const handle = "apps/local/mysite";
+  // The framework selector is shown for hosted apps; pick a concrete framework (Svelte).
+  await expect(page.getByTestId("new-app-framework")).toBeVisible();
+  await page.getByTestId("new-app-framework-svelte").click();
+  await expect(page.getByTestId("new-app-framework-svelte")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  // The handle field was removed — the handle is derived from the name.
+  await expect(page.getByTestId("new-app-handle")).toHaveCount(0);
+
+  // Author the hosted app (the handle is derived from the name via defaultHandle).
+  const handle = "apps/local/my-site";
   await page.getByTestId("new-app-name").fill("My Site");
   await page.getByTestId("new-app-goal").fill("A simple landing page with a hero and a CTA");
-  await page.getByTestId("new-app-handle").fill(handle);
   await page.getByTestId("new-app-submit").click();
 
   // The form closes (SaveApp succeeded; the page scaffold is skipped without a model).

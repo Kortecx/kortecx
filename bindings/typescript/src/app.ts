@@ -381,11 +381,12 @@ export class AppBuilder {
     return this;
   }
 
-  /** D213: make this an Experience (hosted) App — a real Vite-React / Next.js web project
-   * the runtime scaffolds into `branchHandle` and serves on a local port. Mutually exclusive
-   * with {@link AppBuilder.blueprint} (a hosted app carries no blueprint, so it is never
-   * schedulable). `framework` is `"auto"` (the model chooses) | `"vite_react"` | `"next_js"`. */
-  hosted(framework: "auto" | "vite_react" | "next_js", branchHandle: string): this {
+  /** D213: make this an Experience (hosted) App — a real Vite-React / Next.js / Svelte web
+   * project the runtime scaffolds into `branchHandle` and serves on a local port. Mutually
+   * exclusive with {@link AppBuilder.blueprint} (a hosted app carries no blueprint, so it is
+   * never schedulable). `framework` is `"auto"` (the model chooses) | `"vite_react"` |
+   * `"next_js"` | `"svelte"`. */
+  hosted(framework: "auto" | "vite_react" | "next_js" | "svelte", branchHandle: string): this {
     this._hosted = { framework };
     this._branchHandle = branchHandle;
     return this;
