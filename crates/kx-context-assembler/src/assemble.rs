@@ -15,6 +15,28 @@ use kx_warrant::{ToolGrant, WarrantSpec};
 use crate::errors::AssemblyError;
 use crate::types::{AssembledContext, AssembledItem};
 
+/// The longest tool `description` rendered into the menu. `def.description` is the
+/// SOLE uncapped tool-menu field (name/version/`Inputs:`/`Example:` are all bounded),
+/// so a pathological MCP tool with a multi-KB description would dominate the prompt.
+/// Reuses the file's `SNIPPET_MAX = 400` rerank precedent (`render_rerank_prompt`). A
+/// description at or under the cap renders BYTE-IDENTICALLY (the bundled tools are all
+/// well under it); a longer one is truncated on a char boundary with a single-char
+/// ellipsis. Advisory prompt bytes only — off `source_ref` / the journal / `MoteId`, so
+/// digest-neutral (see the [`tool_menu_text`] doc).
+const DESCRIPTION_MAX: usize = 400;
+
+/// Cap `description` to [`DESCRIPTION_MAX`] chars, ellipsizing when it is longer.
+/// Char-count semantics (mirrors `render_rerank_prompt`'s `SNIPPET_MAX` take) so a
+/// multi-byte UTF-8 description is never split mid-codepoint. `≤ cap` ⇒ returned
+/// unchanged, so the common case (every bundled tool) is byte-identical.
+fn cap_description(description: &str) -> String {
+    if description.chars().count() <= DESCRIPTION_MAX {
+        return description.to_string();
+    }
+    let head: String = description.chars().take(DESCRIPTION_MAX).collect();
+    format!("{head}…")
+}
+
 /// PR-6a/PR-1: render the tool-menu text the model sees for a granted tool — the
 /// EXACT callable name (`grant_id`, PR-1/BUG-32 name-steering), then its description
 /// PLUS, when the tool declares a typed `inputSchema`, a deterministic
@@ -34,10 +56,13 @@ fn tool_menu_text(grant_id: &str, def: &ToolDef) -> String {
     // observed live on Ollama gemma3 (the llama.cpp grammar enumerates the pair, but
     // the Ollama honest-degrade path has only the prompt to go on).
     let head = format!("name: {grant_id}\nversion: {}\n", def.tool_version.0);
+    // Cap the SOLE uncapped menu field (name/version/Inputs/Example are all bounded);
+    // `Inputs:`/`Example:` stay byte-intact below.
+    let description = cap_description(&def.description);
     let Some(schema) = &def.input_schema else {
-        return format!("{head}{}", def.description);
+        return format!("{head}{description}");
     };
-    let mut text = format!("{head}{}", def.description);
+    let mut text = format!("{head}{description}");
     text.push_str("\nInputs:");
     for p in &schema.params {
         let ty = match &p.ty {
@@ -504,6 +529,53 @@ mod tool_menu_tests {
         assert_eq!(
             example_call_json(&schema),
             "{\"n\": 5, \"flag\": false, \"mode\": \"alpha\"}"
+        );
+    }
+
+    #[test]
+    fn long_description_is_capped_but_inputs_and_example_stay_byte_intact() {
+        // A pathological >cap description (the SOLE uncapped menu field) is truncated
+        // and ellipsized, while `Inputs:`/`Example:` stay byte-for-byte intact.
+        let long = "x".repeat(500);
+        let schema = InputSchema {
+            params: vec![ParamSpec {
+                name: "text".into(),
+                ty: ParamType::Str { max_len: 4096 },
+                required: true,
+            }],
+            deny_unknown: true,
+        };
+        let mut d = def(Some(schema));
+        d.description = long.clone();
+        let out = tool_menu_text("mcp-echo/echo", &d);
+
+        // Truncated to exactly 400 chars + a single-char ellipsis.
+        let capped = format!("{}…", "x".repeat(400));
+        assert!(out.contains(&capped), "description capped + ellipsized: {out}");
+        assert!(
+            !out.contains(&long),
+            "the full 500-char description body must not survive"
+        );
+        // `Inputs:`/`Example:` are BYTE-preserved (the exact tail is unchanged).
+        assert!(
+            out.ends_with(
+                "\nInputs:\n  - text (string, required)\nExample: {\"text\": \"<string>\"}"
+            ),
+            "Inputs:/Example: must be byte-intact: {out}"
+        );
+    }
+
+    #[test]
+    fn description_at_cap_is_byte_identical() {
+        // A description exactly at the cap is NOT truncated (no ellipsis) — the boundary,
+        // and every real bundled tool (all well under 400), renders byte-identically.
+        let at_cap = "y".repeat(400);
+        let mut d = def(None);
+        d.description = at_cap.clone();
+        assert_eq!(
+            tool_menu_text("fs-list", &d),
+            format!("name: fs-list\nversion: 1\n{at_cap}"),
+            "a description at the cap is unchanged (no ellipsis)"
         );
     }
 }
