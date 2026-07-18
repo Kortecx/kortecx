@@ -170,12 +170,16 @@ pub struct AppRecord {
     pub description: String,
     /// Catalog tags.
     pub tags: Vec<String>,
-    /// Blueprint step count (display only).
+    /// Blueprint step count (display only; 0 for an Experience/hosted App).
     pub step_count: u32,
     /// OPTIONAL 32-byte lineage hint — the `app_digest` this App was imported/cloned
     /// from (`None` ⇒ authored-here). Off-identity (never in the `app_ref`/`app_digest`
     /// preimage), off-journal, off-digest. A provenance hint, never authenticity.
     pub source_digest: Option<Vec<u8>>,
+    /// D213 lane label the host derives from the envelope schema: `"functional"` (a
+    /// schedulable capability) or `"experience"` (a hosted web app). Empty ⇒ functional
+    /// (an old row / unset). Display + section-routing only; never identity-bearing.
+    pub kind: String,
 }
 
 /// The App-catalog store seam: save / enumerate / fetch a caller's App envelopes.

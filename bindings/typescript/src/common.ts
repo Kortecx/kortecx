@@ -154,17 +154,26 @@ export { app, AppBuilder, minimalAppEnvelope, Reach } from "./app.js";
 export type { BlueprintSource, AppClient } from "./app.js";
 export {
   APP_SCHEMA,
+  EXPERIENCE_SCHEMA,
   AppManifest,
   AppSummary,
   SaveAppResult,
   StoredApp,
   canonicalJson,
   contentRefs,
+  hostedAppStateName,
   prettyJson,
   defaultHandle,
   scaffoldPhaseName,
 } from "./apps.js";
-export type { AppCapability, Skill, ScaffoldPhase, ScaffoldStatus } from "./apps.js";
+export type {
+  AppCapability,
+  HostedAppStateName,
+  HostedAppStatus,
+  Skill,
+  ScaffoldPhase,
+  ScaffoldStatus,
+} from "./apps.js";
 export { AppBundle, BUNDLE_SCHEMA } from "./appbundle.js";
 // The skill-catalog views (declarative kortecx.skill/v1 bundles).
 export { AddSkillResult, SkillForm, SkillSummary, SKILL_SCHEMA } from "./skills.js";

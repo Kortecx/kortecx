@@ -242,6 +242,45 @@ async fn register_app_target_cron_trigger_round_trips_view() {
     assert!(row.require_approval, "HITL posture surfaced");
 }
 
+// D213: a hosted (experience) App carries no blueprint and is served by the hosted-app
+// supervisor, never scheduled — REGISTER must refuse it as a trigger target (fail fast).
+#[tokio::test]
+async fn register_rejects_a_hosted_experience_app_as_a_trigger_target() {
+    let dir = TempDir::new().unwrap();
+    let running = start(config(&dir)).await.unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // Save a hosted (experience) App: schema kortecx.experience/v1, a hosted config, no
+    // blueprint, a branch_handle (the project file tree).
+    let envelope = br#"{"schema":"kortecx.experience/v1","name":"landing","version":"1","hosted":{"framework":"vite_react"},"branch_handle":"my/landing/main"}"#;
+    c.save_app(proto::SaveAppRequest {
+        handle: "my/landing/site".to_string(),
+        envelope_json: envelope.to_vec(),
+        source_digest: Vec::new(),
+    })
+    .await
+    .expect("save the experience app")
+    .into_inner();
+
+    // Registering a cron trigger pointing at it must fail closed (invalid_argument).
+    let err = c
+        .register_trigger(proto::RegisterTriggerRequest {
+            name: "nope".to_string(),
+            kind: proto::TriggerKind::Cron as i32,
+            recipe_handle: String::new(),
+            app_handle: "my/landing/site".to_string(),
+            auth: proto::TriggerAuth::None as i32,
+            auth_secret_ref: String::new(),
+            schedule_spec: "0 9 * * 1-5".to_string(),
+            timezone: "America/New_York".to_string(),
+            enabled: true,
+            require_approval: false,
+        })
+        .await
+        .expect_err("a hosted app must not be schedulable");
+    assert_eq!(err.code(), tonic::Code::InvalidArgument, "got {err:?}");
+}
+
 // T-APP-TRIGGER-TARGET: exactly one of recipe_handle | app_handle.
 #[tokio::test]
 async fn register_rejects_both_and_neither_targets() {

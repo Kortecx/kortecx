@@ -18,12 +18,14 @@ import { PendingApprovalRow, type PendingApprovalsPage } from "./approvals.js";
 import {
   AppManifest,
   AppSummary,
+  type HostedAppStatus,
   SaveAppResult,
   type ScaffoldStatus,
   StoredApp,
   canonicalJson,
   contentRefs,
   defaultHandle,
+  hostedAppStatusFromProto,
   scaffoldPhaseName,
 } from "./apps.js";
 import { AdvanceResult, Branch, CreateBranchResult, SnapshotResult } from "./branch.js";
@@ -1366,6 +1368,36 @@ export abstract class KxClientBase {
   async unlockApp(branchHandle: string): Promise<boolean> {
     const resp = await rpc(this.grpc.unlockApp({ branchHandle }));
     return resp.unlocked;
+  }
+
+  /**
+   * D213 Experience lane — start (or attach to) a hosted app's dev server. Materializes the
+   * project file tree, `npm install`s, and runs the dev server on a loopback port, proxied at
+   * `/apps/<handle>/live/`. Idempotent (a running app returns its current status). `rebuild`
+   * forces re-materialize + re-install. Throws {@link KxUnimplemented} on a gateway built
+   * without the `hosted-apps` feature.
+   */
+  async startHostedApp(handle: string, opts: { rebuild?: boolean } = {}): Promise<HostedAppStatus> {
+    const resp = await rpc(this.grpc.startHostedApp({ handle, rebuild: opts.rebuild ?? false }));
+    return hostedAppStatusFromProto(resp);
+  }
+
+  /** D213 Experience lane — stop a hosted app's dev server (kills + reaps the child). */
+  async stopHostedApp(handle: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.stopHostedApp({ handle }));
+    return resp.stopped;
+  }
+
+  /** D213 Experience lane — the live status of a hosted app (state + proxied URL + logs). */
+  async getHostedAppStatus(handle: string): Promise<HostedAppStatus> {
+    const resp = await rpc(this.grpc.getHostedAppStatus({ handle }));
+    return hostedAppStatusFromProto(resp);
+  }
+
+  /** D213 Experience lane — list every hosted app the supervisor is tracking. */
+  async listHostedApps(): Promise<HostedAppStatus[]> {
+    const resp = await rpc(this.grpc.listHostedApps({}));
+    return resp.apps.map(hostedAppStatusFromProto);
   }
 
   /**

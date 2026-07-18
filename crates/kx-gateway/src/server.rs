@@ -1702,6 +1702,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 react_supported,
                 app_author.clone(),
                 app_fireable.clone(),
+                Some(apps_db.clone()),
             ));
             gateway = gateway.with_trigger_admin(admin.clone());
             tracing::info!("D113: trigger seam wired (triggers.db)");

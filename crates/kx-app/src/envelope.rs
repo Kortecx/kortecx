@@ -5,8 +5,16 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The envelope schema/version tag. Readers fail closed on a mismatch.
+/// The envelope schema/version tag for a **Functional** App. Readers fail closed on a mismatch.
 pub const APP_SCHEMA: &str = "kortecx.app/v1";
+
+/// The envelope schema/version tag for an **Experience** (hosted) App.
+///
+/// D213: an Experience App is a distinct TYPE — it carries no `blueprint`, so it can never be
+/// scheduled/triggered/compiled the way a Functional App is. The schema tag itself is the honest
+/// discriminator (no separate `kind` field is added to the wire), which keeps every existing
+/// Functional envelope's canonical bytes — and thus `app_ref`/`app_digest` — byte-identical.
+pub const EXPERIENCE_SCHEMA: &str = "kortecx.experience/v1";
 
 /// Errors from envelope (de)serialization and validation.
 #[derive(Debug, thiserror::Error)]
@@ -363,9 +371,74 @@ impl Replay {
     }
 }
 
-/// A `kortecx.app/v1` envelope: a portable blueprint wrapped with references, a
-/// steering config, replay intent, and an optional project branch handle. Carries
-/// NO authority. See the crate docs for the full contract.
+/// Which lane an App belongs to. Derived from the envelope `schema` tag — NOT a
+/// serialized field, so a Functional envelope stays byte-identical (D213).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppKind {
+    /// A Functional App (`kortecx.app/v1`) — a schedulable/triggerable capability DAG.
+    #[default]
+    Functional,
+    /// An Experience App (`kortecx.experience/v1`) — a hosted, code-bearing web app.
+    Experience,
+}
+
+impl AppKind {
+    /// The stable lowercase wire label (`"functional"` / `"experience"`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AppKind::Functional => "functional",
+            AppKind::Experience => "experience",
+        }
+    }
+}
+
+/// The framework an Experience App is scaffolded and served as.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostedFramework {
+    /// The model picks the framework from the prompt (resolved before scaffolding).
+    #[default]
+    Auto,
+    /// A Vite + React single-page app (the simplest dev server to supervise).
+    ViteReact,
+    /// A Next.js app (choose only when SSR / route handlers / file routing are needed).
+    NextJs,
+}
+
+impl HostedFramework {
+    /// The stable lowercase wire label.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HostedFramework::Auto => "auto",
+            HostedFramework::ViteReact => "vite_react",
+            HostedFramework::NextJs => "next_js",
+        }
+    }
+}
+
+/// The hosted-lane configuration carried by an Experience envelope. The real project
+/// file tree lives in the App's `branch_handle` (a CoW-on-CAS branch manifest); this
+/// struct carries only the framework + optional advisory install/dev command overrides.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HostedConfig {
+    /// The framework this app is scaffolded/served as.
+    #[serde(default)]
+    pub framework: HostedFramework,
+    /// Advisory install command override (default: the framework's `npm install`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub install_cmd: String,
+    /// Advisory dev-server command override (default: the framework's `npm run dev`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub dev_cmd: String,
+}
+
+/// A `kortecx.app/v1` (Functional) or `kortecx.experience/v1` (Experience) envelope: a
+/// portable blueprint OR a hosted-app config, wrapped with references, a steering
+/// config, replay intent, and an optional project branch handle. Carries NO authority.
+/// See the crate docs for the full contract.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AppEnvelope {
     /// The schema/version tag — always [`APP_SCHEMA`].
@@ -384,8 +457,16 @@ pub struct AppEnvelope {
     /// Optional input schema (opaque JSON), e.g. a JSON-schema for `run` args.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<Value>,
-    /// The portable blueprint (a `DagSpec`) carried VERBATIM as opaque JSON.
-    pub blueprint: Value,
+    /// The portable blueprint (a `DagSpec`) carried VERBATIM as opaque JSON. Present for a
+    /// Functional App; ALWAYS absent for an Experience App (which carries `hosted` instead).
+    /// `skip_serializing_if` keeps a Functional envelope's canonical bytes unchanged — a
+    /// `Some(object)` serializes under `"blueprint"` byte-identically to the old bare `Value`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blueprint: Option<Value>,
+    /// The hosted-lane config. Present for an Experience App; ALWAYS absent (omitted) for a
+    /// Functional App, so this field adds ZERO bytes to any existing Functional envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosted: Option<HostedConfig>,
     /// The by-reference rail.
     #[serde(default, skip_serializing_if = "References::is_empty")]
     pub references: References,
@@ -411,12 +492,14 @@ pub struct AppSummary {
     pub description: String,
     /// Tags.
     pub tags: Vec<String>,
-    /// Number of blueprint steps (display only).
+    /// Number of blueprint steps (display only; 0 for an Experience App).
     pub step_count: u32,
+    /// Which lane the App belongs to (derived from the schema tag).
+    pub kind: AppKind,
 }
 
 impl AppEnvelope {
-    /// A minimal envelope wrapping `blueprint` under `name`, schema + version preset.
+    /// A minimal Functional envelope wrapping `blueprint` under `name`, schema + version preset.
     #[must_use]
     pub fn new(name: impl Into<String>, blueprint: Value) -> Self {
         Self {
@@ -426,11 +509,47 @@ impl AppEnvelope {
             description: String::new(),
             tags: Vec::new(),
             input_schema: None,
-            blueprint,
+            blueprint: Some(blueprint),
+            hosted: None,
             references: References::default(),
             steering_config: SteeringConfig::default(),
             replay: Replay::default(),
             branch_handle: String::new(),
+        }
+    }
+
+    /// A minimal Experience (hosted) envelope: no blueprint, a `hosted` config, and the
+    /// `branch_handle` that will hold the generated project file tree.
+    #[must_use]
+    pub fn new_experience(
+        name: impl Into<String>,
+        hosted: HostedConfig,
+        branch_handle: impl Into<String>,
+    ) -> Self {
+        Self {
+            schema: EXPERIENCE_SCHEMA.to_string(),
+            name: name.into(),
+            version: default_version(),
+            description: String::new(),
+            tags: Vec::new(),
+            input_schema: None,
+            blueprint: None,
+            hosted: Some(hosted),
+            references: References::default(),
+            steering_config: SteeringConfig::default(),
+            replay: Replay::default(),
+            branch_handle: branch_handle.into(),
+        }
+    }
+
+    /// Which lane this App belongs to, derived from the schema tag. An unknown schema
+    /// resolves to [`AppKind::Functional`]; [`AppEnvelope::validate`] is what rejects it.
+    #[must_use]
+    pub fn kind(&self) -> AppKind {
+        if self.schema == EXPERIENCE_SCHEMA {
+            AppKind::Experience
+        } else {
+            AppKind::Functional
         }
     }
 
@@ -516,7 +635,8 @@ impl AppEnvelope {
     pub fn summary(&self) -> AppSummary {
         let step_count = self
             .blueprint
-            .get("steps")
+            .as_ref()
+            .and_then(|b| b.get("steps"))
             .and_then(Value::as_array)
             .map_or(0, |s| u32::try_from(s.len()).unwrap_or(u32::MAX));
         AppSummary {
@@ -525,29 +645,62 @@ impl AppEnvelope {
             description: self.description.clone(),
             tags: self.tags.clone(),
             step_count,
+            kind: self.kind(),
         }
     }
 
     /// Validate structure + the security boundary:
-    /// - `schema` is [`APP_SCHEMA`];
-    /// - `blueprint` is a JSON object;
+    /// - `schema` is [`APP_SCHEMA`] (Functional) or [`EXPERIENCE_SCHEMA`] (Experience);
+    /// - a Functional App carries a JSON-object `blueprint` and NO `hosted` config;
+    /// - an Experience App carries a `hosted` config, NO `blueprint`, and a non-empty
+    ///   `branch_handle` (the project file tree) — so it can never be scheduled (D213);
     /// - every content/instructions/cas ref is 64-char lowercase hex;
     /// - connection descriptors carry NO URL userinfo and credential refs are bare names;
     /// - no floats anywhere (SN-8 — identity bytes are integer-only).
     ///
     /// # Errors
     /// Returns [`AppError::Schema`] on a schema-tag mismatch, or [`AppError::Invalid`]
-    /// for a non-object blueprint, a malformed ref, URL userinfo in a connection
-    /// descriptor, a non-bare credential name, or any float.
+    /// for a lane/field-shape mismatch (missing or non-object blueprint, missing hosted
+    /// config, an Experience App with a blueprint, an empty hosted `branch_handle`), a
+    /// malformed ref, URL userinfo in a connection descriptor, a non-bare credential
+    /// name, or any float.
     pub fn validate(&self) -> Result<(), AppError> {
-        if self.schema != APP_SCHEMA {
-            return Err(AppError::Schema {
-                got: self.schema.clone(),
-                expected: APP_SCHEMA,
-            });
-        }
-        if !self.blueprint.is_object() {
-            return Err(AppError::Invalid("blueprint must be a JSON object".into()));
+        match self.kind() {
+            AppKind::Functional => {
+                if self.schema != APP_SCHEMA {
+                    return Err(AppError::Schema {
+                        got: self.schema.clone(),
+                        expected: APP_SCHEMA,
+                    });
+                }
+                if !self.blueprint.as_ref().is_some_and(Value::is_object) {
+                    return Err(AppError::Invalid("blueprint must be a JSON object".into()));
+                }
+                if self.hosted.is_some() {
+                    return Err(AppError::Invalid(
+                        "a functional app must not carry a hosted config".into(),
+                    ));
+                }
+            }
+            AppKind::Experience => {
+                if self.hosted.is_none() {
+                    return Err(AppError::Invalid(
+                        "an experience app must carry a hosted config".into(),
+                    ));
+                }
+                if self.blueprint.is_some() {
+                    return Err(AppError::Invalid(
+                        "an experience app must not carry a blueprint (it is not schedulable)"
+                            .into(),
+                    ));
+                }
+                if self.branch_handle.is_empty() {
+                    return Err(AppError::Invalid(
+                        "an experience app must carry a branch_handle (the project file tree)"
+                            .into(),
+                    ));
+                }
+            }
         }
         // References by-ref/by-name discipline.
         for c in &self.references.context {
@@ -985,6 +1138,95 @@ mod tests {
     fn summary_counts_steps() {
         let env = AppEnvelope::new("x", sample_blueprint());
         assert_eq!(env.summary().step_count, 1);
+        assert_eq!(env.summary().kind, AppKind::Functional);
+    }
+
+    #[test]
+    fn functional_canonical_bytes_are_unchanged_by_the_kind_additions() {
+        // THE DIGEST-INVARIANCE GUARD (D213 / `7d22d4bd`). Adding the Experience lane must
+        // add ZERO bytes to any existing Functional envelope: no `kind` key (derived from
+        // schema, never serialized) and no `hosted` key (None ⇒ omitted). The exact canonical
+        // string below is what a minimal Functional envelope produced BEFORE this change — if
+        // a stray key ever leaks in, this pins it.
+        let env = AppEnvelope::new("x", json!({"steps": []}));
+        let canon = String::from_utf8(env.to_canonical_json().unwrap()).unwrap();
+        assert_eq!(
+            canon,
+            r#"{"blueprint":{"steps":[]},"name":"x","schema":"kortecx.app/v1","version":"1"}"#,
+            "Functional canonical bytes must be byte-identical to the pre-kind form"
+        );
+        assert!(
+            !canon.contains("hosted"),
+            "no hosted key on a functional app"
+        );
+        assert!(
+            !canon.contains("\"kind\""),
+            "kind is derived, never serialized"
+        );
+    }
+
+    #[test]
+    fn experience_envelope_round_trips_and_omits_blueprint() {
+        let env = AppEnvelope::new_experience(
+            "landing",
+            HostedConfig {
+                framework: HostedFramework::ViteReact,
+                ..Default::default()
+            },
+            "app/landing/main",
+        );
+        env.validate().unwrap();
+        assert_eq!(env.kind(), AppKind::Experience);
+        assert_eq!(env.summary().kind, AppKind::Experience);
+        assert_eq!(env.summary().step_count, 0);
+        let canon = env.to_canonical_json().unwrap();
+        let s = String::from_utf8(canon.clone()).unwrap();
+        assert!(
+            !s.contains("blueprint"),
+            "experience carries no blueprint: {s}"
+        );
+        assert!(s.contains("\"schema\":\"kortecx.experience/v1\""), "{s}");
+        assert!(s.contains("\"framework\":\"vite_react\""), "{s}");
+        // round-trip identical
+        let again = AppEnvelope::from_json_slice(&canon).unwrap();
+        assert_eq!(again, env);
+        assert_eq!(again.to_canonical_json().unwrap(), canon);
+    }
+
+    #[test]
+    fn validate_rejects_experience_without_hosted() {
+        let mut env = AppEnvelope::new_experience("x", HostedConfig::default(), "app/x/main");
+        env.hosted = None;
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_experience_with_a_blueprint() {
+        // An Experience app must NOT be schedulable — a smuggled blueprint is refused.
+        let mut env = AppEnvelope::new_experience("x", HostedConfig::default(), "app/x/main");
+        env.blueprint = Some(json!({"steps": []}));
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_experience_without_branch_handle() {
+        let mut env = AppEnvelope::new_experience("x", HostedConfig::default(), "app/x/main");
+        env.branch_handle = String::new();
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_functional_carrying_a_hosted_config() {
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.hosted = Some(HostedConfig::default());
+        assert!(env.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_functional_without_blueprint() {
+        let mut env = AppEnvelope::new("x", json!({"steps": []}));
+        env.blueprint = None;
+        assert!(env.validate().is_err());
     }
 
     /// A distinct, valid 64-char lowercase-hex ref per seed byte.

@@ -1798,6 +1798,8 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // App — the one-App-one-branch model). The list/get handlers OVERRIDE this
         // from the wired LockStore; `false` here = unlocked / no branch / unwired.
         locked: false,
+        // D213 lane label ("functional"/"experience"); empty ⇒ functional on an old row.
+        kind: r.kind,
     }
 }
 
@@ -4644,6 +4646,46 @@ impl KxGateway for GatewayService {
             files_pending: status.files_pending,
             detail: status.detail,
         }))
+    }
+
+    // D213 Experience lane — the hosted-app supervisor. The contract (proto + envelope kind)
+    // lands here; the host supervisor + reverse-proxy are wired behind the `hosted-apps`
+    // feature (kx-gateway `hostsupervisor.rs`). Until then these degrade to `unimplemented`,
+    // the standard optional-seam posture — the browser feature-detects and hides the controls.
+    async fn start_hosted_app(
+        &self,
+        _request: Request<proto::StartHostedAppRequest>,
+    ) -> Result<Response<proto::HostedAppStatus>, Status> {
+        Err(Status::unimplemented(
+            "StartHostedApp: hosted-app supervisor not wired (build with the `hosted-apps` feature)",
+        ))
+    }
+
+    async fn stop_hosted_app(
+        &self,
+        _request: Request<proto::StopHostedAppRequest>,
+    ) -> Result<Response<proto::StopHostedAppResponse>, Status> {
+        Err(Status::unimplemented(
+            "StopHostedApp: hosted-app supervisor not wired (build with the `hosted-apps` feature)",
+        ))
+    }
+
+    async fn get_hosted_app_status(
+        &self,
+        _request: Request<proto::GetHostedAppStatusRequest>,
+    ) -> Result<Response<proto::HostedAppStatus>, Status> {
+        Err(Status::unimplemented(
+            "GetHostedAppStatus: hosted-app supervisor not wired (build with the `hosted-apps` feature)",
+        ))
+    }
+
+    async fn list_hosted_apps(
+        &self,
+        _request: Request<proto::ListHostedAppsRequest>,
+    ) -> Result<Response<proto::ListHostedAppsResponse>, Status> {
+        Err(Status::unimplemented(
+            "ListHostedApps: hosted-app supervisor not wired (build with the `hosted-apps` feature)",
+        ))
     }
 
     async fn list_tool_manifests(
