@@ -1597,8 +1597,10 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
 
     /// RC3 (T-REACT-TOOL-MENU): the granted-tool MENU to prepend to a tool-eligible
     /// ReAct turn's EPHEMERAL instruction, or `None` when no menu applies — not a
-    /// react turn, no grants, an `unconstrained` opt-out, the `KX_SERVE_REACT_TOOL_MENU`
-    /// kill-switch, no wired registry, or an empty render. Derived from
+    /// react turn, no grants, an `unconstrained` opt-out, an ANSWER-FORCE turn (the
+    /// menu is being deliberately suppressed + is grammar-contradicted on Ollama
+    /// `answer_only`), the `KX_SERVE_REACT_TOOL_MENU` kill-switch, no wired registry,
+    /// or an empty render. Derived from
     /// `warrant.tool_grants` via the SHARED [`kx_context_assembler::render_tool_menu`]
     /// (the SAME renderer the context-assembly path uses — no harness↔serve drift),
     /// gated EXACTLY like the RC2 grammar path. The menu is advisory prompt bytes only
@@ -1610,6 +1612,11 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         let eligible = Self::is_react_turn(mote)
             && !warrant.tool_grants.is_empty()
             && !Self::is_unconstrained(mote)
+            // On an ANSWER-FORCE turn (a duplicate-rejection re-prompt / near-budget
+            // settle-nudge) the runtime is deliberately forcing the model to SETTLE, and
+            // on Ollama `answer_only` the grammar has DROPPED the tool arm — so a tool
+            // menu is not just wasted tokens, it grammar-CONTRADICTS the turn. Suppress it.
+            && !Self::react_answer_force(mote)
             && crate::mcp_tool::tool_menu_enabled();
         if !eligible {
             return None;
@@ -3592,6 +3599,48 @@ mod tests {
         assert!(
             !prompt.contains("You can call the following tools:"),
             "no grant ⇒ no menu, got: {prompt}"
+        );
+    }
+
+    /// opt-skip-tool-menu-answer-force: an ANSWER-FORCE react turn (a near-budget
+    /// settle-nudge or a duplicate-rejection re-prompt) SUPPRESSES the tool menu — the
+    /// runtime is deliberately forcing the model to settle, and on Ollama `answer_only`
+    /// the grammar has dropped the tool arm, so the menu would grammar-CONTRADICT it.
+    #[test]
+    fn no_menu_on_an_answer_force_react_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalFsContentStore::open(dir.path()).unwrap();
+        let (exec, backend) = executor(&store, b"blue", None);
+        let exec = exec.with_tool_registry(menu_registry());
+        // A near-budget settle-nudge instruction ⇒ `react_answer_force` == true.
+        let instruction = format!(
+            "summarize the doc\n\n[You have already gathered tool results, and {}. Answer now.]",
+            kx_toolcall::SETTLE_NUDGE_MARKER
+        );
+        exec.run(
+            &react_turn_mote_with_instruction(instruction.as_bytes()),
+            &granted_warrant(),
+            None,
+        )
+        .expect("react turn dispatches");
+        let prompt = backend.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            !prompt.contains("You can call the following tools:"),
+            "answer-force ⇒ the menu is suppressed, got: {prompt}"
+        );
+
+        // Control: an otherwise-identical PLAIN react turn (no answer-force marker) with
+        // the SAME grants + registry DOES prepend the menu — the new gate is answer-force
+        // ONLY, so the common tool-eligible turn is unchanged.
+        let (exec2, backend2) = executor(&store, b"blue", None);
+        let exec2 = exec2.with_tool_registry(menu_registry());
+        exec2
+            .run(&react_turn_mote(), &granted_warrant(), None)
+            .expect("react turn dispatches");
+        let prompt2 = backend2.last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            prompt2.contains("You can call the following tools:"),
+            "a plain react turn still shows the menu, got: {prompt2}"
         );
     }
 
