@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // The sidebar renders TanStack <Link>s; stub them to plain <a> so we can test the
 // nav in isolation (the real router integration is covered by the e2e shell-nav).
@@ -13,20 +13,9 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
   };
 });
 
-// RC6a: the nav badge reads pending approvals (react-query + connection).
-// Stub it (overridable per test) so the sidebar renders without a provider tree.
-const { mockPending } = vi.hoisted(() => ({
-  mockPending: vi.fn(() => ({ count: 0, approvals: [], notWired: false })),
-}));
-vi.mock("../../src/kx/use-approvals", () => ({ useListPendingApprovals: mockPending }));
-
 import { Sidebar } from "../../src/components/shell/Sidebar";
 
 describe("Sidebar (POC-5c / D168 flat IA)", () => {
-  beforeEach(() => {
-    mockPending.mockReturnValue({ count: 0, approvals: [], notWired: false });
-  });
-
   it("renders a plain-button item with a label for every flat section when expanded", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
     for (const id of ["chat", "apps", "runs", "context", "tools", "models", "systems"]) {
@@ -86,25 +75,12 @@ describe("Sidebar (POC-5c / D168 flat IA)", () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it("badges the Apps nav item with the pending-approval count (RC6a)", () => {
-    mockPending.mockReturnValue({ count: 3, approvals: [], notWired: false });
+  it("no longer badges the Apps nav item — the pending-approval count moved to the navbar bell (D213)", () => {
     render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    expect(screen.getByTestId("nav-badge-apps")).toHaveTextContent("3");
-    // Only Apps carries the badge — no other section is decorated.
-    for (const id of ["chat", "runs", "context", "tools", "models", "systems"]) {
+    // The sidebar no longer polls approvals nor decorates any nav item (the navbar
+    // ApprovalsBell owns the count now — see the approvals e2e).
+    for (const id of ["apps", "chat", "runs", "context", "tools", "models", "systems"]) {
       expect(screen.queryByTestId(`nav-badge-${id}`)).toBeNull();
     }
-  });
-
-  it("shows no nav badge when nothing is awaiting approval", () => {
-    mockPending.mockReturnValue({ count: 0, approvals: [], notWired: false });
-    render(<Sidebar collapsed={false} onToggle={() => {}} />);
-    expect(screen.queryByTestId("nav-badge-apps")).toBeNull();
-  });
-
-  it("keeps the badge on the collapsed icon rail (rides the icon)", () => {
-    mockPending.mockReturnValue({ count: 7, approvals: [], notWired: false });
-    render(<Sidebar collapsed={true} onToggle={() => {}} />);
-    expect(screen.getByTestId("nav-badge-apps")).toHaveTextContent("7");
   });
 });
