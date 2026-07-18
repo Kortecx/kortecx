@@ -7,11 +7,13 @@
  * model-driven behaviour is covered by the Rust live-Gemma e2e); the pure-step Run
  * actually executes + navigates.
  *
- * The SECOND test turns that WIRED-only propose→diff→approve gate into a real red/green
- * BEHAVIOURAL net: the model-inference RPCs are stubbed model-free (`stubReactEdit`) while
- * the branch mutation stays REAL, so `approve` is proven to advance the actual manifest —
- * a regression in the propose or approve wiring fails a check (deleting an assertion can't
- * stay green, because each asserts a consequence of real server state, not a rendered node).
+ * The SECOND test (item6) turns the unified agentic-MODIFY drawer into a real red/green
+ * BEHAVIOURAL net over a MULTI-ARTIFACT edit with ROLLBACK: the model-inference RPCs are
+ * stubbed model-free (`stubReactEdit`) while every branch mutation stays REAL, so ONE
+ * high-level instruction across TWO files is proven to advance BOTH manifest paths, and a
+ * rollback is proven to restore each to its distinct prior body. Each assertion reads a
+ * consequence of real server state (not a rendered node), so deleting the approve or the
+ * rollback wiring can't stay green.
  */
 
 import { KxClient } from "@kortecx/sdk/node";
@@ -76,16 +78,16 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await expect(page.getByTestId("app-tab-integrations")).toBeVisible();
   await expect(page.getByTestId("app-tab-chat")).toHaveCount(0);
 
-  // The Chat header action opens the agentic "Chat & edit" drawer (converse + the
-  // propose→diff→approve edit gate); close it before continuing.
+  // The Modify header action opens the unified agentic-modify drawer (describe a change →
+  // multi-file diff → approve/rollback); close it before continuing.
   await page.getByTestId("app-detail-chat").click();
   await expect(page.getByTestId("app-chat-drawer")).toBeVisible();
   await expect(page.getByTestId("app-edit-propose")).toBeVisible();
   // The scrim covers the viewport (a real dim users can click to dismiss) — clicking
   // its top-left (clear of the right-side drawer) closes the drawer.
-  const scrimBox = await page.getByLabel("Close chat").boundingBox();
+  const scrimBox = await page.getByLabel("Close modify drawer").boundingBox();
   expect(scrimBox?.height ?? 0).toBeGreaterThan(100);
-  await page.getByLabel("Close chat").click({ position: { x: 20, y: 20 } });
+  await page.getByLabel("Close modify drawer").click({ position: { x: 20, y: 20 } });
   await expect(page.getByTestId("app-chat-drawer")).toHaveCount(0);
 
   // Files: the tree is a collapsible sidebar rail (collapse hides it, expand restores it).
@@ -164,14 +166,18 @@ test("App IDE (POC-5d): tabs, file view + edit wiring, lineage, and a single-App
   await expect(page).toHaveURL(/\/workflows\//, { timeout: 30_000 });
 });
 
-test("App IDE agentic edit: the propose→diff→approve gate is a real behavioural net (model-free)", async ({
+test("App IDE unified modify (item6): a coherent MULTI-artifact diff + rollback is a real behavioural net (model-free)", async ({
   page,
 }) => {
   const EDIT_HANDLE = "apps/local/edit-net";
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
 
-  // Seed the App + a one-file branch, AND pre-seed the agent's "proposed" rewrite as a real
-  // content-store blob, so approve can advance the REAL manifest to a REAL ref.
+  // Seed the App + a TWO-file branch (distinct bodies), AND pre-seed the agent's "proposed"
+  // rewrite as a real content-store blob, so approve can advance the REAL manifest to a REAL
+  // ref for each file. The two originals differ so rollback is proven to restore each file to
+  // its OWN prior body (its distinct CAS blob is still present).
+  const README_ORIGINAL = "# Readme\nhello from the IDE.\n";
+  const CONFIG_ORIGINAL = '{ "name": "edit-net", "widget": "old" }\n';
   const seed = new KxClient(gw.endpoint);
   await seed.saveApp(
     {
@@ -182,19 +188,23 @@ test("App IDE agentic edit: the propose→diff→approve gate is a real behaviou
     { handle: EDIT_HANDLE },
   );
   await seed.createBranch(EDIT_HANDLE);
-  const original = await seed.putContent(
-    new TextEncoder().encode("# Readme\nhello from the IDE.\n"),
-    {
-      filename: "README.md",
-    },
-  );
-  await seed.advanceBranch(EDIT_HANDLE, "README.md", original.contentRef);
+  const readme = await seed.putContent(new TextEncoder().encode(README_ORIGINAL), {
+    filename: "README.md",
+  });
+  await seed.advanceBranch(EDIT_HANDLE, "README.md", readme.contentRef);
+  const config = await seed.putContent(new TextEncoder().encode(CONFIG_ORIGINAL), {
+    filename: "config.json",
+  });
+  await seed.advanceBranch(EDIT_HANDLE, "config.json", config.contentRef);
   const proposedBytes = new TextEncoder().encode(
-    "# Readme\n\nAGENT_EDIT_MARKER: validation note added by the agent.\n",
+    "AGENT_EDIT_MARKER: coherent rename applied by the agent.\n",
   );
-  const proposed = await seed.putContent(proposedBytes, { filename: "README.md" });
+  const proposed = await seed.putContent(proposedBytes, { filename: "edit.txt" });
 
-  // Stub ONLY the model-inference RPCs of editBranchPropose; AdvanceBranch/GetBranchContent stay real.
+  // Stub ONLY the model-inference RPCs of editBranchPropose (react-edit → projection →
+  // content); GetBranch/GetBranchContent/AdvanceBranch stay REAL. The stub returns the same
+  // proposed blob for every react-edit invoke, so each of the two per-file proposals resolves
+  // to a real ref and each approve/rollback hits the real branch store.
   await stubReactEdit(page, { resultRef: proposed.contentRef, proposedBytes });
 
   await connectConsole(page, gw);
@@ -204,27 +214,49 @@ test("App IDE agentic edit: the propose→diff→approve gate is a real behaviou
   await page.getByTestId(`app-open-${EDIT_HANDLE}`).click();
   await expect(page.getByTestId("app-detail")).toBeVisible({ timeout: 30_000 });
 
-  // Open the Chat & edit drawer and drive the gate for real.
+  // Open the unified modify drawer: ONE high-level instruction, TWO files in scope.
   await page.getByTestId("app-detail-chat").click();
   await expect(page.getByTestId("app-chat-drawer")).toBeVisible();
-  await page.getByTestId("app-edit-target").selectOption("README.md");
-  await page.getByTestId("app-edit-instruction").fill("add a validation note");
+  await page.getByTestId("app-edit-instruction").fill("rename the widget to Gadget everywhere");
+  await page.getByTestId("app-edit-file-README.md").check();
+  await page.getByTestId("app-edit-file-config.json").check();
   await page.getByTestId("app-edit-propose").click();
 
-  // BEHAVIOUR 1: the whole propose composite ran (GetBranch → Invoke → GetProjection →
-  // GetContent → GetBranchContent) and produced a diff whose proposed ≠ current, so the
-  // review gate opens and approve enables. A bare "the button is visible" check can't see this.
+  // BEHAVIOUR 1: BOTH per-file propose composites ran (GetBranch → Invoke → GetProjection →
+  // GetContent → GetBranchContent, once per file) and each produced a diff whose proposed ≠
+  // current, so the single review gate opens with a diff for EACH file and approve enables.
   await expect(page.getByTestId("app-edit-review")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("app-edit-diff")).toBeVisible();
+  await expect(page.getByTestId("app-edit-diff-README.md")).toBeVisible();
+  await expect(page.getByTestId("app-edit-diff-config.json")).toBeVisible();
   await expect(page.getByTestId("app-edit-approve")).toBeEnabled();
 
-  // BEHAVIOUR 2: approve applies against the REAL gateway (unstubbed AdvanceBranch); on
-  // success the drawer resets the proposal and the review gate closes.
+  // BEHAVIOUR 2: approve applies against the REAL gateway (unstubbed AdvanceBranch, once per
+  // file); on success the review gate closes and the applied/rollback panel opens.
   await page.getByTestId("app-edit-approve").click();
   await expect(page.getByTestId("app-edit-review")).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByTestId("app-edit-applied")).toBeVisible();
+  await expect(page.getByTestId("app-edit-rollback")).toBeVisible();
 
-  // BEHAVIOUR 3 (ground truth): the REAL branch manifest now resolves README.md to the
-  // approved body — read straight from the gateway (the node client bypasses the browser stub).
+  // BEHAVIOUR 3 (ground truth): the REAL branch manifest now resolves BOTH files to the
+  // approved body — a genuine multi-artifact modify (read straight from the gateway; the
+  // node client bypasses the browser stub).
+  for (const path of ["README.md", "config.json"]) {
+    await expect
+      .poll(
+        async () => {
+          const body = await seed.getBranchContent(EDIT_HANDLE, path);
+          return body ? new TextDecoder().decode(body) : "";
+        },
+        { timeout: 15_000 },
+      )
+      .toContain("AGENT_EDIT_MARKER");
+  }
+
+  // BEHAVIOUR 4 (ground truth): rollback re-advances each path to its PRIOR ref, restoring
+  // each file to its OWN distinct original body — no history RPC, just the still-present CAS
+  // blobs. The marker is gone from both files.
+  await page.getByTestId("app-edit-rollback").click();
+  await expect(page.getByTestId("app-edit-applied")).toHaveCount(0, { timeout: 15_000 });
   await expect
     .poll(
       async () => {
@@ -233,7 +265,16 @@ test("App IDE agentic edit: the propose→diff→approve gate is a real behaviou
       },
       { timeout: 15_000 },
     )
-    .toContain("AGENT_EDIT_MARKER");
+    .toBe(README_ORIGINAL);
+  await expect
+    .poll(
+      async () => {
+        const body = await seed.getBranchContent(EDIT_HANDLE, "config.json");
+        return body ? new TextDecoder().decode(body) : "";
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(CONFIG_ORIGINAL);
   seed.close();
 });
 
