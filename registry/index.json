@@ -29,6 +29,24 @@
       "ledger": "rc-sw1-skills"
     },
     {
+      "family": "skill",
+      "name": "author-scheduled-app",
+      "version": "1",
+      "source": "skills/author-scheduled-app",
+      "description": "Author a comprehensive scheduled (functional) app that runs unattended on a trigger; read/draft wishes, never a silent send.",
+      "conformance": "just test-skill skills/author-scheduled-app",
+      "ledger": "app-authoring-skills"
+    },
+    {
+      "family": "skill",
+      "name": "author-hosted-app",
+      "version": "1",
+      "source": "skills/author-hosted-app",
+      "description": "Author a comprehensive hosted (experience) web app in Vite-React or Next.js, scaffolded + served locally; read-only wishes.",
+      "conformance": "just test-skill skills/author-hosted-app",
+      "ledger": "app-authoring-skills"
+    },
+    {
       "family": "integration",
       "name": "kx-connector-gmail",
       "version": "0.1.0",
