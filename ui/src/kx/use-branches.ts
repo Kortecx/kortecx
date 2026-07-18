@@ -105,6 +105,12 @@ export interface EditBranchVars {
   readonly handle: string;
   readonly path: string;
   readonly instruction: string;
+  /**
+   * item6: sibling paths in the same branch whose current bodies ride along as
+   * read-only context, so a multi-artifact edit driven by one high-level instruction
+   * stays coherent across files. Ignored by the one-shot {@link useEditBranch}.
+   */
+  readonly contextPaths?: readonly string[];
 }
 
 /**
@@ -143,15 +149,18 @@ export interface EditProposalResult {
  * either approves ({@link useAdvanceBranch} with `resultRef`) or rejects (discards —
  * the proposed blob is a harmless content-addressed orphan). Closes
  * `T-AGENTIC-EDIT-REVIEW-GATE`. No invalidation here (nothing changed yet).
+ *
+ * item6: `contextPaths` attaches sibling files as coherence context so the caller can
+ * drive a MULTI-artifact modify (one propose per file, one high-level instruction).
  */
 export function useEditBranchPropose() {
   const { client } = useConnection();
   return useMutation<EditProposalResult, unknown, EditBranchVars>({
-    mutationFn: async ({ handle, path, instruction }) => {
+    mutationFn: async ({ handle, path, instruction, contextPaths }) => {
       if (!client) {
         throw new Error("not connected");
       }
-      return client.editBranchPropose(handle, path, instruction);
+      return client.editBranchPropose(handle, path, instruction, { contextPaths });
     },
   });
 }

@@ -1224,23 +1224,46 @@ export abstract class KxClientBase {
    * rejects (discards — the proposed blob is a harmless content-addressed orphan).
    * The host is NEVER written. Rejects if the chain produced no committed answer or
    * an empty body (GR15 fail-closed — same guards as the one-shot {@link editBranch}).
+   *
+   * `opts.contextPaths` (item6): additionally attach those sibling files' bodies as
+   * read-only context, so a single high-level instruction — run once per target file —
+   * produces a change that stays COHERENT across a multi-artifact edit. The target file
+   * is always attached first; the target's own path and unknown paths are skipped.
+   * `context_refs` is already `repeated string` on the wire, so this needs no proto
+   * change — the constraint was only ever the single-element array literal below.
    */
   async editBranchPropose(
     handle: string,
     path: string,
     instruction: string,
-    opts: { timeoutMs?: number } = {},
+    opts: { timeoutMs?: number; contextPaths?: readonly string[] } = {},
   ): Promise<{ resultRef: string; proposedText: string; currentText: string }> {
     const branch = await this.getBranch(handle);
     if (branch === null) throw new Error(`branch '${handle}' not found`);
     const item = branch.items.find((it) => it.path === path);
     if (item === undefined) throw new Error(`path '${path}' is not in branch '${handle}'`);
-    const directive = `You are editing the file \`${path}\`. The text in the attached context below IS its exact current contents. Apply this change: ${instruction}\n\nReturn ONLY the complete, updated file contents — no commentary, no explanation, and no markdown code fences.`;
+    // Multi-artifact coherence (item6): resolve any sibling paths to their current refs
+    // so they can ride along as context. The target file is attached FIRST (the model
+    // rewrites it) and siblings AFTER, purely to keep the per-file rewrites consistent.
+    const siblingRefs: string[] = [];
+    for (const p of opts.contextPaths ?? []) {
+      if (p === path) continue;
+      const sibling = branch.items.find((it) => it.path === p);
+      if (sibling !== undefined) siblingRefs.push(sibling.contentRef);
+    }
+    const directive =
+      siblingRefs.length === 0
+        ? `You are editing the file \`${path}\`. The text in the attached context below IS its exact current contents. Apply this change: ${instruction}\n\nReturn ONLY the complete, updated file contents — no commentary, no explanation, and no markdown code fences.`
+        : `You are editing the file \`${path}\`. Its exact current contents are the FIRST attached context below; the remaining attachments are other project files, provided ONLY so your edit stays consistent across the App — do not return them. Apply this change: ${instruction}\n\nReturn ONLY the complete, updated contents of \`${path}\` — no commentary, no explanation, and no markdown code fences.`;
     // react-edit is a single model step; its only free param is `prompt`.
     const result = await this.invoke(
       "kx/recipes/react-edit",
       { prompt: directive },
-      { wait: true, timeoutMs: opts.timeoutMs ?? 300_000, contextRefs: [item.contentRef] },
+      {
+        wait: true,
+        timeoutMs: opts.timeoutMs ?? 300_000,
+        contextRefs: [item.contentRef, ...siblingRefs],
+      },
     );
     if (!(result instanceof Result) || !result.ok || result.resultRef === null) {
       throw new Error("react-edit produced no committed answer to advance the branch to");
