@@ -1,5 +1,7 @@
+import { KxClient } from "@kortecx/sdk/node";
 import { expect, test } from "@playwright/test";
 import { connectConsole, gotoViaPalette } from "./fixtures/connect";
+import { stubProposeWorkflow } from "./fixtures/grpc-stub";
 import { expectOverlayAboveNavbar } from "./fixtures/overlay";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -38,4 +40,65 @@ test("builder: the Describe-a-workflow panel opens, clears the navbar, and close
   // Dismissible with Escape (like the other overlays).
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("builder-propose-panel")).toHaveCount(0);
+});
+
+// 5b: the New App form's NL multi-step authoring. The console gateway serves no model, so a
+// real ProposeWorkflow would honestly reject — `stubProposeWorkflow` supplies a canned
+// multi-step plan so the deterministic propose→preview→author path is exercised, while the
+// (unstubbed) SaveApp lands the real envelope, asserted directly via the node client.
+test("New App: propose → preview → author a MULTI-STEP App (stubbed ProposeWorkflow)", async ({
+  page,
+}) => {
+  const CANNED = {
+    steps: [
+      { role: "researcher", intent: "Gather the source facts from the changelog." },
+      { role: "analyst", intent: "Group the changes by theme and significance." },
+      { role: "writer", intent: "Write the final release notes." },
+    ],
+    edges: [
+      { parent: 0, child: 1 },
+      { parent: 1, child: 2 },
+    ],
+  };
+  gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
+  await stubProposeWorkflow(page, CANNED);
+  const kx = new KxClient(gw.endpoint);
+
+  await connectConsole(page, gw);
+  await gotoViaPalette(page, "apps");
+  await expect(page.getByTestId("apps-section")).toBeVisible();
+  await page.getByTestId("new-app").click();
+  await expect(page.getByTestId("new-app-form")).toBeVisible();
+
+  const HANDLE = "apps/local/nl-multistep-e2e";
+  await page.getByTestId("new-app-name").fill("Release Notes Writer");
+  await page.getByTestId("new-app-goal").fill("Summarize a changelog into release notes.");
+  await page.getByTestId("new-app-handle").fill(HANDLE);
+
+  // Propose → the 3-step plan previews.
+  await page.getByTestId("new-app-propose").click();
+  await expect(page.getByTestId("new-app-proposal")).toContainText("3 steps");
+  await expect(page.getByTestId("new-app-proposal-step-2")).toContainText("writer");
+
+  // Author → the SAVED envelope carries a 3-step blueprint (NOT the single-agent fallback).
+  // The scaffold that follows Save needs a model and errors here — ignored, exactly like the
+  // other App-authoring specs; the durable envelope is the assertion.
+  await page.getByTestId("new-app-submit").click();
+  await expect
+    .poll(
+      async () => {
+        const env = (await kx.getApp(HANDLE))?.envelope as
+          | { blueprint?: { steps?: unknown[] } }
+          | undefined;
+        return env?.blueprint?.steps?.length ?? 0;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(3);
+  const stored = await kx.getApp(HANDLE);
+  const steps = (stored?.envelope as { blueprint: { steps: { kind: string }[] } }).blueprint.steps;
+  expect(steps.every((s) => s.kind === "model")).toBe(true);
+  // 5c co-ship: every authored App still carries the capabilities rule.
+  expect(JSON.stringify(stored?.envelope)).toContain("capabilities");
+  kx.close();
 });

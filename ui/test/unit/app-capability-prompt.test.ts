@@ -34,4 +34,20 @@ describe("composeCapabilityPrompt (PR-G)", () => {
     expect(p).not.toContain("This App's goal");
     expect(p).not.toContain("Attached context files");
   });
+
+  it("is honest about retrieve@1 — never promises a writable project branch (5c)", () => {
+    const p = composeCapabilityPrompt("");
+    // RED on the old prompt: it told the model it could read AND WRITE files to the
+    // project branch — a capability the App run path (retrieve@1 only) never grants.
+    expect(p).not.toMatch(/read and write/i);
+    expect(p).not.toMatch(/as files in the project branch/i);
+    expect(p).not.toMatch(/write generated artifacts/i);
+    expect(p).not.toMatch(/read or write a file/i);
+    // GREEN: it honestly describes read-only retrieval + an inline (not file) deliverable.
+    expect(p).toMatch(/read-only/i);
+    expect(p).toMatch(/no writable project branch|cannot (create|write|save)[^.]*files/i);
+    expect(p).toMatch(/inline as your final answer/i);
+    // The prompt's own honesty clause is preserved verbatim.
+    expect(p).toContain("do not invent a capability that is not offered");
+  });
 });
