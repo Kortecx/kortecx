@@ -1,11 +1,14 @@
 //! POC-5a / POC-6 — the host App-scaffold orchestrator (the [`AppScaffolder`] impl).
 //!
 //! Owns the runtime: it spawns a background task that drives a per-file write loop
-//! into a CoW-on-CAS branch. POC-6 (agentic creation): a SCHEDULED scaffold first
-//! runs the `app-manifest-plan` recipe to plan a use-case-specific project file set
-//! (persisted as `.kortecx/manifest.json`), then loops that DYNAMIC manifest through
-//! the existing per-file write path; a hosted scaffold keeps its proven framework
-//! template. For each file it binds + submits the `app-scaffold-write` recipe (a
+//! into a CoW-on-CAS branch. POC-6 (agentic creation): a HOSTED (Experience)
+//! scaffold first runs the `app-manifest-plan` recipe to plan a use-case-specific,
+//! framework-aware SEPARATED source tree (persisted as `.kortecx/manifest.json`), then
+//! loops that DYNAMIC manifest through the existing per-file write path — the static
+//! build config stays template-owned (the supervisor writes it to disk). A SCHEDULED
+//! (functional/agentic) scaffold writes the fixed agentic `SKELETON` (README, app.json,
+//! prompts, rules, skills) — no web project, no planner. For each file it binds +
+//! submits the `app-scaffold-write` recipe (a
 //! single Pure greedy model step, the `react-edit` pattern) through the EXISTING
 //! binder + submitter (the coordinator stays the sole journal writer — the frozen
 //! loop is untouched), awaits the committed body by polling the read-only projection
@@ -38,7 +41,7 @@ use kx_gateway_core::{
 };
 use kx_mote::MoteId;
 
-use crate::manifest::{decode_manifest, manifest_plan_directive, skeleton_manifest, ManifestFile};
+use crate::manifest::{decode_manifest, manifest_plan_directive, ManifestFile};
 
 /// Per-step await ceiling (comfortably exceeds the recipe warrant's 300s wall-clock,
 /// so the warrant's own timeout fires first and we then report the step `Failed`).
@@ -49,6 +52,24 @@ const POLL: Duration = Duration::from_millis(250);
 /// into each write. Bounded so a large dynamic project's accumulated bodies never
 /// overflow the model's per-decode batch (the `n_tokens_all <= n_batch` guard).
 const SIBLING_CONTEXT_MAX: usize = 2;
+
+/// POC-6: the HOSTED lane's graceful fallback when manifest planning is unavailable
+/// (no served model / a decode failure) — the framework template's model-AUTHORED files
+/// (the visible page + README) as a dynamic-manifest list. The static build config is
+/// template-owned (written to disk by the supervisor), so this still yields a runnable
+/// project, path-for-path with the framework template.
+fn hosted_authored_fallback(framework: &str) -> Vec<ManifestFile> {
+    hosted_template(framework)
+        .iter()
+        .filter_map(|f| match f.source {
+            HostedFileSource::Authored { role, .. } => Some(ManifestFile {
+                path: f.path.to_string(),
+                role: role.to_string(),
+            }),
+            HostedFileSource::Static(_) => None,
+        })
+        .collect()
+}
 
 /// Advisory in-memory progress for one branch's scaffold (the durable truth is the
 /// CoW branch manifest). POC-6: also carries the live token-stream ids of the file
@@ -193,14 +214,13 @@ impl HostScaffolder {
             "Kortecx App project branch (agentically scaffolded, in-CAS)",
         )?;
 
-        // POC-6: resolve the DYNAMIC file set — a committed marker pins a resume
-        // (deterministic — never re-plan), a fresh run asks the model to plan a
-        // use-case-specific project, and a planning failure / no model degrades to
-        // the proven fixed skeleton.
-        let files = self.resolve_manifest(principal, branch, goal).await;
-
+        // Scheduled (functional/agentic) apps get the FIXED agentic skeleton — no web
+        // project, no manifest planner (the dynamic framework project is the HOSTED lane).
+        // No `.kortecx/manifest.json` marker is written, so `status()` reports the skeleton
+        // set by construction (its fallback is the genuine truth for this lane).
+        let all_paths: Vec<&str> = SKELETON.iter().map(|f| f.path).collect();
         let mut prior: Vec<String> = Vec::new();
-        for file in &files {
+        for file in SKELETON {
             // POC-5b: a lock applied before/during the scaffold halts it cleanly.
             if let Some(l) = self.locks.as_ref() {
                 if l.is_locked(principal, branch)? {
@@ -221,27 +241,31 @@ impl HostScaffolder {
                 continue;
             }
 
-            self.set(branch, ScaffoldPhase::Writing, &file.path);
+            self.set(branch, ScaffoldPhase::Writing, file.path);
             let body_ref = self
-                .write_one(principal, branch, &file.path, &file.role, goal, &prior)
+                .write_one(
+                    principal, branch, file.path, file.role, goal, None, &all_paths, &prior,
+                )
                 .await?;
             self.branches
-                .advance(principal, branch, &file.path, body_ref)?;
+                .advance(principal, branch, file.path, body_ref)?;
             prior.push(ContentRef::from_bytes(body_ref).to_hex());
         }
         Ok(())
     }
 
-    /// POC-6: resolve the planned file set for a scheduled scaffold. A committed
-    /// `.kortecx/manifest.json` marker pins the plan (a resume is DETERMINISTIC — a
-    /// re-plan would draw a different set from a non-deterministic model); a fresh
-    /// run asks the model to plan a use-case-specific project and persists the exact
-    /// planned bytes as the marker; no served model / a decode failure degrades to
-    /// the proven fixed skeleton. Never returns empty.
-    async fn resolve_manifest(
+    /// POC-6: resolve the planned file set for a HOSTED (Experience) scaffold. A
+    /// committed `.kortecx/manifest.json` marker pins the plan (a resume is DETERMINISTIC — a
+    /// re-plan would draw a different set from a non-deterministic model); a fresh run asks the
+    /// model to plan a use-case-specific, framework-aware SEPARATED source tree and persists the
+    /// exact planned bytes as the marker; no served model / a decode failure degrades to the
+    /// framework template's authored files (the visible page + README — still a runnable
+    /// project, since the static config is template-owned). Never returns empty.
+    async fn resolve_manifest_hosted(
         &self,
         principal: &str,
         branch: &str,
+        framework: &str,
         goal: &str,
     ) -> Vec<ManifestFile> {
         // Resume: a committed marker is the truth (no re-plan).
@@ -251,7 +275,7 @@ impl HostScaffolder {
             }
         }
         // Fresh plan → persist the planner's committed bytes as the durable marker.
-        match self.plan_manifest(principal, branch, goal).await {
+        match self.plan_manifest(principal, branch, framework, goal).await {
             Ok((files, manifest_ref)) => {
                 if let Err(e) =
                     self.branches
@@ -262,8 +286,8 @@ impl HostScaffolder {
                 files
             }
             Err(e) => {
-                tracing::info!(branch = %branch, error = %e, "manifest planning unavailable; falling back to the fixed skeleton");
-                skeleton_manifest()
+                tracing::info!(branch = %branch, error = %e, "manifest planning unavailable; falling back to the framework template's authored files");
+                hosted_authored_fallback(framework)
             }
         }
     }
@@ -278,9 +302,10 @@ impl HostScaffolder {
         &self,
         principal: &str,
         branch: &str,
+        framework: &str,
         goal: &str,
     ) -> Result<(Vec<ManifestFile>, [u8; 32]), CoreError> {
-        let prompt = manifest_plan_directive(goal);
+        let prompt = manifest_plan_directive(goal, framework);
         let args = serde_json::to_vec(&serde_json::json!({ "prompt": prompt }))
             .map_err(|e| CoreError::Internal(format!("manifest-plan args: {e}")))?;
         let bound = self
@@ -362,13 +387,16 @@ impl HostScaffolder {
             None,
             "Kortecx hosted-app project branch (agentically authored, in-CAS)",
         )?;
+        // Plan a use-case-specific, framework-aware SEPARATED source tree (persisted as the
+        // `.kortecx/manifest.json` marker), then author each planned file streaming into Monaco.
+        // The static build config is TEMPLATE-owned (the supervisor writes it to disk and
+        // `materialize` keeps it authoritative), so the model owns only the source tree.
+        let files = self
+            .resolve_manifest_hosted(principal, branch, framework, goal)
+            .await;
+        let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
         let mut prior: Vec<String> = Vec::new();
-        for tf in hosted_template(framework) {
-            // Only the model-authored files are scaffolded here (page + README); the
-            // static config is written to disk by the supervisor from the template.
-            let HostedFileSource::Authored { role, .. } = tf.source else {
-                continue;
-            };
+        for file in &files {
             if let Some(l) = self.locks.as_ref() {
                 if l.is_locked(principal, branch)? {
                     return Err(CoreError::FailedPrecondition(
@@ -382,17 +410,25 @@ impl HostScaffolder {
                 .ok_or(CoreError::Internal(String::from(
                     "scaffold branch vanished mid-run",
                 )))?;
-            if let Some(it) = manifest.items.iter().find(|i| i.path == tf.path) {
+            if let Some(it) = manifest.items.iter().find(|i| i.path == file.path) {
                 prior.push(ContentRef::from_bytes(it.content_ref).to_hex());
                 continue;
             }
-            self.set(branch, ScaffoldPhase::Writing, tf.path);
-            // Reuse the per-file model write path directly (path + role).
+            self.set(branch, ScaffoldPhase::Writing, &file.path);
             let body_ref = self
-                .write_one(principal, branch, tf.path, role, goal, &prior)
+                .write_one(
+                    principal,
+                    branch,
+                    &file.path,
+                    &file.role,
+                    goal,
+                    Some(framework),
+                    &all_paths,
+                    &prior,
+                )
                 .await?;
             self.branches
-                .advance(principal, branch, tf.path, body_ref)?;
+                .advance(principal, branch, &file.path, body_ref)?;
             prior.push(ContentRef::from_bytes(body_ref).to_hex());
         }
         Ok(())
@@ -402,6 +438,7 @@ impl HostScaffolder {
     /// live token-stream ids, await the terminal body. The warrant is SERVER-minted
     /// (SN-8); the prompt is DATA only. `path`/`role` come from either the fixed
     /// skeleton, the hosted template, or a dynamically-planned manifest file.
+    #[allow(clippy::too_many_arguments)]
     async fn write_one(
         &self,
         principal: &str,
@@ -409,6 +446,8 @@ impl HostScaffolder {
         path: &str,
         role: &str,
         goal: &str,
+        framework: Option<&str>,
+        all_paths: &[&str],
         prior: &[String],
     ) -> Result<[u8; 32], CoreError> {
         // Bound the sibling context to the most RECENT files. A dynamic project can
@@ -423,7 +462,7 @@ impl HostScaffolder {
             .rev()
             .cloned()
             .collect();
-        let prompt = authoring_prompt(path, role, goal, !ctx.is_empty());
+        let prompt = authoring_prompt(path, role, goal, framework, all_paths, !ctx.is_empty());
         let args = serde_json::to_vec(&serde_json::json!({ "prompt": prompt }))
             .map_err(|e| CoreError::Internal(format!("scaffold args: {e}")))?;
         let bound = self
@@ -470,14 +509,12 @@ impl HostScaffolder {
 
 impl AppScaffolder for HostScaffolder {
     fn start(&self, principal: &str, branch_handle: &str, goal: &str) -> Result<bool, CoreError> {
-        // Resumed iff the branch already holds a committed plan marker (a dynamic
-        // scaffold) OR ≥1 fixed-skeleton file (a legacy / fallback scaffold).
+        // Resumed iff the branch already holds ≥1 fixed-skeleton file. Scheduled apps write
+        // no `.kortecx/manifest.json` marker (the dynamic planner is the HOSTED lane).
         let resumed = match self.branches.get(principal, branch_handle)? {
             Some(m) => {
                 let skel: BTreeSet<&str> = SKELETON.iter().map(|f| f.path).collect();
-                m.items
-                    .iter()
-                    .any(|it| it.path == MANIFEST_MARKER_PATH || skel.contains(it.path.as_str()))
+                m.items.iter().any(|it| skel.contains(it.path.as_str()))
             }
             None => false,
         };
@@ -508,14 +545,10 @@ impl AppScaffolder for HostScaffolder {
             .and_then(|e| e.hosted.map(|h| h.framework.as_str().to_string()))
             .unwrap_or_else(|| "auto".to_string());
         let framework = framework.as_str();
-        // Resumed iff the branch already holds ≥1 authored file for this framework.
-        let authored: BTreeSet<&str> = hosted_template(framework)
-            .iter()
-            .filter(|f| matches!(f.source, HostedFileSource::Authored { .. }))
-            .map(|f| f.path)
-            .collect();
+        // Resumed iff the branch already holds the committed plan marker — the planner persists
+        // it before the write loop, so any authored source file implies the marker exists.
         let resumed = match self.branches.get(principal, branch_handle)? {
-            Some(m) => m.items.iter().any(|it| authored.contains(it.path.as_str())),
+            Some(m) => m.items.iter().any(|it| it.path == MANIFEST_MARKER_PATH),
             None => false,
         };
         self.set(branch_handle, ScaffoldPhase::Planning, "");

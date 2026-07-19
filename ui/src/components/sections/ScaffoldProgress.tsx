@@ -118,7 +118,7 @@ export function ScaffoldProgress({
     >
       <div className="scaffold-progress__head">
         <h3 className="scaffold-progress__title">{heading}</h3>
-        <code className="mono scaffold-progress__handle" title={appHandle}>
+        <code className="mono scaffold-progress__handle mono-trunc" title={appHandle}>
           {appHandle}
         </code>
       </div>

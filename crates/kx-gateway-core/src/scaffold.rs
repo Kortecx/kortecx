@@ -202,24 +202,75 @@ pub fn try_committed_body(
     }
 }
 
-/// Build the authoring directive for one project file (fixed-skeleton OR a
-/// dynamically-planned manifest file — the path/role come from the caller). GR15:
-/// the committed answer IS the file body verbatim (reasoning is stripped by the
+/// A human label for the framework a hosted-app file belongs to (drives the authoring
+/// prompt's framing). `None` is the agentic (scheduled) lane; `Some(fw)` is a hosted
+/// (Experience) framework project. Unknown / `"auto"` labels resolve to Vite-React.
+#[must_use]
+fn framework_label(framework: &str) -> &'static str {
+    match framework {
+        "next_js" => "a production-grade Next.js (App Router) + TypeScript web project",
+        "svelte" => "a production-grade Svelte + TypeScript (Vite) web project",
+        _ => "a production-grade Vite + React + TypeScript web project",
+    }
+}
+
+/// Build the authoring directive for one project file. `framework`:
+/// - `None` — the agentic (scheduled) lane: the fixed-skeleton markdown/JSON files.
+/// - `Some(fw)` — a hosted (Experience) framework project: the directive names the
+///   framework, hands the model the COMPLETE planned file set so it IMPORTS from sibling
+///   modules instead of inlining them (killing the single-file monolith), and demands
+///   production-quality separation. `all_paths` is passed as prompt TEXT only (cheap;
+///   orthogonal to the bounded sibling-BODY context that guards the model's decode batch).
+///
+/// GR15: the committed answer IS the file body verbatim (reasoning is stripped by the
 /// recipe), so the directive asks for ONLY the body — no commentary, no fences.
 #[must_use]
-pub fn authoring_prompt(path: &str, role: &str, goal: &str, has_siblings: bool) -> String {
+pub fn authoring_prompt(
+    path: &str,
+    role: &str,
+    goal: &str,
+    framework: Option<&str>,
+    all_paths: &[&str],
+    has_siblings: bool,
+) -> String {
     let siblings = if has_siblings {
-        "The attached context shows sibling files already written for this app; keep this file \
+        "The attached context shows the most recent sibling files already written; keep this file \
          consistent with them. "
     } else {
         ""
     };
-    format!(
-        "You are scaffolding files for a durable, governed agentic application.\n\
-         App goal: {goal}\n\n\
-         Write the COMPLETE contents of the file `{path}` — {role}. {siblings}\
-         Return ONLY the file body — no commentary, no explanation, and no markdown code fences.",
-    )
+    match framework {
+        // Hosted (Experience) lane — a real, SEPARATED framework project.
+        Some(fw) => {
+            let tree = if all_paths.len() > 1 {
+                format!(
+                    "This file is ONE file of a project whose COMPLETE source set is: {}. \
+                     Import what you need from the sibling modules in that set (components, \
+                     styles, hooks, types) instead of inlining or re-declaring their content, and \
+                     do NOT redefine a file that appears elsewhere in the set. ",
+                    all_paths.join(", ")
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "You are authoring one file of {label}.\n\
+                 App goal: {goal}\n\n\
+                 Write the COMPLETE, production-quality contents of the file `{path}` — {role}. \
+                 {tree}{siblings}\
+                 Return ONLY the file body — no commentary, no explanation, and no markdown code \
+                 fences.",
+                label = framework_label(fw),
+            )
+        }
+        // Scheduled (agentic) lane — the fixed agentic-app skeleton (unchanged directive).
+        None => format!(
+            "You are scaffolding files for a durable, governed agentic application.\n\
+             App goal: {goal}\n\n\
+             Write the COMPLETE contents of the file `{path}` — {role}. {siblings}\
+             Return ONLY the file body — no commentary, no explanation, and no markdown code fences.",
+        ),
+    }
 }
 
 /// `true` iff `body` is empty or whitespace-only (the GR15 fail-closed guard — a
@@ -285,13 +336,48 @@ mod tests {
 
     #[test]
     fn authoring_prompt_demands_body_only_and_includes_goal() {
-        let p = authoring_prompt(SKELETON[0].path, SKELETON[0].role, "summarize PDFs", false);
+        // Agentic (scheduled) lane: framework = None, the unchanged skeleton directive.
+        let p = authoring_prompt(
+            SKELETON[0].path,
+            SKELETON[0].role,
+            "summarize PDFs",
+            None,
+            &[],
+            false,
+        );
         assert!(p.contains("summarize PDFs"));
         assert!(p.contains("README.md"));
         assert!(p.contains("no markdown code fences"));
+        assert!(p.contains("agentic application"));
         assert!(!p.contains("sibling files")); // no siblings on the first file
-        let p2 = authoring_prompt(SKELETON[2].path, SKELETON[2].role, "summarize PDFs", true);
+        let p2 = authoring_prompt(
+            SKELETON[2].path,
+            SKELETON[2].role,
+            "summarize PDFs",
+            None,
+            &[],
+            true,
+        );
         assert!(p2.contains("sibling files")); // siblings included once prior files exist
+    }
+
+    #[test]
+    fn authoring_prompt_hosted_names_the_framework_and_the_file_set() {
+        // Hosted (Experience) lane: framework = Some, the separated-project directive that
+        // hands the model the whole file set so it imports siblings (no monolith).
+        let all = ["src/App.tsx", "src/App.css", "src/components/Card.tsx"];
+        let p = authoring_prompt(
+            "src/App.tsx",
+            "the root component",
+            "a recipe card",
+            Some("vite_react"),
+            &all,
+            false,
+        );
+        assert!(p.contains("React"));
+        assert!(p.contains("src/components/Card.tsx")); // the full set is in the prompt
+        assert!(p.contains("Import")); // import-siblings directive (kills the monolith)
+        assert!(p.contains("no markdown code fences"));
     }
 
     #[test]

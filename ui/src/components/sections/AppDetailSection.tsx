@@ -408,7 +408,9 @@ function FilePane({
       animate="show"
     >
       <div className="app-file__head">
-        <code className="mono app-file__path">{path}</code>
+        <code className="mono app-file__path" title={path}>
+          {path}
+        </code>
         {locked ? (
           <span className="muted app-file__locked" data-testid="app-locked-notice" role="note">
             This App is locked — edits are refused. Unlock it from this App's header to edit.
