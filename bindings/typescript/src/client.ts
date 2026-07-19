@@ -1345,6 +1345,10 @@ export abstract class KxClientBase {
       filesDone: resp.filesDone,
       filesPending: resp.filesPending,
       detail: resp.detail,
+      // POC-6: the live-writing file + its token-stream ids (empty ⇒ undefined).
+      writingPath: resp.writingPath || undefined,
+      writingInstanceId: resp.writingInstanceId || undefined,
+      writingMoteId: resp.writingMoteId || undefined,
     };
   }
 

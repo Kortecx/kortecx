@@ -30,6 +30,11 @@
  *     SaveApp/GetApp + the `kortecx.appbundle/v1` codec (base64 + envelope walk). Rides
  *     the eager `common.js` (loaded up front by connection-context). Measured 656,790 B
  *     (origin/main) → 662,868 B (~6 KiB eager); bumped to the next KiB boundary.
+ *   - 656 KiB → 657 KiB (POC-6 live agentic creation): +3 additive fields on
+ *     GetScaffoldStatusResponse (writing_path/writing_instance_id/writing_mote_id) so the
+ *     scaffold surfaces the live-writing file's token-stream ids — the generated message
+ *     schema is eager (connection-context loads the client up front). Measured 671,744 B
+ *     (origin/main) → 671,761 B (+17 B eager); bumped to the next KiB boundary.
  *
  * Exit 1 over budget. The printed table doubles as the GR10 evidence blob.
  */
@@ -40,7 +45,7 @@ import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(UI_ROOT, "dist");
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 671_744);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 672_768);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

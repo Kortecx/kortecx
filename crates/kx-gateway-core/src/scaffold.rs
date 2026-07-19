@@ -25,6 +25,21 @@ use crate::reader::{ContentReader, JournalReader};
 /// this exact handle (the scaffold contract).
 pub const APP_SCAFFOLD_WRITE_RECIPE_HANDLE: &str = "kx/recipes/app-scaffold-write";
 
+/// POC-6 (agentic creation): the recipe handle the host seeds for the DYNAMIC
+/// manifest planner — a single Pure greedy model step whose committed answer is a
+/// strict-JSON project manifest (`{"manifest":{"version":1,"files":[…]}}`). The
+/// host's `provision.rs` MUST seed this exact handle (seeded only when a model is
+/// served). The scaffold orchestrator binds it once per creation to plan the
+/// use-case-specific file set, then drives the write loop over that set.
+pub const APP_MANIFEST_PLAN_RECIPE_HANDLE: &str = "kx/recipes/app-manifest-plan";
+
+/// POC-6: the durable in-branch record of the planned dynamic file set. Written
+/// (as the planner's committed JSON) once the manifest lands, so `GetScaffoldStatus`
+/// and a RESUMED run read the SAME planned paths the model chose — a resume never
+/// re-plans (the committed plan is the truth). Excluded from the reported
+/// file-progress set (an internal marker, never a "project file").
+pub const MANIFEST_MARKER_PATH: &str = ".kortecx/manifest.json";
+
 /// One fixed skeleton file: a stable path + the authoring role the model fills.
 pub struct ScaffoldFile {
     /// The manifest path (stable — the deterministic e2e asserts exactly these).
@@ -86,6 +101,17 @@ pub struct ScaffoldStatus {
     pub files_pending: Vec<String>,
     /// Advisory progress / failure text (never authority).
     pub detail: String,
+    /// POC-6: the project path currently being authored (streamed live), if any.
+    /// `None` outside the write phase.
+    pub writing_path: Option<String>,
+    /// POC-6: the run instance streaming the writing file's tokens — 16 bytes.
+    /// The WS `/tokens` ownership gate; surfaced as hex on the wire. `None` when
+    /// no file is being written.
+    pub writing_instance_id: Option<[u8; 16]>,
+    /// POC-6: the write mote whose decode streams the writing file — 32 bytes.
+    /// The token-broker key; surfaced as hex on the wire. `None` when no file is
+    /// being written.
+    pub writing_mote_id: Option<[u8; 32]>,
 }
 
 /// The host-side App-scaffold orchestrator seam. The host impl owns the runtime
@@ -176,11 +202,12 @@ pub fn try_committed_body(
     }
 }
 
-/// Build the authoring directive for one skeleton file. GR15: the committed answer
-/// IS the file body verbatim (reasoning is stripped by the recipe), so the directive
-/// asks for ONLY the body — no commentary, no code fences.
+/// Build the authoring directive for one project file (fixed-skeleton OR a
+/// dynamically-planned manifest file — the path/role come from the caller). GR15:
+/// the committed answer IS the file body verbatim (reasoning is stripped by the
+/// recipe), so the directive asks for ONLY the body — no commentary, no fences.
 #[must_use]
-pub fn authoring_prompt(file: &ScaffoldFile, goal: &str, has_siblings: bool) -> String {
+pub fn authoring_prompt(path: &str, role: &str, goal: &str, has_siblings: bool) -> String {
     let siblings = if has_siblings {
         "The attached context shows sibling files already written for this app; keep this file \
          consistent with them. "
@@ -192,8 +219,6 @@ pub fn authoring_prompt(file: &ScaffoldFile, goal: &str, has_siblings: bool) -> 
          App goal: {goal}\n\n\
          Write the COMPLETE contents of the file `{path}` — {role}. {siblings}\
          Return ONLY the file body — no commentary, no explanation, and no markdown code fences.",
-        path = file.path,
-        role = file.role,
     )
 }
 
@@ -204,19 +229,22 @@ pub fn body_is_empty(body: &[u8]) -> bool {
     body.iter().all(u8::is_ascii_whitespace)
 }
 
-/// Resolve `files_done` / `files_pending` over the FIXED skeleton given the branch
-/// manifest's current path set (pure — the host calls this from `status`).
+/// Resolve `files_done` / `files_pending` over the PLANNED file set (the dynamic
+/// manifest, or the fixed skeleton as a fallback) given the branch manifest's
+/// current path set. Pure — the host calls this from `status` with the planned
+/// paths it read from the committed manifest marker (or the skeleton).
 #[must_use]
 pub fn split_done_pending(
+    planned_paths: &[String],
     manifest_paths: &std::collections::BTreeSet<String>,
 ) -> (Vec<String>, Vec<String>) {
     let mut done = Vec::new();
     let mut pending = Vec::new();
-    for f in SKELETON {
-        if manifest_paths.contains(f.path) {
-            done.push(f.path.to_string());
+    for p in planned_paths {
+        if manifest_paths.contains(p) {
+            done.push(p.clone());
         } else {
-            pending.push(f.path.to_string());
+            pending.push(p.clone());
         }
     }
     (done, pending)
@@ -257,12 +285,12 @@ mod tests {
 
     #[test]
     fn authoring_prompt_demands_body_only_and_includes_goal() {
-        let p = authoring_prompt(&SKELETON[0], "summarize PDFs", false);
+        let p = authoring_prompt(SKELETON[0].path, SKELETON[0].role, "summarize PDFs", false);
         assert!(p.contains("summarize PDFs"));
         assert!(p.contains("README.md"));
         assert!(p.contains("no markdown code fences"));
         assert!(!p.contains("sibling files")); // no siblings on the first file
-        let p2 = authoring_prompt(&SKELETON[2], "summarize PDFs", true);
+        let p2 = authoring_prompt(SKELETON[2].path, SKELETON[2].role, "summarize PDFs", true);
         assert!(p2.contains("sibling files")); // siblings included once prior files exist
     }
 
@@ -276,21 +304,42 @@ mod tests {
 
     #[test]
     fn split_and_derive_phase_cover_the_states() {
+        let planned: Vec<String> = SKELETON.iter().map(|f| f.path.to_string()).collect();
+
         let none = std::collections::BTreeSet::<String>::new();
-        let (d, p) = split_done_pending(&none);
+        let (d, p) = split_done_pending(&planned, &none);
         assert!(d.is_empty());
         assert_eq!(p.len(), SKELETON.len());
         assert_eq!(derive_phase(&d, &p), ScaffoldPhase::Planning);
 
         let all: std::collections::BTreeSet<String> =
             SKELETON.iter().map(|f| f.path.to_string()).collect();
-        let (d, p) = split_done_pending(&all);
+        let (d, p) = split_done_pending(&planned, &all);
         assert_eq!(d.len(), SKELETON.len());
         assert!(p.is_empty());
         assert_eq!(derive_phase(&d, &p), ScaffoldPhase::Done);
 
         let some: std::collections::BTreeSet<String> = [SKELETON[0].path.to_string()].into();
-        let (d, p) = split_done_pending(&some);
+        let (d, p) = split_done_pending(&planned, &some);
+        assert_eq!(derive_phase(&d, &p), ScaffoldPhase::Writing);
+    }
+
+    #[test]
+    fn split_done_pending_follows_a_dynamic_manifest() {
+        // The planned set is model-chosen, not the fixed skeleton.
+        let planned = vec![
+            "package.json".to_string(),
+            "src/App.tsx".to_string(),
+            "src/App.css".to_string(),
+        ];
+        let present: std::collections::BTreeSet<String> =
+            ["package.json".to_string(), "src/App.tsx".to_string()].into();
+        let (d, p) = split_done_pending(&planned, &present);
+        assert_eq!(
+            d,
+            vec!["package.json".to_string(), "src/App.tsx".to_string()]
+        );
+        assert_eq!(p, vec!["src/App.css".to_string()]);
         assert_eq!(derive_phase(&d, &p), ScaffoldPhase::Writing);
     }
 }

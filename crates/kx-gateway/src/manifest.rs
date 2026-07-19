@@ -1,0 +1,410 @@
+//! POC-6 (agentic creation) — the DYNAMIC project manifest: the model-proposed set
+//! of files a scaffold authors for a use-case-specific project.
+//!
+//! The `app-manifest-plan` recipe's committed answer is a strict-JSON manifest —
+//! UNTRUSTED model output. [`decode_manifest`] turns it into a validated file list
+//! with the exact fail-closed discipline of [`kx_planner::decode_plan`] (IMP-5):
+//! size-check BEFORE parse, strip a leading reasoning block / code fence, decode
+//! into fixed flat structs (`deny_unknown_fields`, never a dynamic `serde_json::Value`
+//! — so no float/NaN/unbounded-recursion path), then enforce the envelope invariants
+//! (version, count, per-field size, safe relative paths, uniqueness, the reserved
+//! marker). Total + panic-free over arbitrary bytes.
+//!
+//! The JSON decode lives in the HOST (kx-gateway), NOT gateway-core: gateway-core's
+//! library deliberately never links a JSON manifest view (its `serde_json` is
+//! dev-only). gateway-core owns the seam types + the marker-path const; the host
+//! owns the decode.
+
+use kx_gateway_core::{MANIFEST_MARKER_PATH, SKELETON};
+use serde::Deserialize;
+
+/// POC-6: the DYNAMIC project-manifest contract — the system prompt teaching the model to
+/// plan a COMPLETE, runnable project for an app goal and emit EXACTLY one strict
+/// `{"manifest":{"version":1,"files":[{"path","role"}]}}` envelope, the minimal surface
+/// [`decode_manifest`] accepts (fail-closed, `deny_unknown_fields`, relative paths only).
+/// The scaffold orchestrator then authors each planned file in turn (its role becomes the
+/// per-file write directive). The exact envelope round-trips through [`decode_manifest`]
+/// (pinned by `manifest_plan_contract_decodes_via_the_enforcer`). It lives beside the
+/// decoder — one place owns the whole manifest contract (prompt + enforcer + coherence
+/// test) — because the scaffold orchestrator that binds it is compiled unconditionally,
+/// while `prompt_library` is `serve-engine`-gated.
+pub(crate) const MANIFEST_PLAN_SYSTEM: &str = "You are a senior engineer planning a COMPLETE, \
+runnable project for an application goal. Decide the FULL set of files the project needs — source \
+components, styles, TypeScript/JavaScript, an entry point, `package.json` and the build/config \
+files it needs (e.g. a bundler config, tsconfig, an index.html), at least one test, a README, and \
+optionally a Dockerfile — everything required to install, build, and run it. Choose real, \
+conventional RELATIVE paths for the framework the goal implies (e.g. `package.json`, \
+`src/main.tsx`, `src/App.tsx`, `src/App.css`, `index.html`, `vite.config.ts`, \
+`src/App.test.tsx`). For EACH file write a short ROLE: one concrete sentence describing what that \
+file must contain. Plan a focused, coherent set — typically 5 to 12 files; add a file only when it \
+does distinct work. Reply with EXACTLY one JSON object and NOTHING else — no prose, no code \
+fence, no explanation:\n\
+{\"manifest\":{\"version\":1,\"files\":[{\"path\":\"<relative path>\",\"role\":\"<what this file \
+contains>\"}]}}\n\
+Rules: version is always 1; every path is RELATIVE (no leading slash, no `..` segment); do NOT \
+include a content/body/language field or any field other than `path` and `role` per file; do NOT \
+plan a `.kortecx/` path (reserved). Keep it minimal but complete.";
+
+/// Build the manifest-planner directive for an app `goal`: the strict-JSON contract
+/// ([`MANIFEST_PLAN_SYSTEM`]) + the goal, passed as the bound `prompt` DATA arg to the
+/// `app-manifest-plan` recipe (the scaffold-write precedent — the directive is data, never
+/// an identity axis). The committed answer is decoded fail-closed by [`decode_manifest`].
+pub(crate) fn manifest_plan_directive(goal: &str) -> String {
+    format!("{MANIFEST_PLAN_SYSTEM}\n\nApp goal: {}", goal.trim())
+}
+
+/// Hard cap on the number of files a manifest may declare — a DoS bound
+/// independent of the byte cap. Generous for a full runnable project, bounded for
+/// the write loop.
+pub(crate) const MAX_MANIFEST_FILES: usize = 48;
+
+/// Hard cap on a manifest byte payload BEFORE parse — a hostile model cannot force
+/// a large parse allocation past this.
+pub(crate) const MAX_MANIFEST_BYTES: usize = 16 * 1024;
+
+/// Per-path cap (defense-in-depth on the flat strings).
+const MAX_MANIFEST_PATH_BYTES: usize = 160;
+/// Per-role cap (defense-in-depth on the flat strings).
+const MAX_MANIFEST_ROLE_BYTES: usize = 400;
+
+/// One planned manifest file — a model-CHOSEN relative path + a short authoring
+/// role the scaffold write step fills. Owned `String`s (vs `kx_gateway_core::ScaffoldFile`'s
+/// `&'static str`) because the model chooses them at run time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ManifestFile {
+    /// The relative project path (validated: relative, no `..`, safe charset).
+    pub(crate) path: String,
+    /// A short authoring role woven into the write step's prompt.
+    pub(crate) role: String,
+}
+
+/// A fail-closed manifest-decode refusal (a closed vocabulary so tests assert the
+/// exact reason). Mirrors `kx_planner::PlanError`'s shape.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum ManifestError {
+    /// The payload exceeded [`MAX_MANIFEST_BYTES`] before parsing.
+    #[error("manifest is oversize: {got} bytes > max {max}")]
+    Oversize {
+        /// The payload byte length.
+        got: usize,
+        /// The cap.
+        max: usize,
+    },
+    /// The payload was not valid UTF-8.
+    #[error("manifest was not valid UTF-8")]
+    NotUtf8,
+    /// The strict envelope parse failed (non-JSON / wrong shape / unknown key).
+    #[error("manifest is malformed: {diagnostic}")]
+    Malformed {
+        /// The serde diagnostic.
+        diagnostic: String,
+    },
+    /// The version field was not the supported `1`.
+    #[error("manifest version {version} is unsupported (expected 1)")]
+    UnknownVersion {
+        /// The declared version.
+        version: u32,
+    },
+    /// The manifest declared no files.
+    #[error("manifest declares no files")]
+    Empty,
+    /// The manifest declared more than [`MAX_MANIFEST_FILES`] files.
+    #[error("manifest declares too many files: {got} > max {max}")]
+    TooManyFiles {
+        /// The declared count.
+        got: usize,
+        /// The cap.
+        max: usize,
+    },
+    /// A declared path was not a safe relative project path (or was the reserved
+    /// manifest marker).
+    #[error("manifest path is invalid: {path}")]
+    InvalidPath {
+        /// The offending path.
+        path: String,
+    },
+    /// A path or role field exceeded its per-field cap.
+    #[error("manifest field too long ({what}): {got} bytes > max {max}")]
+    FieldTooLong {
+        /// Which field (`path` / `role`).
+        what: &'static str,
+        /// The field byte length.
+        got: usize,
+        /// The cap.
+        max: usize,
+    },
+    /// Two files declared the same path.
+    #[error("manifest declares a duplicate path: {path}")]
+    DuplicatePath {
+        /// The duplicated path.
+        path: String,
+    },
+}
+
+/// The strict manifest envelope — `{"manifest":{"version":1,"files":[…]}}`. Flat
+/// structs only (strings + `u32`), `deny_unknown_fields` on each, so no dynamic
+/// `serde_json::Value` / float / unbounded-recursion path exists.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestEnvelope {
+    manifest: WireManifest,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireManifest {
+    version: u32,
+    files: Vec<WireManifestFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WireManifestFile {
+    path: String,
+    role: String,
+}
+
+/// `true` iff `p` is a safe RELATIVE project path: non-empty, ≤ cap, no leading /
+/// trailing `/`, no `.`/`..`/empty segment, and every byte in the portable set
+/// `[A-Za-z0-9._/-]`. Fail-closed — the model chose it (untrusted).
+fn is_safe_manifest_path(p: &str) -> bool {
+    if p.is_empty() || p.len() > MAX_MANIFEST_PATH_BYTES {
+        return false;
+    }
+    if p.starts_with('/') || p.ends_with('/') {
+        return false;
+    }
+    if !p
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/'))
+    {
+        return false;
+    }
+    p.split('/')
+        .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+}
+
+/// Strip a SINGLE leading reasoning block (`<think>…</think>` / `<|channel>…<channel|>`)
+/// then a surrounding markdown code fence, so the strict parser sees bare `{…}`.
+/// Total + panic-free (the delimiters are ASCII). A local copy of the `kx-planner`
+/// decoder's `extract_json_envelope`.
+fn strip_json_wrappers(text: &str) -> &str {
+    let mut t = text.trim();
+    for (open, close) in [("<think>", "</think>"), ("<|channel>", "<channel|>")] {
+        if let Some(rest) = t.strip_prefix(open) {
+            t = match rest.find(close) {
+                Some(i) => rest[i + close.len()..].trim(),
+                None => "",
+            };
+            break;
+        }
+    }
+    let Some(rest) = t.strip_prefix("```") else {
+        return t;
+    };
+    let inner = match rest.find('\n') {
+        Some(nl) => &rest[nl + 1..],
+        None => rest,
+    };
+    match inner.rfind("```") {
+        Some(i) => inner[..i].trim(),
+        None => inner.trim(),
+    }
+}
+
+/// Decode a model-proposed project manifest, fail-closed (see the module doc).
+/// Total + panic-free over arbitrary `bytes`.
+pub(crate) fn decode_manifest(bytes: &[u8]) -> Result<Vec<ManifestFile>, ManifestError> {
+    if bytes.len() > MAX_MANIFEST_BYTES {
+        return Err(ManifestError::Oversize {
+            got: bytes.len(),
+            max: MAX_MANIFEST_BYTES,
+        });
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| ManifestError::NotUtf8)?;
+    let stripped = strip_json_wrappers(text);
+    let envelope: ManifestEnvelope =
+        serde_json::from_str(stripped).map_err(|e| ManifestError::Malformed {
+            diagnostic: e.to_string(),
+        })?;
+    let m = envelope.manifest;
+    if m.version != 1 {
+        return Err(ManifestError::UnknownVersion { version: m.version });
+    }
+    if m.files.is_empty() {
+        return Err(ManifestError::Empty);
+    }
+    if m.files.len() > MAX_MANIFEST_FILES {
+        return Err(ManifestError::TooManyFiles {
+            got: m.files.len(),
+            max: MAX_MANIFEST_FILES,
+        });
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::with_capacity(m.files.len());
+    for f in m.files {
+        if f.role.len() > MAX_MANIFEST_ROLE_BYTES {
+            return Err(ManifestError::FieldTooLong {
+                what: "role",
+                got: f.role.len(),
+                max: MAX_MANIFEST_ROLE_BYTES,
+            });
+        }
+        // The marker is reserved (an internal artifact, never a planned file).
+        if f.path == MANIFEST_MARKER_PATH || !is_safe_manifest_path(&f.path) {
+            return Err(ManifestError::InvalidPath { path: f.path });
+        }
+        if !seen.insert(f.path.clone()) {
+            return Err(ManifestError::DuplicatePath { path: f.path });
+        }
+        out.push(ManifestFile {
+            path: f.path,
+            role: f.role,
+        });
+    }
+    Ok(out)
+}
+
+/// The fixed `kx_gateway_core::SKELETON` as a dynamic-manifest file list — the
+/// graceful FALLBACK when no model is served or manifest planning fails (the
+/// scaffold still produces the proven agentic-app skeleton, path-for-path).
+pub(crate) fn skeleton_manifest() -> Vec<ManifestFile> {
+    SKELETON
+        .iter()
+        .map(|f| ManifestFile {
+            path: f.path.to_string(),
+            role: f.role.to_string(),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_manifest_accepts_a_wrapped_dynamic_project() {
+        // Gemma-style: a leading reasoning block + a ```json fence around the JSON.
+        let raw = "<think>plan a vite react app</think>\n```json\n{\"manifest\":{\"version\":1,\
+                   \"files\":[{\"path\":\"package.json\",\"role\":\"the npm manifest\"},\
+                   {\"path\":\"src/App.tsx\",\"role\":\"the root component\"}]}}\n```";
+        let files = decode_manifest(raw.as_bytes()).expect("wrapped manifest decodes");
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "package.json");
+        assert_eq!(files[1].path, "src/App.tsx");
+        assert_eq!(files[1].role, "the root component");
+    }
+
+    #[test]
+    fn decode_manifest_is_fail_closed() {
+        // Not JSON.
+        assert!(matches!(
+            decode_manifest(b"not a manifest"),
+            Err(ManifestError::Malformed { .. })
+        ));
+        // Unknown key (deny_unknown_fields) — closes the "smuggle an extra field" vector.
+        let extra = "{\"manifest\":{\"version\":1,\"files\":[{\"path\":\"a.txt\",\"role\":\"r\",\
+                     \"model\":\"gemma\"}]}}";
+        assert!(matches!(
+            decode_manifest(extra.as_bytes()),
+            Err(ManifestError::Malformed { .. })
+        ));
+        // Wrong version.
+        let v2 = "{\"manifest\":{\"version\":2,\"files\":[{\"path\":\"a.txt\",\"role\":\"r\"}]}}";
+        assert!(matches!(
+            decode_manifest(v2.as_bytes()),
+            Err(ManifestError::UnknownVersion { version: 2 })
+        ));
+        // Empty file set.
+        let empty = "{\"manifest\":{\"version\":1,\"files\":[]}}";
+        assert_eq!(decode_manifest(empty.as_bytes()), Err(ManifestError::Empty));
+        // Path traversal.
+        let esc = "{\"manifest\":{\"version\":1,\"files\":[{\"path\":\"../etc/passwd\",\"role\":\"r\"}]}}";
+        assert!(matches!(
+            decode_manifest(esc.as_bytes()),
+            Err(ManifestError::InvalidPath { .. })
+        ));
+        // Absolute path.
+        let abs = "{\"manifest\":{\"version\":1,\"files\":[{\"path\":\"/tmp/x\",\"role\":\"r\"}]}}";
+        assert!(matches!(
+            decode_manifest(abs.as_bytes()),
+            Err(ManifestError::InvalidPath { .. })
+        ));
+        // The reserved marker path.
+        let marker = format!(
+            "{{\"manifest\":{{\"version\":1,\"files\":[{{\"path\":\"{MANIFEST_MARKER_PATH}\",\"role\":\"r\"}}]}}}}"
+        );
+        assert!(matches!(
+            decode_manifest(marker.as_bytes()),
+            Err(ManifestError::InvalidPath { .. })
+        ));
+        // Duplicate path.
+        let dup = "{\"manifest\":{\"version\":1,\"files\":[{\"path\":\"a.txt\",\"role\":\"r\"},\
+                   {\"path\":\"a.txt\",\"role\":\"r2\"}]}}";
+        assert!(matches!(
+            decode_manifest(dup.as_bytes()),
+            Err(ManifestError::DuplicatePath { .. })
+        ));
+        // Oversize (before parse).
+        let big = vec![b'x'; MAX_MANIFEST_BYTES + 1];
+        assert!(matches!(
+            decode_manifest(&big),
+            Err(ManifestError::Oversize { .. })
+        ));
+    }
+
+    #[test]
+    fn decode_manifest_caps_the_file_count() {
+        use std::fmt::Write as _;
+        let mut files = String::new();
+        for i in 0..=MAX_MANIFEST_FILES {
+            if i > 0 {
+                files.push(',');
+            }
+            let _ = write!(files, "{{\"path\":\"f{i}.txt\",\"role\":\"r\"}}");
+        }
+        let over = format!("{{\"manifest\":{{\"version\":1,\"files\":[{files}]}}}}");
+        assert!(matches!(
+            decode_manifest(over.as_bytes()),
+            Err(ManifestError::TooManyFiles { .. })
+        ));
+    }
+
+    #[test]
+    fn skeleton_manifest_mirrors_the_fixed_skeleton() {
+        let m = skeleton_manifest();
+        assert_eq!(m.len(), SKELETON.len());
+        for (mf, sf) in m.iter().zip(SKELETON.iter()) {
+            assert_eq!(mf.path, sf.path);
+            assert_eq!(mf.role, sf.role);
+        }
+    }
+
+    /// The canonical manifest the contract teaches MUST decode through the same
+    /// fail-closed enforcer the runtime uses ([`decode_manifest`]) — the render↔enforce
+    /// coherence guard (mirrors the planner example test in `prompt_library`).
+    #[test]
+    fn manifest_plan_contract_decodes_via_the_enforcer() {
+        const EXAMPLE: &str = "{\"manifest\":{\"version\":1,\"files\":[\
+{\"path\":\"package.json\",\"role\":\"the npm manifest with vite + react deps and scripts\"},\
+{\"path\":\"index.html\",\"role\":\"the Vite entry HTML mounting the app\"},\
+{\"path\":\"src/main.tsx\",\"role\":\"the React entry that renders App into the root\"},\
+{\"path\":\"src/App.tsx\",\"role\":\"the root component implementing the goal\"},\
+{\"path\":\"src/App.css\",\"role\":\"the component styles\"},\
+{\"path\":\"src/App.test.tsx\",\"role\":\"a smoke test rendering App\"}]}}";
+        let files = decode_manifest(EXAMPLE.as_bytes())
+            .expect("the taught manifest example must decode via the runtime enforcer");
+        assert!(files.len() >= 5, "the example teaches a complete project");
+        assert!(files.iter().any(|f| f.path == "package.json"));
+        assert!(files.iter().any(|f| f.path == "src/App.tsx"));
+    }
+
+    #[test]
+    fn manifest_plan_directive_includes_goal_and_the_strict_envelope() {
+        let d = manifest_plan_directive("a kanban board with drag and drop");
+        assert!(d.contains("a kanban board with drag and drop"));
+        assert!(d.contains("\"manifest\""));
+        assert!(d.contains("\"version\":1"));
+        assert!(d.contains("EXACTLY one JSON object"));
+    }
+}

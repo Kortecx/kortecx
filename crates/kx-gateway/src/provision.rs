@@ -274,6 +274,12 @@ const REACT_VISION_LOGIC_REF: [u8; 32] = [0x57; 32];
 /// with `react-edit`). `0x59` is the next free sentinel after chat-rag (`0x58`).
 const APP_SCAFFOLD_WRITE_LOGIC_REF: [u8; 32] = [0x59; 32];
 
+/// POC-6: a DISTINCT placeholder `logic_ref` for the `app-manifest-plan` seed step
+/// (the BUG-25 class — own ref so the manifest planner's fingerprint never collides
+/// with `app-scaffold-write`, whose body it otherwise mirrors). `0x5d` is the next
+/// free sentinel after react-memory (`0x5c`).
+const APP_MANIFEST_PLAN_LOGIC_REF: [u8; 32] = [0x5d; 32];
+
 /// RC4b (agentic RAG): the wire handle of the `react-rag` recipe — a live ReAct loop
 /// like [`REACT_RECIPE_HANDLE`] BUT whose server-built warrant grants the read-only
 /// `retrieve@1` tool (RC4a hybrid `HostDatasetView::query`) instead of `mcp-echo@1`,
@@ -1201,6 +1207,35 @@ impl DemoLibrary {
             ));
         }
 
+        // (app-manifest-plan) POC-6: the single Pure greedy model step the scaffold
+        // orchestrator drives ONCE per creation to plan a use-case-specific project
+        // file set. Byte-identical body to app-scaffold-write (a `prompt` directive,
+        // `reasoning=strip`, the terminal answer IS the committed bytes) EXCEPT its
+        // OWN logic ref (BUG-25); the committed answer is a strict-JSON manifest the
+        // host decodes fail-closed (`kx_gateway_core::decode_manifest`). Seeded only
+        // when a model is served (default-OFF ⇒ digest unchanged).
+        if let Some(model_id) = serve_model {
+            let manifest_w = manifest_plan_warrant(exec_class, model_id);
+            let manifest_h = app_manifest_plan_handle()?;
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                parties,
+                &manifest_h,
+                app_manifest_plan_body(&manifest_w),
+                &manifest_w,
+            )?;
+            recipes.push((
+                manifest_h,
+                RecipeMeta {
+                    owner_root: manifest_w,
+                    free_params: prompt_contract(),
+                },
+            ));
+        }
+
         // (judge) T-AGENT2: a SEPARATE opt-in self-checking recipe — a greedy model
         // PRODUCER (a `prompt` free-param) gated by an LLM-JUDGE critic (ReadOnlyNondet)
         // that grades the answer against a fixed rubric using the served model. Seeded
@@ -1590,6 +1625,10 @@ fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
         kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE => (
             "App-Scaffold-Write — the single Pure model step the App scaffold orchestrator drives per file: it authors one file body of a new agentic-app project into a CoW branch (the host is never written).",
             &["agent", "scaffold", "app", "author", "branch", "in-cas"],
+        ),
+        kx_gateway_core::APP_MANIFEST_PLAN_RECIPE_HANDLE => (
+            "App-Manifest-Plan — the single Pure model step the App scaffold orchestrator runs once per creation to plan a use-case-specific project file set (a strict-JSON manifest the host decodes fail-closed); the scaffold then authors each planned file in turn.",
+            &["agent", "scaffold", "app", "plan", "manifest", "in-cas"],
         ),
         VISION_RECIPE_HANDLE => (
             "Vision — a multimodal completion over an attached image.",
@@ -3475,6 +3514,15 @@ pub(crate) fn scaffold_write_warrant(exec_class: ExecutorClass, model_id: &Model
     w
 }
 
+/// POC-6: the warrant for the `app-manifest-plan` step — the same server-minted
+/// Pure/no-tools shape as [`scaffold_write_warrant`] (a JSON project manifest is
+/// well within the scaffold output budget, and a reasoning model still spends part
+/// of it on a stripped `<think>` block). Reusing the scaffold cap keeps both
+/// creation-path steps behind one operator knob (`KX_SERVE_SCAFFOLD_MAX_OUTPUT_TOKENS`).
+pub(crate) fn manifest_plan_warrant(exec_class: ExecutorClass, model_id: &ModelId) -> WarrantSpec {
+    scaffold_write_warrant(exec_class, model_id)
+}
+
 fn react_edit_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(REACT_EDIT_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid react-edit recipe handle".into()))
@@ -3485,6 +3533,13 @@ fn react_edit_handle() -> Result<AssetPath, GatewayError> {
 fn app_scaffold_write_handle() -> Result<AssetPath, GatewayError> {
     parse_handle(kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE)
         .ok_or_else(|| GatewayError::Catalog("invalid app-scaffold-write recipe handle".into()))
+}
+
+/// POC-6: the `app-manifest-plan` recipe handle (the gateway-core scaffold
+/// orchestrator binds this EXACT handle — the shared manifest-plan contract).
+fn app_manifest_plan_handle() -> Result<AssetPath, GatewayError> {
+    parse_handle(kx_gateway_core::APP_MANIFEST_PLAN_RECIPE_HANDLE)
+        .ok_or_else(|| GatewayError::Catalog("invalid app-manifest-plan recipe handle".into()))
 }
 
 fn judge_handle() -> Result<AssetPath, GatewayError> {
@@ -3629,6 +3684,37 @@ fn app_scaffold_write_body(warrant: &WarrantSpec) -> WorkflowDef {
     // default is 512 tokens, which truncated Gemma-authored scaffold pages mid-file (a full
     // `App.tsx`/`App.svelte`/`app/page.tsx` needs far more). Declare the warrant's scaffold
     // budget so the whole file can be emitted; still bounded by that same ceiling.
+    step.inference_params.max_output_tokens = warrant.model_route.max_output_tokens;
+    wf.add_step(step);
+    wf
+}
+
+/// POC-6: the `app-manifest-plan` recipe body — byte-for-byte the
+/// [`app_scaffold_write_body`] single Pure greedy step (a `prompt` slot the binder
+/// fills, `reasoning=strip`), but with its OWN `APP_MANIFEST_PLAN_LOGIC_REF` (BUG-25 —
+/// a distinct fingerprint). The scaffold orchestrator binds it once per creation: the
+/// committed terminal answer is a strict-JSON project manifest the host decodes
+/// fail-closed (`kx_gateway_core::decode_manifest`). Same 512-cap fix — the mote MUST
+/// declare its output budget or the manifest truncates mid-JSON at 512 tokens.
+fn app_manifest_plan_body(warrant: &WarrantSpec) -> WorkflowDef {
+    let logic = LogicRef::from_bytes(APP_MANIFEST_PLAN_LOGIC_REF);
+    let b = APP_MANIFEST_PLAN_LOGIC_REF;
+    let seed = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let mut wf = WorkflowDef::new(seed);
+    let mut step = transform(
+        logic,
+        warrant.model_route.model_id.clone(),
+        warrant.clone(),
+        ToolName("demo".into()),
+    );
+    step.config_subset
+        .insert(ConfigKey(PROMPT_KEY.into()), ConfigVal(Vec::new()));
+    step.config_subset.insert(
+        ConfigKey(REASONING_CONFIG_KEY.into()),
+        ConfigVal(REASONING_STRIP.as_bytes().to_vec()),
+    );
+    // The 512-cap fix (see `app_scaffold_write_body`): declare the warrant's budget
+    // on the mote so the full manifest JSON is emitted, not truncated at 512 tokens.
     step.inference_params.max_output_tokens = warrant.model_route.max_output_tokens;
     wf.add_step(step);
     wf
@@ -6051,6 +6137,75 @@ mod tests {
         assert!(
             mote.mote.def.inference_params.max_output_tokens > 512,
             "a 512-token declared cap truncates a full scaffolded file mid-body"
+        );
+    }
+
+    #[test]
+    fn app_manifest_plan_recipe_seeded_with_distinct_fingerprint() {
+        // POC-6: the manifest-plan recipe seeds alongside app-scaffold-write (a served
+        // model is present), with its OWN logic ref ⇒ a DISTINCT fingerprint from BOTH
+        // scaffold-write and react-edit (BUG-25), and the single-step `prompt` contract
+        // the scaffold orchestrator binds.
+        let model = ModelId("kx-serve:m".to_string());
+        let dir = tempfile::tempdir().unwrap();
+        let lib = DemoLibrary::open_complete(
+            dir.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            Some(&model),
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        let manifest_handle = kx_gateway_core::APP_MANIFEST_PLAN_RECIPE_HANDLE;
+        assert!(lib.recipe_handles().contains(&manifest_handle.to_string()));
+        let fp = |h: &str| lib.recipe_fingerprint(h).unwrap();
+        assert_ne!(
+            fp(manifest_handle),
+            fp(kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE),
+            "manifest-plan must have a distinct fingerprint from scaffold-write"
+        );
+        assert_ne!(fp(manifest_handle), fp(REACT_EDIT_RECIPE_HANDLE));
+        // The published form is the single-step `prompt` contract.
+        let form = lib
+            .recipe_form(manifest_handle)
+            .expect("app-manifest-plan is provisioned");
+        assert_eq!(form.len(), 1);
+        assert_eq!(form[0].name, PROMPT_KEY);
+
+        // No served model ⇒ NOT seeded (the digest gate — a model step).
+        let dir2 = tempfile::tempdir().unwrap();
+        let lib2 = DemoLibrary::open_complete(
+            dir2.path(),
+            ExecutorClass::Bwrap,
+            &["alice@acme".to_string()],
+            None,
+            None,
+            false,
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(!lib2.recipe_handles().contains(&manifest_handle.to_string()));
+    }
+
+    #[test]
+    fn app_manifest_plan_body_declares_the_warrant_output_budget_not_512() {
+        // The manifest is strict JSON that a reasoning model still wraps in a stripped
+        // `<think>` block — so the SAME 512-cap footgun applies: the mote MUST declare
+        // its output budget or the manifest JSON truncates mid-array at 512 tokens.
+        let w = manifest_plan_warrant(ExecutorClass::Bwrap, &ModelId("m".to_string()));
+        let compiled = compile(&app_manifest_plan_body(&w)).expect("manifest body compiles");
+        let mote = compiled.motes.first().expect("one manifest mote");
+        assert_eq!(
+            mote.mote.def.inference_params.max_output_tokens, w.model_route.max_output_tokens,
+            "the manifest mote must DECLARE the warrant's output budget (not the 512 default)"
+        );
+        assert!(
+            mote.mote.def.inference_params.max_output_tokens > 512,
+            "a 512-token declared cap truncates the manifest JSON mid-array"
         );
     }
 

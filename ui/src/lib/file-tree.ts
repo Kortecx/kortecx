@@ -10,9 +10,16 @@
  * (a fixed skeleton + a few edits), so an O(n·depth) build is well within budget.
  */
 
+/** POC-6: a per-file authoring state, threaded onto a leaf so a live creation tree
+ *  can render done / writing / pending glyphs. Absent on a committed App tree. */
+export type FileTreeState = "done" | "writing" | "pending";
+
 export interface BranchManifestItem {
   readonly path: string;
-  readonly contentRef: string;
+  /** The content-store ref; optional (a not-yet-written scaffold file has none). */
+  readonly contentRef?: string;
+  /** POC-6: the authoring state for a live creation tree (absent on committed trees). */
+  readonly state?: FileTreeState;
 }
 
 export interface TreeNode {
@@ -22,6 +29,8 @@ export interface TreeNode {
   readonly path: string;
   /** Present on FILE leaves only — the content-store ref. */
   readonly contentRef?: string;
+  /** Present on FILE leaves only (POC-6) — the live authoring state, if any. */
+  readonly state?: FileTreeState;
   /** Present on FOLDER nodes only — the sorted child nodes. */
   readonly children?: TreeNode[];
 }
@@ -30,6 +39,7 @@ interface MutableNode {
   name: string;
   path: string;
   contentRef?: string;
+  state?: FileTreeState;
   children?: Map<string, MutableNode>;
 }
 
@@ -45,10 +55,14 @@ function compareNodes(a: TreeNode, b: TreeNode): number {
 
 function freeze(node: MutableNode): TreeNode {
   if (node.children === undefined) {
-    // A file leaf — carry its content ref (may be "" defensively; still a leaf).
-    return node.contentRef !== undefined
-      ? { name: node.name, path: node.path, contentRef: node.contentRef }
-      : { name: node.name, path: node.path };
+    // A file leaf — carry its content ref (may be "" defensively; still a leaf) +
+    // its POC-6 authoring state, if any.
+    const leaf: TreeNode = { name: node.name, path: node.path };
+    return {
+      ...leaf,
+      ...(node.contentRef !== undefined ? { contentRef: node.contentRef } : {}),
+      ...(node.state !== undefined ? { state: node.state } : {}),
+    };
   }
   const children = [...node.children.values()].map(freeze).sort(compareNodes);
   return { name: node.name, path: node.path, children };
@@ -76,6 +90,7 @@ export function buildFileTree(items: readonly BranchManifestItem[]): TreeNode[] 
       }
       if (isLeaf) {
         node.contentRef = item.contentRef;
+        node.state = item.state;
       } else {
         if (node.children === undefined) {
           node.children = new Map();

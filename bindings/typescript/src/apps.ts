@@ -161,12 +161,20 @@ export class AppSummary {
 /** POC-5a: the live App-scaffold phase. */
 export type ScaffoldPhase = "planning" | "writing" | "done" | "failed" | "unspecified";
 
-/** POC-5a: the resolved scaffold status (phase + the done/pending skeleton files). */
+/** POC-5a: the resolved scaffold status (phase + the done/pending project files). */
 export interface ScaffoldStatus {
   readonly phase: ScaffoldPhase;
   readonly filesDone: string[];
   readonly filesPending: string[];
   readonly detail: string;
+  /** POC-6: the project path being authored right now (streamed), if any. */
+  readonly writingPath?: string;
+  /** POC-6: the run instance streaming the writing file's tokens (hex; the WS
+   *  `/tokens` ownership gate). Pair with {@link writingMoteId} to subscribe. */
+  readonly writingInstanceId?: string;
+  /** POC-6: the write mote whose decode streams the writing file (hex; the
+   *  token-broker key). */
+  readonly writingMoteId?: string;
 }
 
 /** Map the wire `GetScaffoldStatusResponse.Phase` enum to a stable name. */

@@ -8,8 +8,15 @@
  */
 
 import { useState } from "react";
-import type { TreeNode } from "../../lib/file-tree";
+import type { FileTreeState, TreeNode } from "../../lib/file-tree";
 import { DigestChip } from "../DigestChip";
+
+/** POC-6: the per-file authoring glyph shown in a live creation tree. */
+const STATE_GLYPH: Record<FileTreeState, string> = {
+  done: "✓",
+  writing: "◐",
+  pending: "·",
+};
 
 export function FileTree({
   nodes,
@@ -97,9 +104,15 @@ function TreeRow({
         className={selected ? "file-tree__file file-tree__file--active" : "file-tree__file"}
         style={indent}
         data-testid={`file-${node.path}`}
+        data-state={node.state}
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(node.path, node.contentRef ?? "")}
       >
+        {node.state ? (
+          <span className={`file-tree__state file-tree__state--${node.state}`} aria-hidden="true">
+            {STATE_GLYPH[node.state]}
+          </span>
+        ) : null}
         <span className="file-tree__name mono">{node.name}</span>
         {node.contentRef ? <DigestChip hex={node.contentRef} label={node.path} /> : null}
       </button>

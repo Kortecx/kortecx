@@ -1621,7 +1621,7 @@ class GetScaffoldStatusRequest(_message.Message):
     def __init__(self, branch_handle: _Optional[str] = ...) -> None: ...
 
 class GetScaffoldStatusResponse(_message.Message):
-    __slots__ = ("phase", "files_done", "files_pending", "detail")
+    __slots__ = ("phase", "files_done", "files_pending", "detail", "writing_path", "writing_instance_id", "writing_mote_id")
     class Phase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         PHASE_UNSPECIFIED: _ClassVar[GetScaffoldStatusResponse.Phase]
@@ -1638,11 +1638,17 @@ class GetScaffoldStatusResponse(_message.Message):
     FILES_DONE_FIELD_NUMBER: _ClassVar[int]
     FILES_PENDING_FIELD_NUMBER: _ClassVar[int]
     DETAIL_FIELD_NUMBER: _ClassVar[int]
+    WRITING_PATH_FIELD_NUMBER: _ClassVar[int]
+    WRITING_INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    WRITING_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
     phase: GetScaffoldStatusResponse.Phase
     files_done: _containers.RepeatedScalarFieldContainer[str]
     files_pending: _containers.RepeatedScalarFieldContainer[str]
     detail: str
-    def __init__(self, phase: _Optional[_Union[GetScaffoldStatusResponse.Phase, str]] = ..., files_done: _Optional[_Iterable[str]] = ..., files_pending: _Optional[_Iterable[str]] = ..., detail: _Optional[str] = ...) -> None: ...
+    writing_path: str
+    writing_instance_id: str
+    writing_mote_id: str
+    def __init__(self, phase: _Optional[_Union[GetScaffoldStatusResponse.Phase, str]] = ..., files_done: _Optional[_Iterable[str]] = ..., files_pending: _Optional[_Iterable[str]] = ..., detail: _Optional[str] = ..., writing_path: _Optional[str] = ..., writing_instance_id: _Optional[str] = ..., writing_mote_id: _Optional[str] = ...) -> None: ...
 
 class LockAppRequest(_message.Message):
     __slots__ = ("branch_handle",)

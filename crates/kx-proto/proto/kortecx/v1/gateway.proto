@@ -1347,9 +1347,16 @@ message GetScaffoldStatusResponse {
     FAILED            = 4;  // the orchestration failed (detail carries the advisory reason)
   }
   Phase phase = 1;
-  repeated string files_done    = 2;  // skeleton paths already present in the branch manifest
-  repeated string files_pending = 3;  // skeleton paths still to write
+  repeated string files_done    = 2;  // planned project paths already present in the branch manifest
+  repeated string files_pending = 3;  // planned project paths still to write
   string detail                 = 4;  // advisory progress / failure text (never authority)
+  // POC-6 (agentic creation, additive): the file currently being authored + the live
+  // token-stream ids so the browser can stream its decode into an editor (WS /tokens).
+  // Empty outside the write/plan phases. `writing_instance_id` gates run ownership; the
+  // pair `(writing_instance_id, writing_mote_id)` is the broker subscription key. Hex.
+  string writing_path        = 5;  // the project path being authored right now ("" when idle)
+  string writing_instance_id = 6;  // 16B run instance, lower-hex ("" when idle)
+  string writing_mote_id     = 7;  // 32B write mote (the token-broker key), lower-hex ("" when idle)
 }
 message LockAppRequest   { string branch_handle = 1; }  // lock the App's project branch (caller-scoped)
 message LockAppResponse  { bool locked = 1; }

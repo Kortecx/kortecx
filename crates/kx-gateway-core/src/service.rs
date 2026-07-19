@@ -1895,6 +1895,17 @@ fn scaffold_phase_to_proto(
     }
 }
 
+/// POC-6: lower-hex encode an id (a run `instance_id` / write `mote_id`) for the wire —
+/// the browser passes these hex strings straight to the WS `/tokens` subscription.
+fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
 /// D155: map a host `BranchManifest` to the wire view (`{path -> ref}` entries).
 fn branch_to_proto(m: crate::BranchManifest) -> proto::Branch {
     let item_count = u32::try_from(m.items.len()).unwrap_or(u32::MAX);
@@ -4693,6 +4704,17 @@ impl KxGateway for GatewayService {
             files_done: status.files_done,
             files_pending: status.files_pending,
             detail: status.detail,
+            // POC-6: surface the live-writing file + its token-stream ids (hex) so the
+            // browser can subscribe over WS /tokens; empty when no file is in flight.
+            writing_path: status.writing_path.unwrap_or_default(),
+            writing_instance_id: status
+                .writing_instance_id
+                .map(|b| lower_hex(&b))
+                .unwrap_or_default(),
+            writing_mote_id: status
+                .writing_mote_id
+                .map(|b| lower_hex(&b))
+                .unwrap_or_default(),
         }))
     }
 
