@@ -25,7 +25,7 @@ use std::time::Duration;
 use kx_content::ContentRef;
 use kx_gateway_core::{
     dev_command_args, hosted_template, AppCatalog, BranchStore, ContentReader, GatewayError,
-    HostedAppSupervisor, HostedFileSource, HostedState, HostedStatus,
+    HostedAppSupervisor, HostedFileSource, HostedState, HostedStatus, MANIFEST_MARKER_PATH,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -432,13 +432,23 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
         write_file(&ctx.plan.workdir, tf.path, body.as_bytes())?;
     }
 
-    // 2) Overlay the branch manifest — the model-authored page (and any edited file) wins
-    //    over the template default.
+    // 2) Overlay the branch manifest — the model-authored page + any planned source file wins
+    //    over the template default. Config is TEMPLATE-owned: the framework's STATIC files
+    //    (package.json, build config, entry, base CSS) always win over a branch that (against
+    //    the planner's instructions) authored one, so a hosted project is GUARANTEED to
+    //    install/build/serve regardless of what the model emitted. The reserved plan marker is
+    //    metadata, never a project file.
+    let static_owned: std::collections::BTreeSet<&str> = hosted_template(&ctx.plan.framework)
+        .iter()
+        .filter(|f| matches!(f.source, HostedFileSource::Static(_)))
+        .map(|f| f.path)
+        .collect();
     let manifest = ctx
         .branches
         .get(&ctx.principal, &ctx.plan.branch_handle)
         .map_err(|e| format!("read branch: {e:?}"))?;
     let mut overlaid = 0usize;
+    let mut skipped = 0usize;
     if let Some(manifest) = manifest {
         for item in &manifest.items {
             // Confinement: reject any path that escapes the workdir (defense-in-depth; the
@@ -449,6 +459,10 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
                 .any(|c| c == ".." || c.is_empty())
             {
                 return Err(format!("unsafe manifest path {:?}", item.path));
+            }
+            if item.path == MANIFEST_MARKER_PATH || static_owned.contains(item.path.as_str()) {
+                skipped += 1;
+                continue;
             }
             let bytes = ctx
                 .content
@@ -461,7 +475,7 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
     log_line(
         logs,
         format!(
-            "materialized template ({}) + {overlaid} branch file(s)",
+            "materialized template ({}) + {overlaid} branch file(s) ({skipped} template-owned/marker skipped)",
             ctx.plan.framework
         ),
     );

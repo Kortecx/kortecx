@@ -15,42 +15,89 @@
 //! dev-only). gateway-core owns the seam types + the marker-path const; the host
 //! owns the decode.
 
-use kx_gateway_core::{MANIFEST_MARKER_PATH, SKELETON};
+use kx_gateway_core::MANIFEST_MARKER_PATH;
 use serde::Deserialize;
 
-/// POC-6: the DYNAMIC project-manifest contract — the system prompt teaching the model to
-/// plan a COMPLETE, runnable project for an app goal and emit EXACTLY one strict
-/// `{"manifest":{"version":1,"files":[{"path","role"}]}}` envelope, the minimal surface
+/// POC-6: the DYNAMIC project-manifest contract — the system prompt teaching the
+/// model to plan the SEPARATED SOURCE tree of a production-grade web app and emit EXACTLY one
+/// strict `{"manifest":{"version":1,"files":[{"path","role"}]}}` envelope, the minimal surface
 /// [`decode_manifest`] accepts (fail-closed, `deny_unknown_fields`, relative paths only).
-/// The scaffold orchestrator then authors each planned file in turn (its role becomes the
-/// per-file write directive). The exact envelope round-trips through [`decode_manifest`]
-/// (pinned by `manifest_plan_contract_decodes_via_the_enforcer`). It lives beside the
-/// decoder — one place owns the whole manifest contract (prompt + enforcer + coherence
-/// test) — because the scaffold orchestrator that binds it is compiled unconditionally,
-/// while `prompt_library` is `serve-engine`-gated.
-pub(crate) const MANIFEST_PLAN_SYSTEM: &str = "You are a senior engineer planning a COMPLETE, \
-runnable project for an application goal. Decide the FULL set of files the project needs — source \
-components, styles, TypeScript/JavaScript, an entry point, `package.json` and the build/config \
-files it needs (e.g. a bundler config, tsconfig, an index.html), at least one test, a README, and \
-optionally a Dockerfile — everything required to install, build, and run it. Choose real, \
-conventional RELATIVE paths for the framework the goal implies (e.g. `package.json`, \
-`src/main.tsx`, `src/App.tsx`, `src/App.css`, `index.html`, `vite.config.ts`, \
-`src/App.test.tsx`). For EACH file write a short ROLE: one concrete sentence describing what that \
-file must contain. Plan a focused, coherent set — typically 5 to 12 files; add a file only when it \
-does distinct work. Reply with EXACTLY one JSON object and NOTHING else — no prose, no code \
-fence, no explanation:\n\
+///
+/// This drives the HOSTED (Experience) lane. The build tooling (`package.json`, tsconfig, the
+/// bundler config, the HTML + app entry point) is TEMPLATE-OWNED — the model must NOT plan it —
+/// so the guaranteed-valid config always installs/builds/serves; the planner owns only the
+/// per-goal SOURCE tree. The mandate forces real separation (components in their own files, a
+/// stylesheet the component imports, no single-file monolith). `manifest_plan_directive` appends
+/// a per-framework contract naming exactly what is provided vs what the model must emit. The
+/// exact source-only envelope round-trips through [`decode_manifest`] (pinned by
+/// `manifest_plan_contract_decodes_via_the_enforcer`). It lives beside the decoder — one place
+/// owns the whole manifest contract (prompt + enforcer + coherence test) — because the scaffold
+/// orchestrator that binds it is compiled unconditionally, while `prompt_library` is
+/// `serve-engine`-gated.
+pub(crate) const MANIFEST_PLAN_SYSTEM: &str = "You are a senior front-end engineer planning the \
+SOURCE files of a COMPLETE, production-grade web app for a goal. The build tooling — \
+`package.json`, the bundler + `tsconfig`, the HTML entry, and the app entry point — is ALREADY \
+PROVIDED; do NOT plan any of them. Plan a well-SEPARATED source tree: the main component/page, \
+focused child components each in their OWN file under a components directory, a stylesheet the \
+main component imports, small hooks/helpers/types modules as needed, and at least one test. \
+Separation is mandatory: NEVER put the whole app in one file; each component lives in its own \
+file and is imported where used; styles live in a stylesheet the component imports (NOT inline \
+style objects and NOT one giant inline style block); shared types/data go in their own module; no \
+file re-declares what another file already exports. For EACH file write a short ROLE: one concrete \
+sentence describing what that file contains and which siblings it imports. Plan a focused, \
+coherent set — typically 4 to 10 source files; add a file only when it does distinct work. Reply \
+with EXACTLY one JSON object and NOTHING else — no prose, no code fence, no explanation:\n\
 {\"manifest\":{\"version\":1,\"files\":[{\"path\":\"<relative path>\",\"role\":\"<what this file \
 contains>\"}]}}\n\
 Rules: version is always 1; every path is RELATIVE (no leading slash, no `..` segment); do NOT \
 include a content/body/language field or any field other than `path` and `role` per file; do NOT \
-plan a `.kortecx/` path (reserved). Keep it minimal but complete.";
+plan a `.kortecx/` path (reserved); do NOT plan `package.json`, a `tsconfig`, a bundler/build \
+config, or the HTML / app entry point (all provided). Keep it minimal but complete.";
 
-/// Build the manifest-planner directive for an app `goal`: the strict-JSON contract
-/// ([`MANIFEST_PLAN_SYSTEM`]) + the goal, passed as the bound `prompt` DATA arg to the
-/// `app-manifest-plan` recipe (the scaffold-write precedent — the directive is data, never
-/// an identity axis). The committed answer is decoded fail-closed by [`decode_manifest`].
-pub(crate) fn manifest_plan_directive(goal: &str) -> String {
-    format!("{MANIFEST_PLAN_SYSTEM}\n\nApp goal: {}", goal.trim())
+/// The per-framework CONTRACT appended to the planner directive: names exactly the
+/// template-owned files the model must NOT emit (and what the entry imports), and the source
+/// files it MUST emit, so the planned tree slots into the fixed framework scaffold. Unknown /
+/// `"auto"` resolves to Vite-React (the template's own fallback).
+fn framework_contract(framework: &str) -> &'static str {
+    match framework {
+        "next_js" => {
+            "Framework: Next.js (App Router) + TypeScript. PROVIDED, do NOT emit: \
+package.json, next.config.mjs, tsconfig.json, next-env.d.ts, app/layout.tsx (renders children and \
+imports app/globals.css), app/globals.css. You MUST emit app/page.tsx as the default-export page \
+component; put child components under app/components/ (one per file), a stylesheet the page \
+imports (e.g. app/page.module.css), and a test app/page.test.tsx. Use only `next` and `react` — \
+no other npm dependencies."
+        }
+        "svelte" => {
+            "Framework: Svelte + TypeScript (Vite). PROVIDED, do NOT emit: package.json, \
+svelte.config.js, vite.config.ts, tsconfig.json, index.html, src/vite-env.d.ts, src/main.ts \
+(imports ./App.svelte and ./app.css), src/app.css. You MUST emit src/App.svelte as the root \
+component; put child components under src/lib/ (one per file) and import them into App.svelte; \
+each component's styles go in its own <style> block; add a test src/App.test.ts. Use only \
+`svelte` — no other npm dependencies."
+        }
+        _ => {
+            "Framework: Vite + React + TypeScript. PROVIDED, do NOT emit: package.json, \
+vite.config.ts, tsconfig.json, index.html, src/main.tsx (renders the default export of ./App and \
+imports ./index.css), src/index.css. You MUST emit src/App.tsx as the default-export root \
+component that does `import './App.css'`; put child components under src/components/ (one per \
+file), the src/App.css it imports, any src/hooks or src/types modules you need, and a test \
+src/App.test.tsx. Use only `react` — no other npm dependencies."
+        }
+    }
+}
+
+/// Build the manifest-planner directive for an app `goal` on `framework`: the source-only
+/// separation contract ([`MANIFEST_PLAN_SYSTEM`]) + the framework contract + the goal, passed as
+/// the bound `prompt` DATA arg to the `app-manifest-plan` recipe (the scaffold-write precedent —
+/// the directive is data, never an identity axis). The committed answer is decoded fail-closed by
+/// [`decode_manifest`].
+pub(crate) fn manifest_plan_directive(goal: &str, framework: &str) -> String {
+    format!(
+        "{MANIFEST_PLAN_SYSTEM}\n\n{}\n\nApp goal: {}",
+        framework_contract(framework),
+        goal.trim()
+    )
 }
 
 /// Hard cap on the number of files a manifest may declare — a DoS bound
@@ -265,19 +312,6 @@ pub(crate) fn decode_manifest(bytes: &[u8]) -> Result<Vec<ManifestFile>, Manifes
     Ok(out)
 }
 
-/// The fixed `kx_gateway_core::SKELETON` as a dynamic-manifest file list — the
-/// graceful FALLBACK when no model is served or manifest planning fails (the
-/// scaffold still produces the proven agentic-app skeleton, path-for-path).
-pub(crate) fn skeleton_manifest() -> Vec<ManifestFile> {
-    SKELETON
-        .iter()
-        .map(|f| ManifestFile {
-            path: f.path.to_string(),
-            role: f.role.to_string(),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,41 +404,46 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn skeleton_manifest_mirrors_the_fixed_skeleton() {
-        let m = skeleton_manifest();
-        assert_eq!(m.len(), SKELETON.len());
-        for (mf, sf) in m.iter().zip(SKELETON.iter()) {
-            assert_eq!(mf.path, sf.path);
-            assert_eq!(mf.role, sf.role);
-        }
-    }
-
-    /// The canonical manifest the contract teaches MUST decode through the same
+    /// The canonical SOURCE-ONLY manifest the contract teaches MUST decode through the same
     /// fail-closed enforcer the runtime uses ([`decode_manifest`]) — the render↔enforce
-    /// coherence guard (mirrors the planner example test in `prompt_library`).
+    /// coherence guard (mirrors the planner example test in `prompt_library`). The example is
+    /// a SEPARATED tree (App + a component + a stylesheet + types + a test), and it carries NO
+    /// template-owned config (package.json / entry) — POC-6 makes those template-owned.
     #[test]
     fn manifest_plan_contract_decodes_via_the_enforcer() {
         const EXAMPLE: &str = "{\"manifest\":{\"version\":1,\"files\":[\
-{\"path\":\"package.json\",\"role\":\"the npm manifest with vite + react deps and scripts\"},\
-{\"path\":\"index.html\",\"role\":\"the Vite entry HTML mounting the app\"},\
-{\"path\":\"src/main.tsx\",\"role\":\"the React entry that renders App into the root\"},\
-{\"path\":\"src/App.tsx\",\"role\":\"the root component implementing the goal\"},\
-{\"path\":\"src/App.css\",\"role\":\"the component styles\"},\
-{\"path\":\"src/App.test.tsx\",\"role\":\"a smoke test rendering App\"}]}}";
+{\"path\":\"src/App.tsx\",\"role\":\"the default-export root component; imports ./App.css and \
+components from ./components/\"},\
+{\"path\":\"src/App.css\",\"role\":\"the styles imported by App.tsx\"},\
+{\"path\":\"src/components/Card.tsx\",\"role\":\"a card component imported by App.tsx\"},\
+{\"path\":\"src/types.ts\",\"role\":\"shared TypeScript types\"},\
+{\"path\":\"src/App.test.tsx\",\"role\":\"a smoke test rendering App\"},\
+{\"path\":\"README.md\",\"role\":\"how to run the project\"}]}}";
         let files = decode_manifest(EXAMPLE.as_bytes())
             .expect("the taught manifest example must decode via the runtime enforcer");
-        assert!(files.len() >= 5, "the example teaches a complete project");
-        assert!(files.iter().any(|f| f.path == "package.json"));
+        assert!(
+            files.len() >= 5,
+            "the example teaches a separated source tree"
+        );
         assert!(files.iter().any(|f| f.path == "src/App.tsx"));
+        assert!(files.iter().any(|f| f.path == "src/components/Card.tsx"));
+        // The tooling is template-owned — the contract must NOT teach config paths.
+        assert!(!files.iter().any(|f| f.path == "package.json"));
     }
 
     #[test]
-    fn manifest_plan_directive_includes_goal_and_the_strict_envelope() {
-        let d = manifest_plan_directive("a kanban board with drag and drop");
+    fn manifest_plan_directive_is_framework_aware_source_only() {
+        let d = manifest_plan_directive("a kanban board with drag and drop", "vite_react");
         assert!(d.contains("a kanban board with drag and drop"));
         assert!(d.contains("\"manifest\""));
         assert!(d.contains("\"version\":1"));
         assert!(d.contains("EXACTLY one JSON object"));
+        // Framework contract present + config forbidden.
+        assert!(d.contains("Vite + React"));
+        assert!(d.contains("do NOT emit"));
+        assert!(d.contains("src/App.tsx"));
+        // Next / Svelte contracts route distinctly.
+        assert!(manifest_plan_directive("x", "next_js").contains("app/page.tsx"));
+        assert!(manifest_plan_directive("x", "svelte").contains("src/App.svelte"));
     }
 }

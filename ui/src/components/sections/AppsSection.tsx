@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
 import { useApps, useCloneApp, useExportAppBundle, useImportApp } from "../../kx/use-apps";
-import { useHostedAppStatus, useStartHostedApp } from "../../kx/use-hosted-app";
+import { useHostedAppStatus, useHostedRun } from "../../kx/use-hosted-app";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
@@ -548,33 +548,46 @@ function HostedDetail({ handle }: { handle: string }) {
   );
 }
 
-/** D213 — the hosted-app Run control: start the dev server + open it in a new tab. */
+/** D213 — the hosted-app Run control: start the dev server, open it once actually running,
+ *  surface start errors, and honest-disable when the gateway lacks the hosted-apps feature. */
 function HostedRunButton({ handle }: { handle: string }) {
-  const start = useStartHostedApp();
-  function run(): void {
-    start.mutate(
-      { handle },
-      {
-        onSuccess: (s) => {
-          if (s.url) {
-            window.open(s.url, "_blank", "noopener");
-          }
-        },
-      },
+  const { run, disabled, busy, error } = useHostedRun(handle);
+  if (disabled) {
+    return (
+      <span
+        className="iconbtn iconbtn--disabled"
+        aria-disabled="true"
+        title="Hosted apps aren't available on this gateway (serve with the hosted-apps feature)"
+        data-testid={`hosted-run-${handle}`}
+      >
+        <Icon name="external-link" size={16} />
+      </span>
     );
   }
   return (
-    <button
-      type="button"
-      className="iconbtn"
-      data-testid={`hosted-run-${handle}`}
-      disabled={start.isPending}
-      title="Run this hosted app (opens in a new tab)"
-      aria-label="Run hosted app"
-      onClick={run}
-    >
-      <Icon name="external-link" size={16} />
-    </button>
+    <>
+      <button
+        type="button"
+        className="iconbtn"
+        data-testid={`hosted-run-${handle}`}
+        disabled={busy}
+        aria-busy={busy}
+        title={busy ? "Starting the hosted app…" : "Run this hosted app (opens in a new tab)"}
+        aria-label="Run hosted app"
+        onClick={run}
+      >
+        <Icon name="external-link" size={16} />
+      </button>
+      {error ? (
+        <span
+          className="hosted-run__error field-error"
+          role="alert"
+          data-testid={`hosted-run-error-${handle}`}
+        >
+          {error}
+        </span>
+      ) : null}
+    </>
   );
 }
 
@@ -634,7 +647,9 @@ function AppsTable({
                 {a.name}
               </button>
               <div>
-                <code className="mono muted">{a.handle}</code>
+                <code className="mono muted mono-trunc" title={a.handle}>
+                  {a.handle}
+                </code>
               </div>
             </td>
             <td>v{a.version}</td>

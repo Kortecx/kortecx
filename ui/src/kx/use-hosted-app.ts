@@ -8,6 +8,7 @@
 
 import type { HostedAppStatus } from "@kortecx/sdk/web";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "./connection-context";
 import { toUiError } from "./errors";
 import { queryKeys } from "./query-keys";
@@ -44,6 +45,87 @@ export function useStopHostedApp() {
       void qc.invalidateQueries({ queryKey: queryKeys.hostedAppStatus(endpoint, handle) });
     },
   });
+}
+
+/**
+ * Drive the hosted Run control end-to-end. `StartHostedApp` returns while the app is still
+ * materializing/installing (its URL empty), so a naive "open on success" click does nothing.
+ * This composes `useStartHostedApp` + `useHostedAppStatus`: it starts the app, then opens the
+ * live tab as soon as the poll reports it actually running — and surfaces start errors + the
+ * not-wired signal (the gateway lacking the `hosted-apps` feature). The generic Play/Stop trio
+ * is a later slice; this fixes only the hosted Run.
+ */
+export function useHostedRun(handle: string) {
+  const start = useStartHostedApp();
+  const { status, notWired } = useHostedAppStatus(handle, true);
+  const [armed, setArmed] = useState(false);
+  const openedRef = useRef(false);
+
+  const openLive = useCallback((url: string) => {
+    if (!url || openedRef.current) {
+      return;
+    }
+    openedRef.current = true;
+    // The status carries an absolute loopback URL (http://127.0.0.1:<port>/); resolve
+    // defensively so a relative path would still open against a sane base.
+    let href = url;
+    try {
+      href = new URL(url, window.location.origin).href;
+    } catch {
+      href = url;
+    }
+    window.open(href, "_blank", "noopener");
+  }, []);
+
+  function run(): void {
+    if (notWired) {
+      return;
+    }
+    openedRef.current = false;
+    setArmed(true);
+    start.mutate(
+      { handle },
+      {
+        onSuccess: (s) => {
+          if (s.state === "running" && s.url) {
+            openLive(s.url);
+            setArmed(false);
+          }
+        },
+        onError: () => setArmed(false),
+      },
+    );
+  }
+
+  // Once armed, open as soon as the poll reports the app is actually running (or give up on
+  // a failure — the pill/error surfaces the reason).
+  useEffect(() => {
+    if (!armed) {
+      return;
+    }
+    if (status?.state === "running" && status.url) {
+      openLive(status.url);
+      setArmed(false);
+    } else if (status?.state === "failed") {
+      setArmed(false);
+    }
+  }, [armed, status?.state, status?.url, openLive]);
+
+  const busy =
+    start.isPending ||
+    (armed &&
+      (status?.state === "materializing" ||
+        status?.state === "installing" ||
+        status?.state === "starting"));
+
+  let error: string | null = null;
+  if (start.isError) {
+    error = toUiError(start.error).message;
+  } else if (armed && status?.state === "failed") {
+    error = status.detail || "The hosted app failed to start.";
+  }
+
+  return { run, disabled: notWired, busy, error };
 }
 
 /** Poll a hosted app's status; polls while starting/running, stops once stopped/failed. */

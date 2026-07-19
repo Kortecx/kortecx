@@ -2992,6 +2992,9 @@ select {
   flex-direction: column;
   gap: 0.5rem;
   padding: 0.9rem 1rem;
+  /* A grid item defaults to min-width:auto, so an unbreakable child (a long mono handle)
+     would blow the card past its track and spill across the gap/section. Clamp it. */
+  min-width: 0;
 }
 .card-grid__head {
   display: flex;
@@ -3006,6 +3009,9 @@ select {
   align-items: center;
   gap: 0.1rem;
   margin-left: auto;
+  /* Let the hosted Run error alert drop to its own line under the controls. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .card-grid__title {
   font-weight: 600;
@@ -3074,6 +3080,38 @@ button.card-grid__title:hover {
 .card-grid__handle {
   font-size: 0.72rem;
   color: var(--text-3);
+  /* Long, unbreakable handles (a long App name sanitizes to a ~139-char handle) must
+     truncate inside their card, never overflow it. The full handle stays on the title=. */
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Shared truncation utility for unbreakable mono text (handles, file paths) on the
+   surfaces that don't carry .card-grid__handle. Pair with a title= for the full value. */
+.mono-trunc {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* An auto-layout table cell sizes to its content, so a bare max-width:100% cannot
+   constrain a long mono handle inside it — an explicit cap does. */
+.apps-table .mono-trunc {
+  max-width: min(24rem, 42vw);
+}
+
+/* Client/transport start errors for the hosted Run control (no toast system exists);
+   drops to its own line under the action cluster. */
+.hosted-run__error {
+  flex-basis: 100%;
+  font-size: 0.72rem;
 }
 /* List layout (the box/list toggle): one card per row, laid out horizontally. */
 .card-grid--list {
@@ -4851,6 +4889,9 @@ button.card-grid__title:hover {
 .scaffold-progress__title {
   margin: 0;
   font-size: 0.95rem;
+  /* Yield width to the handle in the space-between head so a long handle can't push the
+     title off-screen; the handle itself truncates via .mono-trunc. */
+  min-width: 0;
 }
 .scaffold-progress__handle {
   color: var(--fg-muted);
@@ -5142,6 +5183,10 @@ button.card-grid__title:hover {
 }
 .app-file__path {
   font-size: 0.85rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .app-file__locked {
   font-size: 0.78rem;
@@ -5482,6 +5527,7 @@ button.card-grid__title:hover {
   gap: 0.3rem;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 .apps-section__panel-head {
   display: flex;

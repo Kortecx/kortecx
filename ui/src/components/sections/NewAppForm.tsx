@@ -312,6 +312,7 @@ export function NewAppForm({
             value={name}
             onChange={(e) => setName(e.target.value)}
             aria-label="App name"
+            maxLength={80}
             disabled={busy}
           />
           <textarea
