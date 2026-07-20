@@ -179,10 +179,20 @@ impl Admit {
 /// `(team, member)` that PRECEDES it in the log (so a fresh re-admit appended AFTER
 /// the removal restores access — revoke-by-new-fact, re-admit-by-new-fact, exactly
 /// the grant-ledger discipline). It is honored by the fold ONLY when `remover` is the
-/// team owner OR a party who admitted `member` to `team` (you may undo what you, or a
-/// fellow admitter, granted). An unauthorized remover's fact is recorded-but-inert.
-/// Removal only ever REDUCES access (it can never escalate), so the owner-or-admitter
-/// authority is intentionally permissive. Private fields; built via [`Removal::new`].
+/// team owner OR a party who admitted `member` to `team` **and still holds ACTIVE
+/// admit-authority** — i.e. is an active member of `team` whose cap carries
+/// [`CatalogAction::Delegate`]. An unauthorized remover's fact is recorded-but-inert.
+///
+/// **D232 — admit-PRESENCE is not admit-AUTHORITY.** An `Admit` is appendable by
+/// anyone (authority is decided by the fold, not at construction), so deriving removal
+/// rights from the mere existence of an admit let a party self-issue an admit that was
+/// inert as an edge and thereby evict a member the OWNER had admitted. The prior rule
+/// was justified on the grounds that removal only ever REDUCES access — true of the
+/// direction, but it does not follow that an *unauthorized* party may choose *whose*
+/// access is reduced. The fold now applies one predicate to both questions: an admit
+/// grants and authorizes under the same check. A delegate who later loses their edge
+/// can no longer retroactively evict members they once admitted; the owner or a
+/// still-active delegate must do it. Private fields; built via [`Removal::new`].
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Removal {

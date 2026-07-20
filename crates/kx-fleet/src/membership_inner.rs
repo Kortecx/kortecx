@@ -140,18 +140,37 @@ fn disbanded_authorized(inner: &Inner, team: &PartyId) -> bool {
 }
 
 /// `true` iff the admit at `admit_pos` for `(team, member)` is cancelled by a LATER
-/// AUTHORIZED removal — a remover that is the team owner OR a party who admitted
-/// `member` to `team` (you may undo what you granted). Append-only + time-ordered: a
-/// removal at position `Pr` cancels an admit at `Pa` only when `Pr > Pa`, so a fresh
-/// re-admit appended AFTER the removal restores access (revoke-by-new-fact,
-/// re-admit-by-new-fact — exactly the grant-ledger discipline).
-fn admit_is_removed(inner: &Inner, team: &PartyId, member: &PartyId, admit_pos: usize) -> bool {
+/// AUTHORIZED removal — a remover that is the team owner OR a party whose admit for
+/// `member` carries ACTIVE admit-authority (you may undo what you were entitled to
+/// grant). Append-only + time-ordered: a removal at position `Pr` cancels an admit at
+/// `Pa` only when `Pr > Pa`, so a fresh re-admit appended AFTER the removal restores
+/// access (revoke-by-new-fact, re-admit-by-new-fact — exactly the grant-ledger
+/// discipline).
+///
+/// D232: the `admitters` set is filtered through the SAME [`admitter_authorized`] check
+/// [`edges_of`] applies to admits, so ONE predicate governs both what an admit GRANTS
+/// and what it AUTHORIZES. Without it, an `Admit` — appendable by anyone, since
+/// authority is decided here in the fold and not at construction — let a party
+/// self-issue an admit that is INERT as an edge yet still conferred eviction rights
+/// over an owner-admitted member (a removal-DoS).
+fn admit_is_removed(
+    inner: &Inner,
+    team: &PartyId,
+    member: &PartyId,
+    admit_pos: usize,
+    depth: usize,
+    visiting: &BTreeSet<PartyId>,
+) -> bool {
     let key = (team.clone(), member.clone());
     let Some(removals) = inner.removed.get(&key) else {
         return false;
     };
     let owner = inner.owners.get(team);
-    // The admitters of this edge (the parties who issued an admit for it).
+    // The AUTHORIZED admitters of this edge — a party who issued an admit for it AND
+    // holds active admit-authority (owner, or an active `Delegate`-holder). The extra
+    // authority resolution runs only when a removal exists for the key (early return
+    // above) and reuses the same depth-bounded, `visiting`-guarded walk `edges_of` uses,
+    // so it adds no unbounded recursion.
     let admitters: BTreeSet<&PartyId> = inner
         .admits_by_team_member
         .get(&key)
@@ -161,6 +180,7 @@ fn admit_is_removed(inner: &Inner, team: &PartyId, member: &PartyId, admit_pos: 
             MembershipFact::Admit(a) => Some(a.admitter()),
             _ => None,
         })
+        .filter(|&a| admitter_authorized(inner, team, a, depth, visiting, member))
         .collect();
     removals.iter().any(|&rpos| {
         rpos > admit_pos
@@ -222,7 +242,7 @@ pub(crate) fn edges_of(
         for &pos in positions {
             // Time-ordered removal: a later authorized removal cancels this admit,
             // but a re-admit appended after the removal survives.
-            if admit_is_removed(inner, team, member, pos) {
+            if admit_is_removed(inner, team, member, pos, depth, visiting) {
                 continue;
             }
             let MembershipFact::Admit(admit) = &inner.facts[pos] else {

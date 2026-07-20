@@ -1015,11 +1015,12 @@ fn nested_chain_widen_is_refused() {
     assert!(matches!(err, GovernedFleetError::Narrowing(_)));
 }
 
-/// An admitter may remove a member they admitted EVEN after losing their own
-/// membership — removal only ever REDUCES access (safe-direction), so the
-/// owner-or-admitter authority is intentionally permissive.
+/// A DE-AUTHORIZED admitter — one who admitted a member and has since lost their own
+/// membership, and with it their `Delegate` edge — can NO LONGER evict that member
+/// (tightened by D232: an inert admit confers no eviction). Owner removals are
+/// unaffected; the owner's own removal mid-test still cascades.
 #[test]
-fn admitter_can_remove_what_they_admitted_even_after_losing_membership() {
+fn de_authorized_admitter_cannot_evict_what_they_once_admitted() {
     let admin = PartyId::new("admin");
     let sre = PartyId::new("team:sre");
     let bob = PartyId::new("bob");
@@ -1065,12 +1066,66 @@ fn admitter_can_remove_what_they_admitted_even_after_losing_membership() {
         ))
         .unwrap();
     assert!(fleet.is_member(&carol, &sre));
-    // Bob (a former admitter of Carol, now de-authorized) records a removal — honored
-    // (safe-direction: it only removes access).
+    // Bob (a former admitter of Carol, now de-authorized — the owner removed him, so he
+    // holds no active Delegate edge) records a removal. It is INERT: he is neither the
+    // owner nor an authorized admitter, so Carol's owner-granted admit survives.
     fleet
         .append_remove(Removal::new(sre.clone(), carol.clone(), bob.clone()))
         .unwrap();
-    assert!(!fleet.is_member(&carol, &sre));
+    assert!(
+        fleet.is_member(&carol, &sre),
+        "a de-authorized admitter with no active edge cannot evict"
+    );
+}
+
+/// D232 regression — the removal-DoS. A party with NO authority on the team self-issues
+/// an `Admit` for a member (recorded, but inert as an edge: they hold no `Delegate`),
+/// then records a `Removal`. Because removal authority was once read off the mere
+/// PRESENCE of an admit, that inert fact used to confer eviction rights over a member
+/// the OWNER admitted. It must not.
+#[test]
+fn an_inert_self_issued_admit_confers_no_eviction_rights() {
+    let admin = PartyId::new("admin");
+    let sre = PartyId::new("team:sre");
+    let alice = PartyId::new("alice");
+    let mallory = PartyId::new("mallory");
+
+    let fleet = InMemoryMembershipLedger::new();
+    fleet
+        .append_founding(Team::found(sre.clone(), admin.clone(), "SRE"))
+        .unwrap();
+    // The OWNER admits Alice — a legitimate, authorized edge.
+    fleet
+        .append_admit(Admit::new(
+            sre.clone(),
+            alice.clone(),
+            admin.clone(),
+            role("alice", 50),
+            CatalogActionSet::allow([CatalogAction::Use]),
+        ))
+        .unwrap();
+    assert!(fleet.is_member(&alice, &sre));
+
+    // Mallory — not the owner, not a member, holding no Delegate — self-issues an admit
+    // for Alice. The fact is RECORDED; as an edge it is inert (it mints nothing).
+    fleet
+        .append_admit(Admit::new(
+            sre.clone(),
+            alice.clone(),
+            mallory.clone(),
+            role("alice-by-mallory", 50),
+            CatalogActionSet::allow([CatalogAction::Use]),
+        ))
+        .unwrap();
+    // Now Mallory tries to evict Alice on the strength of that inert admit.
+    fleet
+        .append_remove(Removal::new(sre.clone(), alice.clone(), mallory.clone()))
+        .unwrap();
+
+    assert!(
+        fleet.is_member(&alice, &sre),
+        "an inert self-issued admit must not authorize a removal (D232 removal-DoS)"
+    );
 }
 
 /// An owner disband is TERMINAL: re-founding the same team principal cannot
