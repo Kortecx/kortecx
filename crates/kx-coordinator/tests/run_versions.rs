@@ -117,7 +117,7 @@ fn warrant_granting(tools: &[(&str, &str)], model_id: &str) -> WarrantSpec {
         fs_scope: FsScope { mounts },
         net_scope: NetScope::EgressAllowlist(BTreeSet::from([Host("api.example.com:443".into())])),
         // Matches the OSS built-ins' syscall_profile_ref (exact-match required by
-        // `check_tool_requirement`), so fs-read/fs-write/text-summarize resolve.
+        // `check_tool_requirement`), so fs-read/fs-write resolve.
         syscall_profile_ref: kx_content::ContentRef::from_bytes([0u8; 32]),
         tool_grants,
         model_route: ModelRoute {
@@ -149,12 +149,12 @@ async fn submit_captures_resolved_versions_as_metadata() {
 
     let mote = common::mote(1, NdClass::Pure, &[]);
     // Two builtins (resolve under any warrant) + a known model id.
-    let warrant = warrant_granting(&[("fs-read", "1"), ("text-summarize", "1")], "qwen2.5-0.5b");
+    let warrant = warrant_granting(&[("fs-read", "1"), ("fs-write", "1")], "qwen2.5-0.5b");
     let resp = common::submit(&svc, &mote, &warrant).await;
     assert_eq!(resp.status, proto::SubmitStatus::Accepted as i32);
 
     let records = svc.run_resolved_versions().await.unwrap();
-    // One record per resolved capability (BTreeSet order: fs-read, text-summarize).
+    // One record per resolved capability (BTreeSet order: fs-read, fs-write).
     assert_eq!(
         records.len(),
         2,
@@ -179,11 +179,7 @@ async fn submit_captures_resolved_versions_as_metadata() {
         .iter()
         .map(|r| r.capability.as_ref().unwrap().tool_id.as_str())
         .collect();
-    assert_eq!(
-        caps,
-        ["fs-read", "text-summarize"],
-        "ordered, both captured"
-    );
+    assert_eq!(caps, ["fs-read", "fs-write"], "ordered, both captured");
     for rec in &records {
         let cap = rec.capability.as_ref().unwrap();
         assert_eq!(cap.tool_version, "1");

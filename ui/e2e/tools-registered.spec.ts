@@ -18,12 +18,14 @@ test("Tools registry: built-in inventory, disabled built-in deregister, SSRF-ref
   await page.getByTestId("nav-tools").click();
   await expect(page.getByTestId("tools-section")).toBeVisible();
 
-  // The durable registry inventory (DiscoverTools) shows the three OSS built-ins,
-  // re-seeded on open (DISTINCT from the advisory toolscout manifests below).
+  // The durable registry inventory (DiscoverTools) shows the OSS built-ins, re-seeded
+  // on open (DISTINCT from the advisory toolscout manifests below). `text-summarize@1`
+  // was removed from the built-in set — it had no implementation anywhere, so it
+  // advertised a tool that could never dispatch.
   await expect(page.getByTestId("tools-registered-panel")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("registered-tool-fs-read-1")).toBeVisible();
   await expect(page.getByTestId("registered-tool-fs-write-1")).toBeVisible();
-  await expect(page.getByTestId("registered-tool-text-summarize-1")).toBeVisible();
+  await expect(page.getByTestId("registered-tool-text-summarize-1")).toHaveCount(0);
 
   // Built-ins are re-seeded on start and NOT deregisterable — the control is disabled.
   await expect(page.getByTestId("deregister-fs-read-1")).toBeDisabled();

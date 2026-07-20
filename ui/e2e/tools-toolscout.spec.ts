@@ -18,12 +18,14 @@ test("Tools: the built-in manifests, an exact-hit bundle score, and the dry-run 
   await page.getByTestId("nav-tools").click();
   await expect(page.getByTestId("tools-section")).toBeVisible();
 
-  // The three OSS built-in tools render as manifest tiles — exactly those three.
+  // The OSS built-in tools render as manifest tiles — exactly those two. The advisory
+  // manifest set must track the DISPATCHABLE set: `text-summarize@1` was removed from
+  // the built-ins because no capability could ever be registered for it.
   await expect(page.getByTestId("tool-manifest-grid")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("tool-tile-fs-read")).toBeVisible();
   await expect(page.getByTestId("tool-tile-fs-write")).toBeVisible();
-  await expect(page.getByTestId("tool-tile-text-summarize")).toBeVisible();
-  await expect(page.locator('[data-testid^="tool-tile-"]')).toHaveCount(3);
+  await expect(page.getByTestId("tool-tile-text-summarize")).toHaveCount(0);
+  await expect(page.locator('[data-testid^="tool-tile-"]')).toHaveCount(2);
 
   // Compose: an intent whose words exact-hit fs-read's curated keywords, plus the
   // fs-read chip. The intent input is CONTROLLED — click + pressSequentially, never

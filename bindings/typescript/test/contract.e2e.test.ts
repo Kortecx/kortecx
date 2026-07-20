@@ -473,7 +473,9 @@ describe("toolscout (advisory — scores never authorize)", () => {
     const kx = new KxClient(s.endpoint);
 
     const manifests = await kx.listToolManifests();
-    expect(manifests.map((m) => m.toolId)).toEqual(["fs-read", "fs-write", "text-summarize"]);
+    // `text-summarize@1` was removed from the built-in set: no capability could ever
+    // be registered for it, so it advertised a tool that could not dispatch.
+    expect(manifests.map((m) => m.toolId)).toEqual(["fs-read", "fs-write"]);
     for (const m of manifests) {
       expect(m.kind).toBe("Builtin");
       expect(m.fingerprintHash).toHaveLength(64); // 32B hex

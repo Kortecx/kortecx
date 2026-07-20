@@ -383,8 +383,8 @@ impl InMemoryToolRegistry {
     }
 
     /// Construct a registry seeded with the OSS built-in tools (`fs-read`,
-    /// `fs-write`, `text-summarize`). All built-ins are `HumanAuthored` (the
-    /// kortecx maintainers) and `Approved` on creation.
+    /// `fs-write`). All built-ins are `HumanAuthored` (the kortecx maintainers)
+    /// and `Approved` on creation.
     ///
     /// The built-in set is intentionally small in v0.1 — a sample for tests
     /// and the runtime demo. Real deployments accrete custom tools.
