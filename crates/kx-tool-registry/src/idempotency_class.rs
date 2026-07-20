@@ -24,13 +24,11 @@ use serde::{Deserialize, Serialize};
 ///   never a model call. Naturally suits **read-only tools** where the
 ///   dispatch IS the probe.
 /// - [`Staged`](Self::Staged) — the tool requires staged-intent journaling
-///   (D38 §2b). **DECLARED HERE BUT NOT ENFORCED UNTIL PR 7 (kx-journal
-///   v1→v2 adds the `EffectStaged` kind) + PR 9 (kx-executor wires the
-///   protocol).** The variant exists for tool authors to declare the
-///   contract their tool requires; the runtime check that honors it lands
-///   later. A tool registered as `Staged` will resolve correctly today, but
-///   the executor's recovery-time re-dispatch refusal (R-13 per
-///   `validate-then-commit.md` §7) only fires once PR 7 + PR 9 ship.
+///   (D38 §2b), and this is **ENFORCED at runtime**: `kx-journal` carries the
+///   `EffectStaged` entry kind, `kx-executor`'s commit protocol runs
+///   `append(EffectStaged) → dispatch → verify → Committed`, and lifecycle
+///   recovery de-duplicates a staged-but-uncommitted effect on replay rather
+///   than blindly re-dispatching it.
 /// - [`AtLeastOnce`](Self::AtLeastOnce) — the tool has no closing mechanism
 ///   (D38 §2c). The executor refuses to dispatch it unless the workflow
 ///   submission context's `accept_at_least_once` is `true` (per
@@ -55,13 +53,10 @@ pub enum IdempotencyClass {
     /// probes world state keyed on `MoteId`; skips dispatch if already
     /// applied. Probe is deterministic; never a model call.
     Readback,
-    /// The tool requires staged-intent journaling (D38 §2b).
-    /// **DECLARED but NOT YET ENFORCED** — the runtime contract lands at
-    /// PR 7 (kx-journal v1→v2 adds the `EffectStaged` kind) + PR 9
-    /// (kx-executor wires the protocol). Tool authors may declare this
-    /// today; the resolver returns the resolved tool correctly, but the
-    /// executor's recovery-time re-dispatch refusal that honors `Staged`
-    /// semantics only fires once PR 7 + PR 9 ship.
+    /// The tool requires staged-intent journaling (D38 §2b) — **enforced**.
+    /// The executor appends `EffectStaged` before dispatching, verifies, then
+    /// commits; recovery reads that entry to de-duplicate an effect that was
+    /// staged but not yet committed, instead of re-dispatching it.
     Staged,
     /// The tool has no closing mechanism (D38 §2c). The executor refuses to
     /// dispatch it unless the workflow submission context's

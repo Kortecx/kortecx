@@ -281,7 +281,7 @@ mod tests {
     fn manifests_cover_the_builtins_in_deterministic_order() {
         let manifests = host(None).list_manifests();
         let ids: Vec<&str> = manifests.iter().map(|m| m.tool_id.as_str()).collect();
-        assert_eq!(ids, vec!["fs-read", "fs-write", "text-summarize"]);
+        assert_eq!(ids, vec!["fs-read", "fs-write"]);
         assert!(manifests.iter().all(|m| m.kind == "Builtin"));
         assert!(manifests.iter().all(|m| !m.description.is_empty()));
         // Each manifest carries the curated, normalized "en" keywords.
@@ -295,7 +295,7 @@ mod tests {
     fn an_exact_intent_keyword_scores_the_matching_tool_at_the_ceiling() {
         let view = host(None);
         let score = view.score_bundle(&spec(&[("fs-read", "1")]));
-        assert_eq!(score.ranked.len(), 3, "every manifest is ranked");
+        assert_eq!(score.ranked.len(), 2, "every manifest is ranked");
         let top = &score.ranked[0];
         assert_eq!(top.tool_id, "fs-read");
         assert_eq!(

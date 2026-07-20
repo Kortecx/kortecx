@@ -350,7 +350,7 @@ mod tests {
             "--tool",
             "fs-read@1",
             "--tool",
-            "text-summarize@1",
+            "fs-write@1",
             "--language-tag",
             "en",
             "--tolerance-threshold-bp",
@@ -365,7 +365,7 @@ mod tests {
             spec.tools,
             vec![
                 ("fs-read".to_string(), "1".to_string()),
-                ("text-summarize".to_string(), "1".to_string())
+                ("fs-write".to_string(), "1".to_string())
             ]
         );
         assert_eq!(spec.language_tags, vec!["en"]);

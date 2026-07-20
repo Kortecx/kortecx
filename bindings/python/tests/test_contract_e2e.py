@@ -383,7 +383,9 @@ def test_dataset_unknown_is_not_found_and_text_without_embedder_fails_preconditi
 def test_toolscout_lists_builtins_and_scores_exact_keyword_at_ceiling(dev_server):
     with KxClient(dev_server.endpoint) as kx:
         manifests = kx.list_tool_manifests()
-        assert [m.tool_id for m in manifests] == ["fs-read", "fs-write", "text-summarize"]
+        # `text-summarize@1` was removed from the built-in set: no capability could
+        # ever be registered for it, so it advertised a tool that could not dispatch.
+        assert [m.tool_id for m in manifests] == ["fs-read", "fs-write"]
         assert all(m.kind == "Builtin" for m in manifests)
         assert all(len(m.fingerprint_hash) == 64 for m in manifests)  # 32B hex
 
@@ -394,7 +396,7 @@ def test_toolscout_lists_builtins_and_scores_exact_keyword_at_ceiling(dev_server
                 language_tags=["en"],
             )
         )
-        assert len(score.ranked) == 3
+        assert len(score.ranked) == 2  # every manifest is ranked
         assert score.ranked[0].tool_id == "fs-read"
         assert score.ranked[0].score_bp == 10_000  # deterministic exact-keyword hit
         assert len(score.bundle_fingerprint) == 64

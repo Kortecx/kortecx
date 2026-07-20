@@ -223,8 +223,17 @@ pub fn resolve_run_versions(
         .collect()
 }
 
-/// The OSS built-in tool set (`fs-read`, `fs-write`, `text-summarize`) paired
-/// with their `HumanAuthored` provenance.
+/// The OSS built-in tool set (`fs-read`, `fs-write`) paired with their
+/// `HumanAuthored` provenance.
+///
+/// A tool belongs here only if a capability can actually be registered for it.
+/// `text-summarize@1` was seeded here for a long time with **no implementation
+/// anywhere in the workspace**, so it surfaced in `kx tools`, `DiscoverTools` and
+/// ToolScout as an available tool that could never dispatch; it has been removed.
+/// Both remaining built-ins are operator-gated at serve time — `fs-read` by
+/// `KX_SERVE_FS_ROOT` and `fs-write` by the separate `KX_SERVE_FS_WRITE_ROOT` — and
+/// the gateway re-registers each with its REAL declared `fs_scope` once the
+/// corresponding root is granted.
 ///
 /// Shared by [`InMemoryToolRegistry::with_builtins`] and the durable
 /// [`crate::SqliteToolRegistry`] so the seeded built-in set is **byte-identical
@@ -284,12 +293,12 @@ pub(crate) fn builtin_registrations() -> Vec<(ToolDef, ToolProvenance)> {
         // or `IdempotencyClass::AtLeastOnce` (explicit author ack required).
         // Append-mode under `Staged` would double-write on re-dispatch.
         //
-        // The `Staged` class itself is DECLARED HERE BUT NOT YET ENFORCED at
-        // runtime — see IdempotencyClass::Staged docs. PR 7 (kx-journal v1→v2
-        // adds the EffectStaged kind) + PR 9 (kx-executor wires the protocol)
-        // close the runtime contract. Today's resolver returns the resolved
-        // tool correctly; only the recovery-time re-dispatch refusal is
-        // pending.
+        // The `Staged` class is ENFORCED at runtime: `kx-executor`'s commit
+        // protocol appends `EffectStaged`, dispatches, verifies, then commits,
+        // and its lifecycle recovery de-duplicates a staged-but-uncommitted
+        // effect on replay. (This comment previously said the contract was
+        // pending — it described a state of the world that had already been
+        // superseded, understating shipped durability safety.)
         (
             ToolDef {
                 tool_id: ToolName("fs-write".into()),
@@ -303,25 +312,6 @@ pub(crate) fn builtin_registrations() -> Vec<(ToolDef, ToolProvenance)> {
             ToolProvenance::HumanAuthored {
                 author: author.clone(),
             },
-        ),
-        // text-summarize: pure transformation (input bytes → summarized
-        // string). IdempotencyClass::Readback fits — for a deterministic
-        // pure-transformation tool, "probe + skip if applied" collapses to
-        // "the journal already has a Committed result_ref for this Mote",
-        // which the executor's memoizer (P1.7.9) handles via the same cache
-        // lookup path; the tool's idempotency-class declaration is the
-        // dispatch-protocol signal, not a separate cache.
-        (
-            ToolDef {
-                tool_id: ToolName("text-summarize".into()),
-                tool_version: ToolVersion("1".into()),
-                kind: ToolKind::Builtin,
-                required_capability: req(FsScope::empty()),
-                description: "Deterministic text summarization heuristic. Pure transformation; naturally idempotent.".into(),
-                idempotency_class: IdempotencyClass::Readback,
-                input_schema: None,
-            },
-            ToolProvenance::HumanAuthored { author },
         ),
     ]
 }
@@ -393,8 +383,8 @@ impl InMemoryToolRegistry {
     }
 
     /// Construct a registry seeded with the OSS built-in tools (`fs-read`,
-    /// `fs-write`, `text-summarize`). All built-ins are `HumanAuthored` (the
-    /// kortecx maintainers) and `Approved` on creation.
+    /// `fs-write`). All built-ins are `HumanAuthored` (the kortecx maintainers)
+    /// and `Approved` on creation.
     ///
     /// The built-in set is intentionally small in v0.1 — a sample for tests
     /// and the runtime demo. Real deployments accrete custom tools.

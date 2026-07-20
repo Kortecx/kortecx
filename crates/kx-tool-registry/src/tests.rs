@@ -491,9 +491,9 @@ fn approve_human_authored_refused_as_not_pending() {
 // -----------------------------------------------------------------
 
 #[test]
-fn with_builtins_seeds_three_tools() {
+fn with_builtins_seeds_only_implemented_tools() {
     let reg = InMemoryToolRegistry::with_builtins();
-    assert_eq!(reg.len(), 3);
+    assert_eq!(reg.len(), 2);
     assert!(!reg.is_empty());
     assert!(reg
         .lookup(&ToolName("fs-read".into()), &ToolVersion("1".into()))
@@ -501,9 +501,13 @@ fn with_builtins_seeds_three_tools() {
     assert!(reg
         .lookup(&ToolName("fs-write".into()), &ToolVersion("1".into()))
         .is_some());
-    assert!(reg
-        .lookup(&ToolName("text-summarize".into()), &ToolVersion("1".into()))
-        .is_some());
+    // `text-summarize@1` was seeded here with no implementation anywhere in the
+    // workspace, so it advertised a tool that could never dispatch.
+    assert!(
+        reg.lookup(&ToolName("text-summarize".into()), &ToolVersion("1".into()))
+            .is_none(),
+        "a built-in with no capability must not be advertised"
+    );
 }
 
 // -----------------------------------------------------------------
