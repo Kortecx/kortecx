@@ -492,6 +492,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // its read root must resolve on any embedded-worker serve (incl. `--features
     // hnsw`). Default-OFF: `None` unless `KX_SERVE_FS_ROOT` is a resolvable dir.
     let fs_list_root: Option<std::path::PathBuf> = serve_fs_root();
+    // Gated on `serve-engine`: unlike the read root (which the model-free branch
+    // `SnapshotInto` path also consumes), the write root is read ONLY by the fs-write
+    // registration below, which needs a served model.
+    #[cfg(feature = "serve-engine")]
+    let fs_write_root: Option<std::path::PathBuf> = serve_fs_write_root();
     // PR-6b-2: resolve the durable catalog dir + open the durable tools registry
     // EARLY (moved up from the telemetry section) so the embedded coordinator
     // SHARES the SAME live `Arc<SqliteToolRegistry>`. The coordinator's D66
@@ -706,6 +711,23 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         };
     #[cfg(not(feature = "serve-engine"))]
     let fs_read_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> = None;
+    // The confined host WRITE tool (fs-write@1). Gated by its OWN root
+    // (`KX_SERVE_FS_WRITE_ROOT`) — granting reads never implies writes — plus a served
+    // model. World-mutating and `Staged`, so a write stages an intent the approval gate
+    // can hold. Default-OFF ⇒ no capability, no registry row, byte-identical serve.
+    #[cfg(feature = "serve-engine")]
+    let fs_write_tool: Option<(kx_mote::ToolName, kx_mote::ToolVersion)> =
+        if serve_model.is_some() && fs_write_root.is_some() {
+            crate::mcp_tool::register_fs_write_capability(&local_broker);
+            Some(crate::mcp_tool::fs_write_tool())
+        } else {
+            None
+        };
+    // NB: no `not(serve-engine)` arm — unlike fs-list/fs-read, `fs_write_tool` is read
+    // only inside the serve-engine registry-seed block below, and fs-write is
+    // deliberately absent from the react-fs / react-auto grant set: autonomous
+    // world-mutating firing needs its own ratified decision and a world-mutating ReAct
+    // variant. Today fs-write is fireable through an AUTHORED tool step, approval-gated.
     // PR-6b-4 (auto-grant): the operator opt-in (`KX_SERVE_AUTOGRANT`, default-OFF)
     // for the autonomous-loop tool auto-grant — gates seeding `kx/recipes/react-auto`
     // AND wiring the binder's live-warrant rebuild. Requires a served model (no model
@@ -902,6 +924,24 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 None,
             ) {
                 tracing::warn!(%error, "D155: failed to seed fs-read@1 into tools.db");
+            }
+        }
+    }
+    // Seed fs-write@1 into the durable registry with its REAL declared scope (the
+    // write root at ReadWrite), so DiscoverTools / `kx tools` / ToolScout advertise it
+    // exactly when it is actually registered on the broker and can dispatch. Keyed on
+    // the WRITE root, independent of the read root.
+    #[cfg(feature = "serve-engine")]
+    if let Some(root) = fs_write_root.as_deref() {
+        if fs_write_tool.is_some() {
+            if let Err(error) = tool_registry.register_server_tool(
+                crate::mcp_tool::fs_write_tool_def(root),
+                kx_tool_registry::ToolProvenance::HumanAuthored {
+                    author: "kx-gateway".to_string(),
+                },
+                None,
+            ) {
+                tracing::warn!(%error, "failed to seed fs-write@1 into tools.db");
             }
         }
     }
@@ -2333,6 +2373,29 @@ fn serve_fs_root() -> Option<PathBuf> {
             tracing::warn!(
                 root = ?raw,
                 "KX_SERVE_FS_ROOT is not a resolvable directory — host fs tools + branch snapshot disabled"
+            );
+            None
+        }
+    }
+}
+
+/// Resolve the operator-granted WRITE root (`KX_SERVE_FS_WRITE_ROOT`) — a knob
+/// SEPARATE from the read root by design, so `KX_SERVE_FS_ROOT` can never silently
+/// confer write authority. Unset / empty / unresolvable ⇒ `None` ⇒ `fs-write@1` is
+/// neither registered on the broker nor seeded into `tools.db`, and serve is
+/// byte-identical to a build without it.
+#[cfg(feature = "serve-engine")]
+fn serve_fs_write_root() -> Option<PathBuf> {
+    let raw = std::env::var_os("KX_SERVE_FS_WRITE_ROOT")?;
+    if raw.is_empty() {
+        return None;
+    }
+    match PathBuf::from(&raw).canonicalize() {
+        Ok(root) if root.is_dir() => Some(root),
+        _ => {
+            tracing::warn!(
+                root = ?raw,
+                "KX_SERVE_FS_WRITE_ROOT is not a resolvable directory — the confined host write tool is disabled"
             );
             None
         }

@@ -195,6 +195,89 @@ pub(crate) fn register_fs_read_capability<S: ContentStore + Send + Sync>(
     tracing::info!("D155 Phase-A: read-only fs-read@1 capability registered (kx/recipes/react-fs)");
 }
 
+/// The `fs-write@1` tool identity (the confined host WRITE tool).
+pub(crate) fn fs_write_tool() -> (ToolName, ToolVersion) {
+    (ToolName("fs-write".into()), ToolVersion("1".into()))
+}
+
+/// The declared `content` ceiling, taken from the capability's own per-write cap so
+/// the two can never silently diverge. Saturating rather than truncating: on a
+/// hypothetical 32-bit target a wrapped cast would produce a SMALLER bound and
+/// silently refuse writes the capability would accept.
+fn fs_write_max_content_len() -> usize {
+    usize::try_from(kx_capability::DEFAULT_MAX_WRITE_BYTES).unwrap_or(usize::MAX)
+}
+
+/// The `fs-write@1` [`ToolDef`]: the confined host WRITE tool that replaces ONE
+/// regular file's bytes under the operator-granted WRITE root. Its declared
+/// `fs_scope_required` is exactly that root at [`FsMode::ReadWrite`](kx_warrant::FsMode)
+/// — a SEPARATE knob from the read root, so granting reads never implies writes —
+/// with typed REQUIRED `path` + `content` params.
+///
+/// `IdempotencyClass::Staged`: the write stages an intent the autonomy approval
+/// gate (`require_approval`) can hold for human review before it commits. The
+/// overwrite-only, full-content semantics are what make `Staged` sound — a
+/// re-dispatch after a pre-commit crash writes the same bytes to the same path.
+#[must_use]
+pub(crate) fn fs_write_tool_def(root: &std::path::Path) -> ToolDef {
+    let (tool_id, tool_version) = fs_write_tool();
+    let mut mounts = std::collections::BTreeMap::new();
+    mounts.insert(root.to_path_buf(), kx_warrant::FsMode::ReadWrite);
+    ToolDef {
+        tool_id,
+        tool_version,
+        kind: ToolKind::Builtin,
+        required_capability: ToolRequirement {
+            net_scope_required: NetScope::None,
+            fs_scope_required: FsScope { mounts },
+            syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+            min_resource_ceiling: ResourceCeiling {
+                cpu_milli: 0,
+                mem_bytes: 0,
+                wall_clock_ms: 0,
+                fd_count: 0,
+                disk_bytes: 0,
+            },
+        },
+        description: "Write the complete intended file content to a single file under the operator-granted write root. Args: {\"path\": <subpath>, \"content\": <text>} (BOTH REQUIRED). Overwrite-only (no append, no mkdir); parent-confined; per-write byte-capped. World-mutating and approval-gated: the write stages an intent before it commits.".into(),
+        idempotency_class: IdempotencyClass::Staged,
+        input_schema: Some(InputSchema {
+            params: vec![
+                ParamSpec {
+                    name: "path".into(),
+                    ty: ParamType::Str { max_len: 4096 },
+                    required: true,
+                },
+                ParamSpec {
+                    name: "content".into(),
+                    // Derived from the capability's own per-write ceiling so the
+                    // schema and the runtime cap can never silently diverge (a
+                    // stricter schema would refuse writes the capability allows).
+                    ty: ParamType::Str {
+                        max_len: fs_write_max_content_len(),
+                    },
+                    required: true,
+                },
+            ],
+            deny_unknown: true,
+        }),
+    }
+}
+
+/// Register the bundled confined-write [`FsWriteCapability`] (`fs-write@1`) on the
+/// serve broker. Operator-gated by its OWN env (`KX_SERVE_FS_WRITE_ROOT`) — enabling
+/// reads never silently implies writes. Root-agnostic: the confined root arrives via
+/// each dispatch's `request.fs_scope`, which the broker `precheck` has already proven
+/// is a subset of the granting warrant's.
+pub(crate) fn register_fs_write_capability<S: ContentStore + Send + Sync>(
+    broker: &LocalCapabilityBroker<S>,
+) {
+    broker.register_capability(Box::new(kx_capability::FsWriteCapability::new()));
+    tracing::info!(
+        "confined fs-write@1 capability registered (KX_SERVE_FS_WRITE_ROOT; approval-gated)"
+    );
+}
+
 /// Locate the bundled `kx-mcp-echo` binary and register its capability on the
 /// serve broker. Returns the tool identity when registered (⇒ the react recipe
 /// can be provisioned), `None` when no binary is available (fail-soft — a missing
@@ -622,5 +705,76 @@ mod tests {
             IdempotencyClass::Readback
         );
         assert_eq!(kv_tool_def().idempotency_class, IdempotencyClass::Readback);
+    }
+
+    /// The `fs-write@1` def must declare the write root at `ReadWrite` and require
+    /// BOTH args. The broker's `precheck` gate is `request.fs_scope ⊆ warrant`, and
+    /// dispatch derives `request.fs_scope` from this declaration — so if the declared
+    /// mode were `ReadOnly` (or the root absent) every write would refuse, and a
+    /// registered-but-undispatchable tool is exactly what this wiring exists to end.
+    #[test]
+    fn fs_write_def_declares_a_writable_root_and_requires_both_args() {
+        let root = std::path::Path::new("/tmp/kx-write-root");
+        let def = fs_write_tool_def(root);
+
+        assert_eq!(def.tool_id.0, "fs-write");
+        assert_eq!(def.tool_version.0, "1");
+        // World-mutating ⇒ the write stages an intent the approval gate can hold.
+        assert_eq!(def.idempotency_class, IdempotencyClass::Staged);
+        // No egress: a file write must never imply network reach.
+        assert_eq!(def.required_capability.net_scope_required, NetScope::None);
+
+        let mounts = &def.required_capability.fs_scope_required.mounts;
+        assert_eq!(mounts.len(), 1, "exactly the granted write root");
+        assert_eq!(
+            mounts.get(root),
+            Some(&kx_warrant::FsMode::ReadWrite),
+            "the declared mount must be WRITABLE or every dispatch refuses"
+        );
+
+        let schema = def.input_schema.expect("fs-write schema");
+        assert!(schema.deny_unknown);
+        let names: Vec<&str> = schema.params.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["path", "content"]);
+        assert!(
+            schema.params.iter().all(|p| p.required),
+            "both args are required — a write with no content is not a write"
+        );
+        // The schema ceiling tracks the capability's own cap, so a stricter schema
+        // can never silently refuse a write the capability would have allowed.
+        assert!(matches!(
+            schema.params[1].ty,
+            ParamType::Str { max_len } if max_len == fs_write_max_content_len()
+        ));
+    }
+
+    /// fs-write is gated by its OWN root. Granting reads must never confer writes,
+    /// so the two defs must not share a mount entry.
+    #[test]
+    fn the_write_root_is_independent_of_the_read_root() {
+        let read_root = std::path::Path::new("/tmp/kx-read-root");
+        let write_root = std::path::Path::new("/tmp/kx-write-root");
+
+        let read_mounts = fs_read_tool_def(read_root)
+            .required_capability
+            .fs_scope_required
+            .mounts;
+        let write_mounts = fs_write_tool_def(write_root)
+            .required_capability
+            .fs_scope_required
+            .mounts;
+
+        assert_eq!(
+            read_mounts.get(read_root),
+            Some(&kx_warrant::FsMode::ReadOnly)
+        );
+        assert!(
+            !read_mounts.contains_key(write_root),
+            "the read tool must not reach the write root"
+        );
+        assert!(
+            !write_mounts.contains_key(read_root),
+            "the write tool must not reach the read root"
+        );
     }
 }

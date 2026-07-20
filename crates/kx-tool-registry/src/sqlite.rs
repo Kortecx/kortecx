@@ -518,8 +518,8 @@ mod tests {
         let names: BTreeSet<String> = reg.defs().into_iter().map(|d| d.tool_id.0).collect();
         assert!(names.contains("fs-read"));
         assert!(names.contains("fs-write"));
-        assert!(names.contains("text-summarize"));
-        assert_eq!(names.len(), 3);
+        assert!(!names.contains("text-summarize"));
+        assert_eq!(names.len(), 2);
     }
 
     #[test]
