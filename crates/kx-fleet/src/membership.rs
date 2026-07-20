@@ -181,7 +181,8 @@ impl Admit {
 /// the grant-ledger discipline). It is honored by the fold ONLY when `remover` is the
 /// team owner OR a party who admitted `member` to `team` **and still holds ACTIVE
 /// admit-authority** — i.e. is an active member of `team` whose cap carries
-/// [`CatalogAction::Delegate`]. An unauthorized remover's fact is recorded-but-inert.
+/// [`CatalogAction::Delegate`](kx_catalog::CatalogAction::Delegate). An unauthorized
+/// remover's fact is recorded-but-inert.
 ///
 /// **D232 — admit-PRESENCE is not admit-AUTHORITY.** An `Admit` is appendable by
 /// anyone (authority is decided by the fold, not at construction), so deriving removal
