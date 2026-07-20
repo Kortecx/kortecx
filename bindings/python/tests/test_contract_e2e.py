@@ -396,7 +396,7 @@ def test_toolscout_lists_builtins_and_scores_exact_keyword_at_ceiling(dev_server
                 language_tags=["en"],
             )
         )
-        assert len(score.ranked) == 3
+        assert len(score.ranked) == 2  # every manifest is ranked
         assert score.ranked[0].tool_id == "fs-read"
         assert score.ranked[0].score_bp == 10_000  # deterministic exact-keyword hit
         assert len(score.bundle_fingerprint) == 64
