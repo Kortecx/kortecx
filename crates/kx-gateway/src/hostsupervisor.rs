@@ -518,10 +518,19 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
         .map_err(|e| format!("read branch: {e:?}"))?;
     let mut overlaid = 0usize;
     let mut skipped = 0usize;
-    // Whether the branch carries the framework's entry component. Step 1 above already wrote
-    // the template's PLACEHOLDER body for that path, so without this check a branch missing
-    // it serves the framework's starter page under the user's App name — a silent, confident
-    // wrong answer, and the single worst failure this lane can produce.
+    // Does the branch carry the framework's entry component, and does it carry a PROJECT at
+    // all? Both, because only their combination is a defect.
+    //
+    // Step 1 wrote the template's placeholder body for the entry path, and for an App with no
+    // project that is the DESIGNED outcome — `FileSource::Authored` promises a hosted project
+    // is "always valid + servable even model-free", and the placeholder says so in its own
+    // words ("Edit src/App.tsx to build it out"). Refusing there would break a working lane to
+    // prevent an honest page.
+    //
+    // The silent wrong answer is the PARTIAL project: a scaffold that ran, wrote eight files,
+    // and dropped the entry — now the placeholder sits among the user's real components and
+    // the App looks finished while rendering the framework splash. Nothing on any surface says
+    // otherwise. That is what this refuses.
     let entry = hosted_entry_path(&ctx.plan.framework);
     let mut has_entry = false;
     if let Some(manifest) = manifest {
@@ -550,14 +559,16 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
             overlaid += 1;
         }
     }
-    if !has_entry {
-        // The scaffolder injects the entry into every plan it writes, so reaching here means
-        // the project is genuinely incomplete: a scaffold that never finished, a branch
-        // imported without its tree, or a file deleted from the IDE. Refusing is the whole
-        // point — serving the placeholder would look like success.
+    // `overlaid` is exactly the model-authored project file count — the loop already skipped
+    // the plan marker and the template-owned statics. So `overlaid > 0 && !has_entry` is the
+    // PARTIAL project, and nothing else: a scaffold that never finished, a branch imported
+    // without its whole tree, or an entry deleted from the IDE. A branch with no authored
+    // files at all is an App with no project, which the template placeholder serves by design.
+    if overlaid > 0 && !has_entry {
         return Err(format!(
-            "the project has no entry component ({entry}); serving it would show the \
-             {} starter page instead of this App. Re-scaffold the App to author it.",
+            "the project has {overlaid} file(s) but no entry component ({entry}), so serving it \
+             would show the {} starter page next to this App's own components. Re-scaffold the \
+             App to author it.",
             ctx.plan.framework
         ));
     }
@@ -847,10 +858,11 @@ mod tests {
     }
 
     #[test]
-    fn materialize_refuses_a_project_with_no_entry_component() {
-        // The silent-wrong-answer this guard exists for: step 1 has ALREADY written the
-        // template's placeholder App.tsx to disk, so without the check this serves the Vite
-        // starter page under the user's App name and reports success.
+    fn materialize_refuses_a_partial_project_missing_its_entry() {
+        // The silent-wrong-answer this guard exists for: a scaffold RAN and wrote real
+        // components but dropped the entry. Step 1 has already put the template's placeholder
+        // App.tsx on disk, so without the check the App looks finished and renders the Vite
+        // splash next to the user's own components.
         let f = fixture("vite_react");
         put_file(
             &f,
@@ -862,9 +874,32 @@ mod tests {
             err.contains("src/App.tsx") && err.contains("starter page"),
             "the refusal must name the missing entry and why it matters: {err}"
         );
-        // And it refuses BEFORE anything could serve — the placeholder must not be presented
-        // as the user's app.
+        // And it refuses BEFORE anything could serve.
         assert!(!f.ctx.plan.workdir.join("node_modules").exists());
+    }
+
+    #[test]
+    fn materialize_still_serves_an_app_that_has_no_project_at_all() {
+        // The line the guard must NOT cross. `FileSource::Authored` promises a hosted project
+        // is "always valid + servable even model-free", and the placeholder says as much in
+        // its own words — an App you never scaffolded is not a defect, and refusing it would
+        // break a working lane to prevent an honest page. Pinned because the first version of
+        // this guard DID refuse here, and two shipped lifecycle e2e tests caught it.
+        let f = fixture("vite_react");
+        materialize(&f.ctx, &logs()).expect("an App with no project still materializes");
+        let entry = std::fs::read_to_string(f.ctx.plan.workdir.join("src/App.tsx")).unwrap();
+        assert!(entry.contains("Your hosted app is live"));
+    }
+
+    #[test]
+    fn materialize_serves_a_branch_that_holds_only_template_statics() {
+        // A scaffold that advanced the template statics and then failed before authoring
+        // anything is still "no project": the statics are template-owned, not the model's
+        // work, so the placeholder remains the honest answer.
+        let f = fixture("vite_react");
+        put_file(&f, "package.json", b"{}");
+        put_file(&f, "src/main.tsx", b"// template-owned");
+        materialize(&f.ctx, &logs()).expect("template statics alone are not a partial project");
     }
 
     #[test]
