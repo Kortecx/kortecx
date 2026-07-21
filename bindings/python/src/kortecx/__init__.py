@@ -28,6 +28,7 @@ from .apps import (
     AppCapability,
     AppManifest,
     AppSummary,
+    DeleteAppResult,
     SaveAppResult,
     ScaffoldLaunch,
     ScaffoldStatus,
@@ -202,6 +203,7 @@ __all__ = [
     "AddSkillResult",
     "AppSummary",
     "AppBundle",
+    "DeleteAppResult",
     "SaveAppResult",
     "StoredApp",
     # permission-aware Apps (reach + capability manifest)

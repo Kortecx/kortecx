@@ -18,6 +18,7 @@ import { PendingApprovalRow, type PendingApprovalsPage } from "./approvals.js";
 import {
   AppManifest,
   AppSummary,
+  type DeleteAppResult,
   type HostedAppStatus,
   SaveAppResult,
   type ScaffoldStatus,
@@ -980,7 +981,13 @@ export abstract class KxClientBase {
         }),
       );
       if (!opts.wait) {
-        return new Run(this, h.instanceId, new Uint8Array(0), h.recipeFingerprint);
+        // Carry the server-derived agentic-chain salt through, exactly as
+        // submitWorkflow() and invoke() do. It was being replaced with an empty array
+        // here, so a caller could not scope anything to THIS run: a serve shares one
+        // journal and one instance_id across every submission, and the salt is the only
+        // key that distinguishes them. Empty when the App has no single agentic step —
+        // that case is the server's answer, not ours to fabricate.
+        return new Run(this, h.instanceId, h.reactChainSalt, h.recipeFingerprint);
       }
       const outcome = await pollAny(this.grpc, h.instanceId, opts.timeoutMs ?? 120_000);
       return this._finish(outcome);
@@ -1375,11 +1382,39 @@ export abstract class KxClientBase {
   }
 
   /**
-   * D213 Experience lane — start (or attach to) a hosted app's dev server. Materializes the
-   * project file tree, `npm install`s, and runs the dev server on a loopback port, proxied at
-   * `/apps/<handle>/live/`. Idempotent (a running app returns its current status). `rebuild`
-   * forces re-materialize + re-install. Throws {@link KxUnimplemented} on a gateway built
-   * without the `hosted-apps` feature.
+   * Delete a caller-owned App and cascade what it uniquely owns: its triggers (which have
+   * no foreign key, so a survivor would fire `RunApp` on a dead handle forever), a running
+   * hosted server, its lock row, and its project-branch binding.
+   *
+   * NOT a full erase, and a UI built on this must not imply otherwise. Content-addressed
+   * blobs survive (they are shared and immutable — the `deleteBranch` posture), so does the
+   * hosted working directory, and so does any dataset the App ingested: there is no
+   * dataset-delete RPC anywhere in the surface. Past runs stay exactly as committed — Apps
+   * are off-journal, so deleting one cannot rewrite history.
+   *
+   * `removed` is `false` uniformly for absent OR not-owned (no existence oracle). Throws
+   * {@link KxUnimplemented} on a server without the App catalog.
+   */
+  async deleteApp(handle: string): Promise<DeleteAppResult> {
+    const resp = await rpc(this.grpc.deleteApp({ handle }));
+    return {
+      removed: resp.removed,
+      branchUnbound: resp.branchUnbound,
+      lockCleared: resp.lockCleared,
+      hostedStopped: resp.hostedStopped,
+      triggersRemoved: resp.triggersRemoved,
+    };
+  }
+
+  /**
+   * D213 Experience lane — start (or attach to) a hosted app's server. Materializes the
+   * project file tree, `npm install`s, then either runs the dev server (`serve_mode: "dev"`,
+   * the default — hot reload) or builds and serves the production output
+   * (`serve_mode: "production"`), on a LOOPBACK port. `status.url` is that absolute origin:
+   * there is no gateway proxy. Idempotent (a running app returns its current status).
+   * `rebuild` forces a re-materialize + clean re-install and restarts the SAME lane — it is
+   * not a production build. Throws {@link KxUnimplemented} on a gateway built without the
+   * `hosted-apps` feature.
    */
   async startHostedApp(handle: string, opts: { rebuild?: boolean } = {}): Promise<HostedAppStatus> {
     const resp = await rpc(this.grpc.startHostedApp({ handle, rebuild: opts.rebuild ?? false }));

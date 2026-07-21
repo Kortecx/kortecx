@@ -41,6 +41,7 @@ from .approvals import PendingApproval, PendingApprovalsPage
 from .apps import (
     AppManifest,
     AppSummary,
+    DeleteAppResult,
     SaveAppResult,
     ScaffoldLaunch,
     ScaffoldStatus,
@@ -1682,6 +1683,33 @@ class KxClient:
             )
         )
         return resp.unlocked
+
+    def delete_app(self, handle: str) -> DeleteAppResult:
+        """Delete a caller-owned App and cascade what it uniquely owns.
+
+        Releases its triggers (which carry no foreign key, so a survivor would fire
+        ``RunApp`` on a dead handle every tick, forever), a running hosted server, its
+        lock row, and its project-branch binding.
+
+        NOT a full erase, and a caller must not present it as one: content-addressed
+        blobs survive (shared and immutable — the ``delete_branch`` posture), so does
+        the hosted working directory, and so does any dataset the App ingested, because
+        there is no dataset-delete RPC anywhere in the surface. Past runs are untouched:
+        Apps are off-journal, so deleting one cannot rewrite history.
+
+        ``removed`` is ``False`` uniformly for absent OR not-owned (no existence
+        oracle).
+        """
+        resp = self._call(
+            lambda: self._stub.DeleteApp(_g.DeleteAppRequest(handle=handle), metadata=self._md)
+        )
+        return DeleteAppResult(
+            removed=resp.removed,
+            branch_unbound=resp.branch_unbound,
+            lock_cleared=resp.lock_cleared,
+            hosted_stopped=resp.hosted_stopped,
+            triggers_removed=resp.triggers_removed,
+        )
 
     def list_models(self) -> List[ModelSummary]:
         """Discover the models the connected gateway serves (Batch A). Display

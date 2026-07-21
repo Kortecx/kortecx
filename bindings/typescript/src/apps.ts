@@ -198,6 +198,7 @@ export type HostedAppStateName =
   | "stopped"
   | "materializing"
   | "installing"
+  | "building"
   | "starting"
   | "running"
   | "failed"
@@ -218,21 +219,37 @@ export function hostedAppStateName(state: number): HostedAppStateName {
       return "running";
     case 6:
       return "failed";
+    case 7:
+      return "building";
     default:
       return "unspecified";
   }
 }
 
-/** D213 Experience lane — a hosted app's live status (state + proxied URL + logs). */
+/**
+ * Which lane a hosted app is served on: `"dev"` (hot reload) or `"production"` (built,
+ * then served by the framework's preview/start server). Carried on the App envelope, so
+ * it is a property of the app rather than of one Start. `""` from an old server ⇒ dev.
+ */
+export type HostedServeModeName = "dev" | "production";
+
+/** D213 Experience lane — a hosted app's live status. */
 export interface HostedAppStatus {
   readonly handle: string;
   readonly state: HostedAppStateName;
-  /** The gateway-proxied path when running (e.g. `/apps/<handle>/live/`); `""` otherwise. */
+  /**
+   * The ABSOLUTE loopback origin the app is served on while running —
+   * `http://127.0.0.1:<port>/`. NOT a gateway-relative path: there is no reverse proxy,
+   * so this cannot be used as an in-console iframe src against the console's own origin.
+   * `""` when not running.
+   */
   readonly url: string;
   readonly recentLogs: string[];
   readonly framework: string;
   readonly port: number;
   readonly detail: string;
+  /** Which lane this app is served on (`"dev"` unless the envelope says otherwise). */
+  readonly serveMode: HostedServeModeName;
 }
 
 /** Convert a wire `HostedAppStatus` to the SDK shape. */
@@ -245,7 +262,28 @@ export function hostedAppStatusFromProto(s: PbHostedAppStatus): HostedAppStatus 
     framework: s.framework,
     port: s.port,
     detail: s.detail,
+    // Unknown/empty (an old server) is dev — never guess "production", which would make
+    // a client claim an app is serving built output when it is hot-reloading source.
+    serveMode: s.serveMode === "production" ? "production" : "dev",
   };
+}
+
+/**
+ * What a `DeleteApp` cascade actually released. Each flag is reported rather than assumed
+ * so a caller can tell the user what happened — "deleted" alone would hide that a cron
+ * trigger was deregistered or a running server was stopped.
+ */
+export interface DeleteAppResult {
+  /** `false` uniformly for absent OR not-owned (no existence oracle). */
+  readonly removed: boolean;
+  /** The project-branch row was dropped (its content blobs stay). */
+  readonly branchUnbound: boolean;
+  /** A lock row existed and was released. */
+  readonly lockCleared: boolean;
+  /** A running hosted server was stopped and reaped. */
+  readonly hostedStopped: boolean;
+  /** How many cron/webhook triggers the cascade deregistered. */
+  readonly triggersRemoved: number;
 }
 
 /** The outcome of a `SaveApp` upsert (server-derived ref + dedup signal). */

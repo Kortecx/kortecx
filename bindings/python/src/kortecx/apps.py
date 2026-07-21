@@ -79,6 +79,22 @@ def default_handle(name: str) -> str:
 
 
 @dataclass(frozen=True)
+class DeleteAppResult:
+    """What a :meth:`KxClient.delete_app` cascade actually released.
+
+    Every flag is reported rather than assumed, so a caller can tell the user what
+    happened — "deleted" alone would hide that a cron trigger was deregistered or a
+    running server was stopped.
+    """
+
+    removed: bool  # False uniformly for absent OR not-owned (no existence oracle)
+    branch_unbound: bool  # the project-branch row was dropped (its blobs stay)
+    lock_cleared: bool  # a lock row existed and was released
+    hosted_stopped: bool  # a running hosted server was stopped + reaped
+    triggers_removed: int  # cron/webhook triggers the cascade deregistered
+
+
+@dataclass(frozen=True)
 class AppSummary:
     """An App's catalog/display view (the envelope-derived summary + server id)."""
 
