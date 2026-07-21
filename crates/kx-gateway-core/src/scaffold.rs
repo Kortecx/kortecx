@@ -292,6 +292,64 @@ pub fn body_is_empty(body: &[u8]) -> bool {
     body.iter().all(u8::is_ascii_whitespace)
 }
 
+/// Strip a markdown code fence that WRAPS the whole body, returning the inner bytes.
+///
+/// [`authoring_prompt`] asks for "no markdown code fences" on both lanes, and that is
+/// the whole enforcement there has ever been. A model that ignores it puts ```` ```tsx ````
+/// on line 1 of `src/App.tsx`, which is a syntax error the bundler reports from a file the
+/// user never wrote — so one disobeyed sentence bricks the project.
+///
+/// DELIBERATELY NARROWER than `manifest::strip_json_wrappers`, which strips a leading fence
+/// and then everything past the LAST ```` ``` ````. That is right for JSON (the payload can
+/// contain no fence of its own) and wrong here: a README's body legitimately CONTAINS fenced
+/// blocks, and `rfind` would eat the last one's content. The rule is therefore positional —
+/// strip only when the first line is a bare fence opener (```` ``` ```` plus an optional
+/// language tag, nothing else) AND the last non-blank line is a bare closing fence. A body
+/// whose interior holds code blocks is returned untouched, because its first line is prose.
+///
+/// Byte-identical on the happy path (returns a subslice of the input), so a body the model
+/// got right is content-addressed to exactly the ref it already had. Total + panic-free.
+#[must_use]
+pub fn strip_code_fence(body: &[u8]) -> &[u8] {
+    let text = body.strip_suffix(b"\n").unwrap_or(body);
+    let Ok(text) = std::str::from_utf8(text) else {
+        return body; // not UTF-8 ⇒ not a fence; leave it exactly as authored
+    };
+    let mut lines = text.lines();
+    let Some(first) = lines.next() else {
+        return body;
+    };
+    // Opener: ``` + an optional language tag, and NOTHING else on the line.
+    let Some(tag) = first.trim_end().strip_prefix("```") else {
+        return body;
+    };
+    if !tag
+        .trim()
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.' | b'#'))
+    {
+        return body;
+    }
+    // Closer: the last non-blank line is a bare ``` (no trailing tag).
+    let Some(close) = text.lines().rev().find(|l| !l.trim().is_empty()) else {
+        return body;
+    };
+    if close.trim() != "```" {
+        return body;
+    }
+    // A single line that is both opener and closer is a degenerate ```` ``` ```` — nothing
+    // to unwrap, and treating it as a wrap would silently produce an empty body.
+    let open_len = first.len() + 1; // + the newline the opener must be followed by
+    if text.len() < open_len {
+        return body;
+    }
+    let inner = &text[open_len..];
+    let Some(end) = inner.rfind("```") else {
+        return body;
+    };
+    inner[..end].trim_end().as_bytes()
+}
+
 /// Resolve `files_done` / `files_pending` over the PLANNED file set (the dynamic
 /// manifest, or the fixed skeleton as a fallback) given the branch manifest's
 /// current path set. Pure — the host calls this from `status` with the planned
@@ -398,6 +456,64 @@ mod tests {
         assert!(body_is_empty(b"   \n\t "));
         assert!(!body_is_empty(b"x"));
         assert!(!body_is_empty(b"  hi  "));
+    }
+
+    #[test]
+    fn strip_code_fence_unwraps_a_fenced_source_file() {
+        // The failure this exists for: ```tsx on line 1 of src/App.tsx is a syntax error
+        // in a file the user never wrote.
+        let body = b"```tsx\nexport default function App() {\n  return <p>hi</p>;\n}\n```\n";
+        assert_eq!(
+            strip_code_fence(body),
+            b"export default function App() {\n  return <p>hi</p>;\n}".as_slice()
+        );
+        // A bare fence (no language tag) unwraps too.
+        assert_eq!(strip_code_fence(b"```\nplain\n```"), b"plain".as_slice());
+    }
+
+    #[test]
+    fn strip_code_fence_leaves_a_markdown_body_with_inner_fences_alone() {
+        // The regression `strip_json_wrappers`' rfind rule would cause: this body's LAST
+        // ``` closes a legitimate block, and eating up to it would delete `npm run dev`.
+        let body = b"# Tip Calculator\n\nRun it:\n\n```sh\nnpm run dev\n```\n";
+        assert_eq!(strip_code_fence(body), body.as_slice());
+        // Prose after the closing fence is likewise untouched (first line is not a fence).
+        let trailing = b"Intro.\n\n```js\nx\n```\n\nOutro.\n";
+        assert_eq!(strip_code_fence(trailing), trailing.as_slice());
+    }
+
+    #[test]
+    fn strip_code_fence_is_conservative_about_what_counts_as_a_wrap() {
+        // An opener carrying prose is not a fence line — leave it.
+        let prose = b"```js let x = 1\ncode\n```";
+        assert_eq!(strip_code_fence(prose), prose.as_slice());
+        // No closing fence ⇒ not a wrap.
+        let unclosed = b"```tsx\ncode\n";
+        assert_eq!(strip_code_fence(unclosed), unclosed.as_slice());
+        // A closer carrying a tag is not a bare closer.
+        let tagged_close = b"```tsx\ncode\n```tsx";
+        assert_eq!(strip_code_fence(tagged_close), tagged_close.as_slice());
+        // A lone fence has nothing to unwrap.
+        assert_eq!(strip_code_fence(b"```"), b"```".as_slice());
+    }
+
+    #[test]
+    fn strip_code_fence_leaves_an_empty_wrap_for_the_fail_closed_guard() {
+        // An empty fenced block must NOT sneak past as a "successful" write — it strips to
+        // nothing, and `body_is_empty` is what refuses to advance the branch.
+        let stripped = strip_code_fence(b"```tsx\n```");
+        assert!(body_is_empty(stripped));
+    }
+
+    #[test]
+    fn strip_code_fence_is_byte_identical_on_the_happy_path() {
+        // A body the model got right must content-address to exactly the ref it already
+        // had — the whole point of returning a subslice rather than rebuilding.
+        let clean = b"import React from 'react';\n\nexport const x = 1;\n";
+        assert_eq!(strip_code_fence(clean), clean.as_slice());
+        // Non-UTF-8 is passed through verbatim rather than guessed at.
+        let binary: &[u8] = &[0xff, 0xfe, 0x00, 0x01];
+        assert_eq!(strip_code_fence(binary), binary);
     }
 
     #[test]

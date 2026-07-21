@@ -531,6 +531,39 @@ pub fn template_paths(framework: &str) -> Vec<&'static str> {
     template(framework).iter().map(|f| f.path).collect()
 }
 
+/// The framework's ENTRY component — the one authored file the template's static entry
+/// imports by name, and therefore the file that decides whether the served page is the
+/// user's app or the template's placeholder.
+///
+/// Vite-React's `src/main.tsx` does `import App from "./App.tsx"`; Next's `app/layout.tsx`
+/// renders `app/page.tsx`; Svelte's `src/main.ts` imports `./App.svelte`. Each is `Static`,
+/// so it is ALWAYS written and always imports this exact path.
+///
+/// Named explicitly rather than derived from "the first `Authored` file that is not the
+/// README", because the derivation would silently follow a template reordering while this
+/// contract — what the static entry imports — would not have moved. The planner contract in
+/// `kx-gateway::manifest` already tells the model it MUST emit this path; this is the value
+/// the host uses to make that true instead of merely requested.
+#[must_use]
+pub fn entry_path(framework: &str) -> &'static str {
+    match framework {
+        "next_js" => "app/page.tsx",
+        "svelte" => "src/App.svelte",
+        _ => "src/App.tsx",
+    }
+}
+
+/// The template's authoring role for `path`, if that path is a model-authored template
+/// file. Lets the host re-plan a template file (notably [`entry_path`]) using the template's
+/// OWN role text, so an injected file is authored to the same contract as a planned one.
+#[must_use]
+pub fn authored_role(framework: &str, path: &str) -> Option<&'static str> {
+    template(framework).iter().find_map(|f| match f.source {
+        FileSource::Authored { role, .. } if f.path == path => Some(role),
+        _ => None,
+    })
+}
+
 /// The dev-server command for `framework`: `npm run dev -- --port <p>` for both, but the
 /// port flag differs (Vite `--port`, Next `-p`). Returns the args AFTER `npm`.
 #[must_use]
@@ -716,6 +749,53 @@ mod tests {
             assert_eq!(authored.len(), 2, "{fw}: page + README are authored");
             assert!(authored.contains(&"README.md"));
         }
+    }
+
+    #[test]
+    fn entry_path_is_the_file_the_static_entry_actually_imports() {
+        // The contract this const encodes: the template's STATIC entry file imports the
+        // entry component BY NAME, so if the branch has no such file the served page is the
+        // template's placeholder under the user's App name. Assert the import, not the
+        // string — a template edit that renamed the entry would otherwise pass.
+        for (fw, static_entry, entry) in [
+            ("vite_react", "src/main.tsx", "src/App.tsx"),
+            ("next_js", "app/layout.tsx", "app/page.tsx"),
+            ("svelte", "src/main.ts", "src/App.svelte"),
+        ] {
+            assert_eq!(entry_path(fw), entry, "{fw}");
+            // The entry is a real, model-AUTHORED file of that template.
+            assert!(
+                authored_role(fw, entry).is_some(),
+                "{fw}: {entry} must be an authored template file"
+            );
+            // Next renders `page.tsx` by routing convention rather than by import; the other
+            // two name it in an import statement.
+            if fw != "next_js" {
+                let src = template(fw)
+                    .iter()
+                    .find(|f| f.path == static_entry)
+                    .expect("the static entry");
+                let FileSource::Static(body) = src.source else {
+                    panic!("{fw}: {static_entry} must be static");
+                };
+                let stem = entry.rsplit('/').next().unwrap();
+                let base = stem.strip_suffix(".tsx").unwrap_or(stem);
+                assert!(
+                    body.contains(base),
+                    "{fw}: {static_entry} must import {entry}"
+                );
+            }
+        }
+        // Unknown / "auto" resolves to Vite-React, matching `template`'s own fallback.
+        assert_eq!(entry_path("auto"), "src/App.tsx");
+        assert_eq!(entry_path("wat"), "src/App.tsx");
+    }
+
+    #[test]
+    fn authored_role_is_none_for_static_and_unknown_paths() {
+        assert!(authored_role("vite_react", "package.json").is_none());
+        assert!(authored_role("vite_react", "src/nope.tsx").is_none());
+        assert!(authored_role("vite_react", "README.md").is_some());
     }
 
     #[test]
