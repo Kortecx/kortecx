@@ -6,8 +6,10 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 656 KiB raw (override with KX_UI_EAGER_BUDGET_BYTES for emergencies —
- * a deliberate, reviewed override, never a silent default bump).
+ * Budget: 657 KiB raw (672,768 B — the value enforced below; keep this line in
+ * lock-step with it, and with the step name in ci.yml, or the doc becomes the
+ * third place that disagrees). Override with KX_UI_EAGER_BUDGET_BYTES for
+ * emergencies — a deliberate, reviewed override, never a silent default bump.
  *
  * History (deliberate, reviewed default bumps — each tied to a real capability the
  * eager SDK client must carry; the SDK is loaded by connection-context up front, so

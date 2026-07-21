@@ -184,6 +184,23 @@ jobs:
           # kx_coordinator reference merge red on this config.
           cargo check -p kx-gateway --no-default-features
 
+      # `hosted-apps` (the D213 Experience lane: the dev-server supervisor, the
+      # Start/Stop/Build lifecycle RPCs) is a NON-DEFAULT kx-gateway feature —
+      # `default = ["embedded-worker", "mcp-gateway"]`. Until this step it was
+      # compiled by NOTHING in CI: `--workspace --all-targets` above builds the
+      # DEFAULT feature set, and the only other compile site was `just
+      # features-guard`, which is local-only. So the entire supervisor could go
+      # red on a rename or a clippy lint and every required check stayed green —
+      # the gate proved nothing about half the hosted surface. Both the lint and
+      # the tests run here: `hosted_supervisor_e2e` / `hosted_app_live_serve` are
+      # `#[cfg(feature = "hosted-apps")]` and would otherwise compile to ZERO
+      # tests and report `ok` (the L-113 false-green shape — read the witness,
+      # never the exit code). FFI-free, so it stays in this cheap job.
+      - name: hosted-apps feature gate (clippy + tests)
+        run: |
+          cargo clippy -p kx-gateway --features hosted-apps --all-targets -- -D warnings
+          cargo test -p kx-gateway --features hosted-apps
+
   # ---------------------------------------------------------------------------
   # test — full workspace test pass.
   # ---------------------------------------------------------------------------
@@ -775,7 +792,7 @@ jobs:
         working-directory: ui
         run: npm run build
 
-      - name: Eager-JS bundle gate (entry + modulepreload ≤ 600 KiB)
+      - name: Eager-JS bundle gate (entry + modulepreload ≤ 657 KiB)
         working-directory: ui
         run: npm run size
 

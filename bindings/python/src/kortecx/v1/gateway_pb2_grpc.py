@@ -474,6 +474,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
                 _registered_method=True)
+        self.DeleteApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeleteApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteAppResponse.FromString,
+                _registered_method=True)
         self.GetAppManifest = channel.unary_unary(
                 '/kortecx.v1.KxGateway/GetAppManifest',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppManifestRequest.SerializeToString,
@@ -1198,6 +1203,17 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def DeleteApp(self, request, context):
+        """Delete a caller-owned App and cascade the things it uniquely owns (triggers, a running
+        hosted supervisor, its lock row, its project-branch binding). Off-journal / off-digest,
+        so it cannot move the canonical digest and never rewrites history. It is NOT a full
+        erase: CAS blobs, the hosted workdir, and the App's ingested RAG dataset all survive —
+        see DeleteAppRequest for why, and say so in any UI that offers this.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetAppManifest(self, request, context):
         """Permission-aware Apps — a READ-ONLY capability manifest ("what this App needs vs.
         what you have"): the requested tools/connections/model diffed against the caller's
@@ -1244,10 +1260,13 @@ class KxGatewayServicer(object):
 
     def StartHostedApp(self, request, context):
         """D213 Experience lane — the hosted-app run/build/serve supervisor. Start materializes
-        the App's branch file tree to disk, `npm install`s, and runs a dev server on a loopback
-        port, reverse-proxied at `/apps/<handle>/live/`; Stop kills + reaps the child; Get/List
-        report state + the live URL + recent logs. A plain host subprocess — never a Mote, never
-        journaled, off-digest. Unimplemented when built without the `hosted-apps` feature.
+        the App's branch file tree to disk, `npm install`s, then either runs the dev server
+        (`serve_mode: "dev"`, the default — HMR, live editing) or `npm run build`s and runs the
+        framework's preview/start server (`serve_mode: "production"`). It binds a LOOPBACK PORT
+        and `url` is that absolute origin — there is no reverse proxy (see HostedAppState).
+        Stop kills + reaps the child; Get/List report state + the live URL + recent logs.
+        A plain host subprocess — never a Mote, never journaled, off-digest. Unimplemented when
+        built without the `hosted-apps` feature.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1760,6 +1779,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.GetApp,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.SerializeToString,
+            ),
+            'DeleteApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteAppResponse.SerializeToString,
             ),
             'GetAppManifest': grpc.unary_unary_rpc_method_handler(
                     servicer.GetAppManifest,
@@ -4208,6 +4232,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/GetApp',
             kortecx_dot_v1_dot_gateway__pb2.GetAppRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.GetAppResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeleteApp',
+            kortecx_dot_v1_dot_gateway__pb2.DeleteAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeleteAppResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -1028,7 +1028,12 @@ message SubmitWorkflowRequest {
 // it returns `rejected` (don't-fake-gaps, D142).
 // ---------------------------------------------------------------------------
 message ProposeWorkflowRequest {
-  string goal = 1;                       // the natural-language objective (size-capped server-side)
+  // The natural-language objective. Rejected only when EMPTY; there is no server-side size
+  // cap on this field (an earlier comment claimed one — it never existed). The planner
+  // interpolates it verbatim into the plan prompt, so a client MAY compose several authoring
+  // inputs (name, goal, instruction, attached filenames) into one multi-line string; the
+  // console does. What bounds the exchange is the planner's OUTPUT cap, not this input.
+  string goal = 1;
 }
 
 // One proposed step. role/intent/kind are the model's plan (minimal trust
@@ -1358,35 +1363,80 @@ message GetScaffoldStatusResponse {
   string writing_instance_id = 6;  // 16B run instance, lower-hex ("" when idle)
   string writing_mote_id     = 7;  // 32B write mote (the token-broker key), lower-hex ("" when idle)
 }
+// Delete a caller-owned App. The `DeleteBranch` idiom (":unbinds the branch; the CAS blobs
+// stay") extended to the things an App uniquely owns. Apps are off-journal / off-digest by
+// construction, so dropping the row cannot move the canonical projection digest and past runs
+// stay exactly as committed — a delete removes the POINTER, never history.
+//
+// WHAT IT CASCADES (each caller-scoped, each reported back so the UI never has to guess):
+//   • the App's cron/webhook triggers — otherwise a surviving trigger fires RunApp on a dead
+//     handle every tick, forever, warning only to the server log. There is no FK to catch it.
+//   • a running hosted supervisor — stopped and forgotten, so it also leaves ListHostedApps.
+//   • the App's lock row, and its project branch BINDING (row only; the CAS blobs stay).
+//
+// WHAT IT CANNOT RECLAIM, and says so rather than implying a purge:
+//   • content-addressed blobs (shared, immutable — the DeleteBranch posture);
+//   • the hosted working directory on disk (node_modules et al) — no other delete in this
+//     service writes the host filesystem, and this one does not start;
+//   • the App's INGESTED RAG DATASET. There is no dataset-delete RPC anywhere in the surface,
+//     so an App's corpus outlives it. A client MUST NOT present this as a full erase.
+message DeleteAppRequest {
+  string handle = 1;                     // exact App handle; caller-scoped
+}
+message DeleteAppResponse {
+  bool removed          = 1;             // false iff absent / not owned (no existence oracle)
+  bool branch_unbound   = 2;             // the project branch row was dropped (blobs stay)
+  bool lock_cleared     = 3;             // a lock row existed and was released
+  bool hosted_stopped   = 4;             // a running hosted supervisor was stopped + reaped
+  uint32 triggers_removed = 5;           // cron/webhook triggers deregistered by the cascade
+}
 message LockAppRequest   { string branch_handle = 1; }  // lock the App's project branch (caller-scoped)
 message LockAppResponse  { bool locked = 1; }
 message UnlockAppRequest { string branch_handle = 1; }
 message UnlockAppResponse{ bool unlocked = 1; }
 
 // D213 Experience lane — the hosted-app supervisor. A hosted (experience) App is a real
-// Vite-React / Next.js project scaffolded into the App's branch; the supervisor materializes
-// that file tree to disk, installs deps, runs a dev server on a loopback port, and reverse-
-// proxies it. Off-journal / off-digest (a plain host subprocess, never a Mote). Unimplemented
-// when the hosted-apps seam is absent (built without the `hosted-apps` feature).
+// Vite-React / Next.js / Svelte project scaffolded into the App's branch; the supervisor
+// materializes that file tree to disk, installs deps, and runs a server on a loopback port.
+// Off-journal / off-digest (a plain host subprocess, never a Mote). Unimplemented when the
+// hosted-apps seam is absent (built without the `hosted-apps` feature).
+//
+// THERE IS NO REVERSE PROXY. Earlier revisions of this comment promised a gateway-proxied
+// `/apps/<handle>/live/` path; the supervisor has only ever emitted a DIRECT loopback origin
+// (`http://127.0.0.1:<port>/`), which `hosted_supervisor_e2e` asserts. A proxy would also have
+// to upgrade the dev server's HMR websocket to keep live editing working. The claim is removed
+// rather than kept as an aspiration — a client that trusted it would build a broken iframe.
 enum HostedAppState {
   HOSTED_APP_STATE_UNSPECIFIED = 0;
   HOSTED_STOPPED               = 1;  // not running (never started, or explicitly stopped)
   HOSTED_MATERIALIZING         = 2;  // writing the branch file tree to the working dir
   HOSTED_INSTALLING            = 3;  // `npm install` (first run / package.json changed)
-  HOSTED_STARTING              = 4;  // dev server spawned, not yet accepting connections
-  HOSTED_RUNNING               = 5;  // dev server accepting connections; `url` is live
-  HOSTED_FAILED                = 6;  // install/start failed (detail carries the advisory reason)
+  HOSTED_STARTING              = 4;  // server spawned, not yet accepting connections
+  HOSTED_RUNNING               = 5;  // server accepting connections; `url` is live
+  HOSTED_FAILED                = 6;  // install/build/start failed (detail carries the advisory reason)
+  HOSTED_BUILDING              = 7;  // `npm run build` (production serve_mode only; never on the dev path)
 }
 message HostedAppStatus {
   string handle              = 1;  // the saved App handle
   HostedAppState state       = 2;
-  string url                 = 3;  // the gateway-proxied path when running (e.g. "/apps/<handle>/live/"); empty otherwise
-  repeated string recent_logs = 4; // tail of the install/dev-server logs (advisory)
-  string framework           = 5;  // "vite_react" | "next_js"
-  uint32 port                = 6;  // the loopback dev-server port (0 when not running)
+  // The ABSOLUTE loopback origin the app is served on when running — `http://127.0.0.1:<port>/`.
+  // Not a gateway-relative path: there is no proxy (see the enum comment). Empty otherwise.
+  string url                 = 3;
+  repeated string recent_logs = 4; // tail of the install/build/server logs (advisory)
+  string framework           = 5;  // "vite_react" | "next_js" | "svelte"
+  uint32 port                = 6;  // the loopback server port (0 when not running)
   string detail              = 7;  // advisory status / failure text (never authority)
+  // Which lane the app is being served on, echoed so a client never has to infer it from
+  // the state sequence: "dev" (materialize -> install -> `npm run dev`, HMR, the default)
+  // or "production" (… -> `npm run build` -> the framework's preview/start server). Carried
+  // on the App ENVELOPE (HostedConfig.serve_mode), not settable per-request — a mode switch
+  // is a property of the app, not of one press of Start. Empty ⇒ "dev" (an old server).
+  string serve_mode          = 8;
 }
-message StartHostedAppRequest { string handle = 1; bool rebuild = 2; }  // rebuild ⇒ force re-materialize + re-install
+// `rebuild` ⇒ force a re-materialize + a clean re-install (drop node_modules) before restarting.
+// It is NOT a production build — it re-runs whatever lane `HostedConfig.serve_mode` selects. The
+// console labels it "Restart clean" for exactly that reason.
+message StartHostedAppRequest { string handle = 1; bool rebuild = 2; }
 message StopHostedAppRequest  { string handle = 1; }
 message StopHostedAppResponse { bool stopped = 1; }
 message GetHostedAppStatusRequest { string handle = 1; }
@@ -2545,6 +2595,13 @@ service KxGateway {
   rpc ListApps(ListAppsRequest) returns (ListAppsResponse);
   rpc GetApp(GetAppRequest) returns (GetAppResponse);
 
+  // Delete a caller-owned App and cascade the things it uniquely owns (triggers, a running
+  // hosted supervisor, its lock row, its project-branch binding). Off-journal / off-digest,
+  // so it cannot move the canonical digest and never rewrites history. It is NOT a full
+  // erase: CAS blobs, the hosted workdir, and the App's ingested RAG dataset all survive —
+  // see DeleteAppRequest for why, and say so in any UI that offers this.
+  rpc DeleteApp(DeleteAppRequest) returns (DeleteAppResponse);
+
   // Permission-aware Apps — a READ-ONLY capability manifest ("what this App needs vs.
   // what you have"): the requested tools/connections/model diffed against the caller's
   // live policy (fireable tools, served models, registered connections). Advisory
@@ -2573,10 +2630,13 @@ service KxGateway {
   rpc GetScaffoldStatus(GetScaffoldStatusRequest) returns (GetScaffoldStatusResponse);
 
   // D213 Experience lane — the hosted-app run/build/serve supervisor. Start materializes
-  // the App's branch file tree to disk, `npm install`s, and runs a dev server on a loopback
-  // port, reverse-proxied at `/apps/<handle>/live/`; Stop kills + reaps the child; Get/List
-  // report state + the live URL + recent logs. A plain host subprocess — never a Mote, never
-  // journaled, off-digest. Unimplemented when built without the `hosted-apps` feature.
+  // the App's branch file tree to disk, `npm install`s, then either runs the dev server
+  // (`serve_mode: "dev"`, the default — HMR, live editing) or `npm run build`s and runs the
+  // framework's preview/start server (`serve_mode: "production"`). It binds a LOOPBACK PORT
+  // and `url` is that absolute origin — there is no reverse proxy (see HostedAppState).
+  // Stop kills + reaps the child; Get/List report state + the live URL + recent logs.
+  // A plain host subprocess — never a Mote, never journaled, off-digest. Unimplemented when
+  // built without the `hosted-apps` feature.
   rpc StartHostedApp(StartHostedAppRequest) returns (HostedAppStatus);
   rpc StopHostedApp(StopHostedAppRequest) returns (StopHostedAppResponse);
   rpc GetHostedAppStatus(GetHostedAppStatusRequest) returns (HostedAppStatus);
