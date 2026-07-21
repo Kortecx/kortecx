@@ -1673,7 +1673,8 @@ pub fn render_scaffold_app(resp: &proto::ScaffoldAppResponse, json: bool) -> Str
     }
 }
 
-/// Render the scaffold status (phase + the done/pending skeleton files).
+/// Render the scaffold status (phase + the done/pending files of the server's PLANNED
+/// set — the base skeleton plus any use-case files the model planned, not a fixed list).
 #[must_use]
 pub fn render_scaffold_status(resp: &proto::GetScaffoldStatusResponse, json: bool) -> String {
     let phase = match proto::get_scaffold_status_response::Phase::try_from(resp.phase) {

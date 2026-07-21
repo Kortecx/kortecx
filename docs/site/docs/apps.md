@@ -149,14 +149,22 @@ branch), so `kx app files <handle>` and the console resolve it directly.
 
 An App is more than an envelope — it has a **project**: a small tree of files the
 agent authors and you can edit in place. `kx app scaffold` (or the console's **New
-App** button) drives a server-side agentic loop that writes a **fixed skeleton** into
-the App's content-addressed (CoW) branch — the model authors the *content* of each
-file, the structure is fixed and testable:
+App** button) drives a server-side agentic loop that writes that tree into the App's
+content-addressed (CoW) branch.
+
+Every scheduled App gets the same **base set**, whose *content* the model authors for
+your goal:
 
 ```
 README.md            prompts/system.md     skills/main.md
 app.json             rules/guardrails.md
 ```
+
+On top of that, the model **plans additional files for your specific goal** — another
+skill per distinct capability, a separate rule for a policy worth stating on its own,
+reference material the agent consults at run time. The base five are preserved (the
+planner may only add, never replace them), so a scaffolded project is always a superset
+of the list above. With no served model the scaffold degrades to the base set alone.
 
 The scaffold runs in the background and is observed from **real** signals — the
 branch manifest growing + a status phase (`planning → writing → done`) — never a

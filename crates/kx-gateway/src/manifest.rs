@@ -87,17 +87,62 @@ src/App.test.tsx. Use only `react` — no other npm dependencies."
     }
 }
 
-/// Build the manifest-planner directive for an app `goal` on `framework`: the source-only
-/// separation contract ([`MANIFEST_PLAN_SYSTEM`]) + the framework contract + the goal, passed as
-/// the bound `prompt` DATA arg to the `app-manifest-plan` recipe (the scaffold-write precedent —
-/// the directive is data, never an identity axis). The committed answer is decoded fail-closed by
-/// [`decode_manifest`].
-pub(crate) fn manifest_plan_directive(goal: &str, framework: &str) -> String {
-    format!(
-        "{MANIFEST_PLAN_SYSTEM}\n\n{}\n\nApp goal: {}",
-        framework_contract(framework),
-        goal.trim()
-    )
+/// POC-6 (scheduled lane): the planner contract for an AGENTIC app — an automation that
+/// runs on a trigger or inside a workflow, not a web page.
+///
+/// A separate system prompt because the hosted one is wrong here in every particular: it
+/// asks for React components, a stylesheet and a bundler-shaped tree, and its `_`
+/// framework fallthrough silently hands a Vite-React contract to a lane that has no
+/// bundler at all. What an agentic app's extra files ARE is the whole content of this
+/// prompt: more skills, more rules, reference data the agent reads at run.
+///
+/// The five base files are already written by the lane and are NOT the model's to plan
+/// (the same "PROVIDED, do not emit" shape the hosted contract uses), because
+/// [`decode_manifest`]'s uniqueness check is manifest-internal and cannot see `SKELETON`
+/// — a re-declared `README.md` would decode cleanly and then collide in the write loop.
+pub(crate) const AGENTIC_PLAN_SYSTEM: &str = "You are planning the supporting files of a \
+Kortecx AGENTIC APP — an automation that a schedule, a trigger, or another workflow runs. \
+It is NOT a web app: there is no UI, no bundler, no package.json, no HTML, no CSS, and no \
+source code to compile. Its behaviour is described in MARKDOWN that the agent reads at run \
+time.\n\
+ALREADY PROVIDED, do NOT plan any of them: README.md (what the app does), app.json (its \
+manifest), prompts/system.md (the system prompt), rules/guardrails.md (the behavioural \
+guardrails), skills/main.md (the primary skill).\n\
+Plan the ADDITIONAL files this specific goal needs, and only those. Good candidates: another \
+`skills/<name>.md` for each DISTINCT capability the goal needs beyond the main one; another \
+`rules/<name>.md` for a policy that deserves to be stated separately (tone, escalation, \
+data handling); a `reference/<name>.md` holding domain knowledge, a checklist, or a worked \
+example the agent should consult; a `prompts/<name>.md` for a reusable sub-prompt. For EACH \
+file write a short ROLE: one concrete sentence saying what it contains and when the agent \
+uses it.\n\
+Plan a FOCUSED set — typically 2 to 6 files. Add a file only when it does distinct work; a \
+goal that needs nothing beyond the base set should plan the single most useful file, not \
+filler. Every path must end in `.md`.\n\
+Reply with EXACTLY one JSON object and NOTHING else — no prose, no code fence, no \
+explanation:\n\
+{\"manifest\":{\"version\":1,\"files\":[{\"path\":\"<relative path>\",\"role\":\"<what this file \
+contains>\"}]}}\n\
+Rules: version is always 1; every path is RELATIVE (no leading slash, no `..` segment); do NOT \
+include a content/body/language field or any field other than `path` and `role` per file; do \
+NOT plan a `.kortecx/` path (reserved); do NOT re-plan any of the five provided files.";
+
+/// Build the manifest-planner directive for an app `goal`.
+///
+/// `framework` selects the lane: `Some(f)` is the HOSTED (Experience) lane and gets the
+/// source-tree separation contract for that framework; `None` is the SCHEDULED (agentic)
+/// lane and gets [`AGENTIC_PLAN_SYSTEM`]. Passed as the bound `prompt` DATA arg to the
+/// `app-manifest-plan` recipe (the scaffold-write precedent — the directive is data, never
+/// an identity axis), so both lanes share one recipe and one seeded fingerprint. The
+/// committed answer is decoded fail-closed by [`decode_manifest`].
+pub(crate) fn manifest_plan_directive(goal: &str, framework: Option<&str>) -> String {
+    match framework {
+        Some(f) => format!(
+            "{MANIFEST_PLAN_SYSTEM}\n\n{}\n\nApp goal: {}",
+            framework_contract(f),
+            goal.trim()
+        ),
+        None => format!("{AGENTIC_PLAN_SYSTEM}\n\nApp goal: {}", goal.trim()),
+    }
 }
 
 /// Hard cap on the number of files a manifest may declare — a DoS bound
@@ -531,7 +576,7 @@ components from ./components/\"},\
 
     #[test]
     fn manifest_plan_directive_is_framework_aware_source_only() {
-        let d = manifest_plan_directive("a kanban board with drag and drop", "vite_react");
+        let d = manifest_plan_directive("a kanban board with drag and drop", Some("vite_react"));
         assert!(d.contains("a kanban board with drag and drop"));
         assert!(d.contains("\"manifest\""));
         assert!(d.contains("\"version\":1"));
@@ -541,7 +586,73 @@ components from ./components/\"},\
         assert!(d.contains("do NOT emit"));
         assert!(d.contains("src/App.tsx"));
         // Next / Svelte contracts route distinctly.
-        assert!(manifest_plan_directive("x", "next_js").contains("app/page.tsx"));
-        assert!(manifest_plan_directive("x", "svelte").contains("src/App.svelte"));
+        assert!(manifest_plan_directive("x", Some("next_js")).contains("app/page.tsx"));
+        assert!(manifest_plan_directive("x", Some("svelte")).contains("src/App.svelte"));
+    }
+
+    /// The SCHEDULED lane gets a genuinely different contract, not the web one with a
+    /// different noun. Before this split, `framework_contract`'s `_` fallthrough silently
+    /// handed a Vite-React contract to a lane that has no bundler — so the planner was
+    /// being asked for React components for an automation.
+    #[test]
+    fn the_agentic_directive_is_not_the_web_one() {
+        let d = manifest_plan_directive("triage inbound support email", None);
+        assert!(d.contains("triage inbound support email"));
+        assert!(d.contains("\"manifest\""));
+        assert!(d.contains("EXACTLY one JSON object"));
+        // It names the agentic vocabulary…
+        assert!(d.contains("skills/"));
+        assert!(d.contains("rules/"));
+        assert!(d.contains("AGENTIC APP"));
+        // …and routes to NEITHER the web system prompt nor any framework contract. This
+        // is the load-bearing assertion: `framework_contract`'s `_` arm returns the
+        // Vite-React contract, so before the lanes split, a scheduled app was silently
+        // asked to plan React components. Asserting on the routing catches that; banning
+        // individual words does not (the agentic prompt legitimately says "no bundler").
+        assert!(
+            !d.contains(MANIFEST_PLAN_SYSTEM),
+            "the web system prompt must not reach the agentic lane"
+        );
+        assert!(
+            !d.contains("Framework:"),
+            "no framework contract may be appended on the agentic lane"
+        );
+        // And the web lane must not have been given the agentic prompt either.
+        assert!(!manifest_plan_directive("x", Some("vite_react")).contains(AGENTIC_PLAN_SYSTEM));
+    }
+
+    /// The five base files are PROVIDED, and the directive must say so — `decode_manifest`
+    /// enforces uniqueness only WITHIN a manifest, so it cannot catch a plan that
+    /// re-declares `README.md`. Belt and braces: the prompt asks the model not to, and
+    /// `resolve_manifest_scheduled` drops it if the model does anyway.
+    #[test]
+    fn the_agentic_directive_declares_the_base_files_off_limits() {
+        let d = manifest_plan_directive("anything", None);
+        assert!(d.contains("do NOT plan any of them"));
+        for base in [
+            "README.md",
+            "app.json",
+            "prompts/system.md",
+            "rules/guardrails.md",
+            "skills/main.md",
+        ] {
+            assert!(
+                d.contains(base),
+                "the directive must name {base} as provided"
+            );
+        }
+    }
+
+    /// A plan that re-declares a base path decodes CLEANLY — the uniqueness check is
+    /// manifest-internal and has no idea `SKELETON` exists. This pins the reason the
+    /// scheduled resolver filters base paths itself rather than trusting the decoder.
+    #[test]
+    fn decode_manifest_cannot_see_the_skeleton_so_a_redeclared_base_path_decodes() {
+        let raw = br#"{"manifest":{"version":1,"files":[
+            {"path":"README.md","role":"re-declared by the model"},
+            {"path":"skills/triage.md","role":"a genuine extra"}]}}"#;
+        let files = decode_manifest(raw).expect("decodes — the collision is invisible here");
+        assert!(files.iter().any(|f| f.path == "README.md"));
+        assert_eq!(files.len(), 2);
     }
 }

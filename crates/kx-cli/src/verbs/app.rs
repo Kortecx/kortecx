@@ -126,9 +126,10 @@ pub enum AppSub {
         /// The clone's new name (its handle is derived from this).
         newname: String,
     },
-    /// POC-5a: agentically scaffold an EXISTING App's fixed-skeleton project tree
-    /// into its CoW branch (server-side; the host is never written). `--wait` polls
-    /// the scaffold status until it completes.
+    /// POC-5a: agentically scaffold an EXISTING App's project tree into its CoW branch
+    /// (server-side; the host is never written) — the preserved base skeleton plus the
+    /// use-case files the model plans for the App's goal. `--wait` polls the scaffold
+    /// status until it completes.
     Scaffold {
         /// The catalog handle (its project branch = the same handle).
         handle: String,

@@ -1,13 +1,22 @@
 //! POC-5a / POC-6 — the host App-scaffold orchestrator (the [`AppScaffolder`] impl).
 //!
 //! Owns the runtime: it spawns a background task that drives a per-file write loop
-//! into a CoW-on-CAS branch. POC-6 (agentic creation): a HOSTED (Experience)
-//! scaffold first runs the `app-manifest-plan` recipe to plan a use-case-specific,
-//! framework-aware SEPARATED source tree (persisted as `.kortecx/manifest.json`), then
-//! loops that DYNAMIC manifest through the existing per-file write path — the static
-//! build config stays template-owned (the supervisor writes it to disk). A SCHEDULED
-//! (functional/agentic) scaffold writes the fixed agentic `SKELETON` (README, app.json,
-//! prompts, rules, skills) — no web project, no planner. For each file it binds +
+//! into a CoW-on-CAS branch. POC-6 (agentic creation): BOTH lanes plan their file set
+//! with the `app-manifest-plan` recipe and persist it as `.kortecx/manifest.json`, then
+//! loop that DYNAMIC manifest through the existing per-file write path. They differ in
+//! what a plan MEANS:
+//!
+//!   • HOSTED (Experience) — a use-case-specific, framework-aware SEPARATED source tree.
+//!     The static build config stays template-owned: the supervisor writes it to disk,
+//!     and the scaffold content-addresses it into the branch so the IDE tree and the
+//!     exported bundle describe the whole project.
+//!   • SCHEDULED (functional/agentic) — the PRESERVED base `SKELETON` (README, app.json,
+//!     prompts, rules, skills) PLUS use-case files planned for the goal (more skills,
+//!     more rules, reference material). The planner may only ADD; the union is what is
+//!     persisted as the marker, so the base files stay visible in the progress report.
+//!
+//! Each lane degrades to its own floor when no model is served — the template's authored
+//! files for hosted, the bare base set for scheduled. For each file it binds +
 //! submits the `app-scaffold-write` recipe (a
 //! single Pure greedy model step, the `react-edit` pattern) through the EXISTING
 //! binder + submitter (the coordinator stays the sole journal writer — the frozen
@@ -53,6 +62,12 @@ const POLL: Duration = Duration::from_millis(250);
 /// into each write. Bounded so a large dynamic project's accumulated bodies never
 /// overflow the model's per-decode batch (the `n_tokens_all <= n_batch` guard).
 const SIBLING_CONTEXT_MAX: usize = 2;
+/// How many model-planned files the SCHEDULED lane may add on top of the fixed base
+/// [`SKELETON`]. Deliberately far below `MAX_MANIFEST_FILES` (48): each file is a full
+/// model step bounded by [`STEP_TIMEOUT`], so 48 extras is a multi-hour scaffold for a
+/// lane that wrote exactly 5 files before. The planner is asked for 2-6; this is the
+/// fail-closed ceiling if it ignores that.
+const MAX_SCHEDULED_EXTRA_FILES: usize = 8;
 
 /// POC-6: the HOSTED lane's graceful fallback when manifest planning is unavailable
 /// (no served model / a decode failure) — the framework template's model-AUTHORED files
@@ -275,13 +290,14 @@ impl HostScaffolder {
             "Kortecx App project branch (agentically scaffolded, in-CAS)",
         )?;
 
-        // Scheduled (functional/agentic) apps get the FIXED agentic skeleton — no web
-        // project, no manifest planner (the dynamic framework project is the HOSTED lane).
-        // No `.kortecx/manifest.json` marker is written, so `status()` reports the skeleton
-        // set by construction (its fallback is the genuine truth for this lane).
-        let all_paths: Vec<&str> = SKELETON.iter().map(|f| f.path).collect();
+        // The planned set is the PRESERVED base skeleton plus whatever use-case files the
+        // planner adds on top (see `resolve_manifest_scheduled`).
+        let files = self
+            .resolve_manifest_scheduled(principal, branch, goal)
+            .await;
+        let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
         let mut prior: Vec<String> = Vec::new();
-        for file in SKELETON {
+        for file in &files {
             // POC-5b: a lock applied before/during the scaffold halts it cleanly.
             if let Some(l) = self.locks.as_ref() {
                 if l.is_locked(principal, branch)? {
@@ -302,17 +318,86 @@ impl HostScaffolder {
                 continue;
             }
 
-            self.set(branch, ScaffoldPhase::Writing, file.path);
+            self.set(branch, ScaffoldPhase::Writing, &file.path);
+            // `framework: None` keeps the AGENTIC authoring directive for every file,
+            // including the planner's extras — they are markdown for an automation, not
+            // source for a web project.
             let body_ref = self
                 .write_one(
-                    principal, branch, file.path, file.role, goal, None, &all_paths, &prior,
+                    principal, branch, &file.path, &file.role, goal, None, &all_paths, &prior,
                 )
                 .await?;
             self.branches
-                .advance(principal, branch, file.path, body_ref)?;
+                .advance(principal, branch, &file.path, body_ref)?;
             prior.push(ContentRef::from_bytes(body_ref).to_hex());
         }
         Ok(())
+    }
+
+    /// Resolve the planned file set for a SCHEDULED (agentic) scaffold: the fixed base
+    /// [`SKELETON`] **plus** model-planned use-case files.
+    ///
+    /// PRESERVE-AND-EXTEND, not replace. The five base files are inviolable — every
+    /// downstream surface assumes `app.json` and `prompts/system.md` exist, and the
+    /// `skeleton_paths_are_stable` unit test pins the constant — so the planner may only
+    /// ADD. Extras that re-declare a base path are dropped here rather than trusted:
+    /// `decode_manifest`'s uniqueness check is manifest-internal and cannot see `SKELETON`.
+    ///
+    /// The UNION is what gets persisted as the marker, and that is load-bearing:
+    /// `split_done_pending` reports only the planned list, so a marker holding just the
+    /// extras would make the five base files vanish from `files_done` in the console.
+    ///
+    /// Degrades to exactly the old behaviour — the bare skeleton — when no model is served
+    /// or the plan does not decode. A scheduled app is never worse off than before.
+    async fn resolve_manifest_scheduled(
+        &self,
+        principal: &str,
+        branch: &str,
+        goal: &str,
+    ) -> Vec<ManifestFile> {
+        let base: Vec<ManifestFile> = SKELETON
+            .iter()
+            .map(|f| ManifestFile {
+                path: f.path.to_string(),
+                role: f.role.to_string(),
+            })
+            .collect();
+        // Resume: a committed marker is the truth (a re-plan would draw a different set
+        // from a non-deterministic model and strand half-written files).
+        if let Ok(Some(m)) = self.branches.get(principal, branch) {
+            if let Some(files) = self.read_planned_manifest(&m) {
+                return files;
+            }
+        }
+        let extras = match self.plan_manifest(principal, branch, None, goal).await {
+            Ok((files, _committed_ref)) => files,
+            Err(e) => {
+                tracing::info!(branch = %branch, error = %e, "agentic manifest planning unavailable; writing the base skeleton only");
+                // Say so on the wire instead of leaving `detail` empty — a five-file app
+                // is otherwise indistinguishable from a planner that chose to add nothing.
+                self.set(
+                    branch,
+                    ScaffoldPhase::Planning,
+                    "planning unavailable — writing the base set only",
+                );
+                Vec::new()
+            }
+        };
+        let base_paths: BTreeSet<&str> = SKELETON.iter().map(|f| f.path).collect();
+        let mut files = base;
+        files.extend(
+            extras
+                .into_iter()
+                .filter(|f| !base_paths.contains(f.path.as_str()))
+                // Bound the lane. MAX_MANIFEST_FILES (48) × the per-step model timeout is
+                // a multi-hour worst case for a lane that wrote exactly 5 files before,
+                // and the live scaffold witness has a wall-clock deadline.
+                .take(MAX_SCHEDULED_EXTRA_FILES),
+        );
+        // The union — NOT just the extras — is the marker, so `status()` keeps reporting
+        // the base files as planned.
+        self.persist_manifest_marker(principal, branch, &files);
+        files
     }
 
     /// POC-6: resolve the planned file set for a HOSTED (Experience) scaffold. A
@@ -336,7 +421,10 @@ impl HostScaffolder {
             }
         }
         // Fresh plan → persist the planner's committed bytes as the durable marker.
-        match self.plan_manifest(principal, branch, framework, goal).await {
+        match self
+            .plan_manifest(principal, branch, Some(framework), goal)
+            .await
+        {
             Ok((files, manifest_ref)) => {
                 if let Err(e) =
                     self.branches
@@ -371,7 +459,7 @@ impl HostScaffolder {
         &self,
         principal: &str,
         branch: &str,
-        framework: &str,
+        framework: Option<&str>,
         goal: &str,
     ) -> Result<(Vec<ManifestFile>, [u8; 32]), CoreError> {
         let prompt = manifest_plan_directive(goal, framework);
@@ -631,15 +719,25 @@ impl HostScaffolder {
 
 impl AppScaffolder for HostScaffolder {
     fn start(&self, principal: &str, branch_handle: &str, goal: &str) -> Result<bool, CoreError> {
-        // Resumed iff the branch already holds ≥1 fixed-skeleton file. Scheduled apps write
-        // no `.kortecx/manifest.json` marker (the dynamic planner is the HOSTED lane).
+        // Resumed iff the branch already holds the committed plan marker or ≥1 base file.
+        // The marker now lands on this lane too (the planned set is the base skeleton plus
+        // the planner's extras), and it is written BEFORE the write loop — so checking it
+        // is what makes a resume that got as far as planning read as resumed.
         let resumed = match self.branches.get(principal, branch_handle)? {
             Some(m) => {
                 let skel: BTreeSet<&str> = SKELETON.iter().map(|f| f.path).collect();
-                m.items.iter().any(|it| skel.contains(it.path.as_str()))
+                m.items
+                    .iter()
+                    .any(|it| it.path == MANIFEST_MARKER_PATH || skel.contains(it.path.as_str()))
             }
             None => false,
         };
+        // Until the marker lands, report the base skeleton — this lane's floor, and what it
+        // will write even if planning is unavailable.
+        self.set_lane_fallback(
+            branch_handle,
+            SKELETON.iter().map(|f| f.path.to_string()).collect(),
+        );
         self.set(branch_handle, ScaffoldPhase::Planning, "");
         // Spawn the background loop and return immediately (the RPC is non-blocking).
         let driver = self.clone();
