@@ -240,6 +240,38 @@ impl<S: ContentStore> BranchesDb<S> {
         }
     }
 
+    /// Load the FULL stored manifest of `(principal, handle)`, if any, on a connection the
+    /// caller already holds. `get` is the same read with its own lock — `create` cannot use
+    /// it (it holds the mutex), and reconstructing the manifest by hand there would risk
+    /// deriving a `branch_ref` that disagrees with the stored one.
+    fn load_manifest(
+        conn: &Connection,
+        principal: &str,
+        handle: &str,
+    ) -> Result<Option<BranchManifest>, CoreError> {
+        conn.query_row(
+            "SELECT handle, branch_ref, parent_handle, description, items_json FROM branches \
+             WHERE principal = ?1 AND handle = ?2",
+            params![principal, handle],
+            |r| {
+                let branch_ref = r.get::<_, Vec<u8>>(1)?;
+                let items_json = r.get::<_, String>(4)?;
+                Ok(Self::row_to_manifest(
+                    r.get::<_, String>(0)?,
+                    &branch_ref,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    &items_json,
+                ))
+            },
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(CoreError::Internal(format!("branches load: {other}"))),
+        })
+    }
+
     /// Load the stored `(parent_handle, items)` of `(principal, handle)`, if any.
     fn load_row(
         conn: &Connection,
@@ -329,7 +361,25 @@ impl<S: ContentStore + Send + Sync + 'static> BranchStore for BranchesDb<S> {
                     .ok_or(CoreError::NotFound("parent branch not found"))?;
                 (p.to_string(), row.1)
             }
-            None => (String::new(), Vec::new()),
+            // A PARENTLESS create over a branch that already exists returns it UNTOUCHED.
+            //
+            // This arm used to build an empty item list and hand it to `upsert_manifest`,
+            // whose `INSERT OR REPLACE` then wrote it over whatever was there — so a
+            // parentless `create` on a populated branch DESTROYED it. That is not a corner
+            // case: it is the first statement of every scaffold, including a RESUME
+            // (`scaffold.rs`, both lanes), which made the resume probe 25 lines further down
+            // structurally unreachable and silently discarded every file already authored.
+            // `CreateBranch` on an existing handle did the same to a user's project.
+            //
+            // "Create" now means create. Re-creating is a no-op that reports the branch it
+            // found, `deduplicated = true` — consistent with what that flag already means
+            // here (the bound manifest is unchanged). `description` is deliberately NOT
+            // applied to an existing row: a half-applied re-create is a worse contract than
+            // a no-op, and nothing asks for a description-only edit.
+            None => match Self::load_manifest(&conn, principal, handle)? {
+                Some(existing) => return Ok((existing, true)),
+                None => (String::new(), Vec::new()),
+            },
         };
         Self::upsert_manifest(&conn, principal, handle, &parent, description, items)
     }
@@ -415,27 +465,7 @@ impl<S: ContentStore + Send + Sync + 'static> BranchStore for BranchesDb<S> {
             .conn
             .lock()
             .map_err(|_| CoreError::Internal("branches lock poisoned".into()))?;
-        conn.query_row(
-            "SELECT handle, branch_ref, parent_handle, description, items_json FROM branches \
-             WHERE principal = ?1 AND handle = ?2",
-            params![principal, handle],
-            |r| {
-                let branch_ref = r.get::<_, Vec<u8>>(1)?;
-                let items_json = r.get::<_, String>(4)?;
-                Ok(Self::row_to_manifest(
-                    r.get::<_, String>(0)?,
-                    &branch_ref,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    &items_json,
-                ))
-            },
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(CoreError::Internal(format!("branches get: {other}"))),
-        })
+        Self::load_manifest(&conn, principal, handle)
     }
 
     fn list(
@@ -810,5 +840,117 @@ mod tests {
         assert_eq!(m.items.len(), 1);
         assert_eq!(m.items[0].path, "out.txt");
         assert_eq!(m.items[0].content_ref, body.0);
+    }
+
+    #[test]
+    fn resume_preserves_items() {
+        // THE scaffold-resume path. Every scaffold — first run AND resume — opens with a
+        // parentless `create`. When that emptied the row, a resume silently discarded every
+        // file already authored, and the resume probe 25 lines later could never see one.
+        let db = db_with_root(None);
+        db.create("alice", "apps/local/a", None, "project").unwrap();
+        let r1 = db.content.put(b"first").unwrap();
+        let r2 = db.content.put(b"second").unwrap();
+        db.advance("alice", "apps/local/a", "README.md", r1.0)
+            .unwrap();
+        db.advance("alice", "apps/local/a", "src/App.tsx", r2.0)
+            .unwrap();
+
+        let (m, deduplicated) = db.create("alice", "apps/local/a", None, "project").unwrap();
+
+        assert_eq!(m.items.len(), 2, "a resume must not empty the branch");
+        assert_eq!(m.items[0].path, "README.md");
+        assert_eq!(m.items[1].path, "src/App.tsx");
+        assert_eq!(m.items[1].content_ref, r2.0);
+        assert!(
+            deduplicated,
+            "a no-op re-create leaves the bound manifest unchanged"
+        );
+        // And it is genuinely persisted, not just echoed back.
+        let stored = db.get("alice", "apps/local/a").unwrap().unwrap();
+        assert_eq!(stored.items.len(), 2);
+        assert_eq!(stored.branch_ref, m.branch_ref);
+    }
+
+    #[test]
+    fn second_create_is_not_destructive() {
+        // `CreateBranch` on a handle a user already owns must not wipe their project — the
+        // same defect reached through the RPC rather than the scaffolder. A differing
+        // description does not license a partial reset either.
+        let db = db_with_root(None);
+        db.create("alice", "ns/coll/work", None, "original")
+            .unwrap();
+        let r = db.content.put(b"body").unwrap();
+        db.advance("alice", "ns/coll/work", "notes.md", r.0)
+            .unwrap();
+        let before = db.get("alice", "ns/coll/work").unwrap().unwrap();
+
+        let (m, _) = db
+            .create("alice", "ns/coll/work", None, "a different description")
+            .unwrap();
+
+        assert_eq!(m.items, before.items);
+        assert_eq!(m.branch_ref, before.branch_ref);
+        assert_eq!(
+            m.description, "original",
+            "an existing branch is returned untouched, not half-updated"
+        );
+    }
+
+    #[test]
+    fn create_still_creates_a_fresh_branch() {
+        // The guard must not turn `create` into a no-op for the case it exists for.
+        let db = db_with_root(None);
+        let (m, deduplicated) = db.create("alice", "ns/coll/new", None, "fresh").unwrap();
+        assert!(m.items.is_empty());
+        assert_eq!(m.description, "fresh");
+        assert_eq!(m.parent_handle, "");
+        assert!(!deduplicated, "a genuinely new branch is not a dedup hit");
+    }
+
+    #[test]
+    fn a_parentless_create_is_scoped_to_its_principal() {
+        // The guard reads the row for (principal, handle) — bob creating the same handle
+        // must get his OWN empty branch, never alice's contents.
+        let db = db_with_root(None);
+        db.create("alice", "ns/coll/x", None, "alice's").unwrap();
+        let r = db.content.put(b"secret").unwrap();
+        db.advance("alice", "ns/coll/x", "a.md", r.0).unwrap();
+
+        let (m, _) = db.create("bob", "ns/coll/x", None, "bob's").unwrap();
+        assert!(m.items.is_empty(), "no cross-principal read");
+        assert_eq!(m.description, "bob's");
+        // alice's is untouched.
+        assert_eq!(
+            db.get("alice", "ns/coll/x").unwrap().unwrap().items.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_cow_fork_still_replaces_the_target() {
+        // Pin the behaviour the fix must NOT over-reach into: forking onto an existing
+        // handle is an explicit "make this branch be a copy of that one".
+        let db = db_with_root(None);
+        db.create("alice", "ns/coll/main", None, "main").unwrap();
+        let p = db.content.put(b"parent body").unwrap();
+        db.advance("alice", "ns/coll/main", "p.md", p.0).unwrap();
+
+        db.create("alice", "ns/coll/feature", None, "feature")
+            .unwrap();
+        let f = db.content.put(b"feature body").unwrap();
+        db.advance("alice", "ns/coll/feature", "f.md", f.0).unwrap();
+
+        let (m, _) = db
+            .create(
+                "alice",
+                "ns/coll/feature",
+                Some("ns/coll/main"),
+                "re-forked",
+            )
+            .unwrap();
+        assert_eq!(m.items.len(), 1, "a fork snapshots the parent");
+        assert_eq!(m.items[0].path, "p.md");
+        assert_eq!(m.parent_handle, "ns/coll/main");
     }
 }

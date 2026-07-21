@@ -23,6 +23,7 @@ import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
 import { queryKeys } from "../../kx/query-keys";
+import { useApps } from "../../kx/use-apps";
 import { useAttachments } from "../../kx/use-attachments";
 import { useDatasets } from "../../kx/use-datasets";
 import { useModels } from "../../kx/use-models";
@@ -30,6 +31,7 @@ import { useProposeWorkflow } from "../../kx/use-propose-workflow";
 import { useScaffoldApp } from "../../kx/use-scaffold-app";
 import { composeCapabilityPrompt, composeProposeGoal } from "../../lib/app-capability-prompt";
 import type { ConnectionEntry } from "../../lib/app-envelope";
+import { collidingHandle } from "../../lib/app-handle";
 import {
   ConnectionsPicker,
   type PickedSkill,
@@ -105,6 +107,9 @@ export function NewAppForm({
   const scaffold = useScaffoldApp();
   const datasets = useDatasets();
   const models = useModels();
+  // The live catalog, for the handle-collision check. `AppsSection` renders this form and
+  // already holds this query, so it resolves from cache — no extra round trip.
+  const { apps } = useApps();
   const attach = useAttachments();
   const propose = useProposeWorkflow();
   const [kind, setKind] = useState<NewAppKind>(initialKind);
@@ -250,7 +255,14 @@ export function NewAppForm({
   const nameOk = name.trim().length > 0;
   const goalOk = goal.trim().length > 0;
   const busy = save.isPending || scaffold.isPending;
-  const canSubmit = nameOk && goalOk && !busy && !attach.uploading && scaffolding === null;
+  // The App's catalog key is DERIVED from its name and `SaveApp` is an upsert on that
+  // key, so saving over an existing handle replaces that App's envelope, its capability
+  // rails, and whatever a trigger already points at — with no warning. Block instead of
+  // auto-suffixing: `my-agent-2` leaves the user unable to tell which App is theirs.
+  // Read from the catalog `AppsSection` has already loaded, so this costs no request.
+  const collision = collidingHandle(apps, name);
+  const canSubmit =
+    nameOk && goalOk && collision === null && !busy && !attach.uploading && scaffolding === null;
 
   // Only datasets with an indexed document can ground (honest: grounding turns on
   // AFTER you ingest). No dataset view (hnsw off) / none ingested ⇒ render nothing
@@ -387,7 +399,20 @@ export function NewAppForm({
             aria-label="App name"
             maxLength={80}
             disabled={busy}
+            aria-invalid={collision !== null}
+            aria-describedby={collision !== null ? "new-app-name-collision" : undefined}
           />
+          {collision !== null ? (
+            <p
+              id="new-app-name-collision"
+              className="field-error"
+              data-testid="new-app-name-collision"
+              role="alert"
+            >
+              An App already exists at <code>{collision}</code>. Saving would replace it — pick a
+              different name.
+            </p>
+          ) : null}
           <textarea
             className="input"
             data-testid="new-app-goal"
