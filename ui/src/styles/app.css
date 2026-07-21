@@ -5562,3 +5562,58 @@ button.card-grid__title:hover {
   gap: 0.5rem;
   margin: 0.5rem 0;
 }
+
+/* D213 — the hosted app's run surface on the App detail page: the supervisor facts the
+   server has always sent and the console never showed (framework / serve lane / port /
+   live URL), plus its log ring. Token-only; both themes. */
+.hosted-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.hosted-panel__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  margin: 0;
+}
+.hosted-panel__facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.hosted-panel__facts dt {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hosted-panel__facts dd {
+  margin: 0;
+  font-size: 0.9rem;
+}
+.hosted-panel__url {
+  margin: 0;
+  font-size: 0.85rem;
+  /* A loopback origin is long and unbreakable; let it wrap rather than widen the pane. */
+  overflow-wrap: anywhere;
+}
+.hosted-panel__logs summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+.hosted-panel__logs pre {
+  margin: 0.4rem 0 0;
+  padding: 0.6rem;
+  max-height: 22rem;
+  overflow: auto;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}

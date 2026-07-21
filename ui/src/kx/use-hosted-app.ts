@@ -77,14 +77,14 @@ export function useHostedRun(handle: string) {
     window.open(href, "_blank", "noopener");
   }, []);
 
-  function run(): void {
+  function launch(rebuild: boolean): void {
     if (notWired) {
       return;
     }
     openedRef.current = false;
     setArmed(true);
     start.mutate(
-      { handle },
+      { handle, rebuild },
       {
         onSuccess: (s) => {
           if (s.state === "running" && s.url) {
@@ -95,6 +95,21 @@ export function useHostedRun(handle: string) {
         onError: () => setArmed(false),
       },
     );
+  }
+
+  /** Start (or attach to) the app and open it once it is genuinely serving. */
+  function run(): void {
+    launch(false);
+  }
+
+  /**
+   * Restart CLEAN: re-materialize, drop `node_modules`, reinstall, restart the same
+   * lane. This is precisely what the wire's `rebuild` flag does — it is not a production
+   * build, which is why the control is not labelled "Build". The flag has been plumbed
+   * proto → SDK → this hook since the lane shipped, with no UI ever setting it.
+   */
+  function restart(): void {
+    launch(true);
   }
 
   // Once armed, open as soon as the poll reports the app is actually running (or give up on
@@ -111,11 +126,16 @@ export function useHostedRun(handle: string) {
     }
   }, [armed, status?.state, status?.url, openLive]);
 
+  // Every non-terminal state must be listed here AND in the poll's `refetchInterval`
+  // below — they are two hand-maintained enumerations of the same idea, and omitting a
+  // state from either makes the UI go quiet mid-lifecycle and never open the tab.
+  // `building` is the production lane's step; the dev lane never reaches it.
   const busy =
     start.isPending ||
     (armed &&
       (status?.state === "materializing" ||
         status?.state === "installing" ||
+        status?.state === "building" ||
         status?.state === "starting"));
 
   let error: string | null = null;
@@ -125,7 +145,7 @@ export function useHostedRun(handle: string) {
     error = status.detail || "The hosted app failed to start.";
   }
 
-  return { run, disabled: notWired, busy, error };
+  return { run, restart, disabled: notWired, busy, error, status };
 }
 
 /** Poll a hosted app's status; polls while starting/running, stops once stopped/failed. */
@@ -136,7 +156,13 @@ export function useHostedAppStatus(handle: string | null, enabled: boolean) {
     enabled: enabled && status === "connected" && client !== null && handle !== null,
     refetchInterval: (query) => {
       const s = (query.state.data as HostedAppStatus | undefined)?.state;
-      return s === "running" || s === "starting" || s === "installing" || s === "materializing"
+      // Keep in lock-step with `busy` in useHostedRun — a state missing here stops the
+      // poll mid-lifecycle, so the app silently never reports Running.
+      return s === "running" ||
+        s === "starting" ||
+        s === "building" ||
+        s === "installing" ||
+        s === "materializing"
         ? 3000
         : false;
     },

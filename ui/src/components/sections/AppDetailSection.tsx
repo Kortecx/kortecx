@@ -37,6 +37,13 @@ import { AppChatEditDrawer } from "../apps/AppChatEditDrawer";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { ConnectionsRail } from "../apps/ConnectionsRail";
 import { FileTree } from "../apps/FileTree";
+import {
+  HostedRestartButton,
+  HostedRunButton,
+  HostedStatusPill,
+  HostedStopButton,
+} from "../apps/HostedControls";
+import { HostedRunPanel } from "../apps/HostedRunPanel";
 import { LockControl } from "../apps/LockControl";
 import { SkillsRail } from "../apps/SkillsRail";
 import { ToolsRail } from "../apps/ToolsRail";
@@ -45,6 +52,7 @@ import { DiffViewer } from "../editor/DiffViewer";
 import { MonacoMount } from "../editor/MonacoMount";
 import { Icon } from "../shell/Icon";
 import { AppLineageSection } from "./AppLineageSection";
+import { sectionOf } from "./AppsSection";
 
 const TABS = ["files", "lineage", "skills", "tools", "integrations"] as const;
 export type IdeTab = (typeof TABS)[number];
@@ -78,6 +86,12 @@ export function AppDetailSection({
   const app = useApp(handle);
   const summary = app.data?.summary;
   const locked = summary?.locked ?? false;
+  // D213: which lane this App is. Decided the SAME way the catalog decides it
+  // (`sectionOf`), because two independent answers is how this page ended up offering
+  // scheduled-lane controls — Run, and a Lineage "Edit structure" — on an App with no
+  // blueprint, all of which the server refuses. `undefined` kind (loading, or an app
+  // from an older server) reads as scheduled, which is the pre-existing behaviour.
+  const hosted = summary !== undefined && sectionOf(summary) === "hosted";
   const exportBundle = useExportAppBundle();
   const saveApp = useSaveApp();
 
@@ -192,16 +206,28 @@ export function AppDetailSection({
           >
             <Icon name="chat" size={18} />
           </button>
-          <button
-            type="button"
-            className="iconbtn"
-            data-testid="app-detail-run"
-            title="Run this App"
-            aria-label="Run"
-            onClick={() => setRunOpen(true)}
-          >
-            <Icon name="play" size={18} />
-          </button>
+          {hosted ? (
+            // A hosted App has no blueprint, so RunApp refuses it by construction
+            // (app_run.rs: "this is a hosted (experience) app with no blueprint"). Offer
+            // the controls that CAN fire instead: start-and-open, stop, restart clean.
+            <>
+              <HostedStatusPill handle={handle} variant="detail" />
+              <HostedRunButton handle={handle} variant="detail" />
+              <HostedStopButton handle={handle} />
+              <HostedRestartButton handle={handle} />
+            </>
+          ) : (
+            <button
+              type="button"
+              className="iconbtn"
+              data-testid="app-detail-run"
+              title="Run this App"
+              aria-label="Run"
+              onClick={() => setRunOpen(true)}
+            >
+              <Icon name="play" size={18} />
+            </button>
+          )}
           <button
             type="button"
             className="iconbtn"
@@ -232,7 +258,15 @@ export function AppDetailSection({
       </fieldset>
 
       {tab === "lineage" ? (
-        <AppLineageSection handle={handle} />
+        // The tab list stays constant across lanes (the route validates it, and the
+        // shell test asserts the exact five). For a hosted App the Lineage tab shows the
+        // server surface instead of an empty blueprint diagram — the same question
+        // ("what is this App doing?") answered for the lane it is actually in.
+        hosted ? (
+          <HostedRunPanel handle={handle} />
+        ) : (
+          <AppLineageSection handle={handle} />
+        )
       ) : tab === "skills" ? (
         app.data ? (
           <SkillsRail handle={handle} envelope={app.data.envelope} locked={locked} />
@@ -310,7 +344,13 @@ export function AppDetailSection({
         </div>
       )}
 
-      {runOpen ? <AppRunDrawer handle={handle} onClose={() => setRunOpen(false)} /> : null}
+      {/* Never for hosted: the drawer's RunPreflight would print "✓ Ready — a model is
+          served and this App's capabilities are in policy" and then the run would be
+          refused for having no blueprint. Not mounting it is the honest fix; a preflight
+          that green-lights a structurally impossible run is worse than no preflight. */}
+      {runOpen && !hosted ? (
+        <AppRunDrawer handle={handle} onClose={() => setRunOpen(false)} />
+      ) : null}
       {chatOpen ? (
         <AppChatEditDrawer handle={handle} locked={locked} onClose={() => setChatOpen(false)} />
       ) : null}
