@@ -168,8 +168,10 @@ export {
 } from "./apps.js";
 export type {
   AppCapability,
+  DeleteAppResult,
   HostedAppStateName,
   HostedAppStatus,
+  HostedServeModeName,
   Skill,
   ScaffoldPhase,
   ScaffoldStatus,

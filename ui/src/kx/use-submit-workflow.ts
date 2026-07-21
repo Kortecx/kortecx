@@ -17,6 +17,13 @@ export type SubmitWorkflowVars = Parameters<KxClientBase["submitWorkflow"]>[0];
 export interface SubmittedWorkflow {
   instanceId: string;
   recipeFingerprint: string;
+  /**
+   * The server-derived per-submission chain key (`RunHandle.react_chain_salt`), hex.
+   * EMPTY when the DAG has no single agentic step. A serve shares one journal and one
+   * `instance_id` across every submission, so this is what lets the run view show THIS
+   * workflow rather than the whole workspace.
+   */
+  reactChainSalt: string;
 }
 
 export function useSubmitWorkflow() {
@@ -36,6 +43,7 @@ export function useSubmitWorkflow() {
       return {
         instanceId: run.instanceId,
         recipeFingerprint: run.recipeFingerprint,
+        reactChainSalt: run.reactChainSalt,
       };
     },
   });

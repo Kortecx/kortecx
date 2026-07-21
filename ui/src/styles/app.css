@@ -5617,3 +5617,21 @@ button.card-grid__title:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
+
+/* A destructive kebab item (Delete…). Tone only — the confirmation dialog, not the
+   colour, is what prevents an accidental delete. */
+.popover__item--danger {
+  color: var(--danger, var(--red, #c0392b));
+}
+.popover__item--danger:hover {
+  background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
+}
+
+/* The scaffold IDE's follow-state control: "Following…" while auto-following the file
+   being written, a button to resume once the user has pinned one. Without it a single
+   click on the tree froze the view for the rest of the scaffold with nothing on screen
+   explaining why it had stopped moving. */
+.scaffold-progress__follow {
+  margin-left: auto;
+  font-size: 0.78rem;
+}

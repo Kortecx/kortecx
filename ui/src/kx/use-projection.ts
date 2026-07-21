@@ -13,6 +13,7 @@
 import type { Projection } from "@kortecx/sdk/web";
 import { useQuery } from "@tanstack/react-query";
 import { useRef } from "react";
+import { connectedComponent } from "../components/dag/dag-graph";
 import { isTerminalState } from "../lib/colors";
 import { useConnection } from "./connection-context";
 import { queryKeys } from "./query-keys";
@@ -114,18 +115,59 @@ export interface UseProjectionOptions {
   atSeq?: number;
   /** The recipe's terminal (sink) Mote id — the authoritative run-complete signal. */
   terminalMoteId?: string;
+  /**
+   * Scope the returned Motes to the connected component containing this one — i.e. to a
+   * SINGLE submission.
+   *
+   * `GetProjection` is not run-scoped by design: one `kx serve` is one journal with ONE
+   * `instance_id` shared by every Invoke, chat turn, scaffold and cron fire, so an
+   * unscoped fold returns the whole workspace. Any server-derived Mote id belonging to
+   * this submission works as the anchor; `RunHandle.react_chain_salt` is the one the
+   * gateway already returns for a run with a single agentic step.
+   *
+   * When the anchor is absent from the projection the result is EMPTY and
+   * `scopeMissed` is true — the caller must say it cannot scope rather than quietly
+   * showing the whole journal.
+   */
+  scopeMoteId?: string;
+}
+
+/** A projection plus whether a requested scope could be applied. */
+export interface ScopedProjectionVM extends ProjectionVM {
+  /**
+   * True when a `scopeMoteId` was requested but is not present in the fold — a stale
+   * link, or a run whose shape yields no single agentic step (the gateway returns an
+   * empty salt for a pure-DAG or multi-agent recipe). The view must NOT silently fall
+   * back to the unscoped set: showing every other run's Motes as if they were this
+   * run's is the bug this option exists to fix.
+   */
+  readonly scopeMissed: boolean;
+}
+
+/** Narrow a projection to one submission (see {@link UseProjectionOptions.scopeMoteId}). */
+export function scopeProjection(p: ProjectionVM, scopeMoteId?: string): ScopedProjectionVM {
+  if (!scopeMoteId) {
+    return { ...p, scopeMissed: false };
+  }
+  const motes = connectedComponent(p.motes, scopeMoteId);
+  return motes.length > 0
+    ? { ...p, motes: [...motes], scopeMissed: false }
+    : { ...p, scopeMissed: true };
 }
 
 export function useProjection(instanceId: string | undefined, opts: UseProjectionOptions = {}) {
   const { client, endpoint, status } = useConnection();
   const atSeq = opts.atSeq;
   const terminalMoteId = opts.terminalMoteId;
+  const scopeMoteId = opts.scopeMoteId;
   // Tracks the journal frontier across polls for the fallback stop heuristic.
   const frontier = useRef<{ key: string; lastSeq: number }>({ key: "", lastSeq: -1 });
   return useQuery({
-    queryKey: queryKeys.projection(endpoint, instanceId ?? "", atSeq),
+    // The scope is part of the identity: two views of the same instance scoped to
+    // different submissions are different data, not a cache hit.
+    queryKey: [...queryKeys.projection(endpoint, instanceId ?? "", atSeq), scopeMoteId ?? ""],
     enabled: status === "connected" && client !== null && Boolean(instanceId),
-    queryFn: async (): Promise<ProjectionVM> => {
+    queryFn: async (): Promise<ScopedProjectionVM> => {
       if (!client || !instanceId) {
         throw new Error("not connected");
       }
@@ -133,7 +175,10 @@ export function useProjection(instanceId: string | undefined, opts: UseProjectio
         instanceId,
         atSeq != null ? { atSeq: BigInt(atSeq) } : {},
       );
-      return toProjectionVM(view);
+      // Scope INSIDE the query fn so every consumer of this hook — the DAG, the mote
+      // table, artifacts, metrics, the per-mote detail fan-out — inherits one run's
+      // worth of data, and the fan-out shrinks from workspace-sized to run-sized.
+      return scopeProjection(toProjectionVM(view), scopeMoteId);
     },
     refetchInterval: (query) => {
       if (atSeq != null) {

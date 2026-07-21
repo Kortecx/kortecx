@@ -247,8 +247,13 @@ function LineageView({
     runApp.mutate(
       { handle },
       {
-        onSuccess: ({ instanceId }) =>
-          void navigate({ to: "/workflows/$instanceId", params: { instanceId } }),
+        onSuccess: ({ instanceId, reactChainSalt }) =>
+          // See AppRunDrawer: the salt is what scopes the run view to THIS submission.
+          void navigate({
+            to: "/workflows/$instanceId",
+            params: { instanceId },
+            search: reactChainSalt ? { chain: reactChainSalt } : {},
+          }),
       },
     );
   }, [runApp, handle, navigate]);

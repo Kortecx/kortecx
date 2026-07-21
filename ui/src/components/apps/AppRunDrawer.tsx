@@ -53,9 +53,16 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
     // Send the opt-in HITL flag only when the user checked it (mirrors the `args`
     // idiom) — an unchecked run keeps today's payload, so the server default applies.
     runApp.mutate(requireApproval ? { handle, args, requireApproval } : { handle, args }, {
-      onSuccess: ({ instanceId }) => {
+      onSuccess: ({ instanceId, reactChainSalt }) => {
         onClose();
-        void navigate({ to: "/workflows/$instanceId", params: { instanceId } });
+        // Carry the per-submission chain key into the run view. Without it the view
+        // falls back to the whole journal: a serve is ONE journal with ONE instance_id
+        // shared by every run, so `/workflows/<instanceId>` alone cannot mean "this run".
+        void navigate({
+          to: "/workflows/$instanceId",
+          params: { instanceId },
+          search: reactChainSalt ? { chain: reactChainSalt } : {},
+        });
       },
     });
   }

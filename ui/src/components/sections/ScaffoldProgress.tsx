@@ -106,9 +106,12 @@ export function ScaffoldProgress({
     })),
   );
 
-  // Auto-follow the writing file until the user pins one; then hold the pin.
+  // Auto-follow the writing file until the user pins one; then hold the pin. The pin
+  // used to be one-way: a single click on the tree froze the view for the rest of the
+  // scaffold with nothing on screen explaining why it had stopped moving.
   const firstDone = derived.rows.find((r) => r.state === "done")?.path;
   const selectedPath = pinned ?? derived.writingPath ?? firstDone ?? null;
+  const following = pinned === null;
 
   return (
     <div
@@ -121,6 +124,21 @@ export function ScaffoldProgress({
         <code className="mono scaffold-progress__handle mono-trunc" title={appHandle}>
           {appHandle}
         </code>
+        {following ? (
+          <span className="muted scaffold-progress__follow" data-testid="scaffold-following">
+            Following the file being written
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="linkbtn scaffold-progress__follow"
+            data-testid="scaffold-resume-follow"
+            title="Go back to following whichever file the model is writing"
+            onClick={() => setPinned(null)}
+          >
+            Pinned to {pinned} — resume following
+          </button>
+        )}
       </div>
 
       {derived.rows.length === 0 ? (
@@ -219,22 +237,39 @@ function StreamingFilePane({
   instanceId: string;
   moteId: string;
 }) {
-  const { text, streaming } = useTokenStream(instanceId, moteId, true);
+  // `dropped` was exposed by the hook and DISCARDED here, which is why a failed stream
+  // rendered a permanent "authoring…" over an empty editor and the whole file then
+  // appeared at once on commit. The stream is advisory — the committed body is the
+  // authority — so the honest state says the write is unaffected rather than implying
+  // the model stalled.
+  const { text, streaming, dropped } = useTokenStream(instanceId, moteId, true);
+  const status = dropped ? "live view unavailable" : streaming ? "streaming…" : "authoring…";
   return (
-    <div className="scaffold-ide__pane" data-testid="scaffold-stream" data-writing-path={path}>
+    <div
+      className="scaffold-ide__pane"
+      data-testid="scaffold-stream"
+      data-writing-path={path}
+      data-dropped={dropped ? "true" : "false"}
+    >
       <div className="scaffold-ide__pane-head">
         <code className="mono">{path}</code>
-        <span className="muted scaffold-ide__streaming">
-          {streaming ? "streaming…" : "authoring…"}
-        </span>
+        <span className="muted scaffold-ide__streaming">{status}</span>
       </div>
-      <CodeViewer
-        value={text}
-        language={inferLanguageFromPath(path)}
-        height={EDITOR_HEIGHT}
-        testId="scaffold-stream-code"
-        ariaLabel={`Authoring ${path}`}
-      />
+      {dropped && text === "" ? (
+        <p className="muted" data-testid="scaffold-stream-dropped">
+          The live view of this file isn't available on this server. It is still being written — the
+          file appears here as soon as it commits.
+        </p>
+      ) : (
+        <CodeViewer
+          value={text}
+          language={inferLanguageFromPath(path)}
+          height={EDITOR_HEIGHT}
+          testId="scaffold-stream-code"
+          ariaLabel={`Authoring ${path}`}
+          followTail
+        />
+      )}
     </div>
   );
 }
