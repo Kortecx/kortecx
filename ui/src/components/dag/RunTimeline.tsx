@@ -96,11 +96,17 @@ function StepFallback({
 export function RunTimeline({
   instanceId,
   projection,
+  chainSalt,
 }: {
   instanceId: string;
   projection: ProjectionVM;
+  /** The per-submission chain key. `ListReactTurns` is scoped by instance alone
+   *  otherwise, and a serve shares ONE instance across every run — so without this the
+   *  timeline listed every agentic turn in the journal, not this run's. Chat already
+   *  passes it (`use-chat.ts`); this view did not. */
+  chainSalt?: string;
 }) {
-  const { turns, terminal } = useReactProgress(instanceId);
+  const { turns, terminal } = useReactProgress(instanceId, chainSalt);
   const settled = terminal !== null || allTerminal(projection);
   const isAgentRun = turns.length > 0;
   return (

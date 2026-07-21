@@ -1825,6 +1825,7 @@ fn hosted_state_to_proto(s: crate::HostedState) -> proto::HostedAppState {
         crate::HostedState::Stopped => proto::HostedAppState::HostedStopped,
         crate::HostedState::Materializing => proto::HostedAppState::HostedMaterializing,
         crate::HostedState::Installing => proto::HostedAppState::HostedInstalling,
+        crate::HostedState::Building => proto::HostedAppState::HostedBuilding,
         crate::HostedState::Starting => proto::HostedAppState::HostedStarting,
         crate::HostedState::Running => proto::HostedAppState::HostedRunning,
         crate::HostedState::Failed => proto::HostedAppState::HostedFailed,
@@ -1840,6 +1841,7 @@ fn hosted_status_to_proto(s: crate::HostedStatus) -> proto::HostedAppStatus {
         framework: s.framework,
         port: s.port,
         detail: s.detail,
+        serve_mode: s.serve_mode.as_str().to_string(),
     }
 }
 
@@ -2920,6 +2922,104 @@ impl KxGateway for GatewayService {
                 source_digest: Vec::new(),
             })),
         }
+    }
+
+    async fn delete_app(
+        &self,
+        request: Request<proto::DeleteAppRequest>,
+    ) -> Result<Response<proto::DeleteAppResponse>, Status> {
+        let apps = self.apps.as_ref().ok_or_else(|| {
+            Status::unimplemented("DeleteApp: no App catalog wired (apps.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.handle.trim().is_empty() {
+            return Err(Status::invalid_argument("handle is required"));
+        }
+        // Uniform absent/not-owned: read first so the cascade only ever runs for a row this
+        // caller genuinely owns, and so a miss reveals nothing (the GetApp posture).
+        let Some((record, envelope_json)) = apps.get(&principal, &req.handle)? else {
+            return Ok(Response::new(proto::DeleteAppResponse::default()));
+        };
+
+        // ORDER: THE ROW FIRST, then everything that merely REFERENCES it.
+        //
+        // There is no cross-store transaction here — apps.db, triggers.db, branches.db and
+        // the supervisor are four independent stores — so SOMETHING has to be the point of
+        // no return. Making it the App row is the only safe choice, and it was learned the
+        // hard way in a live run: cascading first meant a failure at the row delete had
+        // ALREADY deregistered the App's triggers and unbound its project branch, leaving a
+        // LIVE App whose references had been silently destroyed. That is unrecoverable data
+        // loss reported to the caller as a plain error.
+        //
+        // Row-first inverts the failure into a recoverable one: if the row delete fails,
+        // nothing else has happened at all; if a later cleanup fails, the App is gone and
+        // the response reports exactly which cleanups did NOT run, so the caller can say so
+        // and a retry can finish the job. Every cleanup is therefore best-effort and
+        // independently reported — never fatal, because failing here would claim the delete
+        // did not happen when it did.
+        //
+        // `record` existed only to prove ownership.
+        drop(record);
+        let _ = &envelope_json;
+        let removed = apps.delete(&principal, &req.handle)?;
+        if !removed {
+            // Nothing was bound here (lost a race with a concurrent delete) — cascade nothing.
+            return Ok(Response::new(proto::DeleteAppResponse::default()));
+        }
+
+        // 1. Triggers. `triggers.app_handle` has no FK, so an orphan is not inert: the
+        //    cron loop re-selects it every tick and RunApp refuses it, forever, warning
+        //    only to the log. This is the step that turns a silent infinite failure into
+        //    nothing at all.
+        let triggers_removed = match self.trigger_admin.as_ref() {
+            Some(admin) => admin
+                .deregister_by_app(&principal, &req.handle)
+                .await
+                .unwrap_or(0),
+            None => 0,
+        };
+        // 2. A running hosted supervisor — otherwise a dev server keeps a loopback port for
+        //    an App that no longer exists, and since every hosted RPC resolves the App
+        //    first, it could never be stopped through the API again.
+        let hosted_stopped = match self.hosted.as_ref() {
+            Some(h) => h.stop(&principal, &req.handle).unwrap_or(false),
+            None => false,
+        };
+        // 3. The lock row — otherwise a re-created App at the same handle inherits a lock
+        //    nobody set.
+        let lock_cleared = match self.locks.as_ref() {
+            Some(l) => {
+                l.is_locked(&principal, &req.handle).unwrap_or(false)
+                    && l.unlock(&principal, &req.handle).unwrap_or(false)
+            }
+            None => false,
+        };
+        // 4. The project branch BINDING — at the App's OWN handle only, the
+        //    one-App-one-branch convention ScaffoldApp itself defaults to (see
+        //    `scaffold_app`: an empty `branch_handle` resolves to the App handle).
+        //
+        //    Deliberately NOT parsed out of the envelope: gateway-core does not link
+        //    kx-app (the host owns those types), and reaching for a custom
+        //    `branch_handle` would be the wrong behaviour even if it could — an App
+        //    pointed at a shared or foreign branch must not have it deleted out from
+        //    under the other owner. Unbinding only the branch this App demonstrably owns
+        //    is the conservative half, and the one that cannot destroy someone else's work.
+        //
+        //    Row only: the content-addressed blobs stay, exactly as DeleteBranch leaves
+        //    them. `false` here means "no such branch", not "failed".
+        let branch_unbound = match self.branches.as_ref() {
+            Some(b) => b.delete(&principal, &req.handle).unwrap_or(false),
+            None => false,
+        };
+
+        Ok(Response::new(proto::DeleteAppResponse {
+            removed,
+            branch_unbound,
+            lock_cleared,
+            hosted_stopped,
+            triggers_removed,
+        }))
     }
 
     async fn get_app_manifest(
@@ -4037,14 +4137,18 @@ impl KxGateway for GatewayService {
         &self,
         request: Request<proto::ListTriggersRequest>,
     ) -> Result<Response<proto::ListTriggersResponse>, Status> {
-        let _party = caller_principal(&request)?;
+        // Scoped to the CALLER. Every trigger row carries the owner party its runs fire
+        // under, and this handler has always resolved the caller — it just discarded it,
+        // so any authenticated party could enumerate every other party's triggers,
+        // schedules and App targets. Passing it through is the whole fix.
+        let party = caller_principal(&request)?;
         let admin = self
             .trigger_admin
             .as_ref()
             .ok_or_else(|| Status::unimplemented("ListTriggers: no trigger admin wired"))?;
         let req = request.into_inner();
         let (rows, has_more) = admin
-            .list(req.limit, &req.after_name)
+            .list(&party, req.limit, &req.after_name)
             .await
             .map_err(trigger_admin_status)?;
         Ok(Response::new(proto::ListTriggersResponse {
@@ -4073,7 +4177,11 @@ impl KxGateway for GatewayService {
         &self,
         request: Request<proto::DeregisterTriggerRequest>,
     ) -> Result<Response<proto::DeregisterTriggerResponse>, Status> {
-        let _party = caller_principal(&request)?;
+        // Scoped to the CALLER — see ListTriggers. Deleting was the sharper half of the
+        // same gap: the name is the only key, so any party could deregister any other
+        // party's trigger by guessing its name. `removed: false` covers absent AND
+        // owned-by-someone-else, so this stays free of an existence oracle.
+        let party = caller_principal(&request)?;
         let admin = self
             .trigger_admin
             .as_ref()
@@ -4083,7 +4191,7 @@ impl KxGateway for GatewayService {
             return Err(Status::invalid_argument("name is required"));
         }
         let removed = admin
-            .deregister(&req.name)
+            .deregister(&party, &req.name)
             .await
             .map_err(trigger_admin_status)?;
         Ok(Response::new(proto::DeregisterTriggerResponse { removed }))

@@ -200,12 +200,13 @@ impl TriggerAdmin for HostTriggerAdmin {
 
     async fn list(
         &self,
+        owner_party: &str,
         limit: u32,
         after_name: &str,
     ) -> Result<(Vec<TriggerView>, bool), TriggerAdminError> {
         let (rows, has_more) = self
             .triggers
-            .list(limit, after_name)
+            .list(owner_party, limit, after_name)
             .map_err(|e| TriggerAdminError::Storage(e.to_string()))?;
         let views = rows
             .into_iter()
@@ -227,9 +228,19 @@ impl TriggerAdmin for HostTriggerAdmin {
         Ok((views, has_more))
     }
 
-    async fn deregister(&self, name: &str) -> Result<bool, TriggerAdminError> {
+    async fn deregister(&self, owner_party: &str, name: &str) -> Result<bool, TriggerAdminError> {
         self.triggers
-            .remove(name)
+            .remove(owner_party, name)
+            .map_err(|e| TriggerAdminError::Storage(e.to_string()))
+    }
+
+    async fn deregister_by_app(
+        &self,
+        owner_party: &str,
+        app_handle: &str,
+    ) -> Result<u32, TriggerAdminError> {
+        self.triggers
+            .remove_by_app(owner_party, app_handle)
             .map_err(|e| TriggerAdminError::Storage(e.to_string()))
     }
 

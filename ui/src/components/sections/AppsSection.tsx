@@ -5,12 +5,23 @@ import { type ChangeEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { fadeUp, hoverLift, stagger } from "../../app/motion";
 import { toUiError } from "../../kx/errors";
-import { useApps, useCloneApp, useExportAppBundle, useImportApp } from "../../kx/use-apps";
-import { useHostedAppStatus, useHostedRun } from "../../kx/use-hosted-app";
+import {
+  useApps,
+  useCloneApp,
+  useDeleteApp,
+  useExportAppBundle,
+  useImportApp,
+} from "../../kx/use-apps";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { AppViewPopover } from "../apps/AppViewPopover";
+import {
+  HostedControls,
+  HostedDetail,
+  HostedRunButton,
+  HostedStatusPill,
+} from "../apps/HostedControls";
 import { Icon } from "../shell/Icon";
 import { Popover } from "../shell/Popover";
 import { NewAppForm } from "./NewAppForm";
@@ -43,8 +54,11 @@ const APPS_SECTIONS: ReadonlyArray<{ id: AppsSectionKind; label: string; hint: s
   { id: "hosted", label: "Hosted", hint: "Web apps the runtime scaffolds and serves on a port" },
 ];
 
-/** Route an App to its section by the backend lane (defaults to scheduled/functional). */
-function sectionOf(app: AppSummary): AppsSectionKind {
+/** Route an App to its section by the backend lane (defaults to scheduled/functional).
+ *  Exported so the App DETAIL page decides "is this hosted?" the same way the catalog
+ *  does — the detail page had no kind check at all, and two independent answers to that
+ *  question is how it started offering a Run the server refuses. */
+export function sectionOf(app: Pick<AppSummary, "kind">): AppsSectionKind {
   return app.kind === "experience" ? "hosted" : "scheduled";
 }
 
@@ -65,7 +79,9 @@ export function AppsSection({
   const exportBundle = useExportAppBundle();
   const importApp = useImportApp();
   const cloneApp = useCloneApp();
+  const deleteApp = useDeleteApp();
   const [summaryFor, setSummaryFor] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -114,6 +130,38 @@ export function AppsSection({
     importApp.mutate(
       { bundle: text, force: false },
       { onSuccess: ({ handle }) => setNotice(`Imported ${handle}`) },
+    );
+  }
+
+  // Delete cascades (triggers, a running server, the lock, the branch binding), so the
+  // notice reports what actually went rather than a bare "deleted".
+  function confirmDelete(): void {
+    if (deleting === null) {
+      return;
+    }
+    const handle = deleting;
+    deleteApp.mutate(
+      { handle },
+      {
+        onSuccess: (r) => {
+          const also: string[] = [];
+          if (r.triggersRemoved > 0) {
+            also.push(`${r.triggersRemoved} trigger(s)`);
+          }
+          if (r.hostedStopped) {
+            also.push("its running server");
+          }
+          if (r.branchUnbound) {
+            also.push("its project branch");
+          }
+          setNotice(
+            r.removed
+              ? `Deleted ${handle}${also.length > 0 ? ` — also released ${also.join(", ")}` : ""}`
+              : `${handle} was not found`,
+          );
+          setDeleting(null);
+        },
+      },
     );
   }
 
@@ -273,6 +321,7 @@ export function AppsSection({
                   onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
                   onDownload={download}
                   onDuplicate={setDuplicating}
+                  onDelete={setDeleting}
                 />
               ))}
             </m.div>
@@ -309,6 +358,18 @@ export function AppsSection({
           }}
         />
       ) : null}
+      {deleting ? (
+        <DeleteAppDialog
+          handle={deleting}
+          pending={deleteApp.isPending}
+          error={deleteApp.error ? toUiError(deleteApp.error).message : null}
+          onConfirm={confirmDelete}
+          onClose={() => {
+            setDeleting(null);
+            deleteApp.reset();
+          }}
+        />
+      ) : null}
       {runHandle ? <AppRunDrawer handle={runHandle} onClose={() => setRunHandle(null)} /> : null}
     </section>
   );
@@ -326,6 +387,7 @@ function AppCard({
   onOpen,
   onDownload,
   onDuplicate,
+  onDelete,
 }: {
   app: AppSummary;
   hosted: boolean;
@@ -335,6 +397,7 @@ function AppCard({
   onOpen: (handle: string) => void;
   onDownload: (handle: string) => void;
   onDuplicate: (handle: string) => void;
+  onDelete: (handle: string) => void;
 }) {
   return (
     <m.article
@@ -346,7 +409,7 @@ function AppCard({
       <div className="card-grid__head">
         <button
           type="button"
-          className="card-grid__title card-grid__title-btn"
+          className="card-grid__title card-grid__title-btn card-grid__title--clamp"
           title={`${app.name} — view details`}
           data-testid={`app-card-view-${app.handle}`}
           onClick={() => onView(app.handle)}
@@ -474,6 +537,20 @@ function AppCard({
                   <Icon name="copy" size={15} />
                   <span>Duplicate</span>
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="popover__item popover__item--danger"
+                  data-testid={`app-delete-${app.handle}`}
+                  title="Delete this App (asks for confirmation — it also releases its triggers and server)"
+                  onClick={() => {
+                    close();
+                    onDelete(app.handle);
+                  }}
+                >
+                  <Icon name="stop" size={15} />
+                  <span>Delete…</span>
+                </button>
               </>
             )}
           </Popover>
@@ -503,101 +580,6 @@ function AppCard({
         {app.handle}
       </code>
     </m.article>
-  );
-}
-
-/** D213 — a hosted app's live status pill (running / starting / stopped / failed). */
-function HostedStatusPill({ handle }: { handle: string }) {
-  const { status } = useHostedAppStatus(handle, true);
-  const state = status?.state ?? "stopped";
-  const tone =
-    state === "running"
-      ? "committed"
-      : state === "failed"
-        ? "failed"
-        : state === "stopped"
-          ? "unknown"
-          : "pending";
-  return (
-    <span
-      className={`pill pill--${tone}`}
-      data-testid={`hosted-status-${handle}`}
-      title={status?.detail || state}
-    >
-      {state}
-    </span>
-  );
-}
-
-/** D213 — the hosted-app supervisor detail line (install / dev-server progress or the
- *  failure reason). The minimal "surface the supervisor logs" affordance: it shows the
- *  live `HostedAppStatus.detail` while the app is materializing/installing/starting or has
- *  failed, and stays quiet once it is plainly running or stopped. React Query dedups the
- *  poll with the status pill, so this adds no extra network. */
-function HostedDetail({ handle }: { handle: string }) {
-  const { status } = useHostedAppStatus(handle, true);
-  const detail = status?.detail?.trim();
-  const state = status?.state ?? "stopped";
-  if (!detail || state === "stopped" || state === "running") {
-    return null;
-  }
-  return (
-    <p className="card-grid__sub muted" data-testid={`hosted-detail-${handle}`}>
-      {detail}
-    </p>
-  );
-}
-
-/** D213 — the hosted-app Run control: start the dev server, open it once actually running,
- *  surface start errors, and honest-disable when the gateway lacks the hosted-apps feature. */
-function HostedRunButton({ handle }: { handle: string }) {
-  const { run, disabled, busy, error } = useHostedRun(handle);
-  if (disabled) {
-    return (
-      <span
-        className="iconbtn iconbtn--disabled"
-        aria-disabled="true"
-        title="Hosted apps aren't available on this gateway (serve with the hosted-apps feature)"
-        data-testid={`hosted-run-${handle}`}
-      >
-        <Icon name="external-link" size={16} />
-      </span>
-    );
-  }
-  return (
-    <>
-      <button
-        type="button"
-        className="iconbtn"
-        data-testid={`hosted-run-${handle}`}
-        disabled={busy}
-        aria-busy={busy}
-        title={busy ? "Starting the hosted app…" : "Run this hosted app (opens in a new tab)"}
-        aria-label="Run hosted app"
-        onClick={run}
-      >
-        <Icon name="external-link" size={16} />
-      </button>
-      {error ? (
-        <span
-          className="hosted-run__error field-error"
-          role="alert"
-          data-testid={`hosted-run-error-${handle}`}
-        >
-          {error}
-        </span>
-      ) : null}
-    </>
-  );
-}
-
-/** The hosted-app card cluster: a status pill + the Run-in-new-tab control. */
-function HostedControls({ handle }: { handle: string }) {
-  return (
-    <>
-      <HostedStatusPill handle={handle} />
-      <HostedRunButton handle={handle} />
-    </>
   );
 }
 
@@ -715,6 +697,95 @@ function AppsTable({
 }
 
 /** A compact dialog to name a local duplicate (clone) of an App. */
+/**
+ * Confirm an App delete. A confirm DIALOG rather than BranchList's one-click delete,
+ * because this cascades: it deregisters the App's triggers, stops a running server,
+ * releases its lock and unbinds its project branch.
+ *
+ * The copy names what survives as plainly as what goes. An operator who reads only
+ * "delete" would reasonably assume the App's ingested corpus went with it — it cannot,
+ * because no dataset-delete RPC exists anywhere in the surface, and a UI that implies a
+ * full purge is worse than one that admits the limit.
+ */
+function DeleteAppDialog({
+  handle,
+  pending,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  handle: string;
+  pending: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    // Focus CANCEL, not the destructive action — a stray Enter must not delete.
+    confirmRef.current?.focus();
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return createPortal(
+    <>
+      <button
+        type="button"
+        className="node-drawer__scrim node-drawer__scrim--overlay"
+        aria-label="Cancel delete"
+        onClick={onClose}
+      />
+      <div className="dialog-center dialog-center--overlay">
+        <m.div
+          className="dialog-card"
+          data-testid="app-delete-dialog"
+          // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; modal semantics via role+aria-label (the AppViewPopover precedent)
+          role="dialog"
+          aria-label={`Delete ${handle}`}
+          initial={{ y: 12, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ type: "spring", stiffness: 420, damping: 34 }}
+        >
+          <h2 className="dialog-card__title">Delete App</h2>
+          <p className="muted">
+            Delete <code className="mono">{handle}</code>? This also deregisters its triggers, stops
+            its server if one is running, releases its lock, and unbinds its project branch.
+          </p>
+          <p className="muted" data-testid="app-delete-kept">
+            Kept: the content-addressed file blobs, the hosted working directory, and any dataset
+            this App ingested — datasets have no delete. Past runs are unaffected.
+          </p>
+          {error ? (
+            <p className="field-error" role="alert" data-testid="app-delete-error">
+              {error}
+            </p>
+          ) : null}
+          <div className="dialog-card__actions">
+            <button ref={confirmRef} type="button" className="btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              data-testid="app-delete-submit"
+              disabled={pending}
+              onClick={onConfirm}
+            >
+              {pending ? "Deleting…" : "Delete App"}
+            </button>
+          </div>
+        </m.div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
 function DuplicateDialog({
   handle,
   pending,

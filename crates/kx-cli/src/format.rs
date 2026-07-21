@@ -1673,7 +1673,8 @@ pub fn render_scaffold_app(resp: &proto::ScaffoldAppResponse, json: bool) -> Str
     }
 }
 
-/// Render the scaffold status (phase + the done/pending skeleton files).
+/// Render the scaffold status (phase + the done/pending files of the server's PLANNED
+/// set — the base skeleton plus any use-case files the model planned, not a fixed list).
 #[must_use]
 pub fn render_scaffold_status(resp: &proto::GetScaffoldStatusResponse, json: bool) -> String {
     let phase = match proto::get_scaffold_status_response::Phase::try_from(resp.phase) {
@@ -1722,6 +1723,52 @@ pub fn render_app_lock(handle: &str, locked: bool, json: bool) -> String {
             if locked { "locked" } else { "unlocked" }
         )
     }
+}
+
+/// Render `app delete` — what the cascade actually released, and what it did NOT.
+///
+/// The survivors are printed unconditionally, not only in a verbose mode: an operator
+/// who deletes an App and reads "removed" would reasonably assume its corpus went with
+/// it. It cannot — there is no dataset-delete RPC anywhere in the surface.
+#[must_use]
+pub fn render_app_delete(handle: &str, resp: &proto::DeleteAppResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "handle": handle,
+            "removed": resp.removed,
+            "branch_unbound": resp.branch_unbound,
+            "lock_cleared": resp.lock_cleared,
+            "hosted_stopped": resp.hosted_stopped,
+            "triggers_removed": resp.triggers_removed,
+        })
+        .to_string();
+    }
+    if !resp.removed {
+        return format!("app {handle} not found");
+    }
+    let mut out = format!("app {handle} deleted");
+    let mut released: Vec<String> = Vec::new();
+    if resp.triggers_removed > 0 {
+        released.push(format!("{} trigger(s) deregistered", resp.triggers_removed));
+    }
+    if resp.hosted_stopped {
+        released.push("hosted server stopped".to_string());
+    }
+    if resp.lock_cleared {
+        released.push("lock released".to_string());
+    }
+    if resp.branch_unbound {
+        released.push("project branch unbound".to_string());
+    }
+    if !released.is_empty() {
+        use std::fmt::Write as _;
+        let _ = write!(out, "\n  cascaded: {}", released.join(", "));
+    }
+    out.push_str(
+        "\n  kept: content-addressed blobs, the hosted working directory, and any dataset \
+         this App ingested (datasets have no delete)",
+    );
+    out
 }
 
 /// Render `skills add` — the server-derived identity (SN-8).

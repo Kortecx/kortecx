@@ -358,6 +358,22 @@ impl AppCatalog for AppsDb {
         })
         .map_err(|e| CoreError::Internal(format!("apps get: {e}")))
     }
+
+    fn delete(&self, principal: &str, handle: &str) -> Result<bool, CoreError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
+        // Scoped by principal in SQL, so `false` covers absent AND not-owned uniformly —
+        // the same no-existence-oracle posture as `get`.
+        let n = conn
+            .execute(
+                "DELETE FROM apps WHERE principal = ?1 AND handle = ?2",
+                params![principal, handle],
+            )
+            .map_err(|e| CoreError::Internal(format!("apps delete: {e}")))?;
+        Ok(n > 0)
+    }
 }
 
 #[cfg(test)]
@@ -546,6 +562,51 @@ mod tests {
         let db = AppsDb::open(&dir).unwrap();
         let (apps, _) = db.list("alice", 100, None).unwrap();
         assert!(apps.is_empty(), "schema drift must rebuild empty");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `delete` on the REAL store — caller-scoped, and `false` for absent OR not-owned.
+    ///
+    /// This exists because the trait's `delete` is DEFAULTED to a refusal (so an old impl
+    /// or a test fake is not forced to invent one), and this store silently inherited that
+    /// default: `DeleteApp` was reachable from the RPC, the CLI, both SDKs and the console,
+    /// and every one of them got "this App catalog does not support delete". A defaulted
+    /// method is only safe if something asserts the REAL impl overrides it — the shape of
+    /// bug a green suite over fakes cannot see.
+    #[test]
+    fn delete_removes_only_the_callers_own_row() {
+        let dir = tmp_dir();
+        let db = AppsDb::open(&dir).unwrap();
+        db.save("alice", "team/apps/x", &envelope("x"), None)
+            .unwrap();
+        db.save("alice", "team/apps/keep", &envelope("keep"), None)
+            .unwrap();
+        db.save("bob", "team/apps/x", &envelope("x"), None).unwrap();
+
+        assert!(db.delete("alice", "team/apps/x").unwrap(), "own row goes");
+        assert!(
+            db.get("alice", "team/apps/x").unwrap().is_none(),
+            "and is really gone"
+        );
+        assert!(
+            db.get("alice", "team/apps/keep").unwrap().is_some(),
+            "the caller's OTHER app survives"
+        );
+        assert!(
+            db.get("bob", "team/apps/x").unwrap().is_some(),
+            "another party's app at the SAME handle survives"
+        );
+
+        // Uniform `false` — absent and not-owned are indistinguishable (no oracle).
+        assert!(
+            !db.delete("alice", "team/apps/x").unwrap(),
+            "second delete is a no-op"
+        );
+        assert!(
+            !db.delete("carol", "team/apps/keep").unwrap(),
+            "not-owned reports false"
+        );
+        assert!(db.get("alice", "team/apps/keep").unwrap().is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

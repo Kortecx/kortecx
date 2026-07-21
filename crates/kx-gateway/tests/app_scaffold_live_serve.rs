@@ -25,6 +25,9 @@ use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
 
+/// The PRESERVED base set every scheduled scaffold writes. The lane also writes the
+/// manifest planner's use-case files on top, so the branch is a SUPERSET of this list —
+/// every assertion below is containment, never equality.
 const SKELETON: &[&str] = &[
     "README.md",
     "app.json",
@@ -110,8 +113,11 @@ async fn scaffold_writes_the_skeleton_then_lock_refuses_edit() {
         "one-App-one-branch: the branch is the App handle"
     );
 
-    // ---- poll to terminal (5 greedy 12B write steps — generous bound) ----
-    let deadline = Instant::now() + Duration::from_secs(20 * 60);
+    // ---- poll to terminal ----
+    // A planning step plus the base 5 writes plus up to MAX_SCHEDULED_EXTRA_FILES more,
+    // each a greedy 12B decode bounded by the host's 320s per-step ceiling. The old 20min
+    // budget was sized for exactly 5 writes and no planner.
+    let deadline = Instant::now() + Duration::from_secs(45 * 60);
     let done_phase = proto::get_scaffold_status_response::Phase::Done as i32;
     let failed_phase = proto::get_scaffold_status_response::Phase::Failed as i32;
     let mut last_done = 0usize;
@@ -125,10 +131,13 @@ async fn scaffold_writes_the_skeleton_then_lock_refuses_edit() {
             .into_inner();
         if status.files_done.len() != last_done {
             last_done = status.files_done.len();
+            // Denominator from the SERVER's planned set, not SKELETON.len() — the
+            // planner decides how many files this app gets, so a fixed 5 would under-
+            // report and read as "stuck at 8/5".
             eprintln!(
                 "scaffold: {}/{} files written (phase={})",
                 last_done,
-                SKELETON.len(),
+                last_done + status.files_pending.len(),
                 status.phase
             );
         }
@@ -158,10 +167,12 @@ async fn scaffold_writes_the_skeleton_then_lock_refuses_edit() {
         .branch
         .expect("the scaffolded branch resolves");
     let paths: Vec<&str> = manifest.items.iter().map(|i| i.path.as_str()).collect();
+    // The base set is a SUBSET of what was written — the preservation contract. Extras
+    // planned for this goal are expected and must not fail the witness.
     for f in SKELETON {
         assert!(
             paths.contains(f),
-            "skeleton file {f} is in the branch manifest"
+            "base file {f} is in the branch manifest (got: {paths:?})"
         );
         let body = c
             .get_branch_content(proto::GetBranchContentRequest {

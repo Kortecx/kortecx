@@ -126,9 +126,10 @@ pub enum AppSub {
         /// The clone's new name (its handle is derived from this).
         newname: String,
     },
-    /// POC-5a: agentically scaffold an EXISTING App's fixed-skeleton project tree
-    /// into its CoW branch (server-side; the host is never written). `--wait` polls
-    /// the scaffold status until it completes.
+    /// POC-5a: agentically scaffold an EXISTING App's project tree into its CoW branch
+    /// (server-side; the host is never written) — the preserved base skeleton plus the
+    /// use-case files the model plans for the App's goal. `--wait` polls the scaffold
+    /// status until it completes.
     Scaffold {
         /// The catalog handle (its project branch = the same handle).
         handle: String,
@@ -179,6 +180,17 @@ pub enum AppSub {
     Unlock {
         /// The catalog handle.
         handle: String,
+    },
+    /// Delete a caller-owned App and cascade what it uniquely owns — its triggers, a
+    /// running hosted server, its lock row, its project-branch binding. NOT a full
+    /// erase: content-addressed blobs, the hosted working directory, and the App's
+    /// ingested RAG dataset all survive (there is no dataset-delete RPC). Requires
+    /// `--yes`.
+    Delete {
+        /// The catalog handle.
+        handle: String,
+        /// Confirm the delete (required — this cascades).
+        yes: bool,
     },
 }
 
@@ -492,9 +504,14 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
         "unlock" => Ok(AppSub::Unlock {
             handle: require_pos(f.positional, "a <handle>")?,
         }),
+        "delete" => Ok(AppSub::Delete {
+            handle: require_pos(f.positional, "a <handle>")?,
+            yes: f.yes,
+        }),
         other => Err(CliError::Usage(format!(
             "unknown app subcommand {other:?} (expected new | save | list | get | manifest | run | \
-             export | import | clone | scaffold | files | cat | structure | edit | lock | unlock)"
+             export | import | clone | scaffold | files | cat | structure | edit | lock | unlock \
+             | delete)"
         ))),
     }
 }
@@ -985,6 +1002,27 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                 .map_err(CliError::from_status)?
                 .into_inner();
             println!("{}", format::render_app_lock(&handle, !resp.unlocked, json));
+            Ok(())
+        }
+        AppSub::Delete { handle, yes } => {
+            // A delete cascades to triggers, a running server, the lock and the branch
+            // binding. Refuse without an explicit confirmation rather than make it
+            // recoverable-looking; the message names what will go.
+            if !yes {
+                return Err(CliError::Usage(format!(
+                    "app delete {handle} requires --yes: it also deregisters the App's triggers, \
+                     stops its hosted server, releases its lock, and unbinds its project branch \
+                     (content blobs and any ingested dataset are kept)"
+                )));
+            }
+            let resp = client
+                .delete_app(resolved.request(proto::DeleteAppRequest {
+                    handle: handle.clone(),
+                })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            println!("{}", format::render_app_delete(&handle, &resp, json));
             Ok(())
         }
     }

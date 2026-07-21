@@ -27,4 +27,14 @@ export interface EditorSurfaceProps {
   readonly onSubmit?: () => void;
   /** Ghost text shown while empty (Monaco `placeholder` option / textarea attr). */
   readonly placeholder?: string;
+  /**
+   * Keep the newest line in view as `value` grows — for a surface fed by a live token
+   * stream, where without it the text scrolls past the viewport and the user watches a
+   * frozen first screen while the model writes.
+   *
+   * Sticky, not forced: once the reader scrolls up they stay where they are, and
+   * following resumes when they return to the bottom. Yanking someone back mid-read is
+   * worse than not following at all.
+   */
+  readonly followTail?: boolean;
 }

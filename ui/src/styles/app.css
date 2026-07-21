@@ -3012,6 +3012,12 @@ select {
   /* Let the hosted Run error alert drop to its own line under the controls. */
   flex-wrap: wrap;
   justify-content: flex-end;
+  /* Don't let a long title compress the cluster. Its min-content is a single icon, so
+     with the default `flex-shrink: 1` the five scheduled controls would stack into a
+     column rather than the title yielding. The title is the shrinkable item (and is
+     clamped); the controls are fixed-size and keep their basis. `flex-wrap` stays —
+     `.hosted-run__error` relies on `flex-basis: 100%` to drop to its own line. */
+  flex: 0 0 auto;
 }
 .card-grid__title {
   font-weight: 600;
@@ -3020,6 +3026,23 @@ select {
   text-decoration: none;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* Clamp a long display NAME to two lines. Slice 2.5 truncated the handle; the name was
+   left unbounded, so "hello world app with form to collect user information and submit
+   to google my business" wrapped to four lines, made the card taller than its row
+   siblings, and pushed the action cluster down into the middle of the title.
+   A MODIFIER, not a change to the bare selector: `.card-grid__title` is shared with the
+   workflow, blueprint, template and model cards, and WorkflowCard/BlueprintCard put
+   ACTION text on their title= rather than the name — clamping those globally would
+   truncate a headline with no hover recovery. Same idiom as `.lineage-node__label`.
+   `overflow-wrap: anywhere` above stays: it is what lets one unbreakable token break
+   inside the clamped box instead of overflowing it. */
+.card-grid__title--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 /* The title doubles as the "open info" affordance — clicking the item name opens the
  * read-only View popover (a glimpse; deep edit opens from there). A reset button that
@@ -5165,9 +5188,13 @@ button.card-grid__title:hover {
   color: var(--fg-muted);
   width: 0.9rem;
 }
+/* The filename owns the row. `min-width` is a FLOOR, not a reset: it stops any future
+   sibling (a status chip, a badge) from squeezing the name to a few characters the way
+   the content-hash chip used to — a flex item with `min-width: 0` and no floor absorbs
+   the whole width deficit silently. Pair with the row's title= for the full path. */
 .file-tree__name {
   flex: 1;
-  min-width: 0;
+  min-width: 6ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5534,4 +5561,87 @@ button.card-grid__title:hover {
   align-items: center;
   gap: 0.5rem;
   margin: 0.5rem 0;
+}
+
+/* D213 — the hosted app's run surface on the App detail page: the supervisor facts the
+   server has always sent and the console never showed (framework / serve lane / port /
+   live URL), plus its log ring. Token-only; both themes. */
+.hosted-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+.hosted-panel__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  margin: 0;
+}
+.hosted-panel__facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.hosted-panel__facts dt {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.hosted-panel__facts dd {
+  margin: 0;
+  font-size: 0.9rem;
+}
+.hosted-panel__url {
+  margin: 0;
+  font-size: 0.85rem;
+  /* A loopback origin is long and unbreakable; let it wrap rather than widen the pane. */
+  overflow-wrap: anywhere;
+}
+.hosted-panel__logs summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+.hosted-panel__logs pre {
+  margin: 0.4rem 0 0;
+  padding: 0.6rem;
+  max-height: 22rem;
+  overflow: auto;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* A destructive kebab item (Delete…). Tone only — the confirmation dialog, not the
+   colour, is what prevents an accidental delete. */
+.popover__item--danger {
+  color: var(--danger, var(--red, #c0392b));
+}
+.popover__item--danger:hover {
+  background: color-mix(in srgb, var(--danger, #c0392b) 10%, transparent);
+}
+
+/* The scaffold IDE's follow-state control: "Following…" while auto-following the file
+   being written, a button to resume once the user has pinned one. Without it a single
+   click on the tree froze the view for the rest of the scaffold with nothing on screen
+   explaining why it had stopped moving. */
+.scaffold-progress__follow {
+  margin-left: auto;
+  font-size: 0.78rem;
+}
+
+/* The builder canvas EMBEDDED in the New App form: no page chrome, a shorter canvas
+   than the standalone route's, and a toolbar that wraps inside the card. */
+.builder--embedded .builder-toolbar {
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.builder--embedded .builder-canvas {
+  height: 380px;
 }

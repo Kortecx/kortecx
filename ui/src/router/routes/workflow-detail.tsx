@@ -57,6 +57,17 @@ interface RunSearch {
   tab?: RunTab;
   /** Artifacts tab deep link: one committed artifact by content ref (hex). */
   ref?: string;
+  /**
+   * The per-submission chain key (`RunHandle.react_chain_salt`, hex) that scopes this
+   * view to ONE run.
+   *
+   * A serve is one journal with ONE `instance_id` shared by every Invoke, chat turn,
+   * scaffold and cron fire, so `instanceId` alone selects the whole workspace. Absent on
+   * a hand-typed URL, and empty by construction for a run with no single agentic step —
+   * both surface as an honest "showing every run in this journal" notice rather than a
+   * silent workspace dump.
+   */
+  chain?: string;
 }
 
 const TAB_LABEL: Record<RunTab, string> = {
@@ -78,15 +89,20 @@ function WorkflowDetailScreen() {
 function WorkflowDetailContent() {
   const { instanceId } = useParams({ from: ROUTE_ID });
   const search = useSearch({ from: ROUTE_ID });
-  const { atSeq, terminal } = search;
+  const { atSeq, terminal, chain } = search;
   const tab: RunTab = search.tab ?? "graph";
   const navigate = useNavigate({ from: ROUTE_ID });
   const [rerun, setRerun] = useState(false);
   const projection = useProjection(instanceId, {
     ...(atSeq != null ? { atSeq } : {}),
     ...(terminal ? { terminalMoteId: terminal } : {}),
+    ...(chain ? { scopeMoteId: chain } : {}),
   });
   const data = projection.data;
+  // Either no scope key was supplied, or one was and the fold does not contain it. Both
+  // mean the same thing to the user — what follows is the journal, not this run — and
+  // saying so is the whole point of adding the scope.
+  const unscoped = data != null && (chain === undefined || data.scopeMissed);
   const polling = atSeq == null && data != null && !runSettled(data, terminal);
 
   return (
@@ -142,6 +158,14 @@ function WorkflowDetailContent() {
       {atSeq != null ? (
         <p className="muted">Pinned snapshot at seq #{atSeq} (live polling paused).</p>
       ) : null}
+      {unscoped ? (
+        <p className="muted" data-testid="run-unscoped-notice">
+          Showing every step in this server's journal, not just this run.{" "}
+          {data.scopeMissed
+            ? "This run's steps could not be isolated — the link may be stale."
+            : "Open a run from Apps or the builder to see it on its own."}
+        </p>
+      ) : null}
       {projection.isLoading ? <EmptyState title="Loading projection…" /> : null}
       {projection.error ? (
         <ErrorNotice
@@ -157,7 +181,7 @@ function WorkflowDetailContent() {
           ) : null}
           {tab === "timeline" ? (
             <Suspense fallback={<EmptyState title="Loading timeline…" />}>
-              <RunTimeline instanceId={instanceId} projection={data} />
+              <RunTimeline instanceId={instanceId} projection={data} chainSalt={chain} />
             </Suspense>
           ) : null}
           {tab === "artifacts" ? (
@@ -292,6 +316,10 @@ export const workflowDetailRoute = createRoute({
       out.tab = search.tab as RunTab;
     }
     // An artifact content ref is a 32-byte (64 hex char) server-derived id.
+    // The chain salt is a 32-byte server-derived Mote id, same shape as `terminal`.
+    if (typeof search.chain === "string" && /^[0-9a-f]{64}$/.test(search.chain)) {
+      out.chain = search.chain;
+    }
     if (typeof search.ref === "string" && /^[0-9a-f]{64}$/.test(search.ref)) {
       out.ref = search.ref;
     }

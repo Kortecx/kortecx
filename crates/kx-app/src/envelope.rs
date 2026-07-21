@@ -437,6 +437,23 @@ pub struct HostedConfig {
     /// Advisory dev-server command override (default: the framework's `npm run dev`).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub dev_cmd: String,
+    /// Which lane the supervisor serves this app on: `""`/`"dev"` (materialize → install
+    /// → `npm run dev`, hot reload — the default) or `"production"` (… → `npm run build`
+    /// → the framework's preview/start server).
+    ///
+    /// A property of the APP, not of one press of Start: whether this is a live-editing
+    /// workspace or a built artifact is authored, not toggled per request. Carrying it
+    /// here rather than on `StartHostedAppRequest` also costs zero wire surface — the
+    /// envelope is opaque bytes to the gateway.
+    ///
+    /// Empty on every app authored before this field existed, and empty parses as `dev`,
+    /// so no existing app silently changes lane.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub serve_mode: String,
+    /// Advisory build command override (default: the framework's `npm run build`).
+    /// Ignored in dev mode, which never builds.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub build_cmd: String,
 }
 
 /// A `kortecx.app/v1` (Functional) or `kortecx.experience/v1` (Experience) envelope: a

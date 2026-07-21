@@ -37,6 +37,7 @@ function status(over: Partial<HostedAppStatus>): HostedAppStatus {
     framework: "vite_react",
     port: 0,
     detail: "",
+    serveMode: "dev",
     ...over,
   };
 }

@@ -123,15 +123,38 @@ pub trait TriggerAdmin: Send + Sync {
     /// Register (or replace) a trigger. Returns the 16-byte server-derived id.
     async fn register(&self, reg: TriggerRegistration) -> Result<[u8; 16], TriggerAdminError>;
 
-    /// List triggers (deterministic `(name)` order), keyset-paged after `after_name`.
+    /// List `owner_party`'s triggers (deterministic `(name)` order), keyset-paged after
+    /// `after_name`.
+    ///
+    /// OWNER-SCOPED. Triggers carry `owner_party` (the party their runs fire under) and
+    /// every other caller-facing catalog here is keyed on the caller principal, but this
+    /// listing was not — so one party could enumerate another's triggers, including their
+    /// App targets and schedules. The scope is a parameter rather than a post-filter so
+    /// the keyset paging stays correct.
     async fn list(
         &self,
+        owner_party: &str,
         limit: u32,
         after_name: &str,
     ) -> Result<(Vec<TriggerView>, bool), TriggerAdminError>;
 
-    /// Deregister a trigger by name. Returns `true` iff removed.
-    async fn deregister(&self, name: &str) -> Result<bool, TriggerAdminError>;
+    /// Deregister `owner_party`'s trigger by name. Returns `true` iff removed — `false`
+    /// uniformly for absent OR owned by another party, so it is not an existence oracle.
+    async fn deregister(&self, owner_party: &str, name: &str) -> Result<bool, TriggerAdminError>;
+
+    /// Deregister every one of `owner_party`'s triggers that targets the App `app_handle`,
+    /// returning how many went. The App-delete cascade.
+    ///
+    /// This exists because `triggers.app_handle` has NO foreign key: nothing at the
+    /// storage layer stops a trigger outliving its App, and an orphan is not inert — the
+    /// cron loop keeps selecting it and `RunApp` keeps refusing it, forever, warning only
+    /// to the server log. An empty `app_handle` is the recipe-target sentinel, never a
+    /// wildcard, and must remove nothing.
+    async fn deregister_by_app(
+        &self,
+        owner_party: &str,
+        app_handle: &str,
+    ) -> Result<u32, TriggerAdminError>;
 
     /// Fire an inbound event: dedup on `idempotency_key` (empty ⇒ server-derived from
     /// the payload), then — for a fresh key — bind the recipe under the trigger's owner

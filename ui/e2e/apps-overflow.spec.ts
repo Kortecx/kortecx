@@ -59,7 +59,23 @@ test("apps: a long App name/handle does not overflow its card, table, or the she
   await expect(handle).toHaveAttribute("title", /^apps\/local\//);
   expect(await handle.evaluate((n) => getComputedStyle(n).textOverflow)).toBe("ellipsis");
 
+  // The display NAME is clamped to two lines. The handle fix above left the name
+  // unbounded, so a long one wrapped to four lines, made the card taller than its row
+  // siblings, and displaced the action cluster down into the middle of the title.
+  const title = page.locator(".card-grid__title--clamp").first();
+  await expect(title).toHaveAttribute("title", new RegExp(`^${LONG_NAME.slice(0, 20)}`));
+  expect(await title.evaluate((n) => getComputedStyle(n).webkitLineClamp)).toBe("2");
+  // Geometry, not just the declaration: the clamped title occupies at most two lines.
+  const lines = await title.evaluate((n) => {
+    const cs = getComputedStyle(n);
+    const lh = Number.parseFloat(cs.lineHeight) || Number.parseFloat(cs.fontSize) * 1.2;
+    return (n as HTMLElement).getBoundingClientRect().height / lh;
+  });
+  expect(lines).toBeLessThanOrEqual(2.5);
+
   // Box (card) view — no horizontal overflow of the catalog or the page shell.
+  // `.card-grid__head-actions` is now `flex: 0 0 auto`, which removes a shrink path;
+  // this is the assertion that would catch it pushing the head past its track.
   expect(await noHorizontalOverflow(page.getByTestId("apps-catalog"))).toBe(true);
   expect(await noHorizontalOverflow(page.locator(".shell__main"))).toBe(true);
 

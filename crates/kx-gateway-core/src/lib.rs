@@ -128,10 +128,11 @@ pub use error::GatewayError;
 pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 pub use fuzzy_discovery::{score_to_bp, FuzzyDiscoveryView, FuzzyHitEntry};
 pub use hosted_scaffold::{
-    dev_command_args, template as hosted_template, template_paths as hosted_template_paths,
-    FileSource as HostedFileSource, TemplateFile as HostedTemplateFile,
+    build_command_args, dev_command_args, preview_command_args, template as hosted_template,
+    template_paths as hosted_template_paths, FileSource as HostedFileSource,
+    TemplateFile as HostedTemplateFile,
 };
-pub use hosted_view::{HostedAppSupervisor, HostedState, HostedStatus};
+pub use hosted_view::{HostedAppSupervisor, HostedServeMode, HostedState, HostedStatus};
 pub use locks_view::{LockStore, LOCKED_BRANCH_REFUSAL_CODE};
 pub use memory::{
     memory_namespace, DecayCandidateEntry, DecayReportEntry, MemoryEntry, MemoryError,

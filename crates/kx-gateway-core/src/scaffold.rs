@@ -48,9 +48,21 @@ pub struct ScaffoldFile {
     pub role: &'static str,
 }
 
-/// The FIXED skeleton of a scaffolded agentic-app project. STRUCTURE is fixed (the
-/// e2e asserts exactly these paths); the model authors each file's CONTENT. Ordered
-/// so earlier files (README, app.json) become coherence context for later ones.
+/// The BASE skeleton of a scaffolded agentic-app project — the files every scheduled App
+/// has, whose CONTENT the model authors. Ordered so earlier files (README, app.json)
+/// become coherence context for later ones.
+///
+/// PRESERVED, NOT EXHAUSTIVE. The scheduled lane writes this set **plus** the use-case
+/// files its manifest planner adds on top (see the host's `resolve_manifest_scheduled`),
+/// so a scaffolded project is a superset of this list. These five stay inviolable because
+/// downstream surfaces assume `app.json` and `prompts/system.md` exist; the planner may
+/// only ADD, and a plan that re-declares one of these paths has it dropped.
+///
+/// `skeleton_paths_are_stable` pins this CONSTANT, which is the right thing to pin. An
+/// earlier version of this comment claimed "the e2e asserts exactly these paths" — the
+/// witness it meant asserts CONTAINMENT, and is `#[ignore]` + `cfg(feature = "inference")`
+/// so it never runs in CI at all. Do not treat that comment's successor as a licence to
+/// assume the produced set equals this one.
 pub const SKELETON: &[ScaffoldFile] = &[
     ScaffoldFile {
         path: "README.md",

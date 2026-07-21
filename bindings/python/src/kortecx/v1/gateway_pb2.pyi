@@ -81,6 +81,7 @@ class HostedAppState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     HOSTED_STARTING: _ClassVar[HostedAppState]
     HOSTED_RUNNING: _ClassVar[HostedAppState]
     HOSTED_FAILED: _ClassVar[HostedAppState]
+    HOSTED_BUILDING: _ClassVar[HostedAppState]
 
 class FeedbackRating(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -146,6 +147,7 @@ HOSTED_INSTALLING: HostedAppState
 HOSTED_STARTING: HostedAppState
 HOSTED_RUNNING: HostedAppState
 HOSTED_FAILED: HostedAppState
+HOSTED_BUILDING: HostedAppState
 FEEDBACK_RATING_UNSPECIFIED: FeedbackRating
 FEEDBACK_RATING_UP: FeedbackRating
 FEEDBACK_RATING_DOWN: FeedbackRating
@@ -1650,6 +1652,26 @@ class GetScaffoldStatusResponse(_message.Message):
     writing_mote_id: str
     def __init__(self, phase: _Optional[_Union[GetScaffoldStatusResponse.Phase, str]] = ..., files_done: _Optional[_Iterable[str]] = ..., files_pending: _Optional[_Iterable[str]] = ..., detail: _Optional[str] = ..., writing_path: _Optional[str] = ..., writing_instance_id: _Optional[str] = ..., writing_mote_id: _Optional[str] = ...) -> None: ...
 
+class DeleteAppRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class DeleteAppResponse(_message.Message):
+    __slots__ = ("removed", "branch_unbound", "lock_cleared", "hosted_stopped", "triggers_removed")
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    BRANCH_UNBOUND_FIELD_NUMBER: _ClassVar[int]
+    LOCK_CLEARED_FIELD_NUMBER: _ClassVar[int]
+    HOSTED_STOPPED_FIELD_NUMBER: _ClassVar[int]
+    TRIGGERS_REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    branch_unbound: bool
+    lock_cleared: bool
+    hosted_stopped: bool
+    triggers_removed: int
+    def __init__(self, removed: bool = ..., branch_unbound: bool = ..., lock_cleared: bool = ..., hosted_stopped: bool = ..., triggers_removed: _Optional[int] = ...) -> None: ...
+
 class LockAppRequest(_message.Message):
     __slots__ = ("branch_handle",)
     BRANCH_HANDLE_FIELD_NUMBER: _ClassVar[int]
@@ -1675,7 +1697,7 @@ class UnlockAppResponse(_message.Message):
     def __init__(self, unlocked: bool = ...) -> None: ...
 
 class HostedAppStatus(_message.Message):
-    __slots__ = ("handle", "state", "url", "recent_logs", "framework", "port", "detail")
+    __slots__ = ("handle", "state", "url", "recent_logs", "framework", "port", "detail", "serve_mode")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
     URL_FIELD_NUMBER: _ClassVar[int]
@@ -1683,6 +1705,7 @@ class HostedAppStatus(_message.Message):
     FRAMEWORK_FIELD_NUMBER: _ClassVar[int]
     PORT_FIELD_NUMBER: _ClassVar[int]
     DETAIL_FIELD_NUMBER: _ClassVar[int]
+    SERVE_MODE_FIELD_NUMBER: _ClassVar[int]
     handle: str
     state: HostedAppState
     url: str
@@ -1690,7 +1713,8 @@ class HostedAppStatus(_message.Message):
     framework: str
     port: int
     detail: str
-    def __init__(self, handle: _Optional[str] = ..., state: _Optional[_Union[HostedAppState, str]] = ..., url: _Optional[str] = ..., recent_logs: _Optional[_Iterable[str]] = ..., framework: _Optional[str] = ..., port: _Optional[int] = ..., detail: _Optional[str] = ...) -> None: ...
+    serve_mode: str
+    def __init__(self, handle: _Optional[str] = ..., state: _Optional[_Union[HostedAppState, str]] = ..., url: _Optional[str] = ..., recent_logs: _Optional[_Iterable[str]] = ..., framework: _Optional[str] = ..., port: _Optional[int] = ..., detail: _Optional[str] = ..., serve_mode: _Optional[str] = ...) -> None: ...
 
 class StartHostedAppRequest(_message.Message):
     __slots__ = ("handle", "rebuild")

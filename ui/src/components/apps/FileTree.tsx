@@ -1,21 +1,37 @@
 /**
  * POC-5d: the App project file tree (left pane of the App detail view). Renders
  * the hierarchical {@link TreeNode} list from {@link buildFileTree}: folders are
- * expand/collapse buttons (aria-expanded), files are selectable buttons carrying
- * a {@link DigestChip} of their content ref. Token-only colours, keyboard-
- * accessible, both themes. Selection is owned by the parent (the selected path is
- * highlighted); the tree itself is presentational.
+ * expand/collapse buttons (aria-expanded), files are selectable buttons. Token-only
+ * colours, keyboard-accessible, both themes. Selection is owned by the parent (the
+ * selected path is highlighted); the tree itself is presentational.
+ *
+ * THE FILENAME IS THE ROW. This pane lives in a 180-240px rail, and a row that also
+ * carried a content-hash chip gave the hash ~110px of it — `.digestchip` is
+ * `flex-shrink: 0` by design (correct in the wide dense rows it was built for), so the
+ * NAME absorbed the entire width deficit and truncated to about six characters. Two
+ * sibling components both rendered `Counte…`, which is indistinguishable from the
+ * project never having been generated. The ref now lives in the file-pane head, where
+ * there is width for it; here every row carries its full path on `title=`, so anything
+ * that still clips is recoverable on hover. (Dropping the chip also un-nests a `<button>`
+ * from inside a `<button>` — invalid HTML, already fixed the same way in ArtifactGallery.)
  */
 
 import { useState } from "react";
 import type { FileTreeState, TreeNode } from "../../lib/file-tree";
-import { DigestChip } from "../DigestChip";
 
 /** POC-6: the per-file authoring glyph shown in a live creation tree. */
 const STATE_GLYPH: Record<FileTreeState, string> = {
   done: "✓",
   writing: "◐",
   pending: "·",
+};
+
+/** Words for the authoring glyph, so the state reaches the tooltip and a screen reader
+ *  rather than living only in a shape. */
+const STATE_LABEL: Record<FileTreeState, string> = {
+  done: "written",
+  writing: "being written now",
+  pending: "not written yet",
 };
 
 export function FileTree({
@@ -72,6 +88,7 @@ function TreeRow({
           style={indent}
           data-testid={`folder-${node.path}`}
           aria-expanded={open}
+          title={node.path}
           onClick={() => setOpen((o) => !o)}
         >
           <span className="file-tree__twisty" aria-hidden="true">
@@ -97,6 +114,9 @@ function TreeRow({
   }
 
   const selected = selectedPath === node.path;
+  // The full path, not just the leaf name: in a nested tree the leaf alone
+  // (`index.ts`) is the least informative part of what the user is hovering.
+  const title = node.state ? `${node.path} — ${STATE_LABEL[node.state]}` : node.path;
   return (
     <li className="file-tree__node file-tree__node--file">
       <button
@@ -106,6 +126,7 @@ function TreeRow({
         data-testid={`file-${node.path}`}
         data-state={node.state}
         aria-current={selected ? "true" : undefined}
+        title={title}
         onClick={() => onSelect(node.path, node.contentRef ?? "")}
       >
         {node.state ? (
@@ -114,7 +135,6 @@ function TreeRow({
           </span>
         ) : null}
         <span className="file-tree__name mono">{node.name}</span>
-        {node.contentRef ? <DigestChip hex={node.contentRef} label={node.path} /> : null}
       </button>
     </li>
   );

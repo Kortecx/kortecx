@@ -6,8 +6,10 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 656 KiB raw (override with KX_UI_EAGER_BUDGET_BYTES for emergencies —
- * a deliberate, reviewed override, never a silent default bump).
+ * Budget: 659 KiB raw (674,816 B — the value enforced below; keep this line in
+ * lock-step with it, and with the step name in ci.yml, or the doc becomes the
+ * third place that disagrees). Override with KX_UI_EAGER_BUDGET_BYTES for
+ * emergencies — a deliberate, reviewed override, never a silent default bump.
  *
  * History (deliberate, reviewed default bumps — each tied to a real capability the
  * eager SDK client must carry; the SDK is loaded by connection-context up front, so
@@ -35,6 +37,13 @@
  *     scaffold surfaces the live-writing file's token-stream ids — the generated message
  *     schema is eager (connection-context loads the client up front). Measured 671,744 B
  *     (origin/main) → 671,761 B (+17 B eager); bumped to the next KiB boundary.
+ *   - 657 KiB → 659 KiB (Apps closeout): the App lifecycle gains a DELETE — DeleteApp's
+ *     request/response messages, the RPC stub, and `client.deleteApp` — plus the hosted
+ *     serve lane's additive wire surface (HostedAppState::HOSTED_BUILDING,
+ *     HostedAppStatus.serve_mode) and its SDK mapping. All of it rides the eager
+ *     `common.js`: connection-context constructs the client up front, so a generated
+ *     message schema cannot be lazy-split per feature. Measured 671,761 B (origin/main)
+ *     → 673,979 B (+2,218 B eager); bumped to the next KiB boundary.
  *
  * Exit 1 over budget. The printed table doubles as the GR10 evidence blob.
  */
@@ -45,7 +54,7 @@ import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(UI_ROOT, "dist");
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 672_768);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 674_816);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

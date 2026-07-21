@@ -18,7 +18,7 @@
 import { type WorkflowProposal, app, defaultHandle, flow } from "@kortecx/sdk/web";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, Suspense, lazy, useCallback, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
 import { toUiError } from "../../kx/errors";
@@ -28,28 +28,47 @@ import { useDatasets } from "../../kx/use-datasets";
 import { useModels } from "../../kx/use-models";
 import { useProposeWorkflow } from "../../kx/use-propose-workflow";
 import { useScaffoldApp } from "../../kx/use-scaffold-app";
-import { composeCapabilityPrompt } from "../../lib/app-capability-prompt";
+import { composeCapabilityPrompt, composeProposeGoal } from "../../lib/app-capability-prompt";
 import { FRESH_UNMODELED, builderGraphToBlueprint } from "../builder/app-blueprint";
-import { proposalToBuilderGraph } from "../builder/builder-graph";
+import { type BuilderGraph, proposalToBuilderGraph } from "../builder/builder-graph";
 import { GlowCard } from "../ds/GlowCard";
 import { ScaffoldProgress } from "./ScaffoldProgress";
+
+/**
+ * The visual builder canvas, MOUNTED HERE as the structure surface for a scheduled App.
+ *
+ * MUST stay `lazy`. This form is statically imported by AppsSection, so a static import
+ * would pull the builder + @xyflow + dagre (~248 KB) onto the Apps route for everyone who
+ * merely opens the catalog. Lazy, the canvas chunk loads when the form is opened.
+ */
+const BlueprintBuilderSection = lazy(() =>
+  import("./BlueprintBuilderSection").then((m) => ({
+    default: m.BlueprintBuilderSection,
+  })),
+);
+
+/**
+ * The step kinds an APP's canvas offers. Agent + Tool: an App is a governed automation,
+ * and the pattern macros (swarm / supervisor / consensus) belong to the workflow builder,
+ * where a one-shot run is the point. The standalone route keeps all three kinds and every
+ * macro — `palette` is omitted there.
+ */
+const APP_PALETTE = ["model", "tool"] as const;
 
 type ProposedPlan = Extract<WorkflowProposal, { proposed: true }>;
 
 /**
- * Bridge a multi-step NL WorkflowProposal → an App blueprint source. Reuses the SAME
- * persona-framing fold the visual builder applies (`proposalToBuilderGraph`), then lowers
- * it to the portable `DagSpecJson` the App envelope carries (`builderGraphToBlueprint`, the
- * same path the "Save as App" flow uses). The server still re-compiles + re-warrants the
- * DAG at RunApp (SN-8) — this only shapes what gets authored.
+ * Seed the canvas from a multi-step NL WorkflowProposal, via the SAME persona-framing fold
+ * the visual builder applies (`proposalToBuilderGraph`).
+ *
+ * This used to lower the proposal straight to a `DagSpecJson` and discard the graph, so a
+ * proposed plan could be previewed as a list and never edited. Producing the GRAPH instead
+ * means the plan lands on the canvas the user can rearrange, and the lowering happens once
+ * at save from whatever they ended up with.
  */
-function proposalBlueprint(plan: ProposedPlan) {
+function proposalGraph(plan: ProposedPlan): BuilderGraph {
   const insert = proposalToBuilderGraph(plan.steps, plan.edges, 0);
-  const dag = builderGraphToBlueprint(
-    { steps: insert.steps, edges: insert.edges },
-    FRESH_UNMODELED,
-  );
-  return { toBlueprint: () => dag };
+  return { steps: insert.steps, edges: insert.edges };
 }
 
 /** Which lane the New App form authors (D213): a scheduled functional app or a hosted
@@ -83,6 +102,17 @@ export function NewAppForm({
   const propose = useProposeWorkflow();
   const [kind, setKind] = useState<NewAppKind>(initialKind);
   const [proposal, setProposal] = useState<WorkflowProposal | null>(null);
+  // The LIVE canvas graph. Previously a proposal was lowered once, inline, and the
+  // editable graph thrown away — so the plan could be previewed but never adjusted.
+  const [graph, setGraph] = useState<BuilderGraph | null>(null);
+  // A stable callback: `onGraphChange` fires from an effect in the builder, so an inline
+  // arrow would re-run it every render.
+  const onGraphChange = useCallback((g: BuilderGraph) => setGraph(g), []);
+  // Bumped whenever a NEW proposal must land on the canvas. The builder seeds its node
+  // state ONCE (`useNodesState` is `useState` underneath), so a changed `initialGraph`
+  // prop alone would be silently ignored and the proposed plan would never appear.
+  // Keying the mount is the honest way to say "this is a different starting graph".
+  const [seedNonce, setSeedNonce] = useState(0);
   const [name, setName] = useState("");
   const [goal, setGoal] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -140,10 +170,16 @@ export function NewAppForm({
       // 5b: if the author proposed + previewed a multi-step plan, author the App as that
       // MULTI-STEP blueprint (each step keeps its role/intent/model); otherwise fall back to
       // today's single agent step over the prompt. The capability rule co-lands on both.
-      const proposed = proposal?.proposed === true && proposal.steps.length > 0 ? proposal : null;
+      // Author from the LIVE canvas when it holds steps — what the user sees is what is
+      // saved, including anything they rearranged after proposing. Falls back to the
+      // single agent step over the prompt when the canvas is empty.
+      const lowered =
+        graph !== null && graph.steps.length > 0
+          ? { toBlueprint: () => builderGraphToBlueprint(graph, FRESH_UNMODELED) }
+          : null;
       let builder = app(name.trim())
         .describe(goal.trim())
-        .blueprint(proposed ? proposalBlueprint(proposed) : flow().agent(promptText))
+        .blueprint(lowered ?? flow().agent(promptText))
         .rule("capabilities", {
           body: composeCapabilityPrompt(
             goal.trim(),
@@ -329,6 +365,66 @@ export function NewAppForm({
             disabled={busy}
           />
 
+          {kind === "scheduled" ? (
+            <textarea
+              className="input"
+              data-testid="new-app-prompt"
+              placeholder="Prompt (optional) — the instruction the model runs each time. Defaults to the goal. A comprehensive capability prompt (how to use the runtime's tools, connections, datasets & files) is added automatically."
+              rows={3}
+              value={prompt}
+              onChange={(e) => {
+                setPrompt(e.target.value);
+                // The prompt now FEEDS propose, so an edit invalidates the plan it produced —
+                // the goal handler has always done this; the other inputs never did.
+                setProposal(null);
+              }}
+              aria-label="App prompt"
+              disabled={busy}
+            />
+          ) : null}
+
+          {/* Attachments — uploaded (PutContent) and attached to the App as
+              by-reference context files the model reads at run. */}
+          <fieldset className="new-app-form__rail" data-testid="new-app-attachments">
+            <legend className="muted">Attachments (context files)</legend>
+            <input
+              type="file"
+              multiple
+              data-testid="new-app-attach-input"
+              onChange={(e) => {
+                if (e.target.files && e.target.files.length > 0) {
+                  attach.addFiles(e.target.files);
+                  e.target.value = "";
+                }
+              }}
+              aria-label="Attach context files"
+              disabled={busy}
+            />
+            {attach.attachments.length > 0 ? (
+              <div className="chips">
+                {attach.attachments.map((a) => (
+                  <span
+                    key={a.id}
+                    className="chip"
+                    data-testid={`new-app-attachment-${a.filename}`}
+                  >
+                    {a.filename}
+                    {a.status !== "ready" ? " · uploading…" : ""}
+                    <button
+                      type="button"
+                      className="context-strip__remove"
+                      aria-label={`Remove ${a.filename}`}
+                      onClick={() => attach.remove(a.id)}
+                      disabled={busy}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </fieldset>
+
           {/* 5b: NL multi-step authoring — ask the served model to plan a workflow for the
               goal, preview it, then author the App as that multi-step blueprint. Falls back
               to a single agent step when there is no plan (e.g. no served model). */}
@@ -338,7 +434,32 @@ export function NewAppForm({
                 type="button"
                 className="btn-ghost"
                 data-testid="new-app-propose"
-                onClick={() => propose.mutate(goal.trim(), { onSuccess: setProposal })}
+                onClick={() =>
+                  propose.mutate(
+                    // The planner sees the whole brief, not just the goal: the name, the
+                    // instruction the App runs, and what files it can read. Filenames
+                    // only — the planner has no grant to dereference a content ref.
+                    composeProposeGoal({
+                      name,
+                      goal,
+                      prompt,
+                      attachments: attach.attachments
+                        .filter((a) => a.status === "ready")
+                        .map((a) => a.filename),
+                    }),
+                    {
+                      onSuccess: (p) => {
+                        setProposal(p);
+                        // Seed the CANVAS, not a read-only list — the plan is a starting
+                        // point the author can rearrange before saving.
+                        if (p.proposed === true && p.steps.length > 0) {
+                          setGraph(proposalGraph(p));
+                          setSeedNonce((n) => n + 1);
+                        }
+                      },
+                    },
+                  )
+                }
                 disabled={!goalOk || busy || propose.isPending}
                 title="Plan a multi-step workflow for this goal. You preview it before authoring."
               >
@@ -349,7 +470,11 @@ export function NewAppForm({
                   type="button"
                   className="linkbtn"
                   data-testid="new-app-proposal-clear"
-                  onClick={() => setProposal(null)}
+                  onClick={() => {
+                    setProposal(null);
+                    setGraph(null);
+                    setSeedNonce((n) => n + 1);
+                  }}
                   disabled={busy}
                 >
                   Clear plan (author a single step)
@@ -357,20 +482,7 @@ export function NewAppForm({
               ) : null}
             </div>
           ) : null}
-          {proposal?.proposed === true ? (
-            <fieldset className="new-app-form__rail" data-testid="new-app-proposal">
-              <legend className="muted">Proposed plan ({proposal.steps.length} steps)</legend>
-              <ol>
-                {proposal.steps.map((s, i) => (
-                  <li key={`${s.role}-${i}`} data-testid={`new-app-proposal-step-${i}`}>
-                    <strong>{s.role}</strong>
-                    {s.modelId ? <span className="mono"> · {s.modelId}</span> : null}
-                    <div className="muted">{s.intent}</div>
-                  </li>
-                ))}
-              </ol>
-            </fieldset>
-          ) : proposal?.proposed === false ? (
+          {proposal?.proposed === false ? (
             <output className="muted" data-testid="new-app-proposal-rejected">
               No multi-step plan: {proposal.reason} — authoring a single agent step over the goal.
             </output>
@@ -381,18 +493,28 @@ export function NewAppForm({
             </p>
           ) : null}
 
+          {/* THE STRUCTURE SURFACE. A proposed plan used to render as a read-only <ol> —
+              you could see the steps and change nothing. The canvas is the same plan,
+              editable, and it is what gets lowered at save. Scheduled only: a hosted App
+              authors no blueprint at all. */}
           {kind === "scheduled" ? (
-            <textarea
-              className="input"
-              data-testid="new-app-prompt"
-              placeholder="Prompt (optional) — the instruction the model runs each time. Defaults to the goal. A comprehensive capability prompt (how to use the runtime's tools, connections, datasets & files) is added automatically."
-              rows={3}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              aria-label="App prompt"
-              disabled={busy}
-            />
+            <fieldset className="new-app-form__rail" data-testid="new-app-structure">
+              <legend className="muted">
+                Structure{graph !== null ? ` (${graph.steps.length} steps)` : ""}
+              </legend>
+              <Suspense fallback={<p className="muted">Loading the builder…</p>}>
+                <BlueprintBuilderSection
+                  key={seedNonce}
+                  mode={{ kind: "embedded" }}
+                  palette={APP_PALETTE}
+                  patterns={false}
+                  initialGraph={graph ?? undefined}
+                  onGraphChange={onGraphChange}
+                />
+              </Suspense>
+            </fieldset>
           ) : null}
+
           <div className="register-tool-form__row">
             <select
               className="mono"
@@ -477,48 +599,6 @@ export function NewAppForm({
               disabled={busy}
             />
           ) : null}
-
-          {/* Attachments — uploaded (PutContent) and attached to the App as
-              by-reference context files the model reads at run. */}
-          <fieldset className="new-app-form__rail" data-testid="new-app-attachments">
-            <legend className="muted">Attachments (context files)</legend>
-            <input
-              type="file"
-              multiple
-              data-testid="new-app-attach-input"
-              onChange={(e) => {
-                if (e.target.files && e.target.files.length > 0) {
-                  attach.addFiles(e.target.files);
-                  e.target.value = "";
-                }
-              }}
-              aria-label="Attach context files"
-              disabled={busy}
-            />
-            {attach.attachments.length > 0 ? (
-              <div className="chips">
-                {attach.attachments.map((a) => (
-                  <span
-                    key={a.id}
-                    className="chip"
-                    data-testid={`new-app-attachment-${a.filename}`}
-                  >
-                    {a.filename}
-                    {a.status !== "ready" ? " · uploading…" : ""}
-                    <button
-                      type="button"
-                      className="context-strip__remove"
-                      aria-label={`Remove ${a.filename}`}
-                      onClick={() => attach.remove(a.id)}
-                      disabled={busy}
-                    >
-                      ✕
-                    </button>
-                  </span>
-                ))}
-              </div>
-            ) : null}
-          </fieldset>
 
           <div className="register-tool-form__row">
             <button type="submit" data-testid="new-app-submit" disabled={!canSubmit}>

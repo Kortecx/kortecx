@@ -12,12 +12,17 @@ import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 let LOCKED = false;
+/** The App lane the mocked `useApp` reports: "" ⇒ functional/scheduled. */
+let KIND = "";
 const saveFile = vi.fn();
 const proposeMutate = vi.fn();
 
 vi.mock("../../src/kx/use-apps", () => ({
   useApp: () => ({
-    data: { summary: { name: "Echo Demo", locked: LOCKED }, envelope: { input_schema: null } },
+    data: {
+      summary: { name: "Echo Demo", locked: LOCKED, kind: KIND },
+      envelope: { input_schema: null },
+    },
     isLoading: false,
     isError: false,
     error: null,
@@ -104,6 +109,18 @@ vi.mock("../../src/components/apps/AppRunDrawer", () => ({
 vi.mock("../../src/components/chat/AppChat", () => ({
   AppChat: () => <div data-testid="app-chat-stub" />,
 }));
+// The hosted cluster reaches useConnection, which THROWS outside KxConnectionProvider —
+// and this suite wraps in QueryClientProvider only. Stub it so the SCHEDULED cases stay
+// unaffected and the hosted case can assert which controls are offered.
+vi.mock("../../src/components/apps/HostedControls", () => ({
+  HostedStatusPill: () => <div data-testid="hosted-pill-stub" />,
+  HostedRunButton: () => <div data-testid="hosted-run-stub" />,
+  HostedStopButton: () => <div data-testid="hosted-stop-stub" />,
+  HostedRestartButton: () => <div data-testid="hosted-restart-stub" />,
+}));
+vi.mock("../../src/components/apps/HostedRunPanel", () => ({
+  HostedRunPanel: () => <div data-testid="hosted-panel-stub" />,
+}));
 
 import { AppDetailSection } from "../../src/components/sections/AppDetailSection";
 
@@ -114,6 +131,7 @@ function render(ui: ReactElement) {
 
 afterEach(() => {
   LOCKED = false;
+  KIND = "";
   saveFile.mockReset();
   proposeMutate.mockReset();
   // The Files rail persists its collapsed flag to localStorage; reset between tests.
@@ -189,5 +207,39 @@ describe("App IDE shell (POC-5d)", () => {
     expect(screen.queryByTestId("app-run-drawer-stub")).toBeNull();
     fireEvent.click(screen.getByTestId("app-detail-run"));
     expect(screen.getByTestId("app-run-drawer-stub")).toBeInTheDocument();
+  });
+
+  // D213: the page had NO kind check, so it offered a hosted App the scheduled-lane Run
+  // (which RunApp refuses for having no blueprint) and none of the lifecycle controls
+  // the catalog already had.
+  it("a HOSTED app gets lifecycle controls, not the blueprint Run", () => {
+    KIND = "experience";
+    render(<AppDetailSection handle="apps/local/site" />);
+    expect(screen.queryByTestId("app-detail-run")).toBeNull();
+    expect(screen.getByTestId("hosted-pill-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("hosted-run-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("hosted-stop-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("hosted-restart-stub")).toBeInTheDocument();
+    // Modify/Download/Lock are lane-independent and stay.
+    expect(screen.getByTestId("app-detail-chat")).toBeInTheDocument();
+    expect(screen.getByTestId("app-detail-download")).toBeInTheDocument();
+  });
+
+  it("a HOSTED app's Lineage tab shows the server panel, not an empty blueprint", () => {
+    KIND = "experience";
+    render(<AppDetailSection handle="apps/local/site" />);
+    fireEvent.click(screen.getByTestId("app-tab-lineage"));
+    expect(screen.getByTestId("hosted-panel-stub")).toBeInTheDocument();
+    // The blueprint diagram — which would render "No steps" plus an Edit-structure
+    // affordance the server cannot honour — is not mounted at all.
+    expect(screen.queryByTestId("app-lineage-stub")).toBeNull();
+  });
+
+  it("the tab list is identical in both lanes (the route validates it)", () => {
+    KIND = "experience";
+    render(<AppDetailSection handle="apps/local/site" />);
+    for (const t of ["files", "lineage", "skills", "tools", "integrations"]) {
+      expect(screen.getByTestId(`app-tab-${t}`)).toBeInTheDocument();
+    }
   });
 });

@@ -15,6 +15,7 @@ export function CodeViewer({
   height = 240,
   testId,
   ariaLabel = "Code viewer",
+  followTail = false,
 }: {
   value: string;
   /** Pin the language; omit to infer json/plaintext from the value. */
@@ -22,6 +23,9 @@ export function CodeViewer({
   height?: number | string;
   testId?: string;
   ariaLabel?: string;
+  /** Keep the newest line in view as `value` grows (a live token stream). Sticky —
+   *  a reader who scrolls up is not yanked back. */
+  followTail?: boolean;
 }) {
   const lang = language ?? inferLanguage(value);
   return (
@@ -33,6 +37,7 @@ export function CodeViewer({
         height={height}
         testId={testId}
         ariaLabel={ariaLabel}
+        followTail={followTail}
       />
     </div>
   );

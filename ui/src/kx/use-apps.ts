@@ -11,7 +11,7 @@
  * caller's grants. Degrades to a not-wired empty state on an old gateway.
  */
 
-import type { AppSummary, StoredApp } from "@kortecx/sdk/web";
+import type { AppSummary, DeleteAppResult, StoredApp } from "@kortecx/sdk/web";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useConnection } from "./connection-context";
 import { toUiError } from "./errors";
@@ -55,6 +55,16 @@ export function useApp(handle: string | null) {
 
 export interface RunAppResult {
   readonly instanceId: string;
+  /**
+   * The server-derived per-submission chain key (`RunHandle.react_chain_salt`), hex.
+   * EMPTY when the App has no single agentic step — the server's honest answer for a
+   * pure-DAG or multi-agent recipe, never something the client should invent.
+   *
+   * It is the only key that distinguishes THIS run inside a serve's shared journal, so
+   * the run view is scoped by it (see `useProjection`'s `scopeMoteId`). The SDK used to
+   * drop it on this path while keeping it for submitWorkflow/invoke.
+   */
+  readonly reactChainSalt: string;
 }
 
 export function useRunApp() {
@@ -76,7 +86,7 @@ export function useRunApp() {
       if (!("recipeFingerprint" in run)) {
         throw new Error("unexpected runApp result");
       }
-      return { instanceId: run.instanceId };
+      return { instanceId: run.instanceId, reactChainSalt: run.reactChainSalt };
     },
   });
 }
@@ -167,6 +177,31 @@ export function useCloneApp() {
       }
       const res = await client.cloneApp(handle, newname);
       return { handle: res.handle };
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.apps(endpoint) });
+    },
+  });
+}
+
+/**
+ * Delete a caller-owned App, cascading what it uniquely owns: its triggers, a running
+ * hosted server, its lock row, and its project-branch binding.
+ *
+ * NOT a full erase, and the UI must not imply one — content-addressed blobs, the hosted
+ * working directory, and any dataset the App ingested all survive (there is no
+ * dataset-delete RPC). The response reports each step so the confirmation can say what
+ * actually happened instead of just "deleted".
+ */
+export function useDeleteApp() {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
+  return useMutation<DeleteAppResult, unknown, { handle: string }>({
+    mutationFn: async ({ handle }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      return client.deleteApp(handle);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.apps(endpoint) });

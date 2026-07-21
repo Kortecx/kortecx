@@ -42,6 +42,7 @@ vi.mock("../../src/kx/use-apps", () => ({
   useExportAppBundle: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
   useImportApp: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
   useCloneApp: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useDeleteApp: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
 }));
 
 // NewAppForm dependencies — keep the form mountable + inert in jsdom.
