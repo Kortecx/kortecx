@@ -80,3 +80,50 @@ export function composeCapabilityPrompt(
   }
   return parts.join("\n");
 }
+
+/**
+ * Compose everything the author has said about the App into the ONE string
+ * `ProposeWorkflow` accepts, so the planner sees the whole brief rather than a fragment.
+ *
+ * The propose button used to send `goal` alone. The name, the prompt (the instruction
+ * the App actually runs each time) and the attached files were all on screen and none of
+ * them reached the planner — which is why a proposed plan could look unrelated to what
+ * the author had just typed.
+ *
+ * `ProposeWorkflowRequest` has exactly one field and the server interpolates it verbatim
+ * into the plan prompt, so composing here needs no wire change. Labels are plain and
+ * stable; the model reads this as prose, not as a schema.
+ *
+ * ATTACHMENTS ARE NAMED, NEVER REFERENCED. Filenames tell the planner what material
+ * exists; the content refs deliberately stay out, because the planner has no grant to
+ * dereference them and handing it an identifier it cannot resolve invites a plan that
+ * pretends to have read the file.
+ */
+export function composeProposeGoal(input: {
+  name: string;
+  goal: string;
+  prompt?: string;
+  attachments?: readonly string[];
+}): string {
+  const name = input.name.trim();
+  const goal = input.goal.trim();
+  const prompt = (input.prompt ?? "").trim();
+  const files = (input.attachments ?? []).filter((f) => f.trim() !== "");
+  // A bare goal composes to itself — so the common case is byte-identical to what the
+  // planner received before, and nothing about its behaviour changes for it.
+  if (name === "" && prompt === "" && files.length === 0) {
+    return goal;
+  }
+  const parts: string[] = [];
+  if (name !== "") {
+    parts.push(`App: ${name}`);
+  }
+  parts.push(`Goal: ${goal}`);
+  if (prompt !== "") {
+    parts.push(`Instruction it runs each time: ${prompt}`);
+  }
+  if (files.length > 0) {
+    parts.push(`Context files it can read: ${files.join(", ")}`);
+  }
+  return parts.join("\n");
+}

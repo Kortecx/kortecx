@@ -75,10 +75,22 @@ test("New App: propose → preview → author a MULTI-STEP App (stubbed ProposeW
   await page.getByTestId("new-app-name").fill("Release Notes Writer");
   await page.getByTestId("new-app-goal").fill("Summarize a changelog into release notes.");
 
-  // Propose → the 3-step plan previews.
+  // Propose → the plan lands on the CANVAS (it used to render as a read-only <ol> you
+  // could look at and not change). The structure rail reports the step count and the
+  // builder shows one node per step.
   await page.getByTestId("new-app-propose").click();
-  await expect(page.getByTestId("new-app-proposal")).toContainText("3 steps");
-  await expect(page.getByTestId("new-app-proposal-step-2")).toContainText("writer");
+  await expect(page.getByTestId("new-app-structure")).toContainText("3 steps");
+  await expect(page.getByTestId("blueprint-builder")).toBeVisible();
+  await expect(page.getByTestId("builder-node")).toHaveCount(3);
+  // The App palette is Agent + Tool, and the workflow-only pattern macros are absent —
+  // the standalone /blueprints/new route keeps all three kinds and every macro.
+  await expect(page.getByTestId("builder-add-agent")).toBeVisible();
+  await expect(page.getByTestId("builder-add-pure")).toHaveCount(0);
+  await expect(page.getByTestId("builder-add-swarm")).toHaveCount(0);
+  // The embedded canvas owns NO terminal — the form's own submit is the only save, so
+  // the builder's navigating actions cannot fire from inside a half-filled form.
+  await expect(page.getByTestId("builder-submit")).toHaveCount(0);
+  await expect(page.getByTestId("builder-save-as-app")).toHaveCount(0);
 
   // Author → the SAVED envelope carries a 3-step blueprint (NOT the single-agent fallback).
   // The scaffold that follows Save needs a model and errors here — ignored, exactly like the

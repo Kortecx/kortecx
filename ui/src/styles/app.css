@@ -5635,3 +5635,13 @@ button.card-grid__title:hover {
   margin-left: auto;
   font-size: 0.78rem;
 }
+
+/* The builder canvas EMBEDDED in the New App form: no page chrome, a shorter canvas
+   than the standalone route's, and a toolbar that wraps inside the card. */
+.builder--embedded .builder-toolbar {
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.builder--embedded .builder-canvas {
+  height: 380px;
+}

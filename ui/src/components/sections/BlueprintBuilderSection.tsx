@@ -69,12 +69,28 @@ import { NODE_H, NODE_W, layoutGraph } from "../dag/layout";
  *    neither the App hooks nor the blueprint parser. "Save to App" replaces ONLY
  *    `envelope.blueprint` (the lossless rule).
  */
-export type BuilderMode = { kind: "workflow" } | { kind: "app-edit"; handle: string };
+export type BuilderMode =
+  | { kind: "workflow" }
+  | { kind: "app-edit"; handle: string }
+  /**
+   * EMBEDDED — the canvas hosted inside another form (the New App flow), which owns the
+   * terminal action.
+   *
+   * A distinct mode rather than a set of flags, because the property that matters is
+   * negative: in this mode the builder renders NO Build&run / Save-as-App / Save-to-App
+   * control, so none of its three `useNavigate` side-effects can fire and navigate the
+   * user away from a half-filled form. Making that unreachable by construction beats
+   * hiding the buttons and hoping.
+   *
+   * The host receives the live graph through `onGraphChange` and lowers it itself.
+   */
+  | { kind: "embedded" };
 
 /** The mode `BuilderInner` consumes — for app-edit it additionally carries the parsed
  *  `unmodeled` snapshot (preserved blueprint-level fields) the Save re-merges. */
 type InnerMode =
   | { kind: "workflow" }
+  | { kind: "embedded" }
   | {
       kind: "app-edit";
       handle: string;
@@ -143,7 +159,23 @@ function toRfEdge(e: BuilderEdge): Edge {
   };
 }
 
-function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mode: InnerMode }) {
+function BuilderInner({
+  initialGraph,
+  mode,
+  palette,
+  patterns = true,
+  onGraphChange,
+}: {
+  initialGraph?: BuilderGraph;
+  mode: InnerMode;
+  /** Which step kinds the toolbar offers. Omitted ⇒ all three (the standalone route).
+   *  There was no palette concept before; an App canvas wants a narrower one. */
+  palette?: readonly BuilderStepKind[];
+  /** Show the multi-agent pattern macros. */
+  patterns?: boolean;
+  /** Publish the live graph to a host that owns the terminal (embedded mode). */
+  onGraphChange?: (graph: BuilderGraph) => void;
+}) {
   const navigate = useNavigate();
   const { models, unsupported } = useModels();
   const submit = useSubmitWorkflow();
@@ -319,7 +351,15 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
   // convention). The banner shows the reason for this mode's primary terminal.
   const invalidRun = validationError(graph);
   const invalidApp = validationError(graph, { allowEmptyModel: true });
-  const invalid = mode.kind === "app-edit" ? invalidApp : invalidRun;
+  // An App may leave a model blank (the run binds the served one), so an embedded canvas
+  // authoring an App validates by the APP rule, not the one-shot-run rule.
+  const invalid = mode.kind === "workflow" ? invalidRun : invalidApp;
+
+  // Publish the live graph to a host (embedded mode). Effect, not a render-time call:
+  // the host sets state from it.
+  useEffect(() => {
+    onGraphChange?.(graph);
+  }, [graph, onGraphChange]);
 
   const onNodeClick = useCallback<NodeMouseHandler>((_e, node) => {
     setSelEdge(null);
@@ -398,17 +438,14 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
   const selectedStep = selNode ? (nodes.find((n) => n.id === selNode)?.data.step ?? null) : null;
   const selectedEdge = selEdge ? (graph.edges.find((e) => e.id === selEdge) ?? null) : null;
 
+  const embedded = mode.kind === "embedded";
+  const Chrome = embedded ? EmbeddedChrome : PageChrome;
+  // No palette given ⇒ every kind (the standalone route's behaviour, unchanged).
+  const offers = (k: BuilderStepKind): boolean => palette === undefined || palette.includes(k);
   return (
-    <section className="screen builder" data-testid="blueprint-builder">
-      <header className="section-head">
-        <div>
-          <h2>{mode.kind === "app-edit" ? "Edit App structure" : "New blueprint"}</h2>
-          <p className="muted">
-            {mode.kind === "app-edit"
-              ? `Editing ${String(mode.envelope.name ?? mode.handle)} — arrange steps + edges, then Save to App. The saved structure drives the next run.`
-              : "Drag to arrange, drag handle-to-handle to connect. The server compiles the DAG and builds every warrant — you author topology + params only."}
-          </p>
-        </div>
+    <Chrome
+      mode={mode}
+      toolbar={
         <div className="builder-toolbar">
           <button
             type="button"
@@ -420,68 +457,78 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
             ✨ Describe a workflow
           </button>
           <span className="builder-toolbar__divider" aria-hidden="true" />
-          <button
-            type="button"
-            className="btn-ghost"
-            data-testid="builder-add-agent"
-            onClick={() => addStep("model")}
-          >
-            + Agent
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            data-testid="builder-add-pure"
-            onClick={() => addStep("pure")}
-          >
-            + Pure step
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            data-testid="builder-add-tool"
-            onClick={() => addStep("tool")}
-          >
-            + Tool
-          </button>
-          <span className="builder-toolbar__divider" aria-hidden="true" />
-          <button
-            type="button"
-            className="btn-ghost"
-            data-testid="builder-add-swarm"
-            title="Fan out to parallel agents, then gather"
-            onClick={() => insertPatternMacro("swarm")}
-          >
-            + Swarm
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            data-testid="builder-add-supervisor"
-            title="A planner decomposes the task; workers run in parallel; a lead integrates"
-            onClick={() => insertPatternMacro("supervisor")}
-          >
-            + Supervisor
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            data-testid="builder-add-consensus-judge"
-            title="N voters, then a judge selects the single best answer"
-            onClick={() => insertPatternMacro("consensusJudge")}
-          >
-            + Consensus · judge
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            data-testid="builder-add-consensus-majority"
-            title="N voters, then an exact-equality majority vote (server-reduced)"
-            onClick={() => insertPatternMacro("consensusMajority")}
-          >
-            + Consensus · majority
-          </button>
-          {mode.kind === "app-edit" ? (
+          {offers("model") ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="builder-add-agent"
+              onClick={() => addStep("model")}
+            >
+              + Agent
+            </button>
+          ) : null}
+          {offers("pure") ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="builder-add-pure"
+              onClick={() => addStep("pure")}
+            >
+              + Pure step
+            </button>
+          ) : null}
+          {offers("tool") ? (
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="builder-add-tool"
+              onClick={() => addStep("tool")}
+            >
+              + Tool
+            </button>
+          ) : null}
+          {patterns ? (
+            <>
+              <span className="builder-toolbar__divider" aria-hidden="true" />
+              <button
+                type="button"
+                className="btn-ghost"
+                data-testid="builder-add-swarm"
+                title="Fan out to parallel agents, then gather"
+                onClick={() => insertPatternMacro("swarm")}
+              >
+                + Swarm
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                data-testid="builder-add-supervisor"
+                title="A planner decomposes the task; workers run in parallel; a lead integrates"
+                onClick={() => insertPatternMacro("supervisor")}
+              >
+                + Supervisor
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                data-testid="builder-add-consensus-judge"
+                title="N voters, then a judge selects the single best answer"
+                onClick={() => insertPatternMacro("consensusJudge")}
+              >
+                + Consensus · judge
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                data-testid="builder-add-consensus-majority"
+                title="N voters, then an exact-equality majority vote (server-reduced)"
+                onClick={() => insertPatternMacro("consensusMajority")}
+              >
+                + Consensus · majority
+              </button>
+            </>
+          ) : null}
+          {mode.kind === "embedded" ? null : mode.kind === "app-edit" ? (
             <button
               type="button"
               className="builder-submit"
@@ -520,8 +567,8 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
             </>
           )}
         </div>
-      </header>
-
+      }
+    >
       {invalid ? (
         <output className="builder-validation" data-testid="builder-validation">
           {invalid}
@@ -599,7 +646,51 @@ function BuilderInner({ initialGraph, mode }: { initialGraph?: BuilderGraph; mod
       {proposing ? (
         <NlProposePanel onApply={applyProposal} onClose={() => setProposing(false)} />
       ) : null}
+    </Chrome>
+  );
+}
+
+interface ChromeProps {
+  mode: InnerMode;
+  /** The builder toolbar — inside `.section-head` on a page, standalone when embedded. */
+  toolbar: React.ReactNode;
+  children: React.ReactNode;
+}
+
+/** The standalone route's page chrome. Byte-identical DOM to before the embed split:
+ *  `.screen.builder` > `.section-head` > (heading + lede, toolbar), then the canvas. */
+function PageChrome({ mode, toolbar, children }: ChromeProps) {
+  const appEdit = mode.kind === "app-edit";
+  return (
+    <section className="screen builder" data-testid="blueprint-builder">
+      <header className="section-head">
+        <div>
+          <h2>{appEdit ? "Edit App structure" : "New blueprint"}</h2>
+          <p className="muted">
+            {appEdit
+              ? `Editing ${String(mode.envelope.name ?? mode.handle)} — arrange steps + edges, then Save to App. The saved structure drives the next run.`
+              : "Drag to arrange, drag handle-to-handle to connect. The server compiles the DAG and builds every warrant — you author topology + params only."}
+          </p>
+        </div>
+        {toolbar}
+      </header>
+      {children}
     </section>
+  );
+}
+
+/**
+ * Embedded chrome — no `.screen` wrapper, no heading, no lede. The host form has already
+ * said what this is; a second page-level heading inside a card reads as a nested page.
+ * Keeps `data-testid="blueprint-builder"` so the canvas is addressable identically on
+ * both surfaces.
+ */
+function EmbeddedChrome({ toolbar, children }: ChromeProps) {
+  return (
+    <div className="builder builder--embedded" data-testid="blueprint-builder">
+      {toolbar}
+      {children}
+    </div>
   );
 }
 
@@ -758,16 +849,31 @@ function AppEditLoader({ handle }: { handle: string }) {
 export function BlueprintBuilderSection({
   initialGraph,
   mode = { kind: "workflow" },
+  palette,
+  patterns,
+  onGraphChange,
 }: {
   initialGraph?: BuilderGraph;
   mode?: BuilderMode;
+  /** Which step kinds the toolbar offers (default: all three). */
+  palette?: readonly BuilderStepKind[];
+  /** Show the multi-agent pattern macros (default: true). */
+  patterns?: boolean;
+  /** Publish the live graph to a host that owns the terminal (embedded mode). */
+  onGraphChange?: (graph: BuilderGraph) => void;
 }) {
   if (mode.kind === "app-edit") {
     return <AppEditLoader handle={mode.handle} />;
   }
   return (
     <ReactFlowProvider>
-      <BuilderInner initialGraph={initialGraph} mode={mode} />
+      <BuilderInner
+        initialGraph={initialGraph}
+        mode={mode}
+        palette={palette}
+        patterns={patterns}
+        onGraphChange={onGraphChange}
+      />
     </ReactFlowProvider>
   );
 }
