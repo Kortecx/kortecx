@@ -229,10 +229,18 @@ impl TriggersDb {
         })
     }
 
-    /// List triggers keyset-paged after `after_name` (exclusive), up to `limit`.
-    /// Returns `(rows, has_more)`.
+    /// List `owner_party`'s triggers keyset-paged after `after_name` (exclusive), up to
+    /// `limit`. Returns `(rows, has_more)`.
+    ///
+    /// OWNER-SCOPED. Every other caller-facing catalog in this service is keyed on the
+    /// caller principal; triggers were not, so one party could enumerate another's
+    /// triggers — including their App targets and schedules — even though the rows have
+    /// always carried `owner_party` and the fire path has always run under it. The scope
+    /// is applied in SQL rather than by filtering after the fact, so the keyset paging
+    /// stays correct (a post-filter would return short pages and a wrong `has_more`).
     pub(crate) fn list(
         &self,
+        owner_party: &str,
         limit: u32,
         after_name: &str,
     ) -> Result<(Vec<TriggerRow>, bool), GatewayError> {
@@ -242,11 +250,15 @@ impl TriggersDb {
             .prepare(
                 "SELECT trigger_id, name, kind, recipe_handle, args_template_json, auth, \
                  auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, created_unix_ms, \
-                 last_fire_unix_ms, app_handle, timezone, require_approval FROM triggers WHERE name > ?1 ORDER BY name ASC LIMIT ?2",
+                 last_fire_unix_ms, app_handle, timezone, require_approval FROM triggers \
+                 WHERE owner_party = ?1 AND name > ?2 ORDER BY name ASC LIMIT ?3",
             )
             .map_err(|e| GatewayError::Catalog(format!("triggers list prepare: {e}")))?;
         let mut rows = stmt
-            .query_map(params![after_name, i64::from(lim) + 1], row_from)
+            .query_map(
+                params![owner_party, after_name, i64::from(lim) + 1],
+                row_from,
+            )
             .map_err(|e| GatewayError::Catalog(format!("triggers list: {e}")))?
             .collect::<rusqlite::Result<Vec<_>>>()
             .map_err(|e| GatewayError::Catalog(format!("triggers list row: {e}")))?;
@@ -255,14 +267,42 @@ impl TriggersDb {
         Ok((rows, has_more))
     }
 
-    /// Remove a trigger by name. Returns `true` iff a row was removed. The
-    /// `trigger_fires` history is retained (audit) — orphaned rows are inert.
-    pub(crate) fn remove(&self, name: &str) -> Result<bool, GatewayError> {
+    /// Remove `owner_party`'s trigger by name. Returns `true` iff a row was removed —
+    /// `false` uniformly for absent OR owned by someone else, so this is not an existence
+    /// oracle. The `trigger_fires` history is retained (audit); orphaned rows are inert.
+    pub(crate) fn remove(&self, owner_party: &str, name: &str) -> Result<bool, GatewayError> {
         let conn = self.lock()?;
         let n = conn
-            .execute("DELETE FROM triggers WHERE name = ?1", params![name])
+            .execute(
+                "DELETE FROM triggers WHERE owner_party = ?1 AND name = ?2",
+                params![owner_party, name],
+            )
             .map_err(|e| GatewayError::Catalog(format!("triggers remove: {e}")))?;
         Ok(n > 0)
+    }
+
+    /// Remove every one of `owner_party`'s triggers targeting `app_handle`. Returns how
+    /// many rows went. The write half of the App-delete cascade; scoped in SQL so it can
+    /// never reach another party's rows.
+    pub(crate) fn remove_by_app(
+        &self,
+        owner_party: &str,
+        app_handle: &str,
+    ) -> Result<u32, GatewayError> {
+        // An empty app_handle is the RECIPE-target sentinel, not a wildcard — deleting on
+        // it would reap every recipe trigger the party owns. Refuse rather than trust the
+        // caller to have checked.
+        if app_handle.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.lock()?;
+        let n = conn
+            .execute(
+                "DELETE FROM triggers WHERE owner_party = ?1 AND app_handle = ?2",
+                params![owner_party, app_handle],
+            )
+            .map_err(|e| GatewayError::Catalog(format!("triggers remove-by-app: {e}")))?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
     }
 
     /// Pre-check dedup: the `instance_id` already recorded for `idempotency_key`, or
@@ -412,6 +452,9 @@ fn row_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<TriggerRow> {
 mod tests {
     use super::*;
 
+    /// The owner party every fixture row is registered under (see `row`).
+    const OWNER: &str = "local-dev";
+
     fn row(name: &str, kind: &str) -> TriggerRow {
         TriggerRow {
             trigger_id: trigger_id_of(name),
@@ -490,18 +533,82 @@ mod tests {
         for n in ["a", "b", "c"] {
             db.upsert(&row(n, "webhook")).unwrap();
         }
-        let (p1, more) = db.list(2, "").unwrap();
+        let (p1, more) = db.list(OWNER, 2, "").unwrap();
         assert_eq!(
             p1.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
             ["a", "b"]
         );
         assert!(more);
-        assert!(db.remove("b").unwrap());
-        assert!(!db.remove("b").unwrap(), "second remove is a no-op");
-        let (all, _) = db.list(0, "").unwrap();
+        assert!(db.remove(OWNER, "b").unwrap());
+        assert!(!db.remove(OWNER, "b").unwrap(), "second remove is a no-op");
+        let (all, _) = db.list(OWNER, 0, "").unwrap();
         assert_eq!(
             all.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
             ["a", "c"]
+        );
+    }
+
+    /// Triggers are OWNER-SCOPED: one party can neither see nor delete another's.
+    /// Before this scoping, `list` had no owner predicate at all and `remove` keyed on
+    /// the name alone — so any authenticated party could enumerate every other party's
+    /// triggers and deregister them by guessing a name.
+    #[test]
+    fn list_and_remove_cannot_reach_another_partys_triggers() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = TriggersDb::open(dir.path()).unwrap();
+        db.upsert(&row("mine", "webhook")).unwrap();
+        let mut theirs = row("theirs", "webhook");
+        theirs.owner_party = "someone-else".to_string();
+        db.upsert(&theirs).unwrap();
+
+        // The listing shows only the caller's own row — not a short page of a larger set.
+        let (mine, more) = db.list(OWNER, 0, "").unwrap();
+        assert_eq!(
+            mine.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["mine"]
+        );
+        assert!(!more);
+
+        // Deleting by a known-good name belonging to another party removes nothing, and
+        // reports `false` — the same answer as "no such trigger", so it is not an oracle.
+        assert!(!db.remove(OWNER, "theirs").unwrap());
+        let (still_theirs, _) = db.list("someone-else", 0, "").unwrap();
+        assert_eq!(still_theirs.len(), 1, "their trigger survives");
+    }
+
+    /// The App-delete cascade: reap exactly the caller's triggers for one App handle.
+    #[test]
+    fn remove_by_app_is_scoped_and_never_wildcards_on_the_recipe_sentinel() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = TriggersDb::open(dir.path()).unwrap();
+        let mut targeted = row("app-cron", "cron");
+        targeted.app_handle = "apps/local/doomed".to_string();
+        db.upsert(&targeted).unwrap();
+        let mut other_app = row("other-cron", "cron");
+        other_app.app_handle = "apps/local/keeper".to_string();
+        db.upsert(&other_app).unwrap();
+        let mut foreign = row("their-cron", "cron");
+        foreign.app_handle = "apps/local/doomed".to_string();
+        foreign.owner_party = "someone-else".to_string();
+        db.upsert(&foreign).unwrap();
+        // A RECIPE-target trigger: app_handle is the empty sentinel.
+        db.upsert(&row("recipe-hook", "webhook")).unwrap();
+
+        // The empty app_handle is the recipe sentinel, NOT a wildcard — reaping on it
+        // would silently delete every recipe trigger the party owns.
+        assert_eq!(db.remove_by_app(OWNER, "").unwrap(), 0);
+
+        assert_eq!(db.remove_by_app(OWNER, "apps/local/doomed").unwrap(), 1);
+        let (mine, _) = db.list(OWNER, 0, "").unwrap();
+        assert_eq!(
+            mine.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["other-cron", "recipe-hook"],
+            "the other App's trigger and the recipe trigger both survive"
+        );
+        assert_eq!(
+            db.list("someone-else", 0, "").unwrap().0.len(),
+            1,
+            "another party's trigger for the SAME App survives"
         );
     }
 

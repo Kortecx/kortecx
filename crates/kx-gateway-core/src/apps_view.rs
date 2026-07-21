@@ -227,6 +227,36 @@ pub trait AppCatalog: Send + Sync {
         principal: &str,
         handle: &str,
     ) -> Result<Option<(AppRecord, Vec<u8>)>, GatewayError>;
+
+    /// Drop the row bound to `(principal, handle)`. Returns `true` iff a row existed and
+    /// was removed (caller-scoped; `false` uniformly for absent OR not-owned — no
+    /// existence oracle, the `get` posture).
+    ///
+    /// This unbinds the POINTER only. The canonical envelope's content-addressed blobs
+    /// stay, exactly as [`crate::branches_view`]'s delete leaves its blobs — they are
+    /// shared and immutable, and a past run's committed Motes must remain reachable.
+    /// Deleting an App can never rewrite history: the catalog is off-journal and
+    /// off-digest by construction (see this module's header), so no row here has ever
+    /// been an input to the canonical projection digest.
+    ///
+    /// Cascading the things that merely REFERENCE the app — its triggers, a running
+    /// hosted supervisor, its lock row, its project branch — is the caller's job, not the
+    /// catalog's; those live behind their own seams and each needs the caller principal.
+    ///
+    /// DEFAULTED to a refusal so an [`AppCatalog`] impl that predates this method (or a
+    /// test fake) keeps compiling and declines honestly, rather than being forced to
+    /// invent a delete — the same optional-seam degrade the hosted RPCs use. A refusal
+    /// is safe here in a way a defaulted `Ok(true)` never would be.
+    ///
+    /// # Errors
+    /// [`GatewayError::FailedPrecondition`] when the impl does not implement deletion;
+    /// [`GatewayError::Internal`] on a host write failure.
+    fn delete(&self, principal: &str, handle: &str) -> Result<bool, GatewayError> {
+        let _ = (principal, handle);
+        Err(GatewayError::FailedPrecondition(
+            "this App catalog does not support delete",
+        ))
+    }
 }
 
 #[cfg(test)]

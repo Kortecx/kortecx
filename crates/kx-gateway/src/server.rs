@@ -1583,6 +1583,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             submitter.clone(),
             reader.clone(),
             content.clone(),
+            content.clone(),
             branches_db.clone(),
             Some(locks_db.clone() as Arc<dyn kx_gateway_core::LockStore>),
         )))

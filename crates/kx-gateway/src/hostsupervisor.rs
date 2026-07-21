@@ -1,11 +1,20 @@
 //! D213 Experience lane — the hosted-app run/build/serve supervisor (host impl).
 //!
 //! Materializes a hosted (Experience) App's branch file tree to a working directory,
-//! `npm install`s it (once, cached), and runs its dev server (`vite`/`next dev`) on a
-//! loopback port as a supervised child. The dev server is exposed DIRECTLY at
-//! `http://127.0.0.1:<port>/` — the console's Run button opens it in a new browser tab
-//! (native HMR, no proxy). A single-user, local mechanism (a public URL / a reverse
-//! proxy / multi-tenant isolation are Cloud).
+//! `npm install`s it (once, cached), and runs it on a loopback port as a supervised child.
+//! The server is exposed DIRECTLY at `http://127.0.0.1:<port>/` — the console's Run button
+//! opens it in a new browser tab; there is NO reverse proxy (a public URL / a proxy /
+//! multi-tenant isolation are Cloud).
+//!
+//! TWO LANES, chosen by the App envelope's `HostedConfig.serve_mode`:
+//!   • `dev` (the default) — `npm run dev`. Hot module reload; an in-CAS edit is live on
+//!     the next materialize. This is what makes a hosted app an editable workspace.
+//!   • `production` — `npm run build`, then the framework's preview/start server over the
+//!     built output. What actually ships: minified, tree-shaken, no HMR.
+//!
+//! `rebuild` on `start` is ORTHOGONAL to that choice: it re-materializes, drops
+//! `node_modules`, reinstalls and restarts the SAME lane. It is a clean restart, not a
+//! production build — which is why the console labels it "Restart clean".
 //!
 //! **Why this is off-digest (D213).** The supervisor is a plain `tokio::process` child in
 //! the host binary — it is NEVER a Mote, never routed through `kx-executor`, never
@@ -24,8 +33,9 @@ use std::time::Duration;
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    dev_command_args, hosted_template, AppCatalog, BranchStore, ContentReader, GatewayError,
-    HostedAppSupervisor, HostedFileSource, HostedState, HostedStatus, MANIFEST_MARKER_PATH,
+    build_command_args, dev_command_args, hosted_template, preview_command_args, AppCatalog,
+    BranchStore, ContentReader, GatewayError, HostedAppSupervisor, HostedFileSource,
+    HostedServeMode, HostedState, HostedStatus, MANIFEST_MARKER_PATH,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -45,10 +55,13 @@ type AppKey = (String, String);
 /// task, the log readers, and the status/stop RPCs share one view).
 struct RunningApp {
     state: HostedState,
-    /// The supervised dev-server child (`kill_on_drop`). Taken + killed on stop.
+    /// The supervised server child (`kill_on_drop`). Taken + killed on stop.
     child: Option<tokio::process::Child>,
     port: u16,
     framework: String,
+    /// Which lane this app is being served on (echoed in the status so a client never
+    /// has to infer it from the state sequence).
+    serve_mode: HostedServeMode,
     detail: String,
     /// The install/dev-server log tail (its own lock so log writes never contend with
     /// child/state access).
@@ -64,6 +77,7 @@ impl RunningApp {
             child: None,
             port: 0,
             framework,
+            serve_mode: HostedServeMode::default(),
             detail: String::new(),
             logs: Arc::new(Mutex::new(VecDeque::new())),
             generation: 0,
@@ -89,6 +103,7 @@ impl RunningApp {
             framework: self.framework.clone(),
             port: u32::from(self.port),
             detail: self.detail.clone(),
+            serve_mode: self.serve_mode,
         }
     }
 }
@@ -99,6 +114,10 @@ struct LaunchPlan {
     framework: String,
     install_cmd: String,
     dev_cmd: String,
+    /// Which lane to serve on (from the envelope's `HostedConfig.serve_mode`).
+    serve_mode: HostedServeMode,
+    /// Advisory `npm run build` override; ignored in dev mode.
+    build_cmd: String,
     workdir: PathBuf,
 }
 
@@ -157,6 +176,10 @@ impl HostedSupervisor {
             framework: hosted.framework.as_str().to_string(),
             install_cmd: hosted.install_cmd,
             dev_cmd: hosted.dev_cmd,
+            // Unrecognized / empty (every app authored before this field) ⇒ Dev, so no
+            // existing app is silently promoted to a lane it never asked for.
+            serve_mode: HostedServeMode::from_label(&hosted.serve_mode),
+            build_cmd: hosted.build_cmd,
             workdir: self.data_root.join(dir_key),
         })
     }
@@ -193,6 +216,7 @@ impl HostedAppSupervisor for HostedSupervisor {
                 app.state,
                 HostedState::Materializing
                     | HostedState::Installing
+                    | HostedState::Building
                     | HostedState::Starting
                     | HostedState::Running
             );
@@ -209,6 +233,7 @@ impl HostedAppSupervisor for HostedSupervisor {
             app.detail = String::new();
             app.port = 0;
             app.framework.clone_from(&plan.framework);
+            app.serve_mode = plan.serve_mode;
             if let Ok(mut logs) = app.logs.lock() {
                 logs.clear();
             }
@@ -351,7 +376,11 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
         Arc::clone(&app.logs)
     };
 
-    // 1) Materialize the branch file tree to disk (skip when unchanged unless rebuild).
+    let production = ctx.plan.serve_mode == HostedServeMode::Production;
+
+    // 1) Materialize the branch file tree to disk. Always rewritten: the template base is
+    //    small and idempotent, and `node_modules` is never touched, so a prior install
+    //    survives.
     if !advance(&ctx, HostedState::Materializing, "") {
         return;
     }
@@ -369,8 +398,27 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
         return;
     }
 
-    // 3) Allocate a loopback port + spawn the dev server as a supervised child.
-    if !advance(&ctx, HostedState::Starting, "starting dev server") {
+    // 3) PRODUCTION ONLY: `npm run build`. The dev lane never enters this state, which is
+    //    what makes the state honest — a client showing "building…" on a dev start would
+    //    be describing something that is not happening.
+    if production {
+        if !advance(&ctx, HostedState::Building, "building for production") {
+            return;
+        }
+        if let Err(e) = build(&ctx, &logs).await {
+            advance(&ctx, HostedState::Failed, &format!("build: {e}"));
+            return;
+        }
+    }
+
+    // 4) Allocate a loopback port + spawn the server as a supervised child — the dev
+    //    server, or the framework's preview/start server over the built output.
+    let starting = if production {
+        "starting production server"
+    } else {
+        "starting dev server"
+    };
+    if !advance(&ctx, HostedState::Starting, starting) {
         return;
     }
     let port = match alloc_port() {
@@ -380,7 +428,7 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
             return;
         }
     };
-    let child = match spawn_dev(&ctx, port, &logs) {
+    let child = match spawn_server(&ctx, port, &logs) {
         Ok(c) => c,
         Err(e) => {
             advance(&ctx, HostedState::Failed, &format!("spawn: {e}"));
@@ -400,14 +448,22 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
         app.port = port;
     }
 
-    // 4) Wait for the dev server to accept connections, then mark Running.
+    // 5) Wait for the server to accept connections, then mark Running.
     if wait_ready(port).await {
-        advance(&ctx, HostedState::Running, "running");
+        advance(
+            &ctx,
+            HostedState::Running,
+            if production {
+                "running (production build)"
+            } else {
+                "running"
+            },
+        );
     } else {
         advance(
             &ctx,
             HostedState::Failed,
-            "dev server did not become ready in time",
+            "server did not become ready in time",
         );
         if let Ok(mut app) = ctx.ra.lock() {
             if let Some(mut child) = app.child.take() {
@@ -513,18 +569,43 @@ async fn install(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Res
     run_capture(&prog, &args, &ctx.plan.workdir, logs).await
 }
 
-fn spawn_dev(
+/// `npm run build` — the production lane only. A build is a one-shot command, so it
+/// reuses `run_capture` (the install primitive): its output lands in the same log ring,
+/// and a non-zero exit fails the lifecycle with the compiler's own message rather than a
+/// server that starts and serves nothing.
+async fn build(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Result<(), String> {
+    // The install sentinel doubles as the BUILD skip, so the hermetic e2e can exercise the
+    // Building state without Node on the box.
+    if ctx.plan.install_cmd == SKIP_INSTALL {
+        log_line(logs, "build: skipped (hermetic)".into());
+        return Ok(());
+    }
+    let (prog, args) = if ctx.plan.build_cmd.is_empty() {
+        ("npm".to_string(), build_command_args(&ctx.plan.framework))
+    } else {
+        split_cmd(&ctx.plan.build_cmd)
+    };
+    run_capture(&prog, &args, &ctx.plan.workdir, logs).await
+}
+
+/// Spawn the app's server: the dev server (HMR) or, in production mode, the framework's
+/// preview/start server over the freshly built output.
+fn spawn_server(
     ctx: &LifecycleCtx,
     port: u16,
     logs: &Arc<Mutex<VecDeque<String>>>,
 ) -> Result<tokio::process::Child, String> {
+    let production = ctx.plan.serve_mode == HostedServeMode::Production;
     let (prog, args) = if ctx.plan.dev_cmd.is_empty() {
-        (
-            "npm".to_string(),
-            dev_command_args(&ctx.plan.framework, port),
-        )
+        let args = if production {
+            preview_command_args(&ctx.plan.framework, port)
+        } else {
+            dev_command_args(&ctx.plan.framework, port)
+        };
+        ("npm".to_string(), args)
     } else {
-        // A custom dev command gets the port appended as its final argument.
+        // A custom command gets the port appended as its final argument. It overrides BOTH
+        // lanes: an operator who pinned a command owns what it serves.
         let (prog, mut args) = split_cmd(&ctx.plan.dev_cmd);
         args.push(port.to_string());
         (prog, args)

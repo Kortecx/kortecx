@@ -35,13 +35,14 @@ use kx_content::ContentRef;
 use kx_gateway_core::{
     authoring_prompt, body_is_empty, derive_phase, hosted_template, split_done_pending,
     try_committed_body, AppScaffolder, BinderError, BranchManifest, BranchStore, ContentReader,
-    GatewayError as CoreError, HostedFileSource, JournalReader, LockStore, RecipeBinder,
-    RunSubmitter, ScaffoldPhase, ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
-    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH, SKELETON,
+    ContentWriter, GatewayError as CoreError, HostedFileSource, JournalReader, LockStore,
+    RecipeBinder, RunSubmitter, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,
+    APP_MANIFEST_PLAN_RECIPE_HANDLE, APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH,
+    SKELETON,
 };
 use kx_mote::MoteId;
 
-use crate::manifest::{decode_manifest, manifest_plan_directive, ManifestFile};
+use crate::manifest::{decode_manifest, encode_manifest, manifest_plan_directive, ManifestFile};
 
 /// Per-step await ceiling (comfortably exceeds the recipe warrant's 300s wall-clock,
 /// so the warrant's own timeout fires first and we then report the step `Failed`).
@@ -95,9 +96,31 @@ pub(crate) struct HostScaffolder {
     submitter: Arc<dyn RunSubmitter>,
     reader: Arc<dyn JournalReader>,
     content: Arc<dyn ContentReader>,
+    /// The content-store WRITE seam (`PutContent`'s trait). The scaffold needs it for
+    /// the two things it must content-address WITHOUT a model: the template's static
+    /// config files (so the branch — and therefore the IDE tree — holds the whole
+    /// project, not just the model-authored part) and a server-authored plan marker
+    /// (so a fallback plan is as durable as a planned one). A separate seam rather
+    /// than widening `content`, because `try_committed_body` takes `&dyn ContentReader`.
+    writer: Arc<dyn ContentWriter>,
     branches: Arc<dyn BranchStore>,
     locks: Option<Arc<dyn LockStore>>,
     tracker: Arc<Mutex<HashMap<String, Progress>>>,
+    /// Per-branch LANE fallback: which paths `status()` should report as planned
+    /// BEFORE a `.kortecx/manifest.json` marker is committed.
+    ///
+    /// The marker is the durable truth, but it only lands once planning returns — and
+    /// planning is a model step that can run for minutes. In that window `status()` used
+    /// to fall through to its last-resort default, the SCHEDULED skeleton, for BOTH
+    /// lanes: a hosted app displayed README/app.json/prompts/rules/skills — a tree that
+    /// lane never writes — and then visibly swapped to the real one. That read as "the
+    /// template was replaced by the project". Recording the lane at start makes the
+    /// pre-marker report belong to the right lane, so the only change a user sees is a
+    /// fallback plan being refined into a fuller one.
+    ///
+    /// Deliberately NOT stored in `Progress`: `set()` replaces that struct wholesale on
+    /// every phase change, so a field there would be erased by the first transition.
+    lane_fallback: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
 impl HostScaffolder {
@@ -106,6 +129,7 @@ impl HostScaffolder {
         submitter: Arc<dyn RunSubmitter>,
         reader: Arc<dyn JournalReader>,
         content: Arc<dyn ContentReader>,
+        writer: Arc<dyn ContentWriter>,
         branches: Arc<dyn BranchStore>,
         locks: Option<Arc<dyn LockStore>>,
     ) -> Self {
@@ -114,9 +138,46 @@ impl HostScaffolder {
             submitter,
             reader,
             content,
+            writer,
             branches,
             locks,
             tracker: Arc::new(Mutex::new(HashMap::new())),
+            lane_fallback: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Record which paths `status()` should report as planned for `branch` until a
+    /// manifest marker is committed. See [`HostScaffolder::lane_fallback`].
+    fn set_lane_fallback(&self, branch: &str, paths: Vec<String>) {
+        if let Ok(mut m) = self.lane_fallback.lock() {
+            m.insert(branch.to_string(), paths);
+        }
+    }
+
+    /// Content-address `files` as a `.kortecx/manifest.json` marker and bind it into the
+    /// branch. Advisory: a failure is logged, never fatal — the marker only affects what
+    /// `status()` REPORTS, and the branch manifest remains the durable truth of what was
+    /// actually written.
+    fn persist_manifest_marker(&self, principal: &str, branch: &str, files: &[ManifestFile]) {
+        let bytes = match encode_manifest(files) {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!(branch = %branch, error = %e, "scaffold manifest marker not encodable");
+                return;
+            }
+        };
+        match self.writer.put(&bytes) {
+            Ok((r, _existed)) => {
+                if let Err(e) = self
+                    .branches
+                    .advance(principal, branch, MANIFEST_MARKER_PATH, r)
+                {
+                    tracing::warn!(branch = %branch, error = %e, "failed to persist scaffold manifest marker");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(branch = %branch, error = %e, "failed to store scaffold manifest marker");
+            }
         }
     }
 
@@ -287,7 +348,15 @@ impl HostScaffolder {
             }
             Err(e) => {
                 tracing::info!(branch = %branch, error = %e, "manifest planning unavailable; falling back to the framework template's authored files");
-                hosted_authored_fallback(framework)
+                let files = hosted_authored_fallback(framework);
+                // Persist the FALLBACK as the marker too. Without this the branch holds no
+                // marker, so `status()` falls through to its last-resort default — the
+                // SCHEDULED lane's skeleton — and the console shows a hosted app a tree of
+                // README/app.json/prompts/rules/skills that this lane will never write. The
+                // marker is what makes the reported plan match the lane in every case, not
+                // just the happy one.
+                self.persist_manifest_marker(principal, branch, &files);
+                files
             }
         }
     }
@@ -387,6 +456,21 @@ impl HostScaffolder {
             None,
             "Kortecx hosted-app project branch (agentically authored, in-CAS)",
         )?;
+        // Bind the template's STATIC build config into the branch before anything else.
+        //
+        // These files (package.json, the bundler + tsconfig, the HTML entry, the app entry)
+        // are template-owned: the supervisor writes them to disk on every materialize and
+        // deliberately lets them win over a colliding model file, which is what guarantees a
+        // runnable project. But they were only ever written to DISK — never content-addressed
+        // — so the branch, and therefore the IDE file tree and the exported `.kxapp` bundle,
+        // held only the model-authored half of the project. A user browsing their own hosted
+        // app could not see the config that runs it.
+        //
+        // Advancing them here changes nothing about who wins at materialize (the supervisor
+        // still rewrites them from the template, and now simply skips them as duplicates) —
+        // it makes the branch a complete description of the project instead of a partial one.
+        // No model, no journal append, no Mote: content store + branches.db only.
+        self.advance_template_statics(principal, branch, framework)?;
         // Plan a use-case-specific, framework-aware SEPARATED source tree (persisted as the
         // `.kortecx/manifest.json` marker), then author each planned file streaming into Monaco.
         // The static build config is TEMPLATE-owned (the supervisor writes it to disk and
@@ -430,6 +514,44 @@ impl HostScaffolder {
             self.branches
                 .advance(principal, branch, &file.path, body_ref)?;
             prior.push(ContentRef::from_bytes(body_ref).to_hex());
+        }
+        Ok(())
+    }
+
+    /// Content-address the framework template's STATIC files and bind them into the branch.
+    ///
+    /// Idempotent on resume (a path already in the manifest is skipped) and lock-aware on
+    /// every iteration, mirroring the authoring loop: a lock applied mid-scaffold halts this
+    /// too, so POC-5b's "a locked branch takes no further writes" holds for the whole run and
+    /// not just the model-authored part.
+    fn advance_template_statics(
+        &self,
+        principal: &str,
+        branch: &str,
+        framework: &str,
+    ) -> Result<(), CoreError> {
+        for tf in hosted_template(framework) {
+            let HostedFileSource::Static(body) = tf.source else {
+                continue; // authored files are the write loop's job
+            };
+            if let Some(l) = self.locks.as_ref() {
+                if l.is_locked(principal, branch)? {
+                    return Err(CoreError::FailedPrecondition(
+                        "branch is locked; the scaffold was halted",
+                    ));
+                }
+            }
+            let manifest = self
+                .branches
+                .get(principal, branch)?
+                .ok_or(CoreError::Internal(String::from(
+                    "scaffold branch vanished mid-run",
+                )))?;
+            if manifest.items.iter().any(|i| i.path == tf.path) {
+                continue;
+            }
+            let (r, _existed) = self.writer.put(body.as_bytes())?;
+            self.branches.advance(principal, branch, tf.path, r)?;
         }
         Ok(())
     }
@@ -551,6 +673,16 @@ impl AppScaffolder for HostScaffolder {
             Some(m) => m.items.iter().any(|it| it.path == MANIFEST_MARKER_PATH),
             None => false,
         };
+        // Report THIS lane's paths until the plan marker lands (see `lane_fallback`):
+        // the template's authored files plus its statics, which the write loop below
+        // content-addresses into the branch.
+        self.set_lane_fallback(
+            branch_handle,
+            hosted_template(framework)
+                .iter()
+                .map(|f| f.path.to_string())
+                .collect(),
+        );
         self.set(branch_handle, ScaffoldPhase::Planning, "");
         let driver = self.clone();
         let (p, b, f, g) = (
@@ -573,13 +705,22 @@ impl AppScaffolder for HostScaffolder {
             .unwrap_or_default();
         // POC-6: the planned set is the committed DYNAMIC manifest (excludes its
         // marker), else the fixed skeleton (pre-plan / graceful fallback).
+        // The planned set is the committed DYNAMIC manifest marker when one exists (it is
+        // the durable truth, and a resume must report exactly what it will finish). Before
+        // the marker lands, report the LANE's own fallback — hosted apps get the framework
+        // template, not the scheduled skeleton. The bare SKELETON survives only as the
+        // last resort for a branch this process never started (e.g. after a serve restart).
         let planned: Vec<String> = manifest
             .as_ref()
             .and_then(|m| self.read_planned_manifest(m))
-            .map_or_else(
-                || SKELETON.iter().map(|f| f.path.to_string()).collect(),
-                |files| files.into_iter().map(|f| f.path).collect(),
-            );
+            .map(|files| files.into_iter().map(|f| f.path).collect())
+            .or_else(|| {
+                self.lane_fallback
+                    .lock()
+                    .ok()
+                    .and_then(|m| m.get(branch_handle).cloned())
+            })
+            .unwrap_or_else(|| SKELETON.iter().map(|f| f.path.to_string()).collect());
         let (files_done, files_pending) = split_done_pending(&planned, &manifest_paths);
         let (phase, detail, writing_path, writing_instance_id, writing_mote_id) = match self
             .tracker

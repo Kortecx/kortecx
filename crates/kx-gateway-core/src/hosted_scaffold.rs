@@ -83,8 +83,9 @@ const VITE_REACT: &[TemplateFile] = &[
             r#"import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The kortecx hosted-app supervisor runs `npm run dev -- --port <p>` on a loopback
-// port and reverse-proxies it. `strictPort` fails loudly instead of silently drifting.
+// The kortecx hosted-app supervisor runs this on a loopback port and opens
+// http://127.0.0.1:<port>/ directly — there is no reverse proxy, so the app is
+// reached at the origin root. `strictPort` fails loudly instead of silently drifting.
 export default defineConfig({
   plugins: [react()],
   server: { host: "127.0.0.1", strictPort: true },
@@ -379,8 +380,9 @@ export default {
             r#"import { defineConfig } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
-// The kortecx hosted-app supervisor runs `npm run dev -- --port <p>` on a loopback
-// port and reverse-proxies it. `strictPort` fails loudly instead of silently drifting.
+// The kortecx hosted-app supervisor runs this on a loopback port and opens
+// http://127.0.0.1:<port>/ directly — there is no reverse proxy, so the app is
+// reached at the origin root. `strictPort` fails loudly instead of silently drifting.
 export default defineConfig({
   plugins: [svelte()],
   server: { host: "127.0.0.1", strictPort: true },
@@ -545,6 +547,40 @@ pub fn dev_command_args(framework: &str, port: u16) -> Vec<String> {
             "--".into(),
             "--port".into(),
             port,
+        ]
+    }
+}
+
+/// The BUILD command for `framework` — `npm run build` for all three templates (every
+/// `package.json` above declares that script). Returns the args AFTER `npm`.
+///
+/// Only the production serve lane runs this; the dev lane never builds.
+#[must_use]
+pub fn build_command_args(_framework: &str) -> Vec<String> {
+    vec!["run".into(), "build".into()]
+}
+
+/// The command that serves the BUILT output for `framework`, the production counterpart
+/// of [`dev_command_args`]. Returns the args AFTER `npm`.
+///
+/// The scripts genuinely differ, which is why this cannot be one string: Vite and Svelte
+/// declare `preview` (and need `--host` pinned, since `vite preview` does not inherit the
+/// dev server's `server.host` from `vite.config.ts`), while **Next declares no `preview`
+/// at all** — `next start` is its production server, and it takes `-p`.
+#[must_use]
+pub fn preview_command_args(framework: &str, port: u16) -> Vec<String> {
+    let port = port.to_string();
+    if is_next(framework) {
+        vec!["run".into(), "start".into(), "--".into(), "-p".into(), port]
+    } else {
+        vec![
+            "run".into(),
+            "preview".into(),
+            "--".into(),
+            "--port".into(),
+            port,
+            "--host".into(),
+            "127.0.0.1".into(),
         ]
     }
 }

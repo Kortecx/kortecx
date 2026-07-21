@@ -312,9 +312,107 @@ pub(crate) fn decode_manifest(bytes: &[u8]) -> Result<Vec<ManifestFile>, Manifes
     Ok(out)
 }
 
+/// Serialize a file set back into the strict `{"manifest":{"version":1,"files":[…]}}`
+/// envelope, so the scaffold can persist a SERVER-authored plan as the durable
+/// `.kortecx/manifest.json` marker — not only a model-authored one.
+///
+/// Why this exists: the marker is what `GetScaffoldStatus` reads to report the planned
+/// set. Two lanes reach a plan the model did not write — the hosted lane's
+/// authored-files fallback (no served model / a decode failure) and the scheduled
+/// lane's preserved base skeleton — and before this, neither could persist one, so
+/// `status()` fell through to the scheduled skeleton and the console showed the wrong
+/// tree until the write loop happened to overwrite it.
+///
+/// The output is the SAME envelope [`decode_manifest`] accepts, deliberately: the
+/// marker has exactly one format regardless of who authored it, so a resume cannot
+/// tell the difference and no second parser exists to drift.
+///
+/// # Errors
+/// Returns [`ManifestError`] if the set would not survive its own decoder — empty,
+/// over [`MAX_MANIFEST_FILES`], a reserved/unsafe path, an over-cap field, or a
+/// duplicate. Encoding is validated by round-trip rather than trusted: a caller that
+/// hands in something the decoder would reject learns here, not on resume.
+pub(crate) fn encode_manifest(files: &[ManifestFile]) -> Result<Vec<u8>, ManifestError> {
+    let escape = |s: &str| -> String {
+        // The validated charset for paths excludes every JSON metacharacter, but roles
+        // are free text (a fallback role is ours, a planned role is the model's), so
+        // escape both rather than assume.
+        let mut out = String::with_capacity(s.len() + 8);
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => {
+                    use std::fmt::Write as _;
+                    let _ = write!(out, "\\u{:04x}", c as u32);
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    };
+    let body: Vec<String> = files
+        .iter()
+        .map(|f| {
+            format!(
+                "{{\"path\":\"{}\",\"role\":\"{}\"}}",
+                escape(&f.path),
+                escape(&f.role)
+            )
+        })
+        .collect();
+    let json = format!(
+        "{{\"manifest\":{{\"version\":1,\"files\":[{}]}}}}",
+        body.join(",")
+    );
+    let bytes = json.into_bytes();
+    // Round-trip through the real enforcer: the marker we persist must be one the
+    // resume path can read back. This also gives every caller the decoder's fail-closed
+    // vocabulary for free instead of a second, weaker set of checks here.
+    decode_manifest(&bytes)?;
+    Ok(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encode_manifest_round_trips_through_the_enforcer() {
+        let files = vec![
+            ManifestFile {
+                path: "src/App.tsx".to_string(),
+                role: "the root component".to_string(),
+            },
+            ManifestFile {
+                path: "README.md".to_string(),
+                // Quotes + a newline: a role is free text, so the escaper is load-bearing.
+                role: "what \"this\" app does\nand how to run it".to_string(),
+            },
+        ];
+        let bytes = encode_manifest(&files).expect("encodes");
+        assert_eq!(decode_manifest(&bytes).expect("decodes"), files);
+    }
+
+    #[test]
+    fn encode_manifest_refuses_what_its_own_decoder_would_reject() {
+        // Empty: the decoder's `Empty` refusal must surface at encode time, not on resume.
+        assert_eq!(encode_manifest(&[]).unwrap_err(), ManifestError::Empty);
+        // The reserved marker path can never be a planned file, even server-authored.
+        let reserved = vec![ManifestFile {
+            path: MANIFEST_MARKER_PATH.to_string(),
+            role: "the marker".to_string(),
+        }];
+        assert_eq!(
+            encode_manifest(&reserved).unwrap_err(),
+            ManifestError::InvalidPath {
+                path: MANIFEST_MARKER_PATH.to_string()
+            }
+        );
+    }
 
     #[test]
     fn decode_manifest_accepts_a_wrapped_dynamic_project() {
