@@ -2942,10 +2942,32 @@ impl KxGateway for GatewayService {
             return Ok(Response::new(proto::DeleteAppResponse::default()));
         };
 
-        // ORDER MATTERS. Everything that REFERENCES the app is released before the row
-        // itself, so a failure part-way can never leave a live reference to a row that is
-        // already gone. Each step is caller-scoped and independently reported.
+        // ORDER: THE ROW FIRST, then everything that merely REFERENCES it.
         //
+        // There is no cross-store transaction here — apps.db, triggers.db, branches.db and
+        // the supervisor are four independent stores — so SOMETHING has to be the point of
+        // no return. Making it the App row is the only safe choice, and it was learned the
+        // hard way in a live run: cascading first meant a failure at the row delete had
+        // ALREADY deregistered the App's triggers and unbound its project branch, leaving a
+        // LIVE App whose references had been silently destroyed. That is unrecoverable data
+        // loss reported to the caller as a plain error.
+        //
+        // Row-first inverts the failure into a recoverable one: if the row delete fails,
+        // nothing else has happened at all; if a later cleanup fails, the App is gone and
+        // the response reports exactly which cleanups did NOT run, so the caller can say so
+        // and a retry can finish the job. Every cleanup is therefore best-effort and
+        // independently reported — never fatal, because failing here would claim the delete
+        // did not happen when it did.
+        //
+        // `record` existed only to prove ownership.
+        drop(record);
+        let _ = &envelope_json;
+        let removed = apps.delete(&principal, &req.handle)?;
+        if !removed {
+            // Nothing was bound here (lost a race with a concurrent delete) — cascade nothing.
+            return Ok(Response::new(proto::DeleteAppResponse::default()));
+        }
+
         // 1. Triggers. `triggers.app_handle` has no FK, so an orphan is not inert: the
         //    cron loop re-selects it every tick and RunApp refuses it, forever, warning
         //    only to the log. This is the step that turns a silent infinite failure into
@@ -2954,17 +2976,17 @@ impl KxGateway for GatewayService {
             Some(admin) => admin
                 .deregister_by_app(&principal, &req.handle)
                 .await
-                .map_err(trigger_admin_status)?,
+                .unwrap_or(0),
             None => 0,
         };
-        // 2. A running hosted supervisor. Stop before unbinding: a dev server left holding
-        //    a loopback port for a deleted app is unreachable AND unstoppable through the
-        //    API, since every hosted RPC resolves the app first.
+        // 2. A running hosted supervisor — otherwise a dev server keeps a loopback port for
+        //    an App that no longer exists, and since every hosted RPC resolves the App
+        //    first, it could never be stopped through the API again.
         let hosted_stopped = match self.hosted.as_ref() {
             Some(h) => h.stop(&principal, &req.handle).unwrap_or(false),
             None => false,
         };
-        // 3. The lock row — otherwise a re-created app at the same handle inherits a lock
+        // 3. The lock row — otherwise a re-created App at the same handle inherits a lock
         //    nobody set.
         let lock_cleared = match self.locks.as_ref() {
             Some(l) => {
@@ -2986,15 +3008,10 @@ impl KxGateway for GatewayService {
         //
         //    Row only: the content-addressed blobs stay, exactly as DeleteBranch leaves
         //    them. `false` here means "no such branch", not "failed".
-        let _ = &envelope_json;
         let branch_unbound = match self.branches.as_ref() {
             Some(b) => b.delete(&principal, &req.handle).unwrap_or(false),
             None => false,
         };
-        // 5. The row itself. `record` existed only to prove ownership before any of the
-        //    above ran.
-        drop(record);
-        let removed = apps.delete(&principal, &req.handle)?;
 
         Ok(Response::new(proto::DeleteAppResponse {
             removed,
