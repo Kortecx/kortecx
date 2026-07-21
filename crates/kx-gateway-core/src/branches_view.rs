@@ -65,11 +65,21 @@ pub struct BranchManifest {
 /// caller's branches. A `None` seam on the service ⇒ the five RPCs return
 /// `unimplemented`. `SnapshotInto`'s host file read lives in the host impl.
 pub trait BranchStore: Send + Sync {
-    /// Create (or upsert) the branch `(principal, handle)`. If `parent_handle` is
-    /// `Some`, the new branch inherits the parent's resolved items at create time
-    /// (a point-in-time CoW fork; later parent edits do NOT propagate). Returns
-    /// `(manifest, deduplicated)` where `deduplicated` is `true` iff an identical
-    /// manifest was already bound to this `(principal, handle)`.
+    /// Create the branch `(principal, handle)`.
+    ///
+    /// If `parent_handle` is `Some`, the new branch inherits the parent's resolved
+    /// items at create time (a point-in-time CoW fork; later parent edits do NOT
+    /// propagate) — and a fork over an existing handle REPLACES it, which is what
+    /// forking asks for.
+    ///
+    /// If `parent_handle` is `None` and the branch already exists, it is returned
+    /// **untouched** (`description` included) rather than reset to empty. Callers rely
+    /// on this to make "ensure the branch exists" idempotent: every scaffold opens with
+    /// a parentless `create`, including a resume, and an implementation that emptied the
+    /// row there discarded every file already authored.
+    ///
+    /// Returns `(manifest, deduplicated)` where `deduplicated` is `true` iff the bound
+    /// manifest is unchanged — so a no-op re-create reports `true`.
     ///
     /// # Errors
     /// [`GatewayError::NotFound`] if `parent_handle` is set but unknown to the
