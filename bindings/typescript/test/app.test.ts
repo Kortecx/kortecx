@@ -202,10 +202,16 @@ describe("App catalog over a real serve", () => {
     // a test that merely read one of them would have passed against the bug.
     const s = await devServer();
     const kx = new KxClient(s.endpoint);
-    await app("Anchor Demo").blueprint(flow().step({ topic: "kortecx" })).save({ client: kx });
+    await app("Anchor Demo")
+      .blueprint(flow().step({ topic: "kortecx" }))
+      .save({ client: kx });
 
     const run = await kx.runApp("apps/local/anchor-demo", { wait: false });
-    expect(run).toBeInstanceOf(Run);
+    // `runApp` is typed `Result | Run`; narrow by construction rather than casting, so a
+    // regression that returns the wrong branch fails HERE with a readable message.
+    if (!(run instanceof Run)) {
+      throw new Error("runApp with wait:false must return a Run, not a settled Result");
+    }
 
     // The anchor is populated for EVERY shape, including this model-free pure one.
     expect(run.terminalMoteId).toMatch(/^[0-9a-f]{64}$/);

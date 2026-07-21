@@ -981,23 +981,25 @@ export abstract class KxClientBase {
         }),
       );
       if (!opts.wait) {
-        // Carry the server-derived per-run anchors through, exactly as submitWorkflow()
-        // and invoke() do. A serve shares one journal and one instance_id across every
-        // submission, so these are the only keys that distinguish THIS run — without them
-        // the run view can only show the whole workspace.
+        // Carry BOTH server-derived per-run anchors through. A serve shares one journal
+        // and one instance_id across every submission, so these are the only keys that
+        // distinguish THIS run — without them the run view can only show the whole
+        // workspace. Populating the terminal also makes `wait()` settle on this run's own
+        // sink rather than the first committed Mote in a shared journal, and lets
+        // `tokens()` default to it instead of throwing.
+        //
+        // (`submitWorkflow` deliberately still passes an empty terminal: `wait()`'s
+        // documented contract is that a plain workflow run settles on the FIRST committed
+        // Mote, and changing that is a separate decision. It is unaffected by this — the
+        // console reads the anchor off the `RunHandle` itself, which carries it on both
+        // paths.)
         //
         // ⚠ POSITIONAL. `Run`'s ctor is (client, instance, TERMINAL, fingerprint, SALT).
         // An earlier fix passed four arguments — instance, salt, fingerprint — which put
         // the salt in the TERMINAL slot and left the salt defaulting to empty, so
         // `reactChainSalt` was silently always "" on this path while `terminalMoteId`
         // returned the salt. Both anchors are named here and asserted in app.test.ts.
-        return new Run(
-          this,
-          h.instanceId,
-          h.terminalMoteId,
-          h.recipeFingerprint,
-          h.reactChainSalt,
-        );
+        return new Run(this, h.instanceId, h.terminalMoteId, h.recipeFingerprint, h.reactChainSalt);
       }
       const outcome = await pollAny(this.grpc, h.instanceId, opts.timeoutMs ?? 120_000);
       return this._finish(outcome);
