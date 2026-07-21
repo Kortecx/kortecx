@@ -17,31 +17,60 @@
 //! party-scope or deny), watermark-stamped run attribution per delta.
 
 use kx_journal::JournalEntry;
+use kx_projection::RunMetadataFold;
 use kx_proto::proto;
 
 use crate::error::{internal, GatewayError};
 use crate::reader::JournalReader;
-use crate::view::fold_through;
 
 /// Max deltas per frame — bounds frame size (mirrors the coordinator's
 /// `READ_ENTRIES_MAX`). A range with more deltas than this is split across frames;
 /// the client resumes from each frame's `next_seq`.
 const MAX_FRAME_DELTAS: usize = 4096;
 
-/// Validate run ownership (uniform `NotAuthorized`). Folds to head to read the
-/// run's `RunRegistered` entry (which is typically at seq=1, before `since_seq`).
+/// Validate run ownership (uniform `NotAuthorized`): the run must appear among the
+/// journal's `RunRegistered` entries. Folds to head because a registration is typically
+/// at seq=1, long before any `since_seq`.
 ///
 /// The live tailer calls this ONCE at subscribe; per-poll re-reads skip it
 /// (ownership of an already-registered run cannot change). `O(journal)` once.
+///
+/// ## Why this reads EVERY registration, not the latest one
+///
+/// It used to fold the projection and compare against `run_registration()` — a single
+/// **last-write-wins slot** (`kx-projection/src/state.rs`), so only the most recently
+/// registered run in the whole journal was ever authorized. On a serve, one journal is
+/// shared by every submission, and the scaffold calls `register_run` once **per file**.
+/// The moment the server began writing file N+1, the browser's in-flight token
+/// subscription for file N was refused `permission_denied` and closed — mid-word, with no
+/// error surfaced. Any concurrent chat turn or cron fire did the same to any open stream.
+/// A registration is a monotone fact, so the correct predicate is membership, not
+/// recency: a run that was legitimately registered does not stop being yours because
+/// another run started.
+///
+/// This is a READ gate over already-committed facts. `RunRegistered`'s encoding, the
+/// truth fold, and every journaled fact are untouched, so the run digest cannot move.
+/// [`RunMetadataFold`] is reused rather than re-deriving "registered" here, so the two
+/// cannot drift; folding it is also strictly *cheaper* than the full projection fold it
+/// replaces.
 pub fn check_run_ownership(
     reader: &dyn JournalReader,
     instance_id: [u8; 16],
 ) -> Result<(), GatewayError> {
     let head = reader.current_seq().map_err(internal)?;
-    let (projection, _) = fold_through(reader, head)?;
-    match projection.run_registration() {
-        Some((inst, _)) if inst == instance_id => Ok(()),
-        _ => Err(GatewayError::NotAuthorized),
+    // `fold_run_metadata` takes `&dyn Journal`; the gate holds `&dyn JournalReader`. Fold
+    // inline with the same accumulator rather than widening that seam for one caller.
+    let mut fold = RunMetadataFold::new();
+    for entry in reader
+        .read_entries_by_seq(1..head.saturating_add(1))
+        .map_err(internal)?
+    {
+        fold.apply(&entry);
+    }
+    if fold.finish().instance_ids.contains(&instance_id) {
+        Ok(())
+    } else {
+        Err(GatewayError::NotAuthorized)
     }
 }
 
@@ -401,6 +430,35 @@ mod tests {
         assert!(check_run_ownership(&r, [7u8; INSTANCE_ID_LEN]).is_ok());
         assert!(matches!(
             check_run_ownership(&r, [9u8; INSTANCE_ID_LEN]),
+            Err(GatewayError::NotAuthorized)
+        ));
+    }
+
+    #[test]
+    fn an_earlier_run_stays_authorized_after_a_later_one_registers() {
+        // THE REGRESSION THIS GATE SHIPPED WITH. The gate compared against the
+        // projection's `run_registration()` — a last-write-wins slot — so registering a
+        // second run silently revoked the first. On a serve that is not an edge case: one
+        // journal is shared by every submission, and the scaffold registers a run PER
+        // FILE, so a token stream following file N was refused the instant file N+1
+        // began. The user saw a pane that simply stopped mid-word.
+        //
+        // A registration is monotone. Both runs are authorized; an unregistered third is
+        // still refused, so widening membership did not weaken the gate.
+        let j = InMemoryJournal::new();
+        j.append(reg(0xa1, 1, 10)).unwrap();
+        j.append(committed(1)).unwrap();
+        j.append(reg(0xb2, 2, 20)).unwrap();
+        j.append(committed(2)).unwrap();
+        let r = ReadOnly::new(j);
+
+        assert!(
+            check_run_ownership(&r, [0xa1; INSTANCE_ID_LEN]).is_ok(),
+            "the EARLIER run must remain authorized once a later run registers"
+        );
+        assert!(check_run_ownership(&r, [0xb2; INSTANCE_ID_LEN]).is_ok());
+        assert!(matches!(
+            check_run_ownership(&r, [0xc3; INSTANCE_ID_LEN]),
             Err(GatewayError::NotAuthorized)
         ));
     }

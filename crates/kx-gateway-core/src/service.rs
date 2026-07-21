@@ -2051,6 +2051,12 @@ impl KxGateway for GatewayService {
             // SubmitRun refuses client `tool_grants` + `react_seed` (above), so it can
             // carry no agentic step ⇒ never a chain key.
             react_chain_salt: Vec::new(),
+            // No anchor either, and deliberately not fabricated: SubmitRun takes raw
+            // client-supplied Motes rather than a bound recipe, so there is no binder to
+            // name the sink. Picking one here (say, the last submitted) would be a GUESS
+            // presented as a server fact — the client is better served by an honest empty,
+            // which it reads as "this run cannot self-scope".
+            terminal_mote_id: Vec::new(),
         }))
     }
 
@@ -2245,6 +2251,9 @@ impl KxGateway for GatewayService {
             .map_err(submit_status)?;
         // The agentic-step chain key, derived BEFORE the consuming submit loop.
         let react_chain_salt = agentic_chain_salt(&bound.motes);
+        // The run anchor. Unlike the salt this is populated for EVERY shape, which is what
+        // lets a client scope a shared journal's projection down to this one submission.
+        let terminal_mote_id = bound.terminal_mote_id.as_bytes().to_vec();
         for (mote, warrant) in bound.motes {
             self.submitter
                 .submit_mote(mote, warrant, false, false)
@@ -2256,6 +2265,7 @@ impl KxGateway for GatewayService {
             instance_id: instance_id.to_vec(),
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
             react_chain_salt,
+            terminal_mote_id,
         }))
     }
 
@@ -2393,6 +2403,10 @@ impl KxGateway for GatewayService {
         // The agentic-step chain key, derived BEFORE the consuming submit loop (an
         // App whose blueprint carries one tool-granted MODEL step is agentic).
         let react_chain_salt = agentic_chain_salt(&bound.motes);
+        // The run anchor — populated even when the App has no agentic step, which is the
+        // common case (a plain single-agent App reports an EMPTY salt by construction).
+        // Without this, ▶ on such an App could not scope its own run view at all.
+        let terminal_mote_id = bound.terminal_mote_id.as_bytes().to_vec();
         for (mote, warrant) in bound.motes {
             self.submitter
                 .submit_mote(mote, warrant, false, false)
@@ -2404,6 +2418,7 @@ impl KxGateway for GatewayService {
             instance_id: instance_id.to_vec(),
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
             react_chain_salt,
+            terminal_mote_id,
         }))
     }
 

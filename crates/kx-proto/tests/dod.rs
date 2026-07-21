@@ -58,11 +58,22 @@ fn obligation_1_submit_mote_response_round_trips() {
 #[test]
 fn obligation_1_run_handle_round_trips_with_react_chain_salt() {
     // Additive: `RunHandle` gained `react_chain_salt` — the agentic-step chain key
-    // (mirrors `InvokeResponse.react_chain_salt`). The populated form round-trips.
+    // (mirrors `InvokeResponse.react_chain_salt`) — and `terminal_mote_id`, the run
+    // anchor. Both populated round-trips.
     roundtrip(&proto::RunHandle {
         instance_id: vec![0xCD; 16],
         recipe_fingerprint: vec![0xAB; 32],
         react_chain_salt: vec![0x9A; 32],
+        terminal_mote_id: vec![0x5C; 32],
+    });
+    // The COMMON shape, and the one that motivated field 4: a plain non-agentic App has an
+    // empty chain key but a real anchor. This is the case that could not scope its own run
+    // view before — assert the pair is independently settable, not two names for one value.
+    roundtrip(&proto::RunHandle {
+        instance_id: vec![0xCD; 16],
+        recipe_fingerprint: vec![0xAB; 32],
+        react_chain_salt: Vec::new(),
+        terminal_mote_id: vec![0x5C; 32],
     });
     // Back/forward compat (proto3 additive-field semantics): an EMPTY salt is the proto3
     // default ⇒ NOT serialized, so a new server's non-agentic `RunHandle` is byte-identical
@@ -74,12 +85,18 @@ fn obligation_1_run_handle_round_trips_with_react_chain_salt() {
         instance_id: vec![0x01; 16],
         recipe_fingerprint: vec![0x02; 32],
         react_chain_salt: Vec::new(),
+        terminal_mote_id: Vec::new(),
     }
     .encode_to_vec();
     let decoded = proto::RunHandle::decode(&old_wire[..]).expect("decode old-server wire");
     assert!(
         decoded.react_chain_salt.is_empty(),
         "an old-server RunHandle wire (no field 3) ⇒ empty react_chain_salt"
+    );
+    assert!(
+        decoded.terminal_mote_id.is_empty(),
+        "an old-server RunHandle wire (no field 4) ⇒ empty terminal_mote_id, which the \
+         client must read as 'cannot scope' rather than silently showing the whole journal"
     );
 }
 

@@ -981,13 +981,23 @@ export abstract class KxClientBase {
         }),
       );
       if (!opts.wait) {
-        // Carry the server-derived agentic-chain salt through, exactly as
-        // submitWorkflow() and invoke() do. It was being replaced with an empty array
-        // here, so a caller could not scope anything to THIS run: a serve shares one
-        // journal and one instance_id across every submission, and the salt is the only
-        // key that distinguishes them. Empty when the App has no single agentic step —
-        // that case is the server's answer, not ours to fabricate.
-        return new Run(this, h.instanceId, h.reactChainSalt, h.recipeFingerprint);
+        // Carry the server-derived per-run anchors through, exactly as submitWorkflow()
+        // and invoke() do. A serve shares one journal and one instance_id across every
+        // submission, so these are the only keys that distinguish THIS run — without them
+        // the run view can only show the whole workspace.
+        //
+        // ⚠ POSITIONAL. `Run`'s ctor is (client, instance, TERMINAL, fingerprint, SALT).
+        // An earlier fix passed four arguments — instance, salt, fingerprint — which put
+        // the salt in the TERMINAL slot and left the salt defaulting to empty, so
+        // `reactChainSalt` was silently always "" on this path while `terminalMoteId`
+        // returned the salt. Both anchors are named here and asserted in app.test.ts.
+        return new Run(
+          this,
+          h.instanceId,
+          h.terminalMoteId,
+          h.recipeFingerprint,
+          h.reactChainSalt,
+        );
       }
       const outcome = await pollAny(this.grpc, h.instanceId, opts.timeoutMs ?? 120_000);
       return this._finish(outcome);

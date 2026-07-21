@@ -1339,7 +1339,19 @@ class KxClient:
                 return self.submit_workflow(request, wait=wait, timeout=timeout)
             raise from_rpc_error(e) from e
         if not wait:
-            return Run(self, resp.instance_id, b"", resp.recipe_fingerprint)
+            # Carry BOTH server-derived anchors, as ``invoke`` does. They were being
+            # dropped here (an empty terminal, and the salt left to its default), so a
+            # ``Run`` from ``run_app`` could not scope anything to THIS submission on a
+            # serve's shared journal: ``wait()`` fell back to "the FIRST committed Mote",
+            # which on a busy journal can be a foreign one, and ``tokens()`` raised for
+            # want of a terminal. Both are populated by the server for every App shape.
+            return Run(
+                self,
+                resp.instance_id,
+                resp.terminal_mote_id,
+                resp.recipe_fingerprint,
+                resp.react_chain_salt,
+            )
         outcome = _wait.poll_any(self._stub, self._md, resp.instance_id, timeout)
         return self._finish(outcome)
 

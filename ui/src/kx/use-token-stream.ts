@@ -60,6 +60,9 @@ export function useTokenStream(
     }
 
     void (async () => {
+      // Did the server tell us the stream ENDED, or did the socket just stop talking?
+      // Only a frame with `value.done` is the former. See the drop check below.
+      let sawTerminal = false;
       try {
         for (;;) {
           const { value, done } = await iterator.next();
@@ -68,6 +71,7 @@ export function useTokenStream(
           }
           setText((prev) => prev + value.text);
           if (value.done) {
+            sawTerminal = true;
             break;
           }
         }
@@ -78,6 +82,19 @@ export function useTokenStream(
       } finally {
         if (!cancelled) {
           setStreaming(false);
+          // `dropped` used to be set ONLY in the catch, so a stream that died via a
+          // CLEAN close — the gateway refusing the subscription and closing the socket
+          // rather than erroring — left `dropped` false and rendered as a silently empty
+          // pane. That is exactly how the run-ownership gate's per-file revocation hid
+          // itself: the text simply stopped mid-word and nothing anywhere said why.
+          //
+          // Exhausting the iterator without a terminal frame is not a normal ending, so
+          // report it. This is what makes the gate fix PROVABLE rather than merely
+          // plausible — `dropped` is now false when the stream completes and true when
+          // it genuinely dies, so a test can tell the two apart.
+          if (!sawTerminal) {
+            setDropped(true);
+          }
         }
       }
     })();

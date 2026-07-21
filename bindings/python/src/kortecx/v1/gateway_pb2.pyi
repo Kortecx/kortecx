@@ -181,14 +181,16 @@ class SubmitMoteSpec(_message.Message):
     def __init__(self, mote: _Optional[_Union[_coordinator_pb2.Mote, _Mapping]] = ..., warrant: _Optional[_Union[_coordinator_pb2.WarrantSpec, _Mapping]] = ..., accept_at_least_once: bool = ..., react_seed: bool = ...) -> None: ...
 
 class RunHandle(_message.Message):
-    __slots__ = ("instance_id", "recipe_fingerprint", "react_chain_salt")
+    __slots__ = ("instance_id", "recipe_fingerprint", "react_chain_salt", "terminal_mote_id")
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     RECIPE_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
     REACT_CHAIN_SALT_FIELD_NUMBER: _ClassVar[int]
+    TERMINAL_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
     instance_id: bytes
     recipe_fingerprint: bytes
     react_chain_salt: bytes
-    def __init__(self, instance_id: _Optional[bytes] = ..., recipe_fingerprint: _Optional[bytes] = ..., react_chain_salt: _Optional[bytes] = ...) -> None: ...
+    terminal_mote_id: bytes
+    def __init__(self, instance_id: _Optional[bytes] = ..., recipe_fingerprint: _Optional[bytes] = ..., react_chain_salt: _Optional[bytes] = ..., terminal_mote_id: _Optional[bytes] = ...) -> None: ...
 
 class InvokeRequest(_message.Message):
     __slots__ = ("handle", "args", "context_bundles", "context_refs")
