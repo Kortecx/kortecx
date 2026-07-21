@@ -30,6 +30,7 @@ import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
 import { buildFileTree } from "../../lib/file-tree";
 import { inferLanguageFromPath } from "../../lib/monaco/infer-language";
 import { loadFlag, persistFlag } from "../../lib/ui-flags";
+import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppChatEditDrawer } from "../apps/AppChatEditDrawer";
@@ -411,6 +412,10 @@ function FilePane({
         <code className="mono app-file__path" title={path}>
           {path}
         </code>
+        {/* The selected file's content ref. It used to sit on every tree ROW, where a
+            180px rail left the filename ~6 characters; here there is width for both,
+            and only the file you are actually looking at needs its hash. */}
+        {contentRef ? <DigestChip hex={contentRef} label={path} /> : null}
         {locked ? (
           <span className="muted app-file__locked" data-testid="app-locked-notice" role="note">
             This App is locked — edits are refused. Unlock it from this App's header to edit.

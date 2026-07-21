@@ -3012,6 +3012,12 @@ select {
   /* Let the hosted Run error alert drop to its own line under the controls. */
   flex-wrap: wrap;
   justify-content: flex-end;
+  /* Don't let a long title compress the cluster. Its min-content is a single icon, so
+     with the default `flex-shrink: 1` the five scheduled controls would stack into a
+     column rather than the title yielding. The title is the shrinkable item (and is
+     clamped); the controls are fixed-size and keep their basis. `flex-wrap` stays —
+     `.hosted-run__error` relies on `flex-basis: 100%` to drop to its own line. */
+  flex: 0 0 auto;
 }
 .card-grid__title {
   font-weight: 600;
@@ -3020,6 +3026,23 @@ select {
   text-decoration: none;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* Clamp a long display NAME to two lines. Slice 2.5 truncated the handle; the name was
+   left unbounded, so "hello world app with form to collect user information and submit
+   to google my business" wrapped to four lines, made the card taller than its row
+   siblings, and pushed the action cluster down into the middle of the title.
+   A MODIFIER, not a change to the bare selector: `.card-grid__title` is shared with the
+   workflow, blueprint, template and model cards, and WorkflowCard/BlueprintCard put
+   ACTION text on their title= rather than the name — clamping those globally would
+   truncate a headline with no hover recovery. Same idiom as `.lineage-node__label`.
+   `overflow-wrap: anywhere` above stays: it is what lets one unbreakable token break
+   inside the clamped box instead of overflowing it. */
+.card-grid__title--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 /* The title doubles as the "open info" affordance — clicking the item name opens the
  * read-only View popover (a glimpse; deep edit opens from there). A reset button that
@@ -5165,9 +5188,13 @@ button.card-grid__title:hover {
   color: var(--fg-muted);
   width: 0.9rem;
 }
+/* The filename owns the row. `min-width` is a FLOOR, not a reset: it stops any future
+   sibling (a status chip, a badge) from squeezing the name to a few characters the way
+   the content-hash chip used to — a flex item with `min-width: 0` and no floor absorbs
+   the whole width deficit silently. Pair with the row's title= for the full path. */
 .file-tree__name {
   flex: 1;
-  min-width: 0;
+  min-width: 6ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

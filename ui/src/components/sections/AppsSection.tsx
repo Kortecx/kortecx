@@ -346,7 +346,7 @@ function AppCard({
       <div className="card-grid__head">
         <button
           type="button"
-          className="card-grid__title card-grid__title-btn"
+          className="card-grid__title card-grid__title-btn card-grid__title--clamp"
           title={`${app.name} — view details`}
           data-testid={`app-card-view-${app.handle}`}
           onClick={() => onView(app.handle)}
