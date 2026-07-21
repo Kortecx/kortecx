@@ -233,8 +233,8 @@ pub trait AppCatalog: Send + Sync {
     /// existence oracle, the `get` posture).
     ///
     /// This unbinds the POINTER only. The canonical envelope's content-addressed blobs
-    /// stay, exactly as [`crate::branches_view`]'s delete leaves its blobs — they are
-    /// shared and immutable, and a past run's committed Motes must remain reachable.
+    /// stay, exactly as [`crate::BranchStore::delete`] leaves its blobs — they are shared
+    /// and immutable, and a past run's committed Motes must remain reachable.
     /// Deleting an App can never rewrite history: the catalog is off-journal and
     /// off-digest by construction (see this module's header), so no row here has ever
     /// been an input to the canonical projection digest.
