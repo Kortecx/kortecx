@@ -369,7 +369,7 @@ serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch
     mkdir -p "$(dirname "{{journal}}")" "{{content}}"
     export KX_SERVE_MODEL_GGUF="${KX_AGENT_MODEL_DEST:-$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf}"
     echo " ▶ inference serve (model: $KX_SERVE_MODEL_GGUF)"
-    cargo run --release -p kx-cli --features inference,hnsw,console --bin kx -- \
+    cargo run --release -p kx-cli --features inference,hnsw,console,hosted-apps --bin kx -- \
         serve --journal "{{journal}}" --content "{{content}}" --dev-allow-local
 
 # THE PR-REVIEW serve (§2.208 + §2.194 + GR15 guardrail). Guarantees a reviewer
@@ -397,7 +397,7 @@ review-serve journal="target/serve/kx.db" content="target/serve/blobs": fetch-ag
     trap 'kill ${SERVE_PID:-} 2>/dev/null || true; bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true' EXIT
     MODEL="${KX_AGENT_MODEL_DEST:-$(pwd)/target/models/qwen3-0.6b-q4_k_m.gguf}"
     test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }
-    cargo build --release -p kx-cli --features inference,hnsw,console --bin kx
+    cargo build --release -p kx-cli --features inference,hnsw,console,hosted-apps --bin kx
     KX="$(pwd)/target/release/kx"
     PIDS="$(lsof -ti tcp:$PORT 2>/dev/null || true)"
     [ -n "$PIDS" ] && { echo " ! killing stale process on :$PORT ($PIDS)"; kill $PIDS 2>/dev/null || true; sleep 1; }
@@ -451,7 +451,7 @@ review-serve-gemma journal="target/serve/kx.db" content="target/serve/blobs": fe
     MMPROJ="${KX_GEMMA_MMPROJ_DEST:-$(pwd)/target/models/gemma-4-12b-it-mmproj-f16.gguf}"
     test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }
     test -f "$MMPROJ" || { echo " ✗ mmproj GGUF missing: $MMPROJ" >&2; exit 1; }
-    cargo build --release -p kx-cli --features inference,hnsw,console --bin kx
+    cargo build --release -p kx-cli --features inference,hnsw,console,hosted-apps --bin kx
     KX="$(pwd)/target/release/kx"
     PIDS="$(lsof -ti tcp:$PORT 2>/dev/null || true)"
     [ -n "$PIDS" ] && { echo " ! killing stale process on :$PORT ($PIDS)"; kill $PIDS 2>/dev/null || true; sleep 1; }
@@ -493,7 +493,7 @@ console-dist:
 # D139: a release-grade kx with the embedded console + the Datasets data-plane —
 # exactly what the prebuilt release ships (`--features console,hnsw`; FFI-free).
 console-build: console-dist
-    cargo build --release -p kx-cli --features console,hnsw
+    cargo build --release -p kx-cli --features console,hnsw,hosted-apps
 
 # Hermetic proof of the local model back-pressure lease (scripts/model-lease.sh, Rule 44): two
 # callers cannot both hold it, --wait serializes (queues then proceeds after release), a non-holder
@@ -686,13 +686,13 @@ build-no-inference:
 build-serve-engine:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Asserting kx-cli --features console,hnsw,serve-engine stays FFI-free (the prebuilt artifact)..."
-    if cargo tree -p kx-cli --features console,hnsw,serve-engine -e normal | grep -qE 'kx-llamacpp'; then
-        echo " ✗ FAIL: console,hnsw,serve-engine dragged the FFI into kx-cli"
-        cargo tree -p kx-cli --features console,hnsw,serve-engine -e normal | grep -E 'kx-llamacpp' || true
+    echo "Asserting kx-cli --features console,hnsw,serve-engine,hosted-apps stays FFI-free (the prebuilt artifact)..."
+    if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-llamacpp'; then
+        echo " ✗ FAIL: console,hnsw,serve-engine,hosted-apps dragged the FFI into kx-cli"
+        cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -E 'kx-llamacpp' || true
         exit 1
     fi
-    echo " ✓ no kx-llamacpp in the prebuilt (console,hnsw,serve-engine) closure"
+    echo " ✓ no kx-llamacpp in the prebuilt (console,hnsw,serve-engine,hosted-apps) closure"
     echo "Asserting kx-gateway --features serve-engine,hnsw stays FFI-free..."
     if cargo tree -p kx-gateway --features serve-engine,hnsw -e normal | grep -qE 'kx-llamacpp'; then
         echo " ✗ FAIL: serve-engine,hnsw dragged the FFI into kx-gateway"
@@ -745,6 +745,19 @@ features-guard:
     fi
     cargo check -p kx-gateway --features hosted-apps
     echo " ✓ features-guard: kx-gateway --features hosted-apps builds (FFI-free)"
+    # D213: the kx-cli PASSTHROUGH of that feature — the half that actually ships. The
+    # gateway arm above proves the supervisor compiles; without this arm nothing proves
+    # the binary users run can turn it ON, which is exactly how the four hosted RPCs
+    # stayed `unimplemented` on every artifact this repo produces. Asserted on the FULL
+    # prebuilt set, not `hosted-apps` alone, because the union is what ships. `console` is
+    # scanned but NOT compiled here — it embeds a node-built `ui/dist` this recipe has no
+    # business requiring (the `build-serve-engine` precedent).
+    if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-llamacpp'; then
+        echo " ✗ FAIL: the hosted-apps passthrough dragged the FFI into kx-cli"
+        exit 1
+    fi
+    cargo check -p kx-cli --features hnsw,serve-engine,hosted-apps
+    echo " ✓ features-guard: kx-cli --features hnsw,serve-engine,hosted-apps builds (FFI-free)"
 
 # Byte-determinism check (I1.c). Two consecutive release builds must produce
 # bit-identical artifacts. Failure indicates the build is nondeterministic and

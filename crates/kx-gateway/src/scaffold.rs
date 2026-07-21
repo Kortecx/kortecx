@@ -42,12 +42,12 @@ use std::time::{Duration, Instant};
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    authoring_prompt, body_is_empty, derive_phase, hosted_template, split_done_pending,
-    try_committed_body, AppScaffolder, BinderError, BranchManifest, BranchStore, ContentReader,
-    ContentWriter, GatewayError as CoreError, HostedFileSource, JournalReader, LockStore,
-    RecipeBinder, RunSubmitter, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,
-    APP_MANIFEST_PLAN_RECIPE_HANDLE, APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH,
-    SKELETON,
+    authoring_prompt, body_is_empty, derive_phase, hosted_authored_role, hosted_entry_path,
+    hosted_template, split_done_pending, strip_code_fence, try_committed_body, AppScaffolder,
+    BinderError, BranchManifest, BranchStore, ContentReader, ContentWriter,
+    GatewayError as CoreError, HostedFileSource, JournalReader, LockStore, RecipeBinder,
+    RunSubmitter, ScaffoldPhase, ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
+    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH, SKELETON,
 };
 use kx_mote::MoteId;
 
@@ -85,6 +85,38 @@ fn hosted_authored_fallback(framework: &str) -> Vec<ManifestFile> {
             HostedFileSource::Static(_) => None,
         })
         .collect()
+}
+
+/// Guarantee the framework's ENTRY component is in the planned set, returning
+/// `(files, injected)`.
+///
+/// The hosted planner is TOLD it must emit the entry (`manifest::framework_contract`), but
+/// that is prompt text and `decode_manifest` never checked it. A plan that leaves it out
+/// runs to completion, and `materialize` then writes the template's placeholder body for
+/// that path — so the App serves the framework starter page under the user's own name, with
+/// nothing on any surface reporting a problem.
+///
+/// Injected FIRST, because the entry is the file every sibling is written to fit: the write
+/// loop carries the most recent siblings forward as coherence context, and the entry is the
+/// one that names them. The template's own role text is reused so an injected file is
+/// authored to exactly the contract a planned one would have been.
+fn ensure_entry_planned(framework: &str, files: Vec<ManifestFile>) -> (Vec<ManifestFile>, bool) {
+    let entry = hosted_entry_path(framework);
+    if files.iter().any(|f| f.path == entry) {
+        return (files, false);
+    }
+    let Some(role) = hosted_authored_role(framework, entry) else {
+        // Unreachable for the three shipped templates (pinned by `entry_path_is_the_file_
+        // the_static_entry_actually_imports`); degrade OPEN rather than refuse a scaffold.
+        return (files, false);
+    };
+    let mut with_entry = Vec::with_capacity(files.len() + 1);
+    with_entry.push(ManifestFile {
+        path: entry.to_string(),
+        role: role.to_string(),
+    });
+    with_entry.extend(files);
+    (with_entry, true)
 }
 
 /// Advisory in-memory progress for one branch's scaffold (the durable truth is the
@@ -426,7 +458,25 @@ impl HostScaffolder {
             .await
         {
             Ok((files, manifest_ref)) => {
-                if let Err(e) =
+                // The framework contract TELLS the planner it must emit the entry component
+                // (`framework_contract` in `manifest.rs`) — as prompt text, which nothing
+                // checked. A plan that omits it still scaffolds "successfully", and then the
+                // supervisor writes the template's own placeholder body for that path and
+                // serves it: the starter page, under the user's App name, with no error
+                // anywhere. Make the contract true instead of merely requested.
+                let (files, injected) = ensure_entry_planned(framework, files);
+                // Persist the set we will ACTUALLY write. The planner's committed bytes are
+                // the right marker only when they needed no correction — if we injected the
+                // entry and then stored the raw bytes, a resume would read back the plan
+                // WITHOUT it and reintroduce the bug on the second run.
+                if injected {
+                    tracing::info!(
+                        branch = %branch,
+                        entry = %hosted_entry_path(framework),
+                        "the plan omitted the framework entry component; injected it"
+                    );
+                    self.persist_manifest_marker(principal, branch, &files);
+                } else if let Err(e) =
                     self.branches
                         .advance(principal, branch, MANIFEST_MARKER_PATH, manifest_ref)
                 {
@@ -712,8 +762,30 @@ impl HostScaffolder {
             instance_id,
             *terminal.as_bytes(),
         );
-        let (result_ref, _body) = self.await_terminal(terminal).await?;
-        Ok(result_ref)
+        let (result_ref, body) = self.await_terminal(terminal).await?;
+        // The authoring prompt asks for "no markdown code fences" and that request has
+        // always been the only enforcement. A model that ignores it puts ```tsx on line 1
+        // of a source file, which the bundler then reports as a syntax error in a file the
+        // user never wrote. Unwrap it here — ONE place, because both lanes author through
+        // this function — rather than in each scaffolder.
+        //
+        // The committed body is already in CAS under `result_ref`, so a body that needed no
+        // change keeps that exact ref (`strip_code_fence` returns a subslice); only a body
+        // we actually altered is re-`put`. Re-run the GR15 empty guard on the stripped
+        // bytes: a body that was NOTHING but a fence strips to empty, and that must refuse
+        // the write rather than advance the branch to a blank file.
+        let stripped = strip_code_fence(&body);
+        if stripped.len() == body.len() {
+            return Ok(result_ref);
+        }
+        if body_is_empty(stripped) {
+            return Err(CoreError::FailedPrecondition(
+                "scaffold model step produced only a code fence (the branch was NOT advanced)",
+            ));
+        }
+        tracing::debug!(branch = %branch, path = %path, "stripped a wrapping code fence from an authored body");
+        let (fenced_ref, _existed) = self.writer.put(stripped)?;
+        Ok(fenced_ref)
     }
 }
 
@@ -850,5 +922,67 @@ impl AppScaffolder for HostScaffolder {
             writing_instance_id,
             writing_mote_id,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn f(path: &str) -> ManifestFile {
+        ManifestFile {
+            path: path.to_string(),
+            role: "a role".into(),
+        }
+    }
+
+    #[test]
+    fn ensure_entry_planned_injects_a_missing_entry_first() {
+        // The planner IS told to emit src/App.tsx, but that is prompt text — a plan that
+        // drops it used to scaffold "successfully" and then serve the starter page.
+        let (files, injected) =
+            ensure_entry_planned("vite_react", vec![f("src/components/Card.tsx")]);
+        assert!(injected);
+        assert_eq!(files[0].path, "src/App.tsx");
+        assert_eq!(files.len(), 2);
+        // The injected file carries the TEMPLATE's own role, so it is authored to exactly
+        // the contract a planned entry would have been.
+        assert_eq!(
+            files[0].role,
+            hosted_authored_role("vite_react", "src/App.tsx").unwrap()
+        );
+        // The planner's own files survive, in order.
+        assert_eq!(files[1].path, "src/components/Card.tsx");
+    }
+
+    #[test]
+    fn ensure_entry_planned_leaves_a_complete_plan_untouched() {
+        // No injection ⇒ the caller keeps persisting the planner's committed BYTES as the
+        // marker, so a resume replays exactly what the model said.
+        let plan = vec![f("src/App.tsx"), f("src/components/Card.tsx")];
+        let (files, injected) = ensure_entry_planned("vite_react", plan.clone());
+        assert!(!injected);
+        assert_eq!(files, plan);
+    }
+
+    #[test]
+    fn ensure_entry_planned_injects_the_right_entry_per_framework() {
+        for (fw, entry) in [
+            ("next_js", "app/page.tsx"),
+            ("svelte", "src/App.svelte"),
+            ("auto", "src/App.tsx"),
+        ] {
+            let (files, injected) = ensure_entry_planned(fw, vec![f("src/other.ts")]);
+            assert!(injected, "{fw}");
+            assert_eq!(files[0].path, entry, "{fw}");
+        }
+        // A plan that already names the framework's OWN entry is complete, even though it
+        // is not the Vite one.
+        let (_, injected) = ensure_entry_planned("next_js", vec![f("app/page.tsx")]);
+        assert!(!injected);
+        // ...and naming a DIFFERENT framework's entry does not satisfy it.
+        let (files, injected) = ensure_entry_planned("next_js", vec![f("src/App.tsx")]);
+        assert!(injected);
+        assert_eq!(files[0].path, "app/page.tsx");
     }
 }

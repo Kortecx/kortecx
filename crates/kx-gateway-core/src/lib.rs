@@ -128,7 +128,8 @@ pub use error::GatewayError;
 pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 pub use fuzzy_discovery::{score_to_bp, FuzzyDiscoveryView, FuzzyHitEntry};
 pub use hosted_scaffold::{
-    build_command_args, dev_command_args, preview_command_args, template as hosted_template,
+    authored_role as hosted_authored_role, build_command_args, dev_command_args,
+    entry_path as hosted_entry_path, preview_command_args, template as hosted_template,
     template_paths as hosted_template_paths, FileSource as HostedFileSource,
     TemplateFile as HostedTemplateFile,
 };
@@ -140,8 +141,8 @@ pub use memory::{
 };
 pub use propose::{ProposedStep, WorkflowProposal, WorkflowProposer};
 pub use scaffold::{
-    authoring_prompt, body_is_empty, derive_phase, split_done_pending, try_committed_body,
-    AppScaffolder, ScaffoldFile, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,
+    authoring_prompt, body_is_empty, derive_phase, split_done_pending, strip_code_fence,
+    try_committed_body, AppScaffolder, ScaffoldFile, ScaffoldPhase, ScaffoldStatus, ScaffoldStep,
     APP_MANIFEST_PLAN_RECIPE_HANDLE, APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH,
     SKELETON,
 };

@@ -61,23 +61,29 @@ jobs:
           npm --prefix ui run build
 
       # The FFI wall, asserted on the EXACT feature set this job ships: none of
-      # `console` / `hnsw` / `serve-engine` may ever drag the llama.cpp FFI into the
-      # closure (serve-engine adds the FFI-FREE Ollama backend; the in-process
-      # llama.cpp path stays the opt-in `inference` build — PR-A.1). The required
-      # `build-serve-engine` CI job re-proves this on a toolchain-free runner.
-      - name: FFI wall (console,hnsw,serve-engine stays llama.cpp-free)
+      # `console` / `hnsw` / `serve-engine` / `hosted-apps` may ever drag the llama.cpp
+      # FFI into the closure (serve-engine adds the FFI-FREE Ollama backend; the
+      # in-process llama.cpp path stays the opt-in `inference` build — PR-A.1;
+      # hosted-apps adds only tokio/process + tokio/io-util and zero crates). The
+      # required `build-serve-engine` CI job re-proves this on a toolchain-free runner.
+      - name: FFI wall (console,hnsw,serve-engine,hosted-apps stays llama.cpp-free)
         shell: bash
         run: |
-          if cargo tree -p kx-cli --features console,hnsw,serve-engine -e normal | grep -qE 'kx-llamacpp'; then
-            echo "::error::the console/hnsw/serve-engine features dragged the FFI into kx-cli"; exit 1
+          if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-llamacpp'; then
+            echo "::error::the console/hnsw/serve-engine/hosted-apps features dragged the FFI into kx-cli"; exit 1
           fi
 
       # PR-A.1: the prebuilt now ships `serve-engine` (FFI-free), so a toolchain-free
       # `curl | install.sh` install AUTO-DETECTS a running Ollama daemon and serves
       # local models out of the box. llama.cpp stays the opt-in `--features inference`
       # build (needs a C++ toolchain).
-      - name: Build kx (FFI-free; embedded console + datasets + Ollama serve — PR-A.1)
-        run: cargo build --release -p kx-cli --features console,hnsw,serve-engine
+      #
+      # D213: `hosted-apps` ships too. Without it the four hosted RPCs answer
+      # `unimplemented` on the released binary, so a user can create a hosted App in the
+      # console and never start one. It is FFI-free by construction (see the wall above)
+      # and adds no BUILD dependency — serving a hosted App needs Node/npm at RUN time.
+      - name: Build kx (FFI-free; embedded console + datasets + Ollama serve + hosted Apps)
+        run: cargo build --release -p kx-cli --features console,hnsw,serve-engine,hosted-apps
 
       - name: Package + checksum
         shell: bash

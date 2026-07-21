@@ -33,8 +33,8 @@ use std::time::Duration;
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    build_command_args, dev_command_args, hosted_template, preview_command_args, AppCatalog,
-    BranchStore, ContentReader, GatewayError, HostedAppSupervisor, HostedFileSource,
+    build_command_args, dev_command_args, hosted_entry_path, hosted_template, preview_command_args,
+    AppCatalog, BranchStore, ContentReader, GatewayError, HostedAppSupervisor, HostedFileSource,
     HostedServeMode, HostedState, HostedStatus, MANIFEST_MARKER_PATH,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -449,25 +449,38 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
     }
 
     // 5) Wait for the server to accept connections, then mark Running.
-    if wait_ready(port).await {
-        advance(
-            &ctx,
-            HostedState::Running,
-            if production {
-                "running (production build)"
+    match wait_ready(&ctx, port).await {
+        Readiness::Ready => {
+            advance(
+                &ctx,
+                HostedState::Running,
+                if production {
+                    "running (production build)"
+                } else {
+                    "running"
+                },
+            );
+        }
+        // The child is already gone — nothing to kill, and the exit status plus its own last
+        // words are the only useful thing we can say.
+        Readiness::Exited { status, tail } => {
+            let detail = if tail.is_empty() {
+                format!("server exited before becoming ready ({status})")
             } else {
-                "running"
-            },
-        );
-    } else {
-        advance(
-            &ctx,
-            HostedState::Failed,
-            "server did not become ready in time",
-        );
-        if let Ok(mut app) = ctx.ra.lock() {
-            if let Some(mut child) = app.child.take() {
-                let _ = child.start_kill();
+                format!("server exited before becoming ready ({status}): {tail}")
+            };
+            advance(&ctx, HostedState::Failed, &detail);
+        }
+        Readiness::TimedOut => {
+            advance(
+                &ctx,
+                HostedState::Failed,
+                "server did not become ready in time",
+            );
+            if let Ok(mut app) = ctx.ra.lock() {
+                if let Some(mut child) = app.child.take() {
+                    let _ = child.start_kill();
+                }
             }
         }
     }
@@ -505,8 +518,26 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
         .map_err(|e| format!("read branch: {e:?}"))?;
     let mut overlaid = 0usize;
     let mut skipped = 0usize;
+    // Does the branch carry the framework's entry component, and does it carry a PROJECT at
+    // all? Both, because only their combination is a defect.
+    //
+    // Step 1 wrote the template's placeholder body for the entry path, and for an App with no
+    // project that is the DESIGNED outcome — `FileSource::Authored` promises a hosted project
+    // is "always valid + servable even model-free", and the placeholder says so in its own
+    // words ("Edit src/App.tsx to build it out"). Refusing there would break a working lane to
+    // prevent an honest page.
+    //
+    // The silent wrong answer is the PARTIAL project: a scaffold that ran, wrote eight files,
+    // and dropped the entry — now the placeholder sits among the user's real components and
+    // the App looks finished while rendering the framework splash. Nothing on any surface says
+    // otherwise. That is what this refuses.
+    let entry = hosted_entry_path(&ctx.plan.framework);
+    let mut has_entry = false;
     if let Some(manifest) = manifest {
         for item in &manifest.items {
+            if item.path == entry {
+                has_entry = true;
+            }
             // Confinement: reject any path that escapes the workdir (defense-in-depth; the
             // scaffold only ever writes fixed relative paths).
             if item
@@ -527,6 +558,19 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
             write_file(&ctx.plan.workdir, &item.path, &bytes)?;
             overlaid += 1;
         }
+    }
+    // `overlaid` is exactly the model-authored project file count — the loop already skipped
+    // the plan marker and the template-owned statics. So `overlaid > 0 && !has_entry` is the
+    // PARTIAL project, and nothing else: a scaffold that never finished, a branch imported
+    // without its whole tree, or an entry deleted from the IDE. A branch with no authored
+    // files at all is an App with no project, which the template placeholder serves by design.
+    if overlaid > 0 && !has_entry {
+        return Err(format!(
+            "the project has {overlaid} file(s) but no entry component ({entry}), so serving it \
+             would show the {} starter page next to this App's own components. Re-scaffold the \
+             App to author it.",
+            ctx.plan.framework
+        ));
     }
     log_line(
         logs,
@@ -678,19 +722,70 @@ fn alloc_port() -> Result<u16, String> {
     Ok(port)
 }
 
-/// Poll `127.0.0.1:<port>` until it accepts a connection or the timeout elapses.
-async fn wait_ready(port: u16) -> bool {
+/// How the readiness wait ended.
+enum Readiness {
+    /// The port accepted a connection.
+    Ready,
+    /// The child process exited first — with its status and the tail of its own log.
+    Exited { status: String, tail: String },
+    /// Neither happened within [`READINESS_TIMEOUT`].
+    TimedOut,
+}
+
+/// How many trailing log lines to quote when a child dies during startup. Enough to carry a
+/// stack trace's punchline; short enough to sit in a status string.
+const EXIT_LOG_TAIL_LINES: usize = 8;
+
+/// Poll `127.0.0.1:<port>` until it accepts a connection, the child exits, or the timeout
+/// elapses.
+///
+/// Watching only the port made a crash indistinguishable from a slow start: a dev server
+/// that died in 200 ms (a bad config, a missing dependency, a port collision) left the App
+/// reporting "starting dev server" for the full two minutes and then failed with
+/// "did not become ready in time" — which names the one thing that did NOT happen. The child
+/// handle is right there in `ra`; ask it.
+async fn wait_ready(ctx: &LifecycleCtx, port: u16) -> Readiness {
     let deadline = tokio::time::Instant::now() + READINESS_TIMEOUT;
     while tokio::time::Instant::now() < deadline {
         if tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .is_ok()
         {
-            return true;
+            return Readiness::Ready;
+        }
+        // Check the child AFTER the connect attempt: a server that bound the port and then
+        // exited in the same tick should still be reported as the exit it was.
+        if let Ok(mut app) = ctx.ra.lock() {
+            if app.generation == ctx.generation {
+                if let Some(child) = app.child.as_mut() {
+                    if let Ok(Some(status)) = child.try_wait() {
+                        // Reaped here, so drop the handle — `Stop` must not later try to kill
+                        // a pid that no longer exists (or, worse, a reused one).
+                        app.child = None;
+                        return Readiness::Exited {
+                            status: status.to_string(),
+                            tail: log_tail(&app.logs, EXIT_LOG_TAIL_LINES),
+                        };
+                    }
+                }
+            }
         }
         tokio::time::sleep(READINESS_POLL).await;
     }
-    false
+    Readiness::TimedOut
+}
+
+/// The last `n` lines of a captured log, joined for a one-line status detail.
+fn log_tail(logs: &Arc<Mutex<VecDeque<String>>>, n: usize) -> String {
+    let Ok(buf) = logs.lock() else {
+        return String::new();
+    };
+    let start = buf.len().saturating_sub(n);
+    buf.iter()
+        .skip(start)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 /// Whitespace-split a command string into (program, args). Simple by design — the
@@ -699,4 +794,152 @@ fn split_cmd(cmd: &str) -> (String, Vec<String>) {
     let mut it = cmd.split_whitespace().map(str::to_string);
     let prog = it.next().unwrap_or_default();
     (prog, it.collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::branches::BranchesDb;
+    use kx_content::{ContentStore, InMemoryContentStore};
+
+    /// A branch store + content store wired the way the supervisor sees them, plus a
+    /// `LifecycleCtx` pointed at a scratch workdir.
+    struct Fixture {
+        ctx: LifecycleCtx,
+        content: Arc<InMemoryContentStore>,
+        branches: Arc<BranchesDb<InMemoryContentStore>>,
+        _workdir: tempfile::TempDir,
+    }
+
+    fn fixture(framework: &str) -> Fixture {
+        let dbdir = tempfile::tempdir().unwrap();
+        let workdir = tempfile::tempdir().unwrap();
+        let content = Arc::new(InMemoryContentStore::default());
+        let branches =
+            Arc::new(BranchesDb::open(dbdir.path(), Arc::clone(&content), None).unwrap());
+        std::mem::forget(dbdir); // keep the sqlite file alive for the test
+        branches
+            .create("alice", "apps/local/x", None, "test branch")
+            .unwrap();
+        let ctx = LifecycleCtx {
+            ra: Arc::new(Mutex::new(RunningApp::new(framework.to_string()))),
+            branches: Arc::clone(&branches) as Arc<dyn BranchStore>,
+            content: Arc::clone(&content) as Arc<dyn ContentReader>,
+            principal: "alice".into(),
+            plan: LaunchPlan {
+                branch_handle: "apps/local/x".into(),
+                framework: framework.to_string(),
+                install_cmd: SKIP_INSTALL.into(),
+                dev_cmd: String::new(),
+                serve_mode: HostedServeMode::default(),
+                build_cmd: String::new(),
+                workdir: workdir.path().to_path_buf(),
+            },
+            generation: 1,
+            rebuild: false,
+        };
+        Fixture {
+            ctx,
+            content,
+            branches,
+            _workdir: workdir,
+        }
+    }
+
+    fn put_file(f: &Fixture, path: &str, body: &[u8]) {
+        let r = f.content.put(body).unwrap();
+        f.branches
+            .advance("alice", "apps/local/x", path, r.0)
+            .unwrap();
+    }
+
+    fn logs() -> Arc<Mutex<VecDeque<String>>> {
+        Arc::new(Mutex::new(VecDeque::new()))
+    }
+
+    #[test]
+    fn materialize_refuses_a_partial_project_missing_its_entry() {
+        // The silent-wrong-answer this guard exists for: a scaffold RAN and wrote real
+        // components but dropped the entry. Step 1 has already put the template's placeholder
+        // App.tsx on disk, so without the check the App looks finished and renders the Vite
+        // splash next to the user's own components.
+        let f = fixture("vite_react");
+        put_file(
+            &f,
+            "src/components/Card.tsx",
+            b"export const Card = () => null;",
+        );
+        let err = materialize(&f.ctx, &logs()).unwrap_err();
+        assert!(
+            err.contains("src/App.tsx") && err.contains("starter page"),
+            "the refusal must name the missing entry and why it matters: {err}"
+        );
+        // And it refuses BEFORE anything could serve.
+        assert!(!f.ctx.plan.workdir.join("node_modules").exists());
+    }
+
+    #[test]
+    fn materialize_still_serves_an_app_that_has_no_project_at_all() {
+        // The line the guard must NOT cross. `FileSource::Authored` promises a hosted project
+        // is "always valid + servable even model-free", and the placeholder says as much in
+        // its own words — an App you never scaffolded is not a defect, and refusing it would
+        // break a working lane to prevent an honest page. Pinned because the first version of
+        // this guard DID refuse here, and two shipped lifecycle e2e tests caught it.
+        let f = fixture("vite_react");
+        materialize(&f.ctx, &logs()).expect("an App with no project still materializes");
+        let entry = std::fs::read_to_string(f.ctx.plan.workdir.join("src/App.tsx")).unwrap();
+        assert!(entry.contains("Your hosted app is live"));
+    }
+
+    #[test]
+    fn materialize_serves_a_branch_that_holds_only_template_statics() {
+        // A scaffold that advanced the template statics and then failed before authoring
+        // anything is still "no project": the statics are template-owned, not the model's
+        // work, so the placeholder remains the honest answer.
+        let f = fixture("vite_react");
+        put_file(&f, "package.json", b"{}");
+        put_file(&f, "src/main.tsx", b"// template-owned");
+        materialize(&f.ctx, &logs()).expect("template statics alone are not a partial project");
+    }
+
+    #[test]
+    fn materialize_accepts_and_overlays_a_project_that_has_its_entry() {
+        let f = fixture("vite_react");
+        put_file(
+            &f,
+            "src/App.tsx",
+            b"export default function App() { return null; }",
+        );
+        put_file(
+            &f,
+            "src/components/Card.tsx",
+            b"export const Card = () => null;",
+        );
+        materialize(&f.ctx, &logs()).expect("a project with its entry materializes");
+        // The branch body WINS over the template's placeholder for the entry...
+        let entry = std::fs::read(f.ctx.plan.workdir.join("src/App.tsx")).unwrap();
+        assert_eq!(entry, b"export default function App() { return null; }");
+        // ...the planned sibling lands...
+        assert!(f.ctx.plan.workdir.join("src/components/Card.tsx").exists());
+        // ...and the TEMPLATE still owns the static build config.
+        assert!(f.ctx.plan.workdir.join("package.json").exists());
+        assert!(f.ctx.plan.workdir.join("src/main.tsx").exists());
+    }
+
+    #[test]
+    fn materialize_checks_the_entry_of_the_framework_it_was_given() {
+        // A Next project satisfies the guard with app/page.tsx, not src/App.tsx.
+        let f = fixture("next_js");
+        put_file(&f, "src/App.tsx", b"// wrong framework's entry");
+        let err = materialize(&f.ctx, &logs()).unwrap_err();
+        assert!(err.contains("app/page.tsx"), "{err}");
+
+        let g = fixture("next_js");
+        put_file(
+            &g,
+            "app/page.tsx",
+            b"export default function Page() { return null; }",
+        );
+        materialize(&g.ctx, &logs()).expect("next entry satisfies the guard");
+    }
 }
