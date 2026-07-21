@@ -9,6 +9,7 @@ import {
   useListPendingApprovals,
 } from "../../kx/use-approvals";
 import { shortHex } from "../../lib/format";
+import { memberMoteSearch } from "../../lib/run-anchor";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { GlowCard } from "../ds/GlowCard";
@@ -96,6 +97,9 @@ export function ApprovalsInbox() {
                         <Link
                           to="/workflows/$instanceId"
                           params={{ instanceId: ap.instanceId }}
+                          // Anchored on the pending Mote — a member of this run's
+                          // component, which is all the connected-component scope needs.
+                          search={memberMoteSearch(ap.moteId)}
                           className="linkbtn mono"
                           title="Open this run"
                         >

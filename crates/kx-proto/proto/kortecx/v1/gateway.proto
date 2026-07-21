@@ -102,6 +102,23 @@ message RunHandle {
   // one (ambiguous — the client falls back to instance_id-only scoping, like an old
   // server). Never client-supplied (SN-8).
   bytes react_chain_salt = 3;            // 32B — the agentic-step chain key; EMPTY if none / ambiguous
+  // (additive, mirrors InvokeResponse.terminal_mote_id): the bound recipe's TERMINAL
+  // (sink) Mote — the one whose committed result is the run's output. Server-derived from
+  // the binder (SN-8); never client-supplied.
+  //
+  // WHY THIS EXISTS SEPARATELY FROM `react_chain_salt`. Both identify a Mote in THIS
+  // submission, but they answer different questions and must not be conflated. The salt is
+  // a ReAct CHAIN KEY: a client that sees it non-empty takes the react settle path and
+  // polls `ListReactTurns` with it as `step_salt`, so it is EMPTY by design for anything
+  // that is not exactly one tool-granted agentic step. This field is a RUN ANCHOR: it is
+  // populated for EVERY shape — a plain single-agent App, a multi-step DAG, a pure
+  // pipeline — which is what a client needs to scope a shared journal's projection down to
+  // one run. Widening the salt's predicate to cover those shapes would send a plain DAG
+  // down the react poll and hang it; adding a field costs nothing and says what it means.
+  //
+  // EMPTY (0 bytes) from an older server, in which case a client must say it cannot scope
+  // rather than silently presenting the whole journal as the run.
+  bytes terminal_mote_id = 4;            // 32B — the run's sink Mote; the scope anchor
 }
 
 // ---------------------------------------------------------------------------

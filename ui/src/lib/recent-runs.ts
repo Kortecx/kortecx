@@ -11,6 +11,17 @@
 export interface RunRecord {
   readonly instanceId: string;
   readonly terminalMoteId: string | null;
+  /**
+   * The run's ReAct chain key (`RunHandle.react_chain_salt`, hex) when the submission had
+   * exactly one tool-granted agentic step; `null`/absent otherwise — including for every
+   * record written before this field existed, and for every durable-only row.
+   *
+   * Persisted next to `terminalMoteId` so a run REOPENED from history is still scoped to
+   * itself: together the two are the `RunAnchors` that `lib/run-anchor` reduces to one
+   * anchor. Without it, closing and reopening a run silently widened the view back to the
+   * whole journal even though the anchor had been known at submit time.
+   */
+  readonly reactChainSalt?: string | null;
   readonly recipeFingerprint: string | null;
   /** The recipe handle invoked (when known). */
   readonly handle: string | null;
@@ -40,7 +51,10 @@ export function mergeServerRuns(local: RunRecord[], server: ServerRun[]): RunRec
     .filter((s) => !seen.has(s.instanceId))
     .map((s) => ({
       instanceId: s.instanceId,
+      // `ListRuns` enumerates durable INSTANCES; it carries neither per-run anchor, so a
+      // server-only card genuinely cannot be scoped (the run view says so).
       terminalMoteId: null,
+      reactChainSalt: null,
       recipeFingerprint: s.recipeFingerprint,
       handle: null,
       startedAt: s.registeredUnixMs,

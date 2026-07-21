@@ -9,6 +9,9 @@
  *  - **Skills**: attach/detach catalog skills ({@link SkillsRail});
  *  - **MCP Tools** / **Integrations**: the editable capability rails ({@link ToolsRail}
  *    attach/detach; {@link ConnectionsRail} bind/unbind), split.
+ * The last three are SCHEDULED-lane only (see {@link HOSTED_TABS}). Under the header sits
+ * the per-App {@link AppTriggersStrip} — this App's schedule, and the affordance to add
+ * one, where the App is.
  * The header carries the editable App name (left) and top-right actions — Modify
  * (opens the unified agentic-modify {@link AppChatEditDrawer}), Run (opens
  * {@link AppRunDrawer}), Download, and the Lock toggle.
@@ -35,6 +38,7 @@ import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppChatEditDrawer } from "../apps/AppChatEditDrawer";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
+import { AppTriggersStrip } from "../apps/AppTriggersStrip";
 import { ConnectionsRail } from "../apps/ConnectionsRail";
 import { FileTree } from "../apps/FileTree";
 import {
@@ -56,6 +60,23 @@ import { sectionOf } from "./AppsSection";
 
 const TABS = ["files", "lineage", "skills", "tools", "integrations"] as const;
 export type IdeTab = (typeof TABS)[number];
+
+/**
+ * The tabs a HOSTED (experience) App offers.
+ *
+ * Skills / MCP Tools / Integrations are omitted because the hosted lane provably never
+ * reads them: `hostsupervisor.rs` builds its launch plan from the envelope's `hosted`
+ * block alone (framework + install/dev/build commands + serve mode + the branch handle),
+ * and the code that DOES resolve a tool wish, a skill bundle and a connector — `app_run.rs`
+ * — is only reached by `RunApp`, which refuses a hosted App for having no blueprint. So
+ * those three rails could only ever write envelope keys nothing will ever read. The tab
+ * strip had no kind filter at all, which is the same class of bug D213 already fixed for
+ * Run and for Lineage's "Edit structure"; this is the last of it.
+ *
+ * The TYPE stays the full five (the route validates `?tab=` against it) — a hosted App
+ * deep-linked to a lane-less tab falls back to Files rather than 404ing a legal URL.
+ */
+const HOSTED_TABS: readonly IdeTab[] = ["files", "lineage"];
 
 /** The Files rail's collapsed state is remembered across reloads (like the shell nav). */
 const FILES_RAIL_KEY = "kortecx.ui.app-files-rail";
@@ -138,7 +159,12 @@ export function AppDetailSection({
 
   const [tabState, setTabState] = useState<IdeTab>("files");
   const [pathState, setPathState] = useState<string | undefined>(undefined);
-  const tab = tabProp ?? tabState;
+  const requestedTab = tabProp ?? tabState;
+  // Which tabs this lane offers, and the one actually rendered. A hosted App arriving on
+  // `?tab=skills` (a legal URL — the route validates the union, not the lane) must not
+  // land on a rail its lane never reads, with a tab strip showing nothing pressed.
+  const visibleTabs = hosted ? HOSTED_TABS : TABS;
+  const tab = visibleTabs.includes(requestedTab) ? requestedTab : "files";
   const selectedPath = pathProp ?? pathState;
   const setTab = (t: IdeTab) => (onTab ? onTab(t) : setTabState(t));
   const setPath = (p: string | undefined) => (onPath ? onPath(p) : setPathState(p));
@@ -243,8 +269,14 @@ export function AppDetailSection({
         </div>
       </div>
 
+      {/* The App's own schedule, where the App is. Scheduled lane only: a trigger fires an
+          App through RunApp, which refuses a hosted App for having no blueprint — a
+          Schedule button on a hosted App would register a trigger that can only ever
+          fail. */}
+      {hosted ? null : <AppTriggersStrip handle={handle} />}
+
       <fieldset className="view-toggle" aria-label="App view" data-testid="app-detail-tabs">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t}
             type="button"
@@ -258,10 +290,9 @@ export function AppDetailSection({
       </fieldset>
 
       {tab === "lineage" ? (
-        // The tab list stays constant across lanes (the route validates it, and the
-        // shell test asserts the exact five). For a hosted App the Lineage tab shows the
-        // server surface instead of an empty blueprint diagram — the same question
-        // ("what is this App doing?") answered for the lane it is actually in.
+        // Lineage survives in both lanes, because the question ("what is this App doing?")
+        // survives — it is just answered by the server surface rather than by a blueprint
+        // diagram the hosted lane does not have.
         hosted ? (
           <HostedRunPanel handle={handle} />
         ) : (

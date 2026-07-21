@@ -21,6 +21,7 @@ import { useCallback, useMemo } from "react";
 import { toUiError } from "../../kx/errors";
 import { useApp, useRunApp } from "../../kx/use-apps";
 import { readModelRoute, readSkillNames, readToolGrants } from "../../lib/app-envelope";
+import { runViewSearch } from "../../lib/run-anchor";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { appBlueprintToBuilderGraph } from "../builder/app-blueprint";
@@ -247,12 +248,14 @@ function LineageView({
     runApp.mutate(
       { handle },
       {
-        onSuccess: ({ instanceId, reactChainSalt }) =>
-          // See AppRunDrawer: the salt is what scopes the run view to THIS submission.
+        onSuccess: (started) =>
+          // Scope the run view to THIS submission. The salt is empty for an App with no
+          // single agentic step (most of them), so fall back to the terminal Mote —
+          // `runViewSearch` owns that precedence for every navigation.
           void navigate({
             to: "/workflows/$instanceId",
-            params: { instanceId },
-            search: reactChainSalt ? { chain: reactChainSalt } : {},
+            params: { instanceId: started.instanceId },
+            search: runViewSearch(started),
           }),
       },
     );

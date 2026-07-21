@@ -58,14 +58,20 @@ interface RunSearch {
   /** Artifacts tab deep link: one committed artifact by content ref (hex). */
   ref?: string;
   /**
-   * The per-submission chain key (`RunHandle.react_chain_salt`, hex) that scopes this
-   * view to ONE run.
+   * The RUN ANCHOR (hex Mote id) that scopes this view to ONE submission.
    *
    * A serve is one journal with ONE `instance_id` shared by every Invoke, chat turn,
-   * scaffold and cron fire, so `instanceId` alone selects the whole workspace. Absent on
-   * a hand-typed URL, and empty by construction for a run with no single agentic step —
-   * both surface as an honest "showing every run in this journal" notice rather than a
-   * silent workspace dump.
+   * scaffold and cron fire, so `instanceId` alone selects the whole workspace. The scope
+   * is a connected-component walk, so ANY Mote of the submission anchors it; `lib/run-anchor`
+   * picks `react_chain_salt` when the run has one agentic step and `terminal_mote_id`
+   * otherwise, and a feed/inspector link supplies the Mote it is already showing.
+   *
+   * (The param is named `chain` because the salt was the only anchor when it shipped;
+   * the name is kept so links already in the wild keep working.)
+   *
+   * Absent on a hand-typed URL, on a durable run recovered from `ListRuns`, and from a
+   * server older than `terminal_mote_id` — all of which surface as an honest "showing
+   * every run in this journal" notice rather than a silent workspace dump.
    */
   chain?: string;
 }
@@ -181,11 +187,17 @@ function WorkflowDetailContent() {
           ) : null}
           {tab === "timeline" ? (
             <Suspense fallback={<EmptyState title="Loading timeline…" />}>
+              {/* `chain` is the run ANCHOR, which is the ReAct salt only when the run has
+                  one agentic step (that is the anchor's first preference). For any other
+                  shape it is the terminal/member Mote, `ListReactTurns` matches no turn,
+                  and the timeline shows its honest pure-DAG step fallback — rather than
+                  the pre-scope behaviour of listing every agentic turn in the journal as
+                  if it belonged to this run. */}
               <RunTimeline instanceId={instanceId} projection={data} chainSalt={chain} />
             </Suspense>
           ) : null}
           {tab === "artifacts" ? (
-            <ArtifactsTab instanceId={instanceId} contentRef={search.ref} />
+            <ArtifactsTab instanceId={instanceId} contentRef={search.ref} scopeMoteId={chain} />
           ) : null}
           {tab === "activity" ? (
             <ActivityTab
@@ -204,11 +216,16 @@ function WorkflowDetailContent() {
             run={{
               instanceId,
               terminalMoteId: terminal ?? null,
+              // The URL's `chain` is the anchor, but it is not necessarily the react salt
+              // (see RunSearch.chain), so it rides the explicit prop rather than being
+              // stuffed into a field that means something narrower.
+              reactChainSalt: null,
               recipeFingerprint: data?.recipeFingerprint ?? null,
               handle: null,
               startedAt: 0,
               args: null,
             }}
+            {...(chain ? { anchorMoteId: chain } : {})}
             onClose={() => setRerun(false)}
           />
         </Suspense>
@@ -231,15 +248,28 @@ function RunGraph({ projection, table }: { projection: ProjectionVM; table: bool
 }
 
 /** The folded-in Artifacts gallery (PR-2; was the /artifacts route). With a
- *  `ref` deep link it focuses one committed artifact. */
-function ArtifactsTab({ instanceId, contentRef }: { instanceId: string; contentRef?: string }) {
+ *  `ref` deep link it focuses one committed artifact. The gallery opens its OWN
+ *  projection query, so the run's scope anchor has to be handed to it explicitly —
+ *  `scopeMoteId` is part of the query key, and an unscoped call is a different cache
+ *  entry, not a cheaper read of the same one. */
+function ArtifactsTab({
+  instanceId,
+  contentRef,
+  scopeMoteId,
+}: {
+  instanceId: string;
+  contentRef?: string;
+  scopeMoteId?: string;
+}) {
   return (
     <div data-testid="artifacts-tab">
       <Suspense fallback={<EmptyState title="Loading artifacts…" />}>
         {contentRef ? (
+          // A single artifact is addressed by content ref + instance and needs no scope
+          // (`GetContent` is ownership-checked against the instance).
           <SingleArtifact instanceId={instanceId} contentRef={contentRef} />
         ) : (
-          <ArtifactGallery instanceId={instanceId} />
+          <ArtifactGallery instanceId={instanceId} scopeMoteId={scopeMoteId} />
         )}
       </Suspense>
     </div>
@@ -315,11 +345,11 @@ export const workflowDetailRoute = createRoute({
     if (typeof search.tab === "string" && (RUN_TABS as readonly string[]).includes(search.tab)) {
       out.tab = search.tab as RunTab;
     }
-    // An artifact content ref is a 32-byte (64 hex char) server-derived id.
-    // The chain salt is a 32-byte server-derived Mote id, same shape as `terminal`.
+    // The run anchor is a 32-byte server-derived Mote id, same shape as `terminal`.
     if (typeof search.chain === "string" && /^[0-9a-f]{64}$/.test(search.chain)) {
       out.chain = search.chain;
     }
+    // An artifact content ref is a 32-byte (64 hex char) server-derived id.
     if (typeof search.ref === "string" && /^[0-9a-f]{64}$/.test(search.ref)) {
       out.ref = search.ref;
     }

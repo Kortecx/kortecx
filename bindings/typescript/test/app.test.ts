@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
-import { KxClient, Reach, app, canonicalJson, flow, minimalAppEnvelope } from "../src/node.js";
+import { KxClient, Reach, Run, app, canonicalJson, flow, minimalAppEnvelope } from "../src/node.js";
 import { devServer, stopAllServers } from "./fixtures/serve.js";
 
 const CORPUS_PATH = join(
@@ -188,6 +188,39 @@ describe("App catalog over a real serve", () => {
     // run compiles the blueprint and runs it (model-free pure step commits).
     const result = await kx.runApp("apps/local/pure-demo", { wait: true, timeoutMs: 60_000 });
     expect(result).toBeDefined();
+  });
+
+  it("runApp with wait:false returns a Run anchored to THIS submission", async () => {
+    // THE GAP THAT LET A BUG SHIP. Every runApp test above passes `wait: true`, which
+    // returns a Result and never constructs a `Run` — so the no-wait branch had no
+    // coverage at all, and it was calling `Run`'s 5-parameter ctor with FOUR arguments.
+    // The salt landed in the `_terminal` slot and `_reactChainSalt` silently defaulted to
+    // empty, so `reactChainSalt` was always "" and `terminalMoteId` returned the salt.
+    // Nothing failed; the run view just quietly showed the whole journal forever.
+    //
+    // So assert the two anchors are DISTINCT and each carries the server's own value —
+    // a test that merely read one of them would have passed against the bug.
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await app("Anchor Demo")
+      .blueprint(flow().step({ topic: "kortecx" }))
+      .save({ client: kx });
+
+    const run = await kx.runApp("apps/local/anchor-demo", { wait: false });
+    // `runApp` is typed `Result | Run`; narrow by construction rather than casting, so a
+    // regression that returns the wrong branch fails HERE with a readable message.
+    if (!(run instanceof Run)) {
+      throw new Error("runApp with wait:false must return a Run, not a settled Result");
+    }
+
+    // The anchor is populated for EVERY shape, including this model-free pure one.
+    expect(run.terminalMoteId).toMatch(/^[0-9a-f]{64}$/);
+    // A pure blueprint has no tool-granted MODEL step, so the server reports no chain key.
+    // Empty here is the server's answer, not a client-side default — and crucially it is
+    // NOT the terminal id, which is exactly what the positional bug made it.
+    expect(run.reactChainSalt).toBe("");
+    expect(run.terminalMoteId).not.toBe(run.reactChainSalt);
+    expect(run.terminalMoteIdBytes.length).toBe(32);
   });
 
   it("a missing App is null", async () => {

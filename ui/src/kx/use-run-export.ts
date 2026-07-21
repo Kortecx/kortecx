@@ -19,8 +19,9 @@ import {
   exportRunJson,
 } from "../lib/export-run";
 import type { RunRecord } from "../lib/recent-runs";
+import { runAnchor } from "../lib/run-anchor";
 import { useConnection } from "./connection-context";
-import { toProjectionVM } from "./use-projection";
+import { scopeProjection, toProjectionVM } from "./use-projection";
 
 const MIME = "application/json";
 
@@ -48,7 +49,23 @@ export function useRunExport(): UseRunExport {
     setPendingId(record.instanceId);
     setError(null);
     try {
-      const projection = toProjectionVM(await client.getProjection(record.instanceId));
+      // SCOPE the fold to this run before walking it. Unscoped, a "run export" on a
+      // long-lived serve is an export of the entire journal — every other run's Motes AND
+      // a `GetContent` per foreign artifact, so the file is both wrong and slow. The
+      // record carries the anchors; an unscopable record (a durable-only row) exports the
+      // journal as before rather than silently producing an EMPTY bundle.
+      const anchor = runAnchor(record);
+      const scoped = scopeProjection(
+        toProjectionVM(await client.getProjection(record.instanceId)),
+        anchor || undefined,
+      );
+      if (scoped.scopeMissed) {
+        // The anchor is not in the fold (a stale record, a rebuilt journal). A miss leaves
+        // `motes` UNSCOPED, so falling through would silently write the entire workspace
+        // to disk under this run's filename. Refuse; `error` surfaces it on the card.
+        throw new Error("this run's steps are not in the gateway's journal — nothing to export");
+      }
+      const projection = scoped;
       const artifacts: RunArtifactExport[] = [];
       for (const motes of projection.motes) {
         if (motes.resultRef === null) {

@@ -20,13 +20,25 @@ export interface RunArtifact {
 export interface UseRunArtifacts {
   readonly artifacts: RunArtifact[];
   readonly projection: ProjectionVM | undefined;
+  /** A scope anchor was supplied but is absent from the fold — the artifact list is
+   *  EMPTY because we could not isolate the run, not because it produced nothing. */
+  readonly scopeMissed: boolean;
   readonly isLoading: boolean;
   readonly error: unknown;
   refetch(): void;
 }
 
-export function useRunArtifacts(instanceId: string | undefined): UseRunArtifacts {
-  const query = useProjection(instanceId);
+/**
+ * `scopeMoteId` MUST be threaded through, not defaulted away. It is part of
+ * `useProjection`'s query key, so calling this hook unscoped is a genuinely different
+ * cache entry from the run view's scoped one — which is how the graph came to show four
+ * steps while the Artifacts tab beside it listed every output in the workspace.
+ */
+export function useRunArtifacts(
+  instanceId: string | undefined,
+  scopeMoteId?: string,
+): UseRunArtifacts {
+  const query = useProjection(instanceId, scopeMoteId ? { scopeMoteId } : {});
   const artifacts = useMemo<RunArtifact[]>(() => {
     const motes = query.data?.motes ?? [];
     return motes
@@ -36,6 +48,7 @@ export function useRunArtifacts(instanceId: string | undefined): UseRunArtifacts
   return {
     artifacts,
     projection: query.data,
+    scopeMissed: query.data?.scopeMissed ?? false,
     isLoading: query.isLoading,
     error: query.error,
     refetch: () => void query.refetch(),

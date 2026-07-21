@@ -10,6 +10,7 @@ import { useRecipeForm } from "../../kx/use-recipes";
 import { useRunInputs } from "../../kx/use-run-inputs";
 import { humanizeHandle } from "../../lib/humanize-handle";
 import type { RunRecord } from "../../lib/recent-runs";
+import { runAnchor, runViewSearch } from "../../lib/run-anchor";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { RecipeForm } from "../recipes/RecipeForm";
@@ -41,7 +42,21 @@ function parseLocalArgs(args: string | null | undefined): Record<string, unknown
  * gets a confirm-before-fire (effects re-fire). Reuses the `.node-drawer` skeleton
  * + `RecipeForm` (D142.2 — no new pattern). A re-run is just a new `Invoke`.
  */
-export function RerunDrawer({ run, onClose }: { run: RunRecord; onClose: () => void }) {
+export function RerunDrawer({
+  run,
+  anchorMoteId,
+  onClose,
+}: {
+  run: RunRecord;
+  /**
+   * An override scope anchor for the side-effect probe below. The run-detail route knows
+   * the anchor from its `?chain=` (which may be any member Mote — a feed row's event
+   * Mote, say — not necessarily one of the `RunHandle` fields a `RunRecord` persists), so
+   * it hands it in rather than round-tripping it through a synthesized record.
+   */
+  anchorMoteId?: string;
+  onClose: () => void;
+}) {
   const navigate = useNavigate();
   const invoke = useInvoke();
 
@@ -49,8 +64,14 @@ export function RerunDrawer({ run, onClose }: { run: RunRecord; onClose: () => v
   const hasLocal = Boolean(run.handle && localArgs);
   // Only hit the gateway when we lack (handle + args) locally (the durable-recovery case).
   const inputs = useRunInputs(run.instanceId, !hasLocal);
-  // Prior nd_class drives the confirm wording (non-blocking; never fetch-gated).
-  const projection = useProjection(run.instanceId);
+  // Prior nd_class drives the confirm wording (non-blocking; never fetch-gated). SCOPED
+  // to this run: unscoped, the fold is every Mote in the gateway's journal, so ANY
+  // world-mutating step anyone ever ran would arm the "this will re-fire side-effects"
+  // warning for a read-only re-run — a confirm dialog that cries wolf gets clicked
+  // through, which is worse than no confirm at all.
+  const projection = useProjection(run.instanceId, {
+    scopeMoteId: anchorMoteId ?? runAnchor(run),
+  });
 
   const handle = run.handle ?? inputs.data?.handle ?? undefined;
   const prefill = hasLocal ? localArgs : inputs.data?.args;
@@ -82,8 +103,12 @@ export function RerunDrawer({ run, onClose }: { run: RunRecord; onClose: () => v
   const worldMutating =
     projection.isSuccess &&
     (projection.data?.motes.some((mt) => mt.ndClass === ND_WORLD_MUTATING) ?? false);
-  // Unknown when the projection has not resolved — be conservative (confirm).
-  const sideEffectUnknown = !projection.isSuccess;
+  // Unknown when the projection has not resolved — be conservative (confirm). A MISSED
+  // scope counts as unknown too: the fold succeeded but this run's Motes are not in it,
+  // so the empty set is "we could not look", not "we looked and found nothing
+  // side-effecting". Reading it as the latter would silently drop the confirm on exactly
+  // the runs we know least about.
+  const sideEffectUnknown = !projection.isSuccess || (projection.data?.scopeMissed ?? false);
 
   function fire(args: Record<string, unknown>): void {
     if (!handle) {
@@ -104,7 +129,7 @@ export function RerunDrawer({ run, onClose }: { run: RunRecord; onClose: () => v
           void navigate({
             to: "/workflows/$instanceId",
             params: { instanceId: started.instanceId },
-            search: { terminal: started.terminalMoteId },
+            search: runViewSearch(started),
           });
         },
       },
@@ -159,7 +184,7 @@ export function RerunDrawer({ run, onClose }: { run: RunRecord; onClose: () => v
             <Link
               to="/workflows/$instanceId"
               params={{ instanceId: result.instanceId }}
-              search={{ terminal: result.terminalMoteId }}
+              search={runViewSearch(result)}
               className="btnlink"
               data-testid="rerun-view-existing"
               onClick={onClose}
@@ -210,7 +235,7 @@ export function RerunDrawer({ run, onClose }: { run: RunRecord; onClose: () => v
               <Link
                 to="/workflows/$instanceId"
                 params={{ instanceId: run.instanceId }}
-                search={run.terminalMoteId ? { terminal: run.terminalMoteId } : {}}
+                search={runViewSearch(run)}
                 className="btnlink"
                 onClick={onClose}
               >

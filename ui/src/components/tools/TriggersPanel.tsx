@@ -41,8 +41,10 @@ function fmtFired(ms: number): string {
 }
 
 /** Render a cron schedule: legacy interval-seconds (all digits) as `every Ns`, else the
- *  5-field crontab expr with its timezone (T-APP-TRIGGER-TARGET). */
-function fmtSchedule(spec: string, timezone: string): string {
+ *  5-field crontab expr with its timezone (T-APP-TRIGGER-TARGET). Exported so the App
+ *  detail page's per-App trigger strip prints a schedule the SAME way this govern surface
+ *  does — two spellings of "every 300s" is how an operator stops trusting either. */
+export function fmtSchedule(spec: string, timezone: string): string {
   const s = spec.trim();
   if (s.length > 0 && /^\d+$/.test(s)) {
     return `every ${s}s`;
@@ -56,8 +58,12 @@ function fmtSchedule(spec: string, timezone: string): string {
  * (submit the inbound event), Remove. Each row owns its own Test/Fire mutations so
  * the inline outcome stays row-scoped (the ConnectionFireRow precedent). Every state
  * designed (D142): idle / pending / ok+detail / error.
+ *
+ * Exported for the App detail page's per-App trigger strip: an App's schedule is now
+ * visible where the App is, and it must Test/Fire/Remove through this exact control —
+ * a second copy of "Fire" is a second place for the dedup/idempotency semantics to drift.
  */
-function TriggerRowActions({
+export function TriggerRowActions({
   trigger,
   onRemove,
   removeBusy,

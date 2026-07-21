@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 import { toUiError } from "../../kx/errors";
 import { useApp, useRunApp } from "../../kx/use-apps";
 import { appInputForm } from "../../lib/app-input-schema";
+import { runViewSearch } from "../../lib/run-anchor";
 import { ErrorNotice } from "../ErrorNotice";
 import { RecipeForm } from "../recipes/RecipeForm";
 import { RunPreflight } from "./RunPreflight";
@@ -53,15 +54,22 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
     // Send the opt-in HITL flag only when the user checked it (mirrors the `args`
     // idiom) — an unchecked run keeps today's payload, so the server default applies.
     runApp.mutate(requireApproval ? { handle, args, requireApproval } : { handle, args }, {
-      onSuccess: ({ instanceId, reactChainSalt }) => {
+      onSuccess: (started) => {
         onClose();
-        // Carry the per-submission chain key into the run view. Without it the view
-        // falls back to the whole journal: a serve is ONE journal with ONE instance_id
-        // shared by every run, so `/workflows/<instanceId>` alone cannot mean "this run".
+        // Carry the per-submission ANCHOR into the run view. Without it the view falls
+        // back to the whole journal: a serve is ONE journal with ONE instance_id shared by
+        // every run, so `/workflows/<instanceId>` alone cannot mean "this run".
+        //
+        // This used to send the chain salt alone, which meant ▶ on an App — the single
+        // most-travelled path to a run view — landed UNSCOPED for every ordinary App. The
+        // salt is emitted only for exactly one tool-granted agentic step, and a plain
+        // scheduled App is not that shape, so the condition was false almost always.
+        // `runViewSearch` prefers the salt and falls back to the terminal Mote, which the
+        // server populates for every shape.
         void navigate({
           to: "/workflows/$instanceId",
-          params: { instanceId },
-          search: reactChainSalt ? { chain: reactChainSalt } : {},
+          params: { instanceId: started.instanceId },
+          search: runViewSearch(started),
         });
       },
     });

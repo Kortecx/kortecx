@@ -15,7 +15,7 @@
  * (one-App-one-branch), so the scaffold + progress poll key on it.
  */
 
-import { type WorkflowProposal, app, defaultHandle, flow } from "@kortecx/sdk/web";
+import { Reach, type WorkflowProposal, app, defaultHandle, flow } from "@kortecx/sdk/web";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, Suspense, lazy, useCallback, useState } from "react";
@@ -29,6 +29,13 @@ import { useModels } from "../../kx/use-models";
 import { useProposeWorkflow } from "../../kx/use-propose-workflow";
 import { useScaffoldApp } from "../../kx/use-scaffold-app";
 import { composeCapabilityPrompt, composeProposeGoal } from "../../lib/app-capability-prompt";
+import type { ConnectionEntry } from "../../lib/app-envelope";
+import {
+  ConnectionsPicker,
+  type PickedSkill,
+  SkillsPicker,
+  ToolsPicker,
+} from "../apps/CapabilityPickers";
 import { FRESH_UNMODELED, builderGraphToBlueprint } from "../builder/app-blueprint";
 import { type BuilderGraph, proposalToBuilderGraph } from "../builder/builder-graph";
 import { GlowCard } from "../ds/GlowCard";
@@ -122,6 +129,17 @@ export function NewAppForm({
   // T-RUNAPP-CONTEXT-RAIL authoring state (the declarative rail).
   const [grounding, setGrounding] = useState<string[]>([]);
   const [rule, setRule] = useState("");
+  // The CAPABILITY rails. This form had no capability call sites at all, so every
+  // console-authored App saved with `references.tools == []` / `references.skills == []`
+  // and no connection — it ran with nothing plugged in and the only way to fix it was to
+  // create the App, open it, and attach afterwards. These three pieces of state are the
+  // same values the detail page's rails hold; they fold into the SDK builder at save
+  // (`.useTool()` / `.skill()` / `.withConnection()` / `.steer({ reach })`), which is
+  // exactly what `app_run.rs` reads back at RunApp.
+  const [toolGrants, setToolGrants] = useState<Record<string, string>>({});
+  const [reachInherit, setReachInherit] = useState(false);
+  const [skills, setSkills] = useState<PickedSkill[]>([]);
+  const [connections, setConnections] = useState<ConnectionEntry[]>([]);
   // Set once the scaffold has launched — switches the panel to the progress view.
   const [scaffolding, setScaffolding] = useState<{
     appHandle: string;
@@ -195,6 +213,25 @@ export function NewAppForm({
       }
       for (const ds of grounding) {
         builder = builder.dataset(ds);
+      }
+      // The capability rails, in the shape RunApp consumes: `useTool` writes the wish to
+      // `steering_config.tools.requested_grants` (mirrored to `references.tools`), `skill`
+      // writes `references.skills`, and `withConnection` writes `references.connections`
+      // PLUS the credential NAME into `guards.secret_scope` (never the secret, D81). Every
+      // one is a wish — the server still resolves `wish ∩ grants ∩ fireable` at run (SN-8).
+      // Scheduled-lane only: the hosted supervisor reads the framework + commands and
+      // nothing else, so a hosted App carrying these would be authoring dead weight.
+      for (const [toolId, toolVersion] of Object.entries(toolGrants)) {
+        builder = builder.useTool(toolId, toolVersion);
+      }
+      for (const s of skills) {
+        builder = builder.skill(s);
+      }
+      for (const c of connections) {
+        builder = builder.withConnection(c.descriptor, c.credential_ref);
+      }
+      if (reachInherit) {
+        builder = builder.steer({ reach: Reach.InheritPrincipal });
       }
       const trimmedRule = rule.trim();
       if (trimmedRule !== "") {
@@ -437,8 +474,10 @@ export function NewAppForm({
                 onClick={() =>
                   propose.mutate(
                     // The planner sees the whole brief, not just the goal: the name, the
-                    // instruction the App runs, and what files it can read. Filenames
-                    // only — the planner has no grant to dereference a content ref.
+                    // instruction the App runs, what files it can read, and — since the
+                    // rails below now exist — which tools, skills and connectors it was
+                    // given. Names only: the planner has no grant to dereference a content
+                    // ref, and a credential value has no business in a prompt.
                     composeProposeGoal({
                       name,
                       goal,
@@ -446,6 +485,9 @@ export function NewAppForm({
                       attachments: attach.attachments
                         .filter((a) => a.status === "ready")
                         .map((a) => a.filename),
+                      tools: Object.keys(toolGrants),
+                      skills: skills.map((s) => s.name),
+                      connections: connections.map((c) => c.descriptor),
                     }),
                     {
                       onSuccess: (p) => {
@@ -585,6 +627,56 @@ export function NewAppForm({
                 })}
               </div>
             </fieldset>
+          ) : null}
+
+          {/* THE CAPABILITY RAILS — tools / skills / integrations, authored HERE so the
+              App is plugged in the moment it exists. Each mounts the same picker the App
+              detail page's rails mount, so what you attach at create and what you attach
+              afterwards are literally the same control (they cannot drift). Scheduled
+              only: `hostsupervisor.rs` launches a hosted App from its framework +
+              install/dev/build commands and never reads a tool, skill or connection, so
+              offering these on the hosted lane would be a control that cannot fire. */}
+          {kind === "scheduled" ? (
+            <>
+              <fieldset className="new-app-form__rail" data-testid="new-app-tools">
+                <legend className="muted">MCP tools (a wish, granted at run)</legend>
+                <ToolsPicker
+                  grants={toolGrants}
+                  reachInherit={reachInherit}
+                  onChange={(g, r) => {
+                    setToolGrants(g);
+                    setReachInherit(r);
+                  }}
+                  disabled={busy}
+                  disabledTitle="Creating…"
+                  groupTestId="new-app-tools"
+                  itemTestId="new-app-tool"
+                  reachTestId="new-app-tools-reach"
+                />
+              </fieldset>
+              <fieldset className="new-app-form__rail" data-testid="new-app-skills">
+                <legend className="muted">Skills (instructions + tool wishes)</legend>
+                <SkillsPicker
+                  skills={skills}
+                  onChange={setSkills}
+                  disabled={busy}
+                  disabledTitle="Creating…"
+                  groupTestId="new-app-skills"
+                  itemTestId="new-app-skill"
+                />
+              </fieldset>
+              <fieldset className="new-app-form__rail" data-testid="new-app-connections">
+                <legend className="muted">Integrations (connectors)</legend>
+                <ConnectionsPicker
+                  connections={connections}
+                  onChange={setConnections}
+                  disabled={busy}
+                  disabledTitle="Creating…"
+                  groupTestId="new-app-connections"
+                  itemTestId="new-app-connection"
+                />
+              </fieldset>
+            </>
           ) : null}
 
           {kind === "scheduled" ? (

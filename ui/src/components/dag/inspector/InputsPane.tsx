@@ -13,6 +13,7 @@ import { toUiError } from "../../../kx/errors";
 import { type BatchedContentVM, useContentBatch } from "../../../kx/use-content-batch";
 import type { MoteVM } from "../../../kx/use-projection";
 import { shortHex } from "../../../lib/format";
+import { memberMoteSearch } from "../../../lib/run-anchor";
 import { DigestChip } from "../../DigestChip";
 import { EmptyState } from "../../EmptyState";
 import { ErrorNotice } from "../../ErrorNotice";
@@ -60,6 +61,10 @@ export function InputsPane({
           </div>
           <InputPreview
             instanceId={instanceId}
+            // The inspected Mote anchors the artifact deep-link back to THIS run — the
+            // Artifacts tab opens its own projection query and would otherwise widen to
+            // the whole journal at the moment the user drills into one preview.
+            anchorMoteId={mote.moteId}
             resultRef={resultRef}
             item={resultRef ? byRef.get(resultRef) : undefined}
             loading={batch.isLoading && refs.length > 0}
@@ -72,11 +77,13 @@ export function InputsPane({
 
 function InputPreview({
   instanceId,
+  anchorMoteId,
   resultRef,
   item,
   loading,
 }: {
   instanceId: string;
+  anchorMoteId: string;
   resultRef: string | null;
   item: BatchedContentVM | undefined;
   loading: boolean;
@@ -108,7 +115,7 @@ function InputPreview({
           <Link
             to="/workflows/$instanceId"
             params={{ instanceId }}
-            search={{ tab: "artifacts", ref: resultRef }}
+            search={{ ...memberMoteSearch(anchorMoteId), tab: "artifacts", ref: resultRef }}
           >
             open the full artifact
           </Link>

@@ -32,6 +32,7 @@ import { toUiError } from "../../kx/errors";
 import { useApp, useApps, useSaveApp } from "../../kx/use-apps";
 import { useModels } from "../../kx/use-models";
 import { useSubmitWorkflow } from "../../kx/use-submit-workflow";
+import { runViewSearch } from "../../lib/run-anchor";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { BuilderNode } from "../builder/BuilderNode";
@@ -378,12 +379,15 @@ function BuilderInner({
       return; // `invalid` already surfaces the reason in the bar
     }
     submit.mutate(req, {
-      onSuccess: ({ instanceId, reactChainSalt }) => {
-        // See AppRunDrawer: the salt is what scopes the run view to THIS submission.
+      onSuccess: (started) => {
+        // Scope the run view to THIS submission. The salt alone was not enough here: a
+        // builder DAG is usually a PURE/MODEL pipeline with no single agentic step, so
+        // the server returns an empty salt for it and every such run landed unscoped.
+        // `runViewSearch` falls back to the terminal Mote, which every shape has.
         void navigate({
           to: "/workflows/$instanceId",
-          params: { instanceId },
-          search: reactChainSalt ? { chain: reactChainSalt } : {},
+          params: { instanceId: started.instanceId },
+          search: runViewSearch(started),
         });
       },
     });

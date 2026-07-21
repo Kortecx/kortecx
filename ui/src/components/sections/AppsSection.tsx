@@ -25,6 +25,7 @@ import {
 import { Icon } from "../shell/Icon";
 import { Popover } from "../shell/Popover";
 import { NewAppForm } from "./NewAppForm";
+import { ScheduleButton } from "./ScheduleButton";
 
 /**
  * The Apps catalog (POC-4) — a READ-ONLY view over the caller's durable
@@ -36,9 +37,11 @@ import { NewAppForm } from "./NewAppForm";
  * POC-5a adds the agentic "New App" scaffold (inline panel) — author an App
  * here, the agent scaffolds a starter project tree into its CoW branch, then Open
  * browses + edits it (POC-5d). The SDK/CLI surface (`kx app` / `app()`) still
- * authors too. Share + Schedule are Cloud (D129) — honest-disabled chips, never
- * fake controls. Nothing currently exposed disappears: Apps is ADDITIVE alongside
- * Workflows/Blueprints (the consolidation rides the deferred redesign).
+ * authors too. Share across parties stays Cloud (D129) — an honest-disabled chip, never a
+ * fake control; SCHEDULE does not, and never did: local cron ships, so a scheduled App
+ * carries the real {@link ScheduleButton} next to Run. Nothing currently exposed
+ * disappears: Apps is ADDITIVE alongside Workflows/Blueprints (the consolidation rides
+ * the deferred redesign).
  */
 /** The two Apps sections (D213): SCHEDULED = functional automation apps (run on a
  *  trigger, pluggable into workflows); HOSTED = experience apps (a real web app the
@@ -436,6 +439,18 @@ function AppCard({
               >
                 <Icon name="play" size={16} />
               </button>
+              {/* Schedule — the other half of "run". `ScheduleButton` already accepted an
+                  `appHandle` target and had NO call site anywhere, so the Scheduled lane
+                  offered no way to actually schedule anything; the only route was the
+                  global Tools → Triggers form, typing the handle by hand. Hosted cards
+                  skip it: a trigger fires an App through RunApp, which refuses a hosted
+                  App for having no blueprint. */}
+              <ScheduleButton
+                appHandle={app.handle}
+                triggerClassName="iconbtn"
+                iconOnly
+                testId={`app-schedule-${app.handle}`}
+              />
               <span
                 className="iconbtn iconbtn--static"
                 data-testid={`app-lock-${app.handle}`}
@@ -646,16 +661,24 @@ function AppsTable({
               {hosted ? (
                 <HostedRunButton handle={a.handle} />
               ) : (
-                <button
-                  type="button"
-                  className="iconbtn"
-                  data-testid={`app-run-${a.handle}`}
-                  title="Run this App"
-                  aria-label="Run"
-                  onClick={() => onRun(a.handle)}
-                >
-                  <Icon name="play" size={16} />
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="iconbtn"
+                    data-testid={`app-run-${a.handle}`}
+                    title="Run this App"
+                    aria-label="Run"
+                    onClick={() => onRun(a.handle)}
+                  >
+                    <Icon name="play" size={16} />
+                  </button>
+                  <ScheduleButton
+                    appHandle={a.handle}
+                    triggerClassName="iconbtn"
+                    iconOnly
+                    testId={`app-schedule-${a.handle}`}
+                  />
+                </>
               )}
               <button
                 type="button"

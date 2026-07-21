@@ -125,9 +125,11 @@ export interface UseProjectionOptions {
    * this submission works as the anchor; `RunHandle.react_chain_salt` is the one the
    * gateway already returns for a run with a single agentic step.
    *
-   * When the anchor is absent from the projection the result is EMPTY and
-   * `scopeMissed` is true — the caller must say it cannot scope rather than quietly
-   * showing the whole journal.
+   * When the anchor is absent from the projection the motes are left UNSCOPED and
+   * `scopeMissed` is true. (The narrowing is dropped rather than emptied so the run view
+   * can still render something; that only stays honest because every consumer checks the
+   * flag FIRST — see {@link ScopedProjectionVM.scopeMissed}. A consumer that reads
+   * `motes` without it will silently present the whole journal as the run.)
    */
   scopeMoteId?: string;
 }
@@ -136,10 +138,11 @@ export interface UseProjectionOptions {
 export interface ScopedProjectionVM extends ProjectionVM {
   /**
    * True when a `scopeMoteId` was requested but is not present in the fold — a stale
-   * link, or a run whose shape yields no single agentic step (the gateway returns an
-   * empty salt for a pure-DAG or multi-agent recipe). The view must NOT silently fall
-   * back to the unscoped set: showing every other run's Motes as if they were this
-   * run's is the bug this option exists to fix.
+   * link, or a journal rebuilt under the same endpoint. `motes` then holds the UNSCOPED
+   * fold, so this flag is the only thing standing between the user and every other run's
+   * Motes presented as this run's — the exact bug the option exists to fix. CHECK IT
+   * BEFORE READING `motes`, and say "could not isolate this run" rather than describing
+   * what is in the array.
    */
   readonly scopeMissed: boolean;
 }
