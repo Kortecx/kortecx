@@ -19,6 +19,7 @@ import {
   useListPendingApprovals,
 } from "../../kx/use-approvals";
 import { shortHex } from "../../lib/format";
+import { memberMoteSearch } from "../../lib/run-anchor";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 
@@ -105,6 +106,11 @@ export function ApprovalsDrawer() {
                       <Link
                         to="/workflows/$instanceId"
                         params={{ instanceId: ap.instanceId }}
+                        // The pending Mote is a member of the run's component, and the
+                        // scope is a connected-component walk — so it anchors the view
+                        // just as well as the sink would. Without it, opening a run from
+                        // an approval showed the whole shared journal.
+                        search={memberMoteSearch(ap.moteId)}
                         className="linkbtn mono"
                         title="Open this run"
                       >

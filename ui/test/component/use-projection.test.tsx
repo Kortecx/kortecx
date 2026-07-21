@@ -4,6 +4,7 @@ import {
   allTerminal,
   isRunAtRest,
   runSettled,
+  scopeProjection,
   toProjectionVM,
   useProjection,
 } from "../../src/kx/use-projection";
@@ -114,7 +115,106 @@ describe("isRunAtRest (the poll-stop signal)", () => {
   });
 });
 
+/**
+ * The scope is the difference between "this run" and "everything this gateway ever ran":
+ * one `kx serve` is ONE journal with ONE instance id shared by every submission. These
+ * pin the three outcomes a caller has to tell apart — no anchor, a good anchor, and an
+ * anchor that isn't there — because #362 shipped the machinery with none of them tested
+ * and the wiring turned out to be dead.
+ */
+describe("scopeProjection", () => {
+  const A1 = "a1".repeat(32);
+  const A2 = "a2".repeat(32);
+  const B1 = "b1".repeat(32);
+  /** Two unrelated runs folded from one journal — what a shared serve accumulates. */
+  const journal = () =>
+    toProjectionVM(
+      projection(
+        [
+          mote({ moteId: A1 }),
+          mote({ moteId: A2, parents: [{ parentId: A1 }] }),
+          mote({ moteId: B1 }),
+        ],
+        { currentSeq: 3 },
+      ),
+    );
+
+  it("no anchor ⇒ the whole fold, and scopeMissed is FALSE", () => {
+    // "Unscoped" is not a failure — it is a caller that never asked. The view still has
+    // to say what it is showing, but `scopeMissed` must not claim a lookup failed.
+    const out = scopeProjection(journal());
+    expect(out.motes.map((m) => m.moteId)).toEqual([A1, A2, B1]);
+    expect(out.scopeMissed).toBe(false);
+  });
+
+  it("an anchor in the fold ⇒ only that run's connected component", () => {
+    const out = scopeProjection(journal(), A2);
+    expect(out.motes.map((m) => m.moteId)).toEqual([A1, A2]);
+    expect(out.scopeMissed).toBe(false);
+    // The instance-level facts are the journal's and are carried through untouched.
+    expect(out.currentSeq).toBe(3);
+  });
+
+  it("an anchor that is NOT in the fold ⇒ scopeMissed, with the motes left UNSCOPED", () => {
+    // A stale link, or a journal rebuilt under the same endpoint.
+    //
+    // ⚠ PINNING A SHARP EDGE, not endorsing it: the narrowing is DROPPED here, not
+    // applied-and-emptied, so `motes` still holds every run in the journal. The flag is
+    // therefore the ONLY thing between the user and somebody else's run being presented
+    // as theirs — every consumer must branch on `scopeMissed` BEFORE it reads `motes`
+    // (the run view's notice, ArtifactGallery, the export + clone refusals all do).
+    const out = scopeProjection(journal(), "ff".repeat(32));
+    expect(out.scopeMissed).toBe(true);
+    expect(out.motes.map((m) => m.moteId)).toEqual([A1, A2, B1]);
+  });
+
+  it("an EMPTY anchor is 'not asked', not 'not found'", () => {
+    // `runAnchor()` returns "" when the server gave us neither key, and several call
+    // sites forward it straight through. That has to read as unscoped.
+    const out = scopeProjection(journal(), "");
+    expect(out.scopeMissed).toBe(false);
+    expect(out.motes).toHaveLength(3);
+  });
+});
+
 describe("useProjection", () => {
+  it("scopes the query to one run; an UNSCOPED call is a different cache entry", async () => {
+    const A1 = "a1".repeat(32);
+    const A2 = "a2".repeat(32);
+    const B1 = "b1".repeat(32);
+    const { client } = makeMockClient({
+      getProjection: async () =>
+        projection([
+          mote({ moteId: A1, stateCode: 3 }),
+          mote({ moteId: A2, stateCode: 3, parents: [{ parentId: A1 }] }),
+          mote({ moteId: B1, stateCode: 3 }),
+        ]),
+    });
+    const wrapper = connectedWrapper(client);
+    const scoped = renderHook(() => useProjection(INSTANCE, { scopeMoteId: A2 }), { wrapper });
+    await waitFor(() => expect(scoped.result.current.data).toBeTruthy());
+    expect(scoped.result.current.data?.motes.map((m) => m.moteId)).toEqual([A1, A2]);
+    expect(scoped.result.current.data?.scopeMissed).toBe(false);
+
+    // Same instance, no scope: `scopeMoteId` is part of the query key, so this is a
+    // separate entry holding the whole journal — which is exactly how the graph could
+    // show 4 steps while the Artifacts tab beside it listed the workspace.
+    const unscoped = renderHook(() => useProjection(INSTANCE), { wrapper });
+    await waitFor(() => expect(unscoped.result.current.data).toBeTruthy());
+    expect(unscoped.result.current.data?.motes).toHaveLength(3);
+  });
+
+  it("reports scopeMissed when the anchor is absent from the fold", async () => {
+    const { client } = makeMockClient({
+      getProjection: async () => projection([mote({ moteId: "aa".repeat(32), stateCode: 3 })]),
+    });
+    const { result } = renderHook(() => useProjection(INSTANCE, { scopeMoteId: "ff".repeat(32) }), {
+      wrapper: connectedWrapper(client),
+    });
+    await waitFor(() => expect(result.current.data).toBeTruthy());
+    expect(result.current.data?.scopeMissed).toBe(true);
+  });
+
   it("loads a projection from the gateway", async () => {
     const { client, getProjection } = makeMockClient({
       getProjection: async () => projection([mote({ stateCode: 3 })], { currentSeq: 5 }),

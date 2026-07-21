@@ -22,8 +22,19 @@ import { ErrorNotice } from "../ErrorNotice";
 import { ResultPreview } from "../ResultPreview";
 import { ArtifactView } from "./ArtifactView";
 
-export function ArtifactGallery({ instanceId }: { instanceId: string }) {
-  const { artifacts, isLoading, error, refetch } = useRunArtifacts(instanceId);
+export function ArtifactGallery({
+  instanceId,
+  scopeMoteId,
+}: {
+  instanceId: string;
+  /** The run anchor from the URL (`?chain=`). Absent ⇒ the gallery lists every committed
+   *  output in the gateway's shared journal — the run view's unscoped notice covers it. */
+  scopeMoteId?: string;
+}) {
+  const { artifacts, scopeMissed, isLoading, error, refetch } = useRunArtifacts(
+    instanceId,
+    scopeMoteId,
+  );
   // Track the open row by its MOTE id, not its result_ref: distinct Motes can
   // legitimately commit IDENTICAL content (content-addressing dedups it to one
   // ref — e.g. a fan-out of honest PURE passthrough Motes), so a result_ref is
@@ -40,6 +51,18 @@ export function ArtifactGallery({ instanceId }: { instanceId: string }) {
   }
   if (error) {
     return <ErrorNotice error={toUiError(error)} onRetry={refetch} />;
+  }
+  // BEFORE the emptiness check, and before rendering a single row: a missed scope leaves
+  // `artifacts` holding the UNSCOPED fold (see `ScopedProjectionVM.scopeMissed`), so
+  // falling through here would list every output in the gateway's journal under this
+  // run's heading — confidently, with a count.
+  if (scopeMissed) {
+    return (
+      <EmptyState
+        title="This run's outputs could not be isolated"
+        detail="The link's run anchor is not in this gateway's journal — it may be stale, or from a journal that has since been rebuilt. Re-open the run from Apps or your run history."
+      />
+    );
   }
   if (artifacts.length === 0) {
     return (

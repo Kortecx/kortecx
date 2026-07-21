@@ -9,6 +9,7 @@ import { useRecipeSummaries, useRecipes } from "../../kx/use-recipes";
 import { useRuns } from "../../kx/use-runs";
 import { BLUEPRINT_NAMES_CHANGED_EVENT, loadBlueprintNames } from "../../lib/blueprint-names";
 import { humanizeHandle } from "../../lib/humanize-handle";
+import { runViewSearch } from "../../lib/run-anchor";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { BlueprintFormDrawer } from "./BlueprintFormDrawer";
@@ -51,19 +52,21 @@ export function WorkflowsCatalog() {
     invoke.mutate(
       { handle, args },
       {
-        onSuccess: ({ instanceId, terminalMoteId, recipeFingerprint }) => {
+        onSuccess: (started) => {
           add({
-            instanceId,
-            terminalMoteId,
-            recipeFingerprint,
+            instanceId: started.instanceId,
+            terminalMoteId: started.terminalMoteId,
+            // Persist the chain key too, so reopening this run from history stays scoped.
+            reactChainSalt: started.reactChainSalt,
+            recipeFingerprint: started.recipeFingerprint,
             handle,
             startedAt: Date.now(),
             args: JSON.stringify(args),
           });
           navigate({
             to: "/workflows/$instanceId",
-            params: { instanceId },
-            search: { terminal: terminalMoteId },
+            params: { instanceId: started.instanceId },
+            search: runViewSearch(started),
           });
         },
       },
@@ -87,9 +90,20 @@ export function WorkflowsCatalog() {
 
       {catalog ? (
         catalog.length === 0 ? (
+          // This list is `ListRecipes` — the `kx/recipes/*` handles the GATEWAY
+          // provisions. It is server-fixed: nothing the user builds is ever published
+          // into it (the builder's submit is an ad-hoc `SubmitWorkflow` DAG; its durable
+          // form is "Save as App"). The old copy promised the opposite, so a user who
+          // authored a workflow came back here and found an empty list with no
+          // explanation.
           <EmptyState
-            title="No workflows yet"
-            detail="Author one from the visual builder (New workflow), then it appears here to run and schedule."
+            title="This gateway publishes no workflows"
+            detail="The catalog lists the ready-made workflows a gateway ships with. It is fixed by the server — what you build here is never added to it. Save a workflow you author in the builder with “Save as App”; it then lives in Apps, where you can run and schedule it."
+            action={
+              <Link to="/apps" className="btnlink" data-testid="workflows-empty-apps-link">
+                Go to Apps →
+              </Link>
+            }
           />
         ) : (
           <m.div

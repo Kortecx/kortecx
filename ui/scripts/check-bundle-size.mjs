@@ -6,7 +6,7 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 659 KiB raw (674,816 B — the value enforced below; keep this line in
+ * Budget: 660 KiB raw (675,840 B — the value enforced below; keep this line in
  * lock-step with it, and with the step name in ci.yml, or the doc becomes the
  * third place that disagrees). Override with KX_UI_EAGER_BUDGET_BYTES for
  * emergencies — a deliberate, reviewed override, never a silent default bump.
@@ -44,6 +44,13 @@
  *     `common.js`: connection-context constructs the client up front, so a generated
  *     message schema cannot be lazy-split per feature. Measured 671,761 B (origin/main)
  *     → 673,979 B (+2,218 B eager); bumped to the next KiB boundary.
+ *   - 659 KiB → 660 KiB (run-view scoping): `RunHandle` gains `terminal_mote_id` — the
+ *     general run anchor, populated for every shape where `react_chain_salt` covers only
+ *     a single tool-granted agentic step — so the generated message schema grows again on
+ *     the eager `common.js`. Alongside it `lib/run-anchor` (the anchor rule, written once
+ *     instead of repeated at a dozen navigations) is pulled eager by the route modules
+ *     that validate `?chain=`/`?anchor=`. Measured 673,979 B (origin/main) → 674,866 B
+ *     (+887 B eager); bumped to the next KiB boundary.
  *
  * Exit 1 over budget. The printed table doubles as the GR10 evidence blob.
  */
@@ -54,7 +61,7 @@ import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(UI_ROOT, "dist");
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 674_816);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 675_840);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

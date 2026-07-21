@@ -7,6 +7,7 @@ import {
   mergeServerRuns,
   recordRun,
 } from "../../src/lib/recent-runs";
+import { runAnchor } from "../../src/lib/run-anchor";
 
 const EP = "http://127.0.0.1:50151";
 const OTHER = "http://127.0.0.1:60000";
@@ -62,6 +63,41 @@ describe("recent-runs", () => {
   it("corrupt store → empty list (no throw)", () => {
     localStorage.setItem(`kortecx.ui.runs:${EP}`, "{bad");
     expect(loadRuns(EP)).toEqual([]);
+  });
+
+  it("round-trips BOTH run anchors, so a reopened run is still scoped", () => {
+    // The anchor is only knowable at submit time. If the salt does not survive the
+    // localStorage round trip, closing and reopening a run silently widens its view back
+    // to the whole journal — the failure is invisible, the page just shows other runs.
+    recordRun(EP, {
+      ...run("aa".repeat(8), 1),
+      terminalMoteId: "7e".repeat(32),
+      reactChainSalt: "5a".repeat(32),
+    });
+    const [reloaded] = loadRuns(EP);
+    expect(reloaded?.terminalMoteId).toBe("7e".repeat(32));
+    expect(reloaded?.reactChainSalt).toBe("5a".repeat(32));
+    expect(runAnchor(reloaded ?? {})).toBe("5a".repeat(32));
+  });
+
+  it("a record written before the salt field existed still yields the terminal anchor", () => {
+    // Forward/backward compatibility: `reactChainSalt` is optional, and an old record
+    // must degrade to the terminal Mote rather than to "cannot scope".
+    localStorage.setItem(
+      `kortecx.ui.runs:${EP}`,
+      JSON.stringify([
+        {
+          instanceId: "aa".repeat(8),
+          terminalMoteId: "7e".repeat(32),
+          recipeFingerprint: null,
+          handle: null,
+          startedAt: 1,
+        },
+      ]),
+    );
+    const [old] = loadRuns(EP);
+    expect(old?.reactChainSalt).toBeUndefined();
+    expect(runAnchor(old ?? {})).toBe("7e".repeat(32));
   });
 });
 

@@ -60,11 +60,19 @@ export interface RunAppResult {
    * EMPTY when the App has no single agentic step — the server's honest answer for a
    * pure-DAG or multi-agent recipe, never something the client should invent.
    *
-   * It is the only key that distinguishes THIS run inside a serve's shared journal, so
-   * the run view is scoped by it (see `useProjection`'s `scopeMoteId`). The SDK used to
-   * drop it on this path while keeping it for submitWorkflow/invoke.
+   * It is one of the two keys that distinguish THIS run inside a serve's shared journal,
+   * so the run view is scoped by it (see `useProjection`'s `scopeMoteId`). The SDK used
+   * to drop it on this path while keeping it for submitWorkflow/invoke.
    */
   readonly reactChainSalt: string;
+  /**
+   * `RunHandle.terminal_mote_id` (hex) — the App's sink Mote. Populated for EVERY App
+   * shape, including the many with no single agentic step (where the salt above is
+   * empty by design), so this is what makes a plain App's run view scopable at all.
+   * EMPTY only from a server older than the field. Reduce the pair with `runAnchor()`
+   * (`lib/run-anchor`) rather than picking one here.
+   */
+  readonly terminalMoteId: string;
 }
 
 export function useRunApp() {
@@ -86,7 +94,11 @@ export function useRunApp() {
       if (!("recipeFingerprint" in run)) {
         throw new Error("unexpected runApp result");
       }
-      return { instanceId: run.instanceId, reactChainSalt: run.reactChainSalt };
+      return {
+        instanceId: run.instanceId,
+        reactChainSalt: run.reactChainSalt,
+        terminalMoteId: run.terminalMoteId,
+      };
     },
   });
 }

@@ -7,13 +7,17 @@
  * WISHES against the caller's grants and the live broker. Attach/detach is a
  * structure edit — it re-saves the envelope (`SaveApp`), so a LOCKED App
  * refuses it (the POC-5d lock covers structure edits; the control renders
- * disabled with the reason, D142 every-state). Chips, never a controlled
- * `<select>` (the UI-3 e2e gotcha).
+ * disabled with the reason, D142 every-state).
+ *
+ * The chips themselves are {@link SkillsPicker} — the SAME picker the New App create
+ * form mounts, so "attach at create" and "attach after create" cannot drift. This rail
+ * is now just the envelope adapter: read `references.skills`, write it back through
+ * `SaveApp`.
  */
 
 import { toUiError } from "../../kx/errors";
 import { useSaveApp } from "../../kx/use-apps";
-import { useListSkills } from "../../kx/use-skills";
+import { type PickedSkill, SkillsPicker } from "./CapabilityPickers";
 
 interface SkillRefJson {
   name: string;
@@ -37,42 +41,34 @@ export function SkillsRail({
   envelope: Record<string, unknown>;
   locked: boolean;
 }) {
-  const catalog = useListSkills();
   const save = useSaveApp();
   const attached = attachedSkills(envelope);
-  const attachedNames = new Set(attached.map((s) => s.name));
-  const attachable = catalog.skills.filter((s) => !attachedNames.has(s.name));
   const err = save.error ? toUiError(save.error) : null;
 
-  const mutate = (skills: SkillRefJson[]) => {
+  // The ONE place the authoring vocabulary (`instructionsRef`, what the SDK `.skill()`
+  // takes) meets the envelope's wire spelling (`instructions_ref`). The picker speaks
+  // the former on both surfaces; only this rail writes the envelope.
+  const picked: PickedSkill[] = attached.map((s) => ({
+    name: s.name,
+    instructionsRef: s.instructions_ref,
+    ...(s.tools && Object.keys(s.tools).length > 0 ? { tools: s.tools } : {}),
+  }));
+
+  const commit = (next: PickedSkill[]) => {
+    const skills: SkillRefJson[] = next.map((s) => ({
+      name: s.name,
+      instructions_ref: s.instructionsRef,
+      ...(s.tools && Object.keys(s.tools).length > 0 ? { tools: s.tools } : {}),
+    }));
     // Omit-empty without `delete` (biome perf rule): rebuild the objects.
     const { skills: _drop, ...restRefs } = {
       ...(envelope.references as Record<string, unknown> | undefined),
     };
     const refs: Record<string, unknown> = skills.length > 0 ? { ...restRefs, skills } : restRefs;
     const { references: _dropRefs, ...restEnv } = envelope;
-    const next: Record<string, unknown> =
+    const nextEnv: Record<string, unknown> =
       Object.keys(refs).length > 0 ? { ...restEnv, references: refs } : restEnv;
-    save.mutate({ handle, envelope: next });
-  };
-
-  const attach = (name: string) => {
-    const s = catalog.skills.find((c) => c.name === name);
-    if (!s) {
-      return;
-    }
-    mutate([
-      ...attached,
-      {
-        name: s.name,
-        instructions_ref: s.instructionsRef,
-        ...(Object.keys(s.tools).length > 0 ? { tools: s.tools } : {}),
-      },
-    ]);
-  };
-
-  const detach = (name: string) => {
-    mutate(attached.filter((s) => s.name !== name));
+    save.mutate({ handle, envelope: nextEnv });
   };
 
   return (
@@ -83,48 +79,14 @@ export function SkillsRail({
         only at run, <code className="mono">wish ∩ grants ∩ fireable</code>).
         {locked ? " App is locked — unlock to change skills." : ""}
       </p>
-      <div className="chip-row" data-testid="app-skills-attached">
-        {attached.length === 0 ? (
-          <span className="muted">No skills attached.</span>
-        ) : (
-          attached.map((s) => (
-            <button
-              key={s.name}
-              type="button"
-              className="chip chip--active"
-              disabled={locked || save.isPending}
-              title={locked ? "App is locked" : `Detach ${s.name}`}
-              onClick={() => detach(s.name)}
-              data-testid={`app-skill-detach-${s.name}`}
-            >
-              {s.name} ✕
-            </button>
-          ))
-        )}
-      </div>
-      {catalog.notWired ? (
-        <p className="muted">Skill catalog not available on this gateway.</p>
-      ) : attachable.length > 0 ? (
-        <div className="chip-row" data-testid="app-skills-attachable">
-          {attachable.map((s) => (
-            <button
-              key={s.name}
-              type="button"
-              className="chip"
-              disabled={locked || save.isPending}
-              title={
-                locked
-                  ? "App is locked"
-                  : `Attach ${s.name} (${Object.keys(s.tools).length} tool wish(es))`
-              }
-              onClick={() => attach(s.name)}
-              data-testid={`app-skill-attach-${s.name}`}
-            >
-              + {s.name}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <SkillsPicker
+        skills={picked}
+        onChange={commit}
+        disabled={locked || save.isPending}
+        disabledTitle={locked ? "App is locked" : "Saving…"}
+        groupTestId="app-skills"
+        itemTestId="app-skill"
+      />
       {err ? (
         <p className="field-error" data-testid="app-skills-error">
           {err.message}

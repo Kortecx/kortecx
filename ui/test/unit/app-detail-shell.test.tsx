@@ -57,6 +57,34 @@ vi.mock("../../src/kx/use-skills", () => ({
     refetch: vi.fn(),
   }),
 }));
+// The per-App trigger strip + its ScheduleButton reach useConnection, which THROWS
+// outside KxConnectionProvider — this suite wraps in QueryClientProvider only. An empty,
+// wired registry keeps the strip mounted (so the shell can assert it) and inert.
+vi.mock("../../src/kx/use-triggers", () => ({
+  useListTriggers: () => ({
+    triggers: [],
+    notWired: false,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+  useRegisterTrigger: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    isError: false,
+    isSuccess: false,
+    error: null,
+  }),
+  useDeregisterTrigger: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    variables: undefined,
+    error: null,
+  }),
+  useTestTrigger: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null }),
+  useFireTrigger: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null }),
+}));
 vi.mock("../../src/kx/use-app-files", () => ({
   useAppBranch: () => ({
     data: { items: [{ path: "README.md", contentRef: "ab".repeat(32) }] },
@@ -235,11 +263,39 @@ describe("App IDE shell (POC-5d)", () => {
     expect(screen.queryByTestId("app-lineage-stub")).toBeNull();
   });
 
-  it("the tab list is identical in both lanes (the route validates it)", () => {
+  // The tab strip had NO kind filter, so a hosted App offered Skills / MCP Tools /
+  // Integrations — three rails the hosted lane provably never reads (hostsupervisor.rs
+  // launches from the `hosted` config alone; the code that resolves a tool wish, a skill
+  // and a connector lives behind RunApp, which refuses a hosted App).
+  it("a HOSTED app offers only the tabs its lane reads (no Skills / Tools / Integrations)", () => {
     KIND = "experience";
     render(<AppDetailSection handle="apps/local/site" />);
-    for (const t of ["files", "lineage", "skills", "tools", "integrations"]) {
+    for (const t of ["files", "lineage"]) {
       expect(screen.getByTestId(`app-tab-${t}`)).toBeInTheDocument();
     }
+    for (const t of ["skills", "tools", "integrations"]) {
+      expect(screen.queryByTestId(`app-tab-${t}`)).toBeNull();
+    }
+  });
+
+  it("a HOSTED app deep-linked to a lane-less tab falls back to Files", () => {
+    KIND = "experience";
+    render(<AppDetailSection handle="apps/local/site" tab="skills" />);
+    // No skills rail, and the Files pane is what rendered instead.
+    expect(screen.queryByTestId("app-skills-rail")).toBeNull();
+    expect(screen.getByTestId("app-files-sidebar")).toBeInTheDocument();
+  });
+
+  // ScheduleButton accepted an `appHandle` target and had zero call sites; the strip is
+  // where a scheduled App's schedule now lives. A hosted App gets neither (a trigger
+  // fires through RunApp, which refuses it).
+  it("a SCHEDULED app carries the per-App trigger strip; a hosted one does not", () => {
+    const { unmount } = render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.getByTestId("app-triggers-strip")).toBeInTheDocument();
+    expect(screen.getByTestId("app-schedule-apps/local/echo")).toBeInTheDocument();
+    unmount();
+    KIND = "experience";
+    render(<AppDetailSection handle="apps/local/site" />);
+    expect(screen.queryByTestId("app-triggers-strip")).toBeNull();
   });
 });

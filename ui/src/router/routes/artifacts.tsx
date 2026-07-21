@@ -32,6 +32,11 @@ export const artifactsRoute = createRoute({
     }
     return out;
   },
+  // NOTE: these legacy links predate run scoping and carry no per-run anchor, so the
+  // redirect cannot supply `chain` — the run view lands unscoped and says so. Inventing
+  // an anchor from the content ref would be a guess (a `ref` is a CONTENT digest, not a
+  // Mote id), and a wrong anchor renders an empty run, which is worse than an honest
+  // "showing the whole journal".
   beforeLoad: ({ search }) => {
     if (search.instance && search.ref) {
       throw redirect({

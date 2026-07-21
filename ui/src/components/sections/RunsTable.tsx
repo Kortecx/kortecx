@@ -11,6 +11,7 @@ import { useRuns } from "../../kx/use-runs";
 import { shortHex } from "../../lib/format";
 import { humanizeHandle } from "../../lib/humanize-handle";
 import type { RunRecord } from "../../lib/recent-runs";
+import { runAnchor, runViewHref, runViewSearch } from "../../lib/run-anchor";
 import { RUN_NAMES_CHANGED_EVENT, loadRunNames, setRunName } from "../../lib/run-names";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
@@ -222,7 +223,10 @@ function RunRow({
         <Link
           to="/workflows/$instanceId"
           params={{ instanceId: run.instanceId }}
-          search={run.terminalMoteId ? { terminal: run.terminalMoteId } : {}}
+          // Carry BOTH anchors: `terminal` stops the poll, `chain` scopes the fold to
+          // this run. A durable-only (journal) row has neither and lands unscoped —
+          // the run view says so rather than passing the journal off as the run.
+          search={runViewSearch(run)}
           className="iconbtn"
           aria-label="Open run"
           title="Open run"
@@ -284,11 +288,11 @@ function RunDetailDrawer({
     invoke.mutate(
       { handle: run.handle, args },
       {
-        onSuccess: ({ instanceId, terminalMoteId }) => {
+        onSuccess: (started) => {
           void navigate({
             to: "/workflows/$instanceId",
-            params: { instanceId },
-            search: { terminal: terminalMoteId },
+            params: { instanceId: started.instanceId },
+            search: runViewSearch(started),
           });
         },
       },
@@ -343,7 +347,7 @@ function RunDetailDrawer({
           <Link
             to="/workflows/$instanceId"
             params={{ instanceId: run.instanceId }}
-            search={run.terminalMoteId ? { terminal: run.terminalMoteId } : {}}
+            search={runViewSearch(run)}
             className="btnlink"
             data-testid="run-view-full"
             onClick={onClose}
@@ -352,7 +356,9 @@ function RunDetailDrawer({
           </Link>
           {/* The ONLY open-in-new-window button lives in the popup (point 4). */}
           <a
-            href={`/workflows/${run.instanceId}${run.terminalMoteId ? `?terminal=${run.terminalMoteId}` : ""}`}
+            // The one run-view navigation that can't be a <Link> (a real new window), so
+            // it builds the same search by hand — same helper, no second convention.
+            href={runViewHref(run.instanceId, run)}
             target="_blank"
             rel="noopener noreferrer"
             className="linkbtn"
@@ -426,7 +432,14 @@ function RunDetailDrawer({
           ) : null}
           <Link
             to="/blueprints/new"
-            search={{ clone: run.instanceId }}
+            // Clone reconstructs a builder graph from the run's DAG, so it needs the same
+            // anchor the run view does — without it the "clone" is every Mote in the
+            // journal. Omitted (and honestly reported by the builder) when unknown.
+            search={
+              runAnchor(run)
+                ? { clone: run.instanceId, anchor: runAnchor(run) }
+                : { clone: run.instanceId }
+            }
             className="linkbtn"
             data-testid="run-remix"
             onClick={onClose}

@@ -20,12 +20,15 @@ const BlueprintBuilderSection = lazy(() =>
  *  `clone` when both are present. */
 interface BuilderSearch {
   clone?: string;
+  /** The cloned run's scope anchor (64-hex Mote id) — a gateway journal is shared by every
+   *  run, so `clone` alone selects the whole workspace's DAG (see `useCloneGraph`). */
+  anchor?: string;
   app?: string;
 }
 
 /** Loads + reconstructs a run's DAG, then opens the builder seeded from it. */
-function CloneLoader({ instanceId }: { instanceId: string }) {
-  const { graph, loading, error } = useCloneGraph(instanceId);
+function CloneLoader({ instanceId, anchorMoteId }: { instanceId: string; anchorMoteId?: string }) {
+  const { graph, loading, error } = useCloneGraph(instanceId, anchorMoteId);
   if (loading) {
     return <EmptyState title="Cloning workflow…" detail="Reconstructing the graph to remix." />;
   }
@@ -41,7 +44,7 @@ function CloneLoader({ instanceId }: { instanceId: string }) {
 
 function BuilderScreen() {
   const { status } = useConnection();
-  const { clone, app } = useSearch({ from: "/blueprints/new" });
+  const { clone, anchor, app } = useSearch({ from: "/blueprints/new" });
   if (status !== "connected") {
     return <ConnectGate />;
   }
@@ -55,7 +58,7 @@ function BuilderScreen() {
     );
   }
   if (clone) {
-    return <CloneLoader instanceId={clone} />;
+    return <CloneLoader instanceId={clone} {...(anchor ? { anchorMoteId: anchor } : {})} />;
   }
   return (
     <Suspense fallback={<EmptyState title="Loading builder…" />}>
@@ -72,6 +75,10 @@ export const blueprintsNewRoute = createRoute({
     // An instance id is a 16-byte (32 hex char) server-derived id.
     if (typeof search.clone === "string" && /^[0-9a-f]{32}$/.test(search.clone)) {
       out.clone = search.clone;
+    }
+    // The anchor is a 32-byte (64 hex char) server-derived Mote id.
+    if (typeof search.anchor === "string" && /^[0-9a-f]{64}$/.test(search.anchor)) {
+      out.anchor = search.anchor;
     }
     // An App handle (e.g. `kx/apps/<slug>`) — a conservative safe charset; the server
     // re-validates ownership (a not-owned handle returns a uniform not-found).

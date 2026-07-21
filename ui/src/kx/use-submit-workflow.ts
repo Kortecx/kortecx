@@ -24,6 +24,13 @@ export interface SubmittedWorkflow {
    * workflow rather than the whole workspace.
    */
   reactChainSalt: string;
+  /**
+   * `RunHandle.terminal_mote_id` (hex) — the compiled DAG's sink Mote. The builder's
+   * submits are overwhelmingly PURE/MODEL pipelines with no single agentic step, so the
+   * salt above is empty for most of them and this is the anchor that actually scopes
+   * them (`lib/run-anchor`). EMPTY only from a server older than the field.
+   */
+  terminalMoteId: string;
 }
 
 export function useSubmitWorkflow() {
@@ -44,6 +51,7 @@ export function useSubmitWorkflow() {
         instanceId: run.instanceId,
         recipeFingerprint: run.recipeFingerprint,
         reactChainSalt: run.reactChainSalt,
+        terminalMoteId: run.terminalMoteId,
       };
     },
   });

@@ -20,6 +20,7 @@ import {
   tallyEventsByKind,
 } from "../../lib/event-format";
 import { shortHex } from "../../lib/format";
+import { memberMoteSearch } from "../../lib/run-anchor";
 import { EmptyState } from "../EmptyState";
 import { ResultPreview } from "../ResultPreview";
 
@@ -264,6 +265,11 @@ function GlobalEventRow({
           <Link
             to="/workflows/$instanceId"
             params={{ instanceId: delta.instanceId }}
+            // The event's own Mote anchors the scope: it belongs to the run that emitted
+            // the row, and the fold is a connected-component walk, so any member does. A
+            // pre-registration/registered delta has no Mote — that row opens unscoped and
+            // the run view says so.
+            search={memberMoteSearch(delta.moteId)}
             className="linkbtn mono"
             data-testid="global-event-run"
             title="Open this run"

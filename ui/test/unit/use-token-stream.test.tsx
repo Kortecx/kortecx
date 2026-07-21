@@ -52,7 +52,12 @@ it("a stream that ends WITHOUT a terminal chunk reports dropped", async () => {
   // The gate-revocation shape: two pieces arrive, then the socket closes cleanly with no
   // `done` frame. Before the fix this left `dropped === false` — an empty-looking pane
   // that claimed nothing was wrong.
-  wsTokensImpl.mockImplementation(streamOf([{ text: "Hel", done: false }, { text: "lo", done: false }]));
+  wsTokensImpl.mockImplementation(
+    streamOf([
+      { text: "Hel", done: false },
+      { text: "lo", done: false },
+    ]),
+  );
 
   const { result } = renderHook(() => useTokenStream("aa", "bb", true));
 
@@ -64,7 +69,12 @@ it("a stream that ends WITHOUT a terminal chunk reports dropped", async () => {
 it("a stream that ends WITH a terminal chunk does not report dropped", async () => {
   // The other direction, and the one that makes the signal worth having: a normal
   // completion must stay quiet. If this ever flips, `dropped` is noise.
-  wsTokensImpl.mockImplementation(streamOf([{ text: "Hel", done: false }, { text: "lo", done: true }]));
+  wsTokensImpl.mockImplementation(
+    streamOf([
+      { text: "Hel", done: false },
+      { text: "lo", done: true },
+    ]),
+  );
 
   const { result } = renderHook(() => useTokenStream("aa", "bb", true));
 

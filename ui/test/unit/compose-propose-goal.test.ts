@@ -47,4 +47,37 @@ describe("composeProposeGoal", () => {
     });
     expect(out).toContain("Context files it can read: real.csv");
   });
+
+  it("names the capabilities the App was given, as wishes", () => {
+    // The create form grew tools/skills/integrations rails, and the planner was told
+    // none of them — so it proposed steps for an App it believed had no capabilities,
+    // and the attached tools only became real at run time in a DAG never shaped around
+    // them. Names only, and never a credential value.
+    const out = composeProposeGoal({
+      name: "Triage Bot",
+      goal: "triage inbound support mail",
+      tools: ["mcp-echo/echo", "retrieve"],
+      skills: ["classification"],
+      connections: ["github/issues"],
+    });
+    expect(out).toContain("Tools it may request: mcp-echo/echo, retrieve");
+    expect(out).toContain("Skills it carries: classification");
+    expect(out).toContain("Integrations it can reach: github/issues");
+  });
+
+  it("a bare goal still composes to itself when no capability is attached", () => {
+    // The invariant that keeps the common case byte-identical to what the planner
+    // received before the rails existed — adding three optional inputs must not change
+    // the prompt for an App that uses none of them.
+    expect(composeProposeGoal({ name: "", goal: "just a goal" })).toBe("just a goal");
+    expect(
+      composeProposeGoal({
+        name: "",
+        goal: "just a goal",
+        tools: ["  "],
+        skills: [],
+        connections: [],
+      }),
+    ).toBe("just a goal");
+  });
 });

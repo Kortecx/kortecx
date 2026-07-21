@@ -13,6 +13,7 @@ import { useRuns } from "../../kx/use-runs";
 import { BLUEPRINT_NAMES_CHANGED_EVENT, loadBlueprintNames } from "../../lib/blueprint-names";
 import { blueprintInputs } from "../../lib/export-blueprint";
 import { humanizeHandle } from "../../lib/humanize-handle";
+import { runViewSearch } from "../../lib/run-anchor";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { CodeViewer } from "../editor/CodeViewer";
@@ -84,11 +85,14 @@ export function RecipesSection({
     invoke.mutate(
       { handle, args },
       {
-        onSuccess: ({ instanceId, terminalMoteId, recipeFingerprint }) => {
+        onSuccess: (started) => {
           add({
-            instanceId,
-            terminalMoteId,
-            recipeFingerprint,
+            instanceId: started.instanceId,
+            terminalMoteId: started.terminalMoteId,
+            // Persist the chain key too — reopening this run from history must stay
+            // scoped to it, and only the submit response knows the salt.
+            reactChainSalt: started.reactChainSalt,
+            recipeFingerprint: started.recipeFingerprint,
             handle,
             startedAt: Date.now(),
             // Keep the args so the Workflows card can Run-again/Clone.
@@ -96,8 +100,8 @@ export function RecipesSection({
           });
           navigate({
             to: "/workflows/$instanceId",
-            params: { instanceId },
-            search: { terminal: terminalMoteId },
+            params: { instanceId: started.instanceId },
+            search: runViewSearch(started),
           });
         },
       },

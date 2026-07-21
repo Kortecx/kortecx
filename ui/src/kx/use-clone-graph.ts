@@ -16,6 +16,7 @@ import type {
   BuilderStepKind,
 } from "../components/builder/builder-graph";
 import { useConnection } from "./connection-context";
+import { scopeProjection, toProjectionVM } from "./use-projection";
 
 export interface UseCloneGraph {
   readonly graph: BuilderGraph | undefined;
@@ -60,10 +61,20 @@ function decodeConfig(items: ReadonlyArray<{ key: string; value: Uint8Array }>):
   };
 }
 
-export function useCloneGraph(instanceId: string | null): UseCloneGraph {
+/**
+ * `anchorMoteId` scopes the clone to ONE run. Without it this reconstructed "the run's
+ * DAG" from EVERY Mote in the gateway's journal — every other run's steps, plus a
+ * `GetMoteDetail` per foreign Mote — so remixing a 3-step workflow on a long-lived serve
+ * opened a builder canvas holding the whole workspace. Absent (an old deep link, a
+ * durable-only row) it stays unscoped: the caller says so rather than showing a
+ * plausible-looking wrong graph.
+ */
+export function useCloneGraph(instanceId: string | null, anchorMoteId?: string): UseCloneGraph {
   const { client, endpoint } = useConnection();
   const query = useQuery({
-    queryKey: ["clone-graph", endpoint, instanceId],
+    // The anchor is part of the identity, exactly as in `useProjection`: a scoped clone
+    // and an unscoped one are different graphs, not a cache hit for each other.
+    queryKey: ["clone-graph", endpoint, instanceId, anchorMoteId ?? ""],
     enabled: client !== null && instanceId !== null && instanceId.length > 0,
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,
@@ -71,7 +82,15 @@ export function useCloneGraph(instanceId: string | null): UseCloneGraph {
       if (!client || !instanceId) {
         throw new Error("not connected");
       }
-      const proj = await client.getProjection(instanceId);
+      const proj = scopeProjection(
+        toProjectionVM(await client.getProjection(instanceId)),
+        anchorMoteId,
+      );
+      if (proj.scopeMissed) {
+        // A miss leaves `motes` UNSCOPED, so falling through would seed the canvas with
+        // the whole journal — a "clone" of a run that is not even in it.
+        throw new Error("this run's steps are not in the gateway's journal — nothing to clone");
+      }
       const motes = proj.motes;
       // Builder-local ids in deterministic projection order (NOT MoteIds).
       const idOf = new Map<string, string>();

@@ -98,20 +98,45 @@ export function composeCapabilityPrompt(
  * exists; the content refs deliberately stay out, because the planner has no grant to
  * dereference them and handing it an identifier it cannot resolve invites a plan that
  * pretends to have read the file.
+ *
+ * CAPABILITIES ARE NAMED FOR THE SAME REASON. The author picks tools, skills and
+ * connectors on this form, and the planner was told none of them — so it proposed steps
+ * for an App it believed had no capabilities, and the attached tools only became real at
+ * run time, in a DAG that had never been shaped around them. Naming them is what makes
+ * "propose steps" produce a plan that actually uses what the App was given.
+ *
+ * They are named as WISHES, not as grants, because that is what they are: the server
+ * still resolves wish ∩ grants ∩ fireable at run (SN-8). Credential VALUES never appear
+ * here — only the connector descriptor — for the same reason attachment content does not.
  */
 export function composeProposeGoal(input: {
   name: string;
   goal: string;
   prompt?: string;
   attachments?: readonly string[];
+  tools?: readonly string[];
+  skills?: readonly string[];
+  connections?: readonly string[];
 }): string {
   const name = input.name.trim();
   const goal = input.goal.trim();
   const prompt = (input.prompt ?? "").trim();
-  const files = (input.attachments ?? []).filter((f) => f.trim() !== "");
+  const clean = (xs: readonly string[] | undefined): string[] =>
+    (xs ?? []).map((x) => x.trim()).filter((x) => x !== "");
+  const files = clean(input.attachments);
+  const tools = clean(input.tools);
+  const skills = clean(input.skills);
+  const connections = clean(input.connections);
   // A bare goal composes to itself — so the common case is byte-identical to what the
   // planner received before, and nothing about its behaviour changes for it.
-  if (name === "" && prompt === "" && files.length === 0) {
+  if (
+    name === "" &&
+    prompt === "" &&
+    files.length === 0 &&
+    tools.length === 0 &&
+    skills.length === 0 &&
+    connections.length === 0
+  ) {
     return goal;
   }
   const parts: string[] = [];
@@ -124,6 +149,15 @@ export function composeProposeGoal(input: {
   }
   if (files.length > 0) {
     parts.push(`Context files it can read: ${files.join(", ")}`);
+  }
+  if (tools.length > 0) {
+    parts.push(`Tools it may request: ${tools.join(", ")}`);
+  }
+  if (skills.length > 0) {
+    parts.push(`Skills it carries: ${skills.join(", ")}`);
+  }
+  if (connections.length > 0) {
+    parts.push(`Integrations it can reach: ${connections.join(", ")}`);
   }
   return parts.join("\n");
 }
