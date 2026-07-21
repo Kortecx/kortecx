@@ -94,6 +94,16 @@ hnsw = ["kx-gateway/hnsw"]
 # binary, which ships `console,hnsw`). FFI-free (hyper stack only); the default
 # build stays node-free and byte-identical.
 console = ["kx-gateway/console"]
+# D213: build `kx serve` with the HOSTED-APP SUPERVISOR — forwards to the kx-gateway
+# `hosted-apps` feature. Without this passthrough the four hosted RPCs (`StartHostedApp`
+# / `StopHostedApp` / `GetHostedAppStatus` / `ListHostedApps`) answer `unimplemented` on
+# every binary this repo produces, so a hosted App can be created and never started.
+# FFI-FREE: the gateway feature is `["embedded-worker", "tokio/process", "tokio/io-util"]`
+# and `embedded-worker` is already in its default set, so this adds two tokio features and
+# ZERO crates — the `build-no-inference` gate + the dep-wall stay green (proven by the
+# `kx-cli` arm of `just features-guard`). Serving a hosted App needs Node/npm on the host
+# at RUN time; nothing is required at build time.
+hosted-apps = ["kx-gateway/hosted-apps"]
 
 [dev-dependencies]
 # E2E: host an in-process gateway (kx_gateway::start) + drive CLIENT verbs as subprocesses.
