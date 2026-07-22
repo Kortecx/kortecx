@@ -226,6 +226,227 @@ fn framework_label(framework: &str) -> &'static str {
     }
 }
 
+/// The maximum bytes one sibling's distilled API summary may contribute to the next
+/// file's authoring prompt. Signatures are tiny by design (a name list + prop shape), so
+/// this only guards against a pathological `*Props` block; unlike a raw sibling BODY, an
+/// API summary this small can be carried for EVERY prior sibling without approaching the
+/// `n_tokens_all <= n_batch` decode limit.
+const MAX_SIBLING_API_BYTES: usize = 220;
+
+/// `true` for a path whose body is TypeScript/JavaScript source (the hosted lane), whose
+/// export surface and prop types [`distill_module_api`] can summarize. The scheduled lane's
+/// markdown/JSON files return `false` (nothing to import).
+fn is_ts_source(path: &str) -> bool {
+    matches!(
+        path.rsplit('.').next(),
+        Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "mts" | "cts")
+    )
+}
+
+fn push_unique(out: &mut Vec<String>, name: &str) {
+    let n = name.trim();
+    if !n.is_empty() && !out.iter().any(|e| e == n) {
+        out.push(n.to_string());
+    }
+}
+
+/// The names a TS/JS module `export`s, in first-seen (deterministic) order. A line scanner,
+/// not a parser: it recognizes the shipped export forms (`export const/function/class/type/
+/// interface/enum NAME`, `export default …`, and `export { a, b as c } [from …]`). Anything
+/// exotic it misses is caught by the serve-time `tsc --noEmit` gate, never by a failed scaffold.
+fn exported_symbols(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let Some(rest) = raw.trim_start().strip_prefix("export ") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        // `export { a, b as c }` (optionally `from '…'`) — an alias exports the alias name.
+        if let Some(inner) = rest.strip_prefix('{') {
+            let inner = inner.split('}').next().unwrap_or(inner);
+            for item in inner.split(',') {
+                let item = item.trim();
+                if item.is_empty() {
+                    continue;
+                }
+                let name = item.rsplit(" as ").next().unwrap_or(item).trim();
+                push_unique(&mut out, name);
+            }
+            continue;
+        }
+        // `export default …` — the module has a default export (imported under any name).
+        if rest.strip_prefix("default").is_some_and(|a| {
+            a.is_empty() || a.starts_with(|c: char| c.is_whitespace())
+        }) {
+            push_unique(&mut out, "default");
+            continue;
+        }
+        // `export [async] <kw> NAME …`
+        let after = rest.strip_prefix("async ").unwrap_or(rest);
+        for kw in [
+            "function ",
+            "const enum ",
+            "const ",
+            "let ",
+            "var ",
+            "abstract class ",
+            "class ",
+            "type ",
+            "interface ",
+            "enum ",
+        ] {
+            if let Some(tail) = after.strip_prefix(kw) {
+                let name = tail
+                    .trim_start()
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+                    .next()
+                    .unwrap_or("");
+                push_unique(&mut out, name);
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Return the substring INSIDE the brace block that opens at `open` (a byte offset of a `{`),
+/// up to its matching `}`. Empty if unbalanced or `open` is not a `{`.
+fn balanced_block(text: &str, open: usize) -> &str {
+    let bytes = text.as_bytes();
+    if bytes.get(open) != Some(&b'{') {
+        return "";
+    }
+    let mut depth = 0i32;
+    for (i, &b) in bytes.iter().enumerate().skip(open) {
+        match b {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &text[open + 1..i];
+                }
+            }
+            _ => {}
+        }
+    }
+    ""
+}
+
+/// Compact `field: Type` entries from a props-block body (the text between its braces). Takes
+/// the leading `name[?]: …` of each `;`/newline-separated segment, skipping methods/nested junk.
+fn field_entries(block: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for seg in block.split([';', '\n']) {
+        let seg = seg.trim().trim_end_matches(',').trim();
+        if seg.is_empty() || seg.starts_with("//") {
+            continue;
+        }
+        let Some(colon) = seg.find(':') else {
+            continue;
+        };
+        let name = seg[..colon].trim().trim_end_matches('?');
+        // A field name is a bare identifier; a `(` before the colon is a method — skip.
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        {
+            continue;
+        }
+        let mut entry = seg.to_string();
+        if entry.len() > 60 {
+            entry.truncate(60);
+            entry.push('…');
+        }
+        if !out.iter().any(|e| e == &entry) {
+            out.push(entry);
+        }
+    }
+    out
+}
+
+/// The prop shapes a `.tsx`/`.jsx` module declares — each `<Name>Props { field: Type; … }` —
+/// so a parent renders the component with EXACTLY the props it accepts. The single most
+/// common hosted-scaffold break is a parent passing flat props to a child that declared one
+/// object; naming the child's prop shape in the parent's prompt closes it.
+fn prop_shapes(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (idx, _) in text.match_indices("Props") {
+        let line_start = text[..idx].rfind('\n').map_or(0, |p| p + 1);
+        let head = text[line_start..idx].trim_start();
+        let head = head.strip_prefix("export ").unwrap_or(head);
+        if !(head.starts_with("interface ") || head.starts_with("type ")) {
+            continue;
+        }
+        // The declared name is the identifier run ending in this `Props`.
+        let name_start = text[..idx]
+            .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .map_or(0, |p| p + 1);
+        let name = &text[name_start..idx + "Props".len()];
+        let Some(brace_rel) = text[idx..].find('{') else {
+            continue;
+        };
+        let fields = field_entries(balanced_block(text, idx + brace_rel));
+        if fields.is_empty() {
+            continue;
+        }
+        let compact = format!("{name} {{ {} }}", fields.join("; "));
+        if !out.iter().any(|e| e == &compact) {
+            out.push(compact);
+        }
+    }
+    out
+}
+
+/// A compact, deterministic summary of a TS/JS module's PUBLIC surface — the names it
+/// `export`s and the shape of any `*Props` type it declares — for injection into a sibling
+/// file's authoring prompt.
+///
+/// The hosted scaffolder authors one file per model step and can carry only a bounded number
+/// of full sibling BODIES forward (the `n_tokens_all <= n_batch` decode guard). The path list
+/// alone tells the model a sibling EXISTS but not what it exports or what props it declares, so
+/// a later file imports a symbol a sibling never exported, or passes flat props to a component
+/// that declared one object — the App mounts and then throws. A one-line-per-file API summary
+/// is small enough to carry for EVERY prior sibling, which is what lets a file import and wire
+/// its siblings correctly regardless of authoring order.
+///
+/// Heuristic and best-effort (never fails a scaffold; residue is caught by the serve-time
+/// `tsc --noEmit` gate). Returns `None` for a non-source file or a body with no detectable
+/// surface. Deterministic: the same body yields byte-identical output.
+#[must_use]
+pub fn distill_module_api(path: &str, body: &[u8]) -> Option<String> {
+    if !is_ts_source(path) {
+        return None;
+    }
+    let text = std::str::from_utf8(body).ok()?;
+    let exports = exported_symbols(text);
+    // Prop shapes are a JSX/TSX-component concern only.
+    let props = if matches!(path.rsplit('.').next(), Some("tsx" | "jsx")) {
+        prop_shapes(text)
+    } else {
+        Vec::new()
+    };
+    if exports.is_empty() && props.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if !exports.is_empty() {
+        parts.push(format!("exports {}", exports.join(", ")));
+    }
+    parts.extend(props);
+    let mut summary = parts.join("; ");
+    if summary.len() > MAX_SIBLING_API_BYTES {
+        // Truncate on a char boundary (multi-byte-safe).
+        let mut cut = MAX_SIBLING_API_BYTES;
+        while !summary.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        summary.truncate(cut);
+        summary.push('…');
+    }
+    Some(summary)
+}
+
 /// Build the authoring directive for one project file. `framework`:
 /// - `None` — the agentic (scheduled) lane: the fixed-skeleton markdown/JSON files.
 /// - `Some(fw)` — a hosted (Experience) framework project: the directive names the
@@ -233,6 +454,11 @@ fn framework_label(framework: &str) -> &'static str {
 ///   modules instead of inlining them (killing the single-file monolith), and demands
 ///   production-quality separation. `all_paths` is passed as prompt TEXT only (cheap;
 ///   orthogonal to the bounded sibling-BODY context that guards the model's decode batch).
+///
+/// `sibling_apis` are `(path, summary)` pairs from [`distill_module_api`] for the siblings
+/// ALREADY written — the export/prop contract the path list cannot convey. They are what stop
+/// a hosted file from importing a symbol a sibling never exported or passing props a component
+/// never declared; injected as prompt text (hosted lane only), tiny enough to carry all of them.
 ///
 /// GR15: the committed answer IS the file body verbatim (reasoning is stripped by the
 /// recipe), so the directive asks for ONLY the body — no commentary, no fences.
@@ -244,6 +470,7 @@ pub fn authoring_prompt(
     framework: Option<&str>,
     all_paths: &[&str],
     has_siblings: bool,
+    sibling_apis: &[(String, String)],
 ) -> String {
     let siblings = if has_siblings {
         "The attached context shows the most recent sibling files already written; keep this file \
@@ -265,11 +492,25 @@ pub fn authoring_prompt(
             } else {
                 String::new()
             };
+            let apis = if sibling_apis.is_empty() {
+                String::new()
+            } else {
+                let list = sibling_apis
+                    .iter()
+                    .map(|(p, api)| format!("`{p}` {api}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "The sibling modules already written expose exactly these APIs — import ONLY \
+                     these names, and when you render a sibling component pass EXACTLY the props it \
+                     declares; do NOT invent an export or a prop that is not listed:\n{list}\n"
+                )
+            };
             format!(
                 "You are authoring one file of {label}.\n\
                  App goal: {goal}\n\n\
                  Write the COMPLETE, production-quality contents of the file `{path}` — {role}. \
-                 {tree}{siblings}\
+                 {tree}{apis}{siblings}\
                  Return ONLY the file body — no commentary, no explanation, and no markdown code \
                  fences.",
                 label = framework_label(fw),
@@ -414,6 +655,7 @@ mod tests {
             None,
             &[],
             false,
+            &[],
         );
         assert!(p.contains("summarize PDFs"));
         assert!(p.contains("README.md"));
@@ -427,6 +669,7 @@ mod tests {
             None,
             &[],
             true,
+            &[],
         );
         assert!(p2.contains("sibling files")); // siblings included once prior files exist
     }
@@ -443,11 +686,85 @@ mod tests {
             Some("vite_react"),
             &all,
             false,
+            &[],
         );
         assert!(p.contains("React"));
         assert!(p.contains("src/components/Card.tsx")); // the full set is in the prompt
         assert!(p.contains("Import")); // import-siblings directive (kills the monolith)
         assert!(p.contains("no markdown code fences"));
+    }
+
+    #[test]
+    fn authoring_prompt_hosted_injects_sibling_apis() {
+        // The distilled sibling APIs ride the prompt (hosted lane) so a file imports EXACTLY
+        // what a sibling exported and passes EXACTLY the props a component declared.
+        let apis = vec![
+            ("src/actions.ts".to_string(), "exports increment, decrement, reset".to_string()),
+            (
+                "src/components/ResultDisplay.tsx".to_string(),
+                "exports ResultDisplay; ResultDisplayProps { state: CalculatorState }".to_string(),
+            ),
+        ];
+        let p = authoring_prompt(
+            "src/App.tsx",
+            "the root component",
+            "a tip calculator",
+            Some("vite_react"),
+            &["src/App.tsx", "src/actions.ts", "src/components/ResultDisplay.tsx"],
+            true,
+            &apis,
+        );
+        assert!(p.contains("expose exactly these APIs"));
+        assert!(p.contains("increment, decrement, reset"));
+        assert!(p.contains("ResultDisplayProps { state: CalculatorState }"));
+        // The scheduled lane never gets an API block, even if (hypothetically) handed one.
+        let sched = authoring_prompt("README.md", "the readme", "x", None, &[], true, &apis);
+        assert!(!sched.contains("expose exactly these APIs"));
+    }
+
+    #[test]
+    fn distill_module_api_reports_exports_and_prop_shapes() {
+        // The two real hosted-scaffold breaks, as fixtures.
+        // (1) a hook imports a symbol the actions module never exported.
+        let actions = b"export const increment = (n: number) => n + 1;\n\
+                        export const decrement = (n: number) => n - 1;\n\
+                        export function reset() { return 0; }\n";
+        let api = distill_module_api("src/actions.ts", actions).unwrap();
+        assert!(api.contains("exports increment, decrement, reset"), "{api}");
+        assert!(!api.contains("CounterActions")); // the symbol the hook wrongly imported
+
+        // (2) a parent passes flat props to a component that declared one object.
+        let rd = b"import { CalculatorState } from './types';\n\
+                   interface ResultDisplayProps { state: CalculatorState }\n\
+                   export function ResultDisplay({ state }: ResultDisplayProps) {\n\
+                       return <div>{state.total}</div>;\n\
+                   }\n";
+        let api = distill_module_api("src/components/ResultDisplay.tsx", rd).unwrap();
+        assert!(api.contains("exports ResultDisplay"), "{api}");
+        assert!(api.contains("ResultDisplayProps { state: CalculatorState }"), "{api}");
+
+        // Determinism: same body ⇒ byte-identical summary.
+        assert_eq!(distill_module_api("src/actions.ts", actions), Some(api_of(actions)));
+    }
+
+    fn api_of(body: &[u8]) -> String {
+        distill_module_api("src/actions.ts", body).unwrap()
+    }
+
+    #[test]
+    fn distill_module_api_handles_export_forms_and_skips_non_source() {
+        assert_eq!(distill_module_api("README.md", b"# hi\nexport nothing"), None);
+        assert_eq!(distill_module_api("app.json", b"{}"), None);
+        // default + named-list + `as` alias.
+        let m = b"export default function App() {}\n\
+                  const a = 1; const b = 2;\n\
+                  export { a, b as bee };\n\
+                  export type Props = { x: number };\n";
+        let api = distill_module_api("src/x.tsx", m).unwrap();
+        assert!(api.contains("default"), "{api}");
+        assert!(api.contains("bee"), "{api}"); // the alias, not `b`
+        assert!(!api.contains(" b,") && !api.contains("exports a, b;"));
+        assert!(api.contains("Props { x: number }"), "{api}");
     }
 
     #[test]

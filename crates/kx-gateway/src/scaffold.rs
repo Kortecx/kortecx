@@ -42,9 +42,9 @@ use std::time::{Duration, Instant};
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    authoring_prompt, body_is_empty, derive_phase, hosted_authored_role, hosted_entry_path,
-    hosted_template, split_done_pending, strip_code_fence, try_committed_body, AppScaffolder,
-    BinderError, BranchManifest, BranchStore, ContentReader, ContentWriter,
+    authoring_prompt, body_is_empty, derive_phase, distill_module_api, hosted_authored_role,
+    hosted_entry_path, hosted_template, split_done_pending, strip_code_fence, try_committed_body,
+    AppScaffolder, BinderError, BranchManifest, BranchStore, ContentReader, ContentWriter,
     GatewayError as CoreError, HostedFileSource, JournalReader, LockStore, RecipeBinder,
     RunSubmitter, ScaffoldPhase, ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
     APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH, SKELETON,
@@ -328,7 +328,7 @@ impl HostScaffolder {
             .resolve_manifest_scheduled(principal, branch, goal)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-        let mut prior: Vec<String> = Vec::new();
+        let mut prior: Vec<(String, String)> = Vec::new();
         for file in &files {
             // POC-5b: a lock applied before/during the scaffold halts it cleanly.
             if let Some(l) = self.locks.as_ref() {
@@ -346,7 +346,10 @@ impl HostScaffolder {
                     "scaffold branch vanished mid-run",
                 )))?;
             if let Some(it) = manifest.items.iter().find(|i| i.path == file.path) {
-                prior.push(ContentRef::from_bytes(it.content_ref).to_hex());
+                prior.push((
+                    file.path.clone(),
+                    ContentRef::from_bytes(it.content_ref).to_hex(),
+                ));
                 continue;
             }
 
@@ -361,7 +364,10 @@ impl HostScaffolder {
                 .await?;
             self.branches
                 .advance(principal, branch, &file.path, body_ref)?;
-            prior.push(ContentRef::from_bytes(body_ref).to_hex());
+            prior.push((
+                file.path.clone(),
+                ContentRef::from_bytes(body_ref).to_hex(),
+            ));
         }
         Ok(())
     }
@@ -617,8 +623,21 @@ impl HostScaffolder {
             .resolve_manifest_hosted(principal, branch, framework, goal)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-        let mut prior: Vec<String> = Vec::new();
-        for file in &files {
+        // Author the framework ENTRY last. The entry (`src/App.tsx`, `app/page.tsx`, …) is the
+        // file that IMPORTS and MOUNTS every child, so authoring it after its children is what
+        // lets each child's distilled export/prop API reach the entry's authoring prompt — a
+        // parent that renders a child before the child's prop shape is known is the dominant
+        // cross-file break we observed. Only the VISITATION order changes; `files` (and thus the
+        // persisted `.kortecx/manifest.json` marker, and a resume) is untouched. Children keep
+        // their planned order, so an earlier child's API still reaches a later one.
+        let entry = hosted_entry_path(framework);
+        let order: Vec<&ManifestFile> = files
+            .iter()
+            .filter(|f| f.path != entry)
+            .chain(files.iter().filter(|f| f.path == entry))
+            .collect();
+        let mut prior: Vec<(String, String)> = Vec::new();
+        for file in order {
             if let Some(l) = self.locks.as_ref() {
                 if l.is_locked(principal, branch)? {
                     return Err(CoreError::FailedPrecondition(
@@ -633,7 +652,10 @@ impl HostScaffolder {
                     "scaffold branch vanished mid-run",
                 )))?;
             if let Some(it) = manifest.items.iter().find(|i| i.path == file.path) {
-                prior.push(ContentRef::from_bytes(it.content_ref).to_hex());
+                prior.push((
+                    file.path.clone(),
+                    ContentRef::from_bytes(it.content_ref).to_hex(),
+                ));
                 continue;
             }
             self.set(branch, ScaffoldPhase::Writing, &file.path);
@@ -651,7 +673,10 @@ impl HostScaffolder {
                 .await?;
             self.branches
                 .advance(principal, branch, &file.path, body_ref)?;
-            prior.push(ContentRef::from_bytes(body_ref).to_hex());
+            prior.push((
+                file.path.clone(),
+                ContentRef::from_bytes(body_ref).to_hex(),
+            ));
         }
         Ok(())
     }
@@ -708,9 +733,9 @@ impl HostScaffolder {
         goal: &str,
         framework: Option<&str>,
         all_paths: &[&str],
-        prior: &[String],
+        prior: &[(String, String)],
     ) -> Result<[u8; 32], CoreError> {
-        // Bound the sibling context to the most RECENT files. A dynamic project can
+        // Bound the sibling BODY context to the most RECENT files. A dynamic project can
         // hold many files, and the write mote assembles every context ref's BODY into
         // the prompt — an unbounded accumulation overflows the model's per-decode batch
         // (`n_tokens_all <= n_batch`) on the later files of a large project. The most
@@ -720,9 +745,32 @@ impl HostScaffolder {
             .rev()
             .take(SIBLING_CONTEXT_MAX)
             .rev()
-            .cloned()
+            .map(|(_, r)| r.clone())
             .collect();
-        let prompt = authoring_prompt(path, role, goal, framework, all_paths, !ctx.is_empty());
+        // POC-6 coherence: distill EVERY prior sibling's export/prop API. The bounded body
+        // window above carries only the two most-recent BODIES (a batch-size guard); the path
+        // list is prompt text that cannot convey an export list or a prop interface. A model
+        // that sees a sibling's PATH but not its API imports a symbol it never exported or
+        // passes flat props to a component that declared one object — the App mounts and then
+        // throws. Each summary is tiny, so all of them fit regardless of authoring order; the
+        // read is a local content-store hit and the scheduled lane's markdown yields `None`.
+        let sibling_apis: Vec<(String, String)> = prior
+            .iter()
+            .filter_map(|(p, r)| {
+                let cref = ContentRef::from_hex(r)?;
+                let body = self.content.get(&cref)?;
+                distill_module_api(p, &body).map(|api| (p.clone(), api))
+            })
+            .collect();
+        let prompt = authoring_prompt(
+            path,
+            role,
+            goal,
+            framework,
+            all_paths,
+            !ctx.is_empty(),
+            &sibling_apis,
+        );
         let args = serde_json::to_vec(&serde_json::json!({ "prompt": prompt }))
             .map_err(|e| CoreError::Internal(format!("scaffold args: {e}")))?;
         let bound = self
