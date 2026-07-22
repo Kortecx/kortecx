@@ -875,6 +875,35 @@ fn context_rail_items(
     Ok(items)
 }
 
+/// The dataset capability lines for a stored App's manifest. A declared dataset that is
+/// neither self-contained (carries `cas_refs`, materializes at run) nor already ingested is
+/// the ONE dependency that HARD-FAILS the run (`fold_dataset_rag` → `AppRunError::InvalidArgs`),
+/// so this agrees with that check by construction: `in_policy == false` ⟺ the run would refuse.
+/// On a build with no retrieval seam (`datasets == None`) the run degrades to ungrounded rather
+/// than refusing, so nothing here blocks it (every line is in policy).
+fn dataset_manifest_lines(
+    datasets: Option<&Arc<dyn DatasetView>>,
+    env: &AppEnvelope,
+) -> Vec<AppCapability> {
+    let available: BTreeSet<String> = datasets
+        .map(|v| v.list_datasets().into_iter().map(|d| d.dataset_id).collect())
+        .unwrap_or_default();
+    let has_view = datasets.is_some();
+    collect_dataset_bindings(env)
+        .into_iter()
+        .map(|b| {
+            let in_policy = !b.cas_refs.is_empty() || !has_view || available.contains(&b.declared);
+            AppCapability {
+                id: b.declared,
+                version: String::new(),
+                requested: true,
+                in_policy,
+                inherited: false,
+            }
+        })
+        .collect()
+}
+
 /// `true` for a branch file that rides the App's project context rail: a `.md` file that is
 /// not a `.kortecx/` internal marker. `app.json` (a decorative copy of the manifest nothing
 /// parses) and the marker JSON fall out by the suffix filter; the prefix guard is belt-and-
@@ -1285,32 +1314,8 @@ impl AppManifestView for HostAppAuthor {
             })
             .collect();
 
-        // Dataset lines: a declared dataset that is neither self-contained (carries `cas_refs`,
-        // materializes at run) nor already ingested is the ONE dependency that HARD-FAILS the
-        // run (`fold_dataset_rag` → `AppRunError::InvalidArgs`). This arm agrees with that check
-        // by construction: `in_policy=false` ⟺ the run would refuse. On a build with no
-        // retrieval seam (`self.datasets == None`) the run degrades to ungrounded rather than
-        // refusing, so nothing here blocks it.
-        let available: BTreeSet<String> = self
-            .datasets
-            .as_ref()
-            .map(|v| v.list_datasets().into_iter().map(|d| d.dataset_id).collect())
-            .unwrap_or_default();
-        let has_view = self.datasets.is_some();
-        let datasets = collect_dataset_bindings(&env)
-            .into_iter()
-            .map(|b| {
-                let in_policy =
-                    !b.cas_refs.is_empty() || !has_view || available.contains(&b.declared);
-                AppCapability {
-                    id: b.declared,
-                    version: String::new(),
-                    requested: true,
-                    in_policy,
-                    inherited: false,
-                }
-            })
-            .collect();
+        // Dataset lines: `in_policy=false` ⟺ the run would hard-fail on that dataset.
+        let datasets = dataset_manifest_lines(self.datasets.as_ref(), &env);
 
         // Model line: the declared route vs. the served catalog (empty ⇒ served default).
         let model_route = env.steering_config.model.model_route.clone();
