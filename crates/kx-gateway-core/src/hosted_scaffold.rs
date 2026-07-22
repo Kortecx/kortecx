@@ -93,6 +93,11 @@ export default defineConfig({
 "#,
         ),
     },
+    // Test files are EXCLUDED from the project's own type-check. A served app never loads
+    // them, but the model reliably authors an idiomatic `App.test.tsx` importing `vitest` +
+    // `@testing-library/react` — neither of which this template installs — so the serve-time
+    // `tsc --noEmit` gate would block a perfectly runnable app on files the browser never
+    // sees. Found live: 2 of 3 scaffolded apps were held back by exactly this.
     TemplateFile {
         path: "tsconfig.json",
         source: FileSource::Static(
@@ -111,7 +116,8 @@ export default defineConfig({
     "jsx": "react-jsx",
     "strict": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"]
 }
 "#,
         ),
@@ -255,7 +261,13 @@ export default nextConfig;
     "plugins": [{ "name": "next" }]
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx"
+  ]
 }
 "#,
         ),
@@ -406,7 +418,8 @@ export default defineConfig({
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"]
 }
 "#,
         ),
@@ -732,6 +745,46 @@ mod tests {
                 assert!(
                     dev["@types/react"].is_string(),
                     "{fw}: package.json must declare @types/react"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_template_tsconfig_excludes_test_globs() {
+        // The model reliably authors an idiomatic `App.test.tsx` importing `vitest` +
+        // `@testing-library/react`, and no template installs either. Without these excludes
+        // the serve-time `tsc --noEmit` gate blocks a perfectly runnable app over files the
+        // browser never loads — observed live on 2 of 3 scaffolded apps. Regression guard on
+        // the CONSTANTS, which is what a newly scaffolded project copies.
+        //
+        // Note the blast radius this guard does NOT cover: a template edit reaches only NEWLY
+        // scaffolded apps. An existing app replays its original template bytes from its own
+        // content-addressed branch.
+        for fw in ["vite_react", "next_js", "svelte"] {
+            let ts = template(fw)
+                .iter()
+                .find(|f| f.path == "tsconfig.json")
+                .expect("a tsconfig.json");
+            let FileSource::Static(body) = ts.source else {
+                panic!("tsconfig.json must be static");
+            };
+            let v: serde_json::Value = serde_json::from_str(body).expect("tsconfig.json parses");
+            let excludes: Vec<&str> = v["exclude"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{fw}: tsconfig.json must carry an exclude array"))
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect();
+            for glob in [
+                "**/*.test.ts",
+                "**/*.test.tsx",
+                "**/*.spec.ts",
+                "**/*.spec.tsx",
+            ] {
+                assert!(
+                    excludes.contains(&glob),
+                    "{fw}: tsconfig.json must exclude {glob} (got {excludes:?})"
                 );
             }
         }

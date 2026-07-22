@@ -670,16 +670,10 @@ async fn type_check(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> 
     if !ctx.plan.workdir.join("tsconfig.json").is_file() {
         return Ok(()); // not a TypeScript project — nothing to check
     }
-    let tsc = ctx
-        .plan
-        .workdir
-        .join("node_modules")
-        .join(".bin")
-        .join("tsc");
-    if !tsc.is_file() {
+    let Some(tsc) = local_tsc(&ctx.plan.workdir) else {
         log_line(logs, "type-check: no local tsc, skipping".into());
         return Ok(());
-    }
+    };
     log_line(logs, "$ tsc --noEmit".into());
     let output = Command::new(&tsc)
         .arg("--noEmit")
@@ -718,6 +712,43 @@ async fn type_check(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> 
     } else {
         Err(msg)
     }
+}
+
+/// The project's own `tsc`, resolved to a path the OS can still find AFTER the child's
+/// working directory has been changed to the project. `None` ⇒ no local TypeScript
+/// installed, and the caller skips the gate.
+///
+/// The ABSOLUTE result is the whole point. [`Command::current_dir`] changes the child's CWD
+/// *before* the OS resolves the program path, so a RELATIVE program path is looked up inside
+/// the project — where `node_modules/.bin/tsc` is not — while the `is_file()` probe here
+/// resolves that same relative path against the GATEWAY's CWD and says it exists. A relative
+/// workdir is the norm rather than the exception (`--journal target/serve/kx.db` produces one
+/// for the quickstart and every demo recipe), and the effect is inverted: a project WITH
+/// TypeScript installed cannot start, while one WITHOUT it skips the check and serves
+/// unchecked. Tempdir-based tests could never see it — a tempdir path is already absolute.
+fn local_tsc(workdir: &Path) -> Option<PathBuf> {
+    let tsc = workdir.join("node_modules").join(".bin").join("tsc");
+    if !tsc.is_file() {
+        return None;
+    }
+    Some(absolutize(&tsc))
+}
+
+/// `p` as an absolute path.
+///
+/// Prefers `canonicalize`, which also resolves symlinks — npm writes `.bin` entries as links
+/// into the installed package. Falls back to joining the process CWD rather than handing back
+/// `p` unchanged, because returning a relative path is precisely the defect this exists to
+/// prevent: a `canonicalize` that fails on a permission error or a mid-install race would
+/// otherwise reintroduce it silently.
+fn absolutize(p: &Path) -> PathBuf {
+    if let Ok(canonical) = std::fs::canonicalize(p) {
+        return canonical;
+    }
+    if p.is_absolute() {
+        return p.to_path_buf();
+    }
+    std::env::current_dir().map_or_else(|_| p.to_path_buf(), |cwd| cwd.join(p))
 }
 
 /// Spawn the app's server: the dev server (HMR) or, in production mode, the framework's
@@ -1029,5 +1060,79 @@ mod tests {
             b"export default function Page() { return null; }",
         );
         materialize(&g.ctx, &logs()).expect("next entry satisfies the guard");
+    }
+
+    /// Plant a stand-in `node_modules/.bin/tsc` under `root`, the way `npm install` would.
+    fn plant_tsc(root: &Path) {
+        let bin = root.join("node_modules").join(".bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("tsc"), b"#!/bin/sh\nexit 0\n").unwrap();
+    }
+
+    /// Express `abs` as a path RELATIVE to the process CWD, by walking to the filesystem root
+    /// and back down. Reads a process-global (never writes one), so it is safe under the test
+    /// harness's parallelism — unlike `set_current_dir`, which is why no existing test could
+    /// reach this shape.
+    fn relative_to_cwd(abs: &Path) -> PathBuf {
+        let cwd = std::env::current_dir().unwrap();
+        let mut rel = PathBuf::new();
+        for _ in cwd.components().skip(1) {
+            rel.push("..");
+        }
+        for c in abs.components().skip(1) {
+            rel.push(c);
+        }
+        rel
+    }
+
+    /// THE REGRESSION. Every other test in this file builds its workdir from
+    /// `tempfile::tempdir()`, whose path is already absolute — which is exactly why none of
+    /// them saw that the serve-time type-check gate was broken on every relative data dir
+    /// (i.e. every `--journal target/serve/kx.db` serve, including the quickstart).
+    ///
+    /// A relative program path handed to `Command::new` is resolved against the CHILD's
+    /// working directory, which `current_dir` has already moved into the project — so the
+    /// contract `local_tsc` owes its caller is an ABSOLUTE path.
+    #[test]
+    fn local_tsc_is_absolute_even_when_the_workdir_is_relative() {
+        let tmp = tempfile::tempdir().unwrap();
+        plant_tsc(tmp.path());
+
+        let rel = relative_to_cwd(tmp.path());
+        assert!(
+            rel.is_relative(),
+            "the fixture must exercise a RELATIVE workdir"
+        );
+        assert!(
+            rel.join("node_modules/.bin/tsc").is_file(),
+            "the relative workdir must still reach the planted tsc from the gateway's CWD"
+        );
+
+        let resolved = local_tsc(&rel).expect("a local tsc under a relative workdir is found");
+        assert!(
+            resolved.is_absolute(),
+            "spawning {resolved:?} with current_dir(workdir) would look it up INSIDE the \
+             project and fail with ENOENT"
+        );
+        assert!(resolved.is_file(), "the resolved path still names the tsc");
+    }
+
+    #[test]
+    fn local_tsc_is_none_when_typescript_is_not_installed() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(
+            local_tsc(tmp.path()).is_none(),
+            "no local tsc ⇒ the caller skips the gate rather than failing the serve"
+        );
+    }
+
+    /// `canonicalize` fails on a path that does not exist. The fallback must still hand back
+    /// an absolute path — returning the input unchanged would silently restore the defect on
+    /// any permission error or mid-install race.
+    #[test]
+    fn absolutize_falls_back_to_an_absolute_path_for_a_missing_relative_file() {
+        let out = absolutize(Path::new("node_modules/.bin/tsc"));
+        assert!(out.is_absolute(), "{out:?} must be absolute");
+        assert!(out.ends_with("node_modules/.bin/tsc"), "{out:?}");
     }
 }
