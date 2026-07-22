@@ -1,4 +1,4 @@
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0 -->
 # `integrations/` — bundled app connectors
 
 This directory holds **app-integration connectors**: standalone MCP-server processes

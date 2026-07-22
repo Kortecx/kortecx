@@ -1,5 +1,7 @@
 # Kortecx License
 
+Copyright © 2026 Kortecx. All rights reserved.
+
 Kortecx is **fair-code** distributed under the **Sustainable Use License**.
 
 Kortecx exists to make AI adoption at scale practical, and to lower the barrier to *create* and
@@ -12,6 +14,8 @@ repackaged and sold to others as a competing hosted service.
 
 - **Third-party components** included in this repository are licensed by their original owners
   under the terms noted in the respective files or directories; those terms govern that content.
+  See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the components vendored here or
+  statically linked into a build, and the notices their licenses require.
 - **Everything else** in this repository is licensed under the **Sustainable Use License,
   Version 1.0**, set out below.
 
@@ -91,8 +95,8 @@ origin of the software and reproducing the notices in this license.
 
 ### Definitions
 
-The **licensor** is the entity offering these terms, and the **software** is the software the
-licensor makes available under these terms, including any portion of it.
+The **licensor** is Kortecx, the entity offering these terms, and the **software** is the
+software the licensor makes available under these terms, including any portion of it.
 
 **"you"** refers to the individual or entity agreeing to these terms.
 
@@ -110,6 +114,6 @@ otherwise. Control can be direct or indirect.
 
 ---
 
-_The Sustainable Use License text above is adapted from the license of the same name. It is
-provided in good faith to express Kortecx's intent and is **not legal advice**; if you rely on
-it, please have it reviewed by counsel._
+_The Sustainable Use License text above is adapted from the Sustainable Use License published by
+n8n GmbH, with thanks to its authors. It is provided in good faith to express Kortecx's intent and
+is **not legal advice**; if you rely on it, please have it reviewed by counsel._

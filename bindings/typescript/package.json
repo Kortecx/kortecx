@@ -2,7 +2,7 @@
   "name": "@kortecx/sdk",
   "version": "0.1.1",
   "description": "TypeScript/JavaScript client SDK for the kortecx durable agentic-execution runtime (gRPC + gRPC-web over the frozen KxGateway contract).",
-  "license": "Apache-2.0",
+  "license": "LicenseRef-Kortecx-Sustainable-Use-1.0",
   "type": "module",
   "engines": {
     "node": ">=18"

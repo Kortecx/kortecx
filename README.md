@@ -1,7 +1,17 @@
-# Kortecx
+<div align="center">
 
-> **The open runtime for building and running AI agents at scale.**
-> Turn your knowledge into dependable, autonomous work — described in plain language, owned by you.
+<img src="ui/public/kortecx-icon.png" alt="Kortecx" width="96" height="96" />
+
+```
+█   █  ███  ████  █████ █████  ████ █   █
+█  █  █   █ █   █   █   █     █      █ █
+███   █   █ ████    █   ████  █       █
+█  █  █   █ █  █    █   █     █      █ █
+█   █  ███  █   █   █   █████  ████ █   █
+```
+
+**The open runtime for building and running AI agents at scale.**
+Turn what you know into dependable, autonomous work — described in plain language, owned by you.
 
 🌐 **[kortecx.com](https://kortecx.com)** &nbsp;·&nbsp; built in the open at [Kortecx/kortecx](https://github.com/Kortecx/kortecx)
 
@@ -11,700 +21,300 @@
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue.svg)](#)
 [![Status](https://img.shields.io/badge/status-early%20development-yellow.svg)](#)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
-kx serve --dev-allow-local          # zero-config — journal, content store, and catalog auto-resolve under ~/.kortecx
-# → gRPC 127.0.0.1:50151 · events ws://127.0.0.1:50152 · web console http://127.0.0.1:8888
-```
+</div>
+
+---
 
 ## Why Kortecx
 
-AI agents are the highest-leverage way to put intelligence to work — yet building and running
-them at scale is still hard, brittle, and locked behind bespoke infrastructure. **Kortecx exists
-to change that: to make AI adoption at scale practical, and to lower the barrier to *create* and
-*use* AI agents** — so any team can turn what it knows into dependable, autonomous work without
-standing up a platform first.
+AI agents are the highest-leverage way to put intelligence to work — yet building and running them
+at scale is still hard, brittle, and locked behind bespoke infrastructure. **Kortecx exists to
+change that: to make AI adoption at scale practical, and to lower the barrier to *create* and *use*
+AI agents** — so any team can turn what it knows into dependable, autonomous work without standing
+up a platform first.
 
 We build around four convictions:
 
-- **Agents must be durable.** Real work can't vanish on a crash or fire a side effect twice.
-  Every step runs on an append-only journal with **exactly-once** semantics — crashes replay
-  from committed work, and a step that touched the world is re-read, never re-run.
-- **Creating an agent should be as easy as describing it.** Say what you want in plain language;
-  the runtime **plans, writes, and wires the whole project** — tools, skills, data, and files.
+- **Agents must be durable.** Real work can't vanish on a crash or fire a side effect twice. Every
+  step runs on an append-only journal — a crash replays from committed work, and a step that already
+  touched the world is re-read, never re-run.
+- **Creating an agent should be as easy as describing it.** Say what you want in plain language; the
+  runtime plans, writes, and wires the whole project — tools, skills, data, and files.
 - **Capability must never outrun authority.** A model can *propose* anything; only the runtime's
-  checks let an action *happen*. Every tool call is gated by a **server-issued warrant** the
-  model can never mint for itself.
-- **It should run anywhere, owned by you.** One small binary, your models, your data —
-  **local-first**, no daemon required, no vendor lock-in.
+  checks let an action *happen*. Every tool call is gated by a server-issued warrant the model can
+  never mint for itself.
+- **It should run anywhere, owned by you.** One small binary, your models, your data — local-first,
+  no daemon required, no vendor lock-in.
 
-## What Kortecx is
+## What you can build
 
-A single, self-contained runtime (`kx`) — a few MB, no external services required — that runs
-AI agents you can trust with real work. It serves local models (via Ollama or in-process
-llama.cpp), hosts a **web console**, exposes a **gRPC API** with **Python & TypeScript SDKs**,
-and does everything over a crash-safe journal. You describe an agent; Kortecx builds it, runs it,
-schedules it, and keeps it honest.
+- **Apps you describe in a sentence** — scheduled automations, or real web apps the runtime
+  scaffolds and serves for you.
+- **Live agent loops** — reason → call a tool → observe → answer, where every turn is a durable fact.
+- **Workflows and chains** — reusable DAGs of agentic steps, expressible as a one-line string, a
+  fluent builder, or a portable JSON file.
+- **Answers grounded in your own data** — content-addressed corpora the model searches itself.
+- **Agents that remember** — facts recalled by meaning across runs.
 
-## What the runtime offers
-
-| Capability | What it is |
-|---|---|
-| **Apps** — *scheduled* | The durable, headless unit of agentic capability: a blueprint + its tools, skills, connections, dataset grounding, and a project of files the model authors. Runs on demand, on a **cron/webhook trigger**, or inside a workflow. |
-| **Apps** — *hosted* | A real **Vite-React / Next.js** web app the runtime scaffolds from your description and serves on a local port — the agent writes a separated, production-shaped project into a content-addressed branch. |
-| **Workflows** — *Blueprints & Chains* | Reusable, shareable **DAGs** of agentic steps. The live loop **plans** topology, **re-plans** on failure, passes **critic** gates, and runs **ReAct** turns — all crash-safe. |
-| **Context & grounded RAG** | Reusable instruction/file **context bundles**, and content-addressed **Datasets** with vector search so agents ground answers in *your* data — results pinned to the exact bytes read. |
-| **Integrations** | A durable **tool registry** and a built-in **MCP gateway**: register external **MCP servers** as **connections**, and agents call their tools through a governed broker under a warrant. |
-| **Skills** | Declarative `kortecx.skill/v1` packs — instructions + a tool grant-*wish*. A skill wishes; the server grants only the intersection with what *you* are actually allowed to do. |
-| **Policies & security** | Per-App **locks**, a resolved **capability manifest** (reach, ceiling, model route, datasets), a **HITL approval** gate for world-mutating actions, and secret references that never travel in a shared bundle. |
-| **Memory** | Durable, per-principal, cross-run agent **memory** — store, semantic recall, consolidate, and reversible decay. |
-| **Local inference** | Serve local LLMs with **zero toolchain** (a running Ollama daemon) or fully self-contained **in-process llama.cpp** (text + vision). Bring your own models. |
-
-## Describe it — Kortecx builds it
-
-Every capability is reachable in **plain language**; the runtime does the wiring:
-
-- **"Build me a web app that…"** → open **New App → Hosted**, describe the goal, and the model
-  scaffolds a real, separated React/Next project and serves it on a local port.
-- **"Every weekday at 9am, triage my inbox and draft replies"** → **New App → Scheduled** with a
-  goal; the model plans the blueprint, writes the project (prompts, rules, skills), and you bind a
-  **cron trigger** — no DAG to hand-author.
-- **"Answer from our docs, not the model's memory"** → attach a **Dataset**; the App is granted a
-  `retrieve` tool and steered to ground on your corpus.
-- **"Only let it read, and pause before it ever sends"** → attach **skills/tools** with a bounded
-  reach and flip on **require-approval**; irreversible actions wait for your grant in the inbox.
-- **"Just chat with my runtime and its tools"** → the console **Chat** (or `kx chat --tools`) runs
-  a bounded agentic turn with real MCP tools, grounded on a dataset if you name one.
-
-## Three ways to drive it
-
-- **Web console** (`kx serve` → `http://127.0.0.1:8888`): create Apps, run and schedule them, a
-  per-App IDE (file tree + editor, lineage graph, chat), Datasets, Models, Integrations, Security.
-- **CLI** (`kx …`): every capability as a command — `kx app`, `kx chat`, `kx agent`, `kx datasets`,
-  `kx connections`, `kx skills`, `kx triggers`, `kx memory`, `kx runs`, and more.
-- **SDKs** (Python `kortecx`, TypeScript `@kortecx/sdk`): build and run Apps, chat, stream runs,
-  ground on datasets, and drive every RPC from your own code.
-
----
-
-- [Why Kortecx](#why-kortecx) · [What the runtime offers](#what-the-runtime-offers) · [Describe it — Kortecx builds it](#describe-it--kortecx-builds-it)
-- [Prerequisites](#prerequisites) · [Install](#install)
-- [Start the runtime locally](#start-the-runtime-locally) · [The web console](#the-web-console)
-- [CLI reference](#cli-reference) — every command, flag, and environment variable
-- [Apps](#apps) · [Workflows: Blueprints](#blueprints) & [Chains](#chains) · [Datasets & RAG](#datasets--rag) · [SDKs](#sdks)
-- [Security defaults](#security-defaults) · [Run in Docker](#run-in-docker) · [Production notes](#production-notes)
-- [Contributing](#contributing) · [License](#license) · [Links](#links)
-
----
-
-## What you get
-
-| Capability | What it does | Where |
-|---|---|---|
-| **Apps** *(the shareable unit)* | Package a whole agent — its blueprint, prompts, skills, memory rail, and tool/connection/dataset references — as one durable `kortecx.app/v1` envelope, **plus a project** (a tree of files the model authors into a content-addressed branch) you edit in the console IDE. Run, clone, export, and import the envelope elsewhere; it carries no authority, so every warrant re-resolves against the importer's own grants. **The bundle carries the envelope + its content closure, not the project tree.** | `kx app` · SDKs · console Apps |
-| **Exactly-once agentic runs** | Every step (a *Mote*) commits durably to an append-only journal; crashes replay from committed work — a step that touched the world is re-read, never re-run | CLI · SDKs · console |
-| **The live agent loop** | Models **plan** topology, **re-plan** on failure, pass **critic** gates, and run **ReAct turns with real MCP tools** — all inside `kx serve`, all crash-safe | `kx/recipes/react` + the console Chat |
-| **Blueprints** | Reusable, parameterized workflows published by handle — pick one, fill its typed inputs, run it, watch the live DAG | CLI `kx invoke` · SDKs · console |
-| **Chains & Swarms** | Compose published task handles into a DAG with a small string DSL (`>` `&` `\|` `[ ]`), or run a multi-agent pattern (swarm · supervisor · consensus) without hand-writing it — both lower to the same compile + warrant path as a Blueprint | `kx chain` · `kx swarm` · SDKs |
-| **Local LLM inference** | Bring any fit GGUF model; on-device llama.cpp (Metal/CPU) or an auto-detected Ollama daemon drives chat + the agent loop — no API keys, no egress | `kx serve` (inference / serve-engine build) |
-| **Datasets & RAG** | Ingest documents, search by vector similarity, ground agent runs — durable, content-addressed corpora | CLI/SDK/console Datasets |
-| **Durable memory** | Agents remember facts and recall them across runs — server-embedded, scoped to the caller's principal, recalled by similarity | `kx memory` · SDKs |
-| **Live events & time-travel** | Stream every state change as it commits; scrub any run back to any point in its history | `kx events --follow` · console Activity |
-| **Run capture (Morphic)** | Every serve-path run's actions are captured to a durable sidecar — your agents' exhaust becomes queryable data | SDKs (`ListCaptureRecords`) |
-| **Teams & grants** | Durable membership + asset grants with resolved-warrant views | console Systems · SDKs |
-| **Audit trail** | An off-the-truth-path JSONL record of the run lifecycle | `kx run --audit-log` |
-| **Observability & cost** | Per-mote execution telemetry, a per-model token rollup, a per-run local spend estimate, a terminal-failure alerts inbox, and an opt-in Prometheus `/metrics` endpoint — all audit/display-only, never truth | `kx telemetry` · `kx cost` · `kx alerts` · console |
-| **The web console** | All of the above in a browser — served by `kx` itself, zero extra setup | `http://127.0.0.1:8888` |
-
-Every capability is reachable from the **CLI**, the **Python and TypeScript
-SDKs**, and the **web console** — same wire, same guarantees.
-
-## How it works
-
-The atomic unit of execution is the **Mote** — a durably-recorded *record of an
-attempt to effect something*. Once a Mote commits, it is a fact in an append-only
-**journal**, and that fact is never re-run: a step that touched the world is
-re-read on recovery, never re-executed. This is what makes exactly-once hold
-across crashes, retries, and restarts.
-
-The three invariants everything else is built on:
-
-1. **The journal is the single source of truth.** The scheduler, executor, and
-   recovery coordinate *only* through committed journal facts — never through
-   direct messaging. That is why the single-node → distributed step is wiring on
-   the same seams, not a rewrite.
-2. **The journal is an append-only log; the graph is a projection.** Execution is
-   a DAG of Motes, but the live state (each Mote's status, the ready set, the
-   dependency index) is a **pure fold** of the log — re-derived on restart, never
-   stored as a durable mutable graph.
-3. **The model proposes; the runtime enforces.** A model may propose a tool to
-   call, a role to assume, or content to emit; the runtime enforces capability
-   checks and **exact-equality** identity matching (fuzzy search may *discover*
-   candidates, but a world-mutating action always commits an exact reference).
-
-The code is a clean layered DAG — leaf types (`kx-mote`, `kx-journal`,
-`kx-content`) fold up through the projection + executor kernel into the
-coordinator/worker/gateway, and the CLI, SDKs, and console are all clients of the
-same gateway. The `Journal` and `ContentStore` seams are **traits**, so scaling
-out swaps an implementation without touching the engine. See
-[GLOSSARY.md](GLOSSARY.md) for each term and the crate it lives in.
-
-## Install
+## Try it
 
 ```bash
-# Prebuilt binary (Linux x86_64/arm64, macOS arm64) — SHA-256 verified, no sudo,
-# installs to ~/.local/bin. The prebuilt ships the web console + Datasets, and
-# serves local models via a running Ollama daemon out of the box (no C++ toolchain).
 curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
-```
-
-| Installer env | Meaning |
-|---|---|
-| `KX_VERSION` | install a specific release tag (default: latest) |
-| `KX_INSTALL_DIR` | install directory (default `~/.local/bin`) |
-
-From source (Rust 1.94+; each variant adds a capability):
-
-```bash
-git clone https://github.com/Kortecx/kortecx.git && cd kortecx
-cargo install --path crates/kx-cli                          # the core runtime — no C++, no node
-cargo install --path crates/kx-cli --features hnsw          # + Datasets/RAG (still no C++)
-cargo install --path crates/kx-cli --features serve-engine,hnsw  # + serve local models via Ollama (still no C++)
-cargo install --path crates/kx-cli --features inference,hnsw  # + in-process llama.cpp inference (needs a C++ toolchain)
-just console-build                                          # + the embedded web console — builds console,hnsw,serve-engine,hosted-apps (exactly the prebuilt; needs node 22; repo checkout only)
-```
-
-> The web console is embedded at **compile time**, so `--features console` needs
-> the built SPA (`just console-dist`) — use the prebuilt binary if you don't want
-> node. Plain `cargo install` never needs node or C++.
-
-## Prerequisites
-
-| Tier | You get | You need |
-|---|---|---|
-| **Tier 0 — the runtime (prebuilt)** | the runtime + the web console + Datasets + **Apps end-to-end** — scheduled Apps (agentic scaffold, tools, skills, connections, cron triggers) **and** hosted (web-experience) Apps served on a loopback port — serving local models via a running **Ollama** daemon (zero toolchain) | nothing (prebuilt) or **Rust 1.94+** (source); **Ollama** for local inference; **Node/npm** on the host to serve a hosted App |
-| **Tier 1 — in-process llama.cpp** | self-contained on-device inference (no daemon) + multi-modal / vision | a **C++ toolchain** (CMake, clang/libclang) + a **GGUF** model |
-
-Both engines are co-equal first-class backends — see
-[Local inference engines](docs/site/docs/local-inference-engines.md) for the
-positioning (Ollama = quick/easy; llama.cpp = performance / parallel / multi-modal)
-and the capability matrix.
-
-Run **`just doctor`** (repo checkout) for a tiered preflight that prints the
-exact install command for anything missing. Tier 1 hints — macOS:
-`xcode-select --install && brew install cmake`; Debian/Ubuntu:
-`sudo apt-get install -y cmake clang libclang-dev build-essential`.
-
-## Quick start: prove exactly-once
-
-Run the canonical demo workflow, crash it mid-commit, and replay. The digest is
-identical across the clean run and the crash-then-replay run:
-
-```bash
-# 1. Run the demo to completion, capturing its deterministic digest.
-kx run    --journal /tmp/kx.db --content /tmp/kx-content
-#    → 7d22d4bdfc6f68a4311f40b20f3fe7c67f4c5d2b352f3bff8722b439e94a5af9 (8/8 committed)
-
-# 2. Start fresh, but hard-abort right after a side effect commits.
-rm -f /tmp/kx.db; rm -rf /tmp/kx-content
-kx run    --journal /tmp/kx.db --content /tmp/kx-content --crash-at post-commit-vtc
-
-# 3. Recover from the journal and finish the run.
-kx replay --journal /tmp/kx.db --content /tmp/kx-content
-#    → same digest — the crashed step was re-read, not re-run.
-```
-
-Same digest = the exactly-once property, demonstrated. (`just verify-quickstart`
-runs exactly this and asserts the digest, so these docs can't silently drift.)
-
-## Start the runtime locally
-
-**1. Serve.** One command starts the gateway, the embedded worker, the live-event
-bridge, and (prebuilt binaries) the web console. It's **zero-config** — you pass
-only the auth posture; the journal, content store, and catalog auto-resolve under
-`~/.kortecx` (override the base with `KX_DATA_DIR`, or pin individual paths with
-`--journal`/`--content`) and persist across restarts:
-
-```bash
 kx serve --dev-allow-local
-#    gRPC on 127.0.0.1:50151 · events on ws://127.0.0.1:50152
-#    web console at http://127.0.0.1:8888  ← open this in your browser
-#    (a startup banner prints every resolved path + endpoint)
+# → gRPC 127.0.0.1:50151 · events ws://127.0.0.1:50152 · web console http://127.0.0.1:8888
 ```
 
-**2. Run your first blueprints** (another terminal):
+Open the console and you have the whole runtime in a browser. Zero config: the journal, content
+store, and catalog auto-resolve under `~/.kortecx` and are reused across restarts.
+
+The prebuilt binary talks to a running [Ollama](https://ollama.com) daemon for local models with no
+C++ toolchain. To serve a model fully in-process instead, build from source with the `inference`
+feature — see [Local inference & models](#local-inference--models).
+
+## Authoring apps in natural language
+
+An **App** is the durable, shareable unit of agentic capability. You describe it; the runtime plans
+it, writes its project files, and runs it. There are two kinds.
+
+### Scheduled apps
+
+Headless apps that run on demand, on a cron or interval trigger, or inside a workflow. Two ways to
+use them:
+
+- **Contextual** — the app carries its own project of markdown files (prompts, rules, skills,
+  reference notes). At run time the runtime hands that context to the model, and the model acts
+  through the tools, skills, and data you granted it.
+- **Codified** — a programmatic workflow that runs exactly as instructed, every time. A scheduled
+  automation with no room for improvisation.
+
+Both are the same kind under the hood; the difference is how much you leave to the model.
+
+### Hosted apps
+
+Real web apps the runtime scaffolds from your description and serves on a local port. The model
+plans a source tree, writes each file, and the runtime installs dependencies, type-checks the
+project, and starts a dev server. Three frameworks today — **Vite + React**, **Next.js**, and
+**Svelte** — with more to come.
+
+> **Honestly, today:** a hosted app runs as a plain subprocess on a loopback port. There is no
+> sandbox and no container isolation yet — running them in isolated environments (Docker) is on the
+> roadmap, not shipped. Serving one needs Node and npm on the host. Because the project is written
+> by a model, the runtime type-checks it before serving: a project that doesn't compile fails
+> loudly with the compiler's own message rather than serving a blank page.
+
+## Live agent loops
+
+A bounded loop — reason, call a tool, observe, answer — where every turn is committed to the journal
+before the next begins. Crash halfway and it resumes from the last committed turn.
 
 ```bash
-# A single-step echo — the canonical hello-world (typed input: topic).
-kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait
-
-# A real multi-node DAG, model-free: root → 3 children → gather (5 steps, all committed).
-kx invoke kx/recipes/passthrough-dag --args '{}' --wait
+kx chat --tools 'fs-list@1,fs-read@1' \
+  --message 'Find the quarterly notes and tell me what the two incidents were.'
 ```
 
-**3. Inspect anything** — the DAG, a committed result, the live event stream:
+The model decides which tools to call and when to stop. Each call is staged, authorized against a
+server-issued warrant, then committed — so you can always ask what an agent actually did, and
+replay it.
+
+## Workflows, chains & forms
+
+Compose steps with a tiny string DSL — `>` sequences, `&` runs in parallel, `|` alternates, and
+`[ ]` groups:
 
 ```bash
-kx projection --instance <instance-id>                       # the run as a DAG of step states
-kx projection --instance <instance-id> --at-seq 3            # …time-traveled to any point
-kx content    --ref <content-ref> --instance <instance-id>   # a committed result (raw bytes)
-kx events     --instance <instance-id> --follow              # live-tail the run's events
-```
-
-**4. Add a local model.** Two paths — see
-[Local inference engines](docs/site/docs/local-inference-engines.md):
-
-- **Ollama (zero-friction, no C++).** Build with `--features serve-engine,hnsw`,
-  [install Ollama](https://ollama.com), and `kx serve` auto-detects it on the
-  loopback port:
-
-  ```bash
-  ollama pull gemma3:12b
-  kx serve --dev-allow-local
-  ```
-
-- **llama.cpp (self-contained).** Build with `--features inference,hnsw`, download a
-  **fit** GGUF, and point the server at it. The runtime validates fitness at startup:
-  a chat template (ChatML), **native tool-calling**, a commercial-friendly license,
-  `q4_k_m`/`q8_0`/`f16` quantization, and a context window ≥ 2048. The Qwen3 family
-  fits; the 0.6B stand-in below runs on ~0.5 GB:
-
-  ```bash
-  curl -fsSL -o qwen3-0.6b-q4_k_m.gguf \
-    https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf
-  shasum -a 256 qwen3-0.6b-q4_k_m.gguf
-  #    → ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a
-
-  KX_SERVE_MODEL_GGUF="$PWD/qwen3-0.6b-q4_k_m.gguf" \
-    kx serve --dev-allow-local
-  ```
-
-**5. Chat and run the live agent loop** — real on-device inference, durable every
-turn:
-
-```bash
-# One-shot chat: greedy decode over your model, committed like any other step.
-kx invoke kx/recipes/chat --args '{"prompt":"What is the capital of France?"}' --wait
-
-# A full ReAct agent: reason → call a tool → observe → answer, every turn a
-# durable fact. The bundled mcp-echo@1 tool is wired in; budgets are yours:
-kx invoke kx/recipes/react \
-  --args '{"instruction":"Echo the word kortecx via your tool, then summarize.","max_turns":4,"max_tool_calls":2}' \
+kx chain run "research > [critique & summarize] > publish" \
+  --task research='{"kind":"model","prompt":"Research append-only journals."}' \
+  --task critique='{"kind":"model","prompt":"Critique the findings."}' \
+  --task summarize='{"kind":"model","prompt":"Summarize in three bullets."}' \
+  --task publish='{"kind":"model","prompt":"Write the final note."}' \
   --wait
 ```
 
-Crash the server mid-run and start it again: the loop resumes from its committed
-turns — that's the whole point.
+Workflows take typed inputs, so the console renders a form for any of them automatically.
+
+## The chainable SDK
+
+The whole runtime is a chainable SDK. The same expression lowers identically from the CLI, Python,
+and TypeScript — pinned by a shared golden corpus — so you can author in whichever fits and get the
+same DAG.
+
+**Python**
+
+```python
+import kortecx as kx
+
+out = (kx.flow()
+       .agent("Research append-only journals.", tools=["mcp-echo/echo"])
+       .then("Critique the findings.")
+       .then("Summarize in three bullets.")
+       .run())
+print(out.text)
+```
+
+**TypeScript**
+
+```ts
+import { flow } from "@kortecx/sdk";
+
+const out = await flow()
+  .agent("Research append-only journals.", { tools: ["mcp-echo/echo"] })
+  .then("Critique the findings.")
+  .then("Summarize in three bullets.")
+  .run();
+console.log(out.text);
+```
+
+Both resolve the endpoint and token from `KX_ENDPOINT` / `KX_TOKEN` (defaulting to
+`http://127.0.0.1:50151`), so a local `--dev-allow-local` serve needs no arguments.
+
+**Export a chain and re-run it.** Any chain lowers to a portable JSON file — steps, edges, and seed
+— that you can commit, share, and replay:
+
+```python
+c = kx.chain("research > critique", tasks)
+c.export("research.json")                       # portable JSON
+
+req = kx.Chain.from_blueprint_file("research.json")
+client.submit_workflow(req, wait=True)          # re-run it anywhere
+```
+
+```bash
+kx chain run "research > critique" --tasks tasks.json --emit-blueprint research.json --dry-run
+kx blueprint run --file research.json --wait
+```
+
+`--dry-run` lowers and validates entirely offline — no gateway, no model.
+
+Beyond `.agent()` / `.then()`, a flow composes multi-agent shapes — `.swarm()`, `.team()`,
+`.supervisor()`, `.consensus()`, `.map_reduce()`, `.review_loop()` — and attaches capability:
+`.context(handle)` for retrieval, `.with_memory([...])`, `.with_mcp(...)` for an external tool
+server, and `.as_app(name)` to save the whole thing as an App. Note the TypeScript orchestration
+helpers take an array (`swarm([a, b], { goal })`) where Python takes varargs.
+
+## Local inference & models
+
+Two engines, your choice:
+
+- **Ollama** — zero toolchain. Point Kortecx at a running daemon and serve any model it has.
+- **In-process llama.cpp** — fully self-contained, text and vision, no daemon. Build with
+  `--features inference,hnsw`.
+
+A model is checked for fitness before it is served, and `kx models` lists what is actually
+available. A run names the model it wants and is refused if that model isn't served — it never
+silently degrades to a different one.
+
+## Datasets & grounded RAG
+
+Ingest a corpus into a durable, content-addressed store; the model searches it **itself** with a
+built-in `retrieve` tool that fuses keyword and vector search, and every answer cites the exact
+passages it read.
+
+```bash
+kx datasets ingest handbook --file ./handbook.md
+kx invoke kx/recipes/react-rag --wait \
+  --args '{"instruction":"What does our expense policy require for a 600 euro purchase?","dataset":"handbook","max_turns":6,"max_tool_calls":6}'
+```
+
+The model writes its own search query, reads what comes back, and can search again before
+answering. Grounding is steering, not a hard constraint — a capable model reliably searches, but
+nothing forces it to. The store is append-only and deduplicates by content.
+
+## Durable memory
+
+Agents remember facts and recall them by **meaning** across runs, with reversible time-and-salience
+decay (nothing is hard-deleted) and a one-command `consolidate` that distils episodic notes into
+lasting knowledge.
+
+```bash
+kx memory add "Our staging cluster runs in the Frankfurt region."
+kx memory recall --text "Which European datacenter hosts our pre-production environment?"
+# → the Frankfurt fact, with no words in common
+```
+
+Needs `--features inference,hnsw`, a served model, and `KX_SERVE_MEMORY=1`.
+
+> **Choose an embedding model before you store anything.** By default the primary chat model is
+> reused as the embedder, and a generative decoder makes a weak sentence embedder — paraphrased
+> queries rank poorly. Point `KX_SERVE_EMBED_MODEL` at a real embedding model and recall becomes
+> decisively better. A memory store fixes its vector dimension on first write, so switching
+> embedders later means starting a new store.
 
 ## The web console
 
-`kx serve` (prebuilt binaries) hosts the full console at
-**`http://127.0.0.1:8888`** — no node, no separate install. Connect to your
-gateway endpoint (pre-filled: `http://127.0.0.1:50151`; the bearer token, if you
-use one, stays in browser memory and is never stored).
-
-| Section | What you do there |
-|---|---|
-| **New Chat** *(default)* | a fresh agentic conversation over the runtime — every turn a durable run |
-| **Apps** | create an App agentically (**New App** — the model plans and writes its project tree), then browse, run, schedule, and open durable `kortecx.app/v1` Apps in a per-App IDE (files + Monaco editor, lineage graph, chat) |
-| **Workflows** | browse Blueprints and trigger a run; your run history and the self-correction (re-plan / ReAct) trails |
-| **Context** | reusable instruction/file bundles and RAG **Datasets** |
-| **Integrations** | tools, external MCP **connections**, event **triggers**, and **secrets** |
-| **Models** | the models this gateway serves — pick the default |
-| **Security** | an App's resolved capability manifest — reach, capability ceiling, and model route |
-| **Settings** | connection profile + console preferences |
-
-**Activity** is the navbar drawer — the live event feed, run metrics, and
-**time-travel** (scrub any run's history) from any screen. Pending **HITL approvals**
-for world-mutating actions live in the navbar **bell** (a cross-App inbox), not in the
-Apps section. Plus **⌘K** jumps anywhere, and the **DevTools dock** (navbar toggle) tails
-live events and gateway health. Blueprints, Datasets, and Branches also keep their own deep-linkable
-routes. Override the console address with `--console-listen <addr:port>`
-(loopback only) or turn it off with `--no-console`. For a remote browser,
-static-host `ui/dist` and grant its origin with `--cors-origin`.
-
-## CLI reference
-
-`kx <command> --help` prints per-command usage. **Exit codes:** `0` success ·
-`2` usage/config error · `3` `--wait` timed out (the run is still in progress
-and resumable) · `1` everything else.
-
-### Local engine (no server)
-
-| Command | What it does |
-|---|---|
-| `kx run` | drive the canonical demo workflow from scratch |
-| `kx replay` | recover an existing journal and finish the run |
-| `kx digest` | print the projection digest of a journal |
-
-All three take: `--journal <path>` (the SQLite journal) · `--content <dir>` (the
-content store) · `--crash-at <point>` (deterministic crash injection, e.g.
-`post-commit-vtc`) · `--checkpoint-every <N>` · `--audit-log <path>` (JSONL audit
-trail) · `--json`.
-
-```bash
-kx run --journal /tmp/kx.db --content /tmp/kx-content --audit-log /tmp/kx-audit.jsonl
-```
-
-### `kx serve` — the runtime as a server
-
-```bash
-kx serve --dev-allow-local [flags]     # zero-config: journal/content/catalog auto-resolve under ~/.kortecx
-```
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--journal <path>` / `--content <dir>` | under `~/.kortecx` | durable journal + content store (zero-config; override the base with `KX_DATA_DIR`, or pin either explicitly) |
-| `--catalog-dir <dir>` | beside the journal | durable catalog + sidecars (blueprints, signatures, teams, telemetry, capture) |
-| `--listen <addr:port>` | `127.0.0.1:50151` | the gRPC + gRPC-web endpoint |
-| `--ws-listen <addr:port>` | `127.0.0.1:50152` | the live-event WebSocket bridge |
-| `--console-listen <addr:port>` | `127.0.0.1:8888` | the embedded web console (loopback only) |
-| `--no-console` | — | disable the web console |
-| `--dev-allow-local` | off | dev auth: allow loopback callers (loopback binds only) |
-| `--auth-token <token>=<party>` | — | accept a bearer token as a party (repeatable) |
-| `--auth-token-file <path>` | — | `token=party` per line (`#` comments) |
-| `--cors-origin <origin>` | deny all | allow a browser origin on the gRPC-web shim (repeatable, never a wildcard) |
-| `--tls-cert <pem> --tls-key <pem>` | plaintext | in-binary TLS for the gRPC listener |
-| `--max-lease <N>` | `16` | embedded-worker lease batch size |
-| `--workers <N>` | `1` | embedded-worker pool size (`>1` runs Pure/IO/tool Motes concurrently) |
-| `--content-max-bytes <N>` | built-in cap | the `PutContent` payload cap (fail-closed) |
-| `--metrics-listen <addr:port>` | off | opt-in Prometheus `/metrics` endpoint (RED metrics; FFI-free) |
-| `--webhook-listen <addr:port>` | off | opt-in inbound webhook surface for event triggers (per-trigger HMAC/bearer) |
-| `--audit-log <path>` | off | best-effort JSONL audit trail of the run lifecycle |
-
-**Auth is deny-all by default** — pass `--dev-allow-local` (local development) or
-bearer tokens. A bare `kx serve` with no auth posture fails fast with a hint; it
-never opens an unauthenticated server.
-
-### Client commands
-
-Every client command takes the **shared flags**: `--endpoint <url>` (default
-`http://127.0.0.1:50151`) · `--token <t>` / `--token-file <p>` (bearer auth;
-prefer the file — `--token` is visible in `ps`) · `--tls-ca <pem>` (for
-`https://` endpoints) · `--json` (machine-readable output).
-
-Run `kx help <command>` for the full per-command usage (flags, subcommands,
-examples). The shipped verbs, grouped by purpose:
-
-**Author & run**
-
-| Command | What it does |
-|---|---|
-| `kx invoke <handle>` | run a published blueprint to a committed result (`--args`/`--args-file` · `--wait` · `--stream` · `--out`) |
-| `kx chain run "<dsl>"` | author a DAG from the string-DSL (`>` `&` `\|` `[ ]`) over `--tasks`, then run it (`--emit-blueprint` · `--dry-run`) |
-| `kx swarm "<agent>"…` | run a multi-agent pattern (`--pattern swarm`/`supervisor`/`consensus`) without hand-writing the DSL |
-| `kx blueprint run\|import` | run a portable blueprint DAG from `--file`, or validate + summarize one offline |
-| `kx agent run --goal <text>` | the embeddable agent-runner: a goal → a reasoned answer + the audited action set |
-| `kx chat --message <text>` | one chat turn — plain, AUTO-RAG-grounded (`--dataset`), or a bounded agentic turn (`--tools`) |
-| `kx app …` | author, run, share, and edit `kortecx.app/v1` Apps — envelope (`new`/`save`/`list`/`get`/`manifest`/`run`/`delete`), portability (`export`/`import`/`clone`), project (`scaffold`/`files`/`cat`/`edit`/`structure`), policy (`lock`/`unlock`) |
-
-**Inspect & observe**
-
-| Command | What it does |
-|---|---|
-| `kx runs list\|rerun` | durable run history, newest-first; re-run a prior run with edited args (`--set k=v`) |
-| `kx projection --instance <hex>` | render a run as a DAG of step states (`--at-seq <N>` time-travels) |
-| `kx mote show <instance> <mote>` | display-only Mote definition inspection |
-| `kx content get\|put` | fetch a committed result (binary-safe), or upload a blob to the content store |
-| `kx events --instance <hex>\|--all` | print or live-tail a run's event deltas, or the global cross-run tail (`--follow`) |
-| `kx telemetry list\|summary` | per-mote execution telemetry + the per-model token rollup (audit/display-only) |
-| `kx cost <instance>` | a run's local spend estimate |
-| `kx capture list` | Morphic captured-action join-key records |
-| `kx react\|replan\|rerank list` | the ReAct / re-plan / LLM-rerank self-correction trails (read-only) |
-| `kx alerts list` · `kx feedback` | the terminal-failure alerts inbox; submit/list 👍/👎 feedback |
-
-**Catalog, data & memory**
-
-| Command | What it does |
-|---|---|
-| `kx recipe list\|search` | advisory recipe discovery (scores never authorize — SN-8) |
-| `kx signatures list\|get\|register` | the sharable task-signature catalog |
-| `kx models list\|load\|offload` | model discovery + local RAM lifecycle |
-| `kx datasets list\|ingest\|query` | the RAG data-plane (needs `--features hnsw`) |
-| `kx memory add\|recall\|list\|forget\|…` | durable cross-run agent memory (server-embedded, per-principal) |
-| `kx context add\|list\|get\|remove` | reusable context bundles (attach via `invoke --context`) |
-| `kx branch create\|snapshot\|list\|…` | content-addressed file branches |
-
-**Tools, integrations & config**
-
-| Command | What it does |
-|---|---|
-| `kx tools list\|score\|discover\|register` | advisory tool discovery + the durable tools registry (scores never authorize) |
-| `kx connections add\|list\|test\|remove\|fire` | external MCP connections — dial a connector, fire one tool through the broker |
-| `kx skills add\|list\|show\|remove` | the declarative `kortecx.skill/v1` catalog (a grant *wish*, never authority) |
-| `kx secrets set\|list\|rm` | the local OS-keychain secret store (write-only values, names-only reads) |
-| `kx triggers add\|list\|test\|fire\|rm` | event-ingress triggers (webhook / cron / grpc → a recipe handle `--recipe` **or a saved App handle `--app`**; cron takes a 5-field crontab expression + `--timezone`) |
-| `kx approvals list\|grant\|deny` | the HITL pre-action approval gate for world-mutating actions |
-| `kx new skill\|connector <name>` | scaffold a skill pack / MCP connector crate offline |
-| `kx info` · `kx health` · `kx eval` | non-secret server config · gRPC liveness · agentic evaluation (`run`/`score`) |
-| `kx help [command]` · `kx --version` | usage · version |
-
-```bash
-# Run a blueprint and save the committed result bytes:
-kx invoke kx/recipes/echo --args '{"topic":"hello"}' --wait --out /tmp/result.bin
-
-# Everything speaks JSON for scripting:
-kx invoke kx/recipes/echo --args '{"topic":"hello"}' --wait --json | jq .
-
-# Discover the registered tools and preview a task bundle (advisory — never runs anything):
-kx tools list --json | jq '.manifests[].tool_id'
-kx tools score --intent "read a file from disk" --tool fs-read@1 --json | jq '.ranked, .verdict'
-```
-
-### Environment variables
-
-| Variable | Used by | Meaning |
-|---|---|---|
-| `KX_DATA_DIR` | `kx serve` | base directory for the zero-config data layout (default `~/.kortecx`) |
-| `KX_WORKERS` / `KX_SERVE_WORKER_POOL` | `kx serve` | embedded-worker pool size (same as `--workers`; default `1`) |
-| `KX_SERVE_MEMORY` | `kx serve` (inference build) | enable the durable agentic-memory RPCs + the `kx memory` surface |
-| `KX_SERVE_MODEL_GGUF` | `kx serve` (inference build) | absolute path to the GGUF model; enables `kx/recipes/chat` + `kx/recipes/react` |
-| `KX_N_GPU_LAYERS` | inference | GPU offload layers (Metal/CUDA; default: all that fit) |
-| `KX_FLASH_ATTN` | inference | enable flash attention |
-| `KX_KV_TYPE` | inference | KV-cache quantization type |
-| `KX_N_THREADS` | inference | CPU threads for inference |
-| `KX_MCP_ECHO_PATH` | `kx serve` | override the bundled `mcp-echo` tool binary path |
-| `KX_VERSION` / `KX_INSTALL_DIR` | installer | release tag / install directory |
-
-## Blueprints
-
-A **Blueprint** is a reusable, parameterized workflow published by handle. The
-server validates your typed inputs, compiles the workflow to a step DAG, and runs
-it with the full durability guarantee. Four ship with `kx serve`:
-
-| Handle | What it runs | Inputs | Available |
-|---|---|---|---|
-| `kx/recipes/echo` | one deterministic step (echoes your `topic`) | `topic` (str) | always |
-| `kx/recipes/passthrough-dag` | a 5-step fan-out → gather DAG | — | always |
-| `kx/recipes/chat` | one LLM completion over your model | `prompt` (str) | inference build + `KX_SERVE_MODEL_GGUF` |
-| `kx/recipes/react` | the live ReAct agent loop with tools | `instruction` (str) · `max_turns` (1–8, default 8) · `max_tool_calls` (< max_turns, default 6) | inference build + model + tool |
-
-List what your gateway offers from any surface: the console's **Blueprints**
-section, `client.listRecipes()` (SDKs), or the connect-time catalog.
-
-**Author your own** — workflows are composed from pure building blocks
-(map-reduce, fan-out/gather, critic-gated retry, ReAct tool loops, image
-batch-describe) plus a fail-closed prompt-template engine, then compiled and
-submitted like any blueprint. A complete, runnable walkthrough:
-
-```bash
-cargo run -p kx-workflow --example author_a_workflow
-```
-
-## Chains
-
-A **Chain** composes published task handles into a DAG with a small string DSL —
-the same expression lowers identically from the CLI and both SDKs, and compiles
-through the exact same warrant + durability path as a Blueprint (a chain only
-changes how the topology is *authored*). Operators, tightest → loosest: `[ … ]`
-grouping · `>` sequential (a data edge, parent → child) · `&` / `|` parallel
-merge. A handle that appears twice is the same node, so reuse builds real DAGs.
-
-```bash
-# `a` fans out to `b` and `c`, which run in parallel:  a → b, a → c
-kx chain run "a > [b & c]" \
-  --task a='{"kind":"pure"}' --task b='{"kind":"pure"}' --task c='{"kind":"pure"}' \
-  --wait
-
-# lower + validate offline (no gateway) and save the portable blueprint it emits:
-kx chain run "[a & b] > c" --tasks tasks.json --dry-run --emit-blueprint chain.json
-```
-
-Define each handle's step inline with `--task <name>='{…}'`, all at once with
-`--tasks-json '{…}'`, or from a file with `--tasks <file.json>`; a step is
-`{"kind":"pure"|"model"|"tool", …}`. **Multi-agent** patterns compose the same
-way without hand-writing the DSL — `kx swarm "<agent>"…` (or the SDK `swarm()` /
-`supervisor()` / `consensus()` builders) fans N agents to a synthesizer, has a
-lead plan → a team execute → integrate, or takes a best-of-N vote. The SDK
-surface is `chain(...)` / `Chain` / `Task` (Python) and `chain` / `task` / `seq`
-/ `par` / `group` (TypeScript).
-
-## Apps
-
-An **App** is the durable, shareable unit of agentic capability — a
-`kortecx.app/v1` envelope that wraps a portable blueprint with by-reference
-context, tool, connection, and dataset references, a prompt/rule/skill/memory
-rail, and a steering config (model, max turns, max tool calls). Author one from a
-blueprint, save it to the caller-scoped catalog, run it server-side, then export
-it to share:
-
-```bash
-# author an App from a portable blueprint, save it to the catalog, and run it
-kx app new my-agent --from-blueprint chain.json --max-turns 4 --output my-agent.app.json
-kx app save my-agent.app.json --handle apps/local/my-agent
-kx app run apps/local/my-agent --wait
-
-# share it: export a self-contained bundle (envelope + content closure — NOT the
-# project tree), then import it on another instance
-kx app export apps/local/my-agent --bundle my-agent.kxapp
-kx app import my-agent.kxapp
-```
-
-An App **carries no authority**: `run` and `import` re-resolve every warrant from
-the *caller's own* grants (a model can propose, but only the runtime's checks let
-an action happen — SN-8). Connections and secrets never travel in a bundle — the
-importer re-registers them by name, so a shared App resolves each operator's own
-credentials. Author Apps from code too — the Python `kx.app("…")` and TypeScript
-`app("…")` builders (with a `.skill(…)` / `.with_gmail()` rail) — and browse, run,
-and open them in the console's **Apps** section.
-
-### An App has a project
-
-Beyond the envelope, an App owns a **project**: a tree of markdown files (README,
-`prompts/system.md`, `rules/guardrails.md`, `skills/main.md`, plus goal-specific
-extras) that a served model authors for your goal, written into the App's
-content-addressed branch. Drive it with `kx app scaffold <handle> --goal "…" --wait`,
-or click **New App** in the console — which plans, streams, and writes the tree live.
-Browse it with `kx app files` / `kx app cat`, or in the console IDE (file tree + Monaco
-editor, an editable lineage graph, and a chat tab). Edits stay in-CAS; the host
-filesystem is never written.
-
-> **The project markdown reaches the model at run time.** A rule in `rules/*.md` (or any
-> `.md` in the project) rides the App's context rail on every run, so editing
-> `rules/guardrails.md` in the IDE changes what the agent does next — up to a total budget
-> (`KX_APP_PROJECT_RAIL_BYTES`, 12 KiB), over which the run refuses rather than truncating.
-> Non-`.md` files are project docs only.
-
-> **Scaffolding needs a served model.** With no model the scaffold degrades to the base
-> file set with generic content. The prebuilt binary satisfies this via a running Ollama
-> daemon.
-
-### Run an App on a schedule
-
-An App is a first-class trigger target: `kx triggers add --name nightly --kind cron
---app apps/local/my-agent --schedule "0 9 * * 1-5" --timezone America/New_York`, or the
-calendar button on the App card in the console. **Local cron ships in OSS.**
-
-### Two kinds of App
-
-An App is one of two **kinds**, chosen in the console's **New App** form:
-
-- **Scheduled (functional)** — the durable, headless kind above: it wraps a blueprint,
-  runs on demand or on a trigger, and is what every `kx app` verb operates on. The
-  supported lane.
-- **Hosted (experience)** — a real Vite-React or Next.js web project the runtime scaffolds
-  into the App's branch and serves on a loopback dev-server port.
-
-Both ship in the prebuilt binary and every `just serve*` recipe. **Serving a hosted App
-needs Node/npm on the host** (the supervisor runs `npm install` and a dev server), and the
-runtime type-checks the scaffolded project before serving — a project that doesn't compile
-fails loudly instead of serving a blank page.
-
-> **Known limits, said plainly.** A curated connector (`kx connections add --provider gmail`)
-> points at a connector *binary* (`kx-connector-gmail`, …) the release does **not** package —
-> build it from a checkout (`cargo install --path integrations/kx-connector-gmail`) or point
-> `--command` at your own MCP server; `kx connections doctor` reports what resolves. The
-> `.kxapp` bundle carries the envelope's content closure but **not** the project branch, so a
-> hosted App round-trips to an empty shell. A declared dataset's `retrieve@1` grant is
-> enforced, but its *use* is persuasion (the model may not call it) — inspect the actual calls
-> with `kx react list`. Hosted **Stop** kills the npm wrapper, not always the dev server that
-> owns the port, and hosted server state does not survive a gateway restart.
-
-## Datasets & RAG
-
-Durable, content-addressed document corpora with vector search — ground your
-agents in your data (`hnsw` builds; included in the prebuilt binary):
-
-- **Ingest** documents with client-supplied embedding vectors (FFI-free, works
-  with any embedder you run) — or let a `serve-engine`/`inference` build embed
-  server-side (the prebuilt binary can, via a running Ollama embed model).
-- **Search** by similarity; results carry exact content hashes, so anything a
-  run consumes is pinned to the exact bytes it read.
-- Surfaces: the console's **Datasets** section, the SDK `datasets` module
-  (`ListDatasets` / `IngestDocuments` / `QueryDataset`).
-
-## SDKs
-
-Both SDKs speak the same wire as the CLI and console — every capability above is
-callable from code, with identities always server-derived.
-
-**Python** — `pip install kortecx` (`pip install 'kortecx[ws]'` for live event
-streaming):
-
-```python
-from kortecx import KxClient
-
-with KxClient("http://127.0.0.1:50151") as kx:
-    result = kx.invoke("kx/recipes/echo", {"topic": "hello"}, wait=True)
-    print(result.text)
-```
-
-Async twin (`AsyncKxClient`), typed errors with stable codes, run handles with
-`.projection(at_seq=…)` / `.events(follow=True)` / `.content(ref)`, the
-App/Chain/Swarm authoring builders, and wrappers for runs, memory, react/replan/
-rerank turns, capture records, telemetry, cost, datasets, teams, and grants.
-
-**TypeScript/JavaScript** — `npm install @kortecx/sdk` (node + browser entry
-points; `npm install ws` for node live-tail):
-
-```ts
-import { KxClient } from "@kortecx/sdk";
-
-const kx = new KxClient("http://127.0.0.1:50151");
-const result = await kx.invoke("kx/recipes/echo", { topic: "hello" }, { wait: true });
-console.log(result.text);
-```
+Served straight from the binary — no separate deploy, no build step. It streams every agent's
+events live and lets you scrub a run's whole history with a time-travel slider: pin any moment,
+inspect what the agent saw, then jump back to live. The live tail polls a few times a second rather
+than pushing, and the run "latency" it shows is a commit-sequence span, not milliseconds.
+
+## Observability & cost
+
+`kx cost <run>` gives a deterministic local spend estimate, priced per model turn and tool call at
+your own rates. It is a budget guardrail for your own planning, not a billing meter — the estimate
+is display-only, and cost ceilings are off by default.
 
 ## Security defaults
 
-Closed by default, opened explicitly: the server answers **nobody** until you
-pass `--dev-allow-local` (loopback-only) or bearer tokens; every listener binds
-loopback unless you say otherwise; browser access is **deny-by-default** CORS
-(the embedded console auto-grants only its own loopback origin — never a
-wildcard); bearer tokens are never persisted by the console or SDKs beyond
-memory; all run identities are derived server-side; and any step that touches
-the world runs under an explicit grant checked by exact equality — a model can
-propose an action, but only the runtime's checks can let it happen.
+- Deny-all by default: a tool call happens only under a warrant the server issued.
+- Loopback binds by default; an auth posture is **required** to start a server.
+- CORS is deny-by-default; browser origins must be named explicitly.
+- Tokens are never persisted — the console keeps a bearer token in memory only.
+- Capability checks are exact-equality. Scores, rankings, and recommendations are advisory and can
+  never authorize an action.
 
-## Run in Docker
+## Install & prerequisites
 
-The runtime ships as a small FFI-free container image; durability is proven
-*through* the container:
+The prebuilt binary is the fastest path and needs nothing but a shell:
 
 ```bash
-just docker-smoke            # build + reproduce the canonical digest in-container
-docker compose up --build    # the server stack on named volumes (dev token: kx-dev-token)
-
-kx invoke kx/recipes/echo --args '{"topic":"durable agents"}' --wait \
-    --endpoint http://127.0.0.1:50151 --token kx-dev-token
-docker compose restart kx    # journal + content persist across restarts
+curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
 ```
+
+It ships the web console and the dataset data-plane, and serves local models through Ollama.
+
+From source, one line gets you the same thing:
+
+```bash
+cargo install --path crates/kx-cli --features console,hnsw,serve-engine,hosted-apps
+```
+
+Swap `serve-engine` for `inference` to build the in-process llama.cpp engine — that needs CMake, a
+C++ toolchain, and the `crates/kx-llamacpp-sys/llama.cpp` submodule. Building the console from
+source needs Node ≥ 22. Hosted apps need Node and npm at run time.
+
+The gating story in one line: `--features inference,hnsw` plus a served model unlocks
+server-embedded retrieval and memory; memory also needs `KX_SERVE_MEMORY=1`.
+
+Run `kx --help` for the full command surface.
 
 ## Production notes
 
-- **TLS**: in-binary TLS covers the gRPC listener (`--tls-cert/--tls-key`); the
-  WebSocket bridge and web console are loopback plaintext — front them with a
-  TLS proxy for remote browsers.
-- **Scale**: single-system by default (one journal writer, ~18k commits/sec
-  ceiling); the same workflows run unchanged when distributed deployment lands.
-- **Inference**: one model, single-stream decoding per server today.
-- **Observability**: `kx health`, the live event stream, and the audit log, plus
-  per-mote execution telemetry (`kx telemetry`), a per-run local spend estimate
-  (`kx cost`), a terminal-failure alerts inbox (`kx alerts`), and an **opt-in
-  Prometheus `/metrics`** endpoint (`--metrics-listen`, RED metrics) — all
-  audit/display-only, never truth or a digest input. Input-token counts are not
-  measured in the OSS backend.
-- **Versions**: pre-1.0 — pin a release tag (`KX_VERSION`) for anything you keep.
+- **TLS** — serve behind TLS with `--tls-cert` / `--tls-key`, or terminate upstream.
+- **Scale** — single-system by default; the same workflows run unchanged when distributed
+  deployment lands.
+- **Inference** — the prebuilt is FFI-free; build with `inference` only where you want the
+  in-process engine.
+- **Versions** — early development. Interfaces may change before 1.0; pin a commit if you build
+  on it.
 
 ## Contributing
 
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for the
-build/test/gate path and [GLOSSARY.md](GLOSSARY.md) for the vocabulary; the
-design notes live in [`docs/`](docs/). Please open an issue to discuss
-substantial changes before sending a pull request.
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md), and [GLOSSARY.md](GLOSSARY.md)
+for the vocabulary the codebase uses.
 
 ## License
 
-Kortecx is **fair-code**, distributed under the **[Sustainable Use License](LICENSE.md)**. You
-can use, study, modify, and self-host it for your own internal or non-commercial work, free of
-charge. What it does not allow is repackaging Kortecx and selling it to others as a competing
-hosted service. Third-party components keep their original licenses. For a commercial license,
-reach out at hello@kortecx.com.
+Kortecx is **fair-code** distributed under the [Sustainable Use License](LICENSE.md): free to use,
+study, modify, and self-host for your own work, including inside your company. What it does not
+allow is repackaging Kortecx and selling it to others as a competing hosted service.
+
+Want to use it in a way the license doesn't cover? Reach out at **hello@kortecx.com**.
+
+Third-party components keep their own licenses — see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Links
 
-- **Website:** [kortecx.com](https://kortecx.com)
-- **Issues:** [github.com/Kortecx/kortecx/issues](https://github.com/Kortecx/kortecx/issues)
-- **Changelog:** [CHANGELOG.md](CHANGELOG.md)
-- **CI:** [Actions tab](https://github.com/Kortecx/kortecx/actions) — both the full
-  gate and the real-GGUF smoke job must pass on every PR.
+- Website — [kortecx.com](https://kortecx.com)
+- Documentation — [`docs/site`](docs/site)
+- Changelog — [CHANGELOG.md](CHANGELOG.md)
+- Security policy — [SECURITY.md](SECURITY.md)

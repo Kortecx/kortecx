@@ -178,4 +178,4 @@ re-runs `./codegen.sh` and fails on any drift from the frozen proto.
 
 ## License
 
-Apache-2.0.
+Sustainable Use License (fair-code) — see LICENSE.md.
