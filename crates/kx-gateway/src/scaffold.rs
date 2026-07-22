@@ -58,9 +58,14 @@ use crate::manifest::{decode_manifest, encode_manifest, manifest_plan_directive,
 const STEP_TIMEOUT: Duration = Duration::from_secs(320);
 /// Projection re-fold poll interval while awaiting a write step's commit.
 const POLL: Duration = Duration::from_millis(250);
-/// POC-6: how many of the most-recent sibling files to carry as coherence context
-/// into each write. Bounded so a large dynamic project's accumulated bodies never
-/// overflow the model's per-decode batch (the `n_tokens_all <= n_batch` guard).
+/// POC-6: how many of the most-recent sibling files to carry as FULL BODIES into each write.
+/// Bounded to a small count because the serve does NOT chunk a write prompt — the whole prompt
+/// is one decode, which must stay under the model's per-decode batch (`n_tokens_all <= n_batch`,
+/// e.g. 2048 tokens); a wider body window aborts (`GGML_ASSERT`) on the later files of a project.
+/// Full bodies are for local style/coherence; the export/prop CONTRACT every sibling exposes
+/// rides instead as a tiny distilled SIGNATURE ([`distill_module_api`]), which is what lets the
+/// entry — authored last — wire each child by its real return shape and prop list without ever
+/// approaching the batch limit.
 const SIBLING_CONTEXT_MAX: usize = 2;
 /// How many model-planned files the SCHEDULED lane may add on top of the fixed base
 /// [`SKELETON`]. Deliberately far below `MAX_MANIFEST_FILES` (48): each file is a full
@@ -750,6 +755,8 @@ impl HostScaffolder {
         // the prompt — an unbounded accumulation overflows the model's per-decode batch
         // (`n_tokens_all <= n_batch`) on the later files of a large project. The most
         // recent siblings give the most coherence signal; older files are dropped.
+        // The most-recent sibling BODIES, bounded to a small count so the write prompt stays
+        // under the model's per-decode batch (a wider window aborts on a large project).
         let ctx: Vec<String> = prior
             .iter()
             .rev()
@@ -757,13 +764,13 @@ impl HostScaffolder {
             .rev()
             .map(|(_, r)| r.clone())
             .collect();
-        // POC-6 coherence: distill EVERY prior sibling's export/prop API. The bounded body
-        // window above carries only the two most-recent BODIES (a batch-size guard); the path
-        // list is prompt text that cannot convey an export list or a prop interface. A model
-        // that sees a sibling's PATH but not its API imports a symbol it never exported or
-        // passes flat props to a component that declared one object — the App mounts and then
-        // throws. Each summary is tiny, so all of them fit regardless of authoring order; the
-        // read is a local content-store hit and the scheduled lane's markdown yields `None`.
+        // A distilled export/prop SIGNATURE for EVERY prior sibling — the contract the two-body
+        // window and the path list cannot convey: each module's exported names, a hook's return
+        // OBJECT shape, and each component's prop signature (including "no props"). Each summary
+        // is tiny, so all of them ride regardless of authoring order and never approach n_batch,
+        // which is what lets the entry (authored last) import exactly what a sibling exported,
+        // destructure a hook's real return, and pass a component exactly the props it declares.
+        // Each body is read once (a local content-store hit); markdown yields `None`.
         let sibling_apis: Vec<(String, String)> = prior
             .iter()
             .filter_map(|(p, r)| {

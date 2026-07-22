@@ -231,7 +231,7 @@ fn framework_label(framework: &str) -> &'static str {
 /// this only guards against a pathological `*Props` block; unlike a raw sibling BODY, an
 /// API summary this small can be carried for EVERY prior sibling without approaching the
 /// `n_tokens_all <= n_batch` decode limit.
-const MAX_SIBLING_API_BYTES: usize = 220;
+const MAX_SIBLING_API_BYTES: usize = 360;
 
 /// `true` for a path whose body is TypeScript/JavaScript source (the hosted lane), whose
 /// export surface and prop types [`distill_module_api`] can summarize. The scheduled lane's
@@ -399,6 +399,282 @@ fn prop_shapes(text: &str) -> Vec<String> {
     out
 }
 
+/// The byte offset of the close matching the opener `oc` at `open` (which must be `oc`), or
+/// `None` if unbalanced. Generic over `{}` / `()` / `<>`.
+fn matching_close(text: &str, open: usize, oc: u8, cc: u8) -> Option<usize> {
+    let b = text.as_bytes();
+    if b.get(open) != Some(&oc) {
+        return None;
+    }
+    let mut depth = 0i32;
+    for (i, &ch) in b.iter().enumerate().skip(open) {
+        if ch == oc {
+            depth += 1;
+        } else if ch == cc {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// The top-level type annotation of a parameter list body — the text after the FIRST `:` that
+/// sits at brace/paren/bracket/angle depth 0 (so `{ a, b }: Props` → `Props`, `props: Props` →
+/// `Props`, `{ a, b }` → `None`).
+fn top_level_type(params: &str) -> Option<&str> {
+    let b = params.as_bytes();
+    let mut depth = 0i32;
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            b'{' | b'(' | b'[' | b'<' => depth += 1,
+            b'}' | b')' | b']' | b'>' => depth -= 1,
+            b':' if depth == 0 => return Some(params[i + 1..].trim()),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A compact props descriptor for a component whose declaration text (everything after the
+/// component name) is `after`: `props: T` for a typed/`React.FC<T>` component, `no props` for a
+/// `React.FC` or `()` component, else the raw destructure (`props { a, b }`).
+fn component_props(after: &str) -> String {
+    for m in [
+        "React.FC<",
+        "React.FunctionComponent<",
+        "FC<",
+        "FunctionComponent<",
+    ] {
+        if let Some(i) = after.find(m) {
+            let lt = i + m.len() - 1; // the `<`
+            if let Some(gt) = matching_close(after, lt, b'<', b'>') {
+                let t = after[lt + 1..gt].trim();
+                if !t.is_empty() {
+                    return format!("props: {t}");
+                }
+            }
+        }
+    }
+    if after.contains("React.FC")
+        || after.contains("React.FunctionComponent")
+        || after.contains(": FC")
+        || after.contains(": FunctionComponent")
+    {
+        return "no props".to_string(); // an FC with no generic ⇒ no props
+    }
+    if let Some(op) = after.find('(') {
+        if let Some(cl) = matching_close(after, op, b'(', b')') {
+            let params = after[op + 1..cl].trim();
+            if params.is_empty() {
+                return "no props".to_string();
+            }
+            if let Some(t) = top_level_type(params) {
+                return format!("props: {t}");
+            }
+            let mut d = format!("props {params}");
+            if d.len() > 60 {
+                d.truncate(60);
+                d.push('…');
+            }
+            return d;
+        }
+    }
+    "no props".to_string()
+}
+
+/// The top-level keys of the FIRST `return { … }` at depth 1 of the function body opening at
+/// `body_open` — a hook/util's return OBJECT shape. Ignores nested returns (e.g. a `useMemo`
+/// callback), so `useX = () => { … return { a, b, c } }` yields `[a, b, c]`, not the inner one.
+fn top_level_return_keys(text: &str, body_open: usize) -> Option<Vec<String>> {
+    let b = text.as_bytes();
+    if b.get(body_open) != Some(&b'{') {
+        return None;
+    }
+    let mut depth = 0i32;
+    let mut i = body_open;
+    while i < b.len() {
+        match b[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return None;
+                }
+            }
+            _ => {
+                if depth == 1 && text[i..].starts_with("return") && !text[..i].is_empty() {
+                    let prev = b[i - 1];
+                    if !(prev.is_ascii_alphanumeric() || prev == b'_') {
+                        let after = &text[i + "return".len()..];
+                        let trimmed = after.trim_start();
+                        if let Some(brace) = trimmed.strip_prefix('{') {
+                            let _ = brace;
+                            let brace_pos = i + "return".len() + (after.len() - trimmed.len());
+                            let keys = object_keys(balanced_block(text, brace_pos));
+                            if !keys.is_empty() {
+                                return Some(keys);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Top-level property names of an object-literal body (the text between its braces): the
+/// identifier before each `:` or a shorthand key, at brace/paren/bracket depth 0.
+fn object_keys(block: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for seg in split_top_level(block) {
+        let seg = seg.trim();
+        if seg.is_empty() || seg.starts_with("//") || seg.starts_with("...") {
+            continue;
+        }
+        let key = seg.split(':').next().unwrap_or("").trim();
+        if !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+            && !out.iter().any(|k| k == key)
+        {
+            out.push(key.to_string());
+        }
+    }
+    out
+}
+
+/// Split a block body on top-level commas (respecting `{}`/`()`/`[]` nesting).
+fn split_top_level(block: &str) -> Vec<&str> {
+    let b = block.as_bytes();
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, &c) in b.iter().enumerate() {
+        match c {
+            b'{' | b'(' | b'[' => depth += 1,
+            b'}' | b')' | b']' => depth -= 1,
+            b',' if depth == 0 => {
+                out.push(&block[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&block[start..]);
+    out
+}
+
+/// Rich per-export descriptors: a component's prop signature (`Foo(props: T)` / `Foo(no props)`)
+/// and a hook/util's return OBJECT shape (`useFoo() returns { a, b }`). Falls back to the bare
+/// name for a type/interface/class/enum/value. This is what closes the prop-shape and
+/// return-shape drift a bare export-name list cannot: the entry sees exactly what to pass a child
+/// and exactly what a hook returns.
+fn describe_exports(text: &str, is_jsx: bool) -> Vec<String> {
+    // Identifiers that are default-exported by name (`export default TipInput`), so a component
+    // DEFINED as `const X = …` then default-exported gets a rich signature too — the common React
+    // pattern the tip-calc scaffold used.
+    let default_idents: Vec<String> = text
+        .lines()
+        .filter_map(|l| {
+            let t = l.trim_start().strip_prefix("export default ")?;
+            if t.starts_with("function")
+                || t.starts_with("class")
+                || t.starts_with('(')
+                || t.starts_with('{')
+            {
+                return None;
+            }
+            let id: String = t
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                .collect();
+            (!id.is_empty()).then_some(id)
+        })
+        .collect();
+
+    let mut out: Vec<String> = Vec::new();
+    let push = |s: String, out: &mut Vec<String>| {
+        if !s.is_empty() && !out.iter().any(|e| e == &s) {
+            out.push(s);
+        }
+    };
+    for (line_start, raw) in line_offsets(text) {
+        let trimmed = raw.trim_start();
+        // Accept `export [default] [async] (const|function) NAME`, or a bare
+        // `[async] (const|function) NAME` whose NAME is default-exported elsewhere.
+        let (rest, is_export, mut is_default) = match trimmed.strip_prefix("export ") {
+            Some(r) => {
+                let d = r.trim_start().starts_with("default ");
+                (
+                    r.trim_start().strip_prefix("default ").unwrap_or(r),
+                    true,
+                    d,
+                )
+            }
+            None => (trimmed, false, false),
+        };
+        let rest = rest.strip_prefix("async ").unwrap_or(rest);
+        let after_kw = rest
+            .strip_prefix("function ")
+            .or_else(|| rest.strip_prefix("const "))
+            .map(str::trim_start);
+        let Some(after_kw) = after_kw else { continue };
+        let name: String = after_kw
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        let default_by_name = default_idents.iter().any(|d| d == &name);
+        if !is_export && !default_by_name {
+            continue; // a private local, not part of the module's surface
+        }
+        is_default |= default_by_name;
+        let name_abs = line_start + (raw.len() - after_kw.len());
+        let after = &text[name_abs + name.len()..];
+        let pascal = name.chars().next().is_some_and(char::is_uppercase);
+        let looks_component = is_jsx && (pascal || after.contains("React.FC"));
+        let label = if is_default {
+            format!("default {name}")
+        } else {
+            name.clone()
+        };
+        if looks_component {
+            push(format!("{label}({})", component_props(after)), &mut out);
+        } else if let Some(bo) = after.find('{') {
+            if let Some(keys) = top_level_return_keys(text, name_abs + name.len() + bo) {
+                push(
+                    format!("{label}() returns {{ {} }}", keys.join(", ")),
+                    &mut out,
+                );
+            } else {
+                push(label, &mut out);
+            }
+        } else {
+            push(label, &mut out);
+        }
+    }
+    out
+}
+
+/// `(line_start_byte_offset, line_text)` for each line — so a matched declaration can be located
+/// back in the full `text` for brace scanning.
+fn line_offsets(text: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for line in text.split_inclusive('\n') {
+        out.push((start, line.trim_end_matches('\n')));
+        start += line.len();
+    }
+    out
+}
+
 /// A compact, deterministic summary of a TS/JS module's PUBLIC surface — the names it
 /// `export`s and the shape of any `*Props` type it declares — for injection into a sibling
 /// file's authoring prompt.
@@ -420,19 +696,25 @@ pub fn distill_module_api(path: &str, body: &[u8]) -> Option<String> {
         return None;
     }
     let text = std::str::from_utf8(body).ok()?;
-    let exports = exported_symbols(text);
-    // Prop shapes are a JSX/TSX-component concern only.
-    let props = if matches!(path.rsplit('.').next(), Some("tsx" | "jsx")) {
-        prop_shapes(text)
-    } else {
-        Vec::new()
-    };
-    if exports.is_empty() && props.is_empty() {
+    let is_jsx = matches!(path.rsplit('.').next(), Some("tsx" | "jsx"));
+    // Names of every export, PLUS a rich signature for each const/function export — a component's
+    // prop list and a hook/util's return-object shape.
+    let names = exported_symbols(text);
+    let rich = describe_exports(text, is_jsx);
+    // `*Props` type shapes — declared in a `.ts` types module as often as a `.tsx`, so scan both.
+    let props = prop_shapes(text);
+    if names.is_empty() && rich.is_empty() && props.is_empty() {
         return None;
     }
     let mut parts: Vec<String> = Vec::new();
-    if !exports.is_empty() {
-        parts.push(format!("exports {}", exports.join(", ")));
+    if !names.is_empty() {
+        parts.push(format!("exports {}", names.join(", ")));
+    }
+    // Rich per-export detail (drop entries that add nothing over the bare name already listed).
+    for r in rich {
+        if r.contains('(') || r.contains("returns") {
+            parts.push(r);
+        }
     }
     parts.extend(props);
     let mut summary = parts.join("; ");
@@ -782,6 +1064,61 @@ mod tests {
         assert!(api.contains("bee"), "{api}"); // the alias, not `b`
         assert!(!api.contains(" b,") && !api.contains("exports a, b;"));
         assert!(api.contains("Props { x: number }"), "{api}");
+    }
+
+    #[test]
+    fn distill_module_api_captures_hook_returns_and_component_props() {
+        // The exact tip-calculator patterns the live proof exposed — the two drifts a bare
+        // export-name list could not convey.
+
+        // (1) A hook returning an inline object (with a NESTED useMemo return that must be
+        //     ignored) ⇒ the OUTER return keys, so the entry destructures the right fields.
+        let hook = b"import { useState, useMemo } from 'react';\n\
+            export const useTipCalculator = () => {\n\
+            \x20 const [inputState, setInputState] = useState({ billAmount: '0' });\n\
+            \x20 const updateInput = (f, v) => setInputState(p => ({ ...p, [f]: v }));\n\
+            \x20 const calculation = useMemo(() => { return { billAmount: 0, tipAmount: 0 }; }, [inputState]);\n\
+            \x20 return { inputState, updateInput, calculation };\n\
+            };\n";
+        let api = distill_module_api("src/hooks/useTipCalculator.ts", hook).unwrap();
+        assert!(
+            api.contains("useTipCalculator() returns { inputState, updateInput, calculation }"),
+            "{api}"
+        );
+        assert!(
+            !api.contains("tipAmount"),
+            "the nested useMemo return must be ignored: {api}"
+        );
+
+        // (2) A propless component, defined then default-exported ⇒ "no props", so the entry
+        //     renders <TipInput /> instead of passing props it does not accept.
+        let propless = b"import React from 'react';\n\
+            import { useTipCalculator } from '../hooks/useTipCalculator';\n\
+            const TipInput: React.FC = () => {\n  const { inputState } = useTipCalculator();\n  return <div>{inputState.billAmount}</div>;\n};\n\
+            export default TipInput;\n";
+        let api = distill_module_api("src/components/TipInput.tsx", propless).unwrap();
+        assert!(api.contains("default TipInput(no props)"), "{api}");
+
+        // (3) A typed component (React.FC<Props>, default-exported) ⇒ its props TYPE, so the
+        //     entry passes exactly those props.
+        let typed = b"import React from 'react';\n\
+            import { TipResultProps } from '../types';\n\
+            const TipResult: React.FC<TipResultProps> = ({ tipAmount, totalAmount }) => {\n  return <p>{tipAmount}{totalAmount}</p>;\n};\n\
+            export default TipResult;\n";
+        let api = distill_module_api("src/components/TipResult.tsx", typed).unwrap();
+        assert!(
+            api.contains("default TipResult(props: TipResultProps)"),
+            "{api}"
+        );
+
+        // (4) A `.ts` types module's `*Props` shape is captured (previously .tsx-only).
+        let type_module = b"export type TipCalculation = { tipAmount: number };\n\
+            export interface TipResultProps { tipAmount: number; totalAmount: number }\n";
+        let api = distill_module_api("src/types.ts", type_module).unwrap();
+        assert!(
+            api.contains("TipResultProps { tipAmount: number; totalAmount: number }"),
+            "{api}"
+        );
     }
 
     #[test]
