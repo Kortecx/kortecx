@@ -51,9 +51,9 @@ export function RegisterToolForm() {
       <h2>Register an external MCP tool</h2>
       <p className="muted">
         Records a declarative HTTP tool + its SSRF-vetted egress host in the durable registry.
-        Grants no authority (SN-8); a tool fires only under a server-issued warrant. Registering
-        records the tool; executing its HTTP egress at run is a Cloud capability. (To dial an MCP
-        server locally, use <strong>Connections</strong> — that ships in OSS.)
+        Grants no authority; a tool fires only under a server-issued warrant. Registering records
+        the tool; executing its HTTP egress at run is a Cloud capability. (To dial an MCP server
+        locally, use <strong>Connections</strong> — that ships in OSS.)
       </p>
       <form onSubmit={onSubmit} className="register-tool-form">
         <div className="register-tool-form__row">
