@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! G2 — the App-pointer → run resolution seam (the `RunApp` path).
 //!
 //! Apps run **client-orchestrated** today: the client `GetApp`s the envelope,

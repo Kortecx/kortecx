@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! G1a durable membership backend (D94): the membership ledger survives a process
 //! restart. Mirrors `kx-catalog/tests/durable_backends.rs` — `run_with_each_backend`
 //! holds the SQLite impl to the SAME contract as the in-memory one; a write → drop →

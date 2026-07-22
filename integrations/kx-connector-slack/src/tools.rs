@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The Slack tool catalog (the `tools/list` payload) and `tools/call` routing.
 //!
 //! Argument decoding is fail-closed: a missing/ill-typed field yields a JSON-RPC

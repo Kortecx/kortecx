@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-capability` — D24 capability-broker seam (P1.8.5).
 //!
 //! The [`CapabilityBroker`] trait is the executor's sole interface to

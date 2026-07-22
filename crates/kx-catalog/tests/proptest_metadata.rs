@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Property tests for the M7.3 advisory metadata sidecar (D84): set/get/remove,
 //! deterministic [`AssetRef`]-ordered iteration, the inverted tag index matches a
 //! brute-force scan, the per-asset tag bound is fail-closed, and `Tag` validation.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Scale-smoke: the catalog registry stays sub-linear at scale.
 //!
 //! `#[ignore]`d — run in `--release` via the `scale-smoke` recipe. Registration

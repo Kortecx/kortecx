@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! M7.3 action-selection-safety (SN-8 / D70 / D87): fuzzy discovery scores NEVER
 //! leak into the committed selection. The catalog analog of
 //! `kx-workflow/tests/retrieval_mote.rs::similarity_scores_do_not_leak_into_the_committed_fact`.

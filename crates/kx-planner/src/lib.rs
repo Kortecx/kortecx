@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-planner` (M6) — turn an untrusted model **proposal** into a **registered
 //! Mote DAG**. The front of the agentic pipe: prompt → plan → tools → result.
 //!

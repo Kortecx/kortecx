@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-dataset-bm25` — the opt-in SPARSE (keyword / BM25) retrieval backend (RC4a).
 //!
 //! A hand-rolled, pure-Rust, FFI-free inverted index that implements

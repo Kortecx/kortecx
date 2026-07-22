@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`SignatureEntry`] (M7.1, D83) — the registry's value type — plus the
 //! snapshot/recipe descriptor ([`RecipeSnapshot`]) and the typed free-param
 //! contract ([`FreeParamContract`]).

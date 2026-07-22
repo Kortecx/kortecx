@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! RC5b (durable memory — consolidation) — the bundled read-only `consolidate@1`
 //! capability + its typed [`ToolDef`] + the serve-broker registration. In a
 //! `kx/recipes/react-memory` turn a model proposes

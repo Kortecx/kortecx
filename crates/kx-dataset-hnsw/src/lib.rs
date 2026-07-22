@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-dataset-hnsw` — the opt-in SCALE retrieval backend (DP3, T2.3).
 //!
 //! A file-backed, in-process approximate-nearest-neighbour (HNSW) index that

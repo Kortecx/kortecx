@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`MemoryStore`] — the durable, per-namespace memory seam.
 //!
 //! Methods take `&self` (interior mutability) so a store can be shared

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The Notion client: the Notion REST calls authenticated with an integration
 //! token — or a deterministic offline `fake` mode for tests / CI / conformance.
 //!

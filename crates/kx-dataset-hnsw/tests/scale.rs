@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Scale-smoke: a 25k-vector HNSW must answer queries materially faster than the
 //! exact O(n) brute-force scan — the whole point of the opt-in DP3 backend.
 //! `#[ignore]`; run by `just scale-smoke` in `--release`.

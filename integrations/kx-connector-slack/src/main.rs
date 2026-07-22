@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The `kx-connector-slack` binary: a newline-delimited JSON-RPC 2.0 MCP server
 //! over stdio. It builds its Slack client from the environment (the injected
 //! bot-token credential, D81) once at start, then answers one request per input

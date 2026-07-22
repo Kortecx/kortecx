@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The curated connector-author surface: `use kx_extension_sdk::prelude::*;`.
 //!
 //! This is the **supported, semver-pinned** set of seams a connector author needs.

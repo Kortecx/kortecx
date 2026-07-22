@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `just test-connector [endpoint…]` — dial a connector through the gateway path and
 //! run the bundled subset of the D167 Extension Acceptance Gate, printing a
 //! per-check report (and the machine-readable JSON) and exiting non-zero on failure.

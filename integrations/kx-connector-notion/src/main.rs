@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The `kx-connector-notion` binary: a newline-delimited JSON-RPC 2.0 MCP server
 //! over stdio. It builds its Notion client from the environment (the injected
 //! integration-token credential, D81) once at start, then answers one request per

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Fail-closed argument guards for the Notion REST surface.
 //!
 //! The connector interpolates page/block ids into URL path segments

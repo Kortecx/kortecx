@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`SqliteCatalog`] — a durable [`CatalogRegistry`] (G1 / D94). The signature
 //! registry survives a restart. A SQLite `signatures` table (content id PK + a
 //! canonical-bincode entry BLOB) is the truth; an in-memory `BTreeMap` cache is

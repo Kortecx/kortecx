@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`SqliteToolRegistry`] — a durable [`ToolRegistry`] (PR-6a). Registrations
 //! survive a restart in an off-journal `tools.db`. Mirrors the G1a / D94
 //! durable-backend-behind-an-unchanged-trait shape (`kx_fleet::SqliteMembershipLedger`,

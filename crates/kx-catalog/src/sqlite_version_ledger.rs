@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`SqliteVersionLedger`] — a durable [`VersionLedger`] (G1 / D94). Published
 //! versions + the mutable handle survive a restart. A SQLite `versions` table
 //! (`seq` PK preserving append order + a content-id unique index + a

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! # kx-catalog — the snapshot registry + sharable catalog (M7, D82/D83)
 //!
 //! The kortecx **catalog** is the Unity-Catalog-class registry of reusable

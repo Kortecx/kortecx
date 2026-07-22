@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Unit tests: query correctness, parity with the exact index, determinism,
 //! idempotency, dimension handling, and the cache codec round-trip.
 

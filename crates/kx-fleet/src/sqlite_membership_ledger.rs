@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`SqliteMembershipLedger`] — a durable [`MembershipLedger`] (G1a / D94).
 //! Foundings/admits/removals/disbands survive a restart. A SQLite `facts` table
 //! (`seq` PK preserving append order == in-memory `Vec` position + a content-id

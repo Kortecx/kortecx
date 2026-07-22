@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The MCP JSON-RPC 2.0 protocol surface: `initialize` -> `tools/list` ->
 //! `tools/call`, newline-delimited over stdio. Every reply is fail-closed — an
 //! unparseable line or unknown method yields a JSON-RPC error, never a fabricated

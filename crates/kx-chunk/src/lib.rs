@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-chunk` — the kortecx deterministic document chunker (RC4a).
 //!
 //! A pure, `std`-only, recursive **character** text splitter. It segments a

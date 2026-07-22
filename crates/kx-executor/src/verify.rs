@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`verify_pure_rerun`] — re-test a committed PURE fact by re-running it.
 //!
 //! The runtime's identity mechanism IS the verification mechanism: a PURE Mote

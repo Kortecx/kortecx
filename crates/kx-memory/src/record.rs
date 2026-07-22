@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The memory record vocabulary — [`MemoryKind`], [`MemoryRecord`], [`MemoryHit`],
 //! the write [`StoreRequest`]/[`StoreOutcome`], the content-addressed [`memory_id`],
 //! and the shared validation + encoding helpers.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Fail-closed argument guards for the Slack Web API surface.
 //!
 //! The connector interpolates channel ids into URL query parameters

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The deterministic recursive-character chunker.
 
 /// The chunker algorithm version. Bumped on any change to the separator

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Integration + security + exit-gate tests for M7.2 governance (D86).
 //!
 //! Drives the real-life enterprise use cases end to end (an org admin grants a

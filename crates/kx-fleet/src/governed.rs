@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`GovernedFleet`] (M7, D112) — the composed resolution over a
 //! [`MembershipLedger`] + a [`kx_catalog::GrantLedger`].
 //!

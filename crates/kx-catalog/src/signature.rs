@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`TaskSignature`] (M7.0, D82) — the verdict-reuse identity foundation: the
 //! closed [`SignatureAxis`] vocabulary, the content-addressed
 //! [`TaskSignatureHash`], and the [`VerdictScope`] reuse association.

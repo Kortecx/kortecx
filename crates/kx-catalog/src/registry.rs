@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The catalog seam (M7.1): the backend-agnostic [`CatalogRegistry`] trait, its
 //! [`RegistrationOutcome`] / [`CatalogError`] vocabulary, and an `Arc` blanket
 //! impl. The in-memory reference backend is [`crate::InMemoryCatalog`].

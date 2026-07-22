@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`ModelDescriptor`] — a model's identity, modalities, and cache key.
 
 use std::path::{Path, PathBuf};

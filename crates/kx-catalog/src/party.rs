@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`PartyId`] — the opaque identity a grant is issued to / by (M7.2, D86).
 //!
 //! A `PartyId` is an opaque handle the catalog **never parses**: authorization

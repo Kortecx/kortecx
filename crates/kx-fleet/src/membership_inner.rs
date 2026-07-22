@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The shared membership fold: the append-only [`Inner`] truth + derived indices, the
 //! single fold step ([`Inner::apply_fact`]), and the `pub(crate)` read folds the
 //! [`crate::InMemoryMembershipLedger`] AND the durable [`crate::SqliteMembershipLedger`]
