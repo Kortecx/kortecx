@@ -255,7 +255,10 @@ export function ToolsPicker({
           onChange(rest, reachInherit);
         }}
       />
-      <label className="muted" title="Let attached tools act with the caller's full reach at run">
+      <label
+        className="muted"
+        title="REPLACES the tools attached above with your entire tool ceiling at run — the run can use every tool you can, not only the ones selected here"
+      >
         <input
           type="checkbox"
           checked={reachInherit}
@@ -263,7 +266,7 @@ export function ToolsPicker({
           onChange={() => onChange(grants, !reachInherit)}
           data-testid={reachTestId}
         />{" "}
-        Inherit principal reach
+        Inherit principal reach (replaces the selection with your full ceiling)
       </label>
     </>
   );

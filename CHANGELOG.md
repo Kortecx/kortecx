@@ -11,14 +11,32 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 - **Apps — the durable, shareable unit of agentic capability.** An App is a
   `kortecx.app/v1` envelope that wraps a portable blueprint with by-reference
   context / tool / connection / dataset references, a prompt/rule/skill/memory
-  rail, and a steering config (model, max turns, max tool calls).
-  `kx app new/save/list/get/run/export/import/clone` — plus the `kx.app(...)` /
-  `app(...)` builders in the Python and TypeScript SDKs and the console **Apps**
-  section — author, run, and share them. An App carries **no authority**: `run`
-  and `import` re-resolve every warrant from the caller's own grants, and a shared
-  bundle re-registers connections/secrets by name so it resolves each operator's
-  own credentials. Off-journal + additive (the canonical projection digest is
-  unchanged). (cli/sdk/ui)
+  rail, and a steering config (model, max turns, max tool calls) — **plus a
+  project**: a tree of markdown files a served model authors into the App's
+  content-addressed branch, whose `.md` rides the run's context rail (so a rule in
+  `rules/*.md` reaches the model). `kx app new/save/list/get/manifest/run/delete`,
+  `export/import/clone`, `scaffold/files/cat/edit/structure`, `lock/unlock` — plus
+  the `kx.app(...)` / `app(...)` builders in the Python and TypeScript SDKs and the
+  console **Apps** section (a **New App** agentic-creation form and a per-App IDE
+  with a file tree + editor, an editable lineage graph, and chat) — author, run,
+  schedule, and share them. Bind a cron/webhook trigger to an App with
+  `kx triggers add --app <handle>`. `GetAppManifest` and the run preflight report a
+  missing **dataset** — the one declared dependency that hard-fails a run. An App
+  carries **no authority**: `run` and `import` re-resolve every warrant from the
+  caller's own grants, and a shared bundle re-registers connections/secrets by name
+  so it resolves each operator's own credentials; the bundle carries the envelope +
+  its content closure, **not** the project tree. Off-journal + additive (the
+  canonical projection digest is unchanged). (cli/sdk/ui)
+
+- **Hosted (experience) Apps.** A hosted App is a real Vite-React or Next.js project
+  the runtime scaffolds into its branch and serves on a loopback dev-server port. It
+  ships in the prebuilt binary and every `just serve*` recipe (behind the
+  `hosted-apps` cargo feature, wired into the release); **serving one needs Node/npm**
+  on the host. The scaffolder carries each sibling's export/prop API forward so files
+  agree across the seam, and the supervisor type-checks the project (`tsc --noEmit`)
+  before serving — a project that does not compile fails loudly instead of serving a
+  blank page. Authored from the console **New App** form or the SDK `.hosted(...)`
+  builder (`kx app new` cannot create one). (gateway/ui)
 
 - **Chains — a string-DSL for composing published task handles into a DAG.**
   `kx chain run "<dsl>"` (and `chain(...)` in both SDKs) lowers an expression built

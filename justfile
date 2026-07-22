@@ -490,10 +490,11 @@ console-dist:
     npm --prefix ui ci
     npm --prefix ui run build
 
-# D139: a release-grade kx with the embedded console + the Datasets data-plane —
-# exactly what the prebuilt release ships (`--features console,hnsw`; FFI-free).
+# D139: a release-grade kx with the embedded console + the Datasets data-plane + the Ollama
+# serve loop + the hosted-app supervisor — exactly what the prebuilt release ships
+# (`--features console,hnsw,serve-engine,hosted-apps`; FFI-free).
 console-build: console-dist
-    cargo build --release -p kx-cli --features console,hnsw,hosted-apps
+    cargo build --release -p kx-cli --features console,hnsw,serve-engine,hosted-apps
 
 # Hermetic proof of the local model back-pressure lease (scripts/model-lease.sh, Rule 44): two
 # callers cannot both hold it, --wait serializes (queues then proceeds after release), a non-holder

@@ -31,6 +31,9 @@ export function RunPreflight({ handle }: { handle: string }) {
     ? view.tools.filter((t) => t.requested && !t.inPolicy && !t.inherited)
     : [];
   const missingConns = view ? view.connections.filter((c) => c.requested && !c.inPolicy) : [];
+  // A missing dataset is the ONE dependency that HARD-FAILS the run (RunApp refuses), so it is
+  // the one preflight must not stay silent about.
+  const missingDatasets = view ? view.datasets.filter((d) => d.requested && !d.inPolicy) : [];
   const appModelUnserved = view ? view.modelRoute !== "" && !view.modelRouteServed : false;
 
   const warnings: { key: string; text: string }[] = [];
@@ -56,6 +59,14 @@ export function RunPreflight({ handle }: { handle: string }) {
     warnings.push({
       key: "connections",
       text: `⚠ Integrations not connected: ${missingConns.map((c) => c.id).join(", ")}.`,
+    });
+  }
+  if (missingDatasets.length > 0) {
+    warnings.push({
+      key: "datasets",
+      text: `⚠ Dataset not ingested — the run will REFUSE: ${missingDatasets
+        .map((d) => d.id)
+        .join(", ")}. Ingest it with \`kx datasets ingest\`, then re-run.`,
     });
   }
 

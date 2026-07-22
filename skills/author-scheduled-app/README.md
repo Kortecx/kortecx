@@ -16,8 +16,15 @@ dialed tools.
 ```sh
 kx connections add --provider gmail          # connect any services the job needs
 kx skills add --dir skills/author-scheduled-app
-kx app new my-automation --skill author-scheduled-app
-kx app run my-automation
+kx app new my-automation --from-blueprint my-flow.dag.json \
+  --skill author-scheduled-app --output my-automation.app.json
+kx app save my-automation.app.json --handle apps/local/my-automation
+kx app run apps/local/my-automation --wait
 ```
+
+Or skip the blueprint file entirely: create the App in the console's **New App** form,
+which authors the blueprint on the builder canvas and saves it for you. (`kx app new`
+requires `--from-blueprint` and only writes the envelope to a file — `kx app save`
+persists it to the catalog under a handle.)
 
 Conformance: `just test-skill skills/author-scheduled-app`.

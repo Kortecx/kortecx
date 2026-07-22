@@ -1648,7 +1648,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db.clone())
         .with_skill_catalog(skills_db)
-        .with_branches_store(branches_db)
+        .with_branches_store(branches_db.clone())
         .with_lock_store(locks_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
             tool_registry.clone(),
@@ -1725,6 +1725,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                     fireable.clone(),
                     content.clone(),
                     app_datasets,
+                    // T-RUNAPP-PROJECT-RAIL: the SAME branch store the scaffold + IDE write, so
+                    // an App's project `.md` reaches the model at run time.
+                    Some(branches_db.clone() as Arc<dyn kx_gateway_core::BranchStore>),
                 ));
                 // ONE host object, viewed as both the run resolver (`AppAuthor`) and the
                 // capability-manifest seam (`AppManifestView`) — they share the envelope

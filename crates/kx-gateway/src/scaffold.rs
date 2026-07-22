@@ -42,9 +42,9 @@ use std::time::{Duration, Instant};
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    authoring_prompt, body_is_empty, derive_phase, hosted_authored_role, hosted_entry_path,
-    hosted_template, split_done_pending, strip_code_fence, try_committed_body, AppScaffolder,
-    BinderError, BranchManifest, BranchStore, ContentReader, ContentWriter,
+    authoring_prompt, body_is_empty, derive_phase, distill_module_api, hosted_authored_role,
+    hosted_entry_path, hosted_template, split_done_pending, strip_code_fence, try_committed_body,
+    AppScaffolder, BinderError, BranchManifest, BranchStore, ContentReader, ContentWriter,
     GatewayError as CoreError, HostedFileSource, JournalReader, LockStore, RecipeBinder,
     RunSubmitter, ScaffoldPhase, ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
     APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH, SKELETON,
@@ -58,9 +58,14 @@ use crate::manifest::{decode_manifest, encode_manifest, manifest_plan_directive,
 const STEP_TIMEOUT: Duration = Duration::from_secs(320);
 /// Projection re-fold poll interval while awaiting a write step's commit.
 const POLL: Duration = Duration::from_millis(250);
-/// POC-6: how many of the most-recent sibling files to carry as coherence context
-/// into each write. Bounded so a large dynamic project's accumulated bodies never
-/// overflow the model's per-decode batch (the `n_tokens_all <= n_batch` guard).
+/// POC-6: how many of the most-recent sibling files to carry as FULL BODIES into each write.
+/// Bounded to a small count because the serve does NOT chunk a write prompt — the whole prompt
+/// is one decode, which must stay under the model's per-decode batch (`n_tokens_all <= n_batch`,
+/// e.g. 2048 tokens); a wider body window aborts (`GGML_ASSERT`) on the later files of a project.
+/// Full bodies are for local style/coherence; the export/prop CONTRACT every sibling exposes
+/// rides instead as a tiny distilled SIGNATURE ([`distill_module_api`]), which is what lets the
+/// entry — authored last — wire each child by its real return shape and prop list without ever
+/// approaching the batch limit.
 const SIBLING_CONTEXT_MAX: usize = 2;
 /// How many model-planned files the SCHEDULED lane may add on top of the fixed base
 /// [`SKELETON`]. Deliberately far below `MAX_MANIFEST_FILES` (48): each file is a full
@@ -328,7 +333,7 @@ impl HostScaffolder {
             .resolve_manifest_scheduled(principal, branch, goal)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-        let mut prior: Vec<String> = Vec::new();
+        let mut prior: Vec<(String, String)> = Vec::new();
         for file in &files {
             // POC-5b: a lock applied before/during the scaffold halts it cleanly.
             if let Some(l) = self.locks.as_ref() {
@@ -346,7 +351,10 @@ impl HostScaffolder {
                     "scaffold branch vanished mid-run",
                 )))?;
             if let Some(it) = manifest.items.iter().find(|i| i.path == file.path) {
-                prior.push(ContentRef::from_bytes(it.content_ref).to_hex());
+                prior.push((
+                    file.path.clone(),
+                    ContentRef::from_bytes(it.content_ref).to_hex(),
+                ));
                 continue;
             }
 
@@ -361,7 +369,7 @@ impl HostScaffolder {
                 .await?;
             self.branches
                 .advance(principal, branch, &file.path, body_ref)?;
-            prior.push(ContentRef::from_bytes(body_ref).to_hex());
+            prior.push((file.path.clone(), ContentRef::from_bytes(body_ref).to_hex()));
         }
         Ok(())
     }
@@ -421,6 +429,22 @@ impl HostScaffolder {
             extras
                 .into_iter()
                 .filter(|f| !base_paths.contains(f.path.as_str()))
+                // G023: the scheduled lane is markdown-only (`AGENTIC_PLAN_SYSTEM` asks for
+                // ".md only" but that was prompt text, unenforced). Drop a non-`.md` extra
+                // rather than author it: only `.md` rides the run's project context rail
+                // (`app_run::is_project_rail_path`), so a stray `.py`/`.json` would be a file
+                // the user sees, the model never gets, and no surface can explain. Matched to
+                // the rail EXACTLY (lowercase `md`) so "authored" ⟺ "reaches the model".
+                .filter(|f| {
+                    let is_md = matches!(f.path.rsplit('.').next(), Some("md"));
+                    if !is_md {
+                        tracing::info!(
+                            branch = %branch, path = %f.path,
+                            "dropping a non-.md scheduled extra (only markdown reaches the run context rail)"
+                        );
+                    }
+                    is_md
+                })
                 // Bound the lane. MAX_MANIFEST_FILES (48) × the per-step model timeout is
                 // a multi-hour worst case for a lane that wrote exactly 5 files before,
                 // and the live scaffold witness has a wall-clock deadline.
@@ -617,8 +641,21 @@ impl HostScaffolder {
             .resolve_manifest_hosted(principal, branch, framework, goal)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
-        let mut prior: Vec<String> = Vec::new();
-        for file in &files {
+        // Author the framework ENTRY last. The entry (`src/App.tsx`, `app/page.tsx`, …) is the
+        // file that IMPORTS and MOUNTS every child, so authoring it after its children is what
+        // lets each child's distilled export/prop API reach the entry's authoring prompt — a
+        // parent that renders a child before the child's prop shape is known is the dominant
+        // cross-file break we observed. Only the VISITATION order changes; `files` (and thus the
+        // persisted `.kortecx/manifest.json` marker, and a resume) is untouched. Children keep
+        // their planned order, so an earlier child's API still reaches a later one.
+        let entry = hosted_entry_path(framework);
+        let order: Vec<&ManifestFile> = files
+            .iter()
+            .filter(|f| f.path != entry)
+            .chain(files.iter().filter(|f| f.path == entry))
+            .collect();
+        let mut prior: Vec<(String, String)> = Vec::new();
+        for file in order {
             if let Some(l) = self.locks.as_ref() {
                 if l.is_locked(principal, branch)? {
                     return Err(CoreError::FailedPrecondition(
@@ -633,7 +670,10 @@ impl HostScaffolder {
                     "scaffold branch vanished mid-run",
                 )))?;
             if let Some(it) = manifest.items.iter().find(|i| i.path == file.path) {
-                prior.push(ContentRef::from_bytes(it.content_ref).to_hex());
+                prior.push((
+                    file.path.clone(),
+                    ContentRef::from_bytes(it.content_ref).to_hex(),
+                ));
                 continue;
             }
             self.set(branch, ScaffoldPhase::Writing, &file.path);
@@ -651,7 +691,7 @@ impl HostScaffolder {
                 .await?;
             self.branches
                 .advance(principal, branch, &file.path, body_ref)?;
-            prior.push(ContentRef::from_bytes(body_ref).to_hex());
+            prior.push((file.path.clone(), ContentRef::from_bytes(body_ref).to_hex()));
         }
         Ok(())
     }
@@ -708,21 +748,46 @@ impl HostScaffolder {
         goal: &str,
         framework: Option<&str>,
         all_paths: &[&str],
-        prior: &[String],
+        prior: &[(String, String)],
     ) -> Result<[u8; 32], CoreError> {
-        // Bound the sibling context to the most RECENT files. A dynamic project can
+        // Bound the sibling BODY context to the most RECENT files. A dynamic project can
         // hold many files, and the write mote assembles every context ref's BODY into
         // the prompt — an unbounded accumulation overflows the model's per-decode batch
         // (`n_tokens_all <= n_batch`) on the later files of a large project. The most
         // recent siblings give the most coherence signal; older files are dropped.
+        // The most-recent sibling BODIES, bounded to a small count so the write prompt stays
+        // under the model's per-decode batch (a wider window aborts on a large project).
         let ctx: Vec<String> = prior
             .iter()
             .rev()
             .take(SIBLING_CONTEXT_MAX)
             .rev()
-            .cloned()
+            .map(|(_, r)| r.clone())
             .collect();
-        let prompt = authoring_prompt(path, role, goal, framework, all_paths, !ctx.is_empty());
+        // A distilled export/prop SIGNATURE for EVERY prior sibling — the contract the two-body
+        // window and the path list cannot convey: each module's exported names, a hook's return
+        // OBJECT shape, and each component's prop signature (including "no props"). Each summary
+        // is tiny, so all of them ride regardless of authoring order and never approach n_batch,
+        // which is what lets the entry (authored last) import exactly what a sibling exported,
+        // destructure a hook's real return, and pass a component exactly the props it declares.
+        // Each body is read once (a local content-store hit); markdown yields `None`.
+        let sibling_apis: Vec<(String, String)> = prior
+            .iter()
+            .filter_map(|(p, r)| {
+                let cref = ContentRef::from_hex(r)?;
+                let body = self.content.get(&cref)?;
+                distill_module_api(p, &body).map(|api| (p.clone(), api))
+            })
+            .collect();
+        let prompt = authoring_prompt(
+            path,
+            role,
+            goal,
+            framework,
+            all_paths,
+            !ctx.is_empty(),
+            &sibling_apis,
+        );
         let args = serde_json::to_vec(&serde_json::json!({ "prompt": prompt }))
             .map_err(|e| CoreError::Internal(format!("scaffold args: {e}")))?;
         let bound = self

@@ -38,7 +38,9 @@ export function WorkflowsTemplatesPanel() {
           title="No templates yet"
           detail="Mark any App as a template to reuse it here — clone it, then enhance the copy with Chat & edit."
           action={
-            <span className="chip chip--soon" data-testid="workflows-templates-placeholder">
+            // A live "here's what to do next" hint — Templates ship in OSS (clone + toggle are
+            // real), so it must NOT wear the coming-soon chip. A plain hint chip, not `--soon`.
+            <span className="chip" data-testid="workflows-templates-placeholder">
               Mark an App below
             </span>
           }

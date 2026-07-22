@@ -31,6 +31,8 @@ export interface ManifestView {
   readonly reachInherit: boolean;
   readonly tools: ManifestRow[];
   readonly connections: ManifestRow[];
+  /** Declared grounding datasets; `requested && !inPolicy` ⇒ the run HARD-FAILS. */
+  readonly datasets: ManifestRow[];
   readonly modelRoute: string;
   readonly modelRouteServed: boolean;
   /** True when derived from the envelope alone (the server could not resolve policy). */
@@ -42,6 +44,7 @@ function fromManifest(m: AppManifest): ManifestView {
     reachInherit: m.reachInherit,
     tools: m.tools,
     connections: m.connections,
+    datasets: m.datasets,
     modelRoute: m.modelRoute,
     modelRouteServed: m.modelRouteServed,
     needsOnly: false,
@@ -56,6 +59,7 @@ function deriveNeeds(envelope: Record<string, unknown>): ManifestView {
   const modelCfg = (steering.model ?? {}) as Record<string, unknown>;
   const refs = (envelope.references ?? {}) as Record<string, unknown>;
   const conns = (refs.connections ?? []) as { descriptor?: string }[];
+  const datasets = (refs.datasets ?? []) as { dataset_ref?: string }[];
   return {
     reachInherit: toolsCfg.reach === "inherit_principal",
     tools: Object.entries(grants).map(([id, version]) => ({
@@ -70,6 +74,15 @@ function deriveNeeds(envelope: Record<string, unknown>): ManifestView {
       version: "",
       requested: true,
       inPolicy: false,
+      inherited: false,
+    })),
+    // Needs-only: an old gateway can't resolve ingest state, so leave inPolicy true
+    // (don't invent a hard-fail warning the server never confirmed).
+    datasets: datasets.map((d) => ({
+      id: d.dataset_ref ?? "",
+      version: "",
+      requested: true,
+      inPolicy: true,
       inherited: false,
     })),
     modelRoute: typeof modelCfg.model_route === "string" ? modelCfg.model_route : "",

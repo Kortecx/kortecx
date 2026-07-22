@@ -2032,6 +2032,7 @@ pub fn render_app_manifest(handle: &str, m: &proto::GetAppManifestResponse, json
             "model_route_served": m.model_route_served,
             "tools": m.tools.iter().map(capability_json).collect::<Vec<_>>(),
             "connections": m.connections.iter().map(capability_json).collect::<Vec<_>>(),
+            "datasets": m.datasets.iter().map(capability_json).collect::<Vec<_>>(),
         })
         .to_string();
     }
@@ -2071,6 +2072,18 @@ pub fn render_app_manifest(handle: &str, m: &proto::GetAppManifestResponse, json
             "MISSING — register with `kx connections add`"
         };
         let _ = writeln!(out, "    {} [{status}]", c.id);
+    }
+    // Datasets: the ONE dependency that hard-fails a run when missing (RunApp refuses).
+    if !m.datasets.is_empty() {
+        let _ = writeln!(out, "  datasets (grounding):");
+        for d in &m.datasets {
+            let status = if d.in_policy {
+                "ingested"
+            } else {
+                "NOT INGESTED — a run would REFUSE; `kx datasets ingest` first"
+            };
+            let _ = writeln!(out, "    {} [{status}]", d.id);
+        }
     }
     out.trim_end().to_string()
 }
@@ -3430,6 +3443,7 @@ mod tests {
             connections: vec![cap("mcp+stdio://gmail", "", true, false, false)],
             model_route: "kx-serve:ghost".to_string(),
             model_route_served: false,
+            datasets: vec![cap("support-kb", "", true, false, false)],
         };
         let human = render_app_manifest("apps/local/a", &m, false);
         assert!(human.contains("capability manifest"));
@@ -3437,10 +3451,12 @@ mod tests {
         assert!(human.contains("gmail/search@1 [MISSING"), "{human}");
         assert!(human.contains("NOT SERVED"), "{human}");
         assert!(human.contains("mcp+stdio://gmail [MISSING"), "{human}");
+        assert!(human.contains("support-kb [NOT INGESTED"), "{human}");
         let j: Value =
             serde_json::from_str(&render_app_manifest("apps/local/a", &m, true)).unwrap();
         assert_eq!(j["model_route_served"], json!(false));
         assert_eq!(j["tools"][0]["in_policy"], json!(true));
+        assert_eq!(j["datasets"][0]["id"], json!("support-kb"));
     }
 
     #[test]
@@ -3452,6 +3468,7 @@ mod tests {
             connections: vec![],
             model_route: String::new(),
             model_route_served: true,
+            datasets: vec![],
         };
         let human = render_app_manifest("apps/local/a", &m, false);
         assert!(human.contains("reach: inherit_principal"), "{human}");

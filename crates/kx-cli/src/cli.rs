@@ -79,9 +79,9 @@ usage: kx <command> [args]
     kx skills add (--dir <pack> | --manifest <file> [--instructions <md>]) | list | show --name <n> | remove --name <n>   (kortecx.skill/v1 catalog)
     kx new (skill | connector) <name> [--dir <parent>]   (scaffold a skill pack / MCP connector crate, offline)
     kx secrets set --name <N> --value <V> | list | rm --name <N>   (MM-3/D110 local keychain; values write-only)
-    kx triggers add --name <N> --kind <webhook|cron|grpc> --recipe <h> [--auth <a>] [--secret-ref <N>] [--schedule <secs>] [--enabled] | list | test | fire | rm   (D113 event ingress)
+    kx triggers add --name <N> --kind <webhook|cron|grpc> (--recipe <h> | --app <h>) [--auth <a>] [--secret-ref <N>] [--schedule <secs | crontab>] [--timezone <IANA>] [--require-approval] [--enabled] | list | test | fire | rm   (D113 event ingress)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
-    kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--out <file>] | export <handle> (--output <file> | --bundle <file> [--with-data]) | import <bundle> [--yes] | clone <handle> <newname>   (Apps — kortecx.app/v1 envelopes)
+    kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--out <file>] | export <handle> (--output <file> | --bundle <file> [--with-data]) | import <bundle> [--yes] | clone <handle> <newname> | scaffold | files | cat | edit | structure | lock | unlock | delete   (Apps — kortecx.app/v1 envelopes)
     kx branch create <handle> [--parent <handle>] [--description <s>] | snapshot <handle> --path <p>... [--parent <handle>] | list | get <handle> | remove <handle>   (D155 file branches)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list|load <id>|offload <id>|pull <tag|--url U --sha256 H>|use <id|--clear>
@@ -837,7 +837,8 @@ kx models use <id> | use --clear [client flags]
 kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>]
 kx app save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--timeout-secs N] [--out <file>]
 kx app export <handle> (--output <file> | --bundle <file> [--with-data] [--force]) | import <bundle> [--yes] [--force] | clone <handle> <newname>
-kx app scaffold <handle> [--goal <text>] [--wait] [--timeout-secs N] | files <handle> | cat <handle> <path> [--out <file>] | lock <handle> | unlock <handle>   (POC-5 Apps IDE)
+kx app scaffold <handle> [--goal <text>] [--wait] [--timeout-secs N] | files <handle> | cat <handle> <path> [--out <file>] | edit <handle> <path> --from <file> | structure <handle> | lock <handle> | unlock <handle>   (POC-5 Apps IDE)
+kx app delete <handle> [--yes]   (removes the catalog row, its triggers, its lock and its project-branch binding; KEEPS content blobs, the hosted working dir, and datasets)
   POC-4 Apps: a durable, reusable App = a kortecx.app/v1 envelope (a portable blueprint
   wrapped with by-reference context/tool/connection/dataset references, a minimal prompt/
   rule/skill/memory rail, a 4-axis steering config, and per-step replay intent). `new`
@@ -907,17 +908,19 @@ kx secrets rm --name <NAME> [client flags]
   answers Unimplemented (run a serve with a secret store wired)."
             .into(),
         "triggers" => "\
-kx triggers add --name <N> --kind <webhook|cron|grpc> --recipe <handle> [--auth <none|hmac_sha256|bearer>]
-                [--secret-ref <NAME>] [--schedule <secs>] [--enabled] [client flags]
+kx triggers add --name <N> --kind <webhook|cron|grpc> (--recipe <handle> | --app <handle>) [--auth <none|hmac_sha256|bearer>]
+                [--secret-ref <NAME>] [--schedule <secs | \"min hour dom mon dow\">] [--timezone <IANA>] [--require-approval] [--enabled] [client flags]
 kx triggers list [client flags]
 kx triggers test --name <N> [--payload <json>] [client flags]
 kx triggers fire --name <N> [--idempotency-key <K>] [--payload <json>] [client flags]
 kx triggers rm   --name <N> [client flags]
   Govern the D113 event-ingress triggers. A trigger binds an inbound source (webhook |
-  cron | grpc) to a recipe handle; on an event the gateway starts a FRESH registered run
-  via the Invoke path. `add` registers the binding (--kind + --recipe required; --auth
-  defaults to none; --schedule is the cron interval seconds; --secret-ref names the
-  HMAC/bearer secret by NAME only, never the value). `test` dry-runs the binding (handle
+  cron | grpc) to a recipe handle (--recipe) OR a saved App handle (--app) — exactly one;
+  on an event the gateway starts a FRESH registered run via the Invoke path. `add` registers
+  the binding (--kind + exactly one of --recipe/--app required; --auth defaults to none;
+  --schedule is either a legacy all-digit interval in seconds OR a 5-field crontab expression
+  evaluated in --timezone; --require-approval pauses irreversible actions for HITL; --secret-ref
+  names the HMAC/bearer secret by NAME only, never the value). `test` dry-runs the binding (handle
   resolves, payload binds) WITHOUT firing; `fire` is the inbound grpc event verb
   (--idempotency-key dedups a replayed event to a no-op). SN-8: trigger_id is
   server-derived; the run binds under the REGISTRANT's party."

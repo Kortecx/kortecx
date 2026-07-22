@@ -164,7 +164,12 @@ On top of that, the model **plans additional files for your specific goal** — 
 skill per distinct capability, a separate rule for a policy worth stating on its own,
 reference material the agent consults at run time. The base five are preserved (the
 planner may only add, never replace them), so a scaffolded project is always a superset
-of the list above. With no served model the scaffold degrades to the base set alone.
+of the list above. The planner is constrained to **markdown** (`.md`) files, and that is
+now enforced (a non-`.md` extra is dropped) — because the project's markdown **reaches the
+model at run time**: every `.md` in the branch rides the run's context rail (up to a 12 KiB
+budget, `KX_APP_PROJECT_RAIL_BYTES`, over which the run refuses rather than truncating), so a
+rule in `rules/*.md` actually steers the agent. With no served model the scaffold degrades to
+the base set alone.
 
 The scaffold runs in the background and is observed from **real** signals — the
 branch manifest growing + a status phase (`planning → writing → done`) — never a
@@ -201,7 +206,9 @@ deep links are stable. See [Branches](./branches.md) for the CoW mechanics.
 **Run** an App from the IDE header or the **Workflows** catalog. If the App declares an
 `input_schema`, a run drawer collects the inputs (they fold into the entry model step);
 otherwise it runs in one click. The run routes to its live DAG. OSS runs **one App at a
-time** — multi-app chaining and scheduling are Cloud capabilities. The CLI equivalent is
+time** — multi-app chaining is a Cloud capability. **Scheduling ships in OSS**: bind a cron
+trigger with `kx triggers add --kind cron --app <handle> --schedule "0 9 * * 1-5" --timezone
+<IANA>`, or use the calendar button on the App card. The CLI equivalent of a manual run is
 `kx app run <handle>` (`--arg k=v` per input).
 
 `kx app run` prefers the server-side **`RunApp`** RPC (below); on an older gateway it
@@ -271,6 +278,14 @@ reasons over — and `RunApp` wires that rail into the run server-side, so the A
   **Ingest the corpus first** with `kx datasets ingest <dataset_ref> …` (the
   *reference-existing* model); a named dataset absent from the server fails fast with
   `app grounds on dataset "…" but no such dataset is ingested`.
+
+  > **What grounding is and is not.** The `retrieve@1` grant is enforced; the *use* of it is
+  > persuasion. The declared dataset name is appended to the entry step's prompt as one
+  > sentence, and `retrieve@1` accepts whatever dataset name the model supplies — so the
+  > runtime does not confine retrieval to the declared corpus, does not require that retrieval
+  > happen, and does not report whether it did. Inspect the actual calls after a run with
+  > `kx react list` or the console run trail. (A rule you attach as `.rule(...)`, by contrast,
+  > is deterministically placed on the entry context — as is any `.md` in the App's project.)
 
 ```python
 import kortecx as kx
@@ -347,10 +362,15 @@ it — are actually allowed to do. A wish is never authority.
 
 **See what an App needs vs. what you have** with `kx app manifest <handle>` (or the
 **View details** panel in the Apps console). It diffs the App's requested tools /
-connections / model against your live policy — your fireable tools, your registered
-connections, the models this instance serves — and marks each capability *satisfied*,
-*MISSING*, or *inherited*. It is read-only and gates nothing; a run resolves the same
-intersection server-side.
+connections / model / **datasets** against your live policy — your fireable tools, your
+registered connections, the models this instance serves, the datasets you have ingested —
+and marks each capability *satisfied*, *MISSING*, or *inherited*. It is read-only and gates
+nothing; a run resolves the same intersection server-side.
+
+A missing **dataset** is the one declared dependency that **hard-fails** a run (`RunApp`
+refuses), so the manifest — and the console run preflight — call it out explicitly: a
+declared dataset that is neither ingested nor self-contained shows `NOT INGESTED — a run
+would REFUSE`. (A missing tool or connection is reported too, but does not block the run.)
 
 ```bash
 kx app manifest apps/local/research-assistant
@@ -360,6 +380,8 @@ kx app manifest apps/local/research-assistant
 #     gmail/search@1 [MISSING — not granted or not fireable]
 #   connections:
 #     mcp+stdio://gmail [MISSING — register with `kx connections add`]
+#   datasets (grounding):
+#     research [NOT INGESTED — a run would REFUSE; `kx datasets ingest` first]
 ```
 
 **Tool reach.** The tool axis carries a `reach` selector (`steering_config.tools.reach`):
@@ -382,7 +404,7 @@ flags an unserved route before you run.
 
 ## Lock an App (POC-5b)
 
-`kx app lock <handle>` (or the **Security › Policies** section) **fully freezes** an
+`kx app lock <handle>` (or the **lock control in the App page header**) **fully freezes** an
 App: a locked App refuses BOTH an in-CAS **file** edit (`AdvanceBranch`) AND a
 **structure** save from the lineage editor (`SaveApp`) at the write chokepoints
 (`FAILED_PRECONDITION`, refusal code `LOCKED_BRANCH`). `kx app unlock` re-enables
@@ -396,9 +418,14 @@ Open **Apps** in the sidebar. Browse your saved Apps and **Run** one (it routes 
 live run). Each card's overflow (⋯) menu holds **View details** (the summary + the
 [capability manifest](#permissions--the-capability-manifest) — needs vs. what you have),
 **Open project**, **Inspect** the envelope, **Download** a portable `.kxapp` bundle, and
-**Duplicate** (clone locally). **Import** a bundle from the section header; click **New App** to
-scaffold a fresh App. **Share** across parties is a Cloud capability (shown
-honest-disabled). Per-App locks live in the **Policies** section
+**Duplicate** (clone locally). **Import** a bundle from the section header. **New App** opens
+the creation form: pick the **kind** (Scheduled — the supported lane — or Hosted, which the
+prebuilt serves given Node/npm), describe the goal, wire the App's capability rails (tools,
+skills, connections, a grounding dataset), and lay out its structure on the embedded builder
+canvas. On save, a served model plans and writes the App's project tree into its branch,
+streamed live (with no served model it falls back to the generic base file set). **Share**
+across parties is a Cloud capability (shown honest-disabled). Per-App locks live on the App
+page itself (the lock control in the header); the Policies route remains deep-linkable
 ([policies.md](./policies.md)).
 
 ## Chains node

@@ -398,6 +398,18 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
         return;
     }
 
+    // 2.5) Serve-time type-check backstop. With deps installed, run the project's own
+    //      `tsc --noEmit`: a dynamically scaffolded project whose files disagree across the
+    //      seam (an import of a symbol a sibling never exported; props a component never
+    //      declared) compiles-and-throws — it mounts and dies with a blank page. The
+    //      author-time sibling-API summaries prevent most of this; here we catch the residue
+    //      and fail LOUDLY with the compiler's own message. Self-skips without a toolchain
+    //      or tsconfig, and honors KX_HOSTED_TYPECHECK={off,warn}.
+    if let Err(e) = type_check(&ctx, &logs).await {
+        advance(&ctx, HostedState::Failed, &format!("type-check: {e}"));
+        return;
+    }
+
     // 3) PRODUCTION ONLY: `npm run build`. The dev lane never enters this state, which is
     //    what makes the state honest — a client showing "building…" on a dev start would
     //    be describing something that is not happening.
@@ -630,6 +642,82 @@ async fn build(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
         split_cmd(&ctx.plan.build_cmd)
     };
     run_capture(&prog, &args, &ctx.plan.workdir, logs).await
+}
+
+/// How many trailing `tsc` lines to fold into the `Failed` detail when the type-check gate
+/// trips. Enough to name the offending file + symbol; short enough for a status string (the
+/// full diagnostic is in the log ring either way).
+const TYPECHECK_ERR_TAIL_LINES: usize = 6;
+
+/// Serve-time TypeScript gate — the backstop to the author-time sibling-API summaries.
+///
+/// A dynamically scaffolded hosted project can drift across the file seam: a hook imports a
+/// symbol a sibling never exported, or a parent passes flat props to a component that declared
+/// one object. Both compile-and-throw: the App mounts and then dies with a blank page and no
+/// explanation. [`kx_gateway_core::distill_module_api`] PREVENTS most of that at authoring time;
+/// this runs the project's OWN `tsc --noEmit` after install and fails the serve LOUDLY with the
+/// compiler's message for whatever slips through — an honest error beats a white screen.
+///
+/// Runs only when it can be trusted and meaningful: skipped when install was skipped (the
+/// hermetic e2e ships no toolchain), when the project has no `tsconfig.json`, or when no local
+/// `tsc` is installed. `KX_HOSTED_TYPECHECK=off` disables it; `=warn` logs a failure but serves
+/// anyway (for a loose-but-runnable project a dev bundler would tolerate).
+async fn type_check(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Result<(), String> {
+    let mode = std::env::var("KX_HOSTED_TYPECHECK").unwrap_or_default();
+    if mode == "off" || ctx.plan.install_cmd == SKIP_INSTALL {
+        return Ok(());
+    }
+    if !ctx.plan.workdir.join("tsconfig.json").is_file() {
+        return Ok(()); // not a TypeScript project — nothing to check
+    }
+    let tsc = ctx
+        .plan
+        .workdir
+        .join("node_modules")
+        .join(".bin")
+        .join("tsc");
+    if !tsc.is_file() {
+        log_line(logs, "type-check: no local tsc, skipping".into());
+        return Ok(());
+    }
+    log_line(logs, "$ tsc --noEmit".into());
+    let output = Command::new(&tsc)
+        .arg("--noEmit")
+        .current_dir(&ctx.plan.workdir)
+        .output()
+        .await
+        .map_err(|e| format!("cannot run tsc: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let mut lines: Vec<String> = Vec::new();
+    for line in stdout.lines().chain(stderr.lines()) {
+        log_line(logs, line.to_string());
+        lines.push(line.to_string());
+    }
+    if output.status.success() {
+        return Ok(());
+    }
+    let tail = lines
+        .iter()
+        .rev()
+        .take(TYPECHECK_ERR_TAIL_LINES)
+        .rev()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let msg = format!(
+        "the project does not type-check ({}): {tail}",
+        output.status
+    );
+    if mode == "warn" {
+        log_line(
+            logs,
+            format!("type-check: FAILED (warn mode, serving anyway): {msg}"),
+        );
+        Ok(())
+    } else {
+        Err(msg)
+    }
 }
 
 /// Spawn the app's server: the dev server (HMR) or, in production mode, the framework's

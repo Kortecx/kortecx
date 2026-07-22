@@ -32,6 +32,14 @@ pub(crate) const DEFAULT_EDIT_MAX_OUTPUT_TOKENS: u32 = 3_072;
 pub(crate) const DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS: u32 = 6_144;
 /// Default chat-RAG top-k ceiling (the untrusted `k` is clamped to this).
 pub(crate) const DEFAULT_CHAT_RAG_MAX_K: usize = 16;
+/// Default total-bytes budget for an App's PROJECT context rail — the `.md` files the
+/// model authored into the App's branch that ride into the run's context at author time
+/// (`context_rail_items`' branch arm). A run whose project markdown exceeds this REFUSES
+/// (never a silent truncation: a half-read rule is worse than no rule). Deliberately small
+/// — a few focused rule/prompt/reference files, not a wiki. Overridable via
+/// `KX_APP_PROJECT_RAIL_BYTES`; because the value feeds the identity-bearing `config_subset`,
+/// it is a pure function of the sorted manifest at any fixed setting.
+pub(crate) const DEFAULT_APP_PROJECT_RAIL_BYTES: usize = 12 * 1024;
 
 // Defensive upper bounds — a garbage-large env value clamps here rather than blowing
 // the model window / decode loop. Generous (these are operator opt-ins), never silent
@@ -40,6 +48,8 @@ pub(crate) const DEFAULT_CHAT_RAG_MAX_K: usize = 16;
 const MAX_WINDOW_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 const MAX_EDIT_TOKENS: u32 = 131_072; // 128k
 const MAX_CHAT_RAG_K: usize = 256;
+/// Defensive upper bound for the App project rail (an operator opt-in for a bigger rail).
+const MAX_APP_PROJECT_RAIL_BYTES: usize = 512 * 1024; // 512 KiB
 
 /// Resolve a `usize` cap from a raw env string: parse, accept only `min..=max`,
 /// else fall back to `default`. Pure + total (the unit-tested core).
@@ -64,6 +74,19 @@ pub(crate) fn window_bytes() -> usize {
         DEFAULT_WINDOW_BYTES,
         1_024,
         MAX_WINDOW_BYTES,
+    )
+}
+
+/// The App project-rail total-bytes budget (`KX_APP_PROJECT_RAIL_BYTES`). A pure function of
+/// the env at any fixed setting (constant for a serve's lifetime), so the rail it bounds stays
+/// a deterministic function of the branch manifest — required, since the rail feeds the
+/// identity-bearing `config_subset`.
+pub(crate) fn app_project_rail_bytes() -> usize {
+    parse_cap(
+        std::env::var("KX_APP_PROJECT_RAIL_BYTES").ok().as_deref(),
+        DEFAULT_APP_PROJECT_RAIL_BYTES,
+        512,
+        MAX_APP_PROJECT_RAIL_BYTES,
     )
 }
 

@@ -63,8 +63,8 @@ use kx_blueprint::{to_request, DagSpec, StepSpec};
 use kx_content::{ContentRef, ContentStore};
 use kx_gateway_core::{
     app_dataset_scoped_name, author_steps_from_proto, AppAuthor, AppCapability, AppCatalog,
-    AppManifest, AppManifestView, AppRunError, BinderError, BoundRecipe, DatasetError, DatasetView,
-    GatewayError, IngestDoc, RegisteredToolsView,
+    AppManifest, AppManifestView, AppRunError, BinderError, BoundRecipe, BranchStore, DatasetError,
+    DatasetView, GatewayError, IngestDoc, RegisteredToolsView,
 };
 use kx_mcp_gateway::SqliteConnectionStore;
 use kx_mote::{ContextItemRef, ToolName, ToolVersion, REACT_REQUIRE_APPROVAL_KEY};
@@ -146,6 +146,13 @@ pub(crate) struct HostAppAuthor {
     /// ⇒ a declared dataset honest-degrades to an ungrounded run (retrieve@1 is not
     /// registered there anyway).
     datasets: Option<Arc<dyn DatasetView>>,
+    /// T-RUNAPP-PROJECT-RAIL: the branch store (the SAME `Arc` the scaffold + Apps IDE
+    /// share). The `.md` files the model authored into the App's `branch_handle` ride the
+    /// context rail at run time, so a rule the App wrote for itself — or the user edited in
+    /// the IDE — actually reaches the model. Before this, the project was documentation the
+    /// run never read. `None` on a build without the branch seam ⇒ no project rail (the
+    /// digest no-op); a run is otherwise unaffected.
+    branches: Option<Arc<dyn BranchStore>>,
 }
 
 impl HostAppAuthor {
@@ -164,6 +171,7 @@ impl HostAppAuthor {
         registered: Arc<dyn RegisteredToolsView>,
         content: Arc<dyn ContentPresence>,
         datasets: Option<Arc<dyn DatasetView>>,
+        branches: Option<Arc<dyn BranchStore>>,
     ) -> Self {
         Self {
             apps,
@@ -174,6 +182,7 @@ impl HostAppAuthor {
             registered,
             content,
             datasets,
+            branches,
         }
     }
 
@@ -471,51 +480,55 @@ fn collect_dataset_bindings(env: &AppEnvelope) -> Vec<DatasetBinding> {
 
 /// Resolve an App's `references.connections` + `guards.secret_scope` against the
 /// caller's OWN registered connections into the run's secret scope. A pure function
-/// (Rule 5.2 — unit-testable without a store): `registered_credentials` /
-/// `registered_endpoints` are the credential-ref names / transport endpoints of the
-/// caller's registered connections.
+/// (Rule 5.2 — unit-testable without a store): `registered_credentials` is the set of
+/// credential-ref names the caller's connections carry, and `endpoint_credentials` maps
+/// each registered connection's transport endpoint to its credential name (`""` when it
+/// carries none).
 ///
 /// - A referenced connection with no matching registered connection ⇒
 ///   [`AppRunError::MissingIntegration`] (matched by credential ref when it carries
 ///   one, else by transport endpoint). The App is owned, so this is an actionable
 ///   error, not an existence oracle.
-/// - A `guards.secret_scope` name that no referenced connection provides ⇒
-///   [`AppRunError::InvalidArgs`] (the loud mis-authoring guard — avoids a confusing
-///   downstream broker `CapabilityExceedsWarrant`).
-/// - Otherwise the scope is exactly the declared names (bounded to the referenced
-///   connections' credentials); empty ⇒ `None` (fail-closed — a credentialed tool then
-///   refuses at the broker, by design).
+/// - The scope ADOPTS the credential each referenced connection actually provides. For an
+///   explicit `credential_ref` that is the name itself; for a ONE-CLICK bind — a
+///   `ConnectionRef` that carries only an endpoint — it is the credential of the registered
+///   connection it matched (e.g. `kx connections add --provider gmail` stored
+///   `KX_GMAIL_CREDENTIAL`). Without this the scope stayed empty for a one-click bind and a
+///   credentialed tool refused at the broker despite a green preflight. This is server-side,
+///   so every already-saved App is retroactively fixed with no envelope change.
+/// - A `guards.secret_scope`, if set, may only NARROW within what the referenced connections
+///   provide; a name outside that set ⇒ [`AppRunError::InvalidArgs`] (the loud mis-authoring
+///   guard). Empty ⇒ the scope is everything those connections provide, so attaching a
+///   connection is enough to authenticate.
+/// - No referenced connection provides a (non-empty) credential ⇒ `None` (a credential-less
+///   connection, e.g. an unauthenticated MCP server, needs no scope).
 fn resolve_secret_scope(
     refs: &[ConnectionRef],
     scope_names: &[String],
     registered_credentials: &BTreeSet<String>,
-    registered_endpoints: &BTreeSet<String>,
+    endpoint_credentials: &BTreeMap<String, String>,
 ) -> Result<Option<SecretScope>, AppRunError> {
+    // The credential each referenced connection actually provides at run time — adopting the
+    // registered connection's own credential for an endpoint-only (one-click) bind.
+    let mut provided: BTreeSet<String> = BTreeSet::new();
     for cref in refs {
-        let satisfied = if cref.credential_ref.is_empty() {
-            registered_endpoints.contains(&cref.descriptor)
+        let cred: &str = if cref.credential_ref.is_empty() {
+            match endpoint_credentials.get(&cref.descriptor) {
+                Some(c) => c.as_str(),
+                None => return Err(AppRunError::MissingIntegration(cref.descriptor.clone())),
+            }
+        } else if registered_credentials.contains(&cref.credential_ref) {
+            cref.credential_ref.as_str()
         } else {
-            registered_credentials.contains(&cref.credential_ref)
+            return Err(AppRunError::MissingIntegration(cref.credential_ref.clone()));
         };
-        if !satisfied {
-            let name = if cref.credential_ref.is_empty() {
-                cref.descriptor.clone()
-            } else {
-                cref.credential_ref.clone()
-            };
-            return Err(AppRunError::MissingIntegration(name));
+        if !cred.is_empty() {
+            provided.insert(cred.to_string());
         }
     }
 
-    // The credentials the App's referenced connections provide (the ceiling on the scope).
-    let declared: BTreeSet<&str> = refs
-        .iter()
-        .map(|c| c.credential_ref.as_str())
-        .filter(|s| !s.is_empty())
-        .collect();
-
     for name in scope_names {
-        if !declared.contains(name.as_str()) {
+        if !provided.contains(name) {
             return Err(AppRunError::InvalidArgs(format!(
                 "guards.secret_scope names {name:?} but no referenced connection provides \
                  that credential"
@@ -523,7 +536,12 @@ fn resolve_secret_scope(
         }
     }
 
-    let allowed: BTreeSet<SecretRef> = scope_names.iter().cloned().map(SecretRef).collect();
+    // An explicit scope NARROWS; an empty one takes everything the connections provide.
+    let allowed: BTreeSet<SecretRef> = if scope_names.is_empty() {
+        provided.into_iter().map(SecretRef).collect()
+    } else {
+        scope_names.iter().cloned().map(SecretRef).collect()
+    };
     Ok(if allowed.is_empty() {
         None
     } else {
@@ -818,6 +836,8 @@ fn decode_present_ref(
 fn context_rail_items(
     env: &AppEnvelope,
     content: &dyn ContentPresence,
+    branches: Option<&dyn BranchStore>,
+    party: &str,
 ) -> Result<Vec<ContextItemRef>, AppRunError> {
     let r = &env.references;
     let mut items = Vec::new();
@@ -851,7 +871,114 @@ fn context_rail_items(
             content_ref: bytes,
         });
     }
+    project_rail_items(env, content, branches, party, &mut items)?;
     Ok(items)
+}
+
+/// The dataset capability lines for a stored App's manifest. A declared dataset that is
+/// neither self-contained (carries `cas_refs`, materializes at run) nor already ingested is
+/// the ONE dependency that HARD-FAILS the run (`fold_dataset_rag` → `AppRunError::InvalidArgs`),
+/// so this agrees with that check by construction: `in_policy == false` ⟺ the run would refuse.
+/// On a build with no retrieval seam (`datasets == None`) the run degrades to ungrounded rather
+/// than refusing, so nothing here blocks it (every line is in policy).
+fn dataset_manifest_lines(
+    datasets: Option<&Arc<dyn DatasetView>>,
+    env: &AppEnvelope,
+) -> Vec<AppCapability> {
+    let available: BTreeSet<String> = datasets
+        .map(|v| {
+            v.list_datasets()
+                .into_iter()
+                .map(|d| d.dataset_id)
+                .collect()
+        })
+        .unwrap_or_default();
+    let has_view = datasets.is_some();
+    collect_dataset_bindings(env)
+        .into_iter()
+        .map(|b| {
+            let in_policy = !b.cas_refs.is_empty() || !has_view || available.contains(&b.declared);
+            AppCapability {
+                id: b.declared,
+                version: String::new(),
+                requested: true,
+                in_policy,
+                inherited: false,
+            }
+        })
+        .collect()
+}
+
+/// `true` for a branch file that rides the App's project context rail: a `.md` file that is
+/// not a `.kortecx/` internal marker. `app.json` (a decorative copy of the manifest nothing
+/// parses) and the marker JSON fall out by the suffix filter; the prefix guard is belt-and-
+/// braces for any future `.kortecx/*.md`.
+fn is_project_rail_path(path: &str) -> bool {
+    !path.starts_with(".kortecx/") && matches!(path.rsplit('.').next(), Some("md"))
+}
+
+/// T-RUNAPP-PROJECT-RAIL: fold the App's OWN project markdown into the context rail.
+///
+/// The model authored these `.md` files into the App's branch (or the user edited them in the
+/// IDE); before this they were documentation the run never read (`grep -c branch` over this
+/// file was 0). Selection is a PURE, DETERMINISTIC function of the path-sorted branch manifest
+/// — `.md` only, ALL of them, in path order, `app.json` + `.kortecx/*` excluded — because it
+/// lands in `config_subset` (→ `MoteId`): any map-order or timestamp dependence would move the
+/// Mote id run-to-run and break recovery stability. The content is already in CAS (the branch
+/// holds refs), so each file maps straight to its ref; bytes are read only to enforce the total
+/// budget, over which the run REFUSES rather than silently truncating (a half-read rule is worse
+/// than no rule). `None` branch seam or an empty `branch_handle` ⇒ no items (the digest no-op).
+fn project_rail_items(
+    env: &AppEnvelope,
+    content: &dyn ContentPresence,
+    branches: Option<&dyn BranchStore>,
+    party: &str,
+    items: &mut Vec<ContextItemRef>,
+) -> Result<(), AppRunError> {
+    let Some(branches) = branches else {
+        return Ok(());
+    };
+    if env.branch_handle.is_empty() {
+        return Ok(());
+    }
+    let Some(manifest) = branches
+        .get(party, &env.branch_handle)
+        .map_err(|e| AppRunError::Internal(format!("app branch read: {e}")))?
+    else {
+        return Ok(());
+    };
+    let cap = crate::env_caps::app_project_rail_bytes();
+    let mut project: Vec<_> = manifest
+        .items
+        .iter()
+        .filter(|it| is_project_rail_path(&it.path))
+        .collect();
+    // The manifest is documented path-sorted; pin it so selection cannot depend on store order.
+    project.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut used = 0usize;
+    for it in project {
+        let bytes = content
+            .get_ref(&ContentRef::from_bytes(it.content_ref))
+            .ok_or_else(|| {
+                AppRunError::Internal(format!(
+                    "app project file {:?} is missing from the content store",
+                    it.path
+                ))
+            })?;
+        used = used.saturating_add(bytes.len());
+        if used > cap {
+            return Err(AppRunError::InvalidArgs(format!(
+                "app project markdown exceeds the {cap}-byte context-rail budget (reached at \
+                 {:?}); trim the project's `.md` files or raise KX_APP_PROJECT_RAIL_BYTES",
+                it.path
+            )));
+        }
+        items.push(ContextItemRef {
+            name: format!("project:{}", it.path),
+            content_ref: it.content_ref,
+        });
+    }
+    Ok(())
 }
 
 #[tonic::async_trait]
@@ -882,7 +1009,8 @@ impl AppAuthor for HostAppAuthor {
         //      context items BEFORE the blueprint is consumed. Skills (3b) extend this
         //      same Vec; the whole set rides ONE `author_with_context_items` inject.
         //      Empty rail ⇒ empty Vec ⇒ the digest no-op.
-        let mut context_items = context_rail_items(&env, self.content.as_ref())?;
+        let mut context_items =
+            context_rail_items(&env, self.content.as_ref(), self.branches.as_deref(), party)?;
         // The datasets to ground over (collected now, while `env` is fully intact — the
         // blueprint move below partially moves `env`). Empty ⇒ no RAG fold (the no-op).
         let dataset_bindings = collect_dataset_bindings(&env);
@@ -897,15 +1025,23 @@ impl AppAuthor for HostAppAuthor {
             .iter()
             .filter_map(|c| c.credential_ref.clone())
             .collect();
-        let reg_endpoints: BTreeSet<String> = registered
+        // endpoint -> the registered connection's credential name (empty when it has none), so
+        // a one-click (endpoint-only) bind can adopt the credential the connection was
+        // registered with instead of resolving to an empty, broker-refused scope.
+        let endpoint_credentials: BTreeMap<String, String> = registered
             .iter()
-            .map(|c| c.transport.endpoint().to_string())
+            .map(|c| {
+                (
+                    c.transport.endpoint().to_string(),
+                    c.credential_ref.clone().unwrap_or_default(),
+                )
+            })
             .collect();
         let secret_scope = resolve_secret_scope(
             &env.references.connections,
             &env.steering_config.guards.secret_scope,
             &reg_creds,
-            &reg_endpoints,
+            &endpoint_credentials,
         )?;
 
         // (3) Lower the blueprint through the canonical path (+ optional arg injection).
@@ -1179,6 +1315,9 @@ impl AppManifestView for HostAppAuthor {
             })
             .collect();
 
+        // Dataset lines: `in_policy=false` ⟺ the run would hard-fail on that dataset.
+        let datasets = dataset_manifest_lines(self.datasets.as_ref(), &env);
+
         // Model line: the declared route vs. the served catalog (empty ⇒ served default).
         let model_route = env.steering_config.model.model_route.clone();
         let model_route_served =
@@ -1188,6 +1327,7 @@ impl AppManifestView for HostAppAuthor {
             reach_inherit,
             tools,
             connections,
+            datasets,
             model_route,
             model_route_served,
         }))
@@ -1272,6 +1412,13 @@ mod tests {
         names.iter().map(|s| (*s).to_string()).collect()
     }
 
+    fn endpoint_creds(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(e, c)| ((*e).to_string(), (*c).to_string()))
+            .collect()
+    }
+
     #[test]
     fn secret_scope_grants_the_declared_credential_when_registered() {
         // E1 POSITIVE: App refs the gmail connection + declares its credential in
@@ -1282,7 +1429,7 @@ mod tests {
             &refs,
             &scope,
             &creds(&["KX_GMAIL_CREDENTIAL"]),
-            &BTreeSet::new(),
+            &BTreeMap::new(),
         )
         .unwrap();
         match got {
@@ -1295,25 +1442,51 @@ mod tests {
     }
 
     #[test]
-    fn secret_scope_empty_is_fail_closed_none() {
-        // E2 NEGATIVE: the connection is registered but the App declares no secret_scope
-        // ⇒ None (SecretScope::None) ⇒ the credentialed tool fails closed at the broker.
+    fn secret_scope_adopts_a_referenced_connections_credential_without_an_explicit_scope() {
+        // The App refs the gmail connection (credential_ref present, registered) but declares
+        // NO explicit secret_scope. Attaching a connection is intent to use it, so the scope is
+        // the credential that connection provides — not the old fail-closed None that made a
+        // credentialed tool refuse at the broker.
         let refs = vec![cref("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")];
         let got = resolve_secret_scope(
             &refs,
             &[],
             &creds(&["KX_GMAIL_CREDENTIAL"]),
-            &BTreeSet::new(),
+            &BTreeMap::new(),
         )
         .unwrap();
-        assert!(got.is_none(), "empty secret_scope ⇒ fail-closed None");
+        match got {
+            Some(SecretScope::AllowList(s)) => {
+                assert!(s.contains(&SecretRef("KX_GMAIL_CREDENTIAL".to_string())));
+            }
+            other => panic!("expected AllowList adopting the referenced credential, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn secret_scope_adopts_a_one_click_bind_credential() {
+        // THE PR-D FIX. A one-click bind writes a ConnectionRef with only an endpoint (no
+        // credential_ref). The registered connection it matches DOES carry a credential
+        // (KX_GMAIL_CREDENTIAL). The run's scope must adopt that credential — otherwise the
+        // scope is empty and the credentialed tool refuses at the broker despite a green
+        // preflight. No explicit secret_scope, no envelope change: retroactively fixes saved Apps.
+        let refs = vec![cref("https://gmail.local/mcp", "")];
+        let ep = endpoint_creds(&[("https://gmail.local/mcp", "KX_GMAIL_CREDENTIAL")]);
+        let got = resolve_secret_scope(&refs, &[], &BTreeSet::new(), &ep).unwrap();
+        match got {
+            Some(SecretScope::AllowList(s)) => {
+                assert_eq!(s.len(), 1);
+                assert!(s.contains(&SecretRef("KX_GMAIL_CREDENTIAL".to_string())));
+            }
+            other => panic!("expected the adopted credential in scope, got {other:?}"),
+        }
     }
 
     #[test]
     fn missing_registered_connection_is_a_missing_integration() {
         // E3 MISSING: App refs gmail by credential but nothing is registered.
         let refs = vec![cref("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")];
-        let err = resolve_secret_scope(&refs, &[], &BTreeSet::new(), &BTreeSet::new())
+        let err = resolve_secret_scope(&refs, &[], &BTreeSet::new(), &BTreeMap::new())
             .expect_err("missing integration");
         match err {
             AppRunError::MissingIntegration(name) => assert_eq!(name, "KX_GMAIL_CREDENTIAL"),
@@ -1322,33 +1495,32 @@ mod tests {
     }
 
     #[test]
-    fn credential_less_ref_matches_by_endpoint() {
-        // A credential-less connection is satisfied by a matching transport endpoint.
+    fn credential_less_endpoint_bind_needs_no_scope() {
+        // A credential-LESS connection (an unauthenticated MCP server) is satisfied by a
+        // registered endpoint and contributes nothing to the scope ⇒ None.
         let refs = vec![cref("https://mcp.example/sse", "")];
-        let endpoints: BTreeSet<String> = creds(&["https://mcp.example/sse"]);
-        assert!(
-            resolve_secret_scope(&refs, &[], &BTreeSet::new(), &endpoints)
-                .unwrap()
-                .is_none()
-        );
-        // ... and MissingIntegration when the endpoint is not registered.
+        let ep = endpoint_creds(&[("https://mcp.example/sse", "")]);
+        assert!(resolve_secret_scope(&refs, &[], &BTreeSet::new(), &ep)
+            .unwrap()
+            .is_none());
+        // ... and MissingIntegration when the endpoint is not registered at all.
         assert!(matches!(
-            resolve_secret_scope(&refs, &[], &BTreeSet::new(), &BTreeSet::new()),
+            resolve_secret_scope(&refs, &[], &BTreeSet::new(), &BTreeMap::new()),
             Err(AppRunError::MissingIntegration(_))
         ));
     }
 
     #[test]
     fn secret_scope_naming_an_unreferenced_credential_is_rejected() {
-        // The loud mis-authoring guard: secret_scope may only name a credential a
-        // referenced connection provides.
+        // The loud mis-authoring guard: secret_scope may only NARROW within what the
+        // referenced connections provide.
         let refs = vec![cref("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")];
         let scope = vec!["SOME_OTHER_SECRET".to_string()];
         let err = resolve_secret_scope(
             &refs,
             &scope,
             &creds(&["KX_GMAIL_CREDENTIAL", "SOME_OTHER_SECRET"]),
-            &BTreeSet::new(),
+            &BTreeMap::new(),
         )
         .expect_err("loud guard");
         assert!(matches!(err, AppRunError::InvalidArgs(_)));
@@ -1692,6 +1864,7 @@ mod tests {
             Arc::new(FixedFireable(fire)),
             content.clone(),
             None,
+            None,
         );
         (host, content, author)
     }
@@ -1736,6 +1909,7 @@ mod tests {
             Arc::new(FixedFireable(fire)),
             content.clone(),
             datasets,
+            None,
         );
         (host, content, author)
     }
@@ -2024,6 +2198,55 @@ mod tests {
         );
         assert_eq!(m.model_route, "m");
         assert!(m.model_route_served);
+        // No datasets declared ⇒ no dataset lines (the common case).
+        assert!(m.datasets.is_empty());
+    }
+
+    #[tokio::test]
+    async fn manifest_flags_a_missing_dataset_the_one_hard_run_failure() {
+        // A declared dataset that is neither ingested nor self-contained is the ONLY dependency
+        // that hard-fails RunApp — and the one thing preflight never surfaced. The manifest's
+        // dataset arm must flag it `requested && !in_policy` (⟺ the run would refuse), while an
+        // ingested dataset and a self-contained one (carries cas_refs) are both in policy.
+        let dir = tempfile::tempdir().unwrap();
+        let view: Arc<dyn DatasetView> = Arc::new(FakeDatasets::new(&["ingested-ds"]));
+        let (host, _content, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+        let mut env = AppEnvelope::new(
+            "grounded",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "ingested-ds".into(),
+            cas_refs: vec![],
+        });
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "missing-ds".into(),
+            cas_refs: vec![],
+        });
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "carried-ds".into(),
+            cas_refs: vec!["a".repeat(64)], // self-contained ⇒ materializes at run
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let m = host
+            .manifest("alice@acme", &handle)
+            .unwrap()
+            .expect("owned");
+
+        let ds = |id: &str| m.datasets.iter().find(|c| c.id == id).cloned().unwrap();
+        assert!(
+            ds("ingested-ds").in_policy,
+            "an ingested dataset is in policy"
+        );
+        assert!(
+            ds("carried-ds").in_policy,
+            "a self-contained dataset is in policy"
+        );
+        assert!(
+            ds("missing-ds").requested && !ds("missing-ds").in_policy,
+            "a declared-but-unavailable dataset is the missing dependency preflight must warn on"
+        );
     }
 
     #[tokio::test]
@@ -2251,7 +2474,7 @@ mod tests {
             .context_refs
             .push(hex_str(&sref.0));
 
-        let items = context_rail_items(&env, &store).unwrap();
+        let items = context_rail_items(&env, &store, None, "alice@acme").unwrap();
         let named = |n: &str| items.iter().find(|i| i.name == n);
         assert_eq!(named("context:c1").unwrap().content_ref, ctx.0);
         assert_eq!(named("prompt:p1").unwrap().content_ref, prompt.0);
@@ -2273,11 +2496,126 @@ mod tests {
             name: "x".into(),
             content_ref: "d".repeat(64),
         });
-        let err = context_rail_items(&bad, &store).unwrap_err();
+        let err = context_rail_items(&bad, &store, None, "alice@acme").unwrap_err();
         match err {
             AppRunError::InvalidArgs(msg) => {
                 assert!(msg.contains("not found in the content store"), "{msg}");
                 assert!(msg.contains("dddddddddddd"), "names the ref prefix: {msg}");
+            }
+            other => panic!("expected InvalidArgs, got {other:?}"),
+        }
+    }
+
+    // ----- T-RUNAPP-PROJECT-RAIL: the App's own project markdown reaches the run -----
+
+    /// Build a fresh `BranchesDb` (in-memory content store) and advance `(path, body)` pairs
+    /// into a branch, in the given order.
+    fn branch_with(
+        files: &[(&str, &[u8])],
+    ) -> (
+        crate::branches::BranchesDb<InMemoryContentStore>,
+        std::sync::Arc<InMemoryContentStore>,
+    ) {
+        use kx_content::ContentStore as _;
+        let dir = tempfile::tempdir().unwrap();
+        let content = std::sync::Arc::new(InMemoryContentStore::default());
+        let db = crate::branches::BranchesDb::open(dir.path(), content.clone(), None).unwrap();
+        std::mem::forget(dir); // keep the sqlite file alive for the test
+        db.create("alice@acme", "apps/local/proj", None, "project")
+            .unwrap();
+        for (path, body) in files {
+            let r = content.put(body).unwrap();
+            db.advance("alice@acme", "apps/local/proj", path, r.0)
+                .unwrap();
+        }
+        (db, content)
+    }
+
+    fn env_on(branch: &str) -> AppEnvelope {
+        let mut env = AppEnvelope::new(
+            "proj",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.branch_handle = branch.to_string();
+        env
+    }
+
+    /// The project rail is `.md`-only, path-sorted, `app.json`/`.kortecx` excluded — and it is
+    /// a PURE function of the manifest: the SAME set of files yields byte-identical items no
+    /// matter what ORDER they were advanced (the process-restart stability the `MoteId` needs).
+    #[test]
+    fn project_rail_is_md_only_sorted_and_order_independent() {
+        use kx_content::ContentStore as _;
+        // Same files, two DIFFERENT advance orders (a rebuilt manifest may enumerate differently).
+        let forward: &[(&str, &[u8])] = &[
+            ("README.md", b"# readme"),
+            ("app.json", b"{\"decorative\":true}"),
+            (".kortecx/manifest.json", b"{}"),
+            ("prompts/system.md", b"be terse"),
+            ("rules/guardrails.md", b"never delete prod"),
+        ];
+        let reversed: Vec<(&str, &[u8])> = forward.iter().rev().copied().collect();
+
+        let (db_a, ca) = branch_with(forward);
+        let (db_b, cb) = branch_with(&reversed);
+        let env = env_on("apps/local/proj");
+
+        let a1 = context_rail_items(&env, ca.as_ref(), Some(&db_a), "alice@acme").unwrap();
+        let a2 = context_rail_items(&env, ca.as_ref(), Some(&db_a), "alice@acme").unwrap();
+        let b1 = context_rail_items(&env, cb.as_ref(), Some(&db_b), "alice@acme").unwrap();
+
+        // Deterministic within a process, and independent of advance order (⇒ restart-stable).
+        assert_eq!(a1, a2, "two calls must be byte-identical");
+        assert_eq!(a1, b1, "selection must not depend on advance order");
+
+        // Only the three `.md` files, in path order; app.json + .kortecx excluded.
+        let names: Vec<&str> = a1.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "project:README.md",
+                "project:prompts/system.md",
+                "project:rules/guardrails.md"
+            ],
+            "md-only, path-sorted, project: labeled"
+        );
+        // The rule's content actually rides (the whole point).
+        let rule_ref = ca.put(b"never delete prod").unwrap();
+        assert!(a1.iter().any(|i| i.content_ref == rule_ref.0));
+    }
+
+    /// An empty `branch_handle` or a `None` seam ⇒ no project items (the digest no-op the
+    /// `7d22d4bd` invariant depends on for Apps without a project).
+    #[test]
+    fn project_rail_is_a_no_op_without_a_branch() {
+        use kx_content::InMemoryContentStore;
+        let store = InMemoryContentStore::new();
+        let (db, _c) = branch_with(&[("README.md", b"# hi")]);
+        // No branch seam.
+        let env = env_on("apps/local/proj");
+        assert!(context_rail_items(&env, &store, None, "alice@acme")
+            .unwrap()
+            .is_empty());
+        // Seam present, but the App declares no branch.
+        let env_no_branch = env_on("");
+        assert!(
+            context_rail_items(&env_no_branch, &store, Some(&db), "alice@acme")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Project markdown over the byte budget REFUSES the run (never a silent truncation).
+    #[test]
+    fn project_rail_over_budget_refuses() {
+        let big = vec![b'x'; crate::env_caps::DEFAULT_APP_PROJECT_RAIL_BYTES + 1];
+        let (db, c) = branch_with(&[("rules/big.md", &big)]);
+        let env = env_on("apps/local/proj");
+        let err = context_rail_items(&env, c.as_ref(), Some(&db), "alice@acme").unwrap_err();
+        match err {
+            AppRunError::InvalidArgs(msg) => {
+                assert!(msg.contains("context-rail budget"), "{msg}");
+                assert!(msg.contains("big.md"), "names the offending file: {msg}");
             }
             other => panic!("expected InvalidArgs, got {other:?}"),
         }

@@ -5,7 +5,9 @@ name = "kx-proto"
 # is what `semver-checks` asks for: HostedAppStatus gains a pub field, HostedAppState gains
 # a variant, and the KxGateway service trait gains `delete_app` with no default. Same
 # reason 0.4.0 → 0.5.0 was taken for the additive GetScaffoldStatus fields.
-version = "0.7.0"
+# 0.8.0 — GetAppManifestResponse gains `datasets` (field 7): wire-additive (proto-breaking
+# clean), but the generated struct gains a pub field ⇒ breaking-in-Rust, same minor bump.
+version = "0.8.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }
