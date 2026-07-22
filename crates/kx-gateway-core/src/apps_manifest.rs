@@ -54,6 +54,11 @@ pub struct AppManifest {
     pub tools: Vec<AppCapability>,
     /// The connection capability lines (`references.connections` vs. the registered set).
     pub connections: Vec<AppCapability>,
+    /// The dataset capability lines (`references.datasets` ∪ steering dataset refs vs. the
+    /// ingested corpora). A declared dataset that is neither self-contained nor ingested is
+    /// the ONE dependency that HARD-FAILS `RunApp` (`AppRunError::InvalidArgs`), so it is the
+    /// one preflight must surface: `requested && !in_policy` ⇒ the run would refuse.
+    pub datasets: Vec<AppCapability>,
     /// The App's declared model route (empty ⇒ the served default is used).
     pub model_route: String,
     /// Whether `model_route` is offered by this serve (always `true` when empty). When

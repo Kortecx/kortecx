@@ -480,51 +480,55 @@ fn collect_dataset_bindings(env: &AppEnvelope) -> Vec<DatasetBinding> {
 
 /// Resolve an App's `references.connections` + `guards.secret_scope` against the
 /// caller's OWN registered connections into the run's secret scope. A pure function
-/// (Rule 5.2 — unit-testable without a store): `registered_credentials` /
-/// `registered_endpoints` are the credential-ref names / transport endpoints of the
-/// caller's registered connections.
+/// (Rule 5.2 — unit-testable without a store): `registered_credentials` is the set of
+/// credential-ref names the caller's connections carry, and `endpoint_credentials` maps
+/// each registered connection's transport endpoint to its credential name (`""` when it
+/// carries none).
 ///
 /// - A referenced connection with no matching registered connection ⇒
 ///   [`AppRunError::MissingIntegration`] (matched by credential ref when it carries
 ///   one, else by transport endpoint). The App is owned, so this is an actionable
 ///   error, not an existence oracle.
-/// - A `guards.secret_scope` name that no referenced connection provides ⇒
-///   [`AppRunError::InvalidArgs`] (the loud mis-authoring guard — avoids a confusing
-///   downstream broker `CapabilityExceedsWarrant`).
-/// - Otherwise the scope is exactly the declared names (bounded to the referenced
-///   connections' credentials); empty ⇒ `None` (fail-closed — a credentialed tool then
-///   refuses at the broker, by design).
+/// - The scope ADOPTS the credential each referenced connection actually provides. For an
+///   explicit `credential_ref` that is the name itself; for a ONE-CLICK bind — a
+///   `ConnectionRef` that carries only an endpoint — it is the credential of the registered
+///   connection it matched (e.g. `kx connections add --provider gmail` stored
+///   `KX_GMAIL_CREDENTIAL`). Without this the scope stayed empty for a one-click bind and a
+///   credentialed tool refused at the broker despite a green preflight. This is server-side,
+///   so every already-saved App is retroactively fixed with no envelope change.
+/// - A `guards.secret_scope`, if set, may only NARROW within what the referenced connections
+///   provide; a name outside that set ⇒ [`AppRunError::InvalidArgs`] (the loud mis-authoring
+///   guard). Empty ⇒ the scope is everything those connections provide, so attaching a
+///   connection is enough to authenticate.
+/// - No referenced connection provides a (non-empty) credential ⇒ `None` (a credential-less
+///   connection, e.g. an unauthenticated MCP server, needs no scope).
 fn resolve_secret_scope(
     refs: &[ConnectionRef],
     scope_names: &[String],
     registered_credentials: &BTreeSet<String>,
-    registered_endpoints: &BTreeSet<String>,
+    endpoint_credentials: &BTreeMap<String, String>,
 ) -> Result<Option<SecretScope>, AppRunError> {
+    // The credential each referenced connection actually provides at run time — adopting the
+    // registered connection's own credential for an endpoint-only (one-click) bind.
+    let mut provided: BTreeSet<String> = BTreeSet::new();
     for cref in refs {
-        let satisfied = if cref.credential_ref.is_empty() {
-            registered_endpoints.contains(&cref.descriptor)
+        let cred: &str = if cref.credential_ref.is_empty() {
+            match endpoint_credentials.get(&cref.descriptor) {
+                Some(c) => c.as_str(),
+                None => return Err(AppRunError::MissingIntegration(cref.descriptor.clone())),
+            }
+        } else if registered_credentials.contains(&cref.credential_ref) {
+            cref.credential_ref.as_str()
         } else {
-            registered_credentials.contains(&cref.credential_ref)
+            return Err(AppRunError::MissingIntegration(cref.credential_ref.clone()));
         };
-        if !satisfied {
-            let name = if cref.credential_ref.is_empty() {
-                cref.descriptor.clone()
-            } else {
-                cref.credential_ref.clone()
-            };
-            return Err(AppRunError::MissingIntegration(name));
+        if !cred.is_empty() {
+            provided.insert(cred.to_string());
         }
     }
 
-    // The credentials the App's referenced connections provide (the ceiling on the scope).
-    let declared: BTreeSet<&str> = refs
-        .iter()
-        .map(|c| c.credential_ref.as_str())
-        .filter(|s| !s.is_empty())
-        .collect();
-
     for name in scope_names {
-        if !declared.contains(name.as_str()) {
+        if !provided.contains(name) {
             return Err(AppRunError::InvalidArgs(format!(
                 "guards.secret_scope names {name:?} but no referenced connection provides \
                  that credential"
@@ -532,7 +536,12 @@ fn resolve_secret_scope(
         }
     }
 
-    let allowed: BTreeSet<SecretRef> = scope_names.iter().cloned().map(SecretRef).collect();
+    // An explicit scope NARROWS; an empty one takes everything the connections provide.
+    let allowed: BTreeSet<SecretRef> = if scope_names.is_empty() {
+        provided.into_iter().map(SecretRef).collect()
+    } else {
+        scope_names.iter().cloned().map(SecretRef).collect()
+    };
     Ok(if allowed.is_empty() {
         None
     } else {
@@ -986,15 +995,23 @@ impl AppAuthor for HostAppAuthor {
             .iter()
             .filter_map(|c| c.credential_ref.clone())
             .collect();
-        let reg_endpoints: BTreeSet<String> = registered
+        // endpoint -> the registered connection's credential name (empty when it has none), so
+        // a one-click (endpoint-only) bind can adopt the credential the connection was
+        // registered with instead of resolving to an empty, broker-refused scope.
+        let endpoint_credentials: BTreeMap<String, String> = registered
             .iter()
-            .map(|c| c.transport.endpoint().to_string())
+            .map(|c| {
+                (
+                    c.transport.endpoint().to_string(),
+                    c.credential_ref.clone().unwrap_or_default(),
+                )
+            })
             .collect();
         let secret_scope = resolve_secret_scope(
             &env.references.connections,
             &env.steering_config.guards.secret_scope,
             &reg_creds,
-            &reg_endpoints,
+            &endpoint_credentials,
         )?;
 
         // (3) Lower the blueprint through the canonical path (+ optional arg injection).
@@ -1268,6 +1285,33 @@ impl AppManifestView for HostAppAuthor {
             })
             .collect();
 
+        // Dataset lines: a declared dataset that is neither self-contained (carries `cas_refs`,
+        // materializes at run) nor already ingested is the ONE dependency that HARD-FAILS the
+        // run (`fold_dataset_rag` → `AppRunError::InvalidArgs`). This arm agrees with that check
+        // by construction: `in_policy=false` ⟺ the run would refuse. On a build with no
+        // retrieval seam (`self.datasets == None`) the run degrades to ungrounded rather than
+        // refusing, so nothing here blocks it.
+        let available: BTreeSet<String> = self
+            .datasets
+            .as_ref()
+            .map(|v| v.list_datasets().into_iter().map(|d| d.dataset_id).collect())
+            .unwrap_or_default();
+        let has_view = self.datasets.is_some();
+        let datasets = collect_dataset_bindings(&env)
+            .into_iter()
+            .map(|b| {
+                let in_policy =
+                    !b.cas_refs.is_empty() || !has_view || available.contains(&b.declared);
+                AppCapability {
+                    id: b.declared,
+                    version: String::new(),
+                    requested: true,
+                    in_policy,
+                    inherited: false,
+                }
+            })
+            .collect();
+
         // Model line: the declared route vs. the served catalog (empty ⇒ served default).
         let model_route = env.steering_config.model.model_route.clone();
         let model_route_served =
@@ -1277,6 +1321,7 @@ impl AppManifestView for HostAppAuthor {
             reach_inherit,
             tools,
             connections,
+            datasets,
             model_route,
             model_route_served,
         }))
@@ -1361,6 +1406,13 @@ mod tests {
         names.iter().map(|s| (*s).to_string()).collect()
     }
 
+    fn endpoint_creds(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(e, c)| ((*e).to_string(), (*c).to_string()))
+            .collect()
+    }
+
     #[test]
     fn secret_scope_grants_the_declared_credential_when_registered() {
         // E1 POSITIVE: App refs the gmail connection + declares its credential in
@@ -1371,7 +1423,7 @@ mod tests {
             &refs,
             &scope,
             &creds(&["KX_GMAIL_CREDENTIAL"]),
-            &BTreeSet::new(),
+            &BTreeMap::new(),
         )
         .unwrap();
         match got {
@@ -1384,25 +1436,46 @@ mod tests {
     }
 
     #[test]
-    fn secret_scope_empty_is_fail_closed_none() {
-        // E2 NEGATIVE: the connection is registered but the App declares no secret_scope
-        // ⇒ None (SecretScope::None) ⇒ the credentialed tool fails closed at the broker.
+    fn secret_scope_adopts_a_referenced_connections_credential_without_an_explicit_scope() {
+        // The App refs the gmail connection (credential_ref present, registered) but declares
+        // NO explicit secret_scope. Attaching a connection is intent to use it, so the scope is
+        // the credential that connection provides — not the old fail-closed None that made a
+        // credentialed tool refuse at the broker.
         let refs = vec![cref("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")];
-        let got = resolve_secret_scope(
-            &refs,
-            &[],
-            &creds(&["KX_GMAIL_CREDENTIAL"]),
-            &BTreeSet::new(),
-        )
-        .unwrap();
-        assert!(got.is_none(), "empty secret_scope ⇒ fail-closed None");
+        let got = resolve_secret_scope(&refs, &[], &creds(&["KX_GMAIL_CREDENTIAL"]), &BTreeMap::new())
+            .unwrap();
+        match got {
+            Some(SecretScope::AllowList(s)) => {
+                assert!(s.contains(&SecretRef("KX_GMAIL_CREDENTIAL".to_string())));
+            }
+            other => panic!("expected AllowList adopting the referenced credential, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn secret_scope_adopts_a_one_click_bind_credential() {
+        // THE PR-D FIX. A one-click bind writes a ConnectionRef with only an endpoint (no
+        // credential_ref). The registered connection it matches DOES carry a credential
+        // (KX_GMAIL_CREDENTIAL). The run's scope must adopt that credential — otherwise the
+        // scope is empty and the credentialed tool refuses at the broker despite a green
+        // preflight. No explicit secret_scope, no envelope change: retroactively fixes saved Apps.
+        let refs = vec![cref("https://gmail.local/mcp", "")];
+        let ep = endpoint_creds(&[("https://gmail.local/mcp", "KX_GMAIL_CREDENTIAL")]);
+        let got = resolve_secret_scope(&refs, &[], &BTreeSet::new(), &ep).unwrap();
+        match got {
+            Some(SecretScope::AllowList(s)) => {
+                assert_eq!(s.len(), 1);
+                assert!(s.contains(&SecretRef("KX_GMAIL_CREDENTIAL".to_string())));
+            }
+            other => panic!("expected the adopted credential in scope, got {other:?}"),
+        }
     }
 
     #[test]
     fn missing_registered_connection_is_a_missing_integration() {
         // E3 MISSING: App refs gmail by credential but nothing is registered.
         let refs = vec![cref("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")];
-        let err = resolve_secret_scope(&refs, &[], &BTreeSet::new(), &BTreeSet::new())
+        let err = resolve_secret_scope(&refs, &[], &BTreeSet::new(), &BTreeMap::new())
             .expect_err("missing integration");
         match err {
             AppRunError::MissingIntegration(name) => assert_eq!(name, "KX_GMAIL_CREDENTIAL"),
@@ -1411,33 +1484,32 @@ mod tests {
     }
 
     #[test]
-    fn credential_less_ref_matches_by_endpoint() {
-        // A credential-less connection is satisfied by a matching transport endpoint.
+    fn credential_less_endpoint_bind_needs_no_scope() {
+        // A credential-LESS connection (an unauthenticated MCP server) is satisfied by a
+        // registered endpoint and contributes nothing to the scope ⇒ None.
         let refs = vec![cref("https://mcp.example/sse", "")];
-        let endpoints: BTreeSet<String> = creds(&["https://mcp.example/sse"]);
-        assert!(
-            resolve_secret_scope(&refs, &[], &BTreeSet::new(), &endpoints)
-                .unwrap()
-                .is_none()
-        );
-        // ... and MissingIntegration when the endpoint is not registered.
+        let ep = endpoint_creds(&[("https://mcp.example/sse", "")]);
+        assert!(resolve_secret_scope(&refs, &[], &BTreeSet::new(), &ep)
+            .unwrap()
+            .is_none());
+        // ... and MissingIntegration when the endpoint is not registered at all.
         assert!(matches!(
-            resolve_secret_scope(&refs, &[], &BTreeSet::new(), &BTreeSet::new()),
+            resolve_secret_scope(&refs, &[], &BTreeSet::new(), &BTreeMap::new()),
             Err(AppRunError::MissingIntegration(_))
         ));
     }
 
     #[test]
     fn secret_scope_naming_an_unreferenced_credential_is_rejected() {
-        // The loud mis-authoring guard: secret_scope may only name a credential a
-        // referenced connection provides.
+        // The loud mis-authoring guard: secret_scope may only NARROW within what the
+        // referenced connections provide.
         let refs = vec![cref("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")];
         let scope = vec!["SOME_OTHER_SECRET".to_string()];
         let err = resolve_secret_scope(
             &refs,
             &scope,
             &creds(&["KX_GMAIL_CREDENTIAL", "SOME_OTHER_SECRET"]),
-            &BTreeSet::new(),
+            &BTreeMap::new(),
         )
         .expect_err("loud guard");
         assert!(matches!(err, AppRunError::InvalidArgs(_)));
@@ -2115,6 +2187,46 @@ mod tests {
         );
         assert_eq!(m.model_route, "m");
         assert!(m.model_route_served);
+        // No datasets declared ⇒ no dataset lines (the common case).
+        assert!(m.datasets.is_empty());
+    }
+
+    #[tokio::test]
+    async fn manifest_flags_a_missing_dataset_the_one_hard_run_failure() {
+        // A declared dataset that is neither ingested nor self-contained is the ONLY dependency
+        // that hard-fails RunApp — and the one thing preflight never surfaced. The manifest's
+        // dataset arm must flag it `requested && !in_policy` (⟺ the run would refuse), while an
+        // ingested dataset and a self-contained one (carries cas_refs) are both in policy.
+        let dir = tempfile::tempdir().unwrap();
+        let view: Arc<dyn DatasetView> = Arc::new(FakeDatasets::new(&["ingested-ds"]));
+        let (host, _content, _) = rig_ex(dir.path(), &[("retrieve", "1")], Some(view));
+        let mut env = AppEnvelope::new(
+            "grounded",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "ingested-ds".into(),
+            cas_refs: vec![],
+        });
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "missing-ds".into(),
+            cas_refs: vec![],
+        });
+        env.references.datasets.push(kx_app::DatasetRef {
+            dataset_ref: "carried-ds".into(),
+            cas_refs: vec!["a".repeat(64)], // self-contained ⇒ materializes at run
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let m = host.manifest("alice@acme", &handle).unwrap().expect("owned");
+
+        let ds = |id: &str| m.datasets.iter().find(|c| c.id == id).cloned().unwrap();
+        assert!(ds("ingested-ds").in_policy, "an ingested dataset is in policy");
+        assert!(ds("carried-ds").in_policy, "a self-contained dataset is in policy");
+        assert!(
+            ds("missing-ds").requested && !ds("missing-ds").in_policy,
+            "a declared-but-unavailable dataset is the missing dependency preflight must warn on"
+        );
     }
 
     #[tokio::test]

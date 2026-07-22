@@ -357,6 +357,9 @@ export class AppManifest {
     readonly modelRoute: string,
     /** The route is offered here (false ⇒ a run would refuse). */
     readonly modelRouteServed: boolean,
+    /** Declared grounding datasets; `requested && !inPolicy` ⇒ the run HARD-FAILS
+     * (a missing dataset is the only dependency that does). */
+    readonly datasets: AppCapability[],
   ) {}
 
   static fromProto(r: PbGetAppManifestResponse): AppManifest {
@@ -373,6 +376,7 @@ export class AppManifest {
       r.connections.map(cap),
       r.modelRoute,
       r.modelRouteServed,
+      r.datasets.map(cap),
     );
   }
 }

@@ -1573,20 +1573,22 @@ class AppCapability(_message.Message):
     def __init__(self, id: _Optional[str] = ..., version: _Optional[str] = ..., requested: bool = ..., in_policy: bool = ..., inherited: bool = ...) -> None: ...
 
 class GetAppManifestResponse(_message.Message):
-    __slots__ = ("found", "reach_inherit", "tools", "connections", "model_route", "model_route_served")
+    __slots__ = ("found", "reach_inherit", "tools", "connections", "model_route", "model_route_served", "datasets")
     FOUND_FIELD_NUMBER: _ClassVar[int]
     REACH_INHERIT_FIELD_NUMBER: _ClassVar[int]
     TOOLS_FIELD_NUMBER: _ClassVar[int]
     CONNECTIONS_FIELD_NUMBER: _ClassVar[int]
     MODEL_ROUTE_FIELD_NUMBER: _ClassVar[int]
     MODEL_ROUTE_SERVED_FIELD_NUMBER: _ClassVar[int]
+    DATASETS_FIELD_NUMBER: _ClassVar[int]
     found: bool
     reach_inherit: bool
     tools: _containers.RepeatedCompositeFieldContainer[AppCapability]
     connections: _containers.RepeatedCompositeFieldContainer[AppCapability]
     model_route: str
     model_route_served: bool
-    def __init__(self, found: bool = ..., reach_inherit: bool = ..., tools: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ..., connections: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ..., model_route: _Optional[str] = ..., model_route_served: bool = ...) -> None: ...
+    datasets: _containers.RepeatedCompositeFieldContainer[AppCapability]
+    def __init__(self, found: bool = ..., reach_inherit: bool = ..., tools: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ..., connections: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ..., model_route: _Optional[str] = ..., model_route_served: bool = ..., datasets: _Optional[_Iterable[_Union[AppCapability, _Mapping]]] = ...) -> None: ...
 
 class RunAppRequest(_message.Message):
     __slots__ = ("handle", "args", "require_approval")

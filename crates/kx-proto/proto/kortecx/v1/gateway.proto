@@ -1314,6 +1314,7 @@ message GetAppManifestResponse {
   repeated AppCapability connections        = 4;
   string                 model_route        = 5;  // the App's declared route ("" ⇒ served default)
   bool                   model_route_served = 6;  // route is offered here (always true when empty); false ⇒ a run would REFUSE
+  repeated AppCapability datasets           = 7;  // declared grounding datasets; requested && !in_policy ⇒ the run HARD-FAILS (a missing dataset is the only such dependency)
 }
 
 // G2 (App-pointer -> run resolution). Run a caller-owned App SERVER-SIDE: the

@@ -3056,6 +3056,7 @@ impl KxGateway for GatewayService {
                 connections: m.connections.into_iter().map(capability_to_proto).collect(),
                 model_route: m.model_route,
                 model_route_served: m.model_route_served,
+                datasets: m.datasets.into_iter().map(capability_to_proto).collect(),
             })),
             None => Ok(Response::new(proto::GetAppManifestResponse {
                 found: false,
@@ -3064,6 +3065,7 @@ impl KxGateway for GatewayService {
                 connections: Vec::new(),
                 model_route: String::new(),
                 model_route_served: false,
+                datasets: Vec::new(),
             })),
         }
     }

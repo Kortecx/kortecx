@@ -302,6 +302,10 @@ pub async fn execute(args: ConnectionsArgs) -> Result<(), CliError> {
 
     match args.sub {
         ConnectionsSub::Add(spec) => {
+            // G017: for a stdio connection the endpoint IS the connector binary. Probe how it
+            // resolves so `add` warns NOW if the binary is absent, instead of the user
+            // discovering it only when a run tries to dial and fails `Unreachable` at spawn.
+            let probe_target = (spec.transport == "stdio").then(|| spec.endpoint.clone());
             let req = proto::RegisterMcpServerRequest {
                 server_name: spec.name,
                 transport: spec.transport,
@@ -317,6 +321,16 @@ pub async fn execute(args: ConnectionsArgs) -> Result<(), CliError> {
                 .map_err(CliError::from_status)?
                 .into_inner();
             println!("{}", format::render_register_server(&resp, json));
+            if let Some(cmd) = probe_target {
+                if probe_connector(&cmd) == ConnectorResolution::Missing {
+                    eprintln!(
+                        "⚠ connector {cmd:?} is not installed (no kx-sibling or PATH match) — \
+                         dialing it will fail at spawn. Build it from a checkout \
+                         (e.g. `cargo install --path integrations/{cmd}`) or run \
+                         `kx connections doctor` for per-provider install guidance."
+                    );
+                }
+            }
         }
         ConnectionsSub::List => {
             let req = proto::ListMcpServersRequest {
