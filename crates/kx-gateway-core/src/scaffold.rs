@@ -786,7 +786,12 @@ pub fn authoring_prompt(
                 format!(
                     "The sibling modules already written expose exactly these APIs — import ONLY \
                      these names, and when you render a sibling component pass EXACTLY the props it \
-                     declares; do NOT invent an export or a prop that is not listed:\n{list}\n"
+                     declares. If a component's API says `(no props)`, render it as `<Component />` \
+                     and pass it NOTHING — it manages its own state; do NOT pass props to it. \
+                     Destructure a hook's result using ONLY the keys its `returns {{ … }}` lists. \
+                     Lift shared state into THIS file and pass it down via each child's declared \
+                     props; \
+                     do NOT invent an export or a prop that is not listed:\n{list}\n"
                 )
             };
             format!(
