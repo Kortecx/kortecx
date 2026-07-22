@@ -427,6 +427,22 @@ impl HostScaffolder {
             extras
                 .into_iter()
                 .filter(|f| !base_paths.contains(f.path.as_str()))
+                // G023: the scheduled lane is markdown-only (`AGENTIC_PLAN_SYSTEM` asks for
+                // ".md only" but that was prompt text, unenforced). Drop a non-`.md` extra
+                // rather than author it: only `.md` rides the run's project context rail
+                // (`app_run::is_project_rail_path`), so a stray `.py`/`.json` would be a file
+                // the user sees, the model never gets, and no surface can explain. Matched to
+                // the rail EXACTLY (lowercase `md`) so "authored" ⟺ "reaches the model".
+                .filter(|f| {
+                    let is_md = matches!(f.path.rsplit('.').next(), Some("md"));
+                    if !is_md {
+                        tracing::info!(
+                            branch = %branch, path = %f.path,
+                            "dropping a non-.md scheduled extra (only markdown reaches the run context rail)"
+                        );
+                    }
+                    is_md
+                })
                 // Bound the lane. MAX_MANIFEST_FILES (48) × the per-step model timeout is
                 // a multi-hour worst case for a lane that wrote exactly 5 files before,
                 // and the live scaffold witness has a wall-clock deadline.

@@ -63,8 +63,8 @@ use kx_blueprint::{to_request, DagSpec, StepSpec};
 use kx_content::{ContentRef, ContentStore};
 use kx_gateway_core::{
     app_dataset_scoped_name, author_steps_from_proto, AppAuthor, AppCapability, AppCatalog,
-    AppManifest, AppManifestView, AppRunError, BinderError, BoundRecipe, DatasetError, DatasetView,
-    GatewayError, IngestDoc, RegisteredToolsView,
+    AppManifest, AppManifestView, AppRunError, BinderError, BoundRecipe, BranchStore, DatasetError,
+    DatasetView, GatewayError, IngestDoc, RegisteredToolsView,
 };
 use kx_mcp_gateway::SqliteConnectionStore;
 use kx_mote::{ContextItemRef, ToolName, ToolVersion, REACT_REQUIRE_APPROVAL_KEY};
@@ -146,6 +146,13 @@ pub(crate) struct HostAppAuthor {
     /// ⇒ a declared dataset honest-degrades to an ungrounded run (retrieve@1 is not
     /// registered there anyway).
     datasets: Option<Arc<dyn DatasetView>>,
+    /// T-RUNAPP-PROJECT-RAIL: the branch store (the SAME `Arc` the scaffold + Apps IDE
+    /// share). The `.md` files the model authored into the App's `branch_handle` ride the
+    /// context rail at run time, so a rule the App wrote for itself — or the user edited in
+    /// the IDE — actually reaches the model. Before this, the project was documentation the
+    /// run never read. `None` on a build without the branch seam ⇒ no project rail (the
+    /// digest no-op); a run is otherwise unaffected.
+    branches: Option<Arc<dyn BranchStore>>,
 }
 
 impl HostAppAuthor {
@@ -164,6 +171,7 @@ impl HostAppAuthor {
         registered: Arc<dyn RegisteredToolsView>,
         content: Arc<dyn ContentPresence>,
         datasets: Option<Arc<dyn DatasetView>>,
+        branches: Option<Arc<dyn BranchStore>>,
     ) -> Self {
         Self {
             apps,
@@ -174,6 +182,7 @@ impl HostAppAuthor {
             registered,
             content,
             datasets,
+            branches,
         }
     }
 
@@ -818,6 +827,8 @@ fn decode_present_ref(
 fn context_rail_items(
     env: &AppEnvelope,
     content: &dyn ContentPresence,
+    branches: Option<&dyn BranchStore>,
+    party: &str,
 ) -> Result<Vec<ContextItemRef>, AppRunError> {
     let r = &env.references;
     let mut items = Vec::new();
@@ -851,7 +862,80 @@ fn context_rail_items(
             content_ref: bytes,
         });
     }
+    project_rail_items(env, content, branches, party, &mut items)?;
     Ok(items)
+}
+
+/// `true` for a branch file that rides the App's project context rail: a `.md` file that is
+/// not a `.kortecx/` internal marker. `app.json` (a decorative copy of the manifest nothing
+/// parses) and the marker JSON fall out by the suffix filter; the prefix guard is belt-and-
+/// braces for any future `.kortecx/*.md`.
+fn is_project_rail_path(path: &str) -> bool {
+    !path.starts_with(".kortecx/") && matches!(path.rsplit('.').next(), Some("md"))
+}
+
+/// T-RUNAPP-PROJECT-RAIL: fold the App's OWN project markdown into the context rail.
+///
+/// The model authored these `.md` files into the App's branch (or the user edited them in the
+/// IDE); before this they were documentation the run never read (`grep -c branch` over this
+/// file was 0). Selection is a PURE, DETERMINISTIC function of the path-sorted branch manifest
+/// — `.md` only, ALL of them, in path order, `app.json` + `.kortecx/*` excluded — because it
+/// lands in `config_subset` (→ `MoteId`): any map-order or timestamp dependence would move the
+/// Mote id run-to-run and break recovery stability. The content is already in CAS (the branch
+/// holds refs), so each file maps straight to its ref; bytes are read only to enforce the total
+/// budget, over which the run REFUSES rather than silently truncating (a half-read rule is worse
+/// than no rule). `None` branch seam or an empty `branch_handle` ⇒ no items (the digest no-op).
+fn project_rail_items(
+    env: &AppEnvelope,
+    content: &dyn ContentPresence,
+    branches: Option<&dyn BranchStore>,
+    party: &str,
+    items: &mut Vec<ContextItemRef>,
+) -> Result<(), AppRunError> {
+    let Some(branches) = branches else {
+        return Ok(());
+    };
+    if env.branch_handle.is_empty() {
+        return Ok(());
+    }
+    let Some(manifest) = branches
+        .get(party, &env.branch_handle)
+        .map_err(|e| AppRunError::Internal(format!("app branch read: {e}")))?
+    else {
+        return Ok(());
+    };
+    let cap = crate::env_caps::app_project_rail_bytes();
+    let mut project: Vec<_> = manifest
+        .items
+        .iter()
+        .filter(|it| is_project_rail_path(&it.path))
+        .collect();
+    // The manifest is documented path-sorted; pin it so selection cannot depend on store order.
+    project.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut used = 0usize;
+    for it in project {
+        let bytes = content
+            .get_ref(&ContentRef::from_bytes(it.content_ref))
+            .ok_or_else(|| {
+                AppRunError::Internal(format!(
+                    "app project file {:?} is missing from the content store",
+                    it.path
+                ))
+            })?;
+        used = used.saturating_add(bytes.len());
+        if used > cap {
+            return Err(AppRunError::InvalidArgs(format!(
+                "app project markdown exceeds the {cap}-byte context-rail budget (reached at \
+                 {:?}); trim the project's `.md` files or raise KX_APP_PROJECT_RAIL_BYTES",
+                it.path
+            )));
+        }
+        items.push(ContextItemRef {
+            name: format!("project:{}", it.path),
+            content_ref: it.content_ref,
+        });
+    }
+    Ok(())
 }
 
 #[tonic::async_trait]
@@ -882,7 +966,12 @@ impl AppAuthor for HostAppAuthor {
         //      context items BEFORE the blueprint is consumed. Skills (3b) extend this
         //      same Vec; the whole set rides ONE `author_with_context_items` inject.
         //      Empty rail ⇒ empty Vec ⇒ the digest no-op.
-        let mut context_items = context_rail_items(&env, self.content.as_ref())?;
+        let mut context_items = context_rail_items(
+            &env,
+            self.content.as_ref(),
+            self.branches.as_deref(),
+            party,
+        )?;
         // The datasets to ground over (collected now, while `env` is fully intact — the
         // blueprint move below partially moves `env`). Empty ⇒ no RAG fold (the no-op).
         let dataset_bindings = collect_dataset_bindings(&env);
@@ -1692,6 +1781,7 @@ mod tests {
             Arc::new(FixedFireable(fire)),
             content.clone(),
             None,
+            None,
         );
         (host, content, author)
     }
@@ -1736,6 +1826,7 @@ mod tests {
             Arc::new(FixedFireable(fire)),
             content.clone(),
             datasets,
+            None,
         );
         (host, content, author)
     }
@@ -2251,7 +2342,7 @@ mod tests {
             .context_refs
             .push(hex_str(&sref.0));
 
-        let items = context_rail_items(&env, &store).unwrap();
+        let items = context_rail_items(&env, &store, None, "alice@acme").unwrap();
         let named = |n: &str| items.iter().find(|i| i.name == n);
         assert_eq!(named("context:c1").unwrap().content_ref, ctx.0);
         assert_eq!(named("prompt:p1").unwrap().content_ref, prompt.0);
@@ -2273,11 +2364,125 @@ mod tests {
             name: "x".into(),
             content_ref: "d".repeat(64),
         });
-        let err = context_rail_items(&bad, &store).unwrap_err();
+        let err = context_rail_items(&bad, &store, None, "alice@acme").unwrap_err();
         match err {
             AppRunError::InvalidArgs(msg) => {
                 assert!(msg.contains("not found in the content store"), "{msg}");
                 assert!(msg.contains("dddddddddddd"), "names the ref prefix: {msg}");
+            }
+            other => panic!("expected InvalidArgs, got {other:?}"),
+        }
+    }
+
+    // ----- T-RUNAPP-PROJECT-RAIL: the App's own project markdown reaches the run -----
+
+    /// Build a fresh `BranchesDb` (in-memory content store) and advance `(path, body)` pairs
+    /// into a branch, in the given order.
+    fn branch_with(
+        files: &[(&str, &[u8])],
+    ) -> (
+        crate::branches::BranchesDb<InMemoryContentStore>,
+        std::sync::Arc<InMemoryContentStore>,
+    ) {
+        use kx_content::ContentStore as _;
+        let dir = tempfile::tempdir().unwrap();
+        let content = std::sync::Arc::new(InMemoryContentStore::default());
+        let db = crate::branches::BranchesDb::open(dir.path(), content.clone(), None).unwrap();
+        std::mem::forget(dir); // keep the sqlite file alive for the test
+        db.create("alice@acme", "apps/local/proj", None, "project")
+            .unwrap();
+        for (path, body) in files {
+            let r = content.put(body).unwrap();
+            db.advance("alice@acme", "apps/local/proj", path, r.0).unwrap();
+        }
+        (db, content)
+    }
+
+    fn env_on(branch: &str) -> AppEnvelope {
+        let mut env = AppEnvelope::new(
+            "proj",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        env.branch_handle = branch.to_string();
+        env
+    }
+
+    /// The project rail is `.md`-only, path-sorted, `app.json`/`.kortecx` excluded — and it is
+    /// a PURE function of the manifest: the SAME set of files yields byte-identical items no
+    /// matter what ORDER they were advanced (the process-restart stability the `MoteId` needs).
+    #[test]
+    fn project_rail_is_md_only_sorted_and_order_independent() {
+        use kx_content::ContentStore as _;
+        // Same files, two DIFFERENT advance orders (a rebuilt manifest may enumerate differently).
+        let forward: &[(&str, &[u8])] = &[
+            ("README.md", b"# readme"),
+            ("app.json", b"{\"decorative\":true}"),
+            (".kortecx/manifest.json", b"{}"),
+            ("prompts/system.md", b"be terse"),
+            ("rules/guardrails.md", b"never delete prod"),
+        ];
+        let reversed: Vec<(&str, &[u8])> = forward.iter().rev().copied().collect();
+
+        let (db_a, ca) = branch_with(forward);
+        let (db_b, cb) = branch_with(&reversed);
+        let env = env_on("apps/local/proj");
+
+        let a1 = context_rail_items(&env, ca.as_ref(), Some(&db_a), "alice@acme").unwrap();
+        let a2 = context_rail_items(&env, ca.as_ref(), Some(&db_a), "alice@acme").unwrap();
+        let b1 = context_rail_items(&env, cb.as_ref(), Some(&db_b), "alice@acme").unwrap();
+
+        // Deterministic within a process, and independent of advance order (⇒ restart-stable).
+        assert_eq!(a1, a2, "two calls must be byte-identical");
+        assert_eq!(a1, b1, "selection must not depend on advance order");
+
+        // Only the three `.md` files, in path order; app.json + .kortecx excluded.
+        let names: Vec<&str> = a1.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "project:README.md",
+                "project:prompts/system.md",
+                "project:rules/guardrails.md"
+            ],
+            "md-only, path-sorted, project: labeled"
+        );
+        // The rule's content actually rides (the whole point).
+        let rule_ref = ca.put(b"never delete prod").unwrap();
+        assert!(a1.iter().any(|i| i.content_ref == rule_ref.0));
+    }
+
+    /// An empty `branch_handle` or a `None` seam ⇒ no project items (the digest no-op the
+    /// `7d22d4bd` invariant depends on for Apps without a project).
+    #[test]
+    fn project_rail_is_a_no_op_without_a_branch() {
+        use kx_content::InMemoryContentStore;
+        let store = InMemoryContentStore::new();
+        let (db, _c) = branch_with(&[("README.md", b"# hi")]);
+        // No branch seam.
+        let env = env_on("apps/local/proj");
+        assert!(context_rail_items(&env, &store, None, "alice@acme")
+            .unwrap()
+            .is_empty());
+        // Seam present, but the App declares no branch.
+        let env_no_branch = env_on("");
+        assert!(
+            context_rail_items(&env_no_branch, &store, Some(&db), "alice@acme")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// Project markdown over the byte budget REFUSES the run (never a silent truncation).
+    #[test]
+    fn project_rail_over_budget_refuses() {
+        let big = vec![b'x'; crate::env_caps::DEFAULT_APP_PROJECT_RAIL_BYTES + 1];
+        let (db, c) = branch_with(&[("rules/big.md", &big)]);
+        let env = env_on("apps/local/proj");
+        let err = context_rail_items(&env, c.as_ref(), Some(&db), "alice@acme").unwrap_err();
+        match err {
+            AppRunError::InvalidArgs(msg) => {
+                assert!(msg.contains("context-rail budget"), "{msg}");
+                assert!(msg.contains("big.md"), "names the offending file: {msg}");
             }
             other => panic!("expected InvalidArgs, got {other:?}"),
         }
