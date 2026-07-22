@@ -16,8 +16,14 @@ fireable, this skill may wish for them.
 
 ```sh
 kx skills add --dir skills/author-hosted-app
-kx app new my-site --skill author-hosted-app
-# then Run it from the console (the runtime installs + serves it on a local port)
 ```
+
+Then create the App in the console's **New App** form (choose the **Hosted** kind and a
+framework) or with the SDK's `.hosted(framework, …)` builder, and attach this skill. The
+`kx app` CLI has no hosted-kind flag and `kx app new` requires `--from-blueprint <file>`,
+so it cannot author a hosted App.
+
+The hosted lane ships in the prebuilt binary and every `just serve*` recipe; **serving one
+needs Node/npm on the host** (the supervisor runs `npm install` and a dev server).
 
 Conformance: `just test-skill skills/author-hosted-app`.

@@ -169,6 +169,30 @@ identity-load-bearing wire data and are **never renamed** (old clients +
 persisted runs keep working). Display layers say "Blueprint"; the wire says
 `recipe`; SDKs export additive `Blueprint*` aliases over the same types.
 
+### App / App envelope
+A `kortecx.app/v1` **envelope** (`kx-app`) — the durable, shareable unit of agentic
+capability. It wraps a portable blueprint with *by-reference* context / tool /
+connection / dataset references, a prompt / rule / skill / memory artifact rail, a
+four-axis steering config, and per-step replay intent. It carries **no authority**: no
+warrant, grant, secret, credential, or `instance_id`. `RunApp` (`kx-gateway::app_run`)
+re-resolves every warrant from the caller's own grants. The catalog is caller-scoped and
+off-journal (`apps.db`); identity is `app_digest`, derived from the canonical envelope
+(`kx-gateway-core::app_digest_of`). An App is one of two kinds — **Scheduled**
+(functional; the supported headless lane) or **Hosted** (experience; a web project
+served on a loopback port).
+
+### App project / project branch
+The tree of files an App owns, stored in a content-addressed copy-on-write **branch**
+(`kx-gateway::branches`) named by the App's `branch_handle`. A served model authors it
+(`kx-gateway::scaffold`); you edit it in-CAS via `kx app edit` or the console IDE. Its
+markdown **rides the run's context rail** (a rule in `rules/*.md` reaches the model),
+but it is **not** carried by `kx app export --bundle`.
+
+### App bundle (`kortecx.appbundle/v1`)
+A portable `.kxapp` archive (`kx-appbundle`): the canonical envelope plus the base64
+closure of every content-store blob it references. Connections, secrets, and the project
+branch never travel. `source_digest` is a lineage hint, not a signature.
+
 ### Recipe / WorkflowDef
 A reusable, parameterized **workflow** that compiles to a Mote DAG (displayed as
 a **Blueprint**; `recipe` on the frozen wire). Authored as a `WorkflowDef`
