@@ -1599,6 +1599,53 @@ select {
   flex-direction: column;
   gap: 0.2rem;
 }
+/* The multi-file "files in scope" checkboxes + the applied/review lists carried the class
+ * hooks but no styling, so they rendered as raw browser defaults (unaligned checkboxes,
+ * disc-bulleted lists). Give them a legible, aligned row treatment. */
+.app-chat-drawer__file {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.35rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.app-chat-drawer__file:hover {
+  background: var(--surface-elev);
+}
+.app-chat-drawer__file input {
+  flex: 0 0 auto;
+}
+.app-chat-drawer__file span {
+  overflow-wrap: anywhere;
+}
+.app-chat-drawer__applied-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+.app-chat-drawer__applied-list li {
+  overflow-wrap: anywhere;
+}
+.app-chat-drawer__review-file {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.app-chat-drawer__review-path {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
 .app-chat-drawer__review-actions {
   display: flex;
   gap: 0.5rem;
@@ -5457,6 +5504,30 @@ button.card-grid__title:hover {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+}
+
+/* The HITL "require approval" toggle lives in a `.node-drawer__section` — a small-caps LABEL
+ * context (uppercase, letter-spaced, dim) — so without a reset it reads as a section HEADER,
+ * not an interactive control. Reset to readable prose and lay it out as a real checkbox row
+ * with a rule above it (mirrors `.run-preflight`, which resets the same context). */
+.app-run-drawer__approval {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border-md);
+  font-size: 0.85rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  line-height: 1.4;
+  color: var(--text-1);
+  cursor: pointer;
+}
+.app-run-drawer__approval input {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
 }
 
 /* The Run-drawer feasibility preflight (advisory: will this run actually think / fire?).
