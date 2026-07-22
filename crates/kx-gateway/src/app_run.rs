@@ -886,7 +886,12 @@ fn dataset_manifest_lines(
     env: &AppEnvelope,
 ) -> Vec<AppCapability> {
     let available: BTreeSet<String> = datasets
-        .map(|v| v.list_datasets().into_iter().map(|d| d.dataset_id).collect())
+        .map(|v| {
+            v.list_datasets()
+                .into_iter()
+                .map(|d| d.dataset_id)
+                .collect()
+        })
         .unwrap_or_default();
     let has_view = datasets.is_some();
     collect_dataset_bindings(env)
@@ -1004,12 +1009,8 @@ impl AppAuthor for HostAppAuthor {
         //      context items BEFORE the blueprint is consumed. Skills (3b) extend this
         //      same Vec; the whole set rides ONE `author_with_context_items` inject.
         //      Empty rail ⇒ empty Vec ⇒ the digest no-op.
-        let mut context_items = context_rail_items(
-            &env,
-            self.content.as_ref(),
-            self.branches.as_deref(),
-            party,
-        )?;
+        let mut context_items =
+            context_rail_items(&env, self.content.as_ref(), self.branches.as_deref(), party)?;
         // The datasets to ground over (collected now, while `env` is fully intact — the
         // blueprint move below partially moves `env`). Empty ⇒ no RAG fold (the no-op).
         let dataset_bindings = collect_dataset_bindings(&env);
@@ -1447,8 +1448,13 @@ mod tests {
         // the credential that connection provides — not the old fail-closed None that made a
         // credentialed tool refuse at the broker.
         let refs = vec![cref("kx-connector-gmail", "KX_GMAIL_CREDENTIAL")];
-        let got = resolve_secret_scope(&refs, &[], &creds(&["KX_GMAIL_CREDENTIAL"]), &BTreeMap::new())
-            .unwrap();
+        let got = resolve_secret_scope(
+            &refs,
+            &[],
+            &creds(&["KX_GMAIL_CREDENTIAL"]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
         match got {
             Some(SecretScope::AllowList(s)) => {
                 assert!(s.contains(&SecretRef("KX_GMAIL_CREDENTIAL".to_string())));
@@ -2223,11 +2229,20 @@ mod tests {
         });
         env.validate().unwrap();
         let handle = save_app(&host, &env);
-        let m = host.manifest("alice@acme", &handle).unwrap().expect("owned");
+        let m = host
+            .manifest("alice@acme", &handle)
+            .unwrap()
+            .expect("owned");
 
         let ds = |id: &str| m.datasets.iter().find(|c| c.id == id).cloned().unwrap();
-        assert!(ds("ingested-ds").in_policy, "an ingested dataset is in policy");
-        assert!(ds("carried-ds").in_policy, "a self-contained dataset is in policy");
+        assert!(
+            ds("ingested-ds").in_policy,
+            "an ingested dataset is in policy"
+        );
+        assert!(
+            ds("carried-ds").in_policy,
+            "a self-contained dataset is in policy"
+        );
         assert!(
             ds("missing-ds").requested && !ds("missing-ds").in_policy,
             "a declared-but-unavailable dataset is the missing dependency preflight must warn on"
@@ -2510,7 +2525,8 @@ mod tests {
             .unwrap();
         for (path, body) in files {
             let r = content.put(body).unwrap();
-            db.advance("alice@acme", "apps/local/proj", path, r.0).unwrap();
+            db.advance("alice@acme", "apps/local/proj", path, r.0)
+                .unwrap();
         }
         (db, content)
     }

@@ -670,7 +670,12 @@ async fn type_check(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> 
     if !ctx.plan.workdir.join("tsconfig.json").is_file() {
         return Ok(()); // not a TypeScript project — nothing to check
     }
-    let tsc = ctx.plan.workdir.join("node_modules").join(".bin").join("tsc");
+    let tsc = ctx
+        .plan
+        .workdir
+        .join("node_modules")
+        .join(".bin")
+        .join("tsc");
     if !tsc.is_file() {
         log_line(logs, "type-check: no local tsc, skipping".into());
         return Ok(());
@@ -700,9 +705,15 @@ async fn type_check(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> 
         .cloned()
         .collect::<Vec<_>>()
         .join(" | ");
-    let msg = format!("the project does not type-check ({}): {tail}", output.status);
+    let msg = format!(
+        "the project does not type-check ({}): {tail}",
+        output.status
+    );
     if mode == "warn" {
-        log_line(logs, format!("type-check: FAILED (warn mode, serving anyway): {msg}"));
+        log_line(
+            logs,
+            format!("type-check: FAILED (warn mode, serving anyway): {msg}"),
+        );
         Ok(())
     } else {
         Err(msg)

@@ -364,10 +364,7 @@ impl HostScaffolder {
                 .await?;
             self.branches
                 .advance(principal, branch, &file.path, body_ref)?;
-            prior.push((
-                file.path.clone(),
-                ContentRef::from_bytes(body_ref).to_hex(),
-            ));
+            prior.push((file.path.clone(), ContentRef::from_bytes(body_ref).to_hex()));
         }
         Ok(())
     }
@@ -689,10 +686,7 @@ impl HostScaffolder {
                 .await?;
             self.branches
                 .advance(principal, branch, &file.path, body_ref)?;
-            prior.push((
-                file.path.clone(),
-                ContentRef::from_bytes(body_ref).to_hex(),
-            ));
+            prior.push((file.path.clone(), ContentRef::from_bytes(body_ref).to_hex()));
         }
         Ok(())
     }

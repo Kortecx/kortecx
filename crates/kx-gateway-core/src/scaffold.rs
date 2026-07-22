@@ -275,9 +275,10 @@ fn exported_symbols(text: &str) -> Vec<String> {
             continue;
         }
         // `export default …` — the module has a default export (imported under any name).
-        if rest.strip_prefix("default").is_some_and(|a| {
-            a.is_empty() || a.starts_with(|c: char| c.is_whitespace())
-        }) {
+        if rest
+            .strip_prefix("default")
+            .is_some_and(|a| a.is_empty() || a.starts_with(|c: char| c.is_whitespace()))
+        {
             push_unique(&mut out, "default");
             continue;
         }
@@ -699,7 +700,10 @@ mod tests {
         // The distilled sibling APIs ride the prompt (hosted lane) so a file imports EXACTLY
         // what a sibling exported and passes EXACTLY the props a component declared.
         let apis = vec![
-            ("src/actions.ts".to_string(), "exports increment, decrement, reset".to_string()),
+            (
+                "src/actions.ts".to_string(),
+                "exports increment, decrement, reset".to_string(),
+            ),
             (
                 "src/components/ResultDisplay.tsx".to_string(),
                 "exports ResultDisplay; ResultDisplayProps { state: CalculatorState }".to_string(),
@@ -710,7 +714,11 @@ mod tests {
             "the root component",
             "a tip calculator",
             Some("vite_react"),
-            &["src/App.tsx", "src/actions.ts", "src/components/ResultDisplay.tsx"],
+            &[
+                "src/App.tsx",
+                "src/actions.ts",
+                "src/components/ResultDisplay.tsx",
+            ],
             true,
             &apis,
         );
@@ -741,10 +749,16 @@ mod tests {
                    }\n";
         let api = distill_module_api("src/components/ResultDisplay.tsx", rd).unwrap();
         assert!(api.contains("exports ResultDisplay"), "{api}");
-        assert!(api.contains("ResultDisplayProps { state: CalculatorState }"), "{api}");
+        assert!(
+            api.contains("ResultDisplayProps { state: CalculatorState }"),
+            "{api}"
+        );
 
         // Determinism: same body ⇒ byte-identical summary.
-        assert_eq!(distill_module_api("src/actions.ts", actions), Some(api_of(actions)));
+        assert_eq!(
+            distill_module_api("src/actions.ts", actions),
+            Some(api_of(actions))
+        );
     }
 
     fn api_of(body: &[u8]) -> String {
@@ -753,7 +767,10 @@ mod tests {
 
     #[test]
     fn distill_module_api_handles_export_forms_and_skips_non_source() {
-        assert_eq!(distill_module_api("README.md", b"# hi\nexport nothing"), None);
+        assert_eq!(
+            distill_module_api("README.md", b"# hi\nexport nothing"),
+            None
+        );
         assert_eq!(distill_module_api("app.json", b"{}"), None);
         // default + named-list + `as` alias.
         let m = b"export default function App() {}\n\
