@@ -223,4 +223,4 @@ public legibility is itself some of the most valuable contribution you can make.
 ## License
 
 By contributing you agree your contributions are licensed under the
-[Apache License, Version 2.0](LICENSE).
+[Sustainable Use License](LICENSE.md), the fair-code license Kortecx is distributed under.

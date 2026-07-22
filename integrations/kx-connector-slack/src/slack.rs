@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The Slack client: the Slack Web API calls authenticated with a bot token — or a
 //! deterministic offline `fake` mode for tests / CI / conformance.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! # kx-model-store — model lifecycle (M4, D108.2)
 //!
 //! The model store is the runtime's single source of truth for **which model

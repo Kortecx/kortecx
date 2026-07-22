@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Catalog discovery (M7.3, D87) — **fuzzy-in, exact-out**.
 //!
 //! Two strictly-separated tiers:

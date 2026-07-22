@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`SqliteBodyLedger`] — a durable [`BodyLedger`] (G1 / D94). Published recipe
 //! bodies survive a restart, so a published snapshot stays invocable end-to-end
 //! across a process kill. A SQLite `bodies` table (`ManifestId` PK + a

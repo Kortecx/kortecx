@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Conformance: the bundled Notion connector passes the Extension Acceptance Gate
 //! subset (out-of-process · warrant/SN-8 · secret-by-ref · on/off), driven OFFLINE
 //! (`KX_NOTION_FAKE`) so it needs no Notion credentials and no network.

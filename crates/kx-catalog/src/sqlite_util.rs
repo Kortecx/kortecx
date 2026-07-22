@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Shared SQLite plumbing for the durable catalog ledgers (G1 / D94) — open,
 //! configure (WAL + FULL synchronous), run the per-ledger DDL, and stamp + verify
 //! a schema-version row in a `metadata` table. Mirrors `kx_journal`'s

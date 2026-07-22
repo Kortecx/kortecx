@@ -106,9 +106,18 @@ jobs:
           BASE="${{ github.base_ref || github.event.merge_group.base_ref }}"
           BASE="${BASE#refs/heads/}"
           git fetch --no-tags origin "$BASE"
-          CHANGED="$(git diff --name-only "origin/$BASE...HEAD" -- \
-            crates/kx-executor/src crates/kx-scheduler/src \
-            crates/kx-inference/src/dispatcher.rs)"
+          FROZEN="crates/kx-executor/src crates/kx-scheduler/src crates/kx-inference/src/dispatcher.rs"
+          # A licence-header comment carries no execution semantics, and a relicense sweeps every
+          # file in the repository — so an SPDX line is not "kernel evolution" and must not need a
+          # guard edit to land. Anything else under these paths still fails, exactly as before.
+          SUBSTANTIVE="$(git diff --unified=0 "origin/$BASE...HEAD" -- $FROZEN \
+            | grep -E '^[+-]' \
+            | grep -vE '^(\+\+\+|---)' \
+            | grep -vE '^[+-][[:space:]]*(//|#)[[:space:]]*SPDX-License-Identifier:' || true)"
+          CHANGED=""
+          if [ -n "$SUBSTANTIVE" ]; then
+            CHANGED="$(git diff --name-only "origin/$BASE...HEAD" -- $FROZEN)"
+          fi
           if [ -n "$CHANGED" ]; then
             echo "::error::Frozen kernel source changed (thesis test). The execution" \
                  "kernel (kx-executor/kx-scheduler) and the kx-inference dispatch" \

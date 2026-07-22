@@ -130,4 +130,4 @@ pytest              # unit + contract e2e (spins up a real `kx serve`)
 ruff check . && mypy src
 ```
 
-Licensed under Apache-2.0.
+Licensed under the Sustainable Use License (fair-code) — see LICENSE.md.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-connector-example` — a minimal, COMPLETE reference MCP connector.
 //!
 //! This is the canonical "how to author a connector" artifact AND the deterministic

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Advisory catalog metadata (M7.3, D84) — discovery [`Tag`]s + an integer-scaled
 //! confidence, modelled on `kx_dataset::AnnotationStore`.
 //!

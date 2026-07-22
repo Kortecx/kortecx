@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Catalog namespacing (M7.2, D86) — an asset lives at `namespace/collection/name`.
 //!
 //! [`AssetPath`] is the Unity-Catalog analog (`catalog → schema → object`). Its

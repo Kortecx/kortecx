@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Unit tests for the catalog foundation (M7.0 + M7.1).
 
 use std::collections::{BTreeMap, BTreeSet};

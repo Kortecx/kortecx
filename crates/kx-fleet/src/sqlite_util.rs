@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Shared SQLite plumbing for the durable membership ledger (G1a / D94) — open,
 //! configure (WAL + FULL synchronous), run the DDL, and stamp + verify a
 //! schema-version row in a `metadata` table. Replicated from `kx_catalog`'s

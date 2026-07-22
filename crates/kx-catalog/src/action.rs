@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Catalog permissions (M7.2, D86): the closed [`CatalogAction`] vocabulary and
 //! the fail-closed, narrowing-only [`CatalogActionSet`].
 //!

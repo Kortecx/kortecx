@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Conformance: the bundled Slack connector passes the Extension Acceptance Gate
 //! subset (out-of-process · warrant/SN-8 · secret-by-ref · on/off), driven OFFLINE
 //! (`KX_SLACK_FAKE`) so it needs no Slack credentials and no network.

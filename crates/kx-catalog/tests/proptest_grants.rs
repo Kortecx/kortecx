@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Property tests for M7.2 grants/RBAC + revocation (D86).
 //!
 //! Integration-test file: compiled as a separate crate, so it carries its own

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The HNSW retrieval index — an approximate-nearest-neighbour `RetrievalIndex`.
 
 use std::collections::HashMap;

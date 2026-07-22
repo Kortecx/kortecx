@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `just test-skill [pack-dir…]` — run the DECLARATIVE-family gate over
 //! `kortecx.skill/v1` packs, printing a per-check report (and the
 //! machine-readable JSON) and exiting non-zero on any failure.

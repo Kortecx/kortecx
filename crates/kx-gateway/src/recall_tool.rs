@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! RC5a (durable memory) — the bundled read-only `recall@1` capability + its typed
 //! [`ToolDef`] + the serve-broker registration. A model in a `kx/recipes/react-memory`
 //! ReAct turn proposes `{"query": <search text>, "k": <1..64>}`; this recalls the

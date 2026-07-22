@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-workflow` — the kortecx workflow engine, codename **Morphic** (P4.1).
 //!
 //! Morphic sits *above* the scheduler. It takes a declarative multi-agent

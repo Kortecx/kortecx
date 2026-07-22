@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Grants + revocations (M7.2, D86) — content-addressed, narrowing-only,
 //! revoke-by-new-fact.
 //!

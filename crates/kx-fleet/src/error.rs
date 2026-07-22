@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Typed fleet errors (M7, D112): [`MembershipLedgerError`] (append failures) and
 //! [`GovernedFleetError`] (composed-resolution failures). Mirrors
 //! `kx_catalog::LedgerError` / `kx_catalog::GovernedError`.

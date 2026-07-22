@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! In-crate smoke tests: identity stability, schema-version honesty, and the
 //! content-id no-aliasing property. The end-to-end governance + scale behavior lives
 //! in `tests/*.rs` (separate-crate integration tests).

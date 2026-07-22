@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Property tests for M7.2 content-versioning + provenance/lineage (D82/D88).
 //!
 //! Integration-test file: compiled as a separate crate, so it carries its own

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! # kx-extension-sdk — the Connector/Extension authoring surface (D167 E0)
 //!
 //! This crate is the **curated, semver-pinned front door** for authoring an

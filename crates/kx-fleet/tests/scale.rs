@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Scale-smoke: the membership ledger + the composed fleet resolution stay
 //! sub-linear / depth-bounded at scale (M7, D112).
 //!

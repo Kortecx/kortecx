@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Property tests for the M7.0 [`TaskSignature`] foundation: canonical
 //! round-trip, hash determinism + order-independence, schema-version pinning,
 //! and a collision-resistance sanity check.

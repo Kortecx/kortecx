@@ -67,4 +67,4 @@ mid-commit, replay, and observe the identical digest. See the
 Kortecx is in **early development** (pre-1.0). The durability spine and the live
 agent loop are feature-complete; surfaces are being filled in across the CLI,
 SDKs, and console. Pin a release tag for anything you keep. Built in the open at
-[Kortecx/kortecx](https://github.com/Kortecx/kortecx) under Apache-2.0.
+[Kortecx/kortecx](https://github.com/Kortecx/kortecx) under the Sustainable Use License (fair-code).

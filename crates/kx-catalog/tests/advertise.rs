@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! M7.3 Mote-as-MCP advertisement (D85/D86) — descriptor-only, governance-gated.
 //!
 //! Proves: a granted, published snapshot advertises a typed MCP descriptor whose

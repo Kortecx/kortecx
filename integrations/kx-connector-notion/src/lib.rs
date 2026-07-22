@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-connector-notion` — a bundled Notion MCP connector.
 //!
 //! A standalone Model Context Protocol server: newline-delimited JSON-RPC 2.0 over

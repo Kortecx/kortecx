@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`InMemoryMembershipLedger`] — the reference [`MembershipLedger`] backend.
 //!
 //! An append-only `Vec<MembershipFact>` truth + derived `BTreeMap` indices under a

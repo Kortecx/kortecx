@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-audit` — the OFF-TRUTH-PATH, best-effort runtime audit sink (R4, D127 step 2.1).
 //!
 //! An audit trail makes the runtime's execution *observable*: a structured,

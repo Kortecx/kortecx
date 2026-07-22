@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Property tests for the membership ledger + the composed fleet resolution (M7,
 //! D112): idempotency, content-id distinctness, fold determinism + order-independence,
 //! the **no-widen** safety invariant (a member never exceeds the team), revoke /
