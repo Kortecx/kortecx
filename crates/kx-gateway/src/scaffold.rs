@@ -771,7 +771,7 @@ impl HostScaffolder {
         //
         // The committed body is already in CAS under `result_ref`, so a body that needed no
         // change keeps that exact ref (`strip_code_fence` returns a subslice); only a body
-        // we actually altered is re-`put`. Re-run the GR15 empty guard on the stripped
+        // we actually altered is re-`put`. Re-run the empty-body guard on the stripped
         // bytes: a body that was NOTHING but a fence strips to empty, and that must refuse
         // the write rather than advance the branch to a blank file.
         let stripped = strip_code_fence(&body);
