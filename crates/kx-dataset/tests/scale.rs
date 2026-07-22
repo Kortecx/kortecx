@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Scale-smoke: building an `InMemoryRetrievalIndex` must be sub-quadratic — the
 //! O(1) `HashMap` dedup, not the old O(n) `items` scan on every insert. Doubling N
 //! scales an O(n) build ~2x and an O(n^2) build ~4x, so we assert the doubling

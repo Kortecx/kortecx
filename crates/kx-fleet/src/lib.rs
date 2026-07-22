@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! # kx-fleet — teams / fleets (M7, D112)
 //!
 //! The kortecx **fleet** layer is "the unit users actually want": a **team** that

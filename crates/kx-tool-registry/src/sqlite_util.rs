@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Shared SQLite plumbing for the durable tool registry (PR-6a) — open,
 //! configure (WAL + FULL synchronous), run the DDL, and stamp + verify a
 //! schema-version row in a `metadata` table. Replicated from `kx_fleet`'s

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-otel` — OFF-TRUTH-PATH observability metrics (W1a / T-OBS2).
 //!
 //! Folds the **read-only journal** into RED metrics — **R**ate (runs/commits),

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`MemoryError`] — the memory-store error vocabulary. Deliberately shaped 1:1
 //! with `kx_gateway_core::DatasetError` so the `recall@1` / `remember@1`
 //! capabilities map failures to honest gRPC codes / soft-fail observations exactly

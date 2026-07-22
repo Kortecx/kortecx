@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The DECLARATIVE-family conformance harness — `run_skill_conformance`
 //! over a `kortecx.skill/v1` pack directory. The sibling of
 //! [`crate::conformance::run_conformance`] (which dials a REAL out-of-process

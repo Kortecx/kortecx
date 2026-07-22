@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Conformance: the bundled Gmail connector passes the Extension Acceptance Gate
 //! subset (out-of-process · warrant/SN-8 · secret-by-ref · on/off), driven OFFLINE
 //! (`KX_GMAIL_FAKE`) so it needs no Gmail credentials and no network.

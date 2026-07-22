@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`HostMemoryView`] — the serve-side durable-MEMORY view (RC5a).
 //!
 //! A thin adapter that bridges the embedding-aware gateway-core [`MemoryView`] seam

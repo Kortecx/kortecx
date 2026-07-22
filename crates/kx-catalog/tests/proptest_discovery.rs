@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Property + scenario tests for M7.3 exact discovery (D87): the range-scan index
 //! matches a brute-force scan for namespace / collection / path-prefix, results
 //! are deterministic [`AssetRef`]-ordered, namespace/collection matching is

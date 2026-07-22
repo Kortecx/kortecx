@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The membership-ledger seam (M7, D112): the backend-agnostic [`MembershipLedger`]
 //! trait, its query result types ([`TeamEdge`] / [`MemberRole`]), and the
 //! [`MembershipOutcome`] append result. The in-memory reference backend is

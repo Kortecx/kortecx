@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Deterministic unit tests for the memory store — recall ordering, content-address
 //! dedup, namespace isolation, the episodic log, forget, the vector-space guards,
 //! and rebuild-on-open durability. No model, no float on any identity path.

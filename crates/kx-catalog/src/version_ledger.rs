@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The version-ledger seam (M7.2, D82/D88): the backend-agnostic [`VersionLedger`]
 //! trait — content-versioning handles + the provenance/lineage fold. The
 //! in-memory reference backend is [`crate::InMemoryVersionLedger`]; the production

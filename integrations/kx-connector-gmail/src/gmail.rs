@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The Gmail client: the OAuth token exchange + the Gmail REST calls — or a
 //! deterministic offline `fake` mode for tests / CI / conformance.
 //!

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! G2 host wiring for the App-pointer → run resolution seam ([`kx_gateway_core::AppAuthor`]).
 //!
 //! [`HostAppAuthor`] resolves a caller-owned `kortecx.app/v1` App into a runnable

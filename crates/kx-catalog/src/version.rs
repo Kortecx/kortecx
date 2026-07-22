@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Content-versioning facts (M7.2, D82/D88 + D-LOCK-4) — an [`AssetVersion`] is
 //! the immutable, content-addressed "publish a new version" fact that the
 //! [`crate::VersionLedger`] folds into a *mutable-handle → immutable-content*

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Unit tests: determinism, contiguity, bounds, overlap, separator preference,
 //! and codepoint safety.
 

@@ -105,7 +105,7 @@ Fill in `skill.json` `tools` with the `(tool_id → version)` wishes, e.g.
 // `__ENV__`  = its env-var form (uppercased, `-`→`_`), for the credential var.
 // ---------------------------------------------------------------------------
 
-const CONNECTOR_CARGO_TEMPLATE: &str = r#"# SPDX-License-Identifier: Apache-2.0
+const CONNECTOR_CARGO_TEMPLATE: &str = r#"# SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 [package]
 name         = "kx-connector-__NAME__"
 version      = "0.1.0"
@@ -139,7 +139,7 @@ kx-extension-sdk = { path = "../../crates/kx-extension-sdk", version = "0.1.0" }
 workspace = true
 "#;
 
-const CONNECTOR_MAIN_TEMPLATE: &str = r#"// SPDX-License-Identifier: Apache-2.0
+const CONNECTOR_MAIN_TEMPLATE: &str = r#"// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The `kx-connector-__NAME__` binary: a newline-delimited JSON-RPC 2.0 MCP server
 //! over stdio. It builds its client from the environment (the injected credential,
 //! D81) once at start, then answers one request per input line. The credential
@@ -167,7 +167,7 @@ fn main() {
 }
 "#;
 
-const CONNECTOR_LIB_TEMPLATE: &str = r##"// SPDX-License-Identifier: Apache-2.0
+const CONNECTOR_LIB_TEMPLATE: &str = r##"// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-connector-__NAME__` — a bundled __NAME__ MCP connector (scaffold).
 //!
 //! A standalone Model Context Protocol server: newline-delimited JSON-RPC 2.0 over
@@ -369,7 +369,7 @@ mod tests {
 }
 "##;
 
-const CONNECTOR_CONFORMANCE_TEMPLATE: &str = r#"// SPDX-License-Identifier: Apache-2.0
+const CONNECTOR_CONFORMANCE_TEMPLATE: &str = r#"// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Conformance: the scaffolded connector passes the Extension Acceptance Gate
 //! subset (out-of-process · warrant/SN-8 · secret-by-ref · on/off), driven OFFLINE
 //! (`KX___ENV___FAKE`) so it needs no credentials and no network.

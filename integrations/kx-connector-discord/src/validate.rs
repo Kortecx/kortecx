@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Fail-closed argument guards for the Discord REST surface.
 //!
 //! The connector interpolates ids into URL path segments (`/channels/{id}/...`),

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Live witness (GR15) — `#[ignore]` by default because it needs a REAL Slack bot
 //! token and network access, neither of which belong in CI.
 //!

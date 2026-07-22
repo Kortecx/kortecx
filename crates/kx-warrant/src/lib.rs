@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-warrant` — the runtime-enforced capability layer (D30).
 //!
 //! A **Warrant** is the scoped capability boundary a Mote executes under: a

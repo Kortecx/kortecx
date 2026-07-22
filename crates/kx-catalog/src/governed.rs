@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`GovernedCatalog`] (M7.2) — the production governed surface over the
 //! [`crate::VersionLedger`], composed with the [`crate::GrantLedger`].
 //!

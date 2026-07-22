@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`ModelResolver`] — the seam a backend resolves a `ModelId` through — and the
 //! in-memory [`ModelRegistry`] implementation.
 

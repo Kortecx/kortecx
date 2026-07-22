@@ -88,7 +88,7 @@ exclude = [
 [workspace.package]
 edition      = "2021"
 rust-version = "1.94.0"
-license      = "Apache-2.0"
+license      = "LicenseRef-Kortecx-Sustainable-Use-1.0"
 authors      = ["kortecx contributors"]
 repository   = "https://github.com/Kortecx/kortecx"
 

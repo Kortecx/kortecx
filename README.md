@@ -1,42 +1,98 @@
-# kortecx
+# Kortecx
 
-> The durable runtime for AI agents.
-> **Knowledge → Intelligence.**
+> **The open runtime for building and running AI agents at scale.**
+> Turn your knowledge into dependable, autonomous work — described in plain language, owned by you.
 
 🌐 **[kortecx.com](https://kortecx.com)** &nbsp;·&nbsp; built in the open at [Kortecx/kortecx](https://github.com/Kortecx/kortecx)
 
 [![CI](https://github.com/Kortecx/kortecx/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kortecx/kortecx/actions/workflows/ci.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: Sustainable Use](https://img.shields.io/badge/license-Sustainable_Use-6E56CF.svg)](LICENSE.md)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94.0-orange.svg)](rust-toolchain.toml)
-[![Rust Edition](https://img.shields.io/badge/Rust-2021-orange.svg)](https://doc.rust-lang.org/edition-guide/rust-2021/index.html)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-blue.svg)](#)
 [![Status](https://img.shields.io/badge/status-early%20development-yellow.svg)](#)
 
-kortecx runs AI agents you can trust with real work. One small binary gives you
-**durable, exactly-once agentic execution** — live agent loops that plan,
-re-plan, self-check, and call tools; reusable **Blueprints** and **Chains**;
-portable, shareable **Apps**; **RAG datasets** and durable **memory**; **local
-LLM inference**; a built-in **web console**; and **Python/TypeScript SDKs** — all
-over an append-only journal that survives crashes and never runs a world-touching
-step twice.
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Kortecx/kortecx/main/scripts/install.sh | sh
-kx serve --dev-allow-local          # zero-config — the journal, content store, and catalog auto-resolve under ~/.kortecx
+kx serve --dev-allow-local          # zero-config — journal, content store, and catalog auto-resolve under ~/.kortecx
 # → gRPC 127.0.0.1:50151 · events ws://127.0.0.1:50152 · web console http://127.0.0.1:8888
 ```
 
+## Why Kortecx
+
+AI agents are the highest-leverage way to put intelligence to work — yet building and running
+them at scale is still hard, brittle, and locked behind bespoke infrastructure. **Kortecx exists
+to change that: to make AI adoption at scale practical, and to lower the barrier to *create* and
+*use* AI agents** — so any team can turn what it knows into dependable, autonomous work without
+standing up a platform first.
+
+We build around four convictions:
+
+- **Agents must be durable.** Real work can't vanish on a crash or fire a side effect twice.
+  Every step runs on an append-only journal with **exactly-once** semantics — crashes replay
+  from committed work, and a step that touched the world is re-read, never re-run.
+- **Creating an agent should be as easy as describing it.** Say what you want in plain language;
+  the runtime **plans, writes, and wires the whole project** — tools, skills, data, and files.
+- **Capability must never outrun authority.** A model can *propose* anything; only the runtime's
+  checks let an action *happen*. Every tool call is gated by a **server-issued warrant** the
+  model can never mint for itself.
+- **It should run anywhere, owned by you.** One small binary, your models, your data —
+  **local-first**, no daemon required, no vendor lock-in.
+
+## What Kortecx is
+
+A single, self-contained runtime (`kx`) — a few MB, no external services required — that runs
+AI agents you can trust with real work. It serves local models (via Ollama or in-process
+llama.cpp), hosts a **web console**, exposes a **gRPC API** with **Python & TypeScript SDKs**,
+and does everything over a crash-safe journal. You describe an agent; Kortecx builds it, runs it,
+schedules it, and keeps it honest.
+
+## What the runtime offers
+
+| Capability | What it is |
+|---|---|
+| **Apps** — *scheduled* | The durable, headless unit of agentic capability: a blueprint + its tools, skills, connections, dataset grounding, and a project of files the model authors. Runs on demand, on a **cron/webhook trigger**, or inside a workflow. |
+| **Apps** — *hosted* | A real **Vite-React / Next.js** web app the runtime scaffolds from your description and serves on a local port — the agent writes a separated, production-shaped project into a content-addressed branch. |
+| **Workflows** — *Blueprints & Chains* | Reusable, shareable **DAGs** of agentic steps. The live loop **plans** topology, **re-plans** on failure, passes **critic** gates, and runs **ReAct** turns — all crash-safe. |
+| **Context & grounded RAG** | Reusable instruction/file **context bundles**, and content-addressed **Datasets** with vector search so agents ground answers in *your* data — results pinned to the exact bytes read. |
+| **Integrations** | A durable **tool registry** and a built-in **MCP gateway**: register external **MCP servers** as **connections**, and agents call their tools through a governed broker under a warrant. |
+| **Skills** | Declarative `kortecx.skill/v1` packs — instructions + a tool grant-*wish*. A skill wishes; the server grants only the intersection with what *you* are actually allowed to do. |
+| **Policies & security** | Per-App **locks**, a resolved **capability manifest** (reach, ceiling, model route, datasets), a **HITL approval** gate for world-mutating actions, and secret references that never travel in a shared bundle. |
+| **Memory** | Durable, per-principal, cross-run agent **memory** — store, semantic recall, consolidate, and reversible decay. |
+| **Local inference** | Serve local LLMs with **zero toolchain** (a running Ollama daemon) or fully self-contained **in-process llama.cpp** (text + vision). Bring your own models. |
+
+## Describe it — Kortecx builds it
+
+Every capability is reachable in **plain language**; the runtime does the wiring:
+
+- **"Build me a web app that…"** → open **New App → Hosted**, describe the goal, and the model
+  scaffolds a real, separated React/Next project and serves it on a local port.
+- **"Every weekday at 9am, triage my inbox and draft replies"** → **New App → Scheduled** with a
+  goal; the model plans the blueprint, writes the project (prompts, rules, skills), and you bind a
+  **cron trigger** — no DAG to hand-author.
+- **"Answer from our docs, not the model's memory"** → attach a **Dataset**; the App is granted a
+  `retrieve` tool and steered to ground on your corpus.
+- **"Only let it read, and pause before it ever sends"** → attach **skills/tools** with a bounded
+  reach and flip on **require-approval**; irreversible actions wait for your grant in the inbox.
+- **"Just chat with my runtime and its tools"** → the console **Chat** (or `kx chat --tools`) runs
+  a bounded agentic turn with real MCP tools, grounded on a dataset if you name one.
+
+## Three ways to drive it
+
+- **Web console** (`kx serve` → `http://127.0.0.1:8888`): create Apps, run and schedule them, a
+  per-App IDE (file tree + editor, lineage graph, chat), Datasets, Models, Integrations, Security.
+- **CLI** (`kx …`): every capability as a command — `kx app`, `kx chat`, `kx agent`, `kx datasets`,
+  `kx connections`, `kx skills`, `kx triggers`, `kx memory`, `kx runs`, and more.
+- **SDKs** (Python `kortecx`, TypeScript `@kortecx/sdk`): build and run Apps, chat, stream runs,
+  ground on datasets, and drive every RPC from your own code.
+
 ---
 
-- [What you get](#what-you-get) · [How it works](#how-it-works)
-- [Install](#install) · [Prerequisites](#prerequisites)
-- [Quick start: prove exactly-once](#quick-start-prove-exactly-once)
-- [Start the runtime locally](#start-the-runtime-locally) — serve, run blueprints, chat, ReAct with tools
-- [The web console](#the-web-console)
+- [Why Kortecx](#why-kortecx) · [What the runtime offers](#what-the-runtime-offers) · [Describe it — Kortecx builds it](#describe-it--kortecx-builds-it)
+- [Prerequisites](#prerequisites) · [Install](#install)
+- [Start the runtime locally](#start-the-runtime-locally) · [The web console](#the-web-console)
 - [CLI reference](#cli-reference) — every command, flag, and environment variable
-- [Blueprints](#blueprints) · [Chains](#chains) · [Apps](#apps) · [Datasets & RAG](#datasets--rag) · [SDKs](#sdks)
-- [Security defaults](#security-defaults) · [Run in Docker](#run-in-docker)
-- [Production notes](#production-notes)
+- [Apps](#apps) · [Workflows: Blueprints](#blueprints) & [Chains](#chains) · [Datasets & RAG](#datasets--rag) · [SDKs](#sdks)
+- [Security defaults](#security-defaults) · [Run in Docker](#run-in-docker) · [Production notes](#production-notes)
 - [Contributing](#contributing) · [License](#license) · [Links](#links)
 
 ---
@@ -639,7 +695,11 @@ substantial changes before sending a pull request.
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+Kortecx is **fair-code**, distributed under the **[Sustainable Use License](LICENSE.md)**. You
+can use, study, modify, and self-host it for your own internal or non-commercial work, free of
+charge. What it does not allow is repackaging Kortecx and selling it to others as a competing
+hosted service. Third-party components keep their original licenses. For a commercial license,
+reach out at hello@kortecx.com.
 
 ## Links
 

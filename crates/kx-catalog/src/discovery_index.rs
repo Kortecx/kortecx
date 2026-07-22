@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The sub-linear catalog discovery index (M7.3, D87) — exact metadata lookup by
 //! namespace / collection / path-prefix in `O(log n + result)`.
 //!

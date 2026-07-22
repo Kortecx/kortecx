@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The deterministic tokenizer (lowercase + Unicode alphanumeric runs).
 
 /// The tokenizer version — a structural axis of the persisted cache header and an

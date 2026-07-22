@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`LexicalIndex`] — the sparse / keyword (BM25) retrieval seam.
 //!
 //! A sibling of [`RetrievalIndex`](crate::RetrievalIndex): where that trait ranks

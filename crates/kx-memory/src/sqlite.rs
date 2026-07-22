@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`SqliteMemoryStore`] — the durable, rebuildable memory store (`memory.db`).
 //!
 //! Mirrors the RAG `HostDatasetView` durability posture: the SQLite table is the

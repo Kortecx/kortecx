@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The append-only membership fact vocabulary (M7, D112): [`Admit`], [`Removal`],
 //! [`Disband`], and the [`MembershipFact`] union — content-addressed,
 //! narrowing-only, revoke-by-new-fact.

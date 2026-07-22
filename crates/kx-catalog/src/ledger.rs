@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! The grant-ledger seam (M7.2, D86): the backend-agnostic [`GrantLedger`]
 //! trait, its append-only fact vocabulary ([`LedgerFact`] / [`AssetBinding`]),
 //! the query result types ([`EffectiveGrants`] / [`GrantWarrant`]), and the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Durability + fail-closed integration tests for the HNSW cache: dump → drop →
 //! reopen preserves the corpus + its nearest neighbours; absent files open empty;
 //! corrupt files and path-traversal are rejected.

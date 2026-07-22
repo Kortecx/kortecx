@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`SqliteGrantLedger`] — a durable [`GrantLedger`] (G1 / D94). Grants/bindings/
 //! revocations survive a restart. A SQLite `facts` table (`seq` PK preserving
 //! append order == in-memory `Vec` position + a content-id unique index + a

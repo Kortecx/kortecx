@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Mote-as-MCP advertisement (M7.3, D85) — **DESCRIPTOR ONLY**.
 //!
 //! Publishing a snapshot to the catalog's MCP surface makes it an MCP-callable

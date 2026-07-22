@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! `kx-memory` — the kortecx durable agentic MEMORY subsystem (RC5a).
 //!
 //! Cross-run, per-namespace memory: what an agent *learned* in one run and can

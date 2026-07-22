@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! [`InMemoryVersionLedger`] — the reference [`VersionLedger`] backend.
 //!
 //! An append-only `Vec<AssetVersion>` truth + derived `BTreeMap` indices under a

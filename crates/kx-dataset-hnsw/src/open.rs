@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Operator-facing persistence: open an index from a cache file (rebuilding the
 //! HNSW graph from records) and dump it back.
 //!

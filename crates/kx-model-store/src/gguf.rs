@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Fail-closed GGUF-header validation.
 //!
 //! A model file is **new untrusted input** (it may be corrupt, truncated, or
