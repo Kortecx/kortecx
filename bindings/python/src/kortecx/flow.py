@@ -199,11 +199,19 @@ class Flow:
         max_turns: Optional[int] = None,
         max_tool_calls: Optional[int] = None,
         reasoning: Optional[str] = None,
+        skills=None,
+        connections=None,
+        datasets=None,
     ) -> "Flow":
         """Append an agent (MODEL) step. ``model`` defaults to the served model (the
         client's ``default_model`` fills a blank one at submit, SN-8); pass ``tools``
         to make it a deterministic-agentic step — a bounded reason→tool→observe loop
         over the granted SET (PR-9b; the execution lane is LIVE as of PR-9b-2).
+
+        ``skills`` / ``connections`` / ``datasets`` are APP-ONLY per-node capability
+        bindings — the catalog capabilities THIS step uses when the flow becomes an App
+        (``app(...)``). They bind to this node, not the whole App; on the plain workflow
+        path they are refused (no ``references`` to name into).
 
         AGENTIC-VISION: a preceding :meth:`image` grounds this step — the served VLM reasons
         over that image on every turn of the step's loop (the ref binds into the step's
@@ -219,6 +227,9 @@ class Flow:
                 max_turns=max_turns,
                 max_tool_calls=max_tool_calls,
                 reasoning=reasoning,
+                skills=skills,
+                connections=connections,
+                datasets=datasets,
                 **extra,
             )
         )

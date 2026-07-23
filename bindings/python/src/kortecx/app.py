@@ -454,12 +454,65 @@ class App:
                 self._rails[rail].append({"name": name, "content_ref": ref})
         self._pending = []
 
+    def _union_node_bindings(self, kx: Any) -> None:
+        """Union the per-NODE capability bindings on the blueprint into the App's
+        ``references.*`` DECLARATIONS.
+
+        The blueprint step says which node USES a capability; ``references`` says what the
+        App must have REGISTERED. Deriving the declarations from the graph is what keeps them
+        from disagreeing — and nothing is declared that no step asked for. An EXPLICIT
+        ``.skill()`` / ``.with_connection()`` / ``.dataset()`` always wins (a pinned
+        credential is never overwritten), so only a name not already declared is added. A
+        skill name the catalog cannot resolve REFUSES at save (better than the runtime's
+        fail-soft drop: the author is still here). ``to_envelope()`` cannot do this (no
+        client), which is why it lives in :meth:`save`.
+        """
+        steps = (self._blueprint or {}).get("steps", []) or []
+
+        def collect(key: str) -> List[str]:
+            seen: Dict[str, None] = {}
+            for s in steps:
+                if isinstance(s, Mapping):
+                    for name in s.get(key, []) or []:
+                        seen.setdefault(str(name), None)
+            return list(seen)
+
+        for descriptor in collect("connections"):
+            if not any(c["descriptor"] == descriptor for c in self._rails["connections"]):
+                self.with_connection(descriptor)
+        for ds in collect("datasets"):
+            if not any(d["dataset_ref"] == ds for d in self._rails["datasets"]):
+                self.dataset(ds)
+        for name in collect("skills"):
+            if any(sk["name"] == name for sk in self._rails["skills"]):
+                continue
+            get_form = getattr(kx, "get_skill_form", None)
+            if get_form is None:
+                raise ChainError(
+                    f'step binds skill "{name}" but this client cannot resolve skills; '
+                    "attach it explicitly with .skill(...) or use a full client"
+                )
+            form = get_form(name)
+            if form is None:
+                raise ChainError(
+                    f'step binds skill "{name}", which is not in the catalog '
+                    "(kx skills add it first, or remove the binding)"
+                )
+            self.skill(
+                Skill(
+                    name=name,
+                    instructions_ref=form.summary.instructions_ref,
+                    tools=dict(form.summary.tools),
+                )
+            )
+
     def save(self, *, handle: Optional[str] = None, client=None) -> SaveAppResult:
         """Upload any pending bodies, then ``SaveApp`` the canonical envelope. The
         handle defaults to ``apps/local/<sanitized-name>``."""
         from .defaults import default_client
 
         kx = client if client is not None else default_client()
+        self._union_node_bindings(kx)
         self._resolve_pending(kx)
         return kx.save_app(self.to_envelope(), handle=handle)
 

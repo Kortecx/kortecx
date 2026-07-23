@@ -157,6 +157,84 @@ def test_dataset_rejects_non_hex_cas_ref() -> None:
         kx.app("x").blueprint(kx.flow().step(topic="hi")).dataset("d", cas_refs=["not-hex"])
 
 
+# ---- per-node capability bindings ----
+
+
+def test_agent_bindings_ride_onto_the_blueprint_step() -> None:
+    bp = (
+        kx.flow()
+        .agent("gather escalations", skills=["triage"], datasets=["support"])
+        .agent("gather deals", connections=["kx-connector-gmail"])
+        .then("write one digest")
+        .to_blueprint()
+    )
+    steps = bp["steps"]
+    assert steps[0]["skills"] == ["triage"]
+    assert steps[0]["datasets"] == ["support"]
+    assert steps[1]["connections"] == ["kx-connector-gmail"]
+    # The joining step carries nothing — no key emitted.
+    assert "skills" not in steps[2]
+
+
+def test_a_chain_that_binds_nothing_emits_no_new_keys() -> None:
+    bp = kx.flow().agent("a").then("b").to_blueprint()
+    for key in ("skills", "connections", "datasets"):
+        assert key not in bp["steps"][0]
+
+
+def test_the_workflow_path_refuses_a_per_step_binding() -> None:
+    # flow().build() is the workflow lowering; a binding there would be silently dropped.
+    with pytest.raises(ChainError, match="App"):
+        kx.flow().agent("go", skills=["triage"]).build()
+    # ...and re-importing a hand-written blueprint that carries one.
+    with pytest.raises(ChainError, match="references"):
+        kx.chains.Chain.from_blueprint(
+            {"seed": 0, "steps": [{"kind": "model", "prompt": "go", "connections": ["gmail"]}]}
+        )
+
+
+class _SkillFormStub:
+    class _Summary:
+        instructions_ref = "b" * 64
+        tools = {"mcp-echo/echo": "1"}
+
+    summary = _Summary()
+
+
+class _SaveStub:
+    """A minimal client: captures the saved envelope and resolves one skill."""
+
+    def __init__(self, *, form: object) -> None:
+        self.saved: object = None
+        self._form = form
+
+    def put_content(self, *_a: object, **_k: object) -> object:
+        return type("R", (), {"content_ref": "a" * 64})()
+
+    def save_app(self, envelope: object, *, handle: object = None) -> object:
+        self.saved = envelope
+        return type("S", (), {"handle": "apps/local/x", "app_ref": "r", "deduplicated": False})()
+
+    def get_skill_form(self, _name: str) -> object:
+        return self._form
+
+
+def test_save_unions_node_bindings_into_references() -> None:
+    stub = _SaveStub(form=_SkillFormStub())
+    kx.app("Digest").blueprint(
+        kx.flow().agent("gather", skills=["triage"], datasets=["support"]).then("write")
+    ).save(client=stub)
+    refs = stub.saved["references"]  # type: ignore[index]
+    assert [s["name"] for s in refs["skills"]] == ["triage"]
+    assert refs["datasets"] == [{"dataset_ref": "support"}]
+
+
+def test_save_refuses_a_bound_skill_the_catalog_cannot_resolve() -> None:
+    stub = _SaveStub(form=None)
+    with pytest.raises(ChainError, match="ghost"):
+        kx.app("X").blueprint(kx.flow().agent("go", skills=["ghost"])).save(client=stub)
+
+
 # ---- golden corpus parity (the cross-surface byte-shape gate) ----
 
 
@@ -185,7 +263,15 @@ def test_mode_rejects_an_unknown_label() -> None:
 
 def test_corpus_covers_required_shapes() -> None:
     names = {c["name"] for c in _CORPUS}
-    assert {"minimal", "agentic", "full", "grounded", "reach", "codified"} <= names
+    assert {
+        "minimal",
+        "agentic",
+        "full",
+        "grounded",
+        "reach",
+        "codified",
+        "node-bound",
+    } <= names
 
 
 # ---- server-backed (a real kx serve) ----

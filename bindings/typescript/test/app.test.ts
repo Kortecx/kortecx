@@ -15,7 +15,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
-import { KxClient, Reach, Run, app, canonicalJson, flow, minimalAppEnvelope } from "../src/node.js";
+import {
+  Chain,
+  KxClient,
+  Reach,
+  Run,
+  app,
+  canonicalJson,
+  flow,
+  minimalAppEnvelope,
+} from "../src/node.js";
 import { devServer, stopAllServers } from "./fixtures/serve.js";
 
 const CORPUS_PATH = join(
@@ -34,6 +43,85 @@ const corpus: { name: string; canonical: string }[] = JSON.parse(
 
 afterEach(async () => {
   await stopAllServers();
+});
+
+describe("per-node App capability bindings", () => {
+  it("agent(...) options ride onto the blueprint step; a flow chain still lowers", () => {
+    const bp = flow()
+      .agent("gather escalations", { skills: ["triage"], datasets: ["support"] })
+      .agent("gather deals", { connections: ["kx-connector-gmail"] })
+      .then("write one digest")
+      .toBlueprint();
+    expect(bp.steps[0]?.skills).toEqual(["triage"]);
+    expect(bp.steps[0]?.datasets).toEqual(["support"]);
+    expect(bp.steps[1]?.connections).toEqual(["kx-connector-gmail"]);
+    // The step that only joins carries nothing — no key emitted.
+    expect(bp.steps[2]).not.toHaveProperty("skills");
+  });
+
+  it("a chain that binds nothing emits byte-identical blueprint JSON (no new keys)", () => {
+    const bp = flow().agent("a").then("b").toBlueprint();
+    expect(bp.steps[0]).not.toHaveProperty("skills");
+    expect(bp.steps[0]).not.toHaveProperty("connections");
+    expect(bp.steps[0]).not.toHaveProperty("datasets");
+  });
+
+  it("the WORKFLOW path refuses a per-step binding (no references to name into)", () => {
+    // .build() is the workflow lowering; a binding there would be silently dropped.
+    expect(() => flow().agent("go", { skills: ["triage"] }).build()).toThrow(/App/);
+    // ...and so does re-importing a hand-written blueprint that carries one.
+    expect(() =>
+      Chain.fromBlueprint({
+        seed: 0,
+        steps: [{ kind: "model", prompt: "go", connections: ["gmail"] }],
+      }),
+    ).toThrow(/references/);
+  });
+
+  it("save() unions the node bindings into references; an explicit .skill() wins", async () => {
+    let savedEnv: Record<string, unknown> | undefined;
+    const stub = {
+      putContent: async () => ({ contentRef: "a".repeat(64) }),
+      saveApp: async (envelope: unknown) => {
+        savedEnv = envelope as Record<string, unknown>;
+        return { handle: "apps/local/x", appRef: "r", deduplicated: false };
+      },
+      runApp: async () => ({}),
+      getSkillForm: async (_name: string) => ({
+        summary: {
+          instructionsRef: "b".repeat(64),
+          tools: { "mcp-echo/echo": "1" } as Record<string, string>,
+        },
+      }),
+    };
+    await app("Digest")
+      .blueprint(
+        flow()
+          .agent("gather", { skills: ["triage"], datasets: ["support"] })
+          .then("write"),
+      )
+      .save({ client: stub });
+    const refs = savedEnv?.references as {
+      skills: { name: string }[];
+      datasets: { dataset_ref: string }[];
+    };
+    expect(refs.skills.map((s) => s.name)).toEqual(["triage"]);
+    expect(refs.datasets).toEqual([{ dataset_ref: "support" }]);
+  });
+
+  it("save() refuses a bound skill the catalog cannot resolve", async () => {
+    const stub = {
+      putContent: async () => ({ contentRef: "a".repeat(64) }),
+      saveApp: async () => ({ handle: "h", appRef: "r", deduplicated: false }),
+      runApp: async () => ({}),
+      getSkillForm: async () => null,
+    };
+    await expect(
+      app("X")
+        .blueprint(flow().agent("go", { skills: ["ghost"] }))
+        .save({ client: stub }),
+    ).rejects.toThrow(/ghost/);
+  });
 });
 
 describe("App builder (no server)", () => {
@@ -162,7 +250,15 @@ describe("App golden corpus parity (the cross-surface byte-shape gate)", () => {
   });
   it("covers the required shapes", () => {
     const names = new Set(corpus.map((c) => c.name));
-    for (const want of ["minimal", "agentic", "full", "grounded", "reach", "codified"])
+    for (const want of [
+      "minimal",
+      "agentic",
+      "full",
+      "grounded",
+      "reach",
+      "codified",
+      "node-bound",
+    ])
       expect(names.has(want)).toBe(true);
   });
 });

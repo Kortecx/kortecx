@@ -22,5 +22,9 @@
   {
     "canonical": "{\"blueprint\":{\"edges\":[{\"child\":1,\"parent\":0}],\"steps\":[{\"kind\":\"model\",\"prompt\":\"Collect the merged changes.\"},{\"kind\":\"model\",\"prompt\":\"Write the release notes.\"}]},\"branch_handle\":\"acme/apps/release-notes-writer\",\"description\":\"Turns a changelog into release notes.\",\"mode\":\"codified\",\"name\":\"release-notes-writer\",\"schema\":\"kortecx.app/v1\",\"steering_config\":{\"tools\":{\"requested_grants\":{\"mcp-echo/echo\":\"1\"}}},\"version\":\"1\"}",
     "name": "codified"
+  },
+  {
+    "canonical": "{\"blueprint\":{\"edges\":[{\"child\":2,\"parent\":0},{\"child\":2,\"parent\":1}],\"steps\":[{\"datasets\":[\"support\"],\"kind\":\"model\",\"prompt\":\"Collect the escalations.\",\"skills\":[\"triage\"]},{\"connections\":[\"kx-connector-gmail\"],\"kind\":\"model\",\"prompt\":\"Collect the deals.\"},{\"kind\":\"model\",\"prompt\":\"Write one digest.\"}]},\"name\":\"node-bound\",\"references\":{\"connections\":[{\"descriptor\":\"kx-connector-gmail\"}],\"datasets\":[{\"dataset_ref\":\"support\"}],\"skills\":[{\"instructions_ref\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"name\":\"triage\"}]},\"schema\":\"kortecx.app/v1\",\"version\":\"1\"}",
+    "name": "node-bound"
   }
 ]

@@ -41,13 +41,32 @@ fn corpus_covers_the_required_shapes() {
     let cases: Vec<Case> = serde_json::from_str(CORPUS).unwrap();
     let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
     for want in [
-        "minimal", "agentic", "full", "grounded", "reach", "codified",
+        "minimal",
+        "agentic",
+        "full",
+        "grounded",
+        "reach",
+        "codified",
+        "node-bound",
     ] {
         assert!(
             names.contains(&want),
             "corpus must cover the {want:?} shape"
         );
     }
+    // the node-bound case pins the PER-NODE capability bindings on blueprint steps
+    // (skills/connections/datasets on the step, declared in references) — the shape all
+    // three surfaces must canonicalize byte-identically, and the reason it exists.
+    let node_bound = cases.iter().find(|c| c.name == "node-bound").unwrap();
+    assert!(node_bound.canonical.contains("\"skills\":[\"triage\"]"));
+    assert!(node_bound
+        .canonical
+        .contains("\"connections\":[\"kx-connector-gmail\"]"));
+    assert!(node_bound.canonical.contains("\"datasets\":[\"support\"]"));
+    // ...and the declaration union rides references.
+    assert!(node_bound
+        .canonical
+        .contains("\"references\":{\"connections\":"));
     // the agentic case proves an authored @-step round-trips inside the wrapper.
     let agentic = cases.iter().find(|c| c.name == "agentic").unwrap();
     assert!(agentic.canonical.contains("tool_contract"));

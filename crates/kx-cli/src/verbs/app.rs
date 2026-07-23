@@ -29,7 +29,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use kx_app::{AppEnvelope, SkillRef};
+use kx_app::{AppEnvelope, ConnectionRef, DatasetRef, SkillRef};
 use kx_proto::proto;
 
 use crate::client::{next_value, ClientCommon};
@@ -38,11 +38,51 @@ use crate::verbs::app_bundle;
 use crate::verbs::blueprint::{to_request, DagSpec};
 use crate::{format, verbs, wait};
 
+/// The union of the per-node capability BINDINGS a blueprint's steps name, deduped in
+/// first-appearance order. These are the DECLARATION set `kx app new` folds into the App
+/// envelope's `references`: a step says which node USES a capability, `references` says what
+/// the App must have REGISTERED, and deriving one from the other keeps them from disagreeing.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct NodeBindings {
+    skills: Vec<String>,
+    connections: Vec<String>,
+    datasets: Vec<String>,
+}
+
+impl NodeBindings {
+    /// Collect the union from a parsed blueprint (order-preserving dedup).
+    fn from_dag(dag: &DagSpec) -> Self {
+        let mut out = Self::default();
+        let push = |dst: &mut Vec<String>, src: &[String]| {
+            for n in src {
+                if !dst.iter().any(|e| e.eq_ignore_ascii_case(n)) {
+                    dst.push(n.clone());
+                }
+            }
+        };
+        for s in &dag.steps {
+            push(&mut out.skills, &s.skills);
+            push(&mut out.connections, &s.connections);
+            push(&mut out.datasets, &s.datasets);
+        }
+        out
+    }
+}
+
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 /// The `app` subcommand.
 #[derive(Debug)]
 pub enum AppSub {
+    /// Derive a reviewable App DESIGN from one natural-language prompt — the CLI's half of
+    /// the console's derive→review→approve. Prints the designed steps with the per-node
+    /// tools / skills / integrations / grounding each one uses, the edges (calling out which
+    /// steps run in parallel), and any advisories. Validate-only: NOTHING is persisted.
+    /// `--output <file>` writes the designed BLUEPRINT (a `DagSpec` carrying the per-node
+    /// bindings) — inspect it, then `kx app new <name> --from-blueprint <file>` resolves the
+    /// declarations and authors the envelope, and `kx app save` is the approve. Needs a
+    /// served model (else a clear refusal).
+    Derive(DeriveSpec),
     /// Author an envelope locally (offline) from a blueprint file + steering.
     New(NewSpec),
     /// Read an envelope JSON file and `SaveApp` it (handle defaults from its name).
@@ -194,6 +234,24 @@ pub enum AppSub {
     },
 }
 
+/// A `app derive` request, assembled from the flags. Mirrors `DeriveAppRequest`.
+#[derive(Debug)]
+pub struct DeriveSpec {
+    /// The author's single natural-language prompt (the whole input).
+    pub prompt: String,
+    /// `scheduled` (default) | `hosted`. An unknown value is refused server-side.
+    pub kind: String,
+    /// Scheduled only: `contextual` | `codified`; empty ⇒ the server default.
+    pub mode: String,
+    /// Hosted only: a pinned framework, or empty/`auto` for the default.
+    pub framework: String,
+    /// FILENAMES of already-uploaded context attachments (`--attach`, repeatable).
+    pub attachments: Vec<String>,
+    /// Write the designed BLUEPRINT (a `DagSpec` with per-node bindings) here; author it
+    /// with `kx app new <name> --from-blueprint <file>`.
+    pub output: Option<PathBuf>,
+}
+
 /// A `app new` request, assembled from the flags (offline authoring).
 #[derive(Debug)]
 pub struct NewSpec {
@@ -244,8 +302,8 @@ fn parse_u32(raw: &str, flag: &str) -> Result<u32, CliError> {
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
         CliError::Usage(
-            "app needs a subcommand (new|save|list|get|run|export|import|clone|scaffold|\
-             files|cat|structure|edit|lock|unlock)"
+            "app needs a subcommand (derive|new|save|list|get|run|export|import|clone|\
+             scaffold|files|cat|structure|edit|lock|unlock)"
                 .into(),
         )
     })?;
@@ -273,6 +331,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
     let mut yes = false;
     let mut force = false;
     let mut require_approval = false;
+    let mut kind: Option<String> = None;
+    let mut derive_mode: Option<String> = None;
+    let mut framework: Option<String> = None;
+    let mut attachments: Vec<String> = Vec::new();
 
     while let Some(flag) = args.next() {
         if common.try_consume(&flag, &mut args)? {
@@ -315,6 +377,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             "--description" => description = Some(next_value(&mut args, "--description")?),
             "--branch" => branch = Some(next_value(&mut args, "--branch")?),
             "--goal" => goal = Some(next_value(&mut args, "--goal")?),
+            "--kind" => kind = Some(next_value(&mut args, "--kind")?),
+            "--mode" => derive_mode = Some(next_value(&mut args, "--mode")?),
+            "--framework" => framework = Some(next_value(&mut args, "--framework")?),
+            "--attach" => attachments.push(next_value(&mut args, "--attach")?),
             "--wait" => wait_flag = true,
             "--require-approval" => require_approval = true,
             "--timeout-secs" => {
@@ -358,6 +424,10 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             yes,
             force,
             require_approval,
+            kind,
+            derive_mode,
+            framework,
+            attachments,
         },
     )?;
     Ok(AppArgs { sub, common })
@@ -389,6 +459,10 @@ struct Flags {
     yes: bool,
     force: bool,
     require_approval: bool,
+    kind: Option<String>,
+    derive_mode: Option<String>,
+    framework: Option<String>,
+    attachments: Vec<String>,
 }
 
 /// Validate the accumulated flags against the verb and build the subcommand.
@@ -399,6 +473,14 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             .ok_or_else(|| CliError::Usage(format!("app {kw} requires {what}")))
     };
     match kw {
+        "derive" => Ok(AppSub::Derive(DeriveSpec {
+            prompt: require_pos(f.positional, "a \"<prompt>\"")?,
+            kind: f.kind.unwrap_or_default(),
+            mode: f.derive_mode.unwrap_or_default(),
+            framework: f.framework.unwrap_or_default(),
+            attachments: f.attachments,
+            output: f.output,
+        })),
         "new" => Ok(AppSub::New(NewSpec {
             name: require_pos(f.positional, "a <name>")?,
             from_blueprint: f.from_blueprint.ok_or_else(|| {
@@ -539,6 +621,45 @@ pub(super) fn default_handle(name: &str) -> String {
 }
 
 /// Author an envelope offline from `--from-blueprint` + steering, write it out.
+/// Lower a derived App design into a portable BLUEPRINT (`DagSpec`) with the per-node
+/// capability bindings intact — the artifact `kx app derive --output` writes and
+/// `kx app new --from-blueprint` authors. Scheduled only: a hosted design has no DAG
+/// (its `files` are the review surface), and `derive` refuses to write a blueprint for one.
+fn derived_to_blueprint(app: &proto::DerivedApp) -> serde_json::Value {
+    let steps: Vec<serde_json::Value> = app
+        .steps
+        .iter()
+        .map(|s| {
+            let mut step = serde_json::Map::new();
+            step.insert("kind".into(), serde_json::json!("model"));
+            step.insert("prompt".into(), serde_json::json!(s.intent));
+            if !s.model_id.is_empty() {
+                step.insert("model_id".into(), serde_json::json!(s.model_id));
+            }
+            if !s.tool_contract.is_empty() {
+                step.insert("tool_contract".into(), serde_json::json!(s.tool_contract));
+            }
+            // The per-node bindings — the whole point of the design. Emitted only when
+            // non-empty, so a step that binds nothing stays byte-clean.
+            let mut put = |key: &str, v: &[String]| {
+                if !v.is_empty() {
+                    step.insert(key.into(), serde_json::json!(v));
+                }
+            };
+            put("skills", &s.skills);
+            put("connections", &s.integrations);
+            put("datasets", &s.datasets);
+            serde_json::Value::Object(step)
+        })
+        .collect();
+    let edges: Vec<serde_json::Value> = app
+        .edges
+        .iter()
+        .map(|e| serde_json::json!({ "parent": e.parent, "child": e.child }))
+        .collect();
+    serde_json::json!({ "seed": 0, "steps": steps, "edges": edges })
+}
+
 fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError> {
     let raw = std::fs::read(&spec.from_blueprint).map_err(|e| {
         CliError::Usage(format!(
@@ -549,10 +670,19 @@ fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError>
     let blueprint: serde_json::Value = serde_json::from_slice(&raw)
         .map_err(|e| CliError::Usage(format!("invalid blueprint JSON: {e}")))?;
     // Validate the blueprint compiles (kinds / edges / tool args / reserved `exec`)
-    // BEFORE wrapping it — fail at authoring, not at a later `run`.
+    // BEFORE wrapping it — fail at authoring, not at a later `run`. An App blueprint may
+    // legitimately carry per-node capability bindings, which `to_request` refuses (they are
+    // App-only), so validate a COPY with them stripped — the same shape the run lowers.
     let dag: DagSpec = serde_json::from_value(blueprint.clone())
         .map_err(|e| CliError::Usage(format!("blueprint is not a valid DagSpec: {e}")))?;
-    let _ = to_request(dag)?;
+    let bindings = NodeBindings::from_dag(&dag);
+    let mut stripped = dag;
+    for s in &mut stripped.steps {
+        s.skills.clear();
+        s.connections.clear();
+        s.datasets.clear();
+    }
+    let _ = to_request(stripped)?;
 
     let mut env = AppEnvelope::new(spec.name, blueprint);
     if let Some(d) = spec.description {
@@ -567,7 +697,37 @@ fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError>
     if let Some(b) = spec.branch {
         env.branch_handle = b;
     }
+    // The DECLARATION union, derived from the nodes. `--skill` refs (resolved online) win;
+    // any per-node skill name they cover is already present. Connections + datasets are bare
+    // names and need no resolution — the runtime adopts each connector's registered
+    // credential at dial, and a dataset grounds by name.
     env.references.skills = skill_refs;
+    for descriptor in &bindings.connections {
+        if !env
+            .references
+            .connections
+            .iter()
+            .any(|c| c.descriptor == *descriptor)
+        {
+            env.references.connections.push(ConnectionRef {
+                descriptor: descriptor.clone(),
+                credential_ref: String::new(),
+            });
+        }
+    }
+    for name in &bindings.datasets {
+        if !env
+            .references
+            .datasets
+            .iter()
+            .any(|d| d.dataset_ref == *name)
+        {
+            env.references.datasets.push(DatasetRef {
+                dataset_ref: name.clone(),
+                cas_refs: Vec::new(),
+            });
+        }
+    }
     env.validate()
         .map_err(|e| CliError::Usage(format!("authored envelope is invalid: {e}")))?;
     let pretty = env
@@ -595,13 +755,28 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
     // old server without the catalog answers UNIMPLEMENTED — surfaced clearly,
     // never silently dropped.
     if let AppSub::New(spec) = args.sub {
-        if spec.skills.is_empty() {
+        // The skill names to resolve = the `--skill` flags UNIONed with any the blueprint's
+        // steps bind per-node (order-preserving dedup). Both become `references.skills`; a
+        // per-node skill is resolved the same way a `--skill` is (its `instructions_ref` is
+        // server-derived — hand-typing 64-hex is hostile). Connections + datasets need no
+        // resolution, so a blueprint that binds only those stays OFFLINE.
+        let mut skill_names: Vec<String> = spec.skills.clone();
+        if let Ok(raw) = std::fs::read(&spec.from_blueprint) {
+            if let Ok(dag) = serde_json::from_slice::<DagSpec>(&raw) {
+                for n in NodeBindings::from_dag(&dag).skills {
+                    if !skill_names.iter().any(|e| e.eq_ignore_ascii_case(&n)) {
+                        skill_names.push(n);
+                    }
+                }
+            }
+        }
+        if skill_names.is_empty() {
             return execute_new(spec, Vec::new());
         }
         let resolved = args.common.resolve()?;
         let mut client = resolved.connect().await?;
-        let mut refs = Vec::with_capacity(spec.skills.len());
-        for name in &spec.skills {
+        let mut refs = Vec::with_capacity(skill_names.len());
+        for name in &skill_names {
             let resp = client
                 .get_skill_form(
                     resolved.request(proto::GetSkillFormRequest { name: name.clone() })?,
@@ -639,6 +814,54 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
     let mut client = resolved.connect().await?;
     match args.sub {
         AppSub::New(_) => unreachable!("handled above"),
+        AppSub::Derive(spec) => {
+            let output = spec.output.clone();
+            let resp = client
+                .derive_app(resolved.request(proto::DeriveAppRequest {
+                    kind: spec.kind,
+                    mode: spec.mode,
+                    prompt: spec.prompt,
+                    framework: spec.framework,
+                    attachments: spec.attachments,
+                })?)
+                .await
+                .map_err(|s| {
+                    if s.code() == tonic::Code::Unimplemented {
+                        CliError::Usage(
+                            "app derive needs a served model — start `kx serve` with an \
+                             inference or serve-engine build and a resolved model, or author \
+                             the App by hand (`kx app new --from-blueprint`)"
+                                .into(),
+                        )
+                    } else {
+                        CliError::from_status(s)
+                    }
+                })?
+                .into_inner();
+            // A refusal is an outcome the author reads (don't-fake-gaps), not a transport
+            // error — print it and exit non-zero without a stack of noise.
+            if let Some(proto::derive_app_response::Result::Rejected(r)) = &resp.result {
+                return Err(CliError::Usage(format!("the design was refused: {}", r.reason)));
+            }
+            let Some(proto::derive_app_response::Result::App(app)) = resp.result else {
+                return Err(CliError::Usage("the gateway returned no design".into()));
+            };
+            // `--output` writes the designed BLUEPRINT (per-node bindings intact). Author it
+            // with `kx app new <name> --from-blueprint <file>`, which resolves the
+            // declarations. Nothing is persisted here; the derive validated only.
+            if let Some(path) = &output {
+                let bp = derived_to_blueprint(&app);
+                let pretty = serde_json::to_string_pretty(&bp)
+                    .map_err(|e| CliError::Usage(format!("serialize blueprint: {e}")))?;
+                std::fs::write(path, format!("{pretty}\n").as_bytes())
+                    .map_err(|e| CliError::Usage(format!("write {}: {e}", path.display())))?;
+            }
+            println!(
+                "{}",
+                format::render_derived_app(&app, output.as_deref(), json)
+            );
+            Ok(())
+        }
         AppSub::Save { file, handle } => {
             let raw = std::fs::read(&file)
                 .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", file.display())))?;
@@ -1150,6 +1373,132 @@ mod tests {
     #[test]
     fn parse_list() {
         assert!(matches!(parse_ok(&["list"]).sub, AppSub::List));
+    }
+
+    #[test]
+    fn parse_derive() {
+        match parse_ok(&[
+            "derive",
+            "summarise the changelog",
+            "--kind",
+            "scheduled",
+            "--mode",
+            "codified",
+            "--attach",
+            "changelog.md",
+            "--output",
+            "design.json",
+        ])
+        .sub
+        {
+            AppSub::Derive(s) => {
+                assert_eq!(s.prompt, "summarise the changelog");
+                assert_eq!(s.kind, "scheduled");
+                assert_eq!(s.mode, "codified");
+                assert_eq!(s.attachments, vec!["changelog.md".to_string()]);
+                assert_eq!(s.output, Some(PathBuf::from("design.json")));
+            }
+            other => panic!("expected Derive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_derive_needs_a_prompt() {
+        assert!(parse(["derive"].iter().map(ToString::to_string)).is_err());
+    }
+
+    #[test]
+    fn derived_blueprint_carries_per_node_bindings() {
+        let app = proto::DerivedApp {
+            name: "Digest".into(),
+            steps: vec![
+                proto::DerivedAppStep {
+                    role: "researcher".into(),
+                    intent: "gather".into(),
+                    kind: "plain".into(),
+                    model_id: String::new(),
+                    tool_contract: [("retrieve".to_string(), "1".to_string())]
+                        .into_iter()
+                        .collect(),
+                    skills: vec!["triage".into()],
+                    integrations: vec!["gmail".into()],
+                    datasets: vec!["support".into()],
+                },
+                proto::DerivedAppStep {
+                    role: "writer".into(),
+                    intent: "write".into(),
+                    kind: "plain".into(),
+                    model_id: String::new(),
+                    tool_contract: std::collections::HashMap::new(),
+                    skills: vec![],
+                    integrations: vec![],
+                    datasets: vec![],
+                },
+            ],
+            edges: vec![proto::ProposedEdge {
+                parent: 0,
+                child: 1,
+            }],
+            ..Default::default()
+        };
+        let bp = derived_to_blueprint(&app);
+        // Round-trips into a DagSpec, and its App bindings survive.
+        let dag: DagSpec = serde_json::from_value(bp).unwrap();
+        assert_eq!(dag.steps[0].skills, vec!["triage".to_string()]);
+        assert_eq!(dag.steps[0].connections, vec!["gmail".to_string()]);
+        assert_eq!(dag.steps[0].datasets, vec!["support".to_string()]);
+        assert!(dag.steps[1].skills.is_empty());
+        // The union the `kx app new` step would fold into references.
+        let binds = NodeBindings::from_dag(&dag);
+        assert_eq!(binds.skills, vec!["triage".to_string()]);
+        assert_eq!(binds.connections, vec!["gmail".to_string()]);
+        assert_eq!(binds.datasets, vec!["support".to_string()]);
+    }
+
+    #[test]
+    fn new_from_a_bound_blueprint_unions_connections_and_datasets_offline() {
+        // A blueprint that binds only connections/datasets needs NO skill resolution, so
+        // `execute_new` authors it offline and folds the union into references.
+        use std::io::Write as _;
+        let dir = std::env::temp_dir().join(format!("kx-app-new-bound-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bp_path = dir.join("bp.json");
+        let mut f = std::fs::File::create(&bp_path).unwrap();
+        write!(
+            f,
+            "{}",
+            serde_json::json!({
+                "seed": 0,
+                "steps": [{
+                    "kind": "model", "prompt": "go",
+                    "connections": ["kx-connector-gmail"], "datasets": ["support"]
+                }]
+            })
+        )
+        .unwrap();
+        let out_path = dir.join("out.json");
+        execute_new(
+            NewSpec {
+                name: "Bound".into(),
+                from_blueprint: bp_path,
+                model: None,
+                max_turns: None,
+                max_tool_calls: None,
+                tags: vec![],
+                description: None,
+                branch: None,
+                output: Some(out_path.clone()),
+                skills: vec![],
+            },
+            Vec::new(),
+        )
+        .unwrap();
+        let env = AppEnvelope::from_json_slice(&std::fs::read(&out_path).unwrap()).unwrap();
+        assert_eq!(env.references.connections.len(), 1);
+        assert_eq!(env.references.connections[0].descriptor, "kx-connector-gmail");
+        assert_eq!(env.references.datasets.len(), 1);
+        assert_eq!(env.references.datasets[0].dataset_ref, "support");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
