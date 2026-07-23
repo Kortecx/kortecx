@@ -301,6 +301,87 @@ export type WorkflowProposal =
   | { proposed: true; steps: ProposedWorkflowStep[]; edges: ProposedWorkflowEdge[] }
   | { proposed: false; reason: string };
 
+/** The lane a derived App is designed for. */
+export type DerivedAppKind = "scheduled" | "hosted";
+
+/** How a SCHEDULED App is authored (ignored on the hosted lane). */
+export type DerivedAppMode = "contextual" | "codified";
+
+/** What {@link KxClientBase.deriveApp} is asked for: one prompt plus the selectors on it. */
+export interface DeriveAppInput {
+  /** The lane. Defaults to `scheduled`. */
+  kind?: DerivedAppKind;
+  /** Scheduled only: the authoring mode. */
+  mode?: DerivedAppMode;
+  /** The author's single natural-language prompt — the whole input. */
+  prompt: string;
+  /** Hosted only: a pinned template, or `auto`/omitted to take the default. */
+  framework?: string;
+  /**
+   * FILENAMES of already-uploaded context attachments. Names only, deliberately: the derive
+   * model holds no grant to dereference a content ref, and a file's bytes are not what shapes
+   * a design — knowing the app will have `changelog.md` to read is.
+   */
+  attachments?: readonly string[];
+}
+
+/**
+ * One designed step. `role`/`intent` are the model's design; `kind`/`modelId` are the
+ * server-resolved recipe axes; `toolContract` is what SURVIVED the server's intersection
+ * against the caller's own tool ceiling — the ceiling's version, never the model's.
+ */
+export interface DerivedAppStep {
+  role: string;
+  intent: string;
+  kind: string;
+  modelId: string;
+  toolContract: Record<string, string>;
+}
+
+/** One planned project file — the hosted lane's review surface. */
+export interface DerivedAppFile {
+  path: string;
+  role: string;
+}
+
+/** A reviewable App design. Nothing has been persisted: see {@link KxClientBase.deriveApp}. */
+export interface DerivedApp {
+  /** The proposed app name (the catalog handle is derived from it at save). */
+  name: string;
+  /** The proposed one-sentence description. */
+  description: string;
+  /** The designed steps, in plan order. Empty on the hosted lane (no DAG). */
+  steps: DerivedAppStep[];
+  /**
+   * The dependency edges. **A step with no incoming edge runs in parallel** — this list is
+   * the whole of the shape decision, so an empty list on a multi-step design means every step
+   * runs at once, on purpose.
+   */
+  edges: ProposedWorkflowEdge[];
+  /** The planned project files. Hosted only. */
+  files: DerivedAppFile[];
+  /** The resolved hosted framework. Empty on the scheduled lane. */
+  framework: string;
+  /** App-level tool wishes (the union of every step's surviving grant). */
+  tools: Record<string, string>;
+  /** Catalog skill names, intersected against the caller's catalog. */
+  skills: string[];
+  /** Connection descriptors, intersected against the caller's registry. */
+  connections: string[];
+  /** Dataset names to ground on, intersected against the caller's non-empty datasets. */
+  datasets: string[];
+  /**
+   * Advisories about what the design did NOT get — ids dropped as outside the caller's
+   * ceiling, a capability menu bounded by the model's one-decode budget, a framework
+   * substituted. Show these: a design that quietly asked for a tool it did not receive
+   * produces an App that quietly cannot do part of its job.
+   */
+  notices: string[];
+}
+
+/** The outcome of {@link KxClientBase.deriveApp}: a reviewable design, or an honest refusal. */
+export type AppDerivation = ({ derived: true } & DerivedApp) | { derived: false; reason: string };
+
 export abstract class KxClientBase {
   readonly endpoint: string;
   protected readonly token: string | undefined;
@@ -639,6 +720,63 @@ export abstract class KxClientBase {
       return { proposed: false, reason: r.value.reason };
     }
     return { proposed: false, reason: "the gateway returned no proposal" };
+  }
+
+  /**
+   * Derive a reviewable App DESIGN from one natural-language prompt — the single Apps chat
+   * surface. The served model decides the workflow, its SHAPE (which steps run in parallel),
+   * and the capabilities each step needs; the gateway compiles the result through the vetted
+   * planner and intersects every named capability against this caller's own ceiling.
+   *
+   * It VALIDATES ONLY: no envelope is saved, no branch is created, no journal is written.
+   * Nothing exists until you approve the design and author it through the normal path
+   * (`saveApp` + `scaffoldApp`), which re-derives every authoritative axis server-side.
+   *
+   * The model may NAME tool ids, but only from a server-built menu of what this caller could
+   * already fire, and everything it names is intersected back against that menu — naming is
+   * not granting (SN-8). Whatever did not survive is reported in `notices`.
+   *
+   * Returns `{ derived: false, reason }` when the gateway can't design (no served model, an
+   * inadmissible workflow). An old gateway without the seam throws {@link KxUnimplemented}.
+   */
+  async deriveApp(input: DeriveAppInput): Promise<AppDerivation> {
+    const resp = await rpc(
+      this.grpc.deriveApp({
+        kind: input.kind ?? "scheduled",
+        mode: input.mode ?? "",
+        prompt: input.prompt,
+        framework: input.framework ?? "",
+        attachments: [...(input.attachments ?? [])],
+      }),
+    );
+    const r = resp.result;
+    if (r?.case === "app") {
+      const a = r.value;
+      return {
+        derived: true,
+        name: a.name,
+        description: a.description,
+        steps: a.steps.map((s) => ({
+          role: s.role,
+          intent: s.intent,
+          kind: s.kind,
+          modelId: s.modelId,
+          toolContract: { ...s.toolContract },
+        })),
+        edges: a.edges.map((e) => ({ parent: e.parent, child: e.child })),
+        files: a.files.map((f) => ({ path: f.path, role: f.role })),
+        framework: a.framework,
+        tools: { ...a.tools },
+        skills: [...a.skills],
+        connections: [...a.connections],
+        datasets: [...a.datasets],
+        notices: [...a.notices],
+      };
+    }
+    if (r?.case === "rejected") {
+      return { derived: false, reason: r.value.reason };
+    }
+    return { derived: false, reason: "the gateway returned no design" };
   }
 
   /**

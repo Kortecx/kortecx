@@ -295,6 +295,15 @@ export type {
   ProposedWorkflowStep,
   ProposedWorkflowEdge,
 } from "./client.js";
+export type {
+  AppDerivation,
+  DeriveAppInput,
+  DerivedApp,
+  DerivedAppFile,
+  DerivedAppKind,
+  DerivedAppMode,
+  DerivedAppStep,
+} from "./client.js";
 
 export { DEFAULT_ENDPOINT, isNonloopbackPlaintext } from "./transport.js";
 export type { Args } from "./transport.js";
