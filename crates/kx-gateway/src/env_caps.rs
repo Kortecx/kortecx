@@ -30,6 +30,18 @@ pub(crate) const DEFAULT_EDIT_MAX_OUTPUT_TOKENS: u32 = 3_072;
 /// pages mid-file in live testing. This gives the scaffold path its own headroom without
 /// moving the react-edit ceiling. Overridable via `KX_SERVE_SCAFFOLD_MAX_OUTPUT_TOKENS`.
 pub(crate) const DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS: u32 = 6_144;
+/// Default PLANNER output-token budget — the `ProposeWorkflow` / `DeriveApp` model turn.
+///
+/// Was a hard-coded `512` inside the proposer. That is enough for a 3-step plan naming only a
+/// role and an intent, and too little the moment a step also carries a tool list: a reasoning
+/// model spends part of the budget on a `<think>` block that is stripped before decode, so the
+/// JSON envelope itself gets truncated and the whole plan is REJECTED as malformed — a silent
+/// "the model could not plan" for what was really a budget. Sized for a 5-step derived app with
+/// per-step grants, not for the smallest plan that ever worked. Overridable via
+/// `KX_SERVE_PLANNER_MAX_OUTPUT_TOKENS`. Read only on the model-served path, so it is gated to
+/// match (the `DEFAULT_WINDOW_BYTES` precedent).
+#[cfg(feature = "serve-engine")]
+pub(crate) const DEFAULT_PLANNER_MAX_OUTPUT_TOKENS: u32 = 1_536;
 /// Default chat-RAG top-k ceiling (the untrusted `k` is clamped to this).
 pub(crate) const DEFAULT_CHAT_RAG_MAX_K: usize = 16;
 /// Default total-bytes budget for an App's PROJECT context rail — the `.md` files the
@@ -124,6 +136,21 @@ pub(crate) fn scaffold_max_output_tokens() -> u32 {
             .ok()
             .as_deref(),
         DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS,
+        MAX_EDIT_TOKENS,
+    )
+}
+
+/// The PLANNER output-token budget (`KX_SERVE_PLANNER_MAX_OUTPUT_TOKENS`) — shared by the
+/// `ProposeWorkflow` and `DeriveApp` model turns, so raising it can never make the two
+/// authoring paths disagree about how much plan a model is allowed to write. Additive +
+/// default-preserving; the seeded ceiling only, which the executor still clamps (SN-8).
+#[cfg(feature = "serve-engine")]
+pub(crate) fn planner_max_output_tokens() -> u32 {
+    parse_cap_u32(
+        std::env::var("KX_SERVE_PLANNER_MAX_OUTPUT_TOKENS")
+            .ok()
+            .as_deref(),
+        DEFAULT_PLANNER_MAX_OUTPUT_TOKENS,
         MAX_EDIT_TOKENS,
     )
 }
@@ -367,5 +394,19 @@ mod tests {
             "scaffold {scaffold} must exceed edit {edit}"
         );
         assert!(scaffold <= MAX_EDIT_TOKENS);
+    }
+
+    /// The planner budget must clear the literal it replaced. `512` was enough for a plan of
+    /// bare role+intent steps and is not enough for one that also carries per-step grants —
+    /// the regression this knob exists to prevent is someone "restoring the default".
+    #[cfg(feature = "serve-engine")]
+    #[test]
+    fn planner_budget_default_exceeds_the_literal_it_replaced() {
+        let planner = planner_max_output_tokens();
+        assert!(
+            planner > 512,
+            "planner budget {planner} must exceed the former hard-coded 512"
+        );
+        assert!(planner <= MAX_EDIT_TOKENS);
     }
 }

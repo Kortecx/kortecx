@@ -1382,6 +1382,95 @@ message GetScaffoldStatusResponse {
   string writing_instance_id = 6;  // 16B run instance, lower-hex ("" when idle)
   string writing_mote_id     = 7;  // 32B write mote (the token-broker key), lower-hex ("" when idle)
 }
+// ---------------------------------------------------------------------------
+// DeriveApp — one prompt in, a reviewable App DESIGN out (the single Apps chat
+// surface). The author types one thing; the runtime decides the workflow, its
+// SHAPE, and the capabilities each step needs, and hands all of it back for
+// review. It VALIDATES ONLY: no envelope is saved, no branch is created, no
+// journal is written. Nothing exists until the author approves and the client
+// calls SaveApp + ScaffoldApp through the normal path, which re-derives every
+// authoritative axis server-side.
+//
+// WHAT IS NEW vs ProposeWorkflow. A proposed step's tool_contract has always come
+// from the vetted role recipe, which is EMPTY for every authoring role — so no
+// proposal has ever carried a tool, and an App could only be plugged in after it
+// existed. Here the model may NAME tool ids, but only from an ids-only menu the
+// SERVER computed from this caller's own ceiling (party authority INTERSECT
+// broker-fireable INTERSECT registry — the same ceiling GetAppManifest reports
+// against), and everything it names is intersected back against that ceiling
+// host-side. Naming is not granting (SN-8): what survives is a WISH that RunApp
+// intersects AGAIN at fire. The model can only ask for what the caller could
+// already have attached by hand; it can never grant, and never reach past the
+// ceiling.
+//
+// SHAPE IS THE MODEL'S JUDGEMENT. `edges` is the whole of it: a step with NO
+// incoming edge runs in PARALLEL. An empty edge list on a multi-step design means
+// every step runs at once, on purpose — it is not an omission.
+//
+// THE TWO LANES DERIVE DIFFERENT THINGS, because they are different things. A
+// scheduled app IS its workflow, so it comes back as steps + edges and its project
+// files are planned by the scaffold at approve time (where that contract already
+// lives). A hosted app IS its files, so it comes back as `files` + `framework` and
+// `steps` is empty.
+//
+// Needs a served model (an `inference` / `serve-engine` build with a resolved
+// model); with none it returns `rejected` (don't-fake-gaps, D142).
+// ---------------------------------------------------------------------------
+message DeriveAppRequest {
+  string kind   = 1;  // "scheduled" | "hosted"; empty ⇒ scheduled. An unknown value is REFUSED, never defaulted — silently designing the wrong KIND of app is the one mistake the review cannot show.
+  string mode   = 2;  // scheduled only: "contextual" | "codified"; empty ⇒ the server default. Ignored for hosted (no such axis).
+  string prompt = 3;  // the author's single natural-language prompt — the whole input. Rejected only when EMPTY; bounded by the planner's OUTPUT cap, not by a limit here.
+  string framework = 4;  // hosted only: a pinned template, or "auto"/empty to take the default.
+  // FILENAMES of already-uploaded (PutContent) context attachments. Names only, deliberately:
+  // the derive model holds no grant to dereference a content ref, and a file's BYTES are not
+  // what shapes a plan — knowing the app will have `changelog.md` to read is.
+  repeated string attachments = 5;
+}
+
+// One designed step. role/intent are the model's design; kind/model_id are the
+// SERVER-resolved recipe axes; tool_contract is what SURVIVED the intersection —
+// the ceiling's version, never the model's. Display only: every axis is re-derived
+// server-side when the approved App is authored and run (SN-8).
+message DerivedAppStep {
+  string role   = 1;
+  string intent = 2;
+  string kind   = 3;                     // structural kind (always "plain" today — the derive contract authors no critics)
+  string model_id = 4;
+  map<string, string> tool_contract = 5; // the surviving per-step grant set {tool_id: version}
+}
+
+// One planned project file — the HOSTED lane's review surface.
+message DerivedAppFile {
+  string path = 1;                       // relative project path
+  string role = 2;                       // one sentence on what it contains
+}
+
+message DerivedApp {
+  string name        = 1;                // proposed app name (the client derives the catalog handle from it)
+  string description = 2;                // proposed one-sentence description
+  repeated DerivedAppStep steps = 3;     // scheduled lane; empty for hosted
+  repeated ProposedEdge edges   = 4;     // (parent,child) indices into steps[]; NO incoming edge ⇒ runs in parallel
+  repeated DerivedAppFile files = 5;     // hosted lane; empty for scheduled
+  string framework   = 6;                // hosted lane: the resolved template; empty for scheduled
+  map<string, string> tools = 7;         // app-level tool wishes (the union of every step's surviving grant)
+  repeated string skills      = 8;       // catalog skill names, intersected against the caller's catalog
+  repeated string connections = 9;       // connection descriptors, intersected against the caller's registry
+  repeated string datasets    = 10;      // dataset names to ground on, intersected against the caller's non-empty datasets
+  // Human-readable advisories about what the design did NOT get: ids dropped as
+  // outside the ceiling, a menu bounded by the one-decode budget, a framework
+  // substituted. Surfaced verbatim; NEVER parsed for enforcement. This field is why
+  // the derive can be trusted about its own limits — a design that quietly asked for
+  // a tool it did not receive would produce an App that quietly cannot do part of its job.
+  repeated string notices = 11;
+}
+
+message DeriveAppResponse {
+  oneof result {
+    DerivedApp app            = 1;
+    ProposalRejected rejected = 2;       // reuses the proposer's refusal shape (same posture, same honesty)
+  }
+}
+
 // Delete a caller-owned App. The `DeleteBranch` idiom (":unbinds the branch; the CAS blobs
 // stay") extended to the things an App uniquely owns. Apps are off-journal / off-digest by
 // construction, so dropping the row cannot move the canonical projection digest and past runs
@@ -2645,6 +2734,12 @@ service KxGateway {
   // background; observe via GetScaffoldStatus + GetBranch + StreamEvents).
   // Warrants are server-minted (SN-8). Unimplemented when no served model /
   // branch store. Off-journal, off-digest.
+  // DeriveApp: one prompt -> a reviewable App design (steps + SHAPE + capabilities,
+  // or a hosted file plan). Validate-only; saves nothing. The model may NAME tool ids
+  // from a server-built ids-only menu of the caller's OWN ceiling and every id is
+  // intersected back against it (SN-8: naming is not granting). `unimplemented` with
+  // no served model.
+  rpc DeriveApp(DeriveAppRequest) returns (DeriveAppResponse);
   rpc ScaffoldApp(ScaffoldAppRequest) returns (ScaffoldAppResponse);
   rpc GetScaffoldStatus(GetScaffoldStatusRequest) returns (GetScaffoldStatusResponse);
 

@@ -45,6 +45,52 @@ index must be smaller than its child index; do NOT include any model id, tool, p
 any field other than role/intent per step and parent/child per edge. Keep the plan minimal — \
 add a step only when it does distinct work.";
 
+/// The APP-DERIVE contract — the system prompt for the `DeriveApp` model turn.
+///
+/// A **sibling** of [`PLANNER_SYSTEM`], not a variant of it. Two things differ, and both are
+/// the reason a variant would not do:
+///
+/// 1. **Shape is a judgement, not a default.** `PLANNER_SYSTEM` says "Order the steps so each
+///    depends on the ones before it", which is a instruction to emit a CHAIN — and every plan
+///    it has ever produced was one. This contract instead teaches that a step with no incoming
+///    edge runs CONCURRENTLY, so independent work should fan out and rejoin. The `parent <
+///    child` rule stays: it is a topological numbering, not a linearity rule, and a fan-out
+///    (`0→1, 0→2, 1→3, 2→3`) satisfies it.
+/// 2. **The model may NAME a capability.** Steps carry a `tools` list drawn from a menu the
+///    SERVER computed from the caller's own ceiling. Naming is not granting: every id is
+///    intersected back against that ceiling host-side, so this widens what can be ASKED FOR
+///    and nothing else (SN-8). The role palette still supplies every other capability axis.
+pub(crate) const DERIVE_SYSTEM: &str = "You are designing a Kortecx APP: a durable, reusable \
+automation that a schedule, a trigger, or another workflow runs. Turn the user's request into \
+the SMALLEST workflow of collaborating agent roles that fully achieves it.\n\
+SHAPE THE WORKFLOW FOR THE WORK — this is your judgement, not a template:\n\
+- Steps that do NOT need each other's output run AT THE SAME TIME. Give them no edge between \
+them, and they run in PARALLEL.\n\
+- When several parallel steps produce material that must be combined, add ONE final step that \
+gathers them, with an edge from each into it.\n\
+- Chain two steps ONLY when the second genuinely needs what the first produced.\n\
+- A goal that is one piece of work is ONE step. Do not pad a plan to look thorough.\n\
+Choose each step's ROLE from the provided role palette — use ONLY those role names, never \
+invent one. Write each step's INTENT as one concrete, self-contained instruction for that role \
+(what it must produce), phrased so the role can act without seeing the others.\n\
+Each step MAY request TOOLS: pick ids from the provided capability menu, and ONLY from it. \
+Give a step a tool only when that step genuinely has to reach outside the model to do its job. \
+Most steps need none — use an empty list. Never invent a tool id, and never name a permission, \
+a credential, or a model.\n\
+The app as a WHOLE may also draw on the SKILLS, INTEGRATIONS and DATASETS the menu lists — name \
+them by their exact menu name, and only the ones the goal actually needs. Leave a list empty \
+when it needs none.\n\
+Also give the app a short NAME (2-5 words, what it does) and a one-sentence DESCRIPTION.\n\
+Reply with EXACTLY one JSON object and NOTHING else — no prose, no code fence, no \
+explanation:\n\
+{\"app\":{\"name\":\"<short name>\",\"description\":\"<one sentence>\",\"steps\":[{\"role\":\"\
+<palette role>\",\"intent\":\"<what this step produces>\",\"tools\":[\"<menu id>\"]}],\"edges\":\
+[{\"parent\":<step index>,\"child\":<step index>}],\"skills\":[],\"integrations\":[],\
+\"datasets\":[]}}\n\
+Rules: step and edge indices are 0-based into steps[]; an edge's parent index must be smaller \
+than its child index; every list is always present, empty when unused; do NOT include a model \
+id, a permission, or any field other than the ones shown.";
+
 /// One curated authoring role: a stable `name` (aligned to the SDK persona library) + a
 /// one-line `framing` the planner palette shows the model. The heavy MoteDef axes come
 /// from the vetted recipe (`build_authoring_role_catalog`), never from this table.
@@ -126,6 +172,21 @@ pub(crate) fn planner_user_message(goal: &str) -> String {
     format!("{}\nGOAL: {}", render_role_palette(), goal.trim())
 }
 
+/// Build the DERIVE user message: the role palette, the ids-only capability menu, and the
+/// user's one prompt. The contract ([`DERIVE_SYSTEM`]) rides the system channel.
+///
+/// `menu` is pre-rendered and pre-BOUNDED by the caller (see `derive_plan::CapabilityMenu`)
+/// because the whole exchange is ONE decode — the serve does not chunk a prompt, so an
+/// unbounded menu does not degrade, it aborts.
+#[must_use]
+pub(crate) fn derive_user_message(prompt: &str, menu: &str) -> String {
+    format!(
+        "{}\n{menu}\nWhat the user asked for: {}",
+        render_role_palette(),
+        prompt.trim()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +233,62 @@ mod tests {
                 assert_ne!(a.name, b.name, "duplicate role name {:?}", a.name);
             }
         }
+    }
+
+    /// The DERIVE contract's own taught envelope must decode through the enforcer the runtime
+    /// uses, and name only palette roles — the `planner_example_decodes_and_uses_palette_roles`
+    /// discipline applied to the second contract. A contract that teaches a shape its own
+    /// decoder refuses produces a model that is right and a runtime that says it is wrong.
+    #[test]
+    fn derive_example_decodes_and_uses_palette_roles() {
+        const DERIVE_EXAMPLE: &str = "{\"app\":{\"name\":\"Release Notes Writer\",\
+\"description\":\"Turns merged changes into release notes.\",\"steps\":[\
+{\"role\":\"researcher\",\"intent\":\"Gather the merged changes\",\"tools\":[]},\
+{\"role\":\"writer\",\"intent\":\"Write the notes\",\"tools\":[]}],\
+\"edges\":[{\"parent\":0,\"child\":1}],\"skills\":[],\"integrations\":[],\"datasets\":[]}}";
+        let d = crate::derive_plan::decode_derived(DERIVE_EXAMPLE.as_bytes())
+            .expect("the taught envelope must decode via the same enforcer the runtime uses");
+        assert_eq!(d.steps.len(), 2);
+        for s in &d.steps {
+            assert!(
+                is_palette_role(&s.role),
+                "example role {:?} is not in the curated palette",
+                s.role
+            );
+        }
+    }
+
+    /// The derive contract must teach PARALLELISM, and must not inherit the planner's
+    /// "each depends on the ones before it" — that single sentence is why every proposal the
+    /// console has ever shown was a chain. This is the assertion that fails if someone
+    /// "unifies" the two contracts later.
+    #[test]
+    fn the_derive_contract_teaches_shape_and_is_not_the_planner_one() {
+        assert!(DERIVE_SYSTEM.contains("PARALLEL"));
+        assert!(DERIVE_SYSTEM.contains("AT THE SAME TIME"));
+        assert!(
+            !DERIVE_SYSTEM.contains("Order the steps so each depends on the ones before it"),
+            "the derive contract must not inherit the planner's chain instruction"
+        );
+        assert!(!DERIVE_SYSTEM.contains(PLANNER_SYSTEM));
+        assert!(!PLANNER_SYSTEM.contains(DERIVE_SYSTEM));
+        // The menu is the ONLY tool source, and the model still may not name authority.
+        assert!(DERIVE_SYSTEM.contains("ONLY from it"));
+        assert!(DERIVE_SYSTEM.contains("never name a permission"));
+    }
+
+    /// The user turn must carry the palette, the menu and the prompt — all three. A derive
+    /// message missing the menu silently produces an app with no capabilities and no reason.
+    #[test]
+    fn the_derive_user_message_carries_palette_menu_and_prompt() {
+        let m = derive_user_message(
+            "  triage inbound email  ",
+            "Capability menu:\n- echo (v1)\n",
+        );
+        assert!(m.contains("Role palette"));
+        assert!(m.contains("- echo (v1)"));
+        assert!(m.contains("triage inbound email"));
+        assert!(!m.contains("  triage"), "the prompt is trimmed");
     }
 
     #[test]

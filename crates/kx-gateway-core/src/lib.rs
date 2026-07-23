@@ -80,6 +80,7 @@ mod approval_admin;
 // D113 (trigger seam): the trigger admin seam (Register/List/Deregister/Submit/Test).
 // Async (binds + submits a run via the Invoke propose-proxy); the host impl owns the
 // triggers.db store + the binder + submitter. No journal-writer dep added here.
+mod derive;
 mod model_lifecycle;
 mod model_pull;
 mod models_view;
@@ -124,6 +125,7 @@ pub use datasets::{
     DatasetError, DatasetHitEntry, DatasetSummaryEntry, DatasetView, IngestDoc, IngestOutcome,
     RetrievalMode,
 };
+pub use derive::{AppDerivation, AppDeriver, DeriveInput, DerivedApp, DerivedFile, DerivedStep};
 pub use error::GatewayError;
 pub use feedback_view::{FeedbackEntry, FeedbackRecord, FeedbackStore};
 pub use fuzzy_discovery::{score_to_bp, FuzzyDiscoveryView, FuzzyHitEntry};
