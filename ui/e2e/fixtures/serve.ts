@@ -170,4 +170,4 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
 }
 
 /** The pinned origin the SPA is served from (must match playwright webServer). */
-export const SPA_ORIGIN = "http://localhost:4173";
+export const SPA_ORIGIN = "http://localhost:4174";

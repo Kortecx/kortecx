@@ -271,9 +271,14 @@ fn derive_blocking<B: InferenceBackend>(
         derived.edges.clear();
         derived.framework = framework.to_string();
         let goal = format!("{}. {}", derived.description.trim(), input.prompt.trim());
+        // The directive rides the SYSTEM channel with a short user turn, rather than the
+        // directive as the user turn and an empty system: a chat template is only obliged to
+        // render the roles it is given content for, and an empty system is the kind of input
+        // that renders differently per architecture. Both channels non-empty is the shape every
+        // other model turn on this path already uses.
         match run(
-            "",
             &manifest_plan_directive(&goal, ScaffoldLane::Hosted(framework)),
+            "Plan the files for this app.",
         )
         .and_then(|raw| decode_manifest(raw.as_bytes()).map_err(|e| e.to_string()))
         {

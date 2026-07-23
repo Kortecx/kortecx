@@ -73,11 +73,19 @@ test("new app: a hosted (experience) app is authored and lands in the Hosted sec
   // The design proposed the name; it is editable before anything exists.
   await expect(page.getByTestId("new-app-name")).toHaveValue("My Site");
 
-  // Only NOW is the app created.
+  // Only NOW is the app created — and the browser follows it to its OWN page, which is where
+  // the scaffold streams in. (Here the scaffold has no model and fails; the App is real
+  // regardless, so the route still happens — stranding the author on a closed form with no way
+  // to reach the App they just made would be the worse failure.)
   await page.getByTestId("new-app-approve").click();
   await expect(page.getByTestId("new-app-form")).toHaveCount(0, { timeout: 15_000 });
+  // The handle contains slashes, so the route param arrives percent-encoded.
+  await expect(page).toHaveURL(new RegExp(`/apps/${encodeURIComponent(handle)}$`), {
+    timeout: 15_000,
+  });
 
-  // The new hosted app appears in the Hosted section with its live status pill + Run.
+  // And it is filed under Hosted, with its live status pill + Run.
+  await gotoViaPalette(page, "apps");
   await page.getByTestId("apps-section-hosted").click();
   await expect(page.getByTestId(`app-card-${handle}`)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId(`hosted-status-${handle}`)).toBeVisible();
@@ -104,6 +112,8 @@ test("new app: a name that collides with an existing App is blocked, not overwri
   await expect(page.getByTestId("new-app-review")).toBeVisible({ timeout: 15_000 });
   await page.getByTestId("new-app-approve").click();
   await expect(page.getByTestId("new-app-form")).toHaveCount(0, { timeout: 15_000 });
+  // Creating routes to the App's own page; come back to the catalog for the second one.
+  await gotoViaPalette(page, "apps");
   await page.getByTestId("apps-section-hosted").click();
   await expect(page.getByTestId(`app-card-${handle}`)).toBeVisible({ timeout: 15_000 });
 

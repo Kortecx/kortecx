@@ -51,7 +51,7 @@ add a step only when it does distinct work.";
 /// the reason a variant would not do:
 ///
 /// 1. **Shape is a judgement, not a default.** `PLANNER_SYSTEM` says "Order the steps so each
-///    depends on the ones before it", which is a instruction to emit a CHAIN — and every plan
+///    depends on the ones before it", which is an instruction to emit a CHAIN — and every plan
 ///    it has ever produced was one. This contract instead teaches that a step with no incoming
 ///    edge runs CONCURRENTLY, so independent work should fan out and rejoin. The `parent <
 ///    child` rule stays: it is a topological numbering, not a linearity rule, and a fan-out

@@ -224,6 +224,15 @@ export interface DerivedAppInit {
   notices?: string[];
 }
 
+/** The app-level tool wish a design implies: the union of its steps' grants. */
+function unionOfStepGrants(steps: DerivedStepInit[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const s of steps) {
+    Object.assign(out, s.toolContract ?? {});
+  }
+  return out;
+}
+
 /**
  * Stub `DeriveApp` with a canned design.
  *
@@ -253,7 +262,10 @@ export async function stubDeriveApp(page: Page, design: DerivedAppInit = {}): Pr
           edges: (design.edges ?? []).map((e) => create(proto.ProposedEdgeSchema, e)),
           files: (design.files ?? []).map((f) => create(proto.DerivedAppFileSchema, f)),
           framework: design.framework ?? "",
-          tools: design.tools ?? {},
+          // The app-level wish is the UNION of every step's surviving grant — the host
+          // computes it that way, so the stub does too. Left to each spec to restate, a
+          // fixture would happily hand back a design whose rail contradicts its own steps.
+          tools: design.tools ?? unionOfStepGrants(design.steps ?? []),
           skills: design.skills ?? [],
           connections: design.connections ?? [],
           datasets: design.datasets ?? [],

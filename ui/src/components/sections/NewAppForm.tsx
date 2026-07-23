@@ -761,6 +761,31 @@ export function NewAppForm({
             </>
           ) : null}
 
+          {/* Container packaging — the Docker app lane ships next. Kept as an honest-DISABLED
+              radio so the affordance stays discoverable without faking a control the runtime
+              cannot yet fulfil, and moved here because packaging is an app-level decision like
+              the rails beside it, not part of describing what the app should do. */}
+          <fieldset
+            className="new-app-form__rail"
+            aria-label="Packaging"
+            data-testid="new-app-packaging"
+          >
+            <legend className="muted">Packaging</legend>
+            <label>
+              <input type="radio" name="packaging" checked readOnly disabled={busy} /> Standard
+              runtime
+            </label>{" "}
+            <label className="muted" title="Container packaging — ships with the Docker app lane">
+              <input
+                type="radio"
+                name="packaging"
+                disabled
+                data-testid="new-app-packaging-docker"
+              />{" "}
+              Docker container · soon
+            </label>
+          </fieldset>
+
           <div className="register-tool-form__row">
             <button
               type="button"
