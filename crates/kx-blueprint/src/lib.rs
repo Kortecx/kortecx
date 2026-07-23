@@ -164,8 +164,7 @@ pub struct StepSpec {
     /// envelope authored before per-step binding lowers byte-identically.
     ///
     /// **Not a workflow concept.** `SubmitWorkflow` has no `references` to name into, so
-    /// [`to_request`] REFUSES a non-empty list rather than dropping it silently — see
-    /// [`refuse_app_only_bindings`].
+    /// [`to_request`] REFUSES a non-empty list rather than dropping it silently.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
     /// APP ONLY: the connection DESCRIPTORS bound to this step, naming entries in
