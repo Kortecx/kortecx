@@ -189,6 +189,15 @@ mod routing_backend;
 mod prompt_library;
 #[cfg(feature = "serve-engine")]
 mod propose_host;
+// `DeriveApp`: the one-prompt App design path. `derive_plan` owns the model-output contract
+// (the ids-only capability menu, the fail-closed decoder, the ceiling intersection);
+// `derive_host` runs the served model and compiles the result through the SAME vetted
+// `compile_plan` gate `propose_host` uses. Both ride `serve-engine` for the same reason the
+// proposer does (the routing backend + kx-planner). Validate-only / SN-8.
+#[cfg(feature = "serve-engine")]
+mod derive_host;
+#[cfg(feature = "serve-engine")]
+mod derive_plan;
 // PR-4.2 (T-STREAM1): the ADVISORY in-process token broker — the rendezvous
 // between the model executor (publisher) and the live-token subscribers. Only
 // a serve-engine build dispatches models + publishes tokens, so it's serve-engine-

@@ -1650,7 +1650,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_alerts_view(alerts_db)
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db.clone())
-        .with_skill_catalog(skills_db)
+        .with_skill_catalog(skills_db.clone())
         .with_branches_store(branches_db.clone())
         .with_lock_store(locks_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
@@ -1703,10 +1703,24 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // trigger path. Shared (clone) with the `with_app_runner` wiring in the mcp-gateway
     // block below (one construction, no duplicate connections.db handle churn). `AppRunSeam`
     // (module scope) names the (resolver, fireable) pair.
+    // The SAME connections.db handle, kept so the DeriveApp capability menu can list this
+    // caller's integrations without opening a second one (the one-construction rule this
+    // block already follows for the run resolver).
+    // Read only by the serve-engine deriver wiring below; on an mcp-gateway-only build the
+    // handle is still opened (the run resolver needs it) but nothing consumes this alias.
+    // serve-engine-gated (not mcp-gateway): only the deriver reads it, and serve-engine
+    // already implies mcp-gateway, so gating it to its single consumer needs no lint waiver.
+    #[cfg(feature = "serve-engine")]
+    let mut derive_connections: Option<Arc<kx_mcp_gateway::SqliteConnectionStore>> = None;
     #[cfg(feature = "mcp-gateway")]
     let (app_author, app_fireable, app_manifest): AppRunSeam =
         match kx_mcp_gateway::SqliteConnectionStore::open(catalog_dir.join("connections.db")) {
             Ok(conn_store) => {
+                let conn_store = Arc::new(conn_store);
+                #[cfg(feature = "serve-engine")]
+                {
+                    derive_connections = Some(conn_store.clone());
+                }
                 // The live dataset view for RAG-on-App presence checks — Some ONLY where
                 // retrieve@1 is both registered AND fireable (serve-engine + hnsw); else None.
                 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
@@ -1721,7 +1735,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                     });
                 let app_runner = Arc::new(crate::app_run::HostAppAuthor::new(
                     apps_db.clone(),
-                    Arc::new(conn_store),
+                    conn_store,
                     host_author.clone(),
                     demo.clone(),
                     tool_registry.clone(),
@@ -1835,6 +1849,47 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(feature = "serve-engine")]
     if let Some(proposer) = workflow_proposer {
         gateway = gateway.with_workflow_proposer(proposer);
+    }
+    // DeriveApp: one prompt -> a reviewable App design. Wired only when a model is served AND
+    // the run resolver exists, because the two must agree: the deriver's capability menu is
+    // built from `principal_tool_ceiling` — the SAME function RunApp intersects against — so a
+    // tool the design offers can never be one the run would silently drop. Built HERE rather
+    // than beside the proposer because the live registries it reads are constructed above.
+    // Validate-only (no save, no branch, no journal) ⇒ digest-invariant.
+    #[cfg(feature = "serve-engine")]
+    {
+        // The dataset view for the "ground on" axis — Some ONLY where retrieve@1 is both
+        // registered and fireable, matching the run resolver's own gate exactly.
+        #[cfg(feature = "hnsw")]
+        let derive_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> =
+            Some(dataset_view.clone() as Arc<dyn kx_gateway_core::DatasetView>);
+        #[cfg(not(feature = "hnsw"))]
+        let derive_datasets: Option<Arc<dyn kx_gateway_core::DatasetView>> = None;
+        match (model_engine.as_ref(), serve_model.as_ref(), &app_fireable) {
+            (Some(engine), Some(model_id), Some(fireable)) => {
+                let deriver = Arc::new(crate::derive_host::HostAppDeriver::new(
+                    engine.clone(),
+                    model_id.clone(),
+                    default_executor_class(),
+                    crate::derive_host::CapabilitySources {
+                        lib: demo.clone(),
+                        tools: tool_registry.clone(),
+                        registered: fireable.clone(),
+                        skills: Some(skills_db.clone() as Arc<dyn kx_gateway_core::SkillCatalog>),
+                        connections: derive_connections.clone(),
+                        datasets: derive_datasets,
+                    },
+                ));
+                gateway = gateway.with_app_deriver(deriver);
+                tracing::info!("DeriveApp: App deriver wired (one-prompt App design)");
+            }
+            _ => {
+                tracing::info!(
+                    "DeriveApp: not wired (needs a served model + the App run resolver); \
+                     the RPC returns unimplemented and the console hides the affordance"
+                );
+            }
+        }
     }
     // PR-6b-1: wire the EXTERNAL MCP gateway (the 5 MCP-server RPCs + the live
     // Connections govern surface). Opens the off-journal connections.db beside the

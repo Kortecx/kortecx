@@ -106,8 +106,13 @@ fn propose_blocking<B: InferenceBackend>(
              inference or serve-engine build and a resolved model)",
         );
     };
+    // The planner's own output budget (`KX_SERVE_PLANNER_MAX_OUTPUT_TOKENS`), not a literal.
+    // At the former hard-coded 512 a plan that also names per-step grants truncates mid-JSON
+    // and decodes as "the model did not return a valid plan" — a budget failure wearing a
+    // planning failure's message.
     let params = InferenceParams {
-        max_output_tokens: 512u32.min(parent.model_route.max_output_tokens),
+        max_output_tokens: crate::env_caps::planner_max_output_tokens()
+            .min(parent.model_route.max_output_tokens),
         ..InferenceParams::default()
     };
     let raw = match backend.dispatch(model_id, &InferenceInput::text(rendered), &params, &parent) {

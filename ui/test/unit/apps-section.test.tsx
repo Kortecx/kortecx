@@ -111,14 +111,28 @@ describe("Apps section (catalog + POC-5a New App)", () => {
     expect(screen.queryByTestId("new-app-form")).toBeNull();
   });
 
-  it("clicking New App reveals the inline scaffold form", () => {
+  it("clicking New App reveals ONE prompt box with the selectors on it", () => {
+    // The surface is a prompt, not a form: one input, the kind selector, and — because the
+    // scheduled lane is the default — the authoring-mode selector beside it. There is no name
+    // field yet, because there is nothing to name until a design comes back.
     APPS = [];
     render(<AppsSection />);
     fireEvent.click(screen.getByTestId("new-app"));
     expect(screen.getByTestId("new-app-form")).toBeInTheDocument();
-    expect(screen.getByTestId("new-app-name")).toBeInTheDocument();
-    expect(screen.getByTestId("new-app-goal")).toBeInTheDocument();
-    expect(screen.getByTestId("new-app-submit")).toBeInTheDocument();
+    expect(screen.getByTestId("new-app-prompt")).toBeInTheDocument();
+    expect(screen.getByTestId("new-app-kind")).toBeInTheDocument();
+    expect(screen.getByTestId("new-app-mode")).toBeInTheDocument();
+    expect(screen.getByTestId("new-app-derive")).toBeInTheDocument();
+    expect(screen.queryByTestId("new-app-name")).toBeNull();
+  });
+
+  it("the design button stays disabled until there is a prompt", () => {
+    APPS = [];
+    render(<AppsSection />);
+    fireEvent.click(screen.getByTestId("new-app"));
+    expect(screen.getByTestId("new-app-derive")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("new-app-prompt"), { target: { value: "triage email" } });
+    expect(screen.getByTestId("new-app-derive")).not.toBeDisabled();
   });
 
   it("shows the lock-state icon on a locked App", () => {

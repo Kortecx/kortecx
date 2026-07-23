@@ -125,6 +125,29 @@ export interface PickedSkill extends Skill {
   readonly instructionsRef: string;
 }
 
+/** One catalog row, as {@link useListSkills} returns it. */
+interface CatalogSkill {
+  readonly name: string;
+  readonly instructionsRef: string;
+  readonly tools: Record<string, string>;
+}
+
+/**
+ * Snapshot a catalog row as a {@link PickedSkill}.
+ *
+ * Exported so the pick-by-click path and the DERIVE pre-fill path share ONE mapping. They
+ * produce the same `references.skills` entry, so a skill a design attached and a skill a user
+ * clicked cannot serialize differently — which is the only way an App could behave differently
+ * depending on how its skill got there.
+ */
+export function pickedSkill(s: CatalogSkill): PickedSkill {
+  return {
+    name: s.name,
+    instructionsRef: s.instructionsRef,
+    ...(Object.keys(s.tools).length > 0 ? { tools: { ...s.tools } } : {}),
+  };
+}
+
 /** The catalog-skill picker (`references.skills`). Attached skills steer the App's entry
  *  step with their instructions + tool WISHES. */
 export function SkillsPicker({
@@ -178,14 +201,7 @@ export function SkillsPicker({
         if (!s) {
           return;
         }
-        onChange([
-          ...skills,
-          {
-            name: s.name,
-            instructionsRef: s.instructionsRef,
-            ...(Object.keys(s.tools).length > 0 ? { tools: { ...s.tools } } : {}),
-          },
-        ]);
+        onChange([...skills, pickedSkill(s)]);
       }}
       onDetach={(name) => onChange(skills.filter((s) => s.name !== name))}
     />

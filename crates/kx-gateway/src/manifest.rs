@@ -321,7 +321,7 @@ fn is_safe_manifest_path(p: &str) -> bool {
 /// then a surrounding markdown code fence, so the strict parser sees bare `{…}`.
 /// Total + panic-free (the delimiters are ASCII). A local copy of the `kx-planner`
 /// decoder's `extract_json_envelope`.
-fn strip_json_wrappers(text: &str) -> &str {
+pub(crate) fn strip_json_wrappers(text: &str) -> &str {
     let mut t = text.trim();
     for (open, close) in [("<think>", "</think>"), ("<|channel>", "<channel|>")] {
         if let Some(rest) = t.strip_prefix(open) {

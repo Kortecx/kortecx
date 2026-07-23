@@ -108,6 +108,12 @@ vi.mock("../../src/kx/use-app-files", () => ({
     reset: vi.fn(),
   }),
 }));
+// The Files tab asks whether a scaffold is WRITING this App right now (the chat surface routes
+// here the moment an App is created). `done` ⇒ the tab shows the file tree, which is what every
+// assertion below is about.
+vi.mock("../../src/kx/use-scaffold-app", () => ({
+  useScaffoldStatus: () => ({ data: { phase: "done" } }),
+}));
 vi.mock("../../src/kx/use-branches", () => ({
   useEditBranchPropose: () => ({
     mutate: proposeMutate,

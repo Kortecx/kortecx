@@ -824,6 +824,11 @@ pub struct GatewayService {
     /// returns `unimplemented` (no served model). Validate-only: runs the model once and
     /// compiles the plan, never registers/runs it — no journal write, digest-invariant.
     proposer: Option<Arc<dyn crate::propose::WorkflowProposer>>,
+    /// The optional APP-DERIVE seam (`DeriveApp` — one prompt → a reviewable App design).
+    /// `None` ⇒ the RPC returns `unimplemented` (no served model; the console hides the
+    /// affordance). Validate-only: it saves no envelope, creates no branch and writes no
+    /// journal, so it is digest-invariant.
+    deriver: Option<Arc<dyn crate::derive::AppDeriver>>,
     /// The optional App-manifest seam (`GetAppManifest` — the READ-ONLY capability
     /// preview). `None` ⇒ `GetAppManifest` is `unimplemented` (clients fall back to an
     /// envelope-only "needs" view). Server-authoritative + off-journal / off-digest.
@@ -936,6 +941,7 @@ impl GatewayService {
             skills: None,
             app_runner: None,
             proposer: None,
+            deriver: None,
             app_manifest: None,
             locks: None,
             scaffolder: None,
@@ -1405,6 +1411,15 @@ impl GatewayService {
         proposer: Arc<dyn crate::propose::WorkflowProposer>,
     ) -> Self {
         self.proposer = Some(proposer);
+        self
+    }
+
+    /// Wire the APP-DERIVE seam (`DeriveApp`). The host injects a served-model + vetted-role
+    /// catalog + live-registry backed deriver; `None` (the default) ⇒ the RPC is
+    /// `unimplemented`. Validate-only, digest-invariant.
+    #[must_use]
+    pub fn with_app_deriver(mut self, deriver: Arc<dyn crate::derive::AppDeriver>) -> Self {
+        self.deriver = Some(deriver);
         self
     }
 
@@ -2318,6 +2333,87 @@ impl KxGateway for GatewayService {
             }
         };
         Ok(Response::new(proto::ProposeWorkflowResponse {
+            result: Some(result),
+        }))
+    }
+
+    async fn derive_app(
+        &self,
+        request: Request<proto::DeriveAppRequest>,
+    ) -> Result<Response<proto::DeriveAppResponse>, Status> {
+        // One prompt → a reviewable App design. VALIDATE ONLY: nothing is saved, no branch is
+        // created, no journal is written, so this cannot move the canonical digest. `None`
+        // seam ⇒ no served model here (the console hides the affordance).
+        let deriver = self.deriver.clone().ok_or_else(|| {
+            Status::unimplemented(
+                "DeriveApp: no App deriver wired on this gateway \
+                 (needs an inference/serve-engine build with a resolved model)",
+            )
+        })?;
+        // The principal scopes EVERY capability the design may reach: the ids-only menu is
+        // built from this caller's ceiling and the result is intersected back against it.
+        // Reading it here rather than in the host keeps the authority boundary at the RPC edge,
+        // where every other caller-scoped App RPC reads it.
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.prompt.trim().is_empty() {
+            return Err(Status::invalid_argument("prompt must not be empty"));
+        }
+        let outcome = deriver
+            .derive(
+                &principal,
+                crate::derive::DeriveInput {
+                    kind: req.kind,
+                    mode: req.mode,
+                    prompt: req.prompt,
+                    framework: req.framework,
+                    attachments: req.attachments,
+                },
+            )
+            .await;
+        let result = match outcome {
+            crate::derive::AppDerivation::Derived(app) => {
+                let app = *app;
+                proto::derive_app_response::Result::App(proto::DerivedApp {
+                    name: app.name,
+                    description: app.description,
+                    steps: app
+                        .steps
+                        .into_iter()
+                        .map(|s| proto::DerivedAppStep {
+                            role: s.role,
+                            intent: s.intent,
+                            kind: s.kind,
+                            model_id: s.model_id,
+                            tool_contract: s.tool_contract.into_iter().collect(),
+                        })
+                        .collect(),
+                    edges: app
+                        .edges
+                        .into_iter()
+                        .map(|(parent, child)| proto::ProposedEdge { parent, child })
+                        .collect(),
+                    files: app
+                        .files
+                        .into_iter()
+                        .map(|f| proto::DerivedAppFile {
+                            path: f.path,
+                            role: f.role,
+                        })
+                        .collect(),
+                    framework: app.framework,
+                    tools: app.tools.into_iter().collect(),
+                    skills: app.skills,
+                    connections: app.connections,
+                    datasets: app.datasets,
+                    notices: app.notices,
+                })
+            }
+            crate::derive::AppDerivation::Rejected { reason } => {
+                proto::derive_app_response::Result::Rejected(proto::ProposalRejected { reason })
+            }
+        };
+        Ok(Response::new(proto::DeriveAppResponse {
             result: Some(result),
         }))
     }
