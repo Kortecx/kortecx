@@ -531,6 +531,7 @@ struct AppBindings {
     skills: Vec<Vec<String>>,
     connections: Vec<Vec<String>>,
     datasets: Vec<Vec<String>>,
+    apps: Vec<Vec<String>>,
 }
 
 impl AppBindings {
@@ -541,11 +542,13 @@ impl AppBindings {
             skills: Vec::with_capacity(dag.steps.len()),
             connections: Vec::with_capacity(dag.steps.len()),
             datasets: Vec::with_capacity(dag.steps.len()),
+            apps: Vec::with_capacity(dag.steps.len()),
         };
         for s in &mut dag.steps {
             out.skills.push(std::mem::take(&mut s.skills));
             out.connections.push(std::mem::take(&mut s.connections));
             out.datasets.push(std::mem::take(&mut s.datasets));
+            out.apps.push(std::mem::take(&mut s.apps));
         }
         out
     }

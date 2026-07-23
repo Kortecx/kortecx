@@ -1835,6 +1835,9 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // Authoring mode ("contextual"/"codified"); empty ⇒ contextual on an old row, and
         // always empty for an experience app (which has no such axis).
         mode: r.mode,
+        // What one run PRODUCES — advisory, and the line the composition menu renders so
+        // another App can pick this one on purpose. Empty ⇒ an App authored before the field.
+        delivers: r.delivers,
     }
 }
 

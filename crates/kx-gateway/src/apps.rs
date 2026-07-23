@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS apps (
     name          TEXT NOT NULL,   -- envelope name (denormalized summary)
     version       TEXT NOT NULL,   -- envelope version
     description   TEXT NOT NULL,   -- advisory, never parsed for enforcement
+    delivers      TEXT NOT NULL DEFAULT '', -- advisory one-line output contract ('' = old row); what the composition menu renders
     tags_json     TEXT NOT NULL,   -- JSON [string] (denormalized summary)
     step_count    INTEGER NOT NULL,-- blueprint step count (display)
     envelope_json TEXT NOT NULL,   -- the CANONICAL kortecx.app/v1 envelope bytes
@@ -117,6 +118,10 @@ impl AppsDb {
                 "mode",
                 "ALTER TABLE apps ADD COLUMN mode TEXT NOT NULL DEFAULT ''",
             ),
+            (
+                "delivers",
+                "ALTER TABLE apps ADD COLUMN delivers TEXT NOT NULL DEFAULT ''",
+            ),
         ] {
             Self::ensure_column(&conn, column, decl)
                 .map_err(|e| GatewayError::Catalog(format!("apps migrate {column}: {e}")))?;
@@ -173,34 +178,33 @@ impl AppsDb {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn row_to_record(
-        handle: String,
-        app_ref: &[u8],
-        name: String,
-        version: String,
-        description: String,
-        tags_json: &str,
-        step_count: i64,
-        source_digest: Option<Vec<u8>>,
-        kind: String,
-        mode: String,
-    ) -> AppRecord {
+    /// Build an [`AppRecord`] from a row, reading every column BY NAME.
+    ///
+    /// By name, not by index, because the two callers select different column sets — `get`
+    /// adds `envelope_json` in the middle — so the same field already sat at index 7 in one
+    /// query and 8 in the other. Indices that must be counted by hand, on a row of adjacent
+    /// `String`s, is how a positional read goes silently wrong: it still compiles, still
+    /// returns a record, and the values are simply in the wrong fields. Named reads make the
+    /// SELECT and this function agree by construction, and a new column costs one line here.
+    fn row_to_record(r: &rusqlite::Row<'_>) -> rusqlite::Result<AppRecord> {
+        let app_ref = r.get::<_, Vec<u8>>("app_ref")?;
         let mut id = [0u8; 16];
         let n = app_ref.len().min(16);
         id[..n].copy_from_slice(&app_ref[..n]);
-        AppRecord {
+        let tags_json = r.get::<_, String>("tags_json")?;
+        Ok(AppRecord {
             app_ref: id,
-            handle,
-            name,
-            version,
-            description,
-            tags: serde_json::from_str(tags_json).unwrap_or_default(),
-            step_count: u32::try_from(step_count).unwrap_or(u32::MAX),
-            source_digest,
-            kind,
-            mode,
-        }
+            handle: r.get("handle")?,
+            name: r.get("name")?,
+            version: r.get("version")?,
+            description: r.get("description")?,
+            delivers: r.get("delivers")?,
+            tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+            step_count: u32::try_from(r.get::<_, i64>("step_count")?).unwrap_or(u32::MAX),
+            source_digest: r.get("source_digest")?,
+            kind: r.get("kind")?,
+            mode: r.get("mode")?,
+        })
     }
 }
 
@@ -246,8 +250,8 @@ impl AppCatalog for AppsDb {
         let mode = summary.mode.as_str().to_string();
         conn.execute(
             "INSERT OR REPLACE INTO apps(principal, handle, app_ref, name, version, description, \
-             tags_json, step_count, envelope_json, source_digest, kind, mode) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             delivers, tags_json, step_count, envelope_json, source_digest, kind, mode) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 principal,
                 handle,
@@ -255,6 +259,7 @@ impl AppCatalog for AppsDb {
                 summary.name,
                 summary.version,
                 summary.description,
+                summary.delivers,
                 tags_json,
                 i64::from(summary.step_count),
                 canonical_str,
@@ -271,6 +276,7 @@ impl AppCatalog for AppsDb {
                 name: summary.name,
                 version: summary.version,
                 description: summary.description,
+                delivers: summary.delivers,
                 tags: summary.tags,
                 step_count: summary.step_count,
                 source_digest,
@@ -294,29 +300,14 @@ impl AppCatalog for AppsDb {
         let cursor = after_handle.unwrap_or("");
         let mut stmt = conn
             .prepare(
-                "SELECT handle, app_ref, name, version, description, tags_json, step_count, \
-                 source_digest, kind, mode \
+                "SELECT handle, app_ref, name, version, description, delivers, tags_json, \
+                 step_count, source_digest, kind, mode \
                  FROM apps WHERE principal = ?1 AND handle > ?2 ORDER BY handle ASC LIMIT ?3",
             )
             .map_err(|e| CoreError::Internal(format!("apps list prepare: {e}")))?;
         let fetch = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
         let rows = stmt
-            .query_map(params![principal, cursor, fetch], |r| {
-                let app_ref = r.get::<_, Vec<u8>>(1)?;
-                let tags_json = r.get::<_, String>(5)?;
-                Ok(Self::row_to_record(
-                    r.get::<_, String>(0)?,
-                    &app_ref,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    &tags_json,
-                    r.get::<_, i64>(6)?,
-                    r.get::<_, Option<Vec<u8>>>(7)?,
-                    r.get::<_, String>(8)?,
-                    r.get::<_, String>(9)?,
-                ))
-            })
+            .query_map(params![principal, cursor, fetch], Self::row_to_record)
             .map_err(|e| CoreError::Internal(format!("apps list query: {e}")))?;
         let mut out = Vec::new();
         for row in rows {
@@ -337,26 +328,13 @@ impl AppCatalog for AppsDb {
             .lock()
             .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
         conn.query_row(
-            "SELECT handle, app_ref, name, version, description, tags_json, step_count, envelope_json, \
-             source_digest, kind, mode \
+            "SELECT handle, app_ref, name, version, description, delivers, tags_json, step_count, \
+             envelope_json, source_digest, kind, mode \
              FROM apps WHERE principal = ?1 AND handle = ?2",
             params![principal, handle],
             |r| {
-                let app_ref = r.get::<_, Vec<u8>>(1)?;
-                let tags_json = r.get::<_, String>(5)?;
-                let record = Self::row_to_record(
-                    r.get::<_, String>(0)?,
-                    &app_ref,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    &tags_json,
-                    r.get::<_, i64>(6)?,
-                    r.get::<_, Option<Vec<u8>>>(8)?,
-                    r.get::<_, String>(9)?,
-                    r.get::<_, String>(10)?,
-                );
-                let envelope_json = r.get::<_, String>(7)?.into_bytes();
+                let record = Self::row_to_record(r)?;
+                let envelope_json = r.get::<_, String>("envelope_json")?.into_bytes();
                 Ok((record, envelope_json))
             },
         )

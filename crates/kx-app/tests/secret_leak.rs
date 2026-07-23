@@ -62,6 +62,11 @@ fn fully_populated() -> AppEnvelope {
             name: "notes".into(),
             content_ref: "f".repeat(64),
         }],
+        // The composition rail belongs in a "every rail set" fixture too: an App handle is
+        // by-name like every other entry here, and carries no authority and no bytes.
+        apps: vec![kx_app::AppRef {
+            handle: "team/apps/upstream".into(),
+        }],
     };
     env.steering_config = SteeringConfig::default();
     env.steering_config.model.model_route = "kx-serve:gemma".into();

@@ -130,6 +130,27 @@ pub struct SkillRef {
     pub tools: BTreeMap<String, String>,
 }
 
+/// A reference to another App in the SAME caller's catalog, by handle.
+///
+/// The declaration half of App composition: a step names this handle in its
+/// `apps` list, and the runtime lowers that App's own blueprint into the run.
+///
+/// **Handle only, deliberately.** It carries no snapshot of the callee's name or
+/// `delivers` (a copy would go stale the moment the callee is edited, and the console
+/// already lists Apps), and it pins no `app_digest`. Composition resolves the callee as it
+/// is AT AUTHOR TIME, so fixing a callee improves every App that calls it — which is the
+/// point of making an App a capability rather than a copy. Determinism is not lost by
+/// this: the composed DAG is what the run's `MoteId`s and recipe fingerprint are derived
+/// from, so a changed callee is visibly a different run, not a silently different one.
+///
+/// Carries NO authority, like every other entry on this rail: the callee re-resolves its
+/// own warrants from its own envelope, and the caller can neither widen nor narrow them.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppRef {
+    /// The callee's `namespace/collection/name` catalog handle.
+    pub handle: String,
+}
+
 /// The by-reference rail. Every field is by-ref or by-name; no inline bytes,
 /// no authority.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +179,9 @@ pub struct References {
     /// Memory artifacts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory: Vec<ArtifactRef>,
+    /// Other Apps this App composes. Declared here; BOUND by a step naming the handle.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<AppRef>,
 }
 
 impl References {
@@ -172,6 +196,7 @@ impl References {
             && self.rules.is_empty()
             && self.skills.is_empty()
             && self.memory.is_empty()
+            && self.apps.is_empty()
     }
 }
 
@@ -517,6 +542,21 @@ pub struct AppEnvelope {
     /// Free-form description.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
+    /// What one run of this App PRODUCES, in one line — the half of the catalog record that
+    /// makes an App pickable by another App.
+    ///
+    /// `description` says what an App *is*; `input_schema` says what it *needs*. Neither says
+    /// what comes BACK, so nothing composing Apps could choose one on purpose. This is that
+    /// third fact, and it is the line the composition menu renders.
+    ///
+    /// Advisory prose — NEVER parsed for enforcement (the `description` posture). It steers
+    /// which App an author picks; it constrains nothing about the run.
+    ///
+    /// Empty on every App authored before this field existed, and `skip_serializing_if` means
+    /// empty adds ZERO bytes — so every existing envelope canonicalizes byte-identically and
+    /// its `app_ref` / `app_digest` are unchanged.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub delivers: String,
     /// Catalog tags.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -569,6 +609,13 @@ pub struct AppSummary {
     pub version: String,
     /// Description.
     pub description: String,
+    /// What one run of this App produces (the [`AppEnvelope::delivers`] line).
+    ///
+    /// Carried on the SUMMARY, not left to a second call, so one `ListApps` yields the whole
+    /// composition registry: the deriving model needs every candidate's output line at once,
+    /// and an N+1 manifest read per App would put a live registry read inside the authoring
+    /// path.
+    pub delivers: String,
     /// Tags.
     pub tags: Vec<String>,
     /// Number of blueprint steps (display only; 0 for an Experience App).
@@ -589,6 +636,7 @@ impl AppEnvelope {
             name: name.into(),
             version: default_version(),
             description: String::new(),
+            delivers: String::new(),
             tags: Vec::new(),
             input_schema: None,
             blueprint: Some(blueprint),
@@ -614,6 +662,7 @@ impl AppEnvelope {
             name: name.into(),
             version: default_version(),
             description: String::new(),
+            delivers: String::new(),
             tags: Vec::new(),
             input_schema: None,
             blueprint: None,
@@ -736,6 +785,7 @@ impl AppEnvelope {
             name: self.name.clone(),
             version: self.version.clone(),
             description: self.description.clone(),
+            delivers: self.delivers.clone(),
             tags: self.tags.clone(),
             step_count,
             kind: self.kind(),
@@ -817,6 +867,17 @@ impl AppEnvelope {
                             .into(),
                     ));
                 }
+                // Composition is a BLUEPRINT concept: a declared App is reached by a step
+                // naming it, and an Experience app has no steps. Accepting the declaration
+                // would store an intent nothing can ever act on, which reads on the review
+                // surface as "this app calls that one" while the run never does.
+                if !self.references.apps.is_empty() {
+                    return Err(AppError::Invalid(
+                        "an experience app must not declare references.apps (it has no \
+                         blueprint, so no step can bind one)"
+                            .into(),
+                    ));
+                }
             }
         }
         // References by-ref/by-name discipline.
@@ -843,6 +904,9 @@ impl AppEnvelope {
         for conn in &self.references.connections {
             check_descriptor_no_userinfo(&conn.descriptor)?;
             check_bare_name("credential_ref", &conn.credential_ref)?;
+        }
+        for a in &self.references.apps {
+            check_app_handle(&a.handle)?;
         }
         for r in &self.steering_config.context.context_refs {
             check_ref("steering.context_ref", r)?;
@@ -908,6 +972,35 @@ fn check_bare_name(field: &str, name: &str) -> Result<(), AppError> {
     if name.contains('@') || name.contains(':') || name.contains(char::is_whitespace) {
         return Err(AppError::Invalid(format!(
             "{field} must be a bare credential name (no '@', ':', or whitespace), got {name:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// A catalog handle: exactly three non-empty `[a-z0-9._-]` segments, none starting or
+/// ending with `.`/`-` — the `AssetPath` shape `SaveApp` already enforces on the wire.
+///
+/// Re-stated here rather than shared because `kx-app` sits below the gateway and takes no
+/// dependency on it; the two must agree, and the same reasoning applies as for
+/// [`check_tool_id`]. Checked at authoring so a handle that could NEVER resolve is refused
+/// where the author can still fix it, instead of surfacing at run as a missing App.
+fn check_app_handle(handle: &str) -> Result<(), AppError> {
+    let segments: Vec<&str> = handle.split('/').collect();
+    let valid = segments.len() == 3
+        && segments.iter().all(|s| {
+            let b = s.as_bytes();
+            !s.is_empty()
+                && s.len() <= 128
+                && s.bytes().all(|c| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-')
+                })
+                && !matches!(b[0], b'.' | b'-')
+                && !matches!(b[b.len() - 1], b'.' | b'-')
+        });
+    if !valid {
+        return Err(AppError::Invalid(format!(
+            "references.apps[].handle must be a 'namespace/collection/name' AssetPath \
+             ([a-z0-9._-] segments), got {handle:?}"
         )));
     }
     Ok(())
@@ -1477,6 +1570,41 @@ mod tests {
         assert_eq!(parsed.mode, "");
         assert_eq!(parsed.mode(), AppMode::Contextual);
         assert_eq!(parsed.to_canonical_json().unwrap(), old.to_vec());
+    }
+
+    /// The same load-bearing property for `delivers`: an App authored before the composition
+    /// registry existed must canonicalize to the SAME bytes, so its `app_ref` / `app_digest`
+    /// — and therefore every stored catalog row and every export that pins one — cannot move.
+    #[test]
+    fn an_unset_delivers_adds_no_bytes() {
+        let env = AppEnvelope::new("x", sample_blueprint());
+        let s = String::from_utf8(env.to_canonical_json().unwrap()).unwrap();
+        assert!(
+            !s.contains("\"delivers\""),
+            "an unset delivers must be omitted: {s}"
+        );
+        let old =
+            br#"{"blueprint":{"steps":[]},"name":"x","schema":"kortecx.app/v1","version":"1"}"#;
+        let parsed = AppEnvelope::from_json_slice(old).unwrap();
+        assert_eq!(parsed.delivers, "");
+        assert_eq!(parsed.summary().delivers, "");
+        assert_eq!(parsed.to_canonical_json().unwrap(), old.to_vec());
+    }
+
+    /// `delivers` is advisory prose that must survive the round trip intact and reach the
+    /// SUMMARY — the summary is what `ListApps` projects, and the composition menu is built
+    /// from that projection, so a value that stops at the envelope would leave the menu blank.
+    #[test]
+    fn delivers_round_trips_onto_the_summary() {
+        let mut env = AppEnvelope::new("x", sample_blueprint());
+        env.delivers = "a ranked shortlist of candidate suppliers".to_string();
+        let canon = env.to_canonical_json().unwrap();
+        let again = AppEnvelope::from_json_slice(&canon).unwrap();
+        assert_eq!(
+            again.summary().delivers,
+            "a ranked shortlist of candidate suppliers"
+        );
+        assert_eq!(again.to_canonical_json().unwrap(), canon);
     }
 
     #[test]
