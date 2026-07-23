@@ -198,3 +198,69 @@ export async function stubProposeWorkflow(
     await fulfillUnary(route, toBinary(proto.ProposeWorkflowResponseSchema, resp));
   });
 }
+
+/** One step of a canned {@link stubDeriveApp} design. */
+export interface DerivedStepInit {
+  role: string;
+  intent: string;
+  kind?: string;
+  modelId?: string;
+  /** The per-step grant set the design ASKED for and the server kept (`{id: version}`). */
+  toolContract?: Record<string, string>;
+}
+
+/** A canned App design (every field optional — omit what the spec is not about). */
+export interface DerivedAppInit {
+  name?: string;
+  description?: string;
+  steps?: DerivedStepInit[];
+  edges?: { parent: number; child: number }[];
+  files?: { path: string; role: string }[];
+  framework?: string;
+  tools?: Record<string, string>;
+  skills?: string[];
+  connections?: string[];
+  datasets?: string[];
+  notices?: string[];
+}
+
+/**
+ * Stub `DeriveApp` with a canned design.
+ *
+ * The Apps chat surface derives BEFORE it creates, so on a model-free gateway there is no
+ * design and therefore nothing to approve — an authoring spec that does not stub this can only
+ * ever assert the honest refusal. Stubbing the one inference RPC keeps the rest of the flow
+ * real: `SaveApp` and `ScaffoldApp` still hit the actual gateway, so what the spec reads back
+ * is a genuinely saved envelope.
+ */
+export async function stubDeriveApp(page: Page, design: DerivedAppInit = {}): Promise<void> {
+  await onMethod(page, "DeriveApp", async (route) => {
+    const resp = create(proto.DeriveAppResponseSchema, {
+      result: {
+        case: "app",
+        value: create(proto.DerivedAppSchema, {
+          name: design.name ?? "Derived App",
+          description: design.description ?? "",
+          steps: (design.steps ?? []).map((s) =>
+            create(proto.DerivedAppStepSchema, {
+              role: s.role,
+              intent: s.intent,
+              kind: s.kind ?? "plain",
+              modelId: s.modelId ?? "",
+              toolContract: s.toolContract ?? {},
+            }),
+          ),
+          edges: (design.edges ?? []).map((e) => create(proto.ProposedEdgeSchema, e)),
+          files: (design.files ?? []).map((f) => create(proto.DerivedAppFileSchema, f)),
+          framework: design.framework ?? "",
+          tools: design.tools ?? {},
+          skills: design.skills ?? [],
+          connections: design.connections ?? [],
+          datasets: design.datasets ?? [],
+          notices: design.notices ?? [],
+        }),
+      },
+    });
+    await fulfillUnary(route, toBinary(proto.DeriveAppResponseSchema, resp));
+  });
+}

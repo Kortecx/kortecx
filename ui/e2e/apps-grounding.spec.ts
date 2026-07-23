@@ -1,16 +1,19 @@
 /**
- * T-RUNAPP-CONTEXT-RAIL e2e: the "New App" authoring form exposes the declarative
- * knowledge rail — a "Ground on dataset" chip (over the live ListDatasets) + a
- * guidance rule — and the saved App envelope carries `references.datasets` +
- * `references.rules`. At RunApp those resolve server-side into a `retrieve@1` grant
- * (self-grounding) + an entry-step context item. Model-free: the dataset is seeded
- * via the SDK's FFI-free client-vector path (no Metal), and we assert the SAVED
- * envelope (not the model scaffold, which needs a served model).
+ * T-RUNAPP-CONTEXT-RAIL e2e: the declarative knowledge rail — a "Ground on dataset" chip
+ * (over the live ListDatasets) + a guidance rule — survives the chat surface, and the saved
+ * App envelope carries `references.datasets` + `references.rules`. At RunApp those resolve
+ * server-side into a `retrieve@1` grant (self-grounding) + an entry-step context item.
+ *
+ * The rail now lives on the REVIEW panel rather than a form: the design pre-fills what it
+ * asked for, and the author edits it before the App exists. Model-free — the dataset is
+ * seeded via the SDK's FFI-free client-vector path (no Metal), `DeriveApp` is stubbed (the
+ * one inference RPC), and we assert the SAVED envelope, not the model scaffold.
  */
 
 import { KxClient } from "@kortecx/sdk/node";
 import { expect, test } from "@playwright/test";
 import { connectConsole, gotoViaPalette } from "./fixtures/connect";
+import { stubDeriveApp } from "./fixtures/grpc-stub";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
 let gw: Gateway | undefined;
@@ -37,28 +40,41 @@ test("New App: author a grounded App (dataset chip + guidance rule) and the rail
   await gotoViaPalette(page, "apps");
   await expect(page.getByTestId("apps-section")).toBeVisible();
 
-  // Open the inline New App authoring panel.
+  // The design NAMES the dataset it wants to ground on. The server has already intersected
+  // that name against the caller's own non-empty datasets, so what arrives is a real chip
+  // pre-pressed — not a suggestion the author has to go and find.
+  await stubDeriveApp(page, {
+    name: "Grounded Analyst",
+    description: "Answer questions grounded in the corpus.",
+    steps: [{ role: "analyst", intent: "Answer from the corpus" }],
+    datasets: ["research"],
+  });
+
   await page.getByTestId("new-app").click();
   await expect(page.getByTestId("new-app-form")).toBeVisible();
+  await page
+    .getByTestId("new-app-prompt")
+    .fill("Answer questions grounded in the research corpus.");
+  await page.getByTestId("new-app-derive").click();
+  await expect(page.getByTestId("new-app-review")).toBeVisible({ timeout: 30_000 });
 
-  // The declarative rail is present: the "Ground on dataset" chip for the seeded
-  // corpus (a button, NOT a controlled <select> — the Playwright selectOption gotcha)
-  // + the guidance-rule textarea.
+  // The declarative rail is on the REVIEW panel: the "Ground on dataset" chip for the seeded
+  // corpus (a button, NOT a controlled <select> — the Playwright selectOption gotcha) +
+  // the guidance-rule textarea.
   const chip = page.getByTestId("new-app-dataset-research");
   await expect(chip).toBeVisible({ timeout: 30_000 });
   await expect(chip).toContainText("research");
+  // Pre-pressed FROM THE DESIGN — this is the derived grant landing on the rail, which is the
+  // whole reason the App page arrives populated instead of empty.
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("new-app-rule")).toBeVisible();
 
-  // Author: name, goal, ground on the dataset, add a guidance rule. The handle is
-  // derived from the name (defaultHandle) — no handle field.
+  // The name came from the design; the handle is derived from it (defaultHandle).
   const HANDLE = "apps/local/grounded-analyst";
-  await page.getByTestId("new-app-name").fill("Grounded Analyst");
-  await page.getByTestId("new-app-goal").fill("Answer questions grounded in the corpus.");
-  await chip.click();
-  await expect(chip).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("new-app-name")).toHaveValue("Grounded Analyst");
   await page.getByTestId("new-app-rule").fill("Always cite the retrieved passages.");
 
-  await page.getByTestId("new-app-submit").click();
+  await page.getByTestId("new-app-approve").click();
 
   // The SAVE lands (the scaffold that follows needs a served model this gateway lacks,
   // so we verify the durable envelope directly): references.datasets grounds on

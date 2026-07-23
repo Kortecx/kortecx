@@ -1,7 +1,7 @@
 import { KxClient } from "@kortecx/sdk/node";
 import { expect, test } from "@playwright/test";
 import { connectConsole, gotoViaPalette } from "./fixtures/connect";
-import { stubProposeWorkflow } from "./fixtures/grpc-stub";
+import { stubDeriveApp } from "./fixtures/grpc-stub";
 import { expectOverlayAboveNavbar } from "./fixtures/overlay";
 import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 
@@ -42,26 +42,39 @@ test("builder: the Describe-a-workflow panel opens, clears the navbar, and close
   await expect(page.getByTestId("builder-propose-panel")).toHaveCount(0);
 });
 
-// 5b: the New App form's NL multi-step authoring. The console gateway serves no model, so a
-// real ProposeWorkflow would honestly reject — `stubProposeWorkflow` supplies a canned
-// multi-step plan so the deterministic propose→preview→author path is exercised, while the
-// (unstubbed) SaveApp lands the real envelope, asserted directly via the node client.
-test("New App: propose → preview → author a MULTI-STEP App (stubbed ProposeWorkflow)", async ({
+// The Apps chat surface's multi-step authoring, end to end and model-free. The console
+// gateway serves no model, so a real `DeriveApp` would honestly reject — `stubDeriveApp`
+// supplies a canned design so the derive→review→approve path is exercised, while the
+// (unstubbed) SaveApp lands the REAL envelope, asserted directly via the node client.
+//
+// ★ The design here is a FAN-OUT carrying a per-step TOOL GRANT, because those are the two
+// things this surface added and neither was previously reachable: `ProposeWorkflow` could
+// only ever return an empty `tool_contract` (every authoring role resolves to a pure model
+// recipe), and its contract taught a chain. Asserting a sequential, tool-less plan would pass
+// against the surface this replaced.
+test("New App: design → review → approve a PARALLEL, tool-granted App (stubbed DeriveApp)", async ({
   page,
 }) => {
-  const CANNED = {
+  const DESIGN = {
+    name: "Release Notes Writer",
+    description: "Summarize a changelog into release notes.",
     steps: [
-      { role: "researcher", intent: "Gather the source facts from the changelog." },
+      {
+        role: "researcher",
+        intent: "Gather the source facts from the changelog.",
+        toolContract: { "fs-read": "1" },
+      },
       { role: "analyst", intent: "Group the changes by theme and significance." },
       { role: "writer", intent: "Write the final release notes." },
     ],
+    // 0 and 1 have NO parent: they run at the same time and 2 joins them.
     edges: [
-      { parent: 0, child: 1 },
+      { parent: 0, child: 2 },
       { parent: 1, child: 2 },
     ],
   };
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
-  await stubProposeWorkflow(page, CANNED);
+  await stubDeriveApp(page, DESIGN);
   const kx = new KxClient(gw.endpoint);
 
   await connectConsole(page, gw);
@@ -70,15 +83,15 @@ test("New App: propose → preview → author a MULTI-STEP App (stubbed ProposeW
   await page.getByTestId("new-app").click();
   await expect(page.getByTestId("new-app-form")).toBeVisible();
 
-  // The handle is derived from the name (defaultHandle) — no handle field.
+  // The handle is derived from the design's name (defaultHandle) — no handle field.
   const HANDLE = "apps/local/release-notes-writer";
-  await page.getByTestId("new-app-name").fill("Release Notes Writer");
-  await page.getByTestId("new-app-goal").fill("Summarize a changelog into release notes.");
+  await page.getByTestId("new-app-prompt").fill("Summarize a changelog into release notes.");
 
-  // Propose → the plan lands on the CANVAS (it used to render as a read-only <ol> you
-  // could look at and not change). The structure rail reports the step count and the
-  // builder shows one node per step.
-  await page.getByTestId("new-app-propose").click();
+  // Design → the workflow lands on the CANVAS as an EDITABLE graph, and nothing has been
+  // created. The review rail reports the step count and the builder shows one node per step.
+  await page.getByTestId("new-app-derive").click();
+  await expect(page.getByTestId("new-app-review")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("new-app-name")).toHaveValue("Release Notes Writer");
   await expect(page.getByTestId("new-app-structure")).toContainText("3 steps");
   await expect(page.getByTestId("blueprint-builder")).toBeVisible();
   await expect(page.getByTestId("builder-node")).toHaveCount(3);
@@ -92,10 +105,15 @@ test("New App: propose → preview → author a MULTI-STEP App (stubbed ProposeW
   await expect(page.getByTestId("builder-submit")).toHaveCount(0);
   await expect(page.getByTestId("builder-save-as-app")).toHaveCount(0);
 
-  // Author → the SAVED envelope carries a 3-step blueprint (NOT the single-agent fallback).
+  // The tool the DESIGN asked for is on the rail before the App exists — the capability gap
+  // this whole path closes. Previously every proposal arrived with none, and the only way to
+  // plug an App in was to create it and attach afterwards.
+  await expect(page.getByTestId("new-app-tools-attached")).toContainText("fs-read");
+
+  // Approve → the SAVED envelope carries a 3-step blueprint (NOT the single-agent fallback).
   // The scaffold that follows Save needs a model and errors here — ignored, exactly like the
   // other App-authoring specs; the durable envelope is the assertion.
-  await page.getByTestId("new-app-submit").click();
+  await page.getByTestId("new-app-approve").click();
   await expect
     .poll(
       async () => {
@@ -108,8 +126,21 @@ test("New App: propose → preview → author a MULTI-STEP App (stubbed ProposeW
     )
     .toBe(3);
   const stored = await kx.getApp(HANDLE);
-  const steps = (stored?.envelope as { blueprint: { steps: { kind: string }[] } }).blueprint.steps;
-  expect(steps.every((s) => s.kind === "model")).toBe(true);
+  const bp = (
+    stored?.envelope as {
+      blueprint: { steps: { kind: string }[]; edges?: { parent: number; child: number }[] };
+    }
+  ).blueprint;
+  expect(bp.steps.every((s) => s.kind === "model")).toBe(true);
+  // ★ The SHAPE survived to the durable envelope. Two steps with no incoming edge is the
+  // parallelism; a blueprint that had silently linearised would still have 3 steps and read
+  // as a pass, which is why this asserts the edges and not the count.
+  const withParent = new Set((bp.edges ?? []).map((e) => e.child));
+  expect([0, 1].every((i) => !withParent.has(i))).toBe(true);
+  expect(withParent.has(2)).toBe(true);
+  // The derived tool grant survived to the envelope as a WISH (the server still intersects it
+  // at run — SN-8).
+  expect(JSON.stringify(stored?.envelope)).toContain("fs-read");
   // 5c co-ship: every authored App still carries the capabilities rule.
   expect(JSON.stringify(stored?.envelope)).toContain("capabilities");
   kx.close();

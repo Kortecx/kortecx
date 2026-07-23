@@ -4946,6 +4946,65 @@ button.card-grid__title:hover {
   gap: 0.5rem;
 }
 
+/* The Apps CHAT SURFACE — one prompt box with its selectors riding at the top right, an
+   attach/submit foot, and (after the derive) the review panel below. Reuses the existing
+   `.input` / `.view-toggle--compact` / `.chips` vocabulary; only the composition is new. */
+.new-app-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+/* Top-RIGHT: kind first, then — only for a scheduled app — the authoring mode to its right.
+   `flex-end` is what puts them at the right; `wrap` is what keeps them from overflowing the
+   card on a narrow viewport instead of clipping the second selector. */
+.new-app-prompt__selectors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+.new-app-prompt__input {
+  width: 100%;
+  resize: vertical;
+  /* The prompt IS the input, so it reads as the primary field rather than one row of a form. */
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.new-app-prompt__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.new-app-prompt__attach {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.new-app-prompt__attach input[type="file"] {
+  max-width: 14rem;
+  font-size: 0.8rem;
+}
+/* The hosted lane's review surface: the planned project files. */
+.new-app-files {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.new-app-files li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  /* A long role sentence wraps under the path rather than widening the card. */
+  flex-wrap: wrap;
+}
+
 /* Scaffold progress — one row per skeleton file, honest state glyphs. */
 .scaffold-progress {
   margin-top: 0.75rem;

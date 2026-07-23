@@ -30,6 +30,7 @@ import { toUiError } from "../../kx/errors";
 import { useAppBranch, useAppFileContent, useSaveFile } from "../../kx/use-app-files";
 import { useApp, useExportAppBundle, useSaveApp } from "../../kx/use-apps";
 import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
+import { useScaffoldStatus } from "../../kx/use-scaffold-app";
 import { buildFileTree } from "../../lib/file-tree";
 import { inferLanguageFromPath } from "../../lib/monaco/infer-language";
 import { loadFlag, persistFlag } from "../../lib/ui-flags";
@@ -57,6 +58,7 @@ import { MonacoMount } from "../editor/MonacoMount";
 import { Icon } from "../shell/Icon";
 import { AppLineageSection } from "./AppLineageSection";
 import { sectionOf } from "./AppsSection";
+import { ScaffoldProgress } from "./ScaffoldProgress";
 
 const TABS = ["files", "lineage", "skills", "tools", "integrations"] as const;
 export type IdeTab = (typeof TABS)[number];
@@ -180,6 +182,13 @@ export function AppDetailSection({
     });
 
   const branch = useAppBranch(handle);
+  // Is a scaffold WRITING this App's project right now? The chat surface routes here as soon
+  // as the App is created, so the live phase — not the (still empty) branch — is what decides
+  // whether this page shows progress or a file tree. The query stops polling by itself on a
+  // terminal phase, so an App scaffolded long ago costs one read and nothing after it.
+  const scaffoldStatus = useScaffoldStatus(tab === "files" ? handle : null, tab === "files");
+  const scaffolding =
+    scaffoldStatus.data?.phase === "planning" || scaffoldStatus.data?.phase === "writing";
   const items = branch.data?.items ?? [];
   const tree = useMemo(
     () => buildFileTree(items.map((it) => ({ path: it.path, contentRef: it.contentRef }))),
@@ -316,6 +325,12 @@ export function AppDetailSection({
         ) : (
           <EmptyState title="Loading integrations…" />
         )
+      ) : scaffolding ? (
+        // The scaffold runs SERVER-side and the chat surface routes here the moment the App is
+        // created, so this page — not a form that has already closed — is where an author
+        // watches their project get written. Terminal phases fall through to the file tree
+        // below, which is the real artifact once there is one.
+        <ScaffoldProgress branchHandle={handle} appHandle={handle} />
       ) : branch.isLoading ? (
         <EmptyState title="Loading project…" />
       ) : branch.isError ? (
