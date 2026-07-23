@@ -75,6 +75,7 @@ from .defaults import (
     run,
     set_default_client,
 )
+from .derive import AppDerivation, DerivedAppFile, DerivedAppStep
 from .errors import (
     ErrorCode,
     KxCatchupRequired,
@@ -118,7 +119,6 @@ from .memory import (
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
 from .personas import PERSONAS, persona, persona_names
-from .derive import AppDerivation, DerivedAppFile, DerivedAppStep
 from .propose import ProposedWorkflowStep, WorkflowProposal
 from .react import ReactTurn, ReactTurnPage
 from .recipes import (

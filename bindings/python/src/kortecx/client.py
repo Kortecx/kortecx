@@ -64,6 +64,7 @@ from .datasets import (
     RetrievalMode,
     _to_documents,
 )
+from .derive import AppDerivation
 from .errors import KxError, KxFailedPrecondition, KxNotFound, KxUsage, from_rpc_error
 from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
@@ -71,7 +72,6 @@ from .grants import AssetGrants
 from .memory import DecayReport, Memory, MemoryHit, MemoryKind, MemoryStats, StoreResult
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteDetail
-from .derive import AppDerivation
 from .propose import WorkflowProposal
 from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
