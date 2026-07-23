@@ -353,12 +353,14 @@ fn derive_blocking<B: InferenceBackend>(
 /// Split out of `derive_blocking` because it is the part with a rule worth stating on its own:
 /// each axis is resolved independently and each drop is REPORTED. One invented id costs only
 /// itself — never the real grants beside it, and never silently.
-fn intersect_capabilities(
-    plan: &DerivedPlan,
-    menu: &CapabilityMenu,
-    recipes: &dyn RoleRecipeResolver,
-    truncation: &MenuTruncation,
-) -> (Vec<DerivedStep>, DerivedApp) {
+/// The advisories that come from the design itself rather than from any one capability —
+/// what the prompt could not SHOW the model, and what the model answered in the wrong shape.
+///
+/// Its own function because it reads top-to-bottom as prose and shares no state with the
+/// per-step intersection below; keeping it inline only made that pipeline longer to read.
+/// Every entry is the same promise: a design that quietly asked for something it did not
+/// receive would produce an App that quietly cannot do part of its job.
+fn design_notices(plan: &DerivedPlan, truncation: &MenuTruncation) -> Vec<String> {
     let mut notices = Vec::new();
     if truncation.tools_omitted > 0 {
         notices.push(format!(
@@ -367,7 +369,6 @@ fn intersect_capabilities(
             truncation.tools_omitted
         ));
     }
-
     if truncation.apps_omitted > 0 {
         notices.push(format!(
             "{} more of your apps exist than fit the design prompt — attach any that should be \
@@ -375,7 +376,6 @@ fn intersect_capabilities(
             truncation.apps_omitted
         ));
     }
-
     if plan.folded_app_level {
         notices.push(
             "the design attached some capabilities to the app rather than to a step — they \
@@ -383,6 +383,16 @@ fn intersect_capabilities(
                 .to_string(),
         );
     }
+    notices
+}
+
+fn intersect_capabilities(
+    plan: &DerivedPlan,
+    menu: &CapabilityMenu,
+    recipes: &dyn RoleRecipeResolver,
+    truncation: &MenuTruncation,
+) -> (Vec<DerivedStep>, DerivedApp) {
+    let mut notices = design_notices(plan, truncation);
 
     // Every axis is resolved PER STEP and unioned into the app-level sets. The union is the
     // DECLARATION a client writes into `references.*`; the per-step lists are the BINDINGS
