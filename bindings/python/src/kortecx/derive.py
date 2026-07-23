@@ -31,7 +31,9 @@ class DerivedAppStep:
 
     ``skills`` / ``integrations`` / ``datasets`` / ``apps`` are the per-step BINDINGS: which
     node uses each capability. ``apps`` is the one that adds WORK — each handle lowers that
-    App's whole blueprint into the run, feeding its result to this step. They become the blueprint step's own lists, while the app-level lists on
+    App's whole blueprint into the run, feeding its result to this step.
+
+    They become the blueprint step's own lists, while the app-level lists on
     :class:`AppDerivation` are their UNION — the DECLARATION set you write into the envelope's
     ``references``. Writing only the union authors an App whose every capability falls back to
     the entry step."""

@@ -92,9 +92,7 @@ class Task:
 
     def has_app_bindings(self) -> bool:
         """True when this step carries an App-envelope capability binding."""
-        return bool(
-            self.app_skills or self.app_connections or self.app_datasets or self.app_apps
-        )
+        return bool(self.app_skills or self.app_connections or self.app_datasets or self.app_apps)
 
     # --- operator sugar (lower identically to the string DSL) ---
     def __rshift__(self, other: "_Node") -> "_Seq":
