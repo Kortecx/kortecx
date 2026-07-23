@@ -1817,6 +1817,9 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         locked: false,
         // D213 lane label ("functional"/"experience"); empty ⇒ functional on an old row.
         kind: r.kind,
+        // Authoring mode ("contextual"/"codified"); empty ⇒ contextual on an old row, and
+        // always empty for an experience app (which has no such axis).
+        mode: r.mode,
     }
 }
 

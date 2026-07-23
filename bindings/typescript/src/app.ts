@@ -144,6 +144,8 @@ export class AppBuilder {
    * the runtime, not a blueprint. Set via {@link AppBuilder.hosted}; mutually exclusive
    * with {@link AppBuilder.blueprint}. */
   private _hosted?: { framework: string };
+  /** The authoring mode label (`""` = contextual). See {@link AppBuilder.mode}. */
+  private _mode = "";
   /** Imperative pre-run registrations carried from a Flow via {@link Flow.asApp}
    * (with_mcp connectors / with_memory facts). {@link run} executes them before RunApp.
    * Never part of the envelope (off the golden digest). */
@@ -392,6 +394,23 @@ export class AppBuilder {
     return this;
   }
 
+  /** How this App is authored — the second axis, orthogonal to the scheduled/hosted lane.
+   *
+   * `"contextual"` (the default) is a TEXT app that works by model steer: it carries its
+   * prompt / rules / reference markdown, and the runtime hands that context to the model,
+   * which acts through the tools, skills and integrations it was granted.
+   *
+   * `"codified"` means the model authors the code and configuration the runtime needs in
+   * order to manage, orchestrate and run the App — the artifact is a real project, not prose.
+   *
+   * Leaving it unset emits NO `mode` key, so an App authored without this call serializes
+   * exactly as it did before the field existed and keeps its `app_ref`. Not valid on a hosted
+   * app, which is a project by construction — the server refuses one that carries it. */
+  mode(mode: "contextual" | "codified"): this {
+    this._mode = mode;
+    return this;
+  }
+
   private referencesDict(): Record<string, unknown> {
     const refs: Record<string, unknown> = {};
     if (this._context.length) refs.context = this._context;
@@ -474,6 +493,7 @@ export class AppBuilder {
     const steer = this.steeringDict();
     if (Object.keys(steer).length) env.steering_config = steer;
     if (this._branchHandle) env.branch_handle = this._branchHandle;
+    if (this._mode) env.mode = this._mode;
     return env;
   }
 

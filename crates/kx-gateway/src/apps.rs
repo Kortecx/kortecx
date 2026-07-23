@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS apps (
     envelope_json TEXT NOT NULL,   -- the CANONICAL kortecx.app/v1 envelope bytes
     source_digest BLOB,            -- OPTIONAL 32B lineage hint (import/clone source app_digest); NULL = authored-here. Off-identity/off-journal/off-digest.
     kind          TEXT NOT NULL DEFAULT '', -- D213 lane ('functional'/'experience'); '' = functional (old row). Display/routing only, off-identity.
+    mode          TEXT NOT NULL DEFAULT '', -- authoring mode ('contextual'/'codified'); '' = contextual (old row). Display/routing only, off-identity.
     PRIMARY KEY (principal, handle)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
@@ -103,10 +104,23 @@ impl AppsDb {
         // Additive lineage column — migrate an existing v1 catalog in place WITHOUT a
         // version bump (a bump would drop saved apps). Old binaries ignore the unknown
         // column (named-column SELECT/INSERT).
-        Self::ensure_source_digest_column(&conn)
-            .map_err(|e| GatewayError::Catalog(format!("apps migrate source_digest: {e}")))?;
-        Self::ensure_kind_column(&conn)
-            .map_err(|e| GatewayError::Catalog(format!("apps migrate kind: {e}")))?;
+        for (column, decl) in [
+            (
+                "source_digest",
+                "ALTER TABLE apps ADD COLUMN source_digest BLOB",
+            ),
+            (
+                "kind",
+                "ALTER TABLE apps ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
+            ),
+            (
+                "mode",
+                "ALTER TABLE apps ADD COLUMN mode TEXT NOT NULL DEFAULT ''",
+            ),
+        ] {
+            Self::ensure_column(&conn, column, decl)
+                .map_err(|e| GatewayError::Catalog(format!("apps migrate {column}: {e}")))?;
+        }
         conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
             params![SCHEMA_VERSION],
@@ -123,37 +137,25 @@ impl AppsDb {
         Ok(conn)
     }
 
-    /// Idempotently add the nullable `source_digest` column (portable-App lineage).
-    /// A no-op when already present (a fresh catalog gets it from [`SCHEMA`]; an
-    /// existing v1 catalog gets it via `ALTER TABLE ADD COLUMN`). Additive, never a
-    /// `SCHEMA_VERSION` bump — saved apps survive the upgrade.
-    fn ensure_source_digest_column(conn: &Connection) -> rusqlite::Result<()> {
+    /// Idempotently add one additive column, given its `ALTER TABLE` declaration.
+    ///
+    /// A no-op when already present: a fresh catalog gets every column from [`SCHEMA`], an
+    /// existing one gets the missing ones here. Always additive and NEVER a `SCHEMA_VERSION`
+    /// bump — a bump would drop saved apps, and old binaries ignore an unknown column because
+    /// every SELECT/INSERT names its columns explicitly.
+    ///
+    /// One helper rather than one per column: the probe is subtle enough (`table_info` yields
+    /// the name at index 1, and the statement must be dropped before the `ALTER`) that three
+    /// hand-copied versions is three chances to get it subtly different.
+    fn ensure_column(conn: &Connection, column: &str, decl: &str) -> rusqlite::Result<()> {
         let mut stmt = conn.prepare("PRAGMA table_info(apps)")?;
         let present = stmt
             .query_map([], |r| r.get::<_, String>(1))?
             .filter_map(Result::ok)
-            .any(|col| col == "source_digest");
+            .any(|col| col == column);
         drop(stmt);
         if !present {
-            conn.execute("ALTER TABLE apps ADD COLUMN source_digest BLOB", [])?;
-        }
-        Ok(())
-    }
-
-    /// Idempotently add the `kind` column (D213 Experience lane). A no-op when already
-    /// present. Additive, never a `SCHEMA_VERSION` bump — old rows read `''` (functional).
-    fn ensure_kind_column(conn: &Connection) -> rusqlite::Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(apps)")?;
-        let present = stmt
-            .query_map([], |r| r.get::<_, String>(1))?
-            .filter_map(Result::ok)
-            .any(|col| col == "kind");
-        drop(stmt);
-        if !present {
-            conn.execute(
-                "ALTER TABLE apps ADD COLUMN kind TEXT NOT NULL DEFAULT ''",
-                [],
-            )?;
+            conn.execute(decl, [])?;
         }
         Ok(())
     }
@@ -182,6 +184,7 @@ impl AppsDb {
         step_count: i64,
         source_digest: Option<Vec<u8>>,
         kind: String,
+        mode: String,
     ) -> AppRecord {
         let mut id = [0u8; 16];
         let n = app_ref.len().min(16);
@@ -196,6 +199,7 @@ impl AppsDb {
             step_count: u32::try_from(step_count).unwrap_or(u32::MAX),
             source_digest,
             kind,
+            mode,
         }
     }
 }
@@ -239,10 +243,11 @@ impl AppCatalog for AppsDb {
         let deduplicated = existing.as_deref() == Some(&app_ref[..]);
         let source_digest = source_digest.map(<[u8]>::to_vec);
         let kind = summary.kind.as_str().to_string();
+        let mode = summary.mode.as_str().to_string();
         conn.execute(
             "INSERT OR REPLACE INTO apps(principal, handle, app_ref, name, version, description, \
-             tags_json, step_count, envelope_json, source_digest, kind) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             tags_json, step_count, envelope_json, source_digest, kind, mode) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 principal,
                 handle,
@@ -254,7 +259,8 @@ impl AppCatalog for AppsDb {
                 i64::from(summary.step_count),
                 canonical_str,
                 source_digest,
-                kind,
+                kind.clone(),
+                mode.clone(),
             ],
         )
         .map_err(|e| CoreError::Internal(format!("apps upsert: {e}")))?;
@@ -269,6 +275,7 @@ impl AppCatalog for AppsDb {
                 step_count: summary.step_count,
                 source_digest,
                 kind,
+                mode,
             },
             deduplicated,
         ))
@@ -288,7 +295,7 @@ impl AppCatalog for AppsDb {
         let mut stmt = conn
             .prepare(
                 "SELECT handle, app_ref, name, version, description, tags_json, step_count, \
-                 source_digest, kind \
+                 source_digest, kind, mode \
                  FROM apps WHERE principal = ?1 AND handle > ?2 ORDER BY handle ASC LIMIT ?3",
             )
             .map_err(|e| CoreError::Internal(format!("apps list prepare: {e}")))?;
@@ -307,6 +314,7 @@ impl AppCatalog for AppsDb {
                     r.get::<_, i64>(6)?,
                     r.get::<_, Option<Vec<u8>>>(7)?,
                     r.get::<_, String>(8)?,
+                    r.get::<_, String>(9)?,
                 ))
             })
             .map_err(|e| CoreError::Internal(format!("apps list query: {e}")))?;
@@ -330,7 +338,7 @@ impl AppCatalog for AppsDb {
             .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
         conn.query_row(
             "SELECT handle, app_ref, name, version, description, tags_json, step_count, envelope_json, \
-             source_digest, kind \
+             source_digest, kind, mode \
              FROM apps WHERE principal = ?1 AND handle = ?2",
             params![principal, handle],
             |r| {
@@ -346,6 +354,7 @@ impl AppCatalog for AppsDb {
                     r.get::<_, i64>(6)?,
                     r.get::<_, Option<Vec<u8>>>(8)?,
                     r.get::<_, String>(9)?,
+                    r.get::<_, String>(10)?,
                 );
                 let envelope_json = r.get::<_, String>(7)?.into_bytes();
                 Ok((record, envelope_json))
