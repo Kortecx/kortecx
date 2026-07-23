@@ -82,14 +82,20 @@ them by their exact menu name, and only the ones the goal actually needs. Leave 
 when it needs none.\n\
 Also give the app a short NAME (2-5 words, what it does) and a one-sentence DESCRIPTION.\n\
 Reply with EXACTLY one JSON object and NOTHING else — no prose, no code fence, no \
-explanation:\n\
-{\"app\":{\"name\":\"<short name>\",\"description\":\"<one sentence>\",\"steps\":[{\"role\":\"\
-<palette role>\",\"intent\":\"<what this step produces>\",\"tools\":[\"<menu id>\"]}],\"edges\":\
-[{\"parent\":<step index>,\"child\":<step index>}],\"skills\":[],\"integrations\":[],\
-\"datasets\":[]}}\n\
+explanation. This example gathers two INDEPENDENT things and combines them — note that steps 0 \
+and 1 have no edge into them, so they run AT THE SAME TIME, and step 2 waits for both:\n\
+{\"app\":{\"name\":\"Weekly Sales Digest\",\"description\":\"Combines pipeline and support \
+signals into one weekly digest.\",\"steps\":[\
+{\"role\":\"researcher\",\"intent\":\"Collect this week's closed deals and their values\",\"tools\":[]},\
+{\"role\":\"researcher\",\"intent\":\"Collect this week's support escalations\",\"tools\":[]},\
+{\"role\":\"writer\",\"intent\":\"Write one digest covering both\",\"tools\":[]}],\
+\"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}],\
+\"skills\":[],\"integrations\":[],\"datasets\":[]}}\n\
 Rules: step and edge indices are 0-based into steps[]; an edge's parent index must be smaller \
 than its child index; every list is always present, empty when unused; do NOT include a model \
-id, a permission, or any field other than the ones shown.";
+id, a permission, or any field other than the ones shown. Do NOT connect every step in one \
+line — an edge means the child CONSUMES the parent's output, so two steps that read different \
+sources must not be chained.";
 
 /// One curated authoring role: a stable `name` (aligned to the SDK persona library) + a
 /// one-line `framing` the planner palette shows the model. The heavy MoteDef axes come
@@ -241,14 +247,16 @@ mod tests {
     /// decoder refuses produces a model that is right and a runtime that says it is wrong.
     #[test]
     fn derive_example_decodes_and_uses_palette_roles() {
-        const DERIVE_EXAMPLE: &str = "{\"app\":{\"name\":\"Release Notes Writer\",\
-\"description\":\"Turns merged changes into release notes.\",\"steps\":[\
-{\"role\":\"researcher\",\"intent\":\"Gather the merged changes\",\"tools\":[]},\
-{\"role\":\"writer\",\"intent\":\"Write the notes\",\"tools\":[]}],\
-\"edges\":[{\"parent\":0,\"child\":1}],\"skills\":[],\"integrations\":[],\"datasets\":[]}}";
+        const DERIVE_EXAMPLE: &str = "{\"app\":{\"name\":\"Weekly Sales Digest\",\
+\"description\":\"Combines pipeline and support signals into one weekly digest.\",\"steps\":[\
+{\"role\":\"researcher\",\"intent\":\"Collect this week's closed deals and their values\",\"tools\":[]},\
+{\"role\":\"researcher\",\"intent\":\"Collect this week's support escalations\",\"tools\":[]},\
+{\"role\":\"writer\",\"intent\":\"Write one digest covering both\",\"tools\":[]}],\
+\"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}],\
+\"skills\":[],\"integrations\":[],\"datasets\":[]}}";
         let d = crate::derive_plan::decode_derived(DERIVE_EXAMPLE.as_bytes())
             .expect("the taught envelope must decode via the same enforcer the runtime uses");
-        assert_eq!(d.steps.len(), 2);
+        assert_eq!(d.steps.len(), 3);
         for s in &d.steps {
             assert!(
                 is_palette_role(&s.role),
@@ -256,6 +264,23 @@ mod tests {
                 s.role
             );
         }
+        // ★ The taught example must itself be a FAN-OUT, and the contract must contain it
+        // verbatim. Found live: with a single-edge example, Gemma-4-12B returned a 4-step CHAIN
+        // for a prompt naming two explicitly independent sources — prose about parallelism did
+        // not survive contact with an example that showed a chain. Whoever "simplifies" this
+        // example back to one edge should fail here.
+        assert!(
+            DERIVE_SYSTEM
+                .contains("\"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}]"),
+            "the contract must TEACH a fan-out by example, not only describe one"
+        );
+        let with_parent: std::collections::BTreeSet<usize> =
+            d.edges.iter().map(|&(_, c)| c).collect();
+        assert!(
+            !with_parent.contains(&0) && !with_parent.contains(&1),
+            "steps 0 and 1 must have no parent — that IS the parallelism being taught"
+        );
+        assert!(with_parent.contains(&2), "step 2 must join them");
     }
 
     /// The derive contract must teach PARALLELISM, and must not inherit the planner's

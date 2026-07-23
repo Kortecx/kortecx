@@ -291,19 +291,31 @@ fn clean_names(raw: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-/// Normalize a model-named tool id: trim, and accept the `id@version` form the menu does NOT
-/// teach by keeping only the id.
+/// Normalize a model-named tool id to the bare id the ceiling is keyed by.
 ///
-/// The menu deliberately asks for a BARE id and resolves the version host-side, because a model
-/// asked for a version writes a semver (`"1.0.0"`) where the envelope requires an integer — the
-/// exact malformed-version failure the codified fold hit live. Accepting `id@version` and
-/// discarding the version is the generous-input rule the codified decoders already apply to a
-/// wrapper object: the model has answered the question either way.
+/// The menu asks for a BARE id and resolves the version host-side, because a model asked for a
+/// version writes a semver (`"1.0.0"`) where the envelope requires an integer — the exact
+/// malformed-version failure the codified fold hit live. But a model does not only answer the
+/// question it was asked: it copies what it was SHOWN.
+///
+/// **Found live.** The menu rendered `- retrieve (v1)` and Gemma-4-12B returned `"retrieve (v1)"`
+/// as the id. It had correctly chosen a tool the caller could fire, and the intersection dropped
+/// it — reporting the drop as an authority problem when it was a formatting one. The menu no
+/// longer shows a version at all (see [`CapabilityMenu::render`]); this strips both the
+/// `id@version` and the ` (v…)` forms anyway, because tolerating a shape the prompt no longer
+/// teaches costs nothing and silently losing a real grant costs the App part of its job.
 fn normalize_tool_id(raw: &str) -> String {
-    let t = raw.trim();
+    let mut t = raw.trim();
+    // ` (v1)` / `(1)` — the display parenthetical.
+    if let Some((id, rest)) = t.split_once('(') {
+        if rest.trim_end().ends_with(')') {
+            t = id.trim();
+        }
+    }
+    // `id@version`.
     match t.split_once('@') {
         Some((id, _version)) => id.trim().to_string(),
-        None => t.to_string(),
+        None => t.trim().to_string(),
     }
 }
 
@@ -362,8 +374,12 @@ impl CapabilityMenu {
             out.push_str("- (no tools are available to this account; use an empty tools list)\n");
         }
         let mut omitted = 0usize;
-        for (id, version) in &self.tools {
-            let line = format!("- {id} (v{version})\n");
+        for (id, _version) in &self.tools {
+            // The id ALONE. Showing `(v1)` here made Gemma-4-12B return `"retrieve (v1)"` as the
+            // id, which matched nothing and dropped a grant the caller could really fire. The
+            // version is resolved host-side from the ceiling and the contract forbids naming
+            // one, so rendering it was decoration that cost a capability.
+            let line = format!("- {id}\n");
             if out.len() + line.len() > MAX_DERIVE_MENU_BYTES {
                 omitted += 1;
                 continue;
@@ -583,6 +599,23 @@ notes\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
         assert_eq!(granted.get("mcp-echo/echo"), Some(&"1".to_string()));
     }
 
+    /// ★ THE LIVE FINDING. The menu once rendered `- retrieve (v1)`, and Gemma-4-12B returned
+    /// `"retrieve (v1)"` as the id — a tool the caller could genuinely fire, dropped by a
+    /// formatting mismatch and then reported as an authority problem. Every unit test passed,
+    /// because every one of them fed a bare id or `id@version`.
+    #[test]
+    fn a_display_parenthetical_echoed_back_as_an_id_still_resolves() {
+        let d = decode_derived(
+            GOOD.replace("\"mcp-echo/echo\"", "\"mcp-echo/echo (v1)\"")
+                .as_bytes(),
+        )
+        .expect("the echoed display form decodes");
+        assert_eq!(d.steps[0].tools, vec!["mcp-echo/echo".to_string()]);
+        let (granted, dropped) = menu().resolve(&d.steps[0].tools);
+        assert!(dropped.is_empty(), "the grant must survive: {dropped:?}");
+        assert_eq!(granted.get("mcp-echo/echo"), Some(&"1".to_string()));
+    }
+
     #[test]
     fn duplicate_tool_names_collapse_and_the_per_step_cap_holds() {
         let dup = GOOD.replace(
@@ -611,7 +644,13 @@ notes\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
     #[test]
     fn the_menu_renders_ids_only_and_within_budget() {
         let (rendered, truncation) = menu().render();
-        assert!(rendered.contains("mcp-echo/echo (v1)"));
+        // The id ALONE — no version parenthetical. Found live: showing one made the model
+        // return it AS the id.
+        assert!(rendered.contains("- mcp-echo/echo\n"));
+        assert!(
+            !rendered.contains("(v1)"),
+            "a version parenthetical invites an unusable id"
+        );
         assert!(rendered.contains("Skills available: classification"));
         assert!(rendered.contains("Integrations connected: gmail"));
         assert!(rendered.contains("Datasets to ground on: handbook"));
@@ -638,9 +677,12 @@ notes\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
         .render();
         assert!(rendered.len() <= MAX_DERIVE_MENU_BYTES);
         assert!(truncation.tools_omitted > 0, "the shortfall must be told");
-        // Every line that DID make it is whole.
+        // Every line that DID make it is whole (a truncated id would be named and then dropped).
         for line in rendered.lines().filter(|l| l.starts_with("- ")) {
-            assert!(line.ends_with(')'), "truncated mid-entry: {line:?}");
+            assert!(
+                line.ends_with("some-fairly-long-tool-name"),
+                "truncated mid-entry: {line:?}"
+            );
         }
     }
 
