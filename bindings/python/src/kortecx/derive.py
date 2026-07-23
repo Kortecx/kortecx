@@ -29,8 +29,9 @@ class DerivedAppStep:
     SURVIVED the server's intersection against the caller's tool ceiling — the ceiling's
     version, never the model's.
 
-    ``skills`` / ``integrations`` / ``datasets`` are the per-step BINDINGS: which node uses
-    each capability. They become the blueprint step's own lists, while the app-level lists on
+    ``skills`` / ``integrations`` / ``datasets`` / ``apps`` are the per-step BINDINGS: which
+    node uses each capability. ``apps`` is the one that adds WORK — each handle lowers that
+    App's whole blueprint into the run, feeding its result to this step. They become the blueprint step's own lists, while the app-level lists on
     :class:`AppDerivation` are their UNION — the DECLARATION set you write into the envelope's
     ``references``. Writing only the union authors an App whose every capability falls back to
     the entry step."""
@@ -43,6 +44,7 @@ class DerivedAppStep:
     skills: List[str]
     integrations: List[str]
     datasets: List[str]
+    apps: List[str]
 
 
 @_dataclasses.dataclass(frozen=True)
@@ -72,6 +74,7 @@ class AppDerivation:
     derived: bool
     name: str
     description: str
+    delivers: str
     steps: List[DerivedAppStep]
     edges: List[Tuple[int, int]]
     files: List[DerivedAppFile]
@@ -80,6 +83,7 @@ class AppDerivation:
     skills: List[str]
     connections: List[str]
     datasets: List[str]
+    apps: List[str]
     notices: List[str]
     reason: str
 
@@ -89,6 +93,7 @@ class AppDerivation:
             derived=False,
             name="",
             description="",
+            delivers="",
             steps=[],
             edges=[],
             files=[],
@@ -97,6 +102,7 @@ class AppDerivation:
             skills=[],
             connections=[],
             datasets=[],
+            apps=[],
             notices=[],
             reason=reason,
         )
@@ -110,6 +116,7 @@ class AppDerivation:
                 derived=True,
                 name=a.name,
                 description=a.description,
+                delivers=a.delivers,
                 steps=[
                     DerivedAppStep(
                         role=s.role,
@@ -120,6 +127,7 @@ class AppDerivation:
                         skills=list(s.skills),
                         integrations=list(s.integrations),
                         datasets=list(s.datasets),
+                        apps=list(s.apps),
                     )
                     for s in a.steps
                 ],
@@ -130,6 +138,7 @@ class AppDerivation:
                 skills=list(a.skills),
                 connections=list(a.connections),
                 datasets=list(a.datasets),
+                apps=list(a.apps),
                 notices=list(a.notices),
                 reason="",
             )

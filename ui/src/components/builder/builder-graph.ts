@@ -58,6 +58,10 @@ export interface BuilderStep {
   readonly connections: readonly string[];
   /** APP ONLY: the DATASET names this step grounds on. */
   readonly datasets: readonly string[];
+  /** APP ONLY: the APP handles this step CALLS. The odd one out among the bindings — the
+   *  three above give this step more to work with, this one lowers another App's whole
+   *  blueprint into the run and feeds its result to this step. */
+  readonly apps: readonly string[];
   /** MODEL agentic: the per-step model-turn budget (default 8; `0 < maxTurns ≤ 8`). */
   readonly maxTurns?: number;
   /** MODEL agentic: the per-step total tool-call budget (default 20, ceiling 20 —
@@ -331,6 +335,7 @@ export function newStep(kind: BuilderStepKind, id: string): BuilderStep {
     skills: [],
     connections: [],
     datasets: [],
+    apps: [],
   };
 }
 
@@ -456,6 +461,7 @@ export type ProposedStepWithCapabilities = ProposedWorkflowStep & {
   readonly skills?: readonly string[];
   readonly integrations?: readonly string[];
   readonly datasets?: readonly string[];
+  readonly apps?: readonly string[];
 };
 
 /**
@@ -491,6 +497,7 @@ export function proposalToBuilderGraph(
       skills: [...(s.skills ?? [])],
       connections: [...(s.integrations ?? [])],
       datasets: [...(s.datasets ?? [])],
+      apps: [...(s.apps ?? [])],
     };
   });
   const outEdges: BuilderEdge[] = [];

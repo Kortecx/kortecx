@@ -185,6 +185,9 @@ export function NewAppForm({
           .map((n) => serverRegistry.servers.find((sv) => sv.serverName === n)?.endpoint)
           .filter((e): e is string => e !== undefined),
         datasets: s.datasets.filter((n) => groundable.some((g) => g.name === n)),
+        // An app handle needs no name→id mapping: the design already names the handle the
+        // envelope binds and the runtime resolves (the menu shows it verbatim).
+        apps: [...s.apps],
       }));
       const insert = proposalToBuilderGraph(bound, d.edges, 0);
       setGraph({ steps: insert.steps, edges: insert.edges });
@@ -298,6 +301,15 @@ export function NewAppForm({
       }
       for (const ds of named((s) => s.datasets)) {
         builder = builder.dataset(ds);
+      }
+      for (const handle of named((s) => s.apps)) {
+        builder = builder.withApp(handle);
+      }
+      // What a run of this App produces. Carried so the NEXT app's author can find this one
+      // in the composition menu — an app that never says what it delivers is runnable but
+      // effectively invisible to everything that might call it.
+      if (design?.delivers) {
+        builder = builder.delivers(design.delivers);
       }
       if (mode === "codified") {
         builder = builder.mode("codified");

@@ -348,6 +348,12 @@ export interface DerivedAppStep {
   integrations: string[];
   /** The DATASET names this step grounds on. */
   datasets: string[];
+  /**
+   * The APP handles this step CALLS. The odd one out among the bindings: the three above
+   * give this step more to work with, while each of these lowers another App's whole
+   * blueprint into the run and feeds its result to this step.
+   */
+  apps: string[];
 }
 
 /** One planned project file — the hosted lane's review surface. */
@@ -362,6 +368,12 @@ export interface DerivedApp {
   name: string;
   /** The proposed one-sentence description. */
   description: string;
+  /**
+   * What one RUN of this App produces, in a phrase. `description` says what the App is;
+   * this says what comes back — the line another App's author reads in the composition menu
+   * when deciding whether to call this one.
+   */
+  delivers: string;
   /** The designed steps, in plan order. Empty on the hosted lane (no DAG). */
   steps: DerivedAppStep[];
   /**
@@ -382,6 +394,8 @@ export interface DerivedApp {
   connections: string[];
   /** Dataset names to ground on, intersected against the caller's non-empty datasets. */
   datasets: string[];
+  /** App handles the design calls, intersected against the caller's own catalog. */
+  apps: string[];
   /**
    * Advisories about what the design did NOT get — ids dropped as outside the caller's
    * ceiling, a capability menu bounded by the model's one-decode budget, a framework
@@ -768,6 +782,7 @@ export abstract class KxClientBase {
         derived: true,
         name: a.name,
         description: a.description,
+        delivers: a.delivers,
         steps: a.steps.map((s) => ({
           role: s.role,
           intent: s.intent,
@@ -777,6 +792,7 @@ export abstract class KxClientBase {
           skills: [...s.skills],
           integrations: [...s.integrations],
           datasets: [...s.datasets],
+          apps: [...s.apps],
         })),
         edges: a.edges.map((e) => ({ parent: e.parent, child: e.child })),
         files: a.files.map((f) => ({ path: f.path, role: f.role })),
@@ -785,6 +801,7 @@ export abstract class KxClientBase {
         skills: [...a.skills],
         connections: [...a.connections],
         datasets: [...a.datasets],
+        apps: [...a.apps],
         notices: [...a.notices],
       };
     }
