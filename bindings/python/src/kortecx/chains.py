@@ -76,8 +76,8 @@ class Task:
     node, so reusing one object twice in an expression reuses the node (the DAG
     reuse rule). Build one via :func:`pure` / :func:`model`.
 
-    ``app_skills`` / ``app_connections`` / ``app_datasets`` are the per-node capability
-    BINDINGS — catalog names this step uses when the chain becomes an App (:func:`app`).
+    ``app_skills`` / ``app_connections`` / ``app_datasets`` / ``app_apps`` are the per-node
+    capability BINDINGS — catalog names this step uses when the chain becomes an App (:func:`app`).
     They name entries in the App envelope's ``references``, so they are meaningful ONLY on
     the App path; the plain workflow lowering (:meth:`Chain.build` /
     :meth:`Chain.from_blueprint`) has no ``references`` to resolve them against and REFUSES a
@@ -88,10 +88,13 @@ class Task:
     app_skills: List[str] = field(default_factory=list)
     app_connections: List[str] = field(default_factory=list)
     app_datasets: List[str] = field(default_factory=list)
+    app_apps: List[str] = field(default_factory=list)
 
     def has_app_bindings(self) -> bool:
         """True when this step carries an App-envelope capability binding."""
-        return bool(self.app_skills or self.app_connections or self.app_datasets)
+        return bool(
+            self.app_skills or self.app_connections or self.app_datasets or self.app_apps
+        )
 
     # --- operator sugar (lower identically to the string DSL) ---
     def __rshift__(self, other: "_Node") -> "_Seq":
@@ -197,6 +200,7 @@ def model(
     skills: "Optional[Sequence[str]]" = None,
     connections: "Optional[Sequence[str]]" = None,
     datasets: "Optional[Sequence[str]]" = None,
+    apps: "Optional[Sequence[str]]" = None,
     **params: Union[bytes, str],
 ) -> Task:
     """A MODEL step. ``prompt`` is the instruction; ``params`` are extra step params.
@@ -238,6 +242,7 @@ def model(
         app_skills=list(skills or []),
         app_connections=list(connections or []),
         app_datasets=list(datasets or []),
+        app_apps=list(apps or []),
     )
 
 
@@ -454,6 +459,8 @@ class Chain:
                 step["connections"] = list(t.app_connections)
             if t.app_datasets:
                 step["datasets"] = list(t.app_datasets)
+            if t.app_apps:
+                step["apps"] = list(t.app_apps)
             steps.append(step)
         bp: Dict[str, object] = {
             "seed": self._seed,
@@ -575,6 +582,7 @@ def _refuse_app_bindings_on_workflow(index: int, t: Task) -> None:
             ("skills", bool(t.app_skills)),
             ("connections", bool(t.app_connections)),
             ("datasets", bool(t.app_datasets)),
+            ("apps", bool(t.app_apps)),
         )
         if present
     ]
@@ -590,7 +598,7 @@ def _refuse_spec_app_bindings(index: int, d: "Mapping[str, object]") -> None:
     """As :func:`_refuse_app_bindings_on_workflow`, over a parsed blueprint step."""
     named = [
         name
-        for name in ("skills", "connections", "datasets")
+        for name in ("skills", "connections", "datasets", "apps")
         if isinstance(d.get(name), list) and d.get(name)
     ]
     if not named:

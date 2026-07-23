@@ -1649,6 +1649,32 @@ impl HostAppAuthor {
                 (a.handle.clone(), targets)
             })
             .collect();
+        // A step naming an App the envelope never DECLARED would otherwise resolve to
+        // nothing at all — the run would author cleanly and simply not do that work. Every
+        // other axis degrades gracefully when a name misses (a skill drops, a dataset
+        // grounds on nothing); this one drops an entire sub-graph, and the App would look
+        // like it was working while producing an answer assembled from less than it claims.
+        // Refuse, and name the handle: an envelope hand-authored offline (where `save()`
+        // does not derive the declarations from the graph) is exactly where this happens.
+        for (i, named) in binds.apps.iter().enumerate() {
+            for handle in named {
+                if !env
+                    .references
+                    .apps
+                    .iter()
+                    .any(|a| a.handle.eq_ignore_ascii_case(handle))
+                {
+                    return Err(AppRunError::UncomposableApp {
+                        handle: handle.clone(),
+                        reason: format!(
+                            "step {i} calls it, but the app does not declare it in \
+                             references.apps — declare it (the SDK `save()` does this from \
+                             the graph; `with_app`/`withApp` does it offline)"
+                        ),
+                    });
+                }
+            }
+        }
 
         Ok(Prepared {
             dag,
@@ -3401,6 +3427,37 @@ mod tests {
         };
         assert_eq!(handle, "team/apps/gone");
         assert!(reason.contains("catalog"), "{reason}");
+    }
+
+    /// The mirror of the case above: a step that CALLS an App the envelope never declared is
+    /// refused, not silently skipped. Every other axis degrades when a name misses; this one
+    /// would drop a whole sub-graph and still produce a confident-looking answer.
+    #[tokio::test]
+    async fn calling_an_undeclared_app_is_refused_rather_than_silently_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        let callee = save_callee(&host, "research", 1);
+        // A blueprint that BINDS the callee, with an envelope that declares nothing — what
+        // an offline `to_envelope()` produces when the author forgot `with_app`.
+        let env = AppEnvelope::new(
+            "digest",
+            serde_json::json!({
+                "steps": [{ "kind": "model", "prompt": "go", "apps": [callee.clone()] }]
+            }),
+        );
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+
+        let err = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .err()
+            .expect("an undeclared call must not author");
+        let AppRunError::UncomposableApp { handle: h, reason } = err else {
+            panic!("expected an uncomposable-app refusal, got {err:?}");
+        };
+        assert_eq!(h, callee);
+        assert!(reason.contains("references.apps"), "{reason}");
     }
 
     /// A declared App that NO step names is not called. There is no App-wide fallback site

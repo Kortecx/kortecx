@@ -26,5 +26,9 @@
   {
     "canonical": "{\"blueprint\":{\"edges\":[{\"child\":2,\"parent\":0},{\"child\":2,\"parent\":1}],\"steps\":[{\"datasets\":[\"support\"],\"kind\":\"model\",\"prompt\":\"Collect the escalations.\",\"skills\":[\"triage\"]},{\"connections\":[\"kx-connector-gmail\"],\"kind\":\"model\",\"prompt\":\"Collect the deals.\"},{\"kind\":\"model\",\"prompt\":\"Write one digest.\"}]},\"name\":\"node-bound\",\"references\":{\"connections\":[{\"descriptor\":\"kx-connector-gmail\"}],\"datasets\":[{\"dataset_ref\":\"support\"}],\"skills\":[{\"instructions_ref\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"name\":\"triage\"}]},\"schema\":\"kortecx.app/v1\",\"version\":\"1\"}",
     "name": "node-bound"
+  },
+  {
+    "canonical": "{\"blueprint\":{\"edges\":[{\"child\":1,\"parent\":0}],\"steps\":[{\"apps\":[\"apps/local/escalation-review\"],\"kind\":\"model\",\"prompt\":\"Collect the escalations.\"},{\"apps\":[\"apps/local/escalation-review\"],\"kind\":\"model\",\"prompt\":\"Write one digest.\"}]},\"delivers\":\"a weekly digest of escalations\",\"name\":\"app-composed\",\"references\":{\"apps\":[{\"handle\":\"apps/local/escalation-review\"}]},\"schema\":\"kortecx.app/v1\",\"version\":\"1\"}",
+    "name": "app-composed"
   }
 ]

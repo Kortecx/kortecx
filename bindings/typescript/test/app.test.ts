@@ -262,6 +262,7 @@ describe("App golden corpus parity (the cross-surface byte-shape gate)", () => {
       "reach",
       "codified",
       "node-bound",
+      "app-composed",
     ])
       expect(names.has(want)).toBe(true);
   });

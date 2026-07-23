@@ -48,6 +48,7 @@ fn corpus_covers_the_required_shapes() {
         "reach",
         "codified",
         "node-bound",
+        "app-composed",
     ] {
         assert!(
             names.contains(&want),
@@ -67,6 +68,33 @@ fn corpus_covers_the_required_shapes() {
     assert!(node_bound
         .canonical
         .contains("\"references\":{\"connections\":"));
+    // the app-composed case pins COMPOSITION: an `apps` binding on a step, declared in
+    // `references.apps`, on the SAME App bound by two steps — the shape that lowers one
+    // sub-graph fanning out to both consumers rather than two copies of it.
+    let composed = cases.iter().find(|c| c.name == "app-composed").unwrap();
+    assert!(composed
+        .canonical
+        .contains("\"apps\":[\"apps/local/escalation-review\"]"));
+    assert!(composed
+        .canonical
+        .contains("\"references\":{\"apps\":[{\"handle\":\"apps/local/escalation-review\"}]}"));
+    // ...and `delivers`, sorted between `blueprint` and `name` — the placement that keeps
+    // the field free for every App that never set one.
+    assert!(composed
+        .canonical
+        .contains("\"delivers\":\"a weekly digest of escalations\",\"name\":"));
+    // No other case may emit `delivers` or `references.apps`: the omission is what keeps an
+    // App authored before composition existed byte-identical, and its `app_ref` unchanged.
+    for c in &cases {
+        if c.name == "app-composed" {
+            continue;
+        }
+        assert!(
+            !c.canonical.contains("\"delivers\""),
+            "{} must not carry a delivers key",
+            c.name
+        );
+    }
     // the agentic case proves an authored @-step round-trips inside the wrapper.
     let agentic = cases.iter().find(|c| c.name == "agentic").unwrap();
     assert!(agentic.canonical.contains("tool_contract"));

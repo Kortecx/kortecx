@@ -56,6 +56,10 @@ export interface AgentStepOptions {
   connections?: readonly string[];
   /** APP ONLY: dataset names this step grounds on — this step gets `retrieve` over them. */
   datasets?: readonly string[];
+  /** APP ONLY: App handles this step CALLS. Each named App's own blueprint is lowered into
+   *  the run and its result becomes a parent of this step — so a step can reuse an App that
+   *  already does the work instead of restating it. */
+  apps?: readonly string[];
 }
 
 /** AGENTIC-VISION: the step-config key a {@link Flow.image} ref binds into (the SAME key
@@ -291,6 +295,7 @@ export class Flow {
         skills: opts.skills,
         connections: opts.connections,
         datasets: opts.datasets,
+        apps: opts.apps,
       }),
     );
   }
