@@ -61,7 +61,14 @@ import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(UI_ROOT, "dist");
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 675_840);
+// 660 KiB -> 662 KiB for `DeriveApp`. The growth is the TypeScript SDK's, not the console's,
+// and it was measured three ways rather than assumed: main UI + main SDK = 675_122 B;
+// THIS branch's UI + main SDK = 675_113 B (9 B smaller — the chat surface is route-lazy and
+// costs nothing eager); this branch's UI + this branch's SDK = 677_339 B. So all +2_226 B is
+// `client.ts`'s `deriveApp` plus the regenerated proto descriptor for the four new DeriveApp
+// messages, and the SDK client is eager on every route. A new RPC buys that; bumping here — in
+// the PR that spends it — is the same move #363, #362, #358 and #304 each made.
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 677_888);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {
