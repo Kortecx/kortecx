@@ -49,6 +49,9 @@ pub(crate) const MAX_APP_LEVEL_NAMES: usize = 8;
 pub(crate) const MAX_DERIVE_NAME_BYTES: usize = 80;
 /// Hard cap on the proposed one-sentence description.
 pub(crate) const MAX_DERIVE_DESCRIPTION_BYTES: usize = 400;
+/// Hard cap on the `delivers` line ONE menu entry may spend. An App that cannot say what it
+/// produces in a phrase has not been scoped, and the whole menu shares one decode.
+pub(crate) const MAX_APP_DELIVERS_MENU_BYTES: usize = 120;
 /// Byte budget for the rendered capability menu. Sized so the menu, the role palette, the
 /// contract and the user's prompt together stay comfortably inside one decode on the smallest
 /// context the serve accepts (`AGENT_MIN_CTX_TOKENS` = 2048).
@@ -91,6 +94,12 @@ struct AppJson {
     name: String,
     #[serde(default)]
     description: String,
+    /// What a run of this app produces — the line another app's author reads when deciding
+    /// whether to call it. Taught by the contract, so it MUST be decodable here:
+    /// `deny_unknown_fields` turns a field the prompt teaches but the decoder does not know
+    /// into a total refusal of every design.
+    #[serde(default)]
+    delivers: String,
     steps: Vec<StepJson>,
     #[serde(default)]
     edges: Vec<EdgeJson>,
@@ -106,6 +115,12 @@ struct AppJson {
     integrations: Vec<String>,
     #[serde(default)]
     datasets: Vec<String>,
+    /// Accepted for the SAME reason as its three siblings above, before the model has ever
+    /// been taught to write it here: `deny_unknown_fields` means one misplaced key costs the
+    /// author their entire design, and a model that has just seen three list-shaped axes at
+    /// step level will sometimes lift the fourth one up.
+    #[serde(default)]
+    apps: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,6 +139,11 @@ struct StepJson {
     integrations: Vec<String>,
     #[serde(default)]
     datasets: Vec<String>,
+    /// The other APPS this step calls. Unlike its siblings this one adds WORK to the run
+    /// rather than context to a step, so a name that survives the intersection becomes a
+    /// whole sub-graph.
+    #[serde(default)]
+    apps: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +168,8 @@ pub(crate) struct DerivedStep {
     pub(crate) integrations: Vec<String>,
     /// The DATASET names this step grounds on (deduped, still UNRESOLVED).
     pub(crate) datasets: Vec<String>,
+    /// The APP handles this step calls (deduped, still UNRESOLVED).
+    pub(crate) apps: Vec<String>,
 }
 
 /// A decoded derive: the app's proposed identity plus its unresolved workflow.
@@ -157,6 +179,8 @@ pub(crate) struct DerivedPlan {
     pub(crate) name: String,
     /// The proposed one-sentence description.
     pub(crate) description: String,
+    /// The proposed one-phrase statement of what a run produces.
+    pub(crate) delivers: String,
     /// The steps, in plan order.
     pub(crate) steps: Vec<DerivedStep>,
     /// The `(parent, child)` dependency edges. A step with no incoming edge runs in parallel.
@@ -261,6 +285,11 @@ pub(crate) fn decode_derived(bytes: &[u8]) -> Result<DerivedPlan, DeriveError> {
             skills: clean_names(s.skills),
             integrations: clean_names(s.integrations),
             datasets: clean_names(s.datasets),
+            apps: clean_names(s.apps)
+                .iter()
+                .map(|a| normalize_app_handle(a))
+                .filter(|a| !a.is_empty())
+                .collect(),
         });
     }
 
@@ -296,12 +325,18 @@ pub(crate) fn decode_derived(bytes: &[u8]) -> Result<DerivedPlan, DeriveError> {
         skills: clean_names(app.skills),
         integrations: clean_names(app.integrations),
         datasets: clean_names(app.datasets),
+        apps: clean_names(app.apps)
+            .iter()
+            .map(|a| normalize_app_handle(a))
+            .filter(|a| !a.is_empty())
+            .collect(),
     };
     let folded_app_level = legacy.fold_onto_entry(&mut steps, &edges);
 
     Ok(DerivedPlan {
         name: clamp_chars(app.name.trim(), MAX_DERIVE_NAME_BYTES),
         description: clamp_chars(app.description.trim(), MAX_DERIVE_DESCRIPTION_BYTES),
+        delivers: clamp_chars(app.delivers.trim(), MAX_DERIVE_DESCRIPTION_BYTES),
         steps,
         edges,
         folded_app_level,
@@ -314,6 +349,7 @@ struct LegacyAppLevel {
     skills: Vec<String>,
     integrations: Vec<String>,
     datasets: Vec<String>,
+    apps: Vec<String>,
 }
 
 impl LegacyAppLevel {
@@ -324,7 +360,11 @@ impl LegacyAppLevel {
     /// The entry step is chosen because it is where `RunApp` binds a capability no step
     /// claims: folding anywhere else would make the reviewed design and the run disagree.
     fn fold_onto_entry(self, steps: &mut [DerivedStep], edges: &[(usize, usize)]) -> bool {
-        if self.skills.is_empty() && self.integrations.is_empty() && self.datasets.is_empty() {
+        if self.skills.is_empty()
+            && self.integrations.is_empty()
+            && self.datasets.is_empty()
+            && self.apps.is_empty()
+        {
             return false;
         }
         let entry = (0..steps.len()).find(|i| !edges.iter().any(|&(_, c)| c == *i));
@@ -341,6 +381,7 @@ impl LegacyAppLevel {
         merge(&mut step.skills, self.skills);
         merge(&mut step.integrations, self.integrations);
         merge(&mut step.datasets, self.datasets);
+        merge(&mut step.apps, self.apps);
         true
     }
 }
@@ -385,6 +426,38 @@ fn normalize_tool_id(raw: &str) -> String {
     }
 }
 
+/// Recover the bare catalog handle from whatever the model wrote.
+///
+/// The App menu is the ONE axis that cannot be names-only. A handle alone (`apps/local/x`)
+/// tells a model nothing about whether that App is the one its step needs, so the menu shows
+/// what each App DELIVERS beside it — which walks straight into the failure that cost a real
+/// grant once already: a model copies what it was SHOWN, so `- apps/local/research — a
+/// researched brief` comes back as the id, matches nothing, and the design silently loses a
+/// whole sub-graph while the notice blames the account's catalog.
+///
+/// So the menu renders richly and this reads defensively, the same pairing
+/// [`normalize_tool_id`] uses. A handle is a known shape — three `[a-z0-9._-]` segments — so
+/// rather than guess at which separator the model chose, keep the leading run of handle
+/// characters and stop at the first one that cannot be part of a handle. `Apps/Local/X`
+/// lower-cases (the catalog is lowercase); anything with no handle-shaped prefix returns
+/// empty and is dropped by the caller.
+fn normalize_app_handle(raw: &str) -> String {
+    let mut out = String::new();
+    for c in raw.trim().chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-' | '/') {
+            out.push(c);
+        } else if c.is_ascii_uppercase() {
+            out.push(c.to_ascii_lowercase());
+        } else {
+            break;
+        }
+    }
+    // A trailing separator is decoration, not part of the name (`apps/local/x -- …` stops
+    // after the space, but `apps/local/x-` would keep a dangling hyphen the catalog has not
+    // got). Segment count is checked by the envelope validator, not here.
+    out.trim_end_matches(['-', '.', '/']).to_string()
+}
+
 /// Truncate to `max` BYTES on a char boundary (never mid-UTF-8).
 fn clamp_chars(s: &str, max: usize) -> String {
     if s.len() <= max {
@@ -416,6 +489,9 @@ pub(crate) struct CapabilityMenu {
     pub(crate) connections: Vec<String>,
     /// Dataset names that actually hold an indexed document.
     pub(crate) datasets: Vec<String>,
+    /// The caller's own callable Apps as `(handle, delivers)` — the composition registry.
+    /// Scheduled (Functional) Apps only: a hosted App has no blueprint to lower.
+    pub(crate) apps: Vec<(String, String)>,
 }
 
 /// What the menu could not show, so the console can say so instead of implying completeness.
@@ -423,6 +499,8 @@ pub(crate) struct CapabilityMenu {
 pub(crate) struct MenuTruncation {
     /// Tool ids omitted for the byte budget.
     pub(crate) tools_omitted: usize,
+    /// Callable Apps omitted for the byte budget.
+    pub(crate) apps_omitted: usize,
 }
 
 impl CapabilityMenu {
@@ -469,6 +547,35 @@ impl CapabilityMenu {
             let line = format!("{label}: {}\n", values.join(", "));
             if out.len() + line.len() <= MAX_DERIVE_MENU_BYTES {
                 out.push_str(&line);
+            }
+        }
+        // The composition registry. This is the ONE axis that cannot be names-only: a bare
+        // handle says nothing about whether that App is the one a step needs, so each line
+        // carries what the App DELIVERS. That is the same decoration that once came back as
+        // an id and cost a real grant — the difference is that `normalize_app_handle` now
+        // reads the handle back out of whatever the model writes, so the menu can afford to
+        // be useful. One whole line at a time, and the count dropped is reported.
+        if !self.apps.is_empty() {
+            let header = "Apps you may call from a step (write the handle exactly as shown):\n";
+            if out.len() + header.len() <= MAX_DERIVE_MENU_BYTES {
+                out.push_str(header);
+                for (handle, delivers) in &self.apps {
+                    let line = if delivers.is_empty() {
+                        format!("- {handle}\n")
+                    } else {
+                        format!(
+                            "- {handle} — {}\n",
+                            clamp_chars(delivers, MAX_APP_DELIVERS_MENU_BYTES)
+                        )
+                    };
+                    if out.len() + line.len() > MAX_DERIVE_MENU_BYTES {
+                        truncation.apps_omitted += 1;
+                        continue;
+                    }
+                    out.push_str(&line);
+                }
+            } else {
+                truncation.apps_omitted = self.apps.len();
             }
         }
         (out, truncation)
@@ -546,6 +653,10 @@ notes\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
             skills: vec!["classification".into()],
             connections: vec!["gmail".into()],
             datasets: vec!["handbook".into()],
+            apps: vec![(
+                "apps/local/research".to_string(),
+                "a researched brief".to_string(),
+            )],
         }
     }
 

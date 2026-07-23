@@ -1447,6 +1447,7 @@ message DerivedAppStep {
   repeated string skills       = 6;      // catalog skill names, intersected against the caller's catalog
   repeated string integrations = 7;      // connection names, intersected against the caller's registry
   repeated string datasets     = 8;      // dataset names, intersected against the caller's non-empty datasets
+  repeated string apps         = 9;      // APP handles this step calls; each becomes that App's own workflow, lowered into the run and feeding this step
 }
 
 // One planned project file — the HOSTED lane's review surface.
@@ -1472,6 +1473,8 @@ message DerivedApp {
   // the derive can be trusted about its own limits — a design that quietly asked for
   // a tool it did not receive would produce an App that quietly cannot do part of its job.
   repeated string notices = 11;
+  repeated string apps    = 12;          // app handles the design calls (the union of every step's surviving picks) — the DECLARATION a client writes into `references.apps`
+  string delivers    = 13;               // proposed one-phrase statement of what a run produces; the line the composition menu shows other apps' authors
 }
 
 message DeriveAppResponse {

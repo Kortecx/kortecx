@@ -74,6 +74,13 @@ pub struct DerivedStep {
     /// The DATASET names this step grounds on, intersected against the caller's non-empty
     /// datasets.
     pub datasets: Vec<String>,
+    /// The APP handles this step calls, intersected against the caller's own catalog.
+    ///
+    /// The odd one out among the bindings: the three above give this step more to work with,
+    /// while this one puts another App's whole workflow into the run and feeds its result to
+    /// this step. That is why the design shows it — an author reviewing "researcher, gathers
+    /// the evidence" needs to see that gathering means running their research App.
+    pub apps: Vec<String>,
 }
 
 /// One planned project file (the hosted lane's review surface).
@@ -92,6 +99,10 @@ pub struct DerivedApp {
     pub name: String,
     /// The proposed one-sentence description.
     pub description: String,
+    /// What a run of this app produces, in one phrase. Advisory prose, and the line the
+    /// composition menu shows other apps' authors — which is why the derive proposes it
+    /// rather than leaving every app undiscoverable until someone writes it by hand.
+    pub delivers: String,
     /// The designed steps, in plan order. Empty on the hosted lane (a hosted App has no DAG).
     pub steps: Vec<DerivedStep>,
     /// The dependency edges as `(parent_index, child_index)`. **A step with no incoming edge
@@ -115,6 +126,8 @@ pub struct DerivedApp {
     pub connections: Vec<String>,
     /// Dataset names to ground on, intersected against the caller's non-empty datasets.
     pub datasets: Vec<String>,
+    /// App handles the design calls, intersected against the caller's own catalog.
+    pub apps: Vec<String>,
     /// Human-readable advisories about what the design did NOT get: ids dropped because they
     /// were not on the menu, a menu bounded by the one-decode budget. Surfaced to the author
     /// verbatim; never parsed for enforcement.

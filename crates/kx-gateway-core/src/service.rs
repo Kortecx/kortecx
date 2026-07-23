@@ -2392,6 +2392,7 @@ impl KxGateway for GatewayService {
                             skills: s.skills,
                             integrations: s.integrations,
                             datasets: s.datasets,
+                            apps: s.apps,
                         })
                         .collect(),
                     edges: app
@@ -2412,6 +2413,8 @@ impl KxGateway for GatewayService {
                     skills: app.skills,
                     connections: app.connections,
                     datasets: app.datasets,
+                    apps: app.apps,
+                    delivers: app.delivers,
                     notices: app.notices,
                 })
             }

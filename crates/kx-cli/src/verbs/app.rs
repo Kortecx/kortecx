@@ -47,6 +47,7 @@ struct NodeBindings {
     skills: Vec<String>,
     connections: Vec<String>,
     datasets: Vec<String>,
+    apps: Vec<String>,
 }
 
 impl NodeBindings {
@@ -64,6 +65,7 @@ impl NodeBindings {
             push(&mut out.skills, &s.skills);
             push(&mut out.connections, &s.connections);
             push(&mut out.datasets, &s.datasets);
+            push(&mut out.apps, &s.apps);
         }
         out
     }
@@ -649,6 +651,7 @@ fn derived_to_blueprint(app: &proto::DerivedApp) -> serde_json::Value {
             put("skills", &s.skills);
             put("connections", &s.integrations);
             put("datasets", &s.datasets);
+            put("apps", &s.apps);
             serde_json::Value::Object(step)
         })
         .collect();
@@ -725,6 +728,16 @@ fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError>
             env.references.datasets.push(DatasetRef {
                 dataset_ref: name.clone(),
                 cas_refs: Vec::new(),
+            });
+        }
+    }
+    // The composition declarations. Like connections and datasets these are bare names
+    // needing no online resolution — the runtime resolves each handle against the caller's
+    // own catalog at run — so an App that only composes other Apps still authors OFFLINE.
+    for handle in &bindings.apps {
+        if !env.references.apps.iter().any(|a| a.handle == *handle) {
+            env.references.apps.push(kx_app::AppRef {
+                handle: handle.clone(),
             });
         }
     }
@@ -1426,6 +1439,7 @@ mod tests {
                     skills: vec!["triage".into()],
                     integrations: vec!["gmail".into()],
                     datasets: vec!["support".into()],
+                    apps: vec!["apps/local/research".into()],
                 },
                 proto::DerivedAppStep {
                     role: "writer".into(),
@@ -1436,6 +1450,7 @@ mod tests {
                     skills: vec![],
                     integrations: vec![],
                     datasets: vec![],
+                    apps: vec![],
                 },
             ],
             edges: vec![proto::ProposedEdge {
@@ -1450,6 +1465,7 @@ mod tests {
         assert_eq!(dag.steps[0].skills, vec!["triage".to_string()]);
         assert_eq!(dag.steps[0].connections, vec!["gmail".to_string()]);
         assert_eq!(dag.steps[0].datasets, vec!["support".to_string()]);
+        assert_eq!(dag.steps[0].apps, vec!["apps/local/research".to_string()]);
         assert!(dag.steps[1].skills.is_empty());
         // The union the `kx app new` step would fold into references.
         let binds = NodeBindings::from_dag(&dag);
