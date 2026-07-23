@@ -489,6 +489,11 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.RunAppRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
                 _registered_method=True)
+        self.DeriveApp = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeriveApp',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeriveAppRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeriveAppResponse.FromString,
+                _registered_method=True)
         self.ScaffoldApp = channel.unary_unary(
                 '/kortecx.v1.KxGateway/ScaffoldApp',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.ScaffoldAppRequest.SerializeToString,
@@ -1240,14 +1245,25 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def ScaffoldApp(self, request, context):
+    def DeriveApp(self, request, context):
         """POC-5a (Apps "scaffold") — drive a server-side async scaffold of the App's
         fixed skeleton into a fresh CoW-on-CAS branch (plan -> N writes -> N
         AdvanceBranch). Returns immediately (the orchestration runs in the
         background; observe via GetScaffoldStatus + GetBranch + StreamEvents).
         Warrants are server-minted (SN-8). Unimplemented when no served model /
         branch store. Off-journal, off-digest.
+        DeriveApp: one prompt -> a reviewable App design (steps + SHAPE + capabilities,
+        or a hosted file plan). Validate-only; saves nothing. The model may NAME tool ids
+        from a server-built ids-only menu of the caller's OWN ceiling and every id is
+        intersected back against it (SN-8: naming is not granting). `unimplemented` with
+        no served model.
         """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ScaffoldApp(self, request, context):
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -1794,6 +1810,11 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.RunApp,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunAppRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.SerializeToString,
+            ),
+            'DeriveApp': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeriveApp,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeriveAppRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeriveAppResponse.SerializeToString,
             ),
             'ScaffoldApp': grpc.unary_unary_rpc_method_handler(
                     servicer.ScaffoldApp,
@@ -4313,6 +4334,33 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/RunApp',
             kortecx_dot_v1_dot_gateway__pb2.RunAppRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeriveApp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeriveApp',
+            kortecx_dot_v1_dot_gateway__pb2.DeriveAppRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeriveAppResponse.FromString,
             options,
             channel_credentials,
             insecure,

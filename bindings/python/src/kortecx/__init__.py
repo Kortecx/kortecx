@@ -118,6 +118,7 @@ from .memory import (
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteConfigItem, MoteDetail, effect_pattern_name, nd_class_name
 from .personas import PERSONAS, persona, persona_names
+from .derive import AppDerivation, DerivedAppFile, DerivedAppStep
 from .propose import ProposedWorkflowStep, WorkflowProposal
 from .react import ReactTurn, ReactTurnPage
 from .recipes import (
@@ -370,6 +371,9 @@ __all__ = [
     # NL authoring (D209.3): ProposeWorkflow — a natural-language goal → a proposed DAG
     "WorkflowProposal",
     "ProposedWorkflowStep",
+    "AppDerivation",
+    "DerivedAppStep",
+    "DerivedAppFile",
     # RC1 (D172) agentic-evaluation per-run quality readout (ScoreRun)
     "RunScore",
     # D170 / MM-3 operator secret store (PutSecret / ListSecretNames / DeleteSecret)

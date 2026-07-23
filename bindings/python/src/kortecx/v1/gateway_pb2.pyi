@@ -1658,6 +1658,90 @@ class GetScaffoldStatusResponse(_message.Message):
     writing_mote_id: str
     def __init__(self, phase: _Optional[_Union[GetScaffoldStatusResponse.Phase, str]] = ..., files_done: _Optional[_Iterable[str]] = ..., files_pending: _Optional[_Iterable[str]] = ..., detail: _Optional[str] = ..., writing_path: _Optional[str] = ..., writing_instance_id: _Optional[str] = ..., writing_mote_id: _Optional[str] = ...) -> None: ...
 
+class DeriveAppRequest(_message.Message):
+    __slots__ = ("kind", "mode", "prompt", "framework", "attachments")
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    MODE_FIELD_NUMBER: _ClassVar[int]
+    PROMPT_FIELD_NUMBER: _ClassVar[int]
+    FRAMEWORK_FIELD_NUMBER: _ClassVar[int]
+    ATTACHMENTS_FIELD_NUMBER: _ClassVar[int]
+    kind: str
+    mode: str
+    prompt: str
+    framework: str
+    attachments: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, kind: _Optional[str] = ..., mode: _Optional[str] = ..., prompt: _Optional[str] = ..., framework: _Optional[str] = ..., attachments: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class DerivedAppStep(_message.Message):
+    __slots__ = ("role", "intent", "kind", "model_id", "tool_contract")
+    class ToolContractEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    ROLE_FIELD_NUMBER: _ClassVar[int]
+    INTENT_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    MODEL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_CONTRACT_FIELD_NUMBER: _ClassVar[int]
+    role: str
+    intent: str
+    kind: str
+    model_id: str
+    tool_contract: _containers.ScalarMap[str, str]
+    def __init__(self, role: _Optional[str] = ..., intent: _Optional[str] = ..., kind: _Optional[str] = ..., model_id: _Optional[str] = ..., tool_contract: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class DerivedAppFile(_message.Message):
+    __slots__ = ("path", "role")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    ROLE_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    role: str
+    def __init__(self, path: _Optional[str] = ..., role: _Optional[str] = ...) -> None: ...
+
+class DerivedApp(_message.Message):
+    __slots__ = ("name", "description", "steps", "edges", "files", "framework", "tools", "skills", "connections", "datasets", "notices")
+    class ToolsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    STEPS_FIELD_NUMBER: _ClassVar[int]
+    EDGES_FIELD_NUMBER: _ClassVar[int]
+    FILES_FIELD_NUMBER: _ClassVar[int]
+    FRAMEWORK_FIELD_NUMBER: _ClassVar[int]
+    TOOLS_FIELD_NUMBER: _ClassVar[int]
+    SKILLS_FIELD_NUMBER: _ClassVar[int]
+    CONNECTIONS_FIELD_NUMBER: _ClassVar[int]
+    DATASETS_FIELD_NUMBER: _ClassVar[int]
+    NOTICES_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    description: str
+    steps: _containers.RepeatedCompositeFieldContainer[DerivedAppStep]
+    edges: _containers.RepeatedCompositeFieldContainer[ProposedEdge]
+    files: _containers.RepeatedCompositeFieldContainer[DerivedAppFile]
+    framework: str
+    tools: _containers.ScalarMap[str, str]
+    skills: _containers.RepeatedScalarFieldContainer[str]
+    connections: _containers.RepeatedScalarFieldContainer[str]
+    datasets: _containers.RepeatedScalarFieldContainer[str]
+    notices: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., steps: _Optional[_Iterable[_Union[DerivedAppStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[ProposedEdge, _Mapping]]] = ..., files: _Optional[_Iterable[_Union[DerivedAppFile, _Mapping]]] = ..., framework: _Optional[str] = ..., tools: _Optional[_Mapping[str, str]] = ..., skills: _Optional[_Iterable[str]] = ..., connections: _Optional[_Iterable[str]] = ..., datasets: _Optional[_Iterable[str]] = ..., notices: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class DeriveAppResponse(_message.Message):
+    __slots__ = ("app", "rejected")
+    APP_FIELD_NUMBER: _ClassVar[int]
+    REJECTED_FIELD_NUMBER: _ClassVar[int]
+    app: DerivedApp
+    rejected: ProposalRejected
+    def __init__(self, app: _Optional[_Union[DerivedApp, _Mapping]] = ..., rejected: _Optional[_Union[ProposalRejected, _Mapping]] = ...) -> None: ...
+
 class DeleteAppRequest(_message.Message):
     __slots__ = ("handle",)
     HANDLE_FIELD_NUMBER: _ClassVar[int]

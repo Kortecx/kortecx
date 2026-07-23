@@ -71,6 +71,7 @@ from .grants import AssetGrants
 from .memory import DecayReport, Memory, MemoryHit, MemoryKind, MemoryStats, StoreResult
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteDetail
+from .derive import AppDerivation
 from .propose import WorkflowProposal
 from .react import ReactTurn, ReactTurnPage
 from .recipes import RecipeForm, RecipeInfo, ScoredRecipe
@@ -971,6 +972,47 @@ class KxClient:
             )
         )
         return WorkflowProposal.from_proto(resp)
+
+    def derive_app(
+        self,
+        prompt: str,
+        *,
+        kind: str = "scheduled",
+        mode: str = "",
+        framework: str = "",
+        attachments: Optional[Sequence[str]] = None,
+    ) -> AppDerivation:
+        """Derive a reviewable App DESIGN from ONE natural-language ``prompt``.
+
+        The served model decides the workflow, its SHAPE (which steps run in parallel) and
+        the capabilities each step needs; the gateway compiles the result through the vetted
+        planner and intersects every named capability against this caller's own ceiling.
+
+        VALIDATE-ONLY: no envelope is saved, no branch is created, no journal is written.
+        Nothing exists until you approve the design and author it through the normal path
+        (:meth:`save_app` + :meth:`scaffold_app`), which re-derives every authoritative axis
+        server-side.
+
+        ``kind`` is ``"scheduled"`` or ``"hosted"``; an unknown value is REFUSED rather than
+        defaulted. ``mode`` (``"contextual"`` / ``"codified"``) applies to the scheduled lane
+        only. ``attachments`` are FILENAMES of already-uploaded context files — names only,
+        because the derive holds no grant to dereference a content ref.
+
+        Returns ``derived=False`` with a ``reason`` when the gateway can't design. An old
+        gateway without the seam raises ``KxUnimplemented``."""
+        resp = self._call(
+            lambda: self._stub.DeriveApp(
+                _g.DeriveAppRequest(
+                    kind=kind,
+                    mode=mode,
+                    prompt=prompt,
+                    framework=framework,
+                    attachments=list(attachments or []),
+                ),
+                metadata=self._md,
+            )
+        )
+        return AppDerivation.from_proto(resp)
 
     def run_chain(
         self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
@@ -3117,6 +3159,30 @@ class AsyncKxClient:
             self._stub.ProposeWorkflow(_g.ProposeWorkflowRequest(goal=goal), metadata=self._md)
         )
         return WorkflowProposal.from_proto(resp)
+
+    async def derive_app(
+        self,
+        prompt: str,
+        *,
+        kind: str = "scheduled",
+        mode: str = "",
+        framework: str = "",
+        attachments: Optional[Sequence[str]] = None,
+    ) -> AppDerivation:
+        """As :meth:`KxClient.derive_app` — validate-only one-prompt App design."""
+        resp = await self._acall(
+            self._stub.DeriveApp(
+                _g.DeriveAppRequest(
+                    kind=kind,
+                    mode=mode,
+                    prompt=prompt,
+                    framework=framework,
+                    attachments=list(attachments or []),
+                ),
+                metadata=self._md,
+            )
+        )
+        return AppDerivation.from_proto(resp)
 
     async def run_chain(
         self, chain: "_chains.Chain", *, wait: bool = False, timeout: float = 120.0
