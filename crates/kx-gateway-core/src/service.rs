@@ -2471,6 +2471,11 @@ impl KxGateway for GatewayService {
                         "missing integration: {name} (register it with `kx connections add`)"
                     ))
                 }
+                crate::apps_run::AppRunError::UncomposableApp { handle, reason } => {
+                    Status::failed_precondition(format!(
+                        "cannot compose app {handle:?}: {reason}"
+                    ))
+                }
                 crate::apps_run::AppRunError::UnservedModelRoute(route) => {
                     Status::failed_precondition(format!(
                         "model route {route:?} is not served here (start `kx serve` with a matching \

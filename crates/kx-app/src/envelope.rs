@@ -808,6 +808,11 @@ impl AppEnvelope {
     /// config, an Experience App with a blueprint, an empty hosted `branch_handle`), a
     /// malformed ref, URL userinfo in a connection descriptor, a non-bare credential
     /// name, or any float.
+    //
+    // One flat per-lane then per-rail sequence of independent shape checks. Splitting it
+    // would scatter the contract across helpers that are each read once, and the value of
+    // this function is that the whole envelope contract is visible in one place.
+    #[allow(clippy::too_many_lines)]
     pub fn validate(&self) -> Result<(), AppError> {
         match self.kind() {
             AppKind::Functional => {
