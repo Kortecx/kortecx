@@ -1647,6 +1647,12 @@ pub fn render_save_app(resp: &proto::SaveAppResponse, json: bool) -> String {
 }
 
 /// JSON of one App summary (the catalog/display view).
+///
+/// Carries the two DISCRIMINANTS the wire provides: `kind` (`functional` / `experience` —
+/// which lane) and `mode` (`contextual` / `codified` — how a scheduled app is authored).
+/// Both were dropped here, so `kx app list --json` could not tell a hosted app from a
+/// scheduled one while the console showed the difference on every card. Empty is the honest
+/// value for either on an older server, and it reads as the default the runtime applies.
 fn app_summary_json(s: &proto::AppSummary) -> Value {
     json!({
         "handle": s.handle,
@@ -1657,6 +1663,8 @@ fn app_summary_json(s: &proto::AppSummary) -> Value {
         "tags": s.tags,
         "step_count": s.step_count,
         "locked": s.locked,
+        "kind": s.kind,
+        "mode": s.mode,
     })
 }
 
@@ -4056,5 +4064,40 @@ mod tests {
             false,
         );
         assert!(empty.contains("no telemetry rows"));
+    }
+
+    /// The catalog JSON must carry BOTH discriminants the wire provides. They were dropped
+    /// here, so `kx app list --json` could not distinguish a hosted app from a scheduled one,
+    /// nor contextual from codified — while the console showed both on every card. A consumer
+    /// scripting against this output had no way to ask "which of these are hosted?".
+    #[test]
+    fn app_summary_json_carries_the_kind_and_mode_discriminants() {
+        let s = proto::AppSummary {
+            handle: "apps/local/payouts".into(),
+            app_ref: vec![0xab; 16],
+            name: "Payouts".into(),
+            version: "1".into(),
+            description: "reconcile".into(),
+            tags: vec![],
+            step_count: 3,
+            locked: false,
+            kind: "functional".into(),
+            mode: "codified".into(),
+        };
+        let v = app_summary_json(&s);
+        assert_eq!(v["kind"], "functional");
+        assert_eq!(v["mode"], "codified");
+        assert_eq!(v["step_count"], 3);
+
+        // An older server sends neither; empty is the honest value and reads as the default
+        // the runtime applies (functional / contextual) rather than a missing key.
+        let old = proto::AppSummary {
+            kind: String::new(),
+            mode: String::new(),
+            ..s
+        };
+        let v = app_summary_json(&old);
+        assert_eq!(v["kind"], "");
+        assert_eq!(v["mode"], "");
     }
 }
