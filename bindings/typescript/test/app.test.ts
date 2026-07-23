@@ -152,9 +152,17 @@ describe("App golden corpus parity (the cross-surface byte-shape gate)", () => {
       expect(canonicalJson(JSON.parse(c.canonical))).toBe(c.canonical);
     });
   }
+  it("emits the mode key only when a mode was set", () => {
+    // The whole point of the additive field: an App that never called .mode() must
+    // serialize exactly as it did before the field existed, so its app_ref cannot move.
+    const plain = app("Plain").blueprint(flow().agent("go")).toEnvelope();
+    expect(plain.mode).toBeUndefined();
+    const codified = app("Codified").blueprint(flow().agent("go")).mode("codified").toEnvelope();
+    expect(codified.mode).toBe("codified");
+  });
   it("covers the required shapes", () => {
     const names = new Set(corpus.map((c) => c.name));
-    for (const want of ["minimal", "agentic", "full", "grounded", "reach"])
+    for (const want of ["minimal", "agentic", "full", "grounded", "reach", "codified"])
       expect(names.has(want)).toBe(true);
   });
 });

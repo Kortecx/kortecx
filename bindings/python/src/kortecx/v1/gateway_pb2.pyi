@@ -1475,7 +1475,7 @@ class SetActiveModelResponse(_message.Message):
     def __init__(self, active_model_id: _Optional[str] = ...) -> None: ...
 
 class AppSummary(_message.Message):
-    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked", "kind")
+    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked", "kind", "mode")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     APP_REF_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -1485,6 +1485,7 @@ class AppSummary(_message.Message):
     STEP_COUNT_FIELD_NUMBER: _ClassVar[int]
     LOCKED_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
+    MODE_FIELD_NUMBER: _ClassVar[int]
     handle: str
     app_ref: bytes
     name: str
@@ -1494,7 +1495,8 @@ class AppSummary(_message.Message):
     step_count: int
     locked: bool
     kind: str
-    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ..., kind: _Optional[str] = ...) -> None: ...
+    mode: str
+    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ..., kind: _Optional[str] = ..., mode: _Optional[str] = ...) -> None: ...
 
 class SaveAppRequest(_message.Message):
     __slots__ = ("handle", "envelope_json", "source_digest")

@@ -141,6 +141,13 @@ export class AppSummary {
      * to its Scheduled / Hosted section by this field.
      */
     readonly kind: string = "",
+    /**
+     * The authoring mode: `"contextual"` (a text app steered by its own markdown) or
+     * `"codified"` (the model authors the code/config the runtime orchestrates from).
+     * `""` on an old server ⇒ treat as contextual, and always `""` for a `"experience"`
+     * app, which has no such axis.
+     */
+    readonly mode: string = "",
   ) {}
 
   static fromProto(s: PbAppSummary): AppSummary {
@@ -154,6 +161,7 @@ export class AppSummary {
       s.stepCount,
       s.locked,
       s.kind,
+      s.mode,
     );
   }
 }

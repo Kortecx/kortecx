@@ -46,6 +46,11 @@ separators, number format, or escaping fails the gate.
   `steering_config.tools.requested_grants` + `steering_config.context.dataset_refs`.
 - `reach` — the `steering_config.tools.reach` selector (`inherit_principal`), sorted
   before `requested_grants`, proving the additive field's canonical placement.
+- `codified` — the `mode` discriminant, sorted between `description` and `name`, on a
+  multi-step blueprint with `branch_handle` + `requested_grants`. The gate also asserts
+  that **no other case emits a `mode` key**: that omission is what keeps the field free,
+  since an App that never set a mode must serialize exactly as it did before the field
+  existed, and therefore keep its `app_ref` / `app_digest`.
 
 Regenerate by constructing the envelopes via the typed `kx-app` API and printing
 `to_canonical_json()`; never hand-edit the `canonical` strings.

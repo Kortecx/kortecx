@@ -167,9 +167,25 @@ def test_golden_corpus_round_trips_byte_identically(case) -> None:
     assert canonical_json(parsed).decode() == s, case["name"]
 
 
+def test_mode_key_is_emitted_only_when_set() -> None:
+    # The whole point of the additive field: an App that never called .mode() must
+    # serialize exactly as it did before the field existed, so its app_ref cannot move.
+    plain = kx.app("Plain").blueprint(kx.flow().step(topic="hi")).to_envelope()
+    assert "mode" not in plain
+    codified = (
+        kx.app("Codified").blueprint(kx.flow().step(topic="hi")).mode("codified").to_envelope()
+    )
+    assert codified["mode"] == "codified"
+
+
+def test_mode_rejects_an_unknown_label() -> None:
+    with pytest.raises(ChainError):
+        kx.app("x").blueprint(kx.flow().step(topic="hi")).mode("codifed")
+
+
 def test_corpus_covers_required_shapes() -> None:
     names = {c["name"] for c in _CORPUS}
-    assert {"minimal", "agentic", "full", "grounded", "reach"} <= names
+    assert {"minimal", "agentic", "full", "grounded", "reach", "codified"} <= names
 
 
 # ---- server-backed (a real kx serve) ----
