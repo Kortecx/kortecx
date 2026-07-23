@@ -180,6 +180,12 @@ pub struct AppRecord {
     /// schedulable capability) or `"experience"` (a hosted web app). Empty ⇒ functional
     /// (an old row / unset). Display + section-routing only; never identity-bearing.
     pub kind: String,
+    /// The authoring-mode label the host derives from the envelope: `"contextual"` (a text
+    /// app steered by its own markdown) or `"codified"` (the model authors the code and
+    /// configuration the runtime orchestrates from). Empty ⇒ contextual (an old row / unset),
+    /// and always empty for an Experience App, which has no such axis. Display + routing
+    /// only; never identity-bearing.
+    pub mode: String,
 }
 
 /// The App-catalog store seam: save / enumerate / fetch a caller's App envelopes.

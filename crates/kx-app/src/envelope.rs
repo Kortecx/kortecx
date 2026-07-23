@@ -394,6 +394,51 @@ impl AppKind {
     }
 }
 
+/// How a Functional App is authored — the second axis, orthogonal to [`AppKind`].
+///
+/// [`AppKind`] says which LANE an App belongs to (schedulable capability vs hosted web app);
+/// this says what the artifact of a scheduled App actually IS.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppMode {
+    /// A TEXT app that works by model steer: it carries prompt / rules / reference markdown,
+    /// and the runtime hands that context to the model, which acts through the tools, skills
+    /// and integrations it was granted. The default, and what every App authored before this
+    /// field existed keeps doing.
+    #[default]
+    Contextual,
+    /// The model authors the code and configuration the runtime needs in order to manage,
+    /// orchestrate and run the App. The artifact is a real project, not prose.
+    Codified,
+}
+
+impl AppMode {
+    /// The stable lowercase wire label (`"contextual"` / `"codified"`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AppMode::Contextual => "contextual",
+            AppMode::Codified => "codified",
+        }
+    }
+
+    /// Parse the envelope label. Anything unrecognized — including the empty string every App
+    /// authored before this field existed carries — is [`AppMode::Contextual`].
+    ///
+    /// Degrading rather than failing is the SAFE direction: contextual authors markdown only,
+    /// so an unreadable label can never make a reader write files it does not understand.
+    /// [`AppEnvelope::validate`] is what refuses an unknown label outright, so a typo is an
+    /// honest authoring error rather than a silent downgrade — this is the defensive read for
+    /// anything that got past it.
+    #[must_use]
+    pub fn from_label(s: &str) -> Self {
+        match s {
+            "codified" => Self::Codified,
+            _ => Self::Contextual,
+        }
+    }
+}
+
 /// The framework an Experience App is scaffolded and served as.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -500,6 +545,19 @@ pub struct AppEnvelope {
     /// Optional per-App project branch handle (reserved; the scaffold creates it).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub branch_handle: String,
+    /// How a Functional App is authored: `""`/`"contextual"` (a text app steered by its own
+    /// markdown — the default) or `"codified"` (the model authors the code and configuration
+    /// the runtime orchestrates from). See [`AppMode`].
+    ///
+    /// A property of the APP, not of one run: whether the artifact is prose or a project is
+    /// authored, not toggled per invocation. ALWAYS empty for an Experience App, which has a
+    /// project by construction — [`AppEnvelope::validate`] refuses one that carries it.
+    ///
+    /// Empty on every App authored before this field existed, and `skip_serializing_if` means
+    /// empty adds ZERO bytes — so every existing envelope canonicalizes byte-identically and
+    /// its `app_ref` / `app_digest` are unchanged.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mode: String,
 }
 
 /// The envelope-derived summary the catalog projects (the host adds handle + `app_ref`).
@@ -517,6 +575,9 @@ pub struct AppSummary {
     pub step_count: u32,
     /// Which lane the App belongs to (derived from the schema tag).
     pub kind: AppKind,
+    /// How a Functional App is authored. Always [`AppMode::Contextual`] for an Experience App
+    /// (which has no such axis — see [`AppEnvelope::validate`]).
+    pub mode: AppMode,
 }
 
 impl AppEnvelope {
@@ -536,6 +597,7 @@ impl AppEnvelope {
             steering_config: SteeringConfig::default(),
             replay: Replay::default(),
             branch_handle: String::new(),
+            mode: String::new(),
         }
     }
 
@@ -560,6 +622,7 @@ impl AppEnvelope {
             steering_config: SteeringConfig::default(),
             replay: Replay::default(),
             branch_handle: branch_handle.into(),
+            mode: String::new(),
         }
     }
 
@@ -572,6 +635,15 @@ impl AppEnvelope {
         } else {
             AppKind::Functional
         }
+    }
+
+    /// How this App is authored — the parsed [`AppEnvelope::mode`] label.
+    ///
+    /// Always [`AppMode::Contextual`] for an Experience App: `validate` refuses one that
+    /// carries a mode at all, so there is no second answer to derive.
+    #[must_use]
+    pub fn mode(&self) -> AppMode {
+        AppMode::from_label(&self.mode)
     }
 
     /// Parse + validate an envelope from JSON bytes (any key order accepted).
@@ -667,6 +739,7 @@ impl AppEnvelope {
             tags: self.tags.clone(),
             step_count,
             kind: self.kind(),
+            mode: self.mode(),
         }
     }
 
@@ -702,6 +775,18 @@ impl AppEnvelope {
                         "a functional app must not carry a hosted config".into(),
                     ));
                 }
+                // Refuse an unknown label rather than let `AppMode::from_label` degrade it.
+                // The degrade is the right READ posture (contextual authors markdown only, so
+                // it can never write files a reader does not understand), but at AUTHORING a
+                // typo silently becoming a text app is a surprise the user cannot see: they
+                // asked for a project and got prose, with nothing to point at.
+                if !self.mode.is_empty() && !matches!(self.mode.as_str(), "contextual" | "codified")
+                {
+                    return Err(AppError::Invalid(format!(
+                        "unknown app mode {:?} (expected \"contextual\" or \"codified\")",
+                        self.mode
+                    )));
+                }
             }
             AppKind::Experience => {
                 if self.hosted.is_none() {
@@ -718,6 +803,17 @@ impl AppEnvelope {
                 if self.branch_handle.is_empty() {
                     return Err(AppError::Invalid(
                         "an experience app must carry a branch_handle (the project file tree)"
+                            .into(),
+                    ));
+                }
+                // The contextual/codified axis is a property of the SCHEDULED lane. A hosted
+                // app is a real project by construction, so the question does not apply — and
+                // answering it anyway would give two surfaces disagreeing about what an
+                // Experience app is.
+                if !self.mode.is_empty() {
+                    return Err(AppError::Invalid(
+                        "an experience app must not carry a mode (it is a project by \
+                         construction, not a contextual/codified choice)"
                             .into(),
                     ));
                 }
@@ -1358,6 +1454,74 @@ mod tests {
             let expect: std::collections::BTreeSet<String> =
                 seeds.iter().map(|s| hexref(*s)).collect();
             prop_assert_eq!(got, expect);
+        }
+    }
+
+    /// THE LOAD-BEARING PROPERTY of the mode field: adding it must cost an existing App
+    /// exactly nothing. `skip_serializing_if` means an unset mode contributes no bytes, so
+    /// every envelope authored before it existed canonicalizes identically — and `app_ref` /
+    /// `app_digest`, which are hashes of exactly these bytes, cannot move.
+    #[test]
+    fn an_unset_mode_adds_no_bytes() {
+        let env = AppEnvelope::new("x", sample_blueprint());
+        let s = String::from_utf8(env.to_canonical_json().unwrap()).unwrap();
+        // Match the KEY, not the substring: `"kind":"model"` contains "mode".
+        assert!(
+            !s.contains("\"mode\":"),
+            "an unset mode must be omitted: {s}"
+        );
+        // And the old bytes still parse, with the field defaulted rather than demanded.
+        let old =
+            br#"{"blueprint":{"steps":[]},"name":"x","schema":"kortecx.app/v1","version":"1"}"#;
+        let parsed = AppEnvelope::from_json_slice(old).unwrap();
+        assert_eq!(parsed.mode, "");
+        assert_eq!(parsed.mode(), AppMode::Contextual);
+        assert_eq!(parsed.to_canonical_json().unwrap(), old.to_vec());
+    }
+
+    #[test]
+    fn a_codified_mode_round_trips() {
+        let mut env = AppEnvelope::new("x", sample_blueprint());
+        env.mode = "codified".to_string();
+        let canon = env.to_canonical_json().unwrap();
+        let again = AppEnvelope::from_json_slice(&canon).unwrap();
+        assert_eq!(again.mode(), AppMode::Codified);
+        assert_eq!(again.summary().mode, AppMode::Codified);
+        assert_eq!(again.to_canonical_json().unwrap(), canon);
+    }
+
+    /// A typo must be an honest authoring error, not a silent downgrade to a text app: the
+    /// user asked for a project and would otherwise get prose with nothing to point at.
+    #[test]
+    fn an_unknown_mode_is_refused_at_validate() {
+        let mut env = AppEnvelope::new("x", sample_blueprint());
+        env.mode = "codifed".to_string(); // sic
+        let err = env.validate().unwrap_err().to_string();
+        assert!(err.contains("unknown app mode"), "{err}");
+        // ...while the READ path still degrades safely for anything that got past validate.
+        assert_eq!(AppMode::from_label("codifed"), AppMode::Contextual);
+        assert_eq!(AppMode::from_label(""), AppMode::Contextual);
+    }
+
+    /// The mode axis belongs to the scheduled lane. A hosted app is a project by
+    /// construction, so carrying the field would give two surfaces different answers about
+    /// what an Experience app is.
+    #[test]
+    fn an_experience_app_must_not_carry_a_mode() {
+        let mut env = AppEnvelope::new_experience("x", HostedConfig::default(), "acme/apps/x");
+        env.validate().expect("a hosted app with no mode is valid");
+        env.mode = "codified".to_string();
+        let err = env.validate().unwrap_err().to_string();
+        assert!(err.contains("must not carry a mode"), "{err}");
+    }
+
+    #[test]
+    fn mode_labels_are_stable() {
+        assert_eq!(AppMode::Contextual.as_str(), "contextual");
+        assert_eq!(AppMode::Codified.as_str(), "codified");
+        assert_eq!(AppMode::default(), AppMode::Contextual);
+        for m in [AppMode::Contextual, AppMode::Codified] {
+            assert_eq!(AppMode::from_label(m.as_str()), m);
         }
     }
 }

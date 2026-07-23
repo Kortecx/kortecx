@@ -41,7 +41,7 @@
 mod envelope;
 
 pub use envelope::{
-    canonical_json, summary_of, AppEnvelope, AppError, AppKind, AppSummary, ArtifactRef,
+    canonical_json, summary_of, AppEnvelope, AppError, AppKind, AppMode, AppSummary, ArtifactRef,
     ConnectionRef, ContextRef, ContextSteering, DatasetRef, Guards, HostedConfig, HostedFramework,
     ModelSteering, Reach, References, Replay, ReplayMode, SkillRef, SteeringConfig, ToolRef,
     ToolsSteering, APP_SCHEMA, EXPERIENCE_SCHEMA, MAX_APP_CORPUS_BYTES, MAX_APP_CORPUS_REFS,

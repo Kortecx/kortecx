@@ -65,6 +65,21 @@ export function sectionOf(app: Pick<AppSummary, "kind">): AppsSectionKind {
   return app.kind === "experience" ? "hosted" : "scheduled";
 }
 
+/** The display label for a scheduled App's authoring mode. Empty (an old server, or an App
+ *  saved before the field existed) reads as Contextual — the same default the runtime uses,
+ *  so the chip never claims something the run would not do. */
+export function modeLabel(mode: string): string {
+  return mode === "codified" ? "Codified" : "Contextual";
+}
+
+/** What that label MEANS, on hover. The two modes differ in what the App's project actually
+ *  is, which is not guessable from one word. */
+export function modeHint(mode: string): string {
+  return mode === "codified"
+    ? "Codified — the model wrote the code and configuration this app is orchestrated from"
+    : "Contextual — a text app: its own prompt, rules and reference notes steer the model";
+}
+
 export function AppsSection({
   section = "scheduled",
   onSection,
@@ -251,7 +266,17 @@ export function AppsSection({
         <ErrorNotice error={toUiError(exportBundle.error)} onRetry={() => exportBundle.reset()} />
       ) : null}
 
-      {creating ? <NewAppForm onClose={() => setCreating(false)} initialKind={section} /> : null}
+      {creating ? (
+        <NewAppForm
+          onClose={() => setCreating(false)}
+          initialKind={section}
+          // Follow the kind the App was actually authored as. The form's kind toggle is its
+          // OWN state, so authoring a hosted app from the Scheduled tab used to leave the
+          // catalog on Scheduled — the new app was real, but in the section the user was not
+          // looking at, which reads as the kind selection being dropped by the scaffold.
+          onKindAuthored={(authored) => onSection?.(authored)}
+        />
+      ) : null}
 
       {isLoading ? <EmptyState title="Loading apps…" /> : null}
 
@@ -580,9 +605,18 @@ function AppCard({
           // A hosted app has no blueprint steps — show what it IS, not a misleading "0 steps".
           <span className="chip chip--tag">web app</span>
         ) : (
-          <span className="chip chip--tag">
-            {app.stepCount} step{app.stepCount === 1 ? "" : "s"}
-          </span>
+          <>
+            <span className="chip chip--tag">
+              {app.stepCount} step{app.stepCount === 1 ? "" : "s"}
+            </span>
+            <span
+              className="chip chip--tag"
+              data-testid={`app-mode-${app.handle}`}
+              title={modeHint(app.mode)}
+            >
+              {modeLabel(app.mode)}
+            </span>
+          </>
         )}
         {app.tags.map((t) => (
           <span key={t} className="chip chip--tag">

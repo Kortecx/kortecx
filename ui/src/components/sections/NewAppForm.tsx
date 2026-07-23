@@ -95,12 +95,22 @@ const HOSTED_FRAMEWORKS = [
 ] as const;
 type HostedFrameworkChoice = (typeof HOSTED_FRAMEWORKS)[number]["value"];
 
+/** How a scheduled App is authored (the second axis, orthogonal to {@link NewAppKind}):
+ *  `contextual` = a text app steered by its own markdown; `codified` = the model authors the
+ *  code and configuration the runtime orchestrates from. */
+export type NewAppMode = "contextual" | "codified";
+
 export function NewAppForm({
   onClose,
   initialKind = "scheduled",
+  onKindAuthored,
 }: {
   onClose: () => void;
   initialKind?: NewAppKind;
+  /** Called with the kind the App was actually SAVED as, so the catalog can follow it. The
+   *  form's kind toggle is local state, so without this a hosted app authored from the
+   *  Scheduled tab lands in a section the user is not looking at. */
+  onKindAuthored?: (kind: NewAppKind) => void;
 }) {
   const { client, endpoint } = useConnection();
   const qc = useQueryClient();
@@ -113,6 +123,7 @@ export function NewAppForm({
   const attach = useAttachments();
   const propose = useProposeWorkflow();
   const [kind, setKind] = useState<NewAppKind>(initialKind);
+  const [mode, setMode] = useState<NewAppMode>("contextual");
   const [proposal, setProposal] = useState<WorkflowProposal | null>(null);
   // The LIVE canvas graph. Previously a proposal was lowered once, inline, and the
   // editable graph thrown away — so the plan could be previewed but never adjusted.
@@ -238,6 +249,11 @@ export function NewAppForm({
       if (reachInherit) {
         builder = builder.steer({ reach: Reach.InheritPrincipal });
       }
+      // Only a non-default mode is written: leaving it off emits no `mode` key at all, so a
+      // contextual App's envelope bytes — and its app_ref — are what they always were.
+      if (mode === "codified") {
+        builder = builder.mode("codified");
+      }
       const trimmedRule = rule.trim();
       if (trimmedRule !== "") {
         builder = builder.rule("guidance", { body: trimmedRule });
@@ -282,8 +298,12 @@ export function NewAppForm({
     if (!canSubmit) {
       return;
     }
+    // Capture the kind the save was issued under — the catalog follows it, so a hosted app
+    // authored from the Scheduled tab lands in the section the user ends up looking at.
+    const authoredKind = kind;
     save.mutate(undefined, {
       onSuccess: (appHandle) => {
+        onKindAuthored?.(authoredKind);
         scaffold.mutate(
           { handle: appHandle, goal: goal.trim() },
           {
@@ -357,6 +377,38 @@ export function NewAppForm({
               Hosted
             </button>
           </fieldset>
+          {/* The authoring-mode axis. Codified is honest-DISABLED: the envelope carries the
+              field and the catalog reads it, but the scheduled scaffold rail still authors
+              markdown only — so saving `codified` today would put a "Codified" chip on an app
+              that is prose. Offered now (the `new-app-packaging-docker` precedent) so the axis
+              is discoverable, enabled when the rail lands. */}
+          {kind === "scheduled" ? (
+            <fieldset
+              className="view-toggle view-toggle--compact"
+              aria-label="App mode"
+              data-testid="new-app-mode"
+            >
+              <button
+                type="button"
+                data-testid="new-app-mode-contextual"
+                aria-pressed={mode === "contextual"}
+                onClick={() => setMode("contextual")}
+                disabled={busy}
+                title="A text app: its own prompt, rules and reference notes steer the model"
+              >
+                Contextual
+              </button>
+              <button
+                type="button"
+                data-testid="new-app-mode-codified"
+                aria-pressed={false}
+                disabled
+                title="Codified — the model writes the code and configuration this app is orchestrated from. Ships with the codified scaffold rail."
+              >
+                Codified · soon
+              </button>
+            </fieldset>
+          ) : null}
           {kind === "hosted" ? (
             <>
               <p className="muted" data-testid="new-app-hosted-note">

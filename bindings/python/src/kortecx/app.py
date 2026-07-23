@@ -104,6 +104,8 @@ class App:
         # SecretScope::AllowList to these (bounded by the referenced connections).
         self._secret_scope: List[str] = []
         self._branch_handle = ""
+        # The authoring mode label ("" = contextual). See :meth:`mode`.
+        self._mode = ""
         self._replay: Dict[str, str] = {}
         # Imperative pre-run registrations carried from a Flow via
         # :meth:`Flow.as_app` (with_mcp connectors / with_memory facts). Run() executes
@@ -330,6 +332,24 @@ class App:
         self._branch_handle = handle
         return self
 
+    def mode(self, mode: str) -> "App":
+        """How this App is authored — the second axis, orthogonal to the scheduled/hosted lane.
+
+        ``"contextual"`` (the default) is a TEXT app that works by model steer: it carries its
+        prompt / rules / reference markdown, and the runtime hands that context to the model,
+        which acts through the tools, skills and integrations it was granted.
+
+        ``"codified"`` means the model authors the code and configuration the runtime needs in
+        order to manage, orchestrate and run the App — the artifact is a real project, not prose.
+
+        Leaving it unset emits NO ``mode`` key, so an App authored without this call serializes
+        exactly as it did before the field existed and keeps its ``app_ref``.
+        """
+        if mode not in ("contextual", "codified"):
+            raise ChainError(f'unknown app mode {mode!r} (expected "contextual" or "codified")')
+        self._mode = mode
+        return self
+
     # -- terminals --
 
     def _references_dict(self) -> Dict[str, Any]:
@@ -398,6 +418,8 @@ class App:
             env["replay"] = {"per_step": dict(self._replay)}
         if self._branch_handle:
             env["branch_handle"] = self._branch_handle
+        if self._mode:
+            env["mode"] = self._mode
         return env
 
     def export(self, path, *, bundle: bool = False, client=None, with_data: bool = False) -> None:

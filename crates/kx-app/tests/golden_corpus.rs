@@ -40,7 +40,9 @@ fn corpus_round_trips_byte_identically() {
 fn corpus_covers_the_required_shapes() {
     let cases: Vec<Case> = serde_json::from_str(CORPUS).unwrap();
     let names: Vec<&str> = cases.iter().map(|c| c.name.as_str()).collect();
-    for want in ["minimal", "agentic", "full", "grounded", "reach"] {
+    for want in [
+        "minimal", "agentic", "full", "grounded", "reach", "codified",
+    ] {
         assert!(
             names.contains(&want),
             "corpus must cover the {want:?} shape"
@@ -73,4 +75,23 @@ fn corpus_covers_the_required_shapes() {
     assert!(reach
         .canonical
         .contains("\"tools\":{\"reach\":\"inherit_principal\",\"requested_grants\":"));
+    // the codified case pins the additive `mode` field's canonical PLACEMENT — sorted
+    // between `description` and `name`. That placement is the whole risk of an additive
+    // field: a surface that appended it instead of sorting it would still parse every case
+    // here and still emit "valid" JSON, while producing different bytes and therefore a
+    // different app_ref for the same App.
+    let codified = cases.iter().find(|c| c.name == "codified").unwrap();
+    assert!(codified
+        .canonical
+        .contains("\"mode\":\"codified\",\"name\":"));
+    assert!(codified.canonical.contains("\"description\":\"Turns"));
+    // …and that no OTHER case emits the key at all, which is what makes the field free:
+    // an App that never set a mode serializes exactly as it did before the field existed.
+    for c in cases.iter().filter(|c| c.name != "codified") {
+        assert!(
+            !c.canonical.contains("\"mode\":"),
+            "case {:?} must not carry a mode key",
+            c.name
+        );
+    }
 }
