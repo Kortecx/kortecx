@@ -27,13 +27,22 @@ class DerivedAppStep:
     """One designed step (display shape). ``role``/``intent`` are the model's design;
     ``kind``/``model_id`` are the server-resolved recipe axes; ``tool_contract`` is what
     SURVIVED the server's intersection against the caller's tool ceiling — the ceiling's
-    version, never the model's."""
+    version, never the model's.
+
+    ``skills`` / ``integrations`` / ``datasets`` are the per-step BINDINGS: which node uses
+    each capability. They become the blueprint step's own lists, while the app-level lists on
+    :class:`AppDerivation` are their UNION — the DECLARATION set you write into the envelope's
+    ``references``. Writing only the union authors an App whose every capability falls back to
+    the entry step."""
 
     role: str
     intent: str
     kind: str
     model_id: str
     tool_contract: Dict[str, str]
+    skills: List[str]
+    integrations: List[str]
+    datasets: List[str]
 
 
 @_dataclasses.dataclass(frozen=True)
@@ -108,6 +117,9 @@ class AppDerivation:
                         kind=s.kind,
                         model_id=s.model_id,
                         tool_contract=dict(s.tool_contract),
+                        skills=list(s.skills),
+                        integrations=list(s.integrations),
+                        datasets=list(s.datasets),
                     )
                     for s in a.steps
                 ],

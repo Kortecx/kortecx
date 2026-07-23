@@ -62,6 +62,18 @@ pub struct DerivedStep {
     /// The surviving per-step grant set `{tool_id: version}` — the ceiling's version, never the
     /// model's.
     pub tool_contract: BTreeMap<String, String>,
+    /// The catalog SKILL names bound to this step, intersected against the caller's catalog.
+    ///
+    /// This and the two fields below are the BINDINGS: which node uses the capability. The
+    /// app-level lists on [`DerivedApp`] are their union — the DECLARATION set a client
+    /// writes into the envelope's `references`. Keeping both is what lets the design the
+    /// author reviews and the envelope the App runs from describe the same thing.
+    pub skills: Vec<String>,
+    /// The INTEGRATION names bound to this step, intersected against the caller's registry.
+    pub integrations: Vec<String>,
+    /// The DATASET names this step grounds on, intersected against the caller's non-empty
+    /// datasets.
+    pub datasets: Vec<String>,
 }
 
 /// One planned project file (the hosted lane's review surface).
@@ -92,6 +104,10 @@ pub struct DerivedApp {
     /// The resolved hosted framework (`vite_react` | `next_js` | `svelte`). Empty on scheduled.
     pub framework: String,
     /// App-level tool wishes: the union of every step's surviving grant.
+    ///
+    /// This and the three lists below are the DECLARATION set — what the App must have
+    /// registered for the design to work, which is what a client writes into the envelope's
+    /// `references`. Which NODE uses each one is [`DerivedStep`]'s business.
     pub tools: BTreeMap<String, String>,
     /// Catalog skill names the design asked for, intersected against the caller's catalog.
     pub skills: Vec<String>,

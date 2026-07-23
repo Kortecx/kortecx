@@ -94,8 +94,12 @@ struct AppJson {
     steps: Vec<StepJson>,
     #[serde(default)]
     edges: Vec<EdgeJson>,
-    // The app-level capability axes. All `default`: a model that omits one has said "none",
-    // which is the common case and must not be a decode failure.
+    // The app-level capability axes — the shape the contract taught BEFORE capabilities
+    // moved onto the step. Still accepted, and folded onto the entry step with a notice.
+    //
+    // Tolerating a shape the prompt no longer teaches costs nothing; refusing it costs the
+    // author their whole design because the model put a name one level up. That is the same
+    // trade the ` (v1)` id normalization makes, and it was learned the same way — live.
     #[serde(default)]
     skills: Vec<String>,
     #[serde(default)]
@@ -111,6 +115,15 @@ struct StepJson {
     intent: String,
     #[serde(default)]
     tools: Vec<String>,
+    // The per-step capability axes. A step says what IT reaches for, which is what the
+    // runtime binds (`kx_blueprint::StepSpec`) — so the design the author reviews and the
+    // envelope the App runs from describe the same thing.
+    #[serde(default)]
+    skills: Vec<String>,
+    #[serde(default)]
+    integrations: Vec<String>,
+    #[serde(default)]
+    datasets: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +142,12 @@ pub(crate) struct DerivedStep {
     pub(crate) intent: String,
     /// The tool ids this step requested, in the order named (deduped, still UNRESOLVED).
     pub(crate) tools: Vec<String>,
+    /// The catalog SKILL names this step asked for (deduped, still UNRESOLVED).
+    pub(crate) skills: Vec<String>,
+    /// The INTEGRATION names this step asked for (deduped, still UNRESOLVED).
+    pub(crate) integrations: Vec<String>,
+    /// The DATASET names this step grounds on (deduped, still UNRESOLVED).
+    pub(crate) datasets: Vec<String>,
 }
 
 /// A decoded derive: the app's proposed identity plus its unresolved workflow.
@@ -142,12 +161,10 @@ pub(crate) struct DerivedPlan {
     pub(crate) steps: Vec<DerivedStep>,
     /// The `(parent, child)` dependency edges. A step with no incoming edge runs in parallel.
     pub(crate) edges: Vec<(usize, usize)>,
-    /// App-level skill names the design asked for (still UNRESOLVED).
-    pub(crate) skills: Vec<String>,
-    /// App-level connection descriptors the design asked for (still UNRESOLVED).
-    pub(crate) integrations: Vec<String>,
-    /// App-level dataset names the design asked for (still UNRESOLVED).
-    pub(crate) datasets: Vec<String>,
+    /// The model answered with APP-LEVEL capability lists (the pre-per-step shape) and they
+    /// were folded onto the entry step. Advisory: the caller says so in a notice rather than
+    /// silently reshaping what the author is about to review.
+    pub(crate) folded_app_level: bool,
 }
 
 impl DerivedPlan {
@@ -241,6 +258,9 @@ pub(crate) fn decode_derived(bytes: &[u8]) -> Result<DerivedPlan, DeriveError> {
             role,
             intent,
             tools,
+            skills: clean_names(s.skills),
+            integrations: clean_names(s.integrations),
+            datasets: clean_names(s.datasets),
         });
     }
 
@@ -268,15 +288,61 @@ pub(crate) fn decode_derived(bytes: &[u8]) -> Result<DerivedPlan, DeriveError> {
     edges.sort_unstable();
     edges.dedup();
 
+    // The app-level lists are the pre-per-step shape. Fold them onto the ENTRY step —
+    // the step with no incoming edge, which is exactly where `RunApp` binds a capability
+    // no step names — so a model answering in the old shape still produces a design whose
+    // capabilities land where the runtime would have put them anyway.
+    let legacy = LegacyAppLevel {
+        skills: clean_names(app.skills),
+        integrations: clean_names(app.integrations),
+        datasets: clean_names(app.datasets),
+    };
+    let folded_app_level = legacy.fold_onto_entry(&mut steps, &edges);
+
     Ok(DerivedPlan {
         name: clamp_chars(app.name.trim(), MAX_DERIVE_NAME_BYTES),
         description: clamp_chars(app.description.trim(), MAX_DERIVE_DESCRIPTION_BYTES),
         steps,
         edges,
-        skills: clean_names(app.skills),
-        integrations: clean_names(app.integrations),
-        datasets: clean_names(app.datasets),
+        folded_app_level,
     })
+}
+
+/// The app-level capability lists a model may still answer with — the shape the contract
+/// taught before capabilities moved onto the step.
+struct LegacyAppLevel {
+    skills: Vec<String>,
+    integrations: Vec<String>,
+    datasets: Vec<String>,
+}
+
+impl LegacyAppLevel {
+    /// Fold any app-level names onto the ENTRY step (the first with no incoming edge),
+    /// returning `true` iff anything was folded — so the caller can TELL the author their
+    /// design was adjusted instead of quietly reshaping it.
+    ///
+    /// The entry step is chosen because it is where `RunApp` binds a capability no step
+    /// claims: folding anywhere else would make the reviewed design and the run disagree.
+    fn fold_onto_entry(self, steps: &mut [DerivedStep], edges: &[(usize, usize)]) -> bool {
+        if self.skills.is_empty() && self.integrations.is_empty() && self.datasets.is_empty() {
+            return false;
+        }
+        let entry = (0..steps.len()).find(|i| !edges.iter().any(|&(_, c)| c == *i));
+        let Some(step) = entry.and_then(|i| steps.get_mut(i)) else {
+            return false;
+        };
+        let merge = |dst: &mut Vec<String>, src: Vec<String>| {
+            for n in src {
+                if !dst.iter().any(|e| e.eq_ignore_ascii_case(&n)) {
+                    dst.push(n);
+                }
+            }
+        };
+        merge(&mut step.skills, self.skills);
+        merge(&mut step.integrations, self.integrations);
+        merge(&mut step.datasets, self.datasets);
+        true
+    }
 }
 
 /// Trim, drop empties, dedupe, and bound one app-level name list. Bounded by
@@ -387,13 +453,15 @@ impl CapabilityMenu {
             out.push_str(&line);
         }
         truncation.tools_omitted = omitted;
-        // The remaining axes are CONTEXT, not a naming surface — they tell the model what this
-        // app can be grounded in and connected to, which changes the intents it writes. Each is
-        // a single joined line and is dropped whole if it does not fit.
+        // The remaining axes are a NAMING surface too — a step may attach any of them, so
+        // each line must read as "these are the names you may write", not as background.
+        // Names only, for the same reason the tool list is ids only: whatever this renders
+        // is what the model sends back, so a decoration here becomes an unresolvable name
+        // there. Each line is dropped whole if it does not fit — never half a list.
         for (label, values) in [
-            ("Skills available", &self.skills),
-            ("Integrations connected", &self.connections),
-            ("Datasets to ground on", &self.datasets),
+            ("Skills you may attach to a step", &self.skills),
+            ("Integrations you may attach to a step", &self.connections),
+            ("Datasets a step may ground on", &self.datasets),
         ] {
             if values.is_empty() {
                 continue;
@@ -517,6 +585,67 @@ notes\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
         let has_incoming = |i: usize| d.edges.iter().any(|&(_, c)| c == i);
         assert!(!has_incoming(0) && !has_incoming(1));
         assert!(has_incoming(2));
+    }
+
+    /// The per-step capability axes decode onto the STEP that named them — the shape the
+    /// runtime binds. A step that names nothing gets nothing; there is no implicit spread.
+    #[test]
+    fn per_step_capabilities_decode_onto_their_own_step() {
+        let src = "{\"app\":{\"name\":\"Digest\",\"description\":\"d\",\"steps\":[\
+{\"role\":\"researcher\",\"intent\":\"a\",\"tools\":[],\"skills\":[\"triage\"],\
+\"integrations\":[\"gmail\"],\"datasets\":[\"handbook\"]},\
+{\"role\":\"writer\",\"intent\":\"b\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
+        let d = decode_derived(src.as_bytes()).expect("the per-step shape decodes");
+        assert_eq!(d.steps[0].skills, vec!["triage".to_string()]);
+        assert_eq!(d.steps[0].integrations, vec!["gmail".to_string()]);
+        assert_eq!(d.steps[0].datasets, vec!["handbook".to_string()]);
+        assert!(
+            d.steps[1].skills.is_empty()
+                && d.steps[1].integrations.is_empty()
+                && d.steps[1].datasets.is_empty(),
+            "a step that named nothing carries nothing"
+        );
+        assert!(!d.folded_app_level, "nothing was at the app level");
+    }
+
+    /// ★ TOLERATE THE SHAPE YOU NO LONGER TEACH. A model answering in the OLD app-level
+    /// shape must still produce a usable design: the names fold onto the ENTRY step, which
+    /// is exactly where `RunApp` binds a capability no step claims. Refusing would cost the
+    /// author their whole design because the model put a name one level up — the same trade
+    /// the ` (v1)` id normalization makes, learned the same way.
+    #[test]
+    fn app_level_capabilities_fold_onto_the_entry_step_and_say_so() {
+        let src = "{\"app\":{\"name\":\"Digest\",\"description\":\"d\",\"steps\":[\
+{\"role\":\"researcher\",\"intent\":\"a\",\"tools\":[]},\
+{\"role\":\"writer\",\"intent\":\"b\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}],\
+\"skills\":[\"triage\"],\"integrations\":[\"gmail\"],\"datasets\":[\"handbook\"]}}";
+        let d = decode_derived(src.as_bytes()).expect("the legacy shape still decodes");
+        assert!(d.folded_app_level, "the adjustment must be reportable");
+        assert_eq!(d.steps[0].skills, vec!["triage".to_string()]);
+        assert_eq!(d.steps[0].integrations, vec!["gmail".to_string()]);
+        assert_eq!(d.steps[0].datasets, vec!["handbook".to_string()]);
+        assert!(
+            d.steps[1].skills.is_empty(),
+            "the fold targets the entry step only"
+        );
+    }
+
+    /// A fan-out has TWO roots; the legacy fold must pick the first rather than spraying
+    /// the capability across both — one of them is not the step that needed it.
+    #[test]
+    fn the_legacy_fold_picks_one_entry_on_a_fan_out_and_never_duplicates() {
+        let src = "{\"app\":{\"name\":\"Scan\",\"description\":\"d\",\"steps\":[\
+{\"role\":\"researcher\",\"intent\":\"a\",\"tools\":[],\"skills\":[\"triage\"]},\
+{\"role\":\"analyst\",\"intent\":\"b\",\"tools\":[]},\
+{\"role\":\"writer\",\"intent\":\"c\",\"tools\":[]}],\
+\"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}],\"skills\":[\"triage\"]}}";
+        let d = decode_derived(src.as_bytes()).unwrap();
+        assert_eq!(
+            d.steps[0].skills,
+            vec!["triage".to_string()],
+            "already there ⇒ merged once, not twice"
+        );
+        assert!(d.steps[1].skills.is_empty() && d.steps[2].skills.is_empty());
     }
 
     #[test]
@@ -651,9 +780,11 @@ notes\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
             !rendered.contains("(v1)"),
             "a version parenthetical invites an unusable id"
         );
-        assert!(rendered.contains("Skills available: classification"));
-        assert!(rendered.contains("Integrations connected: gmail"));
-        assert!(rendered.contains("Datasets to ground on: handbook"));
+        // Every axis reads as a NAMING surface ("you may attach"), because a step may now
+        // attach any of them — a line that reads as background gets treated as background.
+        assert!(rendered.contains("Skills you may attach to a step: classification"));
+        assert!(rendered.contains("Integrations you may attach to a step: gmail"));
+        assert!(rendered.contains("Datasets a step may ground on: handbook"));
         assert!(rendered.len() <= MAX_DERIVE_MENU_BYTES);
         assert_eq!(truncation.tools_omitted, 0);
     }

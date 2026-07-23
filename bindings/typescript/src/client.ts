@@ -336,6 +336,18 @@ export interface DerivedAppStep {
   kind: string;
   modelId: string;
   toolContract: Record<string, string>;
+  /**
+   * The catalog SKILL names bound to THIS step. This and the two lists below are the
+   * BINDINGS — which node uses each capability — and become the blueprint step's own
+   * `skills`/`connections`/`datasets`. The app-level lists on {@link DerivedApp} are their
+   * union: the DECLARATION set you write into the envelope's `references`. Writing only the
+   * union authors an App whose every capability falls back to the entry step.
+   */
+  skills: string[];
+  /** The INTEGRATION names bound to this step. */
+  integrations: string[];
+  /** The DATASET names this step grounds on. */
+  datasets: string[];
 }
 
 /** One planned project file — the hosted lane's review surface. */
@@ -762,6 +774,9 @@ export abstract class KxClientBase {
           kind: s.kind,
           modelId: s.modelId,
           toolContract: { ...s.toolContract },
+          skills: [...s.skills],
+          integrations: [...s.integrations],
+          datasets: [...s.datasets],
         })),
         edges: a.edges.map((e) => ({ parent: e.parent, child: e.child })),
         files: a.files.map((f) => ({ path: f.path, role: f.role })),

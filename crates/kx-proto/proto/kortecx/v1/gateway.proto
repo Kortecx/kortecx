@@ -1437,6 +1437,15 @@ message DerivedAppStep {
   string kind   = 3;                     // structural kind (always "plain" today — the derive contract authors no critics)
   string model_id = 4;
   map<string, string> tool_contract = 5; // the surviving per-step grant set {tool_id: version}
+  // The per-step capability BINDINGS: which node uses each capability. The app-level lists
+  // on DerivedApp are their UNION — the DECLARATION set a client writes into the envelope's
+  // `references`, while these become the blueprint step's own `skills`/`connections`/
+  // `datasets`. Both travel because they answer different questions ("what must be
+  // registered?" vs "which step uses it?"), and a client that wrote only the union would
+  // author an App whose every capability falls back to the entry step.
+  repeated string skills       = 6;      // catalog skill names, intersected against the caller's catalog
+  repeated string integrations = 7;      // connection names, intersected against the caller's registry
+  repeated string datasets     = 8;      // dataset names, intersected against the caller's non-empty datasets
 }
 
 // One planned project file — the HOSTED lane's review surface.

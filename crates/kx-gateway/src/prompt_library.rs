@@ -73,29 +73,36 @@ gathers them, with an edge from each into it.\n\
 Choose each step's ROLE from the provided role palette — use ONLY those role names, never \
 invent one. Write each step's INTENT as one concrete, self-contained instruction for that role \
 (what it must produce), phrased so the role can act without seeing the others.\n\
-Each step MAY request TOOLS: pick ids from the provided capability menu, and ONLY from it. \
-Give a step a tool only when that step genuinely has to reach outside the model to do its job. \
-Most steps need none — use an empty list. Never invent a tool id, and never name a permission, \
-a credential, or a model.\n\
-The app as a WHOLE may also draw on the SKILLS, INTEGRATIONS and DATASETS the menu lists — name \
-them by their exact menu name, and only the ones the goal actually needs. Leave a list empty \
-when it needs none.\n\
+EVERY CAPABILITY BELONGS TO THE STEP THAT USES IT — never to the app. Each step names its \
+own TOOLS, SKILLS, INTEGRATIONS and DATASETS, picking from the provided capability menu and \
+ONLY from it, by the exact name the menu shows:\n\
+- tools: give a step a tool only when that step genuinely has to reach outside the model to \
+do its job.\n\
+- skills: attach one when a step needs that specific expertise to do its part.\n\
+- integrations: attach one only to the step that actually talks to that service.\n\
+- datasets: attach one to the step whose answer must be grounded in it.\n\
+Most steps need few or none — use an empty list. Never invent a name, and never name a \
+permission, a credential, or a model. A step that merely combines what other steps produced \
+usually needs nothing at all.\n\
 Also give the app a short NAME (2-5 words, what it does) and a one-sentence DESCRIPTION.\n\
 Reply with EXACTLY one JSON object and NOTHING else — no prose, no code fence, no \
 explanation. This example gathers two INDEPENDENT things and combines them — note that steps 0 \
-and 1 have no edge into them, so they run AT THE SAME TIME, and step 2 waits for both:\n\
+and 1 have no edge into them, so they run AT THE SAME TIME, step 2 waits for both, and each \
+step carries ONLY what it itself needs:\n\
 {\"app\":{\"name\":\"Weekly Sales Digest\",\"description\":\"Combines pipeline and support \
 signals into one weekly digest.\",\"steps\":[\
-{\"role\":\"researcher\",\"intent\":\"Collect this week's closed deals and their values\",\"tools\":[]},\
-{\"role\":\"researcher\",\"intent\":\"Collect this week's support escalations\",\"tools\":[]},\
-{\"role\":\"writer\",\"intent\":\"Write one digest covering both\",\"tools\":[]}],\
-\"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}],\
-\"skills\":[],\"integrations\":[],\"datasets\":[]}}\n\
+{\"role\":\"researcher\",\"intent\":\"Collect this week's closed deals and their values\",\
+\"tools\":[\"crm/query\"],\"skills\":[],\"integrations\":[\"crm\"],\"datasets\":[]},\
+{\"role\":\"researcher\",\"intent\":\"Collect this week's support escalations\",\
+\"tools\":[],\"skills\":[\"triage\"],\"integrations\":[],\"datasets\":[\"support\"]},\
+{\"role\":\"writer\",\"intent\":\"Write one digest covering both\",\
+\"tools\":[],\"skills\":[],\"integrations\":[],\"datasets\":[]}],\
+\"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}]}}\n\
 Rules: step and edge indices are 0-based into steps[]; an edge's parent index must be smaller \
-than its child index; every list is always present, empty when unused; do NOT include a model \
-id, a permission, or any field other than the ones shown. Do NOT connect every step in one \
-line — an edge means the child CONSUMES the parent's output, so two steps that read different \
-sources must not be chained.";
+than its child index; every list is always present on every step, empty when unused; do NOT \
+include a model id, a permission, or any field other than the ones shown. Do NOT connect every \
+step in one line — an edge means the child CONSUMES the parent's output, so two steps that read \
+different sources must not be chained.";
 
 /// One curated authoring role: a stable `name` (aligned to the SDK persona library) + a
 /// one-line `framing` the planner palette shows the model. The heavy MoteDef axes come
@@ -249,11 +256,13 @@ mod tests {
     fn derive_example_decodes_and_uses_palette_roles() {
         const DERIVE_EXAMPLE: &str = "{\"app\":{\"name\":\"Weekly Sales Digest\",\
 \"description\":\"Combines pipeline and support signals into one weekly digest.\",\"steps\":[\
-{\"role\":\"researcher\",\"intent\":\"Collect this week's closed deals and their values\",\"tools\":[]},\
-{\"role\":\"researcher\",\"intent\":\"Collect this week's support escalations\",\"tools\":[]},\
-{\"role\":\"writer\",\"intent\":\"Write one digest covering both\",\"tools\":[]}],\
-\"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}],\
-\"skills\":[],\"integrations\":[],\"datasets\":[]}}";
+{\"role\":\"researcher\",\"intent\":\"Collect this week's closed deals and their values\",\
+\"tools\":[\"crm/query\"],\"skills\":[],\"integrations\":[\"crm\"],\"datasets\":[]},\
+{\"role\":\"researcher\",\"intent\":\"Collect this week's support escalations\",\
+\"tools\":[],\"skills\":[\"triage\"],\"integrations\":[],\"datasets\":[\"support\"]},\
+{\"role\":\"writer\",\"intent\":\"Write one digest covering both\",\
+\"tools\":[],\"skills\":[],\"integrations\":[],\"datasets\":[]}],\
+\"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}]}}";
         let d = crate::derive_plan::decode_derived(DERIVE_EXAMPLE.as_bytes())
             .expect("the taught envelope must decode via the same enforcer the runtime uses");
         assert_eq!(d.steps.len(), 3);
@@ -281,6 +290,48 @@ mod tests {
             "steps 0 and 1 must have no parent — that IS the parallelism being taught"
         );
         assert!(with_parent.contains(&2), "step 2 must join them");
+
+        // ★ THE EXAMPLE IS THE CONTRACT, part two. The capability lists must sit ON THE
+        // STEPS and at least one must be NON-EMPTY. The previous contract described the
+        // axes in prose and then showed `"skills":[],"integrations":[],"datasets":[]` at
+        // the app level — three empty lists, which is what a model copies. Prose lost to
+        // the example once already (a single-edge example produced chains for four bullets
+        // of parallelism instruction); this is the same failure waiting in a different
+        // field, so pin the SHAPE and not just the decode.
+        assert!(
+            DERIVE_SYSTEM.contains(DERIVE_EXAMPLE),
+            "the contract must teach the per-step shape VERBATIM"
+        );
+        assert!(
+            d.steps.iter().all(|s| {
+                DERIVE_EXAMPLE.contains(&format!("\"intent\":\"{}\",\"tools\":", s.intent))
+            }),
+            "every taught step carries its own capability lists"
+        );
+        assert!(
+            d.steps
+                .iter()
+                .any(|s| !s.skills.is_empty() || !s.integrations.is_empty()),
+            "at least one taught step must ATTACH something — an example of three empty \
+             lists teaches three empty lists"
+        );
+        assert!(
+            d.steps.iter().any(|s| !s.datasets.is_empty()),
+            "grounding must be shown on a step too, not only described"
+        );
+        assert!(
+            !d.folded_app_level,
+            "the taught example must not use the legacy app-level shape"
+        );
+        // The step that merely joins the other two asks for nothing — the discrimination
+        // the whole per-node model exists to express.
+        assert!(
+            d.steps[2].skills.is_empty()
+                && d.steps[2].integrations.is_empty()
+                && d.steps[2].datasets.is_empty()
+                && d.steps[2].tools.is_empty(),
+            "the joining step must be taught as needing nothing"
+        );
     }
 
     /// The derive contract must teach PARALLELISM, and must not inherit the planner's
