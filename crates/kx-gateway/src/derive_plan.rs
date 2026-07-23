@@ -374,7 +374,7 @@ impl CapabilityMenu {
             out.push_str("- (no tools are available to this account; use an empty tools list)\n");
         }
         let mut omitted = 0usize;
-        for (id, _version) in &self.tools {
+        for id in self.tools.keys() {
             // The id ALONE. Showing `(v1)` here made Gemma-4-12B return `"retrieve (v1)"` as the
             // id, which matched nothing and dropped a grant the caller could really fire. The
             // version is resolved host-side from the ceiling and the contract forbids naming
