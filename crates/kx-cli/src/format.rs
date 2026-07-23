@@ -3517,7 +3517,7 @@ pub fn render_derived_app(
             );
         }
         None => {
-            out.push_str("Re-run with --output <file> to save the blueprint, then `kx app new`.")
+            out.push_str("Re-run with --output <file> to save the blueprint, then `kx app new`.");
         }
     }
     out

@@ -40,9 +40,9 @@ export function ToolsRail({
       <h3>MCP Tools</h3>
       <p className="muted">
         App-wide tool <em>wishes</em> — granted only at run (
-        <code className="mono">wish ∩ grants ∩ fireable</code>), never by attaching (SN-8), and
-        bound to the entry step. To grant a tool to a specific step, open it on the canvas (Lineage
-        → Edit structure).
+        <code className="mono">wish ∩ grants ∩ fireable</code>), never by attaching, and bound to
+        the entry step. To grant a tool to a specific step, open it on the canvas (Lineage → Edit
+        structure).
         {locked ? " App is locked — unlock to change tools." : ""}
       </p>
       <ToolsPicker
