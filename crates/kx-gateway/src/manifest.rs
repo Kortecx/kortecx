@@ -15,8 +15,11 @@
 //! dev-only). gateway-core owns the seam types + the marker-path const; the host
 //! owns the decode.
 
-use kx_gateway_core::MANIFEST_MARKER_PATH;
+use std::collections::BTreeMap;
+
+use kx_gateway_core::{ScaffoldLane, MANIFEST_MARKER_PATH};
 use serde::Deserialize;
+use serde_json::Value;
 
 /// POC-6: the DYNAMIC project-manifest contract — the system prompt teaching the
 /// model to plan the SEPARATED SOURCE tree of a production-grade web app and emit EXACTLY one
@@ -126,22 +129,60 @@ Rules: version is always 1; every path is RELATIVE (no leading slash, no `..` se
 include a content/body/language field or any field other than `path` and `role` per file; do \
 NOT plan a `.kortecx/` path (reserved); do NOT re-plan any of the five provided files.";
 
+/// The CODIFIED scheduled lane's manifest contract.
+///
+/// A sibling of [`AGENTIC_PLAN_SYSTEM`], not a variant of it: the contextual lane plans
+/// MARKDOWN the agent reads, while this lane plans a project the runtime is orchestrated
+/// from. Getting that distinction into one prompt produced a planner that hedged and emitted
+/// both.
+///
+/// The two files the runtime PARSES are stated as already provided, for the same reason the
+/// five base files are: `decode_manifest`'s uniqueness check is manifest-internal, so a
+/// re-declared `workflow.json` decodes cleanly and then collides in the write loop.
+pub(crate) const CODIFIED_PLAN_SYSTEM: &str = "You are planning the supporting files of a \
+Kortecx CODIFIED APP — an automation that a schedule, a trigger, or another workflow runs, \
+whose behaviour is defined by CONFIGURATION AND CODE the runtime reads, not by prose alone. \
+It is NOT a web app: there is no UI, no bundler, no package.json, no HTML and no CSS.\n\
+ALREADY PROVIDED, do NOT plan any of them: README.md (what the app does), app.json (its \
+manifest), prompts/system.md (the system prompt), rules/guardrails.md (the behavioural \
+guardrails), skills/main.md (the primary skill), workflow.json (the steps the runtime runs), \
+tools.json (the tools it may use).\n\
+Plan the ADDITIONAL files this specific goal needs, and only those. Good candidates: a \
+`config/<name>.json` or `config/<name>.yaml` holding settings the app's behaviour depends on \
+(thresholds, routing tables, field mappings, recipients); a `schema/<name>.json` describing \
+the shape of an input or an output; a `scripts/<name>.py` or `scripts/<name>.sh` recording a \
+transformation the agent should follow step by step; a `queries/<name>.sql` for a query it \
+runs against a known schema; another `skills/<name>.md` or `rules/<name>.md` for a distinct \
+capability or policy; a `reference/<name>.md` for domain knowledge it must consult. For EACH \
+file write a short ROLE: one concrete sentence saying what it contains and when it is used.\n\
+Plan a FOCUSED set — typically 2 to 6 files. Add a file only when it does distinct work. \
+Every path must end in one of: .md .json .yaml .yml .toml .py .ts .tsx .js .jsx .sh .sql \
+.txt — a file with any other extension is DISCARDED.\n\
+Reply with EXACTLY one JSON object and NOTHING else — no prose, no code fence, no \
+explanation:\n\
+{\"manifest\":{\"version\":1,\"files\":[{\"path\":\"<relative path>\",\"role\":\"<what this file \
+contains>\"}]}}\n\
+Rules: version is always 1; every path is RELATIVE (no leading slash, no `..` segment); do NOT \
+include a content/body/language field or any field other than `path` and `role` per file; do \
+NOT plan a `.kortecx/` path (reserved); do NOT re-plan any of the seven provided files.";
+
 /// Build the manifest-planner directive for an app `goal`.
 ///
-/// `framework` selects the lane: `Some(f)` is the HOSTED (Experience) lane and gets the
-/// source-tree separation contract for that framework; `None` is the SCHEDULED (agentic)
-/// lane and gets [`AGENTIC_PLAN_SYSTEM`]. Passed as the bound `prompt` DATA arg to the
+/// `lane` selects the contract: hosted gets the source-tree separation contract for its
+/// framework, contextual gets [`AGENTIC_PLAN_SYSTEM`], codified gets
+/// [`CODIFIED_PLAN_SYSTEM`]. Passed as the bound `prompt` DATA arg to the
 /// `app-manifest-plan` recipe (the scaffold-write precedent — the directive is data, never
 /// an identity axis), so both lanes share one recipe and one seeded fingerprint. The
 /// committed answer is decoded fail-closed by [`decode_manifest`].
-pub(crate) fn manifest_plan_directive(goal: &str, framework: Option<&str>) -> String {
-    match framework {
-        Some(f) => format!(
+pub(crate) fn manifest_plan_directive(goal: &str, lane: ScaffoldLane<'_>) -> String {
+    match lane {
+        ScaffoldLane::Hosted(f) => format!(
             "{MANIFEST_PLAN_SYSTEM}\n\n{}\n\nApp goal: {}",
             framework_contract(f),
             goal.trim()
         ),
-        None => format!("{AGENTIC_PLAN_SYSTEM}\n\nApp goal: {}", goal.trim()),
+        ScaffoldLane::Contextual => format!("{AGENTIC_PLAN_SYSTEM}\n\nApp goal: {}", goal.trim()),
+        ScaffoldLane::Codified => format!("{CODIFIED_PLAN_SYSTEM}\n\nApp goal: {}", goal.trim()),
     }
 }
 
@@ -302,6 +343,163 @@ fn strip_json_wrappers(text: &str) -> &str {
         Some(i) => inner[..i].trim(),
         None => inner.trim(),
     }
+}
+
+/// Hard cap on a codified configuration payload BEFORE parse. `workflow.json` and
+/// `tools.json` are a step list and an id → version map; the manifest ceiling is already
+/// generous for both, and sharing it keeps one answer to "how big may model JSON be".
+pub(crate) const MAX_CODIFIED_CONFIG_BYTES: usize = MAX_MANIFEST_BYTES;
+
+/// Hard cap on the steps a codified `workflow.json` may declare. Each step is a model call
+/// at run, so this bounds a single scheduled fire — not just a parse.
+pub(crate) const MAX_CODIFIED_STEPS: usize = 24;
+
+/// Hard cap on the tool wishes a codified `tools.json` may declare. Every entry is still
+/// intersected with the caller's own authority at run, so this is a parse bound rather than
+/// a security one.
+pub(crate) const MAX_CODIFIED_TOOLS: usize = 32;
+
+/// A codified configuration file that did not decode. Its own type rather than a reuse of
+/// [`ManifestError`]: these messages reach the user as the reason their app has no workflow,
+/// and every `ManifestError` string says "manifest", which is a different file.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CodifiedError {
+    /// The payload exceeded [`MAX_CODIFIED_CONFIG_BYTES`] before parsing.
+    #[error("{file} is oversize: {got} bytes > max {MAX_CODIFIED_CONFIG_BYTES}")]
+    Oversize {
+        /// Which codified file.
+        file: &'static str,
+        /// The payload byte length.
+        got: usize,
+    },
+    /// The payload was not valid UTF-8.
+    #[error("{file} was not valid UTF-8")]
+    NotUtf8 {
+        /// Which codified file.
+        file: &'static str,
+    },
+    /// The payload did not parse, or was not the shape the runtime consumes.
+    #[error("{file} is malformed: {diagnostic}")]
+    Malformed {
+        /// Which codified file.
+        file: &'static str,
+        /// What was wrong, in terms the author can act on.
+        diagnostic: String,
+    },
+}
+
+/// Decode a codified `workflow.json` into the App `blueprint` value, fail-closed.
+///
+/// The bytes are model-authored, so this takes the same posture as [`decode_manifest`]:
+/// strip the wrappers a chatty model adds, bound the payload before parse, and refuse
+/// anything that is not exactly the expected shape. It additionally round-trips the value
+/// through [`kx_blueprint::DagSpec`] — the type `RunApp` lowers — so a workflow that would
+/// fail at the FIRST FIRE fails here instead, while the user is still looking at the
+/// scaffold that produced it.
+///
+/// # Errors
+/// [`CodifiedError`] when the payload is oversize, not UTF-8, not a JSON object, declares no
+/// steps, declares more than [`MAX_CODIFIED_STEPS`], or does not lower as a `DagSpec`.
+pub(crate) fn decode_codified_workflow(bytes: &[u8]) -> Result<Value, CodifiedError> {
+    const FILE: &str = kx_gateway_core::CODIFIED_WORKFLOW_PATH;
+    let text = codified_text(FILE, bytes)?;
+    let value: Value = serde_json::from_str(text).map_err(|e| CodifiedError::Malformed {
+        file: FILE,
+        diagnostic: e.to_string(),
+    })?;
+    // Accept a `{"workflow":{…}}` wrapper as well as the bare object: the directive asks for
+    // the bare form, and a model that wraps it anyway has still answered the question.
+    let value = match value.get("workflow") {
+        Some(inner) if inner.is_object() => inner.clone(),
+        _ => value,
+    };
+    let malformed = |d: String| CodifiedError::Malformed {
+        file: FILE,
+        diagnostic: d,
+    };
+    let obj = value
+        .as_object()
+        .ok_or_else(|| malformed("not a JSON object".into()))?;
+    let steps = obj
+        .get("steps")
+        .and_then(Value::as_array)
+        .ok_or_else(|| malformed("no `steps` array".into()))?;
+    if steps.is_empty() {
+        return Err(malformed(
+            "declares no steps (an app with no steps has nothing to run)".into(),
+        ));
+    }
+    if steps.len() > MAX_CODIFIED_STEPS {
+        return Err(malformed(format!(
+            "declares {} steps, over the {MAX_CODIFIED_STEPS} ceiling",
+            steps.len()
+        )));
+    }
+    // The real gate: does the runtime's OWN lowering accept it? Anything short of this is a
+    // shape check that agrees with the parser and not with the executor.
+    serde_json::from_value::<kx_blueprint::DagSpec>(value.clone())
+        .map_err(|e| malformed(format!("not a runnable DAG: {e}")))?;
+    Ok(value)
+}
+
+/// Decode a codified `tools.json` into the App's tool WISH map, fail-closed.
+///
+/// Every entry is a request. `app_run` still intersects the wish with the caller's tool
+/// authority, the fireable set, and the registry, so a model naming a tool here cannot grant
+/// itself one — only ask for one.
+///
+/// # Errors
+/// [`CodifiedError`] when the payload is oversize, not UTF-8, not a JSON object, declares
+/// more than [`MAX_CODIFIED_TOOLS`] entries, or gives a version that is not a string.
+pub(crate) fn decode_codified_tools(
+    bytes: &[u8],
+) -> Result<BTreeMap<String, String>, CodifiedError> {
+    const FILE: &str = kx_gateway_core::CODIFIED_TOOLS_PATH;
+    let text = codified_text(FILE, bytes)?;
+    let malformed = |d: String| CodifiedError::Malformed {
+        file: FILE,
+        diagnostic: d,
+    };
+    let value: Value = serde_json::from_str(text).map_err(|e| malformed(e.to_string()))?;
+    // The bare map is accepted alongside the documented `{"tools":{…}}` wrapper.
+    let map = match value.get("tools") {
+        Some(inner) => inner
+            .as_object()
+            .ok_or_else(|| malformed("`tools` is not a JSON object".into()))?,
+        None => value
+            .as_object()
+            .ok_or_else(|| malformed("not a JSON object".into()))?,
+    };
+    if map.len() > MAX_CODIFIED_TOOLS {
+        return Err(malformed(format!(
+            "declares {} entries, over the {MAX_CODIFIED_TOOLS} ceiling",
+            map.len()
+        )));
+    }
+    let mut out = BTreeMap::new();
+    for (id, version) in map {
+        // A non-string version REFUSES rather than being coerced: the envelope requires an
+        // integer-valued string, so stringifying a JSON number here would produce a wish that
+        // reads fine and then fails the envelope's own validation with a worse message.
+        let v = version
+            .as_str()
+            .ok_or_else(|| malformed(format!("tool {id:?} has a non-string version")))?;
+        out.insert(id.clone(), v.to_string());
+    }
+    Ok(out)
+}
+
+/// The shared pre-parse guard for a codified file: bound the bytes, require UTF-8, and strip
+/// the reasoning block / code fence a model wraps its answer in.
+fn codified_text<'a>(file: &'static str, bytes: &'a [u8]) -> Result<&'a str, CodifiedError> {
+    if bytes.len() > MAX_CODIFIED_CONFIG_BYTES {
+        return Err(CodifiedError::Oversize {
+            file,
+            got: bytes.len(),
+        });
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| CodifiedError::NotUtf8 { file })?;
+    Ok(strip_json_wrappers(text))
 }
 
 /// Decode a model-proposed project manifest, fail-closed (see the module doc).
@@ -612,7 +810,10 @@ components from ./components/\"},\
 
     #[test]
     fn manifest_plan_directive_is_framework_aware_source_only() {
-        let d = manifest_plan_directive("a kanban board with drag and drop", Some("vite_react"));
+        let d = manifest_plan_directive(
+            "a kanban board with drag and drop",
+            ScaffoldLane::Hosted("vite_react"),
+        );
         assert!(d.contains("a kanban board with drag and drop"));
         assert!(d.contains("\"manifest\""));
         assert!(d.contains("\"version\":1"));
@@ -622,8 +823,12 @@ components from ./components/\"},\
         assert!(d.contains("do NOT emit"));
         assert!(d.contains("src/App.tsx"));
         // Next / Svelte contracts route distinctly.
-        assert!(manifest_plan_directive("x", Some("next_js")).contains("app/page.tsx"));
-        assert!(manifest_plan_directive("x", Some("svelte")).contains("src/App.svelte"));
+        assert!(
+            manifest_plan_directive("x", ScaffoldLane::Hosted("next_js")).contains("app/page.tsx")
+        );
+        assert!(
+            manifest_plan_directive("x", ScaffoldLane::Hosted("svelte")).contains("src/App.svelte")
+        );
     }
 
     /// The SCHEDULED lane gets a genuinely different contract, not the web one with a
@@ -632,7 +837,7 @@ components from ./components/\"},\
     /// being asked for React components for an automation.
     #[test]
     fn the_agentic_directive_is_not_the_web_one() {
-        let d = manifest_plan_directive("triage inbound support email", None);
+        let d = manifest_plan_directive("triage inbound support email", ScaffoldLane::Contextual);
         assert!(d.contains("triage inbound support email"));
         assert!(d.contains("\"manifest\""));
         assert!(d.contains("EXACTLY one JSON object"));
@@ -654,7 +859,10 @@ components from ./components/\"},\
             "no framework contract may be appended on the agentic lane"
         );
         // And the web lane must not have been given the agentic prompt either.
-        assert!(!manifest_plan_directive("x", Some("vite_react")).contains(AGENTIC_PLAN_SYSTEM));
+        assert!(
+            !manifest_plan_directive("x", ScaffoldLane::Hosted("vite_react"))
+                .contains(AGENTIC_PLAN_SYSTEM)
+        );
     }
 
     /// The five base files are PROVIDED, and the directive must say so — `decode_manifest`
@@ -663,7 +871,7 @@ components from ./components/\"},\
     /// `resolve_manifest_scheduled` drops it if the model does anyway.
     #[test]
     fn the_agentic_directive_declares_the_base_files_off_limits() {
-        let d = manifest_plan_directive("anything", None);
+        let d = manifest_plan_directive("anything", ScaffoldLane::Contextual);
         assert!(d.contains("do NOT plan any of them"));
         for base in [
             "README.md",
@@ -690,5 +898,202 @@ components from ./components/\"},\
         let files = decode_manifest(raw).expect("decodes — the collision is invisible here");
         assert!(files.iter().any(|f| f.path == "README.md"));
         assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn the_codified_directive_is_its_own_contract() {
+        let d = manifest_plan_directive("reconcile daily payouts", ScaffoldLane::Codified);
+        assert!(d.contains("reconcile daily payouts"));
+        assert!(d.contains("CODIFIED APP"));
+        // It routes to NEITHER of the other two contracts. This is the assertion that
+        // matters: the three lanes share one recipe, so a routing slip means an app is
+        // planned against a contract for a different kind of thing entirely — and the
+        // result still decodes, so nothing downstream notices.
+        assert!(
+            !d.contains(MANIFEST_PLAN_SYSTEM),
+            "the web system prompt must not reach the codified lane"
+        );
+        assert!(
+            !d.contains(AGENTIC_PLAN_SYSTEM),
+            "the contextual prompt must not reach the codified lane"
+        );
+        assert!(
+            !d.contains("Framework:"),
+            "no framework contract on a scheduled lane"
+        );
+    }
+
+    #[test]
+    fn the_codified_directive_declares_the_consumed_files_off_limits() {
+        // `decode_manifest`'s uniqueness check is manifest-internal and cannot see the files
+        // the lane guarantees, so a re-planned `workflow.json` decodes cleanly and then
+        // collides in the write loop. The prompt has to say so.
+        let d = manifest_plan_directive("x", ScaffoldLane::Codified);
+        for provided in ["workflow.json", "tools.json", "README.md", "app.json"] {
+            assert!(
+                d.contains(provided),
+                "must name {provided} as already provided"
+            );
+        }
+        assert!(d.contains("do NOT re-plan"));
+    }
+
+    #[test]
+    fn the_codified_directive_lists_exactly_the_extensions_the_filter_accepts() {
+        // The prompt and the authoring filter must agree: an extension the prompt invites
+        // and the filter drops is a file the model spends a step writing and no one ever
+        // sees. Assert against the SHARED constant rather than a hand-copied list.
+        let d = manifest_plan_directive("x", ScaffoldLane::Codified);
+        for ext in kx_gateway_core::CODIFIED_SOURCE_EXTS {
+            assert!(
+                d.contains(&format!(".{ext}")),
+                "the directive must offer .{ext}"
+            );
+        }
+        assert!(d.contains(".md"));
+    }
+
+    #[test]
+    fn codified_workflow_decodes_a_plain_dag() {
+        let v = decode_codified_workflow(
+            br#"{"steps":[{"kind":"model","prompt":"a"},{"kind":"model","prompt":"b"}],
+                 "edges":[{"parent":0,"child":1}]}"#,
+        )
+        .expect("a two-step DAG decodes");
+        assert_eq!(v["steps"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn codified_workflow_accepts_the_wrapper_a_model_adds() {
+        // The directive asks for the bare object; a model that wraps it in `{"workflow":…}`
+        // or a code fence has still answered the question.
+        for raw in [
+            br#"{"workflow":{"steps":[{"kind":"model","prompt":"a"}]}}"#.to_vec(),
+            b"```json
+{\"steps\":[{\"kind\":\"model\",\"prompt\":\"a\"}]}
+```"
+            .to_vec(),
+        ] {
+            let v = decode_codified_workflow(&raw).expect("decodes");
+            assert!(v.get("steps").is_some(), "unwrapped to the DAG itself");
+        }
+    }
+
+    #[test]
+    fn codified_workflow_is_fail_closed() {
+        // Each of these would otherwise become an app that scaffolds green and then cannot
+        // run — the failure mode this decoder exists to move earlier.
+        for (raw, why) in [
+            (b"not json at all".to_vec(), "prose"),
+            (br#"{"steps":[]}"#.to_vec(), "no steps"),
+            (
+                br#"{"notes":"I will build a DAG"}"#.to_vec(),
+                "no steps key",
+            ),
+            (br#"["a","b"]"#.to_vec(), "not an object"),
+            (
+                br#"{"steps":[{"kind":"model","prompt":5}]}"#.to_vec(),
+                "not a DagSpec",
+            ),
+        ] {
+            assert!(
+                decode_codified_workflow(&raw).is_err(),
+                "must refuse: {why}"
+            );
+        }
+        // …and the step ceiling, which bounds one scheduled FIRE, not just a parse.
+        let many = format!(
+            r#"{{"steps":[{}]}}"#,
+            vec![r#"{"kind":"model","prompt":"x"}"#; MAX_CODIFIED_STEPS + 1].join(",")
+        );
+        assert!(decode_codified_workflow(many.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn codified_workflow_refuses_an_oversize_payload_before_parsing() {
+        let huge = vec![b'x'; MAX_CODIFIED_CONFIG_BYTES + 1];
+        assert!(matches!(
+            decode_codified_workflow(&huge),
+            Err(CodifiedError::Oversize { .. })
+        ));
+    }
+
+    #[test]
+    fn codified_tools_decodes_wrapped_and_bare() {
+        for raw in [
+            br#"{"tools":{"mcp-echo/echo":"1"}}"#.to_vec(),
+            br#"{"mcp-echo/echo":"1"}"#.to_vec(),
+        ] {
+            let m = decode_codified_tools(&raw).expect("decodes");
+            assert_eq!(m.get("mcp-echo/echo").map(String::as_str), Some("1"));
+        }
+        // An app that needs no tools says so, and that is not an error.
+        assert!(decode_codified_tools(br#"{"tools":{}}"#)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn codified_tools_refuses_a_non_string_version() {
+        // Coercing `1` to `"1"` here would produce a wish that reads fine and then fails the
+        // envelope's own validation with a message that names neither the file nor the tool.
+        let err = decode_codified_tools(br#"{"tools":{"mcp-echo/echo":1}}"#).unwrap_err();
+        assert!(err.to_string().contains("non-string version"), "{err}");
+    }
+
+    #[test]
+    fn codified_tools_is_bounded() {
+        let many: Vec<String> = (0..=MAX_CODIFIED_TOOLS)
+            .map(|i| format!(r#""t{i}/x":"1""#))
+            .collect();
+        let raw = format!(r#"{{"tools":{{{}}}}}"#, many.join(","));
+        assert!(decode_codified_tools(raw.as_bytes()).is_err());
+    }
+
+    /// THE LIVE FINDING. Given only `"<version>"`, a served model reasonably writes semver
+    /// for every tool — and the envelope refuses it (`check_integer` parses a `u64`). The
+    /// directive now states the format with a worked example and names semver as wrong; this
+    /// pins that it says so, because the failure it causes is silent at authoring time and
+    /// only shows up as a tool wish that vanished.
+    #[test]
+    fn the_tools_directive_states_the_version_format() {
+        let d = authoring_prompt_for(kx_gateway_core::CODIFIED_TOOLS_PATH);
+        assert!(d.contains("whole number"), "{d}");
+        assert!(
+            d.contains("\"1.0.0\" is invalid"),
+            "must name semver as wrong: {d}"
+        );
+        // A worked example beats a placeholder: `"<version>"` is what produced the semver.
+        assert!(d.contains("\"1\""), "{d}");
+    }
+
+    /// Every version the tools directive shows as an example must be one the envelope would
+    /// actually accept. A directive that demonstrates an invalid value is worse than a vague
+    /// one — it teaches the mistake.
+    #[test]
+    fn the_tools_directive_examples_would_pass_validation() {
+        let d = authoring_prompt_for(kx_gateway_core::CODIFIED_TOOLS_PATH);
+        let shown = decode_codified_tools(br#"{"tools":{"mcp-echo/echo":"1","retrieve":"1"}}"#)
+            .expect("the documented example decodes");
+        for (id, version) in &shown {
+            assert!(d.contains(id.as_str()), "the directive shows {id}");
+            assert!(
+                version.parse::<u64>().is_ok(),
+                "{id}: the example version {version:?} must be an integer string — the envelope \
+                 rejects anything else, and an example that fails validation teaches the bug"
+            );
+        }
+    }
+
+    fn authoring_prompt_for(path: &str) -> String {
+        kx_gateway_core::authoring_prompt(
+            path,
+            "r",
+            "g",
+            kx_gateway_core::ScaffoldLane::Codified,
+            &[],
+            false,
+            &[],
+        )
     }
 }

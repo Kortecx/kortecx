@@ -1586,6 +1586,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             content.clone(),
             branches_db.clone(),
             Some(locks_db.clone() as Arc<dyn kx_gateway_core::LockStore>),
+            // The CODIFIED lane folds the configuration it authored back onto the App, so
+            // the orchestrator needs the same catalog the service is wired with.
+            Some(apps_db.clone() as Arc<dyn kx_gateway_core::AppCatalog>),
         )))
     } else {
         None

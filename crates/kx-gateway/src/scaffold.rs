@@ -40,18 +40,66 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use kx_app::AppMode;
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    authoring_prompt, body_is_empty, derive_phase, distill_module_api, hosted_authored_role,
-    hosted_entry_path, hosted_template, split_done_pending, strip_code_fence, try_committed_body,
-    AppScaffolder, BinderError, BranchManifest, BranchStore, ContentReader, ContentWriter,
-    GatewayError as CoreError, HostedFileSource, JournalReader, LockStore, RecipeBinder,
-    RunSubmitter, ScaffoldPhase, ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
-    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH, SKELETON,
+    authoring_prompt, body_is_empty, codified_path_allowed, derive_phase, distill_module_api,
+    hosted_authored_role, hosted_entry_path, hosted_template, split_done_pending, strip_code_fence,
+    try_committed_body, AppCatalog, AppScaffolder, BinderError, BranchManifest, BranchStore,
+    ContentReader, ContentWriter, GatewayError as CoreError, HostedFileSource, JournalReader,
+    LockStore, RecipeBinder, RunSubmitter, ScaffoldFile, ScaffoldLane, ScaffoldPhase,
+    ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
+    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH,
+    MANIFEST_MARKER_PATH, SKELETON,
 };
 use kx_mote::MoteId;
 
-use crate::manifest::{decode_manifest, encode_manifest, manifest_plan_directive, ManifestFile};
+use crate::manifest::{
+    decode_codified_tools, decode_codified_workflow, decode_manifest, encode_manifest,
+    manifest_plan_directive, ManifestFile,
+};
+
+/// The files a CODIFIED app always has, because the runtime PARSES them. Guaranteed by
+/// `resolve_manifest_scheduled` whether or not the planner listed them.
+const CODIFIED_CONFIG: &[ScaffoldFile] = &[
+    ScaffoldFile {
+        path: CODIFIED_WORKFLOW_PATH,
+        role: "the workflow this app runs: the ordered steps and the edges between them",
+    },
+    ScaffoldFile {
+        path: CODIFIED_TOOLS_PATH,
+        role: "the MCP tools this app needs, as an id → version map",
+    },
+];
+
+/// Apply one codified fold to `env`, keeping it only if the result is a VALID envelope.
+///
+/// The fold runs on a clone and is adopted only on success, so a file the envelope refuses
+/// costs nothing but itself. Found live: a model wrote semver tool versions (`"1.0.0"`, which
+/// `check_integer` rejects), and a single validate-at-the-end discarded a perfectly good
+/// three-step workflow alongside them.
+///
+/// Validation goes through the envelope's OWN `validate`, not a re-check of the fields here —
+/// two definitions of "valid" is how the fold and the catalog would come to disagree.
+fn fold_validated(
+    env: &mut kx_app::AppEnvelope,
+    apply: impl FnOnce(&mut kx_app::AppEnvelope),
+) -> Result<(), kx_app::AppError> {
+    let mut candidate = env.clone();
+    apply(&mut candidate);
+    candidate.validate()?;
+    *env = candidate;
+    Ok(())
+}
+
+/// The authoring lane for a scheduled app in `mode`. One place, so the manifest PLANNER and
+/// the per-file WRITER can never be handed different lanes for the same scaffold.
+fn scheduled_lane(mode: AppMode) -> ScaffoldLane<'static> {
+    match mode {
+        AppMode::Contextual => ScaffoldLane::Contextual,
+        AppMode::Codified => ScaffoldLane::Codified,
+    }
+}
 
 /// Per-step await ceiling (comfortably exceeds the recipe warrant's 300s wall-clock,
 /// so the warrant's own timeout fires first and we then report the step `Failed`).
@@ -173,9 +221,19 @@ pub(crate) struct HostScaffolder {
     /// Deliberately NOT stored in `Progress`: `set()` replaces that struct wholesale on
     /// every phase change, so a field there would be erased by the first transition.
     lane_fallback: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// The App catalog, for the CODIFIED fold-back only: once the project is written, the
+    /// configuration the model authored is read back and saved onto the App. `None` on a
+    /// serve with no catalog wired — the scaffold still writes every file, it just cannot
+    /// promote what it wrote (and says so).
+    catalog: Option<Arc<dyn AppCatalog>>,
 }
 
 impl HostScaffolder {
+    // One positional argument per SEAM, which is the shape the whole file is built on (the
+    // `write_one` precedent below). Grouping them into a struct would read better here and
+    // worse at the single call site in `server.rs`, where each argument is already a named
+    // local.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         binder: Arc<dyn RecipeBinder>,
         submitter: Arc<dyn RunSubmitter>,
@@ -184,6 +242,7 @@ impl HostScaffolder {
         writer: Arc<dyn ContentWriter>,
         branches: Arc<dyn BranchStore>,
         locks: Option<Arc<dyn LockStore>>,
+        catalog: Option<Arc<dyn AppCatalog>>,
     ) -> Self {
         Self {
             binder,
@@ -195,6 +254,7 @@ impl HostScaffolder {
             locks,
             tracker: Arc::new(Mutex::new(HashMap::new())),
             lane_fallback: Arc::new(Mutex::new(HashMap::new())),
+            catalog,
         }
     }
 
@@ -307,8 +367,18 @@ impl HostScaffolder {
     }
 
     /// Drive the full scaffold to terminal, recording the outcome in the tracker.
-    async fn run(self, principal: String, branch: String, goal: String) {
-        match self.run_inner(&principal, &branch, &goal).await {
+    async fn run(
+        self,
+        principal: String,
+        app_handle: String,
+        branch: String,
+        goal: String,
+        mode: AppMode,
+    ) {
+        match self
+            .run_inner(&principal, &app_handle, &branch, &goal, mode)
+            .await
+        {
             Ok(()) => self.set(&branch, ScaffoldPhase::Done, ""),
             Err(e) => {
                 let detail = format!("{e}");
@@ -318,7 +388,14 @@ impl HostScaffolder {
         }
     }
 
-    async fn run_inner(&self, principal: &str, branch: &str, goal: &str) -> Result<(), CoreError> {
+    async fn run_inner(
+        &self,
+        principal: &str,
+        app_handle: &str,
+        branch: &str,
+        goal: &str,
+        mode: AppMode,
+    ) -> Result<(), CoreError> {
         // Ensure the project branch exists (idempotent on resume).
         self.branches.create(
             principal,
@@ -330,7 +407,7 @@ impl HostScaffolder {
         // The planned set is the PRESERVED base skeleton plus whatever use-case files the
         // planner adds on top (see `resolve_manifest_scheduled`).
         let files = self
-            .resolve_manifest_scheduled(principal, branch, goal)
+            .resolve_manifest_scheduled(principal, branch, goal, mode)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
         let mut prior: Vec<(String, String)> = Vec::new();
@@ -359,17 +436,30 @@ impl HostScaffolder {
             }
 
             self.set(branch, ScaffoldPhase::Writing, &file.path);
-            // `framework: None` keeps the AGENTIC authoring directive for every file,
-            // including the planner's extras — they are markdown for an automation, not
-            // source for a web project.
+            // The SCHEDULED authoring directive for every file, including the planner's
+            // extras — they are notes for an automation, not source for a web project. The
+            // codified lane differs only for the two files the runtime parses, which get a
+            // strict-shape directive instead.
             let body_ref = self
                 .write_one(
-                    principal, branch, &file.path, &file.role, goal, None, &all_paths, &prior,
+                    principal,
+                    branch,
+                    &file.path,
+                    &file.role,
+                    goal,
+                    scheduled_lane(mode),
+                    &all_paths,
+                    &prior,
                 )
                 .await?;
             self.branches
                 .advance(principal, branch, &file.path, body_ref)?;
             prior.push((file.path.clone(), ContentRef::from_bytes(body_ref).to_hex()));
+        }
+        // CODIFIED: the project is written, so fold what the model configured back onto the
+        // App. Deliberately LAST and deliberately non-fatal — see `apply_codified_config`.
+        if mode == AppMode::Codified {
+            self.apply_codified_config(principal, app_handle, branch);
         }
         Ok(())
     }
@@ -394,6 +484,7 @@ impl HostScaffolder {
         principal: &str,
         branch: &str,
         goal: &str,
+        mode: AppMode,
     ) -> Vec<ManifestFile> {
         let base: Vec<ManifestFile> = SKELETON
             .iter()
@@ -409,7 +500,10 @@ impl HostScaffolder {
                 return files;
             }
         }
-        let extras = match self.plan_manifest(principal, branch, None, goal).await {
+        let extras = match self
+            .plan_manifest(principal, branch, scheduled_lane(mode), goal)
+            .await
+        {
             Ok((files, _committed_ref)) => files,
             Err(e) => {
                 tracing::info!(branch = %branch, error = %e, "agentic manifest planning unavailable; writing the base skeleton only");
@@ -429,27 +523,64 @@ impl HostScaffolder {
             extras
                 .into_iter()
                 .filter(|f| !base_paths.contains(f.path.as_str()))
-                // G023: the scheduled lane is markdown-only (`AGENTIC_PLAN_SYSTEM` asks for
-                // ".md only" but that was prompt text, unenforced). Drop a non-`.md` extra
-                // rather than author it: only `.md` rides the run's project context rail
-                // (`app_run::is_project_rail_path`), so a stray `.py`/`.json` would be a file
-                // the user sees, the model never gets, and no surface can explain. Matched to
-                // the rail EXACTLY (lowercase `md`) so "authored" ⟺ "reaches the model".
+                // The authored set must equal the set that reaches the run: a file the user
+                // sees, the model never gets, and no surface can explain is worse than no
+                // file. What that permits depends on the mode, and BOTH filters are the same
+                // predicate the run's context rail applies (`kx_gateway_core::codified_*`),
+                // so "authored" ⟺ "reaches the model" by construction rather than by two
+                // rules that happen to agree today.
+                //
+                // CONTEXTUAL is markdown-only, byte-for-byte the rule this lane has always
+                // enforced — `AGENTIC_PLAN_SYSTEM` asked for ".md only" as prompt text, which
+                // nothing checked. CODIFIED additionally allows the source/config extensions
+                // its project is made of.
                 .filter(|f| {
-                    let is_md = matches!(f.path.rsplit('.').next(), Some("md"));
-                    if !is_md {
+                    let allowed = match mode {
+                        AppMode::Contextual => matches!(f.path.rsplit('.').next(), Some("md")),
+                        AppMode::Codified => codified_path_allowed(&f.path),
+                    };
+                    if !allowed {
                         tracing::info!(
-                            branch = %branch, path = %f.path,
-                            "dropping a non-.md scheduled extra (only markdown reaches the run context rail)"
+                            branch = %branch, path = %f.path, mode = mode.as_str(),
+                            "dropping a scheduled extra this mode cannot author (it would never reach the run context rail)"
                         );
                     }
-                    is_md
+                    allowed
                 })
                 // Bound the lane. MAX_MANIFEST_FILES (48) × the per-step model timeout is
                 // a multi-hour worst case for a lane that wrote exactly 5 files before,
                 // and the live scaffold witness has a wall-clock deadline.
                 .take(MAX_SCHEDULED_EXTRA_FILES),
         );
+        // CODIFIED: the two files the runtime PARSES are the app, not a nice-to-have, so the
+        // lane guarantees them rather than hoping the planner listed them. The hosted lane
+        // learned this the hard way (`ensure_entry_planned`): a plan that omitted the entry
+        // still scaffolded "successfully" and then served the template's starter page under
+        // the user's app name, with no error anywhere. The equivalent here is a codified app
+        // that scaffolds green and has no DAG.
+        //
+        // Prepended, not appended: earlier files become coherence context for later ones, so
+        // the workflow the model committed to is what the prose files then describe.
+        if mode == AppMode::Codified {
+            let planned: BTreeSet<String> = files.iter().map(|f| f.path.clone()).collect();
+            let mut required: Vec<ManifestFile> = CODIFIED_CONFIG
+                .iter()
+                .filter(|f| !planned.contains(f.path))
+                .map(|f| ManifestFile {
+                    path: f.path.to_string(),
+                    role: f.role.to_string(),
+                })
+                .collect();
+            if !required.is_empty() {
+                tracing::info!(
+                    branch = %branch,
+                    injected = ?required.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+                    "the codified plan omitted a file the runtime parses; injected it"
+                );
+                required.append(&mut files);
+                files = required;
+            }
+        }
         // The union — NOT just the extras — is the marker, so `status()` keeps reporting
         // the base files as planned.
         self.persist_manifest_marker(principal, branch, &files);
@@ -478,7 +609,7 @@ impl HostScaffolder {
         }
         // Fresh plan → persist the planner's committed bytes as the durable marker.
         match self
-            .plan_manifest(principal, branch, Some(framework), goal)
+            .plan_manifest(principal, branch, ScaffoldLane::Hosted(framework), goal)
             .await
         {
             Ok((files, manifest_ref)) => {
@@ -533,10 +664,10 @@ impl HostScaffolder {
         &self,
         principal: &str,
         branch: &str,
-        framework: Option<&str>,
+        lane: ScaffoldLane<'_>,
         goal: &str,
     ) -> Result<(Vec<ManifestFile>, [u8; 32]), CoreError> {
-        let prompt = manifest_plan_directive(goal, framework);
+        let prompt = manifest_plan_directive(goal, lane);
         let args = serde_json::to_vec(&serde_json::json!({ "prompt": prompt }))
             .map_err(|e| CoreError::Internal(format!("manifest-plan args: {e}")))?;
         let bound = self
@@ -586,6 +717,118 @@ impl HostScaffolder {
             .find(|i| i.path == MANIFEST_MARKER_PATH)?;
         let bytes = self.content.get(&ContentRef::from_bytes(it.content_ref))?;
         decode_manifest(&bytes).ok()
+    }
+
+    /// CODIFIED: fold the project's configuration back onto the App envelope — the step that
+    /// makes a codified file something the runtime IS ORCHESTRATED FROM rather than something
+    /// it merely stores.
+    ///
+    /// `workflow.json` becomes the App's `blueprint` (the DAG `RunApp` lowers and executes);
+    /// `tools.json` becomes `steering_config.tools.requested_grants`. Both are re-saved
+    /// through the normal catalog upsert, so the envelope stays the single source of truth
+    /// and `RunApp` / `validate` / `app_ref` are untouched.
+    ///
+    /// **Why fold rather than read the branch at run.** The blueprint is part of the launch
+    /// Mote's identity. Sourcing it from a branch the IDE can edit would make an App's MoteId
+    /// depend on a file that changes underneath it, so a "replay" would silently be a
+    /// different run. Folding once, here, keeps identity where it already lives.
+    ///
+    /// **Why the grants are still only a wish.** `requested_grants` is intersected at run with
+    /// the caller's own tool authority (`app_run`'s `wish ∩ allowlist ∩ fireable ∩ registry`).
+    /// A model naming a tool therefore cannot grant itself one; it can only ask.
+    ///
+    /// **Why failure here is advisory.** The files are written and the project is real; a
+    /// malformed `workflow.json` is a thing the user can open in the IDE and fix, whereas
+    /// failing the whole scaffold would throw away every file the model just authored. The
+    /// reason is logged and left on the branch — it is not swallowed.
+    fn apply_codified_config(&self, principal: &str, app_handle: &str, branch: &str) {
+        let Some(catalog) = self.catalog.as_ref() else {
+            tracing::info!(
+                branch = %branch,
+                "codified config not applied: no App catalog is wired on this serve"
+            );
+            return;
+        };
+        let Ok(Some((_record, envelope_json))) = catalog.get(principal, app_handle) else {
+            tracing::warn!(app = %app_handle, "codified config not applied: the App is not in the catalog");
+            return;
+        };
+        let Ok(mut env) = kx_app::AppEnvelope::from_json_slice(&envelope_json) else {
+            tracing::warn!(app = %app_handle, "codified config not applied: the stored envelope is invalid");
+            return;
+        };
+        let Ok(Some(manifest)) = self.branches.get(principal, branch) else {
+            return;
+        };
+        let read = |path: &str| -> Option<Vec<u8>> {
+            let it = manifest.items.iter().find(|i| i.path == path)?;
+            self.content.get(&ContentRef::from_bytes(it.content_ref))
+        };
+
+        // Each file is folded onto a CANDIDATE and validated on its own, so one malformed
+        // file cannot cost the other. Found live: the model wrote semver tool versions
+        // (`"1.0.0"`, which the envelope refuses), and validating once at the end discarded a
+        // perfectly good three-step workflow along with them. Validating the real envelope —
+        // rather than re-checking the fields here — keeps one definition of "valid".
+        let mut applied: Vec<&str> = Vec::new();
+        if let Some(bytes) = read(CODIFIED_WORKFLOW_PATH) {
+            match decode_codified_workflow(&bytes) {
+                Ok(blueprint) => {
+                    if fold_validated(&mut env, |e| e.blueprint = Some(blueprint))
+                        .inspect_err(|e| tracing::warn!(app = %app_handle, file = CODIFIED_WORKFLOW_PATH, error = %e, "the codified workflow did not produce a valid envelope; the app keeps its authored blueprint"))
+                        .is_ok()
+                    {
+                        applied.push(CODIFIED_WORKFLOW_PATH);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(app = %app_handle, error = %e, "codified workflow.json did not decode; the app keeps its authored blueprint");
+                }
+            }
+        }
+        if let Some(bytes) = read(CODIFIED_TOOLS_PATH) {
+            match decode_codified_tools(&bytes) {
+                Ok(tools) => {
+                    if fold_validated(&mut env, |e| {
+                        // Author pins WIN: a tool the user attached in the console is a
+                        // decision, and a model re-planning the project must not drop it.
+                        for (id, version) in tools {
+                            e.steering_config
+                                .tools
+                                .requested_grants
+                                .entry(id)
+                                .or_insert(version);
+                        }
+                    })
+                    .inspect_err(|e| tracing::warn!(app = %app_handle, file = CODIFIED_TOOLS_PATH, error = %e, "the codified tool wishes did not produce a valid envelope; the app keeps the wishes it had"))
+                    .is_ok()
+                    {
+                        applied.push(CODIFIED_TOOLS_PATH);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(app = %app_handle, error = %e, "codified tools.json did not decode; the app keeps its authored tool wishes");
+                }
+            }
+        }
+        if applied.is_empty() {
+            return;
+        }
+        match env
+            .to_canonical_json()
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                catalog
+                    .save(principal, app_handle, &bytes, None)
+                    .map_err(|e| e.to_string())
+            }) {
+            Ok(_) => {
+                tracing::info!(app = %app_handle, applied = ?applied, "applied the codified project configuration to the App");
+            }
+            Err(e) => {
+                tracing::warn!(app = %app_handle, error = %e, "could not save the App with its codified configuration");
+            }
+        }
     }
 
     /// Drive a HOSTED-app scaffold to terminal: author the framework template's
@@ -684,7 +927,7 @@ impl HostScaffolder {
                     &file.path,
                     &file.role,
                     goal,
-                    Some(framework),
+                    ScaffoldLane::Hosted(framework),
                     &all_paths,
                     &prior,
                 )
@@ -746,7 +989,7 @@ impl HostScaffolder {
         path: &str,
         role: &str,
         goal: &str,
-        framework: Option<&str>,
+        lane: ScaffoldLane<'_>,
         all_paths: &[&str],
         prior: &[(String, String)],
     ) -> Result<[u8; 32], CoreError> {
@@ -783,7 +1026,7 @@ impl HostScaffolder {
             path,
             role,
             goal,
-            framework,
+            lane,
             all_paths,
             !ctx.is_empty(),
             &sibling_apis,
@@ -855,7 +1098,20 @@ impl HostScaffolder {
 }
 
 impl AppScaffolder for HostScaffolder {
-    fn start(&self, principal: &str, branch_handle: &str, goal: &str) -> Result<bool, CoreError> {
+    fn start(
+        &self,
+        principal: &str,
+        app_handle: &str,
+        branch_handle: &str,
+        envelope_json: &[u8],
+        goal: &str,
+    ) -> Result<bool, CoreError> {
+        // Parse the authoring mode out of the opaque envelope (the host owns the kx-app
+        // types). An envelope that does not parse degrades to CONTEXTUAL — the markdown-only
+        // lane this has always been — rather than authoring a project shape nothing asked for.
+        let mode = kx_app::AppEnvelope::from_json_slice(envelope_json)
+            .map(|e| e.mode())
+            .unwrap_or_default();
         // Resumed iff the branch already holds the committed plan marker or ≥1 base file.
         // The marker now lands on this lane too (the planned set is the base skeleton plus
         // the planner's extras), and it is written BEFORE the write loop — so checking it
@@ -878,13 +1134,14 @@ impl AppScaffolder for HostScaffolder {
         self.set(branch_handle, ScaffoldPhase::Planning, "");
         // Spawn the background loop and return immediately (the RPC is non-blocking).
         let driver = self.clone();
-        let (p, b, g) = (
+        let (p, a, b, g) = (
             principal.to_string(),
+            app_handle.to_string(),
             branch_handle.to_string(),
             goal.to_string(),
         );
         tokio::spawn(async move {
-            driver.run(p, b, g).await;
+            driver.run(p, a, b, g, mode).await;
         });
         Ok(resumed)
     }
@@ -1049,5 +1306,86 @@ mod tests {
         let (files, injected) = ensure_entry_planned("next_js", vec![f("src/App.tsx")]);
         assert!(injected);
         assert_eq!(files[0].path, "app/page.tsx");
+    }
+
+    /// THE LIVE FINDING, pinned. A codified scaffold produces both files, and the model can
+    /// get one of them wrong while the other is perfect. Folding them together meant a
+    /// semver tool version — which the envelope refuses — also threw away a valid three-step
+    /// workflow, so the app fell back to the single agent step it was created with and
+    /// nothing on any surface said why.
+    #[test]
+    fn a_rejected_fold_does_not_cost_the_other_one() {
+        let mut env = kx_app::AppEnvelope::new(
+            "x",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "the original" }] }),
+        );
+
+        // The good fold lands.
+        let workflow = serde_json::json!({
+            "steps": [
+                { "kind": "model", "prompt": "a" },
+                { "kind": "model", "prompt": "b" },
+                { "kind": "model", "prompt": "c" },
+            ],
+            "edges": [{ "parent": 0, "child": 1 }, { "parent": 1, "child": 2 }],
+        });
+        fold_validated(&mut env, |e| e.blueprint = Some(workflow)).expect("a valid DAG folds");
+
+        // The bad one is refused — exactly what a semver version does.
+        let err = fold_validated(&mut env, |e| {
+            e.steering_config
+                .tools
+                .requested_grants
+                .insert("get_payout_records".into(), "1.0.0".into());
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("integer"), "{err}");
+
+        // …and the workflow SURVIVED it.
+        let steps = env.blueprint.as_ref().unwrap()["steps"].as_array().unwrap();
+        assert_eq!(
+            steps.len(),
+            3,
+            "the good fold must not be undone by the bad one"
+        );
+        assert!(
+            env.steering_config.tools.requested_grants.is_empty(),
+            "the refused fold leaves no partial state behind"
+        );
+        env.validate()
+            .expect("the envelope is left valid either way");
+    }
+
+    #[test]
+    fn a_valid_tool_wish_folds_and_author_pins_win() {
+        let mut env = kx_app::AppEnvelope::new("x", serde_json::json!({ "steps": [] }));
+        // An author already pinned this tool at version 2 in the console.
+        env.steering_config
+            .tools
+            .requested_grants
+            .insert("mcp-echo/echo".into(), "2".into());
+
+        fold_validated(&mut env, |e| {
+            for (id, version) in [("mcp-echo/echo", "1"), ("retrieve", "1")] {
+                e.steering_config
+                    .tools
+                    .requested_grants
+                    .entry(id.into())
+                    .or_insert_with(|| version.into());
+            }
+        })
+        .expect("integer versions fold");
+
+        let g = &env.steering_config.tools.requested_grants;
+        assert_eq!(
+            g.get("mcp-echo/echo").map(String::as_str),
+            Some("2"),
+            "author pin wins"
+        );
+        assert_eq!(
+            g.get("retrieve").map(String::as_str),
+            Some("1"),
+            "the new wish lands"
+        );
     }
 }
