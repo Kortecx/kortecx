@@ -4805,8 +4805,10 @@ impl KxGateway for GatewayService {
             scaffolder.start_hosted(&principal, &branch_handle, &envelope, &goal)?
         } else {
             // The host driver creates/resumes the branch + spawns the background loop and
-            // returns immediately (progress via GetScaffoldStatus + GetBranch).
-            scaffolder.start(&principal, &branch_handle, &goal)?
+            // returns immediately (progress via GetScaffoldStatus + GetBranch). The envelope
+            // rides along so the host can read the authoring mode out of it, and the App
+            // handle so a codified scaffold can fold its result back onto the right App.
+            scaffolder.start(&principal, &req.handle, &branch_handle, &envelope, &goal)?
         };
         Ok(Response::new(proto::ScaffoldAppResponse {
             // Multi-run by design — correlate by `branch_handle` (poll GetScaffoldStatus

@@ -346,7 +346,9 @@ export function NewAppForm({
       <p className="muted" data-testid="new-app-lede">
         {kind === "hosted"
           ? "Describe the web app and its goal. We save a durable App envelope, then scaffold a real framework project into the App's own content-addressed branch — browse, edit, and serve it on a local port."
-          : "Describe the App and its goal. We save a durable App envelope, then the agent plans a complete project tailored to your goal and scaffolds it — streaming each file in live — into the App's own content-addressed branch. Browse and edit it after."}
+          : mode === "codified"
+            ? "Describe the App and its goal. The agent writes the workflow, tool list and supporting config this App is orchestrated from into its own content-addressed branch — streaming each file in live — and the workflow it settles on becomes the App's steps. Browse and edit it after."
+            : "Describe the App and its goal. We save a durable App envelope, then the agent plans a complete project tailored to your goal and scaffolds it — streaming each file in live — into the App's own content-addressed branch. Browse and edit it after."}
       </p>
 
       {scaffolding === null ? (
@@ -377,11 +379,10 @@ export function NewAppForm({
               Hosted
             </button>
           </fieldset>
-          {/* The authoring-mode axis. Codified is honest-DISABLED: the envelope carries the
-              field and the catalog reads it, but the scheduled scaffold rail still authors
-              markdown only — so saving `codified` today would put a "Codified" chip on an app
-              that is prose. Offered now (the `new-app-packaging-docker` precedent) so the axis
-              is discoverable, enabled when the rail lands. */}
+          {/* The authoring-mode axis. Contextual scaffolds markdown the model is steered by;
+              codified scaffolds the configuration the runtime is orchestrated from — its
+              `workflow.json` becomes the App's blueprint and its `tools.json` its tool
+              wishes, both folded onto the App when the scaffold finishes. */}
           {kind === "scheduled" ? (
             <fieldset
               className="view-toggle view-toggle--compact"
@@ -401,11 +402,12 @@ export function NewAppForm({
               <button
                 type="button"
                 data-testid="new-app-mode-codified"
-                aria-pressed={false}
-                disabled
-                title="Codified — the model writes the code and configuration this app is orchestrated from. Ships with the codified scaffold rail."
+                aria-pressed={mode === "codified"}
+                onClick={() => setMode("codified")}
+                disabled={busy}
+                title="The model writes the workflow, tool list and supporting config this app is orchestrated from"
               >
-                Codified · soon
+                Codified
               </button>
             </fieldset>
           ) : null}

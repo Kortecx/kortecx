@@ -58,13 +58,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use kx_app::{AppEnvelope, ConnectionRef, Reach, SkillRef};
+use kx_app::{AppEnvelope, AppMode, ConnectionRef, Reach, SkillRef};
 use kx_blueprint::{to_request, DagSpec, StepSpec};
 use kx_content::{ContentRef, ContentStore};
 use kx_gateway_core::{
-    app_dataset_scoped_name, author_steps_from_proto, AppAuthor, AppCapability, AppCatalog,
-    AppManifest, AppManifestView, AppRunError, BinderError, BoundRecipe, BranchStore, DatasetError,
-    DatasetView, GatewayError, IngestDoc, RegisteredToolsView,
+    app_dataset_scoped_name, author_steps_from_proto, codified_path_allowed, AppAuthor,
+    AppCapability, AppCatalog, AppManifest, AppManifestView, AppRunError, BinderError, BoundRecipe,
+    BranchStore, DatasetError, DatasetView, GatewayError, IngestDoc, RegisteredToolsView,
 };
 use kx_mcp_gateway::SqliteConnectionStore;
 use kx_mote::{ContextItemRef, ToolName, ToolVersion, REACT_REQUIRE_APPROVAL_KEY};
@@ -913,8 +913,22 @@ fn dataset_manifest_lines(
 /// not a `.kortecx/` internal marker. `app.json` (a decorative copy of the manifest nothing
 /// parses) and the marker JSON fall out by the suffix filter; the prefix guard is belt-and-
 /// braces for any future `.kortecx/*.md`.
-fn is_project_rail_path(path: &str) -> bool {
-    !path.starts_with(".kortecx/") && matches!(path.rsplit('.').next(), Some("md"))
+fn is_project_rail_path(path: &str, mode: AppMode) -> bool {
+    if path.starts_with(".kortecx/") {
+        return false;
+    }
+    match mode {
+        // Byte-for-byte the rule this rail has always applied.
+        AppMode::Contextual => matches!(path.rsplit('.').next(), Some("md")),
+        // A codified app must be able to read the project it is running inside — its config,
+        // schemas and scripts are the instructions. The two files the runtime CONSUMES are
+        // excluded: `workflow.json` is already the DAG being executed and `tools.json` is
+        // already the grant set, so folding them back in is noise that also spends the rail's
+        // byte budget on telling the model what it is currently doing.
+        AppMode::Codified => {
+            codified_path_allowed(path) && !kx_gateway_core::codified_consumed_path(path)
+        }
+    }
 }
 
 /// T-RUNAPP-PROJECT-RAIL: fold the App's OWN project markdown into the context rail.
@@ -922,12 +936,15 @@ fn is_project_rail_path(path: &str) -> bool {
 /// The model authored these `.md` files into the App's branch (or the user edited them in the
 /// IDE); before this they were documentation the run never read (`grep -c branch` over this
 /// file was 0). Selection is a PURE, DETERMINISTIC function of the path-sorted branch manifest
-/// — `.md` only, ALL of them, in path order, `app.json` + `.kortecx/*` excluded — because it
-/// lands in `config_subset` (→ `MoteId`): any map-order or timestamp dependence would move the
-/// Mote id run-to-run and break recovery stability. The content is already in CAS (the branch
-/// holds refs), so each file maps straight to its ref; bytes are read only to enforce the total
-/// budget, over which the run REFUSES rather than silently truncating (a half-read rule is worse
-/// than no rule). `None` branch seam or an empty `branch_handle` ⇒ no items (the digest no-op).
+/// — ALL matching files, in path order, `.kortecx/*` excluded — because it lands in
+/// `config_subset` (→ `MoteId`): any map-order or timestamp dependence would move the Mote id
+/// run-to-run and break recovery stability. WHICH files match depends on the App's authoring
+/// mode ([`is_project_rail_path`]): a contextual app folds its markdown, a codified app also
+/// folds the source and configuration it was scaffolded with. The content is already in CAS
+/// (the branch holds refs), so each file maps straight to its ref; bytes are read only to
+/// enforce the total budget, over which the run REFUSES rather than silently truncating (a
+/// half-read rule is worse than no rule). `None` branch seam or an empty `branch_handle` ⇒ no
+/// items (the digest no-op).
 fn project_rail_items(
     env: &AppEnvelope,
     content: &dyn ContentPresence,
@@ -947,11 +964,12 @@ fn project_rail_items(
     else {
         return Ok(());
     };
+    let mode = env.mode();
     let cap = crate::env_caps::app_project_rail_bytes();
     let mut project: Vec<_> = manifest
         .items
         .iter()
-        .filter(|it| is_project_rail_path(&it.path))
+        .filter(|it| is_project_rail_path(&it.path, mode))
         .collect();
     // The manifest is documented path-sorted; pin it so selection cannot depend on store order.
     project.sort_by(|a, b| a.path.cmp(&b.path));
@@ -968,8 +986,8 @@ fn project_rail_items(
         used = used.saturating_add(bytes.len());
         if used > cap {
             return Err(AppRunError::InvalidArgs(format!(
-                "app project markdown exceeds the {cap}-byte context-rail budget (reached at \
-                 {:?}); trim the project's `.md` files or raise KX_APP_PROJECT_RAIL_BYTES",
+                "the app's project files exceed the {cap}-byte context-rail budget (reached at \
+                 {:?}); trim the project or raise KX_APP_PROJECT_RAIL_BYTES",
                 it.path
             )));
         }
@@ -2582,6 +2600,88 @@ mod tests {
         // The rule's content actually rides (the whole point).
         let rule_ref = ca.put(b"never delete prod").unwrap();
         assert!(a1.iter().any(|i| i.content_ref == rule_ref.0));
+    }
+
+    /// A CODIFIED app reads the project it is running inside: its config, schemas and
+    /// scripts ride the rail alongside its markdown. The two files the runtime CONSUMES do
+    /// not — `workflow.json` is already the DAG being executed and `tools.json` is already
+    /// the grant set, so folding them back in spends the rail's budget telling the model what
+    /// it is currently doing.
+    #[test]
+    fn the_codified_rail_carries_the_project_but_not_what_the_runtime_consumed() {
+        let files: &[(&str, &[u8])] = &[
+            ("README.md", b"# readme"),
+            ("config/routing.json", b"{\"eu\":\"team-a\"}"),
+            ("scripts/extract.py", b"print(1)"),
+            ("queries/daily.sql", b"select 1"),
+            ("workflow.json", b"{\"steps\":[]}"),
+            ("tools.json", b"{\"tools\":{}}"),
+            (".kortecx/manifest.json", b"{}"),
+        ];
+        let (db, c) = branch_with(files);
+        let mut env = env_on("apps/local/proj");
+        env.mode = "codified".to_string();
+
+        let items = context_rail_items(&env, c.as_ref(), Some(&db), "alice@acme").unwrap();
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "project:README.md",
+                "project:config/routing.json",
+                "project:queries/daily.sql",
+                "project:scripts/extract.py",
+            ],
+            "path-sorted; the consumed config and .kortecx are excluded"
+        );
+    }
+
+    /// The SAME branch, read as contextual, still folds markdown only. This is what makes the
+    /// mode a real discriminant rather than a label: the two modes genuinely disagree about
+    /// the same files.
+    #[test]
+    fn the_contextual_rail_is_unchanged_by_the_codified_lane_existing() {
+        let files: &[(&str, &[u8])] = &[
+            ("README.md", b"# readme"),
+            ("config/routing.json", b"{}"),
+            ("scripts/extract.py", b"print(1)"),
+        ];
+        let (db, c) = branch_with(files);
+        let env = env_on("apps/local/proj");
+        let items = context_rail_items(&env, c.as_ref(), Some(&db), "alice@acme").unwrap();
+        let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["project:README.md"], "markdown only, as always");
+    }
+
+    /// AUTHORING and the RUN must agree: a path a codified scaffold would write is a path the
+    /// run reads back. A file the user sees, the model never gets, and no surface can explain
+    /// is the failure this pairing exists to prevent — so assert the two predicates against
+    /// each other rather than against two hand-written lists.
+    #[test]
+    fn everything_a_codified_scaffold_may_author_reaches_the_run() {
+        for path in [
+            "reference/policy.md",
+            "config/limits.yaml",
+            "schema/input.json",
+            "scripts/extract.py",
+            "queries/daily.sql",
+            "notes.txt",
+        ] {
+            assert!(
+                kx_gateway_core::codified_path_allowed(path),
+                "{path} is authorable"
+            );
+            assert!(
+                is_project_rail_path(path, AppMode::Codified),
+                "{path} is authorable, so it must also reach the run"
+            );
+        }
+        // The consumed pair is the ONE documented exception, in the safe direction: authored
+        // and parsed, but not fed back.
+        for path in ["workflow.json", "tools.json"] {
+            assert!(kx_gateway_core::codified_path_allowed(path));
+            assert!(!is_project_rail_path(path, AppMode::Codified));
+        }
     }
 
     /// An empty `branch_handle` or a `None` seam ⇒ no project items (the digest no-op the
