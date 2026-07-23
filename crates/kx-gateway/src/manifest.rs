@@ -1049,4 +1049,51 @@ components from ./components/\"},\
         let raw = format!(r#"{{"tools":{{{}}}}}"#, many.join(","));
         assert!(decode_codified_tools(raw.as_bytes()).is_err());
     }
+
+    /// THE LIVE FINDING. Given only `"<version>"`, a served model reasonably writes semver
+    /// for every tool — and the envelope refuses it (`check_integer` parses a `u64`). The
+    /// directive now states the format with a worked example and names semver as wrong; this
+    /// pins that it says so, because the failure it causes is silent at authoring time and
+    /// only shows up as a tool wish that vanished.
+    #[test]
+    fn the_tools_directive_states_the_version_format() {
+        let d = authoring_prompt_for(kx_gateway_core::CODIFIED_TOOLS_PATH);
+        assert!(d.contains("whole number"), "{d}");
+        assert!(
+            d.contains("\"1.0.0\" is invalid"),
+            "must name semver as wrong: {d}"
+        );
+        // A worked example beats a placeholder: `"<version>"` is what produced the semver.
+        assert!(d.contains("\"1\""), "{d}");
+    }
+
+    /// Every version the tools directive shows as an example must be one the envelope would
+    /// actually accept. A directive that demonstrates an invalid value is worse than a vague
+    /// one — it teaches the mistake.
+    #[test]
+    fn the_tools_directive_examples_would_pass_validation() {
+        let d = authoring_prompt_for(kx_gateway_core::CODIFIED_TOOLS_PATH);
+        let shown = decode_codified_tools(br#"{"tools":{"mcp-echo/echo":"1","retrieve":"1"}}"#)
+            .expect("the documented example decodes");
+        for (id, version) in &shown {
+            assert!(d.contains(id.as_str()), "the directive shows {id}");
+            assert!(
+                version.parse::<u64>().is_ok(),
+                "{id}: the example version {version:?} must be an integer string — the envelope \
+                 rejects anything else, and an example that fails validation teaches the bug"
+            );
+        }
+    }
+
+    fn authoring_prompt_for(path: &str) -> String {
+        kx_gateway_core::authoring_prompt(
+            path,
+            "r",
+            "g",
+            kx_gateway_core::ScaffoldLane::Codified,
+            &[],
+            false,
+            &[],
+        )
+    }
 }

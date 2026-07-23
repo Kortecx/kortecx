@@ -72,6 +72,26 @@ const CODIFIED_CONFIG: &[ScaffoldFile] = &[
     },
 ];
 
+/// Apply one codified fold to `env`, keeping it only if the result is a VALID envelope.
+///
+/// The fold runs on a clone and is adopted only on success, so a file the envelope refuses
+/// costs nothing but itself. Found live: a model wrote semver tool versions (`"1.0.0"`, which
+/// `check_integer` rejects), and a single validate-at-the-end discarded a perfectly good
+/// three-step workflow alongside them.
+///
+/// Validation goes through the envelope's OWN `validate`, not a re-check of the fields here —
+/// two definitions of "valid" is how the fold and the catalog would come to disagree.
+fn fold_validated(
+    env: &mut kx_app::AppEnvelope,
+    apply: impl FnOnce(&mut kx_app::AppEnvelope),
+) -> Result<(), kx_app::AppError> {
+    let mut candidate = env.clone();
+    apply(&mut candidate);
+    candidate.validate()?;
+    *env = candidate;
+    Ok(())
+}
+
 /// The authoring lane for a scheduled app in `mode`. One place, so the manifest PLANNER and
 /// the per-file WRITER can never be handed different lanes for the same scaffold.
 fn scheduled_lane(mode: AppMode) -> ScaffoldLane<'static> {
@@ -745,12 +765,21 @@ impl HostScaffolder {
             self.content.get(&ContentRef::from_bytes(it.content_ref))
         };
 
+        // Each file is folded onto a CANDIDATE and validated on its own, so one malformed
+        // file cannot cost the other. Found live: the model wrote semver tool versions
+        // (`"1.0.0"`, which the envelope refuses), and validating once at the end discarded a
+        // perfectly good three-step workflow along with them. Validating the real envelope —
+        // rather than re-checking the fields here — keeps one definition of "valid".
         let mut applied: Vec<&str> = Vec::new();
         if let Some(bytes) = read(CODIFIED_WORKFLOW_PATH) {
             match decode_codified_workflow(&bytes) {
                 Ok(blueprint) => {
-                    env.blueprint = Some(blueprint);
-                    applied.push(CODIFIED_WORKFLOW_PATH);
+                    if fold_validated(&mut env, |e| e.blueprint = Some(blueprint))
+                        .inspect_err(|e| tracing::warn!(app = %app_handle, file = CODIFIED_WORKFLOW_PATH, error = %e, "the codified workflow did not produce a valid envelope; the app keeps its authored blueprint"))
+                        .is_ok()
+                    {
+                        applied.push(CODIFIED_WORKFLOW_PATH);
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(app = %app_handle, error = %e, "codified workflow.json did not decode; the app keeps its authored blueprint");
@@ -760,16 +789,22 @@ impl HostScaffolder {
         if let Some(bytes) = read(CODIFIED_TOOLS_PATH) {
             match decode_codified_tools(&bytes) {
                 Ok(tools) => {
-                    // Author pins WIN: a tool the user attached in the console is a decision,
-                    // and a model re-planning the project must not be able to drop it.
-                    for (id, version) in tools {
-                        env.steering_config
-                            .tools
-                            .requested_grants
-                            .entry(id)
-                            .or_insert(version);
+                    if fold_validated(&mut env, |e| {
+                        // Author pins WIN: a tool the user attached in the console is a
+                        // decision, and a model re-planning the project must not drop it.
+                        for (id, version) in tools {
+                            e.steering_config
+                                .tools
+                                .requested_grants
+                                .entry(id)
+                                .or_insert(version);
+                        }
+                    })
+                    .inspect_err(|e| tracing::warn!(app = %app_handle, file = CODIFIED_TOOLS_PATH, error = %e, "the codified tool wishes did not produce a valid envelope; the app keeps the wishes it had"))
+                    .is_ok()
+                    {
+                        applied.push(CODIFIED_TOOLS_PATH);
                     }
-                    applied.push(CODIFIED_TOOLS_PATH);
                 }
                 Err(e) => {
                     tracing::warn!(app = %app_handle, error = %e, "codified tools.json did not decode; the app keeps its authored tool wishes");
@@ -777,12 +812,6 @@ impl HostScaffolder {
             }
         }
         if applied.is_empty() {
-            return;
-        }
-        // Re-validate before saving: the catalog validates too, but failing HERE names the
-        // codified file that caused it instead of surfacing as an opaque upsert error.
-        if let Err(e) = env.validate() {
-            tracing::warn!(app = %app_handle, error = %e, "the codified config produced an invalid envelope; the app is unchanged");
             return;
         }
         match env
@@ -1277,5 +1306,86 @@ mod tests {
         let (files, injected) = ensure_entry_planned("next_js", vec![f("src/App.tsx")]);
         assert!(injected);
         assert_eq!(files[0].path, "app/page.tsx");
+    }
+
+    /// THE LIVE FINDING, pinned. A codified scaffold produces both files, and the model can
+    /// get one of them wrong while the other is perfect. Folding them together meant a
+    /// semver tool version — which the envelope refuses — also threw away a valid three-step
+    /// workflow, so the app fell back to the single agent step it was created with and
+    /// nothing on any surface said why.
+    #[test]
+    fn a_rejected_fold_does_not_cost_the_other_one() {
+        let mut env = kx_app::AppEnvelope::new(
+            "x",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "the original" }] }),
+        );
+
+        // The good fold lands.
+        let workflow = serde_json::json!({
+            "steps": [
+                { "kind": "model", "prompt": "a" },
+                { "kind": "model", "prompt": "b" },
+                { "kind": "model", "prompt": "c" },
+            ],
+            "edges": [{ "parent": 0, "child": 1 }, { "parent": 1, "child": 2 }],
+        });
+        fold_validated(&mut env, |e| e.blueprint = Some(workflow)).expect("a valid DAG folds");
+
+        // The bad one is refused — exactly what a semver version does.
+        let err = fold_validated(&mut env, |e| {
+            e.steering_config
+                .tools
+                .requested_grants
+                .insert("get_payout_records".into(), "1.0.0".into());
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("integer"), "{err}");
+
+        // …and the workflow SURVIVED it.
+        let steps = env.blueprint.as_ref().unwrap()["steps"].as_array().unwrap();
+        assert_eq!(
+            steps.len(),
+            3,
+            "the good fold must not be undone by the bad one"
+        );
+        assert!(
+            env.steering_config.tools.requested_grants.is_empty(),
+            "the refused fold leaves no partial state behind"
+        );
+        env.validate()
+            .expect("the envelope is left valid either way");
+    }
+
+    #[test]
+    fn a_valid_tool_wish_folds_and_author_pins_win() {
+        let mut env = kx_app::AppEnvelope::new("x", serde_json::json!({ "steps": [] }));
+        // An author already pinned this tool at version 2 in the console.
+        env.steering_config
+            .tools
+            .requested_grants
+            .insert("mcp-echo/echo".into(), "2".into());
+
+        fold_validated(&mut env, |e| {
+            for (id, version) in [("mcp-echo/echo", "1"), ("retrieve", "1")] {
+                e.steering_config
+                    .tools
+                    .requested_grants
+                    .entry(id.into())
+                    .or_insert_with(|| version.into());
+            }
+        })
+        .expect("integer versions fold");
+
+        let g = &env.steering_config.tools.requested_grants;
+        assert_eq!(
+            g.get("mcp-echo/echo").map(String::as_str),
+            Some("2"),
+            "author pin wins"
+        );
+        assert_eq!(
+            g.get("retrieve").map(String::as_str),
+            Some("1"),
+            "the new wish lands"
+        );
     }
 }

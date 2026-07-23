@@ -932,8 +932,14 @@ pub fn authoring_prompt(
 /// accept, so nothing here is a second definition of either.
 fn codified_shape_directive(path: &str) -> &'static str {
     if path == CODIFIED_TOOLS_PATH {
+        // The version format is stated with a WORKED EXAMPLE, and semver is named as wrong
+        // explicitly. Found live: given only `"<version>"`, the model reasonably wrote
+        // `"1.0.0"` for every tool — which the envelope refuses (`check_integer`), so a
+        // perfectly sensible tools file was thrown away for a reason nothing had told it.
         "Write a JSON object naming the MCP tools this app needs, as an id → version map:\n\
-         {\"tools\":{\"<tool id>\":\"<version>\"}}\n\
+         {\"tools\":{\"mcp-echo/echo\":\"1\",\"retrieve\":\"1\"}}\n\
+         Each VERSION is a whole number written as a string — \"1\", \"2\". It is NOT semantic \
+         versioning: \"1.0.0\" is invalid and the entry will be rejected. \
          Name only tools the goal genuinely needs. Every entry is a REQUEST: the runtime \
          still intersects it with what the caller is actually allowed to fire, so naming a \
          tool cannot grant it. An app that needs no tools writes {\"tools\":{}}."
