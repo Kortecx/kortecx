@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  bindingTargets,
   readConnections,
   readReachInherit,
   readSecretScope,
   readToolGrants,
+  unbindFromSteps,
   writeConnections,
   writeTools,
 } from "../../src/lib/app-envelope";
@@ -67,5 +69,48 @@ describe("app-envelope editors", () => {
       { descriptor: "b", credential_ref: "TOK" },
     ]);
     expect(readSecretScope(shared)).toEqual(["TOK"]);
+  });
+});
+
+describe("per-node binding read/scrub", () => {
+  const env = (): Env => ({
+    blueprint: {
+      steps: [
+        { prompt: "gather escalations", skills: ["triage"], datasets: ["support"] },
+        { prompt: "write the summary" },
+      ],
+    },
+    references: { skills: [{ name: "triage" }] },
+  });
+
+  it("bindingTargets names the bound step, and 'the entry step' when unbound", () => {
+    expect(bindingTargets(env(), "skills", "triage")).toEqual(["gather escalations"]);
+    // Case-insensitive on the declared name — the same rule the runtime resolves by.
+    expect(bindingTargets(env(), "skills", "TRIAGE")).toEqual(["gather escalations"]);
+    // A declaration no step names binds where it always did.
+    expect(bindingTargets(env(), "skills", "unused")).toEqual(["the entry step"]);
+  });
+
+  it("bindingTargets falls back to a step ordinal when the step has no prompt", () => {
+    const e: Env = { blueprint: { steps: [{ skills: ["s"] }] } };
+    expect(bindingTargets(e, "skills", "s")).toEqual(["step 1"]);
+  });
+
+  it("unbindFromSteps removes the name and drops the emptied key, leaving siblings", () => {
+    const scrubbed = unbindFromSteps(env(), "skills", "triage");
+    const steps = (scrubbed.blueprint as { steps: Record<string, unknown>[] }).steps;
+    expect(steps[0]).not.toHaveProperty("skills");
+    // A sibling axis on the same step is untouched.
+    expect(steps[0]?.datasets).toEqual(["support"]);
+    // references is not this function's concern — only the step bindings.
+    expect((scrubbed.references as { skills: unknown[] }).skills).toHaveLength(1);
+  });
+
+  it("unbindFromSteps returns the env unchanged when nothing bound the name", () => {
+    const e = env();
+    expect(unbindFromSteps(e, "skills", "never-bound")).toBe(e);
+    // ...including a hosted App with no blueprint.
+    const hosted: Env = { references: { skills: [{ name: "triage" }] } };
+    expect(unbindFromSteps(hosted, "skills", "triage")).toBe(hosted);
   });
 });

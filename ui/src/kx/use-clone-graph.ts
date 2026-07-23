@@ -118,6 +118,11 @@ export function useCloneGraph(instanceId: string | null, anchorMoteId?: string):
           // projection exposes stepKind, not the agentic tool_contract); empty ⇒ a
           // plain model step until the user grants a set.
           toolContract: {},
+          // Likewise the App capability bindings: a clone reconstructs a RUN from the
+          // projection, which carries no App envelope to name a skill or connector into.
+          skills: [],
+          connections: [],
+          datasets: [],
         };
       });
       const edges: BuilderEdge[] = [];

@@ -207,6 +207,10 @@ export interface DerivedStepInit {
   modelId?: string;
   /** The per-step grant set the design ASKED for and the server kept (`{id: version}`). */
   toolContract?: Record<string, string>;
+  /** The per-step capability BINDINGS: which node uses each catalog capability. */
+  skills?: string[];
+  integrations?: string[];
+  datasets?: string[];
 }
 
 /** A canned App design (every field optional — omit what the spec is not about). */
@@ -233,6 +237,11 @@ function unionOfStepGrants(steps: DerivedStepInit[]): Record<string, string> {
   return out;
 }
 
+/** The app-level union of one per-step axis — the DECLARATION set, as the host computes it. */
+function unionOfAxis(steps: DerivedStepInit[], pick: (s: DerivedStepInit) => string[]): string[] {
+  return [...new Set(steps.flatMap((s) => pick(s)))];
+}
+
 /**
  * Stub `DeriveApp` with a canned design.
  *
@@ -257,18 +266,22 @@ export async function stubDeriveApp(page: Page, design: DerivedAppInit = {}): Pr
               kind: s.kind ?? "plain",
               modelId: s.modelId ?? "",
               toolContract: s.toolContract ?? {},
+              skills: s.skills ?? [],
+              integrations: s.integrations ?? [],
+              datasets: s.datasets ?? [],
             }),
           ),
           edges: (design.edges ?? []).map((e) => create(proto.ProposedEdgeSchema, e)),
           files: (design.files ?? []).map((f) => create(proto.DerivedAppFileSchema, f)),
           framework: design.framework ?? "",
-          // The app-level wish is the UNION of every step's surviving grant — the host
-          // computes it that way, so the stub does too. Left to each spec to restate, a
-          // fixture would happily hand back a design whose rail contradicts its own steps.
+          // Every app-level list is the UNION of what the steps named — the host computes
+          // them that way, so the stub does too. Left to each spec to restate, a fixture
+          // would happily hand back a design whose declarations contradict its own nodes.
           tools: design.tools ?? unionOfStepGrants(design.steps ?? []),
-          skills: design.skills ?? [],
-          connections: design.connections ?? [],
-          datasets: design.datasets ?? [],
+          skills: design.skills ?? unionOfAxis(design.steps ?? [], (s) => s.skills ?? []),
+          connections:
+            design.connections ?? unionOfAxis(design.steps ?? [], (s) => s.integrations ?? []),
+          datasets: design.datasets ?? unionOfAxis(design.steps ?? [], (s) => s.datasets ?? []),
           notices: design.notices ?? [],
         }),
       },

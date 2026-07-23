@@ -1015,6 +1015,24 @@ export interface DagSpecStep {
   args?: Record<string, string | number | boolean>;
   max_turns?: number;
   max_tool_calls?: number;
+  /**
+   * APP ONLY — the catalog SKILL names bound to this step, naming entries in the App
+   * envelope's `references.skills[].name`.
+   *
+   * This and the two below are BINDINGS, not declarations: `references` still holds the
+   * skill's instructions ref, the credential name and the corpus; the step says only which
+   * of them it uses. `RunApp` resolves them, and a capability NO step names binds where it
+   * always did — the entry step — so a blueprint that binds nothing behaves exactly as
+   * before and compiles to the same identity.
+   *
+   * A plain `SubmitWorkflow` has no `references` to name into, so lowering one of these as a
+   * workflow is refused rather than silently dropped.
+   */
+  skills?: string[];
+  /** APP ONLY — connection DESCRIPTORS bound to this step (`references.connections[]`). */
+  connections?: string[];
+  /** APP ONLY — DATASET names this step grounds on (`references.datasets[]`). */
+  datasets?: string[];
 }
 
 /** A portable blueprint (the `kx blueprint run --file` JSON shape). */

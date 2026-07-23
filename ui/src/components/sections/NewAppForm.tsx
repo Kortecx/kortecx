@@ -13,17 +13,25 @@
  *     defaulting to CODIFIED). One prompt is the whole input.
  *  2. **review** — `DeriveApp` returns a design and NOTHING has been persisted. A scheduled
  *     design lands on the builder canvas as an editable graph; a hosted design lands as its
- *     planned file list. Beside it, the same capability pickers the App detail rails mount,
- *     pre-filled with what the design asked for and already intersected server-side against
- *     what this caller can actually reach.
+ *     planned file list.
  *  3. **approve** — only now does `SaveApp` + `ScaffoldApp` run, and the browser routes to the
  *     App's own page, where the scaffold streams in.
+ *
+ * **The graph is the whole create surface.** Tools, skills, integrations and grounding all
+ * attach to the NODE that uses them, in the step drawer — there are no capability rails
+ * beside the canvas. That is not a layout preference: a rail is app-level, and an app-level
+ * capability binds to the entry step, which on a fan-out is not the step that needed it. A
+ * node is the unit that says what it does, what it may reach, and what it knows.
+ *
+ * The declarations the envelope needs (`references.skills` / `.connections` / `.datasets`)
+ * are computed at approve as the UNION of what the nodes name, so the author never maintains
+ * two lists that can disagree.
  *
  * The envelope still carries NO authority: the server re-resolves every warrant at run, and a
  * derived tool grant is a WISH the runtime intersects again at fire (SN-8).
  */
 
-import { type AppDerivation, Reach, app, defaultHandle, flow } from "@kortecx/sdk/web";
+import { type AppDerivation, app, defaultHandle, flow } from "@kortecx/sdk/web";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, Suspense, lazy, useCallback, useMemo, useState } from "react";
@@ -36,21 +44,17 @@ import { useAttachments } from "../../kx/use-attachments";
 import { useListMcpServers } from "../../kx/use-connections";
 import { useDatasets } from "../../kx/use-datasets";
 import { useDeriveApp } from "../../kx/use-derive-app";
-import { useModels } from "../../kx/use-models";
 import { useScaffoldApp } from "../../kx/use-scaffold-app";
 import { useListSkills } from "../../kx/use-skills";
 import { composeCapabilityPrompt } from "../../lib/app-capability-prompt";
-import type { ConnectionEntry } from "../../lib/app-envelope";
 import { collidingHandle } from "../../lib/app-handle";
-import {
-  ConnectionsPicker,
-  type PickedSkill,
-  SkillsPicker,
-  ToolsPicker,
-  pickedSkill,
-} from "../apps/CapabilityPickers";
+import { pickedSkill } from "../apps/CapabilityPickers";
 import { FRESH_UNMODELED, builderGraphToBlueprint } from "../builder/app-blueprint";
-import { type BuilderGraph, proposalToBuilderGraph } from "../builder/builder-graph";
+import {
+  type BuilderGraph,
+  type BuilderStep,
+  proposalToBuilderGraph,
+} from "../builder/builder-graph";
 import { GlowCard } from "../ds/GlowCard";
 
 /**
@@ -123,7 +127,6 @@ export function NewAppForm({
   const scaffold = useScaffoldApp();
   const derive = useDeriveApp();
   const datasets = useDatasets();
-  const models = useModels();
   const skillCatalog = useListSkills();
   const serverRegistry = useListMcpServers();
   // The live catalog, for the handle-collision check. `AppsSection` renders this form and
@@ -142,15 +145,10 @@ export function NewAppForm({
   const [framework, setFramework] = useState<HostedFrameworkChoice>("auto");
 
   // ---- review state: seeded by the derive, then editable ----
+  // Only the App's IDENTITY lives here. Every capability lives on a node — see the module
+  // note; the declarations are derived from the graph at approve.
   const [design, setDesign] = useState<Design | null>(null);
   const [name, setName] = useState("");
-  const [model, setModel] = useState("");
-  const [rule, setRule] = useState("");
-  const [grounding, setGrounding] = useState<string[]>([]);
-  const [toolGrants, setToolGrants] = useState<Record<string, string>>({});
-  const [reachInherit, setReachInherit] = useState(false);
-  const [skills, setSkills] = useState<PickedSkill[]>([]);
-  const [connections, setConnections] = useState<ConnectionEntry[]>([]);
   const [files, setFiles] = useState<{ path: string; role: string }[]>([]);
   // The LIVE canvas graph — what the author sees is what gets lowered at approve.
   const [graph, setGraph] = useState<BuilderGraph | null>(null);
@@ -166,37 +164,29 @@ export function NewAppForm({
   const reviewing = design !== null;
 
   /**
-   * Seed every review control from the design.
+   * Seed the review from the design: the App's identity, and the graph whose NODES carry
+   * every capability the design chose.
    *
-   * Each axis is mapped INDEPENDENTLY: a skill the catalog no longer holds must not stop the
-   * tools from landing. The server already intersected each name against this caller's ceiling,
-   * so anything that fails to map here is a catalog that moved underneath us, not an authority
-   * question — it is dropped rather than allowed to block the review.
+   * The design names an integration by its registered NAME (short and readable, which is what
+   * a byte-bounded prompt menu can afford); the envelope binds by ENDPOINT, because the
+   * endpoint is what the runtime actually dials. Mapping name → endpoint HERE is what makes a
+   * derived integration a real binding rather than a label. A name the registry no longer
+   * holds is dropped rather than allowed to block the review — the server already intersected
+   * it against this caller's ceiling, so a miss here is a catalog that moved underneath us.
    */
   function seedReview(d: Design): void {
     setDesign(d);
     setName(d.name);
-    setToolGrants({ ...d.tools });
     setFiles(d.files.map((f) => ({ path: f.path, role: f.role })));
-    setSkills(
-      d.skills
-        .map((n) => skillCatalog.skills.find((s) => s.name === n))
-        .filter((s): s is NonNullable<typeof s> => s !== undefined)
-        .map(pickedSkill),
-    );
-    // The design names a connection by its registered NAME (short and readable, which is what a
-    // byte-bounded prompt menu can afford); the envelope binds by ENDPOINT, because the endpoint
-    // is what the runtime actually dials. Mapping name → endpoint HERE is what makes a derived
-    // integration a real binding rather than a label.
-    setConnections(
-      d.connections
-        .map((n) => serverRegistry.servers.find((s) => s.serverName === n))
-        .filter((s): s is NonNullable<typeof s> => s !== undefined)
-        .map((s) => ({ descriptor: s.endpoint, credential_ref: "" })),
-    );
-    setGrounding(d.datasets.filter((n) => groundable.some((g) => g.name === n)));
     if (d.steps.length > 0) {
-      const insert = proposalToBuilderGraph(d.steps, d.edges, 0);
+      const bound = d.steps.map((s) => ({
+        ...s,
+        integrations: s.integrations
+          .map((n) => serverRegistry.servers.find((sv) => sv.serverName === n)?.endpoint)
+          .filter((e): e is string => e !== undefined),
+        datasets: s.datasets.filter((n) => groundable.some((g) => g.name === n)),
+      }));
+      const insert = proposalToBuilderGraph(bound, d.edges, 0);
       setGraph({ steps: insert.steps, edges: insert.edges });
     } else {
       setGraph(null);
@@ -242,7 +232,6 @@ export function NewAppForm({
         throw new Error("not connected");
       }
       const readyFiles = attach.attachments.filter((a) => a.status === "ready" && a.ref);
-      const trimmedModel = model.trim();
       const description = design?.description.trim() ?? "";
 
       // HOSTED: no blueprint — the runtime scaffolds a real web project into the App's branch
@@ -259,9 +248,6 @@ export function NewAppForm({
               "hosted",
             ),
           });
-        if (trimmedModel !== "") {
-          hb = hb.steer({ model: trimmedModel });
-        }
         for (const a of readyFiles) {
           hb = hb.context(a.filename, a.ref as string, { mediaType: a.mediaType });
         }
@@ -285,38 +271,36 @@ export function NewAppForm({
             "scheduled",
           ),
         });
-      if (trimmedModel !== "") {
-        builder = builder.steer({ model: trimmedModel });
-      }
       for (const a of readyFiles) {
         builder = builder.context(a.filename, a.ref as string, { mediaType: a.mediaType });
       }
-      for (const ds of grounding) {
+      // THE DECLARATIONS, DERIVED FROM THE NODES. `references.*` says what this App needs
+      // registered; the blueprint's per-step lists say which node uses each one. Computing
+      // the declaration set from the graph is what keeps them from disagreeing — there is no
+      // second list for the author to maintain, and nothing can be declared that no step
+      // asked for. The bindings themselves already rode into the blueprint above.
+      //
+      // Tools are NOT written app-level at all: a step's `tool_contract` is a real grant on
+      // that step, so `steering_config.tools.requested_grants` would only duplicate it onto
+      // the entry step. Every one is still a wish — the server resolves
+      // `wish ∩ grants ∩ fireable` at run (SN-8).
+      const named = (pick: (s: BuilderStep) => readonly string[]): string[] => [
+        ...new Set((graph?.steps ?? []).flatMap((s) => pick(s))),
+      ];
+      for (const n of named((s) => s.skills)) {
+        const s = skillCatalog.skills.find((c) => c.name === n);
+        if (s) {
+          builder = builder.skill(pickedSkill(s));
+        }
+      }
+      for (const endpoint of named((s) => s.connections)) {
+        builder = builder.withConnection(endpoint, "");
+      }
+      for (const ds of named((s) => s.datasets)) {
         builder = builder.dataset(ds);
-      }
-      // The capability rails, in the shape RunApp consumes: `useTool` writes the wish to
-      // `steering_config.tools.requested_grants`, `skill` writes `references.skills`, and
-      // `withConnection` writes `references.connections` PLUS the credential NAME into
-      // `guards.secret_scope` (never the secret). Every one is a wish — the server still
-      // resolves `wish ∩ grants ∩ fireable` at run (SN-8).
-      for (const [toolId, toolVersion] of Object.entries(toolGrants)) {
-        builder = builder.useTool(toolId, toolVersion);
-      }
-      for (const s of skills) {
-        builder = builder.skill(s);
-      }
-      for (const c of connections) {
-        builder = builder.withConnection(c.descriptor, c.credential_ref);
-      }
-      if (reachInherit) {
-        builder = builder.steer({ reach: Reach.InheritPrincipal });
       }
       if (mode === "codified") {
         builder = builder.mode("codified");
-      }
-      const trimmedRule = rule.trim();
-      if (trimmedRule !== "") {
-        builder = builder.rule("guidance", { body: trimmedRule });
       }
       const result = await builder.save({ client });
       return result.handle;
@@ -364,7 +348,7 @@ export function NewAppForm({
     if (reviewing) {
       return kind === "hosted"
         ? "Review the project before it exists. Nothing has been created yet — edit the file plan and the app's details, then create it."
-        : "Review the workflow before it exists. Nothing has been created yet — open any step to change what it does or which tools it may use, then create the app.";
+        : "Review the workflow before it exists. Nothing has been created yet — open any step to change what it does and what it may use: its tools, skills, integrations and grounding all live on the step. Then create the app.";
     }
     if (kind === "hosted") {
       return "Describe the web app you want. The runtime designs the project and shows you the file plan before anything is created.";
@@ -654,137 +638,6 @@ export function NewAppForm({
               )}
             </fieldset>
           )}
-
-          <div className="register-tool-form__row">
-            <select
-              className="mono"
-              data-testid="new-app-model"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              aria-label="Model"
-              disabled={busy || create.isPending}
-              title="Pick a local model, or leave on the served default."
-            >
-              <option value="">Served default</option>
-              {(models.models ?? []).map((m) => (
-                <option key={m.modelId} value={m.modelId}>
-                  {m.modelId}
-                  {m.modalities.includes("image") ? " (vision)" : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* THE CAPABILITY RAILS — pre-filled by the design, editable before it exists. The
-              SAME pickers the App detail page mounts, so what a design attaches and what a user
-              attaches afterwards cannot drift. Scheduled only: the hosted supervisor launches
-              from a framework + commands and never reads a tool, skill or connection. */}
-          {kind === "scheduled" ? (
-            <>
-              {groundable.length > 0 ? (
-                <fieldset className="new-app-form__rail" data-testid="new-app-datasets">
-                  <legend className="muted">Ground on dataset (RAG)</legend>
-                  <div className="chips">
-                    {groundable.map((d) => {
-                      const on = grounding.includes(d.name);
-                      return (
-                        <button
-                          key={d.datasetId}
-                          type="button"
-                          className={on ? "chip chip--active" : "chip"}
-                          aria-pressed={on}
-                          data-testid={`new-app-dataset-${d.name}`}
-                          onClick={() =>
-                            setGrounding((cur) =>
-                              cur.includes(d.name)
-                                ? cur.filter((x) => x !== d.name)
-                                : [...cur, d.name],
-                            )
-                          }
-                          disabled={busy || create.isPending}
-                        >
-                          {d.name} ({d.docCount})
-                        </button>
-                      );
-                    })}
-                  </div>
-                </fieldset>
-              ) : null}
-              <fieldset className="new-app-form__rail" data-testid="new-app-tools">
-                <legend className="muted">MCP tools (a wish, granted at run)</legend>
-                <ToolsPicker
-                  grants={toolGrants}
-                  reachInherit={reachInherit}
-                  onChange={(g, r) => {
-                    setToolGrants(g);
-                    setReachInherit(r);
-                  }}
-                  disabled={busy || create.isPending}
-                  disabledTitle="Creating…"
-                  groupTestId="new-app-tools"
-                  itemTestId="new-app-tool"
-                  reachTestId="new-app-tools-reach"
-                />
-              </fieldset>
-              <fieldset className="new-app-form__rail" data-testid="new-app-skills">
-                <legend className="muted">Skills (instructions + tool wishes)</legend>
-                <SkillsPicker
-                  skills={skills}
-                  onChange={setSkills}
-                  disabled={busy || create.isPending}
-                  disabledTitle="Creating…"
-                  groupTestId="new-app-skills"
-                  itemTestId="new-app-skill"
-                />
-              </fieldset>
-              <fieldset className="new-app-form__rail" data-testid="new-app-connections">
-                <legend className="muted">Integrations (connectors)</legend>
-                <ConnectionsPicker
-                  connections={connections}
-                  onChange={setConnections}
-                  disabled={busy || create.isPending}
-                  disabledTitle="Creating…"
-                  groupTestId="new-app-connections"
-                  itemTestId="new-app-connection"
-                />
-              </fieldset>
-              <textarea
-                className="input"
-                data-testid="new-app-rule"
-                placeholder="Guidance rule (optional) — a behavior note the agent must follow (e.g. 'Always cite sources.')"
-                rows={2}
-                value={rule}
-                onChange={(e) => setRule(e.target.value)}
-                aria-label="Guidance rule (optional)"
-                disabled={busy || create.isPending}
-              />
-            </>
-          ) : null}
-
-          {/* Container packaging — the Docker app lane ships next. Kept as an honest-DISABLED
-              radio so the affordance stays discoverable without faking a control the runtime
-              cannot yet fulfil, and moved here because packaging is an app-level decision like
-              the rails beside it, not part of describing what the app should do. */}
-          <fieldset
-            className="new-app-form__rail"
-            aria-label="Packaging"
-            data-testid="new-app-packaging"
-          >
-            <legend className="muted">Packaging</legend>
-            <label>
-              <input type="radio" name="packaging" checked readOnly disabled={busy} /> Standard
-              runtime
-            </label>{" "}
-            <label className="muted" title="Container packaging — ships with the Docker app lane">
-              <input
-                type="radio"
-                name="packaging"
-                disabled
-                data-testid="new-app-packaging-docker"
-              />{" "}
-              Docker container · soon
-            </label>
-          </fieldset>
 
           <div className="register-tool-form__row">
             <button

@@ -161,11 +161,15 @@ export function entryAgenticStepId(graph: BuilderGraph): string | null {
 }
 
 /**
- * The warning shown when an App declares skills / tool grants but its blueprint has NO
+ * The warning shown when an App has APP-WIDE skills / tool grants but its blueprint has NO
  * root model step to fold them onto. The server drops them at run with only a
  * `tracing::warn!` — invisible to the user, who sees a populated Skills rail and
  * reasonably assumes it applies. This is the one place that silent drop becomes visible.
  * `null` ⇒ nothing to warn about.
+ *
+ * `wishes` must count only the APP-WIDE (unbound) capabilities: a skill BOUND to a specific
+ * step folds onto that step and needs no root model step, so counting it here would warn
+ * about a fold that happens. The caller filters bound skills out before passing the count.
  */
 export function entryFoldWarning(graph: BuilderGraph, wishes: number): string | null {
   if (wishes === 0 || entryAgenticStepId(graph) !== null) {

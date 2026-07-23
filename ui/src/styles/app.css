@@ -4946,6 +4946,19 @@ button.card-grid__title:hover {
   gap: 0.5rem;
 }
 
+/* The "binds to" summary under an App detail rail — states the runtime's per-node binding
+   rule so a rail full of declarations never reads as app-wide when the truth is per-node. */
+.app-binding-summary {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.app-binding-summary li {
+  margin: 0;
+}
+
 /* The Apps CHAT SURFACE — one prompt box with its selectors riding at the top right, an
    attach/submit foot, and (after the derive) the review panel below. Reuses the existing
    `.input` / `.view-toggle--compact` / `.chips` vocabulary; only the composition is new. */

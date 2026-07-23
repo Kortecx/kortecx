@@ -165,6 +165,7 @@ function BuilderInner({
   mode,
   palette,
   patterns = true,
+  appCapabilities,
   onGraphChange,
 }: {
   initialGraph?: BuilderGraph;
@@ -174,6 +175,10 @@ function BuilderInner({
   palette?: readonly BuilderStepKind[];
   /** Show the multi-agent pattern macros. */
   patterns?: boolean;
+  /** Offer the per-node App capability axes in the step drawer. Only meaningful when the
+   *  canvas is authoring an APP: a plain workflow has no `references` for a name to point
+   *  at, and the lowering refuses one. */
+  appCapabilities?: boolean;
   /** Publish the live graph to a host that owns the terminal (embedded mode). */
   onGraphChange?: (graph: BuilderGraph) => void;
 }) {
@@ -614,6 +619,7 @@ function BuilderInner({
           step={selectedStep}
           models={models}
           modelsUnsupported={unsupported}
+          appCapabilities={appCapabilities}
           onChange={(s) => updateStep(selectedStep.id, s)}
           onDelete={() => deleteStep(selectedStep.id)}
           onClose={() => setSelNode(null)}
@@ -838,6 +844,9 @@ function AppEditLoader({ handle }: { handle: string }) {
       <BuilderInner
         initialGraph={parsed.graph}
         mode={{ kind: "app-edit", handle, envelope, unmodeled: parsed.unmodeled }}
+        // Editing an existing App's structure is where per-node capabilities are re-bound
+        // after creation — the same drawer the create canvas offers, on the same graph.
+        appCapabilities
       />
     </ReactFlowProvider>
   );
@@ -855,6 +864,7 @@ export function BlueprintBuilderSection({
   mode = { kind: "workflow" },
   palette,
   patterns,
+  appCapabilities,
   onGraphChange,
 }: {
   initialGraph?: BuilderGraph;
@@ -863,6 +873,8 @@ export function BlueprintBuilderSection({
   palette?: readonly BuilderStepKind[];
   /** Show the multi-agent pattern macros (default: true). */
   patterns?: boolean;
+  /** Offer the per-node App capability axes in the step drawer (App canvases only). */
+  appCapabilities?: boolean;
   /** Publish the live graph to a host that owns the terminal (embedded mode). */
   onGraphChange?: (graph: BuilderGraph) => void;
 }) {
@@ -876,6 +888,7 @@ export function BlueprintBuilderSection({
         mode={mode}
         palette={palette}
         patterns={patterns}
+        appCapabilities={appCapabilities}
         onGraphChange={onGraphChange}
       />
     </ReactFlowProvider>
