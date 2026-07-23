@@ -1394,7 +1394,7 @@ dependencies = [
 
 [[package]]
 name = "kx-blueprint"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kx-proto",
  "serde",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "kx-workflow"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",

@@ -263,6 +263,30 @@ impl WorkflowDef {
         }
         injected
     }
+
+    /// INSERT a config entry into ONE step's identity-bearing `config_subset` — the
+    /// single-step sibling of [`Self::inject_entry_config`].
+    ///
+    /// `inject_entry_config` targets every DAG ROOT, which is right for something attached
+    /// to the RUN (a context bundle the whole workflow is grounded in). It is wrong for
+    /// something attached to a NODE: an App that binds one skill's instructions to its
+    /// second gatherer means that step and no other, and on a fan-out "every root" is
+    /// several steps. Returns `false` when `step_index` is out of range (a caller-side
+    /// indexing error, never a silent no-op on the wrong step).
+    ///
+    /// Like its sibling this ADDS to `config_subset`, so the step's `MoteId` becomes
+    /// identity-bearing over the value — and a workflow that injects nothing never reaches
+    /// this method, which is what keeps the canonical digest untouched.
+    pub fn inject_step_config(&mut self, step_index: usize, key: &str, value: &ConfigVal) -> bool {
+        match self.steps.get_mut(step_index) {
+            Some(step) => {
+                step.config_subset
+                    .insert(ConfigKey(key.to_string()), value.clone());
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 /// One compiled step ready to submit: a derived [`Mote`] plus the warrant and
@@ -278,6 +302,16 @@ pub struct CompiledMote {
     pub warrant: WarrantSpec,
     /// The capability a WM/ROND dispatch routes through.
     pub capability: ToolName,
+    /// The AUTHORED step this mote came from — its [`StepRef`] index in the
+    /// [`WorkflowDef`], i.e. its position in the blueprint the caller wrote.
+    ///
+    /// [`crate::compile`] emits motes in TOPOLOGICAL order, which is deliberately not
+    /// authoring order, so a caller holding a per-step decision (an App binding a
+    /// connection's secret scope to one node) had no way to say WHICH mote it meant.
+    /// Recomputing the topological order caller-side would be a second definition of an
+    /// ordering rule that already lives here — the kind of duplicate that drifts. This
+    /// carries the answer instead. Off-identity: it is not part of the `Mote`.
+    pub step_index: usize,
 }
 
 /// The result of [`crate::compile`]: the compiled motes in topological

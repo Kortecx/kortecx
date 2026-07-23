@@ -34,7 +34,7 @@ use kx_mote::{
 use kx_tool_registry::{ToolDef, ToolRegistry};
 use kx_warrant::{
     intersect, ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope,
-    ResourceCeiling, Role, ToolGrant, WarrantSpec,
+    ResourceCeiling, Role, SecretScope, ToolGrant, WarrantSpec,
 };
 use kx_workflow::{compile, generator, tool_step, transform, StepDef, WorkflowDef};
 
@@ -2638,6 +2638,42 @@ impl HostWorkflowAuthor {
     }
 }
 
+/// What an App binds to INDIVIDUAL steps, indexed by authored step position.
+///
+/// The App-wide rail (`context_bundles` + `extra_items`) says "this run is grounded in
+/// X"; this says "THIS node is". Both are needed: an App's declared skills may bind to one
+/// gatherer and its connections to another, while its context bundles still belong to the
+/// run as a whole.
+///
+/// Every field is empty by default, and an all-empty value takes the SAME code path as
+/// before it existed — which is what keeps an App authored without per-step bindings
+/// byte-identical, `MoteId`s included.
+#[derive(Debug, Default)]
+pub(crate) struct PerStepBinds {
+    /// Extra context items for step `i` (an App's skill instructions, bound to the node
+    /// that needs them). Short vectors are fine — a missing index means "none".
+    pub(crate) context_items: Vec<Vec<ContextItemRef>>,
+    /// The secret scope step `i`'s tool-firing warrant runs under. `None` ⇒ leave the
+    /// resolved warrant's own scope untouched.
+    ///
+    /// The App-wide case is expressed as the same scope at every index rather than as a
+    /// separate code path, so there is ONE rule for where a credential may be reached
+    /// instead of two that can disagree.
+    pub(crate) secret_scope: Vec<Option<SecretScope>>,
+}
+
+impl PerStepBinds {
+    fn items_for(&self, step_index: usize) -> &[ContextItemRef] {
+        self.context_items
+            .get(step_index)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    fn scope_for(&self, step_index: usize) -> Option<&SecretScope> {
+        self.secret_scope.get(step_index).and_then(Option::as_ref)
+    }
+}
+
 impl HostWorkflowAuthor {
     /// The full authoring body, with EXTRA caller-resolved [`ContextItemRef`]s
     /// merged into the entry-step context bundle (an App's skill
@@ -2647,11 +2683,25 @@ impl HostWorkflowAuthor {
     /// (`inject_entry_config` would OVERWRITE on a second call). `extra_items`
     /// empty ⇒ byte-identical to the plain [`WorkflowAuthor::author`] path (the
     /// digest no-op the a0 guard + the byte-identity test pin).
+    ///
+    /// `per_step` carries what an App bound to INDIVIDUAL nodes ([`PerStepBinds`]). It is
+    /// applied here, rather than by the caller after the fact, because the compile emits
+    /// motes in TOPOLOGICAL order: only inside this function is the authored step index
+    /// still attached to the mote it produced (`CompiledMote::step_index`). A caller
+    /// re-deriving that order would be a second copy of an ordering rule that already
+    /// exists — the kind that drifts silently. An all-empty `per_step` reduces this to the
+    /// pre-existing entry-only inject, byte for byte.
     //
-    // The arg list mirrors the trait signature + the one extra slice (bundling
-    // them would obscure the delegate equivalence); `async` for call-shape
-    // parity with the trait (the body is currently synchronous).
-    #[allow(clippy::too_many_arguments, clippy::unused_async)]
+    // The arg list mirrors the trait signature + the extra caller-resolved bindings
+    // (bundling them would obscure the delegate equivalence); `async` for call-shape
+    // parity with the trait (the body is currently synchronous). One linear
+    // caps → build → resolve → inject → compile → narrow pipeline sharing local state,
+    // so splitting it would only scatter that state.
+    #[allow(
+        clippy::too_many_arguments,
+        clippy::unused_async,
+        clippy::too_many_lines
+    )]
     pub(crate) async fn author_with_context_items(
         &self,
         party: &str,
@@ -2661,6 +2711,7 @@ impl HostWorkflowAuthor {
         mode: AuthorExecutionMode,
         context_bundles: &[String],
         extra_items: &[ContextItemRef],
+        per_step: &PerStepBinds,
     ) -> Result<BoundRecipe, BinderError> {
         // DYNAMIC is reserved (PR-1 frozen-only); refuse rather than silently treat
         // it as frozen so the contract never misleads.
@@ -2733,9 +2784,26 @@ impl HostWorkflowAuthor {
         let mut context_items =
             resolve_context_items(self.bundles.as_deref(), party, context_bundles, &[])?;
         context_items.extend_from_slice(extra_items);
-        if !context_items.is_empty() {
-            let encoded = ConfigVal(encode_context_items(&context_items));
-            wf.inject_entry_config(CONTEXT_ITEMS_KEY, &encoded);
+        // The run-wide items land on every DAG ROOT (the pre-existing
+        // `inject_entry_config` rule); an App's per-NODE items land on their own step and
+        // MERGE with the run-wide set when that step happens to be a root. Merging is the
+        // point: a second `inject_*` call would OVERWRITE, silently dropping the run's
+        // grounding from the one node the App bound a skill to. `encode_context_items`
+        // sorts + dedups, so the merged bytes — and the step's `MoteId` — stay
+        // deterministic. With no per-step items this loop injects exactly what
+        // `inject_entry_config` did and nothing else.
+        let has_parent: BTreeSet<usize> = edges.iter().map(|e| e.child as usize).collect();
+        for idx in 0..steps.len() {
+            let mut items: Vec<ContextItemRef> = if has_parent.contains(&idx) {
+                Vec::new()
+            } else {
+                context_items.clone()
+            };
+            items.extend_from_slice(per_step.items_for(idx));
+            if !items.is_empty() {
+                let encoded = ConfigVal(encode_context_items(&items));
+                wf.inject_step_config(idx, CONTEXT_ITEMS_KEY, &encoded);
+            }
         }
 
         // Compile (acyclicity refusal lands here) + narrow each Mote's warrant to the
@@ -2763,7 +2831,7 @@ impl HostWorkflowAuthor {
             // D66 resolution re-verify every axis server-side at fire (SN-8). Every
             // PURE/MODEL mote (empty `tool_grants`) narrows against the party
             // authority exactly as before (byte-identical when no tool() steps).
-            let warrant = if cm.warrant.tool_grants.is_empty() {
+            let mut warrant = if cm.warrant.tool_grants.is_empty() {
                 let step_role = Role {
                     name: "blueprint-step".to_string(),
                     version: 0,
@@ -2774,6 +2842,19 @@ impl HostWorkflowAuthor {
             } else {
                 cm.warrant.clone()
             };
+            // G2: give a TOOL-FIRING warrant the secret scope its step was bound, so the
+            // broker precheck (capability.required_secret_scope ⊆ warrant.secret_scope)
+            // lets a credentialed connector be dialed. A FRESH construction on the
+            // resolved warrant — server-authorized from the caller's own validated
+            // envelope, and deterministic (a sorted `BTreeSet`), so recovery replays the
+            // journaled `warrant_ref` byte-identically. A step bound no connection keeps
+            // `SecretScope::None` and a credentialed tool fails closed there, which is the
+            // whole reason the scope is per-step rather than App-wide.
+            if !warrant.tool_grants.is_empty() {
+                if let Some(scope) = per_step.scope_for(cm.step_index) {
+                    warrant.secret_scope = scope.clone();
+                }
+            }
             fp_buf.extend_from_slice(cm.mote.id.as_bytes());
             motes.push((cm.mote.clone(), warrant));
         }
@@ -2799,8 +2880,20 @@ impl WorkflowAuthor for HostWorkflowAuthor {
         mode: AuthorExecutionMode,
         context_bundles: &[String],
     ) -> Result<BoundRecipe, BinderError> {
-        self.author_with_context_items(party, seed, steps, edges, mode, context_bundles, &[])
-            .await
+        // A plain workflow binds nothing per node — there is no App envelope to name a
+        // skill or a connection into (see `kx_blueprint::to_request`, which refuses those
+        // fields on this path). Empty ⇒ the entry-only inject, byte-identical.
+        self.author_with_context_items(
+            party,
+            seed,
+            steps,
+            edges,
+            mode,
+            context_bundles,
+            &[],
+            &PerStepBinds::default(),
+        )
+        .await
     }
 }
 
@@ -6953,6 +7046,7 @@ mod tests {
                     AuthorExecutionMode::Frozen,
                     &bundles,
                     &extra,
+                    &PerStepBinds::default(),
                 )
                 .await
                 .expect("authors")

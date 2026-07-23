@@ -86,6 +86,7 @@ pub fn compile(def: &WorkflowDef) -> Result<CompiledWorkflow, CompileError> {
             mote,
             warrant: s.warrant.clone(),
             capability: s.capability.clone(),
+            step_index: step_idx,
         });
     }
 

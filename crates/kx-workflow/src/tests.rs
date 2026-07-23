@@ -75,6 +75,64 @@ fn topo_order_places_parents_before_children() {
     }
 }
 
+/// ★ The reason `step_index` exists. Motes are emitted in TOPOLOGICAL order, which is not
+/// authoring order — so a caller holding a per-step decision needs the authored index back,
+/// and must not have to recompute the ordering rule that already lives in `compile`.
+/// Built deliberately "backwards": step 0 depends on step 1, so topological order reverses
+/// the authored order and an off-by-index bug cannot pass.
+#[test]
+fn compiled_motes_carry_their_authored_step_index() {
+    let mut wf = WorkflowDef::new(0);
+    let late = wf.add_step(transform(logic(1), model(), warrant(), cap()));
+    let early = wf.add_step(transform(logic(2), model(), warrant(), cap()));
+    wf.add_edge(early, late, EdgeMeta::data()).unwrap();
+
+    let out = compile(&wf).unwrap();
+    // Topological order puts the AUTHORED-SECOND step first...
+    assert_eq!(
+        out.motes
+            .iter()
+            .map(|m| m.step_index)
+            .collect::<Vec<usize>>(),
+        vec![early.index(), late.index()],
+        "emission order is topological, not authoring order"
+    );
+    // ...and every index still addresses the step whose logic it was authored with.
+    for m in &out.motes {
+        assert_eq!(m.mote.def.logic_ref, wf.steps[m.step_index].logic_ref);
+    }
+}
+
+/// `inject_step_config` targets ONE step. Its sibling `inject_entry_config` targets every
+/// DAG ROOT, which on a fan-out is several steps — the difference that matters when a
+/// capability belongs to one node rather than to the run.
+#[test]
+fn inject_step_config_targets_one_step_and_reports_a_bad_index() {
+    use kx_mote::ConfigVal;
+
+    let mut wf = WorkflowDef::new(0);
+    let a = wf.add_step(transform(logic(1), model(), warrant(), cap()));
+    let b = wf.add_step(transform(logic(2), model(), warrant(), cap()));
+    let sink = wf.add_step(transform(logic(3), model(), warrant(), cap()));
+    wf.add_edge(a, sink, EdgeMeta::data()).unwrap();
+    wf.add_edge(b, sink, EdgeMeta::data()).unwrap();
+
+    let val = ConfigVal(b"bound".to_vec());
+    assert!(wf.inject_step_config(b.index(), "kx.test.bound", &val));
+    let has = |i: usize| {
+        wf.steps[i]
+            .config_subset
+            .contains_key(&kx_mote::ConfigKey("kx.test.bound".to_string()))
+    };
+    assert!(has(b.index()), "the named step is configured");
+    assert!(
+        !has(a.index()) && !has(sink.index()),
+        "no sibling root and no child is touched — the whole point"
+    );
+    // Out of range REPORTS rather than silently no-oping (or hitting the wrong step).
+    assert!(!wf.inject_step_config(99, "kx.test.bound", &val));
+}
+
 #[test]
 fn parents_all_exist_in_graph() {
     let wf = synthesis_pipeline(0, model(), cap(), logic(1), logic(2), logic(3)).unwrap();

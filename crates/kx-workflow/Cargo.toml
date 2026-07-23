@@ -1,6 +1,9 @@
 [package]
 name         = "kx-workflow"
-version      = "0.1.1"
+# 0.1.1 -> 0.2.0: `CompiledMote` gained the authored `step_index` (the topological
+# emission order is not authoring order, so a per-step caller decision had no addressable
+# handle). A public struct-literal break on a Cargo 0.x crate is a MINOR bump.
+version      = "0.2.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
