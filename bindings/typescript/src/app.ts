@@ -578,15 +578,13 @@ export class AppBuilder {
       if (this._skills.some((sk) => sk.name === name)) continue;
       if (client.getSkillForm === undefined) {
         throw new KxUsage(
-          `step binds skill "${name}" but this client cannot resolve skills; attach it ` +
-            "explicitly with .skill(...) or use a full client",
+          `step binds skill "${name}" but this client cannot resolve skills; attach it explicitly with .skill(...) or use a full client`,
         );
       }
       const form = await client.getSkillForm(name);
       if (form === null) {
         throw new KxUsage(
-          `step binds skill "${name}", which is not in the catalog (kx skills add it first, ` +
-            "or remove the binding)",
+          `step binds skill "${name}", which is not in the catalog (kx skills add it first, or remove the binding)`,
         );
       }
       this.skill({

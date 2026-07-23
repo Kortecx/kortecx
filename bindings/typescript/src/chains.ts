@@ -1110,10 +1110,7 @@ function refuseAppBindingsOnWorkflow(index: number, t: Task): void {
     t.appDatasets.length > 0 ? "datasets" : null,
   ].filter((x): x is string => x !== null);
   throw new ChainParseError(
-    `step ${index} declares ${named.join(" + ")} — a per-step capability list is an ` +
-      "App-envelope binding that names an entry in the App's references, and RunApp is what " +
-      "resolves it. A workflow has no references to name into: author this as an App " +
-      "(app(...)), or grant the step a tool directly with { tools: [...] }.",
+    `step ${index} declares ${named.join(" + ")} — a per-step capability list is an App-envelope binding that names an entry in the App's references, and RunApp is what resolves it. A workflow has no references to name into: author this as an App (app(...)), or grant the step a tool directly with { tools: [...] }.`,
   );
 }
 
@@ -1126,9 +1123,7 @@ function refuseSpecAppBindings(index: number, d: DagSpecStep): void {
   ].filter((x): x is string => x !== null);
   if (named.length === 0) return;
   throw new ChainParseError(
-    `step ${index} declares ${named.join(" + ")} — a per-step capability list is an ` +
-      "App-envelope binding resolved by RunApp; a workflow blueprint has no references to " +
-      "name into. Author it as an App, or grant the step a tool directly via tool_contract.",
+    `step ${index} declares ${named.join(" + ")} — a per-step capability list is an App-envelope binding resolved by RunApp; a workflow blueprint has no references to name into. Author it as an App, or grant the step a tool directly via tool_contract.`,
   );
 }
 

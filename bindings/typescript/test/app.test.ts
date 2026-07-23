@@ -68,7 +68,11 @@ describe("per-node App capability bindings", () => {
 
   it("the WORKFLOW path refuses a per-step binding (no references to name into)", () => {
     // .build() is the workflow lowering; a binding there would be silently dropped.
-    expect(() => flow().agent("go", { skills: ["triage"] }).build()).toThrow(/App/);
+    expect(() =>
+      flow()
+        .agent("go", { skills: ["triage"] })
+        .build(),
+    ).toThrow(/App/);
     // ...and so does re-importing a hand-written blueprint that carries one.
     expect(() =>
       Chain.fromBlueprint({
