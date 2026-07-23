@@ -592,7 +592,12 @@ fn steps_naming(per_step: &[Vec<String>], name: &str) -> Vec<usize> {
 /// config nothing reads: waste that looks like configuration. Warn and drop the target
 /// (FAIL-SOFT, like every other skill path — one mis-bound name must never brick an App),
 /// and let the capability fall back to its App-wide site if no valid target survives.
-fn model_steps_naming(per_step: &[Vec<String>], name: &str, dag: &DagSpec, axis: &str) -> Vec<usize> {
+fn model_steps_naming(
+    per_step: &[Vec<String>],
+    name: &str,
+    dag: &DagSpec,
+    axis: &str,
+) -> Vec<usize> {
     let (ok, skipped): (Vec<usize>, Vec<usize>) = steps_naming(per_step, name)
         .into_iter()
         .partition(|&i| dag.steps.get(i).is_some_and(is_model_step));
@@ -1387,10 +1392,7 @@ impl AppAuthor for HostAppAuthor {
         // of the per-step wish is that it is exactly what that step's own skills asked for.
         let wish = effective_tool_wish(
             reach,
-            combined_tool_wish(
-                &unbound_skills,
-                &env.steering_config.tools.requested_grants,
-            ),
+            combined_tool_wish(&unbound_skills, &env.steering_config.tools.requested_grants),
             ceiling.as_ref(),
         );
         let per_step_wish: Vec<BTreeMap<String, String>> =
@@ -2815,8 +2817,14 @@ mod tests {
             }),
         );
 
-        let a = host.author_app("alice@acme", &legacy, b"", false).await.unwrap();
-        let b = host.author_app("alice@acme", &bound, b"", false).await.unwrap();
+        let a = host
+            .author_app("alice@acme", &legacy, b"", false)
+            .await
+            .unwrap();
+        let b = host
+            .author_app("alice@acme", &bound, b"", false)
+            .await
+            .unwrap();
         assert_eq!(a.motes.len(), b.motes.len());
         for ((m1, w1), (m2, w2)) in a.motes.iter().zip(b.motes.iter()) {
             assert_eq!(m1.id, m2.id, "byte-identical MoteIds");
@@ -2891,10 +2899,7 @@ mod tests {
         );
         let (m, w) = &bound.motes[carrying[0]];
         assert!(granted(m), "the same step gets the skill's tool grant");
-        assert!(w
-            .tool_grants
-            .iter()
-            .any(|g| g.tool_id.0 == "echo-tool"));
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "echo-tool"));
         // ...and nobody else does. Tools without instructions (or the reverse) is the
         // split `entry_agentic_step_index` exists to refuse.
         assert!(

@@ -706,7 +706,10 @@ reports.\",\"steps\":[{\"role\":\"researcher\",\"intent\":\"Gather pricing\",\"t
     fn every_axis_binds_to_the_step_that_asked_and_the_app_carries_the_union() {
         let app = derived(run(&[FAN_OUT], &scheduled("scan the market"), &menu()));
         assert_eq!(app.steps.len(), 3);
-        assert_eq!(app.steps[0].tool_contract.get("mcp-echo/echo"), Some(&"1".into()));
+        assert_eq!(
+            app.steps[0].tool_contract.get("mcp-echo/echo"),
+            Some(&"1".into())
+        );
         assert_eq!(app.steps[1].skills, vec!["drafting".to_string()]);
         assert_eq!(app.steps[1].integrations, vec!["gmail".to_string()]);
         assert_eq!(app.steps[1].datasets, vec!["handbook".to_string()]);
@@ -764,7 +767,9 @@ reports.\",\"steps\":[{\"role\":\"researcher\",\"intent\":\"Gather pricing\",\"t
         assert_eq!(app.steps[0].datasets, vec!["handbook".to_string()]);
         assert!(app.steps[1].skills.is_empty());
         assert!(
-            app.notices.iter().any(|n| n.contains("rather than to a step")),
+            app.notices
+                .iter()
+                .any(|n| n.contains("rather than to a step")),
             "the adjustment must be told: {:?}",
             app.notices
         );

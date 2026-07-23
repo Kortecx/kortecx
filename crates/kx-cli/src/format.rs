@@ -3423,7 +3423,11 @@ pub fn render_test_trigger(resp: &proto::TestTriggerResponse, json: bool) -> Str
 /// every advisory verbatim; `--json` emits the raw design. Validate-only — nothing was
 /// persisted, which the footer says.
 #[must_use]
-pub fn render_derived_app(app: &proto::DerivedApp, output: Option<&std::path::Path>, json: bool) -> String {
+pub fn render_derived_app(
+    app: &proto::DerivedApp,
+    output: Option<&std::path::Path>,
+    json: bool,
+) -> String {
     if json {
         let steps: Vec<Value> = app
             .steps
@@ -3472,10 +3476,18 @@ pub fn render_derived_app(app: &proto::DerivedApp, output: Option<&std::path::Pa
     } else {
         for (i, s) in app.steps.iter().enumerate() {
             let idx = u32::try_from(i).unwrap_or(u32::MAX);
-            let parallel = if has_parent.contains(&idx) { "" } else { "  [runs in parallel]" };
+            let parallel = if has_parent.contains(&idx) {
+                ""
+            } else {
+                "  [runs in parallel]"
+            };
             let _ = write!(out, "\n[{i}] {} — {}{parallel}", s.role, s.intent);
             let cap = |label: &str, ids: &[String]| -> String {
-                if ids.is_empty() { String::new() } else { format!("\n      {label}: {}", ids.join(", ")) }
+                if ids.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n      {label}: {}", ids.join(", "))
+                }
             };
             let tools: Vec<String> = s.tool_contract.keys().cloned().collect();
             out.push_str(&cap("tools", &tools));
@@ -3504,7 +3516,9 @@ pub fn render_derived_app(app: &proto::DerivedApp, output: Option<&std::path::Pa
                 p.display()
             );
         }
-        None => out.push_str("Re-run with --output <file> to save the blueprint, then `kx app new`."),
+        None => {
+            out.push_str("Re-run with --output <file> to save the blueprint, then `kx app new`.")
+        }
     }
     out
 }

@@ -841,7 +841,10 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
             // A refusal is an outcome the author reads (don't-fake-gaps), not a transport
             // error — print it and exit non-zero without a stack of noise.
             if let Some(proto::derive_app_response::Result::Rejected(r)) = &resp.result {
-                return Err(CliError::Usage(format!("the design was refused: {}", r.reason)));
+                return Err(CliError::Usage(format!(
+                    "the design was refused: {}",
+                    r.reason
+                )));
             }
             let Some(proto::derive_app_response::Result::App(app)) = resp.result else {
                 return Err(CliError::Usage("the gateway returned no design".into()));
@@ -1495,7 +1498,10 @@ mod tests {
         .unwrap();
         let env = AppEnvelope::from_json_slice(&std::fs::read(&out_path).unwrap()).unwrap();
         assert_eq!(env.references.connections.len(), 1);
-        assert_eq!(env.references.connections[0].descriptor, "kx-connector-gmail");
+        assert_eq!(
+            env.references.connections[0].descriptor,
+            "kx-connector-gmail"
+        );
         assert_eq!(env.references.datasets.len(), 1);
         assert_eq!(env.references.datasets[0].dataset_ref, "support");
         std::fs::remove_dir_all(&dir).ok();
