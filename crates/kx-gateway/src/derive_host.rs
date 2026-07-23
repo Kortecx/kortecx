@@ -267,9 +267,17 @@ fn derive_blocking<B: InferenceBackend>(
         // name/description, drop the steps, and plan the files through the contract that
         // already owns that job.
         let framework = resolve_framework(&input.framework, &mut derived.notices);
-        derived.steps.clear();
         derived.edges.clear();
         derived.framework = framework.to_string();
+        // Drop every capability axis too. `hostsupervisor` launches a hosted app from its
+        // framework + install/dev/build commands and reads no tool, skill, connection or
+        // dataset — so returning the wishes the discarded steps implied would hand a client
+        // grants it cannot use and a rail it cannot honour. The console does not author them
+        // on this lane; saying so in the RESPONSE is what keeps any other client honest too.
+        derived.tools.clear();
+        derived.skills.clear();
+        derived.connections.clear();
+        derived.datasets.clear();
         let goal = format!("{}. {}", derived.description.trim(), input.prompt.trim());
         // The directive rides the SYSTEM channel with a short user turn, rather than the
         // directive as the user turn and an empty system: a chat template is only obliged to
@@ -701,6 +709,13 @@ reports.\",\"steps\":[{\"role\":\"researcher\",\"intent\":\"Gather pricing\",\"t
         ));
         assert!(app.steps.is_empty(), "a hosted app has no DAG");
         assert!(app.edges.is_empty());
+        // ...and no capability wishes either. The design turn reasoned about tools (its
+        // researcher step asked for one); the hosted supervisor reads none, so carrying them
+        // would be a grant the lane cannot use and a rail it cannot honour.
+        assert!(app.tools.is_empty(), "a hosted app carries no tool wishes");
+        assert!(app.skills.is_empty());
+        assert!(app.connections.is_empty());
+        assert!(app.datasets.is_empty());
         assert_eq!(app.framework, DEFAULT_FRAMEWORK);
         assert_eq!(
             app.files
