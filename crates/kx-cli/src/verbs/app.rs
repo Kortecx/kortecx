@@ -272,6 +272,10 @@ pub struct NewSpec {
     pub tags: Vec<String>,
     /// Advisory description.
     pub description: Option<String>,
+    /// Advisory one-phrase statement of what a run PRODUCES — the line the composition
+    /// menu shows other Apps' authors. Without it this App is runnable but effectively
+    /// invisible to anything that might call it.
+    pub delivers: Option<String>,
     /// Optional per-App project branch handle (reserved; never created here).
     pub branch: Option<String>,
     /// Write the pretty envelope JSON here (else stdout).
@@ -324,6 +328,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
     let mut tags: Vec<String> = Vec::new();
     let mut skills: Vec<String> = Vec::new();
     let mut description: Option<String> = None;
+    let mut delivers: Option<String> = None;
     let mut branch: Option<String> = None;
     let mut wait_flag = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
@@ -377,6 +382,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             "--tag" => tags.push(next_value(&mut args, "--tag")?),
             "--skill" => skills.push(next_value(&mut args, "--skill")?),
             "--description" => description = Some(next_value(&mut args, "--description")?),
+            "--delivers" => delivers = Some(next_value(&mut args, "--delivers")?),
             "--branch" => branch = Some(next_value(&mut args, "--branch")?),
             "--goal" => goal = Some(next_value(&mut args, "--goal")?),
             "--kind" => kind = Some(next_value(&mut args, "--kind")?),
@@ -416,6 +422,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             max_tool_calls,
             tags,
             description,
+            delivers,
             branch,
             wait_flag,
             timeout_secs,
@@ -451,6 +458,7 @@ struct Flags {
     max_tool_calls: Option<u32>,
     tags: Vec<String>,
     description: Option<String>,
+    delivers: Option<String>,
     branch: Option<String>,
     wait_flag: bool,
     timeout_secs: u64,
@@ -493,6 +501,7 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             max_tool_calls: f.max_tool_calls,
             tags: f.tags,
             description: f.description,
+            delivers: f.delivers,
             branch: f.branch,
             output: f.output,
             skills: f.skills,
@@ -690,6 +699,9 @@ fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError>
     let mut env = AppEnvelope::new(spec.name, blueprint);
     if let Some(d) = spec.description {
         env.description = d;
+    }
+    if let Some(d) = spec.delivers {
+        env.delivers = d;
     }
     env.tags = spec.tags;
     if let Some(m) = spec.model {
@@ -1505,6 +1517,7 @@ mod tests {
                 max_tool_calls: None,
                 tags: vec![],
                 description: None,
+                delivers: None,
                 branch: None,
                 output: Some(out_path.clone()),
                 skills: vec![],
