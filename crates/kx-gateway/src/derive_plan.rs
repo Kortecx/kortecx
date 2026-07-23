@@ -52,6 +52,19 @@ pub(crate) const MAX_DERIVE_DESCRIPTION_BYTES: usize = 400;
 /// Hard cap on the `delivers` line ONE menu entry may spend. An App that cannot say what it
 /// produces in a phrase has not been scoped, and the whole menu shares one decode.
 pub(crate) const MAX_APP_DELIVERS_MENU_BYTES: usize = 120;
+/// Byte sub-budget for the WHOLE composition block, within [`MAX_DERIVE_MENU_BYTES`].
+///
+/// The app axis is the only one whose entries carry prose, so it is the only one that can
+/// grow without bound as an account accumulates Apps — and it renders last, which means
+/// without its own ceiling it would silently absorb whatever the other axes left behind.
+///
+/// **Observed live, on Gemma-4-12B:** a derive against a menu holding 8 Apps returned JSON
+/// with no `steps` field twice, where the same prompt against a 1-App menu produced a usable
+/// design. Not established as causal — a 12B's JSON adherence varies run to run and the
+/// measurement was later contaminated by CPU contention — so this is a BOUND, not a fix: it
+/// keeps the block from being the thing that grows, and `apps_omitted` tells the author what
+/// was left out rather than letting the menu quietly under-report their catalog.
+pub(crate) const MAX_APP_MENU_BLOCK_BYTES: usize = 512;
 /// Byte budget for the rendered capability menu. Sized so the menu, the role palette, the
 /// contract and the user's prompt together stay comfortably inside one decode on the smallest
 /// context the serve accepts (`AGENT_MIN_CTX_TOKENS` = 2048).
@@ -557,7 +570,12 @@ impl CapabilityMenu {
         // be useful. One whole line at a time, and the count dropped is reported.
         if !self.apps.is_empty() {
             let header = "Apps you may call from a step (write the handle exactly as shown):\n";
-            if out.len() + header.len() <= MAX_DERIVE_MENU_BYTES {
+            // Bounded TWICE: by the block's own sub-budget and by what is left of the whole
+            // menu. Whichever binds first, the block stops on a WHOLE entry — a half-written
+            // handle is worse than an absent one, because the model would name it and the
+            // intersection would drop it while blaming the account's catalog.
+            let ceiling = MAX_DERIVE_MENU_BYTES.min(out.len() + MAX_APP_MENU_BLOCK_BYTES);
+            if out.len() + header.len() <= ceiling {
                 out.push_str(header);
                 for (handle, delivers) in &self.apps {
                     let line = if delivers.is_empty() {
@@ -568,7 +586,7 @@ impl CapabilityMenu {
                             clamp_chars(delivers, MAX_APP_DELIVERS_MENU_BYTES)
                         )
                     };
-                    if out.len() + line.len() > MAX_DERIVE_MENU_BYTES {
+                    if out.len() + line.len() > ceiling {
                         truncation.apps_omitted += 1;
                         continue;
                     }
@@ -896,8 +914,43 @@ notes\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
         assert!(rendered.contains("Skills you may attach to a step: classification"));
         assert!(rendered.contains("Integrations you may attach to a step: gmail"));
         assert!(rendered.contains("Datasets a step may ground on: handbook"));
+        // The composition axis: the handle EXACTLY as it must come back, plus what the App
+        // delivers — the one line that has to carry prose for the pick to be informed.
+        assert!(rendered.contains("- apps/local/research — a researched brief\n"));
+        assert!(rendered.contains("write the handle exactly as shown"));
         assert!(rendered.len() <= MAX_DERIVE_MENU_BYTES);
         assert_eq!(truncation.tools_omitted, 0);
+        assert_eq!(truncation.apps_omitted, 0);
+    }
+
+    /// A catalog of Apps must not be able to grow the prompt without bound. The composition
+    /// block renders LAST, so without its own ceiling it would absorb whatever the other axes
+    /// left of the budget — and this is the one axis whose entries carry prose.
+    #[test]
+    fn a_large_app_catalog_is_bounded_and_reports_the_shortfall() {
+        let apps: Vec<(String, String)> = (0..100)
+            .map(|i| {
+                (
+                    format!("apps/local/some-app-{i:03}"),
+                    "a fairly long statement of what this particular app delivers".into(),
+                )
+            })
+            .collect();
+        let (rendered, truncation) = CapabilityMenu {
+            apps,
+            ..Default::default()
+        }
+        .render();
+        assert!(rendered.len() <= MAX_DERIVE_MENU_BYTES);
+        assert!(
+            truncation.apps_omitted > 0,
+            "the shortfall must be reported, not silently dropped"
+        );
+        // Whole entries only — a half-written handle would be named by the model and then
+        // dropped by the intersection, reported as an authority problem.
+        for line in rendered.lines().filter(|l| l.starts_with("- apps/")) {
+            assert!(line.contains(" — "), "half-written entry: {line:?}");
+        }
     }
 
     /// A registry bigger than the budget must bound the PROMPT and report the shortfall — never
