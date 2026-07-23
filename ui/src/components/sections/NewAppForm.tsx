@@ -605,6 +605,9 @@ export function NewAppForm({
                   mode={{ kind: "embedded" }}
                   palette={APP_PALETTE}
                   patterns={false}
+                  // The canvas IS the create surface: each node carries its own tools,
+                  // skills, integrations and grounding (there are no rails beside it).
+                  appCapabilities
                   initialGraph={graph ?? undefined}
                   onGraphChange={onGraphChange}
                 />
