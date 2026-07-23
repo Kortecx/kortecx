@@ -47,6 +47,15 @@ export interface AgentStepOptions {
   maxTurns?: number;
   maxToolCalls?: number;
   reasoning?: ReasoningMode;
+  /** APP ONLY: catalog SKILL names this step uses. Bound to THIS node when the chain
+   *  becomes an App (`app(...)`) — its instructions and tool wishes reach this step, not the
+   *  whole App. Refused on the plain workflow path (no `references` to name into). */
+  skills?: readonly string[];
+  /** APP ONLY: connection descriptors this step dials — only this step's warrant carries
+   *  their credential scope. */
+  connections?: readonly string[];
+  /** APP ONLY: dataset names this step grounds on — this step gets `retrieve` over them. */
+  datasets?: readonly string[];
 }
 
 /** AGENTIC-VISION: the step-config key a {@link Flow.image} ref binds into (the SAME key
@@ -279,6 +288,9 @@ export class Flow {
         maxTurns: opts.maxTurns,
         maxToolCalls: opts.maxToolCalls,
         reasoning: opts.reasoning,
+        skills: opts.skills,
+        connections: opts.connections,
+        datasets: opts.datasets,
       }),
     );
   }

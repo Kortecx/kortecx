@@ -121,6 +121,44 @@ describe("app-blueprint round-trip (digest-safety)", () => {
     expect(s0?.toolContract).toEqual({ "mcp-echo/echo": "1" });
   });
 
+  it("round-trips a model step's per-node capability bindings", () => {
+    // NOT in the Chain.fromBlueprint corpus above: a plain workflow lowering refuses these
+    // (they are App-only). This asserts the canvas ADAPTER preserves them across
+    // parse → edit → emit, which is what keeps a re-saved App's bindings intact.
+    const bp: DagSpecJson = {
+      seed: 0,
+      steps: [
+        {
+          kind: "model",
+          model_id: "m",
+          prompt: "gather",
+          skills: ["triage"],
+          connections: ["kx-connector-gmail"],
+          datasets: ["support"],
+        },
+      ],
+    };
+    const { graph, unmodeled } = appBlueprintToBuilderGraph(bp);
+    expect(graph.steps[0]?.skills).toEqual(["triage"]);
+    expect(graph.steps[0]?.connections).toEqual(["kx-connector-gmail"]);
+    expect(graph.steps[0]?.datasets).toEqual(["support"]);
+    const out = builderGraphToBlueprint(graph, unmodeled);
+    expect(out.steps[0]?.skills).toEqual(["triage"]);
+    expect(out.steps[0]?.connections).toEqual(["kx-connector-gmail"]);
+    expect(out.steps[0]?.datasets).toEqual(["support"]);
+  });
+
+  it("omits the binding keys entirely when a step binds nothing (byte-stability)", () => {
+    const { graph, unmodeled } = appBlueprintToBuilderGraph({
+      seed: 0,
+      steps: [{ kind: "model", model_id: "m", prompt: "go" }],
+    });
+    const out = builderGraphToBlueprint(graph, unmodeled);
+    expect(out.steps[0]).not.toHaveProperty("skills");
+    expect(out.steps[0]).not.toHaveProperty("connections");
+    expect(out.steps[0]).not.toHaveProperty("datasets");
+  });
+
   it("refuses editing an unrepresentable (exec / body_signature_id) blueprint", () => {
     const withExec = appBlueprintToBuilderGraph({
       seed: 0,

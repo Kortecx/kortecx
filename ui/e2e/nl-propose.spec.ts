@@ -105,10 +105,17 @@ test("New App: design → review → approve a PARALLEL, tool-granted App (stubb
   await expect(page.getByTestId("builder-submit")).toHaveCount(0);
   await expect(page.getByTestId("builder-save-as-app")).toHaveCount(0);
 
-  // The tool the DESIGN asked for is on the rail before the App exists — the capability gap
-  // this whole path closes. Previously every proposal arrived with none, and the only way to
-  // plug an App in was to create it and attach afterwards.
-  await expect(page.getByTestId("new-app-tools-attached")).toContainText("fs-read");
+  // The tool the DESIGN asked for is on the NODE that asked for it — capabilities live on the
+  // graph now, so there is no rail beside the canvas. Open step 0 and confirm its own tool is
+  // granted there and NOT on the join step.
+  await page.getByTestId("builder-node").first().click();
+  await expect(page.getByTestId("step-config-drawer")).toBeVisible();
+  await expect(page.getByTestId("step-config-agent-tools")).toContainText("fs-read");
+  await page.keyboard.press("Escape");
+  // And there are no app-level capability rails at all — the whole point of this change.
+  await expect(page.getByTestId("new-app-tools")).toHaveCount(0);
+  await expect(page.getByTestId("new-app-skills")).toHaveCount(0);
+  await expect(page.getByTestId("new-app-connections")).toHaveCount(0);
 
   // Approve → the SAVED envelope carries a 3-step blueprint (NOT the single-agent fallback).
   // The scaffold that follows Save needs a model and errors here — ignored, exactly like the
@@ -127,8 +134,11 @@ test("New App: design → review → approve a PARALLEL, tool-granted App (stubb
     .toBe(3);
   const stored = await kx.getApp(HANDLE);
   const bp = (
-    stored?.envelope as {
-      blueprint: { steps: { kind: string }[]; edges?: { parent: number; child: number }[] };
+    (stored as { envelope: unknown }).envelope as {
+      blueprint: {
+        steps: { kind: string; tool_contract?: Record<string, string> }[];
+        edges?: { parent: number; child: number }[];
+      };
     }
   ).blueprint;
   expect(bp.steps.every((s) => s.kind === "model")).toBe(true);
@@ -138,9 +148,10 @@ test("New App: design → review → approve a PARALLEL, tool-granted App (stubb
   const withParent = new Set((bp.edges ?? []).map((e) => e.child));
   expect([0, 1].every((i) => !withParent.has(i))).toBe(true);
   expect(withParent.has(2)).toBe(true);
-  // The derived tool grant survived to the envelope as a WISH (the server still intersects it
-  // at run — SN-8).
-  expect(JSON.stringify(stored?.envelope)).toContain("fs-read");
+  // ★ The derived tool grant survived to the envelope ON THE STEP THAT ASKED — the per-node
+  // truth, not an app-level wish. Step 0 carries it; the joining step does not.
+  expect(bp.steps[0]?.tool_contract).toEqual({ "fs-read": "1" });
+  expect(bp.steps[2]?.tool_contract ?? {}).toEqual({});
   // 5c co-ship: every authored App still carries the capabilities rule.
   expect(JSON.stringify(stored?.envelope)).toContain("capabilities");
   kx.close();

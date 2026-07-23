@@ -63,6 +63,12 @@ export interface AppClient {
   /** OPTIONAL — export a saved App as a portable `kortecx.appbundle/v1` archive
    *  (used by `App.export({ bundle: true, client })`). */
   exportAppBundle?(handle: string, opts?: { withData?: boolean }): Promise<string>;
+  /** OPTIONAL — resolve a catalog skill NAME to its stored form, so `save()` can turn a
+   *  per-step skill BINDING into a `references.skills` DECLARATION. Shaped to accept the
+   *  real `KxClient.getSkillForm` return (`{ summary: { instructionsRef, tools } }`). */
+  getSkillForm?(
+    name: string,
+  ): Promise<{ summary: { instructionsRef: string; tools: Record<string, string> } } | null>;
 }
 
 function resolveClient(explicit?: AppClient): AppClient {
@@ -535,10 +541,65 @@ export class AppBuilder {
     this._pending.length = 0;
   }
 
+  /**
+   * Union the per-NODE capability bindings on the blueprint into the App's
+   * `references.*` DECLARATIONS.
+   *
+   * The blueprint step says which node USES a capability; `references` says what the App
+   * must have REGISTERED. A client that wrote only one would author an App whose declaration
+   * disagrees with its bindings, so `save()` derives the declarations from the graph. An
+   * EXPLICIT `.skill()` / `.withConnection()` / `.dataset()` always wins — a pinned
+   * credential must never be overwritten by an auto-resolution — so only a name not already
+   * declared is added. A skill name the catalog cannot resolve REFUSES at save (better than
+   * the runtime's fail-soft drop: the author is still here). `toEnvelope()` cannot do this
+   * (no client), which is why it lives in `save()`.
+   */
+  private async unionNodeBindings(client: AppClient): Promise<void> {
+    const steps = (this._blueprint?.steps ?? []) as Array<{
+      skills?: string[];
+      connections?: string[];
+      datasets?: string[];
+    }>;
+    const collect = (pick: (s: (typeof steps)[number]) => string[] | undefined): string[] => [
+      ...new Set(steps.flatMap((s) => pick(s) ?? [])),
+    ];
+
+    for (const descriptor of collect((s) => s.connections)) {
+      if (!this._connections.some((c) => c.descriptor === descriptor)) {
+        this.withConnection(descriptor, "");
+      }
+    }
+    for (const ds of collect((s) => s.datasets)) {
+      if (!this._datasets.some((d) => d.dataset_ref === ds)) {
+        this.dataset(ds);
+      }
+    }
+    for (const name of collect((s) => s.skills)) {
+      if (this._skills.some((sk) => sk.name === name)) continue;
+      if (client.getSkillForm === undefined) {
+        throw new KxUsage(
+          `step binds skill "${name}" but this client cannot resolve skills; attach it explicitly with .skill(...) or use a full client`,
+        );
+      }
+      const form = await client.getSkillForm(name);
+      if (form === null) {
+        throw new KxUsage(
+          `step binds skill "${name}", which is not in the catalog (kx skills add it first, or remove the binding)`,
+        );
+      }
+      this.skill({
+        name,
+        instructionsRef: form.summary.instructionsRef,
+        tools: form.summary.tools,
+      });
+    }
+  }
+
   /** Upload any pending bodies, then `SaveApp` the canonical envelope. The handle
    * defaults to `apps/local/<sanitized-name>`. */
   async save(opts: { handle?: string; client?: AppClient } = {}): Promise<SaveAppResult> {
     const client = resolveClient(opts.client);
+    await this.unionNodeBindings(client);
     await this.resolvePending(client);
     return client.saveApp(this.toEnvelope(), { handle: opts.handle });
   }

@@ -3418,6 +3418,111 @@ pub fn render_test_trigger(resp: &proto::TestTriggerResponse, json: bool) -> Str
     }
 }
 
+/// Render a derived App design (`kx app derive`). Human form shows the designed steps with
+/// the per-node capabilities each USES, marks the steps that run in parallel, and prints
+/// every advisory verbatim; `--json` emits the raw design. Validate-only — nothing was
+/// persisted, which the footer says.
+#[must_use]
+pub fn render_derived_app(
+    app: &proto::DerivedApp,
+    output: Option<&std::path::Path>,
+    json: bool,
+) -> String {
+    if json {
+        let steps: Vec<Value> = app
+            .steps
+            .iter()
+            .map(|s| {
+                json!({
+                    "role": s.role,
+                    "intent": s.intent,
+                    "model_id": s.model_id,
+                    "tool_contract": s.tool_contract,
+                    "skills": s.skills,
+                    "integrations": s.integrations,
+                    "datasets": s.datasets,
+                })
+            })
+            .collect();
+        return json!({
+            "name": app.name,
+            "description": app.description,
+            "steps": steps,
+            "edges": app.edges.iter().map(|e| json!({"parent": e.parent, "child": e.child})).collect::<Vec<_>>(),
+            "files": app.files.iter().map(|f| json!({"path": f.path, "role": f.role})).collect::<Vec<_>>(),
+            "framework": app.framework,
+            "tools": app.tools,
+            "skills": app.skills,
+            "connections": app.connections,
+            "datasets": app.datasets,
+            "notices": app.notices,
+        })
+        .to_string();
+    }
+
+    let mut out = format!("App design: {}\n  {}\n", app.name, app.description);
+
+    // The steps that RUN IN PARALLEL — a step with no incoming edge. Called out because it
+    // is the whole of the shape decision and is invisible in a flat list.
+    let has_parent: std::collections::BTreeSet<u32> = app.edges.iter().map(|e| e.child).collect();
+    if app.steps.is_empty() && !app.files.is_empty() {
+        let _ = write!(out, "\nProject files ({}):", app.files.len());
+        for f in &app.files {
+            let _ = write!(out, "\n  {}  {}", f.path, f.role);
+        }
+        if !app.framework.is_empty() {
+            let _ = write!(out, "\nframework: {}", app.framework);
+        }
+    } else {
+        for (i, s) in app.steps.iter().enumerate() {
+            let idx = u32::try_from(i).unwrap_or(u32::MAX);
+            let parallel = if has_parent.contains(&idx) {
+                ""
+            } else {
+                "  [runs in parallel]"
+            };
+            let _ = write!(out, "\n[{i}] {} — {}{parallel}", s.role, s.intent);
+            let cap = |label: &str, ids: &[String]| -> String {
+                if ids.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n      {label}: {}", ids.join(", "))
+                }
+            };
+            let tools: Vec<String> = s.tool_contract.keys().cloned().collect();
+            out.push_str(&cap("tools", &tools));
+            out.push_str(&cap("skills", &s.skills));
+            out.push_str(&cap("integrations", &s.integrations));
+            out.push_str(&cap("grounding", &s.datasets));
+        }
+    }
+
+    // What the design did NOT get — verbatim, first-class (a design that quietly dropped a
+    // capability produces an App that quietly cannot do part of its job).
+    if !app.notices.is_empty() {
+        out.push_str("\n\nNotices:");
+        for n in &app.notices {
+            let _ = write!(out, "\n  • {n}");
+        }
+    }
+
+    out.push_str("\n\nNothing was created — this is a design. ");
+    match output {
+        Some(p) => {
+            let _ = write!(
+                out,
+                "Wrote the blueprint to {}; author it with:\n  kx app new <name> --from-blueprint {}",
+                p.display(),
+                p.display()
+            );
+        }
+        None => {
+            out.push_str("Re-run with --output <file> to save the blueprint, then `kx app new`.");
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -154,6 +154,11 @@ export function appBlueprintToBuilderGraph(blueprint: DagSpecJson): {
         toolId,
         toolVersion: toolVersion || "1",
         toolContract: {},
+        // A tool step runs no agentic loop and reads no instructions, so it can carry no
+        // App capability binding — `RunApp` drops one there with a warning either way.
+        skills: [],
+        connections: [],
+        datasets: [],
         maxTurns: undefined,
         maxToolCalls: undefined,
       };
@@ -169,8 +174,12 @@ export function appBlueprintToBuilderGraph(blueprint: DagSpecJson): {
       reasoning,
       toolId: "",
       toolVersion: "",
-      // An agentic model step keeps its tool_contract (the bounded ReAct set).
+      // An agentic model step keeps its tool_contract (the bounded ReAct set) and its
+      // per-node App capability bindings.
       toolContract: kind === "model" ? toolContract : {},
+      skills: kind === "model" ? [...(d.skills ?? [])] : [],
+      connections: kind === "model" ? [...(d.connections ?? [])] : [],
+      datasets: kind === "model" ? [...(d.datasets ?? [])] : [],
       maxTurns: kind === "model" ? maxTurns : undefined,
       maxToolCalls: kind === "model" ? maxToolCalls : undefined,
     };
@@ -253,6 +262,18 @@ export function builderGraphToBlueprint(
         if (s.maxToolCalls !== undefined) {
           step.max_tool_calls = s.maxToolCalls;
         }
+      }
+      // The per-node App capability bindings. Emitted ONLY when non-empty, so a graph
+      // that binds nothing produces the same blueprint bytes it always did — which is what
+      // keeps an existing App's identity unchanged when it is re-saved from the canvas.
+      if (s.skills.length > 0) {
+        step.skills = [...s.skills];
+      }
+      if (s.connections.length > 0) {
+        step.connections = [...s.connections];
+      }
+      if (s.datasets.length > 0) {
+        step.datasets = [...s.datasets];
       }
     }
     if (Object.keys(params).length > 0) {

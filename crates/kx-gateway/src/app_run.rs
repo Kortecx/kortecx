@@ -208,9 +208,12 @@ impl HostAppAuthor {
     ///   is not even registered) ⇒ honest-degrade to an UNGROUNDED run (mirrors chat-rag's
     ///   no-dataset-view path), never a hard error.
     /// - No root model step to ground ⇒ the fold + steer skip (mirror `fold_skill_tools`).
+    /// - A dataset BOUND to a step grounds THAT step (`targets`); one no step named grounds
+    ///   the entry root, which is where it has always grounded.
     async fn fold_dataset_rag(
         &self,
         bindings: &[DatasetBinding],
+        targets: &[Vec<usize>],
         dag: &mut DagSpec,
     ) -> Result<(), AppRunError> {
         let Some(view) = self.datasets.as_ref() else {
@@ -246,15 +249,35 @@ impl HostAppAuthor {
                 )));
             }
         }
-        // Grant retrieve@1 on the entry root model step (agentic_step_warrant mints the
-        // grant from the folded contract ∩ registry). `or_insert` ⇒ an author pin wins.
+        // Group the RESOLVED physical names by the step that grounds on them. A dataset no
+        // step named goes to the entry root — its pre-existing site — so an App that binds
+        // nothing produces exactly the single entry fold + steer it always did.
+        let mut per_step: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+        let mut app_wide: Vec<String> = Vec::new();
+        for (name, bound_to) in resolved.iter().zip(targets) {
+            if bound_to.is_empty() {
+                app_wide.push(name.clone());
+                continue;
+            }
+            for &i in bound_to {
+                per_step.entry(i).or_default().push(name.clone());
+            }
+        }
+        // Grant retrieve@1 (agentic_step_warrant mints the grant from the folded contract ∩
+        // registry). `or_insert` ⇒ an author pin wins. Then steer that step to USE retrieve
+        // on ITS dataset(s) — steer-only DATA, never a grant (SN-8; the same class as
+        // `inject_app_args` / `fold_react_rag_dataset`).
         let granted: BTreeMap<String, String> = [("retrieve".to_string(), "1".to_string())]
             .into_iter()
             .collect();
-        fold_skill_tools(dag, &granted);
-        // Steer the entry step to USE retrieve on the RESOLVED dataset(s) — steer-only DATA,
-        // never a grant (SN-8; the same class as `inject_app_args` / `fold_react_rag_dataset`).
-        steer_dataset_prompt(dag, &resolved);
+        if !app_wide.is_empty() {
+            fold_skill_tools(dag, &granted);
+            steer_dataset_prompt(dag, &app_wide);
+        }
+        for (idx, names) in &per_step {
+            fold_step_tools(dag, *idx, &granted);
+            steer_step_dataset_prompt(dag, *idx, names);
+        }
         Ok(())
     }
 
@@ -429,6 +452,19 @@ fn steer_dataset_prompt(dag: &mut DagSpec, dataset_names: &[String]) {
     let Some(idx) = entry_agentic_step_index(dag) else {
         return;
     };
+    steer_step_dataset_prompt(dag, idx, dataset_names);
+}
+
+/// [`steer_dataset_prompt`] aimed at ONE named step — the site a per-node grounding
+/// binding steers. Same steer-only DATA, never a grant (SN-8); deterministic in the
+/// resolved declaration order ⇒ recovery-stable. Pure.
+fn steer_step_dataset_prompt(dag: &mut DagSpec, idx: usize, dataset_names: &[String]) {
+    if dataset_names.is_empty() {
+        return;
+    }
+    let Some(_) = dag.steps.get(idx) else {
+        return;
+    };
     let list = dataset_names.join(", ");
     let directive = format!(
         "Grounding: use the `retrieve` tool to search the dataset(s) [{list}] for relevant \
@@ -478,6 +514,103 @@ fn collect_dataset_bindings(env: &AppEnvelope) -> Vec<DatasetBinding> {
     out
 }
 
+/// The per-step capability BINDINGS an App's blueprint declares, taken off the `DagSpec`
+/// before it lowers.
+///
+/// Each vector is indexed by authored step position and holds the NAMES that step bound —
+/// a `references.skills[].name`, a `references.connections[].descriptor`, a
+/// `references.datasets[].dataset_ref`. The `references` rail stays the DECLARATION (the
+/// CAS ref, the credential name, the corpus); the step carries only which of them it uses.
+///
+/// **They are taken OFF the spec** ([`Self::take_from`]) because they have no meaning to
+/// `SubmitWorkflow` — `kx_blueprint::to_request` refuses them — and because a lowering that
+/// never sees them is a lowering byte-identical to the one every already-authored App was
+/// compiled through.
+#[derive(Debug, Default)]
+struct AppBindings {
+    skills: Vec<Vec<String>>,
+    connections: Vec<Vec<String>>,
+    datasets: Vec<Vec<String>>,
+}
+
+impl AppBindings {
+    /// Move the bindings out of `dag`, leaving a spec that lowers exactly as it did before
+    /// per-step binding existed.
+    fn take_from(dag: &mut DagSpec) -> Self {
+        let mut out = Self {
+            skills: Vec::with_capacity(dag.steps.len()),
+            connections: Vec::with_capacity(dag.steps.len()),
+            datasets: Vec::with_capacity(dag.steps.len()),
+        };
+        for s in &mut dag.steps {
+            out.skills.push(std::mem::take(&mut s.skills));
+            out.connections.push(std::mem::take(&mut s.connections));
+            out.datasets.push(std::mem::take(&mut s.datasets));
+        }
+        out
+    }
+}
+
+/// An App's blueprint steps, or empty when it has none / cannot be parsed.
+///
+/// READ-ONLY and deliberately forgiving: this serves the advisory capability manifest, and
+/// a stored envelope whose blueprint will not parse is a problem for the RUN to refuse
+/// loudly (`author_app` does exactly that), not for a preview to die on.
+fn blueprint_steps(env: &AppEnvelope) -> Vec<StepSpec> {
+    env.blueprint
+        .as_ref()
+        .and_then(|b| serde_json::from_value::<DagSpec>(b.clone()).ok())
+        .map(|d| d.steps)
+        .unwrap_or_default()
+}
+
+/// The steps that NAME `name` on one binding axis, in ascending order.
+///
+/// **An EMPTY result means "no step named it", which binds the capability where it has
+/// always bound** — the entry agentic step, or App-wide for a connection. That fallback is
+/// the whole migration story: an App authored before per-step binding names nothing
+/// anywhere, so every capability takes the legacy site and the run is byte-identical. It is
+/// also monotone — adding a binding can only narrow where a capability reaches.
+///
+/// Matching is case-insensitive on the CANONICAL declared name, mirroring
+/// `CapabilityMenu::resolve_names`: the same name written two ways must not silently become
+/// two different bindings. Pure (Rule 5.2).
+fn steps_naming(per_step: &[Vec<String>], name: &str) -> Vec<usize> {
+    per_step
+        .iter()
+        .enumerate()
+        .filter(|(_, named)| named.iter().any(|n| n.eq_ignore_ascii_case(name)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The steps a capability may legally bind to: [`steps_naming`] filtered to MODEL steps.
+///
+/// A skill is instructions plus a tool wish, and a dataset is a grounding steer plus
+/// `retrieve@1` — both are things a MODEL step reads and neither a `pure` nor a `tool` step
+/// can act on. Binding one to a non-model step would change that step's `MoteId` for a
+/// config nothing reads: waste that looks like configuration. Warn and drop the target
+/// (FAIL-SOFT, like every other skill path — one mis-bound name must never brick an App),
+/// and let the capability fall back to its App-wide site if no valid target survives.
+fn model_steps_naming(
+    per_step: &[Vec<String>],
+    name: &str,
+    dag: &DagSpec,
+    axis: &str,
+) -> Vec<usize> {
+    let (ok, skipped): (Vec<usize>, Vec<usize>) = steps_naming(per_step, name)
+        .into_iter()
+        .partition(|&i| dag.steps.get(i).is_some_and(is_model_step));
+    if !skipped.is_empty() {
+        tracing::warn!(
+            %axis, %name, ?skipped,
+            "binding dropped: only a model step can act on it (a pure/tool step reads no \
+             instructions and runs no agentic loop)"
+        );
+    }
+    ok
+}
+
 /// Resolve an App's `references.connections` + `guards.secret_scope` against the
 /// caller's OWN registered connections into the run's secret scope. A pure function
 /// (Rule 5.2 — unit-testable without a store): `registered_credentials` is the set of
@@ -508,9 +641,35 @@ fn resolve_secret_scope(
     registered_credentials: &BTreeSet<String>,
     endpoint_credentials: &BTreeMap<String, String>,
 ) -> Result<Option<SecretScope>, AppRunError> {
-    // The credential each referenced connection actually provides at run time — adopting the
-    // registered connection's own credential for an endpoint-only (one-click) bind.
-    let mut provided: BTreeSet<String> = BTreeSet::new();
+    let provided_by = connection_credentials(refs, registered_credentials, endpoint_credentials)?;
+    let provided: BTreeSet<String> = provided_by.iter().filter_map(|(_, c)| c.clone()).collect();
+
+    for name in scope_names {
+        if !provided.contains(name) {
+            return Err(AppRunError::InvalidArgs(format!(
+                "guards.secret_scope names {name:?} but no referenced connection provides \
+                 that credential"
+            )));
+        }
+    }
+
+    Ok(narrow_scope(&provided, scope_names))
+}
+
+/// The credential each referenced connection actually provides at run time, paired with the
+/// descriptor it was declared under — adopting the registered connection's own credential
+/// for an endpoint-only (one-click) bind, and `None` for a credential-less connection.
+///
+/// Factored out of [`resolve_secret_scope`] so the App-wide scope and the PER-STEP scopes
+/// are computed from ONE definition of "what does this connection give you". Two copies of
+/// that answer is how a step could end up authorized for a credential the App-level guard
+/// says it may not reach. Pure (Rule 5.2).
+fn connection_credentials(
+    refs: &[ConnectionRef],
+    registered_credentials: &BTreeSet<String>,
+    endpoint_credentials: &BTreeMap<String, String>,
+) -> Result<Vec<(String, Option<String>)>, AppRunError> {
+    let mut out = Vec::with_capacity(refs.len());
     for cref in refs {
         let cred: &str = if cref.credential_ref.is_empty() {
             match endpoint_credentials.get(&cref.descriptor) {
@@ -522,31 +681,74 @@ fn resolve_secret_scope(
         } else {
             return Err(AppRunError::MissingIntegration(cref.credential_ref.clone()));
         };
-        if !cred.is_empty() {
-            provided.insert(cred.to_string());
-        }
+        out.push((
+            cref.descriptor.clone(),
+            (!cred.is_empty()).then(|| cred.to_string()),
+        ));
     }
+    Ok(out)
+}
 
-    for name in scope_names {
-        if !provided.contains(name) {
-            return Err(AppRunError::InvalidArgs(format!(
-                "guards.secret_scope names {name:?} but no referenced connection provides \
-                 that credential"
-            )));
-        }
-    }
-
-    // An explicit scope NARROWS; an empty one takes everything the connections provide.
+/// `provided` narrowed by an explicit `guards.secret_scope`. An explicit scope NARROWS
+/// (intersect — a name outside `provided` is simply not reachable here); an empty one takes
+/// everything the connections provide, so attaching a connection is enough to authenticate.
+/// Empty result ⇒ `None` ⇒ the warrant keeps `SecretScope::None` and a credentialed tool
+/// fails closed. Pure.
+///
+/// The INTERSECT (rather than the App-level "take the names verbatim") is what makes the
+/// per-step scope safe: `guards.secret_scope` is validated App-wide against every declared
+/// connection, so taking it verbatim on a step that bound none of them would hand that step
+/// a credential its own bindings never justified.
+fn narrow_scope(provided: &BTreeSet<String>, scope_names: &[String]) -> Option<SecretScope> {
     let allowed: BTreeSet<SecretRef> = if scope_names.is_empty() {
-        provided.into_iter().map(SecretRef).collect()
+        provided.iter().cloned().map(SecretRef).collect()
     } else {
-        scope_names.iter().cloned().map(SecretRef).collect()
+        scope_names
+            .iter()
+            .filter(|n| provided.contains(*n))
+            .cloned()
+            .map(SecretRef)
+            .collect()
     };
-    Ok(if allowed.is_empty() {
-        None
-    } else {
-        Some(SecretScope::AllowList(allowed))
-    })
+    (!allowed.is_empty()).then_some(SecretScope::AllowList(allowed))
+}
+
+/// The secret scope for EVERY authored step: what its own bound connections provide, plus
+/// every connection no step bound, narrowed by the App-level `guards.secret_scope`.
+///
+/// The unbound term is the migration rule ([`steps_naming`]): an App that binds nothing
+/// gives every step the same App-wide scope, which is byte-for-byte what the single
+/// App-wide stamp did before. An App that DOES bind gets the honest thing — a step that
+/// never asked for the Gmail connector cannot dial it, even though the App as a whole can.
+///
+/// Returns one entry per step (`None` ⇒ leave that step's warrant scope alone). The
+/// per-connection existence check has already run in [`connection_credentials`], so this is
+/// pure set arithmetic and cannot fail.
+fn per_step_secret_scopes(
+    provided_by: &[(String, Option<String>)],
+    bindings: &[Vec<String>],
+    scope_names: &[String],
+    step_count: usize,
+) -> Vec<Option<SecretScope>> {
+    let unbound: BTreeSet<String> = provided_by
+        .iter()
+        .filter(|(descriptor, _)| steps_naming(bindings, descriptor).is_empty())
+        .filter_map(|(_, cred)| cred.clone())
+        .collect();
+    (0..step_count)
+        .map(|i| {
+            let mut provided = unbound.clone();
+            for (descriptor, cred) in provided_by {
+                let bound_here = bindings
+                    .get(i)
+                    .is_some_and(|named| named.iter().any(|n| n.eq_ignore_ascii_case(descriptor)));
+                if bound_here {
+                    provided.extend(cred.clone());
+                }
+            }
+            narrow_scope(&provided, scope_names)
+        })
+        .collect()
 }
 
 /// `true` when a blueprint step is a MODEL step (mirrors `kx_blueprint`'s
@@ -753,7 +955,23 @@ fn fold_skill_tools(dag: &mut DagSpec, granted: &BTreeMap<String, String>) {
         );
         return;
     };
-    let step = &mut dag.steps[idx];
+    fold_step_tools(dag, idx, granted);
+}
+
+/// Fold GRANTED (already-intersected) tools into ONE named step's `tool_contract` — the
+/// step-addressed core of [`fold_skill_tools`], and the site a PER-NODE binding folds onto.
+///
+/// The rules are the entry fold's, unchanged: a non-empty contract compiles the step as a
+/// generator (the coordinator parks it as an agentic launch), an author-declared `(id →
+/// version)` pin always wins (`or_insert`), and an empty `granted` is no fold at all —
+/// which IS the "binds-empty-grants-to-zero" conformance behavior. Pure.
+fn fold_step_tools(dag: &mut DagSpec, idx: usize, granted: &BTreeMap<String, String>) {
+    if granted.is_empty() {
+        return;
+    }
+    let Some(step) = dag.steps.get_mut(idx) else {
+        return;
+    };
     for (id, version) in granted {
         step.tool_contract
             .entry(id.clone())
@@ -1055,9 +1273,20 @@ impl AppAuthor for HostAppAuthor {
                 )
             })
             .collect();
-        let secret_scope = resolve_secret_scope(
+        // The App-LEVEL gate, unchanged: every referenced connection must resolve
+        // (`MissingIntegration`) and `guards.secret_scope` may only name a credential some
+        // referenced connection provides. Both are properties of the ENVELOPE, not of any
+        // one step, so they are still decided once and refuse the whole run. What each
+        // STEP may reach within that ceiling is decided below, once the blueprint is
+        // parsed and its bindings are known.
+        resolve_secret_scope(
             &env.references.connections,
             &env.steering_config.guards.secret_scope,
+            &reg_creds,
+            &endpoint_credentials,
+        )?;
+        let provided_by = connection_credentials(
+            &env.references.connections,
             &reg_creds,
             &endpoint_credentials,
         )?;
@@ -1074,6 +1303,12 @@ impl AppAuthor for HostAppAuthor {
         let mut dag: DagSpec = serde_json::from_value(blueprint).map_err(|e| {
             AppRunError::InvalidArgs(format!("app blueprint is not a DagSpec: {e}"))
         })?;
+        // (3-bind) Take the per-NODE capability bindings off the spec before anything else
+        //      reads it. From here the `DagSpec` is exactly the shape every App authored
+        //      before per-step binding lowered through, which is what makes an unbound App
+        //      byte-identical — `MoteId`s included.
+        let binds = AppBindings::take_from(&mut dag);
+        let step_count = dag.steps.len();
         inject_app_args(&mut dag, args)?;
 
         // (3a) PR-3: the App's model axis (Axis 1). A non-empty `steering_config.model.
@@ -1101,11 +1336,34 @@ impl AppAuthor for HostAppAuthor {
         //      intersection (wish ∩ caller-Use ∩ fireable ∩ registry ∩ compat) folded onto
         //      the entry model step's tool_contract (declared pins win). Structurally gated:
         //      no skills AND no steering wishes ⇒ zero new code runs (the digest no-op).
-        if !env.references.skills.is_empty() {
-            context_items.extend(skill_context_items(
-                &env.references.skills,
-                self.content.as_ref(),
-            )?);
+        //      A skill BOUND to a step (the blueprint named it there) resolves onto THAT
+        //      step; one no step named resolves App-wide onto the entry root, which is
+        //      where it has always resolved. Both legs use the same fail-closed CAS
+        //      presence check — a bound skill whose body is missing is as broken as an
+        //      unbound one.
+        let mut per_step = crate::provision::PerStepBinds {
+            context_items: vec![Vec::new(); step_count],
+            secret_scope: Vec::new(),
+        };
+        let mut unbound_skills: Vec<SkillRef> = Vec::new();
+        let mut bound_skills: Vec<Vec<SkillRef>> = vec![Vec::new(); step_count];
+        for s in &env.references.skills {
+            let targets = model_steps_naming(&binds.skills, &s.name, &dag, "skill");
+            if targets.is_empty() {
+                unbound_skills.push(s.clone());
+                continue;
+            }
+            for i in targets {
+                bound_skills[i].push(s.clone());
+            }
+        }
+        if !unbound_skills.is_empty() {
+            context_items.extend(skill_context_items(&unbound_skills, self.content.as_ref())?);
+        }
+        for (i, skills) in bound_skills.iter().enumerate() {
+            if !skills.is_empty() {
+                per_step.context_items[i] = skill_context_items(skills, self.content.as_ref())?;
+            }
         }
         // `Reach::InheritPrincipal` REPLACES the declared wish with the caller's whole
         // tool ceiling (never a UNION — a union would widen past the ceiling, SN-8).
@@ -1127,32 +1385,54 @@ impl AppAuthor for HostAppAuthor {
         } else {
             None
         };
+        //
+        // `reach` steers the APP-LEVEL wish only. Expanding a per-node wish to the whole
+        // ceiling would hand every skill-bearing step everything the caller can fire,
+        // which is the opposite of what binding a capability to a node means — the point
+        // of the per-step wish is that it is exactly what that step's own skills asked for.
         let wish = effective_tool_wish(
             reach,
-            combined_tool_wish(
-                &env.references.skills,
-                &env.steering_config.tools.requested_grants,
-            ),
+            combined_tool_wish(&unbound_skills, &env.steering_config.tools.requested_grants),
             ceiling.as_ref(),
         );
-        if !wish.is_empty() {
-            // Use-gate + conditional narrowing (SN-8; see party_tool_authority).
+        let per_step_wish: Vec<BTreeMap<String, String>> =
+            bound_skills.iter().map(|s| skill_wish_union(s)).collect();
+        if !wish.is_empty() || per_step_wish.iter().any(|w| !w.is_empty()) {
+            // Use-gate + conditional narrowing (SN-8; see party_tool_authority). Resolved
+            // ONCE and shared by every fold: the caller's authority does not vary by step,
+            // only the wish does.
             let allowlist = party_tool_authority(&self.lib, party).map_err(map_binder_err)?;
             let fireable = self.registered.registered_grants();
-            // The declared contract seed is read from the SAME entry agentic step the
-            // fold targets (the root model step), so an author pin on that step wins +
-            // the fs/net compat union is seeded correctly.
-            let declared = entry_agentic_step_index(&dag)
-                .map(|i| dag.steps[i].tool_contract.clone())
-                .unwrap_or_default();
-            let granted = skill_union_grants(
-                &declared,
-                &wish,
-                allowlist.as_ref(),
-                self.tools.as_ref(),
-                &fireable,
-            );
-            fold_skill_tools(&mut dag, &granted);
+            let mut intersect_onto = |idx: Option<usize>, wish: &BTreeMap<String, String>| {
+                if wish.is_empty() {
+                    return;
+                }
+                // The declared contract seed is read from the SAME step the fold targets,
+                // so an author pin on that step wins + the fs/net compat union is seeded
+                // correctly.
+                let target = idx.or_else(|| entry_agentic_step_index(&dag));
+                let declared = target
+                    .and_then(|i| dag.steps.get(i))
+                    .map(|s| s.tool_contract.clone())
+                    .unwrap_or_default();
+                let granted = skill_union_grants(
+                    &declared,
+                    wish,
+                    allowlist.as_ref(),
+                    self.tools.as_ref(),
+                    &fireable,
+                );
+                match target {
+                    Some(i) => fold_step_tools(&mut dag, i, &granted),
+                    // No root model step: `fold_skill_tools` owns that warning, and a
+                    // per-node wish cannot reach here (its target is a model step).
+                    None => fold_skill_tools(&mut dag, &granted),
+                }
+            };
+            intersect_onto(None, &wish);
+            for (i, w) in per_step_wish.iter().enumerate() {
+                intersect_onto(Some(i), w);
+            }
         }
 
         // (3c) T-RUNAPP-CONTEXT-RAIL: declarative RAG-on-App — the datasets the App
@@ -1160,7 +1440,12 @@ impl AppAuthor for HostAppAuthor {
         //      search them. A binding carrying `cas_refs` materializes its own corpus first
         //      (T-RUNAPP-RAG-SELF-CONTAINED). Empty ⇒ skipped (the digest no-op).
         if !dataset_bindings.is_empty() {
-            self.fold_dataset_rag(&dataset_bindings, &mut dag).await?;
+            let targets: Vec<Vec<usize>> = dataset_bindings
+                .iter()
+                .map(|b| model_steps_naming(&binds.datasets, &b.declared, &dag, "dataset"))
+                .collect();
+            self.fold_dataset_rag(&dataset_bindings, &targets, &mut dag)
+                .await?;
         }
 
         // (3d) T-APP-TRIGGER-TARGET / D114: stamp the per-run HITL posture onto the entry
@@ -1195,7 +1480,19 @@ impl AppAuthor for HostAppAuthor {
         let (steps, edges, mode) =
             author_steps_from_proto(req.steps, req.edges, req.execution_mode)
                 .map_err(|s| AppRunError::InvalidArgs(s.message().to_string()))?;
-        let mut bound = self
+        // (5) The G2 load-bearing grant, now per STEP: each tool-firing warrant gets the
+        //     secret scope its OWN bound connections justify (plus every connection no
+        //     step bound), so the broker precheck lets a credentialed connector be dialed
+        //     in that step's loop — and a step that bound none cannot dial one at all.
+        //     Applied inside the author, where the compiled mote still knows which
+        //     authored step it came from; see `PerStepBinds`.
+        per_step.secret_scope = per_step_secret_scopes(
+            &provided_by,
+            &binds.connections,
+            &env.steering_config.guards.secret_scope,
+            step_count,
+        );
+        let bound = self
             .author
             .author_with_context_items(
                 party,
@@ -1205,6 +1502,7 @@ impl AppAuthor for HostAppAuthor {
                 mode,
                 &context_bundles,
                 &context_items,
+                &per_step,
             )
             .await
             .map_err(|e| match e {
@@ -1212,22 +1510,6 @@ impl AppAuthor for HostAppAuthor {
                 BinderError::InvalidArgs(d) => AppRunError::InvalidArgs(d),
                 BinderError::Internal(d) => AppRunError::Internal(d),
             })?;
-
-        // (5) The G2 load-bearing grant: give the tool-firing warrants the App's declared
-        //     secret scope so the broker precheck (capability.required_secret_scope ⊆
-        //     warrant.secret_scope) lets a credentialed connector be dialed in the loop.
-        //     A FRESH construction on the resolved warrant (server-authorized from the
-        //     validated envelope), applied to the tool-granting motes (the agentic MODEL
-        //     anchor + any tool step) — the react in-loop dispatch fires under the anchor
-        //     warrant, so this propagates to every observation turn. Empty scope ⇒
-        //     unchanged (`SecretScope::None`) ⇒ a credentialed tool fails closed, by design.
-        if let Some(scope) = &secret_scope {
-            for (_, warrant) in &mut bound.motes {
-                if !warrant.tool_grants.is_empty() {
-                    warrant.secret_scope = scope.clone();
-                }
-            }
-        }
         Ok(bound)
     }
 }
@@ -1261,10 +1543,21 @@ impl AppManifestView for HostAppAuthor {
         // The declared wish (steering ∪ skills) and the caller's tool ceiling — the exact
         // two sets author_app resolves. A caller with NO tool authority (NotAuthorized ⇒
         // no Use grant) simply has an empty ceiling (nothing in policy), not an error.
-        let wish = combined_tool_wish(
+        let mut wish = combined_tool_wish(
             &env.references.skills,
             &env.steering_config.tools.requested_grants,
         );
+        // ...plus what the BLUEPRINT's own steps ask for. A step's `tool_contract` has
+        // always been a real grant at run — it is where the whole per-node capability model
+        // lands — but this manifest only ever read the App-level rail, so an App whose
+        // tools live on its nodes reported needing none. That is the manifest saying "this
+        // App reaches nothing" about an App that reaches a connector, which is exactly the
+        // question the surface exists to answer honestly.
+        for step in blueprint_steps(&env) {
+            for (id, version) in &step.tool_contract {
+                wish.entry(id.clone()).or_insert_with(|| version.clone());
+            }
+        }
         let ceiling = match principal_tool_ceiling(
             &self.lib,
             principal,
@@ -2220,6 +2513,38 @@ mod tests {
         assert!(m.datasets.is_empty());
     }
 
+    /// The manifest must report what the BLUEPRINT's own steps reach, not only the
+    /// App-level rail. A per-node tool contract has always been a real grant at run; a
+    /// manifest that read only `steering ∪ skills` answered "this App needs nothing" about
+    /// an App that fires a tool — the opposite of what this surface is for.
+    #[test]
+    fn manifest_reports_a_tool_a_step_asks_for_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        // NOTHING at the App level: the tool lives on the node, which is now the norm.
+        let env = AppEnvelope::new(
+            "node-tooled",
+            serde_json::json!({
+                "steps": [
+                    { "kind": "model", "prompt": "gather", "tool_contract": { "echo-tool": "1" } },
+                    { "kind": "model", "prompt": "write" }
+                ],
+                "edges": [{ "parent": 0, "child": 1 }]
+            }),
+        );
+        let handle = save_app(&host, &env);
+        let m = host
+            .manifest("alice@acme", &handle)
+            .unwrap()
+            .expect("owned app");
+        let echo = m
+            .tools
+            .iter()
+            .find(|c| c.id == "echo-tool")
+            .expect("a tool a step asks for is a tool the App needs");
+        assert!(echo.requested && echo.in_policy && !echo.inherited);
+    }
+
     #[tokio::test]
     async fn manifest_flags_a_missing_dataset_the_one_hard_run_failure() {
         // A declared dataset that is neither ingested nor self-contained is the ONLY dependency
@@ -2449,6 +2774,243 @@ mod tests {
                 .iter()
                 .any(|i| i.name == "skill:triage" && i.content_ref == blob.0),
             "labeled skill instructions present: {items:?}"
+        );
+    }
+
+    // ----- per-NODE capability bindings -----
+
+    /// ★ THE MIGRATION PROOF. An App that declares a skill App-wide and binds it to NO step
+    /// must author BYTE-IDENTICALLY to the same App that binds it explicitly to its entry
+    /// step. That is the whole of the compatibility story: every App authored before
+    /// per-step binding names nothing anywhere, so each of its capabilities takes the legacy
+    /// site — and "the legacy site" and "explicitly bound there" are the same run, `MoteId`s
+    /// and warrants included.
+    #[tokio::test]
+    async fn an_unbound_skill_authors_identically_to_one_bound_to_the_entry_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        let blob = kx_content::ContentStore::put(content.as_ref(), b"# Triage rules").unwrap();
+        let hex = hex_str(&blob.0);
+
+        let app = |name: &str, blueprint: serde_json::Value| {
+            let mut env = AppEnvelope::new(name, blueprint);
+            env.references.skills.push(SkillRef {
+                name: "triage".into(),
+                instructions_ref: hex.clone(),
+                tools: [("echo-tool".to_string(), "1".to_string())]
+                    .into_iter()
+                    .collect(),
+            });
+            env.validate().unwrap();
+            save_app(&host, &env)
+        };
+        // Same App, two spellings: the legacy one names nothing; the new one binds the
+        // skill to the step it was always going to land on.
+        let legacy = app(
+            "legacy",
+            serde_json::json!({ "steps": [{ "kind": "model", "prompt": "go" }] }),
+        );
+        let bound = app(
+            "bound",
+            serde_json::json!({
+                "steps": [{ "kind": "model", "prompt": "go", "skills": ["triage"] }]
+            }),
+        );
+
+        let a = host
+            .author_app("alice@acme", &legacy, b"", false)
+            .await
+            .unwrap();
+        let b = host
+            .author_app("alice@acme", &bound, b"", false)
+            .await
+            .unwrap();
+        assert_eq!(a.motes.len(), b.motes.len());
+        for ((m1, w1), (m2, w2)) in a.motes.iter().zip(b.motes.iter()) {
+            assert_eq!(m1.id, m2.id, "byte-identical MoteIds");
+            assert_eq!(w1, w2, "byte-identical warrants");
+        }
+        assert_eq!(a.recipe_fingerprint, b.recipe_fingerprint);
+    }
+
+    /// ★ THE POINT OF THE WHOLE CHANGE. On a two-root fan-out, a skill bound to the SECOND
+    /// gatherer reaches that step and NOT the first — instructions and grants together.
+    /// Before per-step binding both legs landed on the entry root, so an App could not say
+    /// "this node is the one that triages".
+    #[tokio::test]
+    async fn a_skill_bound_to_one_branch_of_a_fan_out_reaches_only_that_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        let blob = kx_content::ContentStore::put(content.as_ref(), b"# Triage rules").unwrap();
+
+        let mut env = AppEnvelope::new(
+            "fanned",
+            serde_json::json!({
+                "steps": [
+                    { "kind": "model", "prompt": "gather A" },
+                    { "kind": "model", "prompt": "gather B", "skills": ["triage"] },
+                    { "kind": "model", "prompt": "join" }
+                ],
+                "edges": [{ "parent": 0, "child": 2 }, { "parent": 1, "child": 2 }]
+            }),
+        );
+        env.references.skills.push(SkillRef {
+            name: "triage".into(),
+            instructions_ref: hex_str(&blob.0),
+            tools: [("echo-tool".to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+
+        // Find each authored step by its prompt-bearing identity: motes come back in
+        // TOPOLOGICAL order, so position is not authoring position.
+        let has_skill = |m: &kx_mote::Mote| {
+            m.def
+                .config_subset
+                .get(&ConfigKey(CONTEXT_ITEMS_KEY.into()))
+                .is_some_and(|v| {
+                    kx_mote::decode_context_items(&v.0)
+                        .iter()
+                        .any(|i| i.name == "skill:triage")
+                })
+        };
+        let granted = |m: &kx_mote::Mote| {
+            m.def
+                .tool_contract
+                .contains_key(&kx_mote::ToolName("echo-tool".into()))
+        };
+        let carrying: Vec<usize> = bound
+            .motes
+            .iter()
+            .enumerate()
+            .filter(|(_, (m, _))| has_skill(m))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            carrying.len(),
+            1,
+            "exactly ONE step carries the instructions — not both roots, not the join"
+        );
+        let (m, w) = &bound.motes[carrying[0]];
+        assert!(granted(m), "the same step gets the skill's tool grant");
+        assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "echo-tool"));
+        // ...and nobody else does. Tools without instructions (or the reverse) is the
+        // split `entry_agentic_step_index` exists to refuse.
+        assert!(
+            bound
+                .motes
+                .iter()
+                .enumerate()
+                .all(|(i, (m, _))| i == carrying[0] || !granted(m)),
+            "no sibling step picked up the grant"
+        );
+    }
+
+    /// A binding to a step that cannot act on it (a PURE step reads no instructions and
+    /// runs no loop) is dropped with a warning and falls back to the App-wide site —
+    /// FAIL-SOFT, like every other skill path. One mis-bound name never bricks an App.
+    #[tokio::test]
+    async fn a_skill_bound_to_a_non_model_step_falls_back_rather_than_failing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, content, _) = rig(dir.path(), &[("echo-tool", "1")]);
+        let blob = kx_content::ContentStore::put(content.as_ref(), b"# Rules").unwrap();
+
+        let mut env = AppEnvelope::new(
+            "misbound",
+            serde_json::json!({
+                "steps": [
+                    { "kind": "model", "prompt": "go" },
+                    { "kind": "pure", "skills": ["triage"] }
+                ],
+                "edges": [{ "parent": 0, "child": 1 }]
+            }),
+        );
+        env.references.skills.push(SkillRef {
+            name: "triage".into(),
+            instructions_ref: hex_str(&blob.0),
+            tools: [("echo-tool".to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+        let bound = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .unwrap();
+        // The model root — the App-wide site — carries it.
+        assert!(bound.motes.iter().any(|(m, _)| m
+            .def
+            .tool_contract
+            .contains_key(&kx_mote::ToolName("echo-tool".into()))));
+    }
+
+    /// The per-step secret scope. Every step sees what its OWN bound connections provide
+    /// plus every connection no step bound; an explicit `guards.secret_scope` can only
+    /// narrow within that. A step that bound nothing relevant gets `None` — fail-closed,
+    /// which is why the scope is per-step at all.
+    #[test]
+    fn per_step_secret_scopes_bind_where_named_and_share_what_is_unbound() {
+        let provided = vec![
+            ("gmail".to_string(), Some("KX_GMAIL_CREDENTIAL".to_string())),
+            ("shared".to_string(), Some("KX_SHARED".to_string())),
+        ];
+        // Step 0 binds gmail; step 1 binds nothing. `shared` is bound by nobody.
+        let bindings = vec![vec!["gmail".to_string()], Vec::new()];
+        let scopes = per_step_secret_scopes(&provided, &bindings, &[], 2);
+        let names = |s: &Option<SecretScope>| match s {
+            Some(SecretScope::AllowList(a)) => {
+                a.iter().map(|r| r.0.clone()).collect::<Vec<String>>()
+            }
+            _ => Vec::new(),
+        };
+        assert_eq!(names(&scopes[0]), vec!["KX_GMAIL_CREDENTIAL", "KX_SHARED"]);
+        assert_eq!(
+            names(&scopes[1]),
+            vec!["KX_SHARED"],
+            "the step that never asked for gmail cannot dial it, though the App can"
+        );
+
+        // BINDING NOTHING is the legacy shape: every step gets the same App-wide scope.
+        let unbound = per_step_secret_scopes(&provided, &[Vec::new(), Vec::new()], &[], 2);
+        assert_eq!(names(&unbound[0]), names(&unbound[1]));
+        assert_eq!(names(&unbound[0]), vec!["KX_GMAIL_CREDENTIAL", "KX_SHARED"]);
+
+        // An explicit guard NARROWS, and narrows per step: step 1 never provides the
+        // gmail credential, so naming it App-wide does not reach there.
+        let guarded = per_step_secret_scopes(
+            &provided,
+            &bindings,
+            &["KX_GMAIL_CREDENTIAL".to_string()],
+            2,
+        );
+        assert_eq!(names(&guarded[0]), vec!["KX_GMAIL_CREDENTIAL"]);
+        assert!(
+            guarded[1].is_none(),
+            "narrowed to nothing ⇒ SecretScope::None ⇒ a credentialed tool fails closed"
+        );
+    }
+
+    /// `steps_naming` is the one rule every axis shares. Empty ⇒ the legacy site; a name
+    /// matches case-insensitively (the same name written two ways must not become two
+    /// different bindings).
+    #[test]
+    fn steps_naming_is_case_insensitive_and_empty_means_app_wide() {
+        let per_step = vec![
+            vec!["Triage".to_string()],
+            Vec::new(),
+            vec!["triage".to_string(), "other".to_string()],
+        ];
+        assert_eq!(steps_naming(&per_step, "triage"), vec![0, 2]);
+        assert!(
+            steps_naming(&per_step, "absent").is_empty(),
+            "a capability no step named binds App-wide"
         );
     }
 
@@ -2982,7 +3544,9 @@ mod tests {
         bindings: &[DatasetBinding],
     ) -> Result<String, AppRunError> {
         let mut d = dag(vec![model_step("Answer.")]);
-        host.fold_dataset_rag(bindings, &mut d).await?;
+        // No per-step binding: every dataset takes the App-wide entry site.
+        let targets = vec![Vec::new(); bindings.len()];
+        host.fold_dataset_rag(bindings, &targets, &mut d).await?;
         Ok(d.steps[0].prompt.clone())
     }
 

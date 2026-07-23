@@ -63,6 +63,86 @@ export function readSkillNames(env: Env): string[] {
   return (skills ?? []).map((s) => s.name ?? "").filter((n) => n !== "");
 }
 
+/** One blueprint step, tolerantly read. */
+type BlueprintStep = {
+  prompt?: string;
+  model_id?: string;
+  kind?: string;
+  skills?: string[];
+  connections?: string[];
+  datasets?: string[];
+};
+
+/** The App's blueprint steps, or `[]` for a hosted App / an unparsed envelope. */
+function blueprintSteps(env: Env): BlueprintStep[] {
+  const bp = env.blueprint as { steps?: BlueprintStep[] } | undefined;
+  return bp?.steps ?? [];
+}
+
+/** A short, human label for a blueprint step: its prompt's first words, else its
+ *  1-based position. Purely for the "binds to" line — never identity. */
+function stepLabel(step: BlueprintStep, index: number): string {
+  const text = (step.prompt ?? "").trim().replace(/\s+/g, " ");
+  if (text === "") {
+    return `step ${index + 1}`;
+  }
+  return text.length > 32 ? `${text.slice(0, 32)}…` : text;
+}
+
+/**
+ * Where a declared capability BINDS: the labels of the steps that NAME it on `axis`, or a
+ * single "the entry step" when no step does.
+ *
+ * This is the runtime's own rule stated on screen (`RunApp` binds a capability no step
+ * claims to the entry agentic step, and per-step otherwise), so a rail can show an attached
+ * skill WITHOUT implying it is app-wide when the truth is per-node. Matching is
+ * case-insensitive on the declared name — the same rule the runtime resolves by.
+ */
+export function bindingTargets(
+  env: Env,
+  axis: "skills" | "connections" | "datasets",
+  name: string,
+): string[] {
+  const steps = blueprintSteps(env);
+  const bound = steps
+    .map((s, i) => ({ s, i }))
+    .filter(({ s }) => (s[axis] ?? []).some((n) => n.toLowerCase() === name.toLowerCase()));
+  if (bound.length === 0) {
+    return ["the entry step"];
+  }
+  return bound.map(({ s, i }) => stepLabel(s, i));
+}
+
+/** Scrub `name` from every step's `axis` binding — used when a rail DETACHES a
+ *  declaration, so the blueprint never names a binding to a `references` entry that is gone.
+ *  Returns the env unchanged when nothing bound it (a hosted App, or an already-unbound
+ *  declaration). Omit-empty: a step whose last binding on an axis is removed drops the key. */
+export function unbindFromSteps(
+  env: Env,
+  axis: "skills" | "connections" | "datasets",
+  name: string,
+): Env {
+  const bp = env.blueprint as { steps?: BlueprintStep[] } | undefined;
+  if (!bp?.steps) {
+    return env;
+  }
+  let changed = false;
+  const steps = bp.steps.map((s) => {
+    const cur = s[axis];
+    if (!cur || !cur.some((n) => n.toLowerCase() === name.toLowerCase())) {
+      return s;
+    }
+    changed = true;
+    const next = cur.filter((n) => n.toLowerCase() !== name.toLowerCase());
+    const { [axis]: _drop, ...rest } = s;
+    return next.length > 0 ? { ...rest, [axis]: next } : rest;
+  });
+  if (!changed) {
+    return env;
+  }
+  return { ...env, blueprint: { ...bp, steps } };
+}
+
 // ---- writes (omit-empty, preserve sibling keys) ----
 
 function withReferences(env: Env, references: Env): Env {

@@ -834,6 +834,7 @@ kx models use <id> | use --clear [client flags]
   validated server-side; load/offload/use manage RAM residency + the default, never authority."
             .into(),
         "app" => "\
+kx app derive \"<prompt>\" [--kind scheduled|hosted] [--mode contextual|codified] [--framework <fw>] [--attach <file>]... [--output <blueprint.json>]
 kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>]
 kx app save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--timeout-secs N] [--out <file>]
 kx app export <handle> (--output <file> | --bundle <file> [--with-data] [--force]) | import <bundle> [--yes] [--force] | clone <handle> <newname>
@@ -851,7 +852,11 @@ kx app delete <handle> [--yes]   (removes the catalog row, its triggers, its loc
   fail-closed under YOUR OWN principal (PutContent the closure, then SaveApp with a
   source_digest lineage stamp; connections/secrets never travel — re-register by name,
   fail-closed at run until then); `clone` makes a local frozen copy. The envelope carries
-  NO authority — `run`/`import` re-resolve every warrant from the caller's own grants (SN-8)."
+  NO authority — `run`/`import` re-resolve every warrant from the caller's own grants (SN-8).
+  `derive` is the CLI's derive→review→approve: one prompt → a designed blueprint whose NODES
+  carry the tools/skills/integrations/grounding each step uses (needs a served model).
+  --output writes that blueprint; `kx app new <name> --from-blueprint <it>` resolves the
+  declarations into the envelope, then `kx app save`."
             .into(),
         "health" => "\
 kx health [client flags]

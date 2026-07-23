@@ -1673,7 +1673,7 @@ class DeriveAppRequest(_message.Message):
     def __init__(self, kind: _Optional[str] = ..., mode: _Optional[str] = ..., prompt: _Optional[str] = ..., framework: _Optional[str] = ..., attachments: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DerivedAppStep(_message.Message):
-    __slots__ = ("role", "intent", "kind", "model_id", "tool_contract")
+    __slots__ = ("role", "intent", "kind", "model_id", "tool_contract", "skills", "integrations", "datasets")
     class ToolContractEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -1686,12 +1686,18 @@ class DerivedAppStep(_message.Message):
     KIND_FIELD_NUMBER: _ClassVar[int]
     MODEL_ID_FIELD_NUMBER: _ClassVar[int]
     TOOL_CONTRACT_FIELD_NUMBER: _ClassVar[int]
+    SKILLS_FIELD_NUMBER: _ClassVar[int]
+    INTEGRATIONS_FIELD_NUMBER: _ClassVar[int]
+    DATASETS_FIELD_NUMBER: _ClassVar[int]
     role: str
     intent: str
     kind: str
     model_id: str
     tool_contract: _containers.ScalarMap[str, str]
-    def __init__(self, role: _Optional[str] = ..., intent: _Optional[str] = ..., kind: _Optional[str] = ..., model_id: _Optional[str] = ..., tool_contract: _Optional[_Mapping[str, str]] = ...) -> None: ...
+    skills: _containers.RepeatedScalarFieldContainer[str]
+    integrations: _containers.RepeatedScalarFieldContainer[str]
+    datasets: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, role: _Optional[str] = ..., intent: _Optional[str] = ..., kind: _Optional[str] = ..., model_id: _Optional[str] = ..., tool_contract: _Optional[_Mapping[str, str]] = ..., skills: _Optional[_Iterable[str]] = ..., integrations: _Optional[_Iterable[str]] = ..., datasets: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DerivedAppFile(_message.Message):
     __slots__ = ("path", "role")

@@ -226,14 +226,17 @@ function LineageView({
   // The App declares capability wishes but the blueprint may have nowhere to fold them:
   // RunApp drops them with only a server-side warning, leaving a populated Skills rail
   // that silently does nothing. Say so here — it is the one surface that can.
-  const foldWarning = useMemo(
-    () =>
-      entryFoldWarning(
-        parsed.graph,
-        readSkillNames(envelope).length + Object.keys(readToolGrants(envelope)).length,
-      ),
-    [parsed.graph, envelope],
-  );
+  const foldWarning = useMemo(() => {
+    // Only APP-WIDE capabilities need a root model step. A skill BOUND to a step folds onto
+    // that step, so exclude it from the count or the warning fires about a fold that happens.
+    const boundSkill = (name: string) =>
+      parsed.graph.steps.some((s) => s.skills.some((n) => n.toLowerCase() === name.toLowerCase()));
+    const appWideSkills = readSkillNames(envelope).filter((n) => !boundSkill(n)).length;
+    return entryFoldWarning(
+      parsed.graph,
+      appWideSkills + Object.keys(readToolGrants(envelope)).length,
+    );
+  }, [parsed.graph, envelope]);
 
   // Structure is editable in the builder unless the blueprint has an un-round-trippable
   // (exec/binary) step, or the App is locked (a locked App refuses a structure re-save).

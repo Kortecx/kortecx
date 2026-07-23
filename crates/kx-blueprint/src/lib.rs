@@ -32,6 +32,22 @@
 //! and the kind is inferred from field presence (`model_id`/`prompt` ⇒ `model`, a
 //! `tool_contract` with no model fields ⇒ `tool`, else ⇒ `pure`); an explicit kind
 //! must agree with the fields (fail-closed). `edge` ∈ {`data`, `control`}.
+//!
+//! ## The App-only per-step fields
+//!
+//! A step may also carry `skills` / `connections` / `datasets` — NAMES that bind an App
+//! envelope's declared capabilities to THAT node, so an App's knowledge and reach are
+//! properties of the step that needs them rather than of the whole App:
+//! ```json
+//! { "prompt": "Collect this week's escalations",
+//!   "tool_contract": { "retrieve": "1" },
+//!   "skills": ["triage"], "connections": ["kx-connector-gmail"], "datasets": ["support"] }
+//! ```
+//! They are resolved by `RunApp` against the envelope's `references`, and they are
+//! **App-only**: [`to_request`] refuses them, because a `SubmitWorkflowRequest` has no
+//! `references` rail to name into. Each is omitted from the emitted JSON when empty, so a
+//! blueprint that binds nothing is byte-identical to one written before these existed —
+//! which is what keeps every already-authored App's `MoteId`s unchanged.
 
 use std::collections::BTreeMap;
 
@@ -137,9 +153,77 @@ pub struct StepSpec {
     pub max_turns: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tool_calls: Option<u32>,
+    /// APP ONLY: the catalog SKILL names bound to THIS step, naming entries in the App
+    /// envelope's `references.skills[].name`.
+    ///
+    /// A name, not a descriptor: `references.*` stays the DECLARATION (the CAS
+    /// `instructions_ref`, the tool wish set — and what `GetAppManifest` reports) and the
+    /// step carries only the BINDING, so two steps sharing a skill duplicate nothing and a
+    /// reorder cannot misbind. `RunApp` resolves it; a name no step mentions binds to the
+    /// entry agentic step, which is the pre-existing App-wide behaviour and is why an
+    /// envelope authored before per-step binding lowers byte-identically.
+    ///
+    /// **Not a workflow concept.** `SubmitWorkflow` has no `references` to name into, so
+    /// [`to_request`] REFUSES a non-empty list rather than dropping it silently.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<String>,
+    /// APP ONLY: the connection DESCRIPTORS bound to this step, naming entries in
+    /// `references.connections[].descriptor`. Same posture as [`Self::skills`]; the run's
+    /// per-step secret scope is derived from what these connections provide, bounded by the
+    /// App-level `guards.secret_scope`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connections: Vec<String>,
+    /// APP ONLY: the DATASET names this step grounds over, naming entries in
+    /// `references.datasets[].dataset_ref` (or `steering_config.context.dataset_refs`).
+    /// Same posture as [`Self::skills`]: the bound step gets `retrieve@1` + the grounding
+    /// steer, instead of the entry step getting them on the whole App's behalf.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datasets: Vec<String>,
+}
+
+/// Refuse a step carrying an App-envelope capability binding on the WORKFLOW lowering path.
+///
+/// A `SubmitWorkflowRequest` has no `references` rail, so there is nothing for a
+/// `skills`/`connections`/`datasets` NAME to resolve against — the runtime could only drop
+/// it. Dropping it would hand the author a workflow that silently lacks the knowledge and
+/// reach they wrote down, so this fails at authoring with a message that says where the
+/// field IS honoured. Same posture as the reserved `exec` kind in
+/// [`StepSpec::resolve_kind`]: fail with a clear message rather than a server round-trip.
+fn refuse_app_only_bindings(index: usize, s: &StepSpec) -> Result<(), BlueprintError> {
+    if !s.has_app_bindings() {
+        return Ok(());
+    }
+    let named: Vec<&str> = [
+        (!s.skills.is_empty()).then_some("skills"),
+        (!s.connections.is_empty()).then_some("connections"),
+        (!s.datasets.is_empty()).then_some("datasets"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    Err(BlueprintError::new(format!(
+        "step {index} declares {} — a per-step capability list is an App-envelope BINDING \
+         that names an entry in the App's `references`, and `RunApp` is what resolves it. A \
+         workflow has no references to name into: author this as an App (kx app new / the SDK \
+         `app(...)`), or grant the step a tool directly via `tool_contract`",
+        named.join(" + "),
+    )))
 }
 
 impl StepSpec {
+    /// True when this step carries an App-envelope capability BINDING
+    /// ([`Self::skills`] / [`Self::connections`] / [`Self::datasets`]).
+    ///
+    /// `RunApp` takes these off the spec before lowering, so by the time a blueprint
+    /// reaches [`to_request`] on the App path they are always empty — which is exactly what
+    /// keeps the lowering (and therefore every `MoteId`) byte-identical to the pre-binding
+    /// form. Reaching `to_request` with one still set means the blueprint came from a
+    /// workflow path that has no App to resolve it against.
+    #[must_use]
+    pub fn has_app_bindings(&self) -> bool {
+        !self.skills.is_empty() || !self.connections.is_empty() || !self.datasets.is_empty()
+    }
+
     /// Resolve the step's wire kind (Batch A authoring veneer). When `kind` is omitted
     /// it is INFERRED from field presence; when present it is an override that must
     /// AGREE with the fields (fail-closed). `exec` is rejected client-side (the binder
@@ -282,7 +366,12 @@ fn hex_val(c: u8) -> Result<u8, BlueprintError> {
 /// malformed `body_signature_id`.
 pub fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, BlueprintError> {
     let mut steps = Vec::with_capacity(spec.steps.len());
-    for s in spec.steps {
+    for (i, s) in spec.steps.into_iter().enumerate() {
+        // A per-step skills/connections/datasets list is an APP binding with no workflow
+        // meaning — refuse it here rather than let it vanish into a lowering that cannot
+        // carry it (`RunApp` takes them off the spec before calling this, so the App path
+        // never trips it).
+        refuse_app_only_bindings(i, &s)?;
         // Batch A: the kind is resolved (inferred when omitted, validated when explicit;
         // `exec` reserved) — see [`StepSpec::resolve_kind`].
         let kind = s.resolve_kind()?;
@@ -389,6 +478,66 @@ mod tests {
         let spec: DagSpec =
             serde_json::from_str(r#"{ "steps": [ {"kind":"frobnicate"} ] }"#).unwrap();
         assert!(to_request(spec).is_err());
+    }
+
+    /// ★ THE DIGEST-INVARIANCE PROPERTY, at this layer. The three App-binding fields are
+    /// omitted from the emitted JSON when empty and are absent from the lowering, so a
+    /// blueprint written before they existed and the same blueprint parsed by this build
+    /// compile to the IDENTICAL request. Every already-authored App's `MoteId`s depend on
+    /// this holding.
+    #[test]
+    fn app_bindings_absent_lower_identically_to_a_pre_binding_blueprint() {
+        let json = r#"{ "seed": 3,
+             "steps": [ {"kind":"model","prompt":"go"}, {"kind":"pure"} ],
+             "edges": [ {"parent":0,"child":1} ] }"#;
+        let before: DagSpec = serde_json::from_str(json).unwrap();
+        let emitted = serde_json::to_string(&before).unwrap();
+        assert!(
+            !emitted.contains("skills")
+                && !emitted.contains("connections")
+                && !emitted.contains("datasets"),
+            "an unbound blueprint must not grow keys: {emitted}"
+        );
+        let reparsed: DagSpec = serde_json::from_str(&emitted).unwrap();
+        assert_eq!(
+            to_request(serde_json::from_str::<DagSpec>(json).unwrap()).unwrap(),
+            to_request(reparsed).unwrap()
+        );
+    }
+
+    /// A per-step capability list is an APP binding. Lowering it as a WORKFLOW has nowhere
+    /// to resolve the name, so it must refuse — dropping it would hand the author a
+    /// workflow silently missing the reach they wrote down.
+    #[test]
+    fn refuses_app_only_bindings_on_the_workflow_lowering_path() {
+        for field in ["skills", "connections", "datasets"] {
+            let spec: DagSpec = serde_json::from_str(&format!(
+                r#"{{ "steps": [ {{"kind":"pure"}}, {{"kind":"model","prompt":"go","{field}":["x"]}} ] }}"#
+            ))
+            .unwrap();
+            let err = to_request(spec).expect_err("an App binding must not lower as a workflow");
+            assert!(err.0.contains("step 1"), "names the step: {err}");
+            assert!(err.0.contains(field), "names the field: {err}");
+            assert!(err.0.contains("App"), "says where it IS honoured: {err}");
+        }
+    }
+
+    /// The bindings survive an export→import round trip verbatim — the App path reads them
+    /// off the parsed spec, so a lossy round trip would silently unbind a live App.
+    #[test]
+    fn app_bindings_round_trip_through_serialize() {
+        let json = r#"{ "seed": 1, "steps": [ {"kind":"model","prompt":"go",
+             "skills":["triage"],"connections":["kx-connector-gmail"],"datasets":["support"]} ] }"#;
+        let spec: DagSpec = serde_json::from_str(json).unwrap();
+        assert!(spec.steps[0].has_app_bindings());
+        let reparsed: DagSpec =
+            serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(reparsed.steps[0].skills, vec!["triage".to_string()]);
+        assert_eq!(
+            reparsed.steps[0].connections,
+            vec!["kx-connector-gmail".to_string()]
+        );
+        assert_eq!(reparsed.steps[0].datasets, vec!["support".to_string()]);
     }
 
     /// Batch B: a `DagSpec` survives Serialize → Deserialize and re-compiles to the

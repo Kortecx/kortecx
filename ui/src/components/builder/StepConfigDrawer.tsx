@@ -11,11 +11,55 @@ import { type ModelSummary, PERSONAS, personaNames } from "@kortecx/sdk/web";
 import { m } from "framer-motion";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useListMcpServers } from "../../kx/use-connections";
+import { useDatasets } from "../../kx/use-datasets";
+import { useListSkills } from "../../kx/use-skills";
 import { useDiscoverTools } from "../../kx/use-tool-registry";
 import { JsonEditor } from "../editor/JsonEditor";
 import { MonacoMount } from "../editor/MonacoMount";
 import type { BuilderStep } from "./builder-graph";
 import { isJsonObject } from "./builder-graph";
+
+/** The per-node capability axes, in display order. `field` is the {@link BuilderStep} key
+ *  each one toggles; `empty` is what to say when the account has none of that thing —
+ *  naming where to add one, since an empty group with no explanation reads as broken. */
+const CAPABILITY_AXES = [
+  {
+    field: "skills",
+    label: "Skills",
+    hint: "Instructions plus a tool wish. Attached here, they reach THIS step — its prompt and its loop — not the whole app.",
+    empty: (
+      <>
+        No skills in the catalog. Add one in <strong>Skills</strong>.
+      </>
+    ),
+  },
+  {
+    field: "connections",
+    label: "Integrations",
+    hint: "Only this step may dial the connector, and only this step's warrant carries its credential scope.",
+    empty: (
+      <>
+        No integrations connected. Dial one in <strong>Tools → Connections</strong>.
+      </>
+    ),
+  },
+  {
+    field: "datasets",
+    label: "Grounding",
+    hint: "This step gets `retrieve` over the dataset and is steered to search it before answering.",
+    empty: (
+      <>
+        No dataset holds an indexed document yet. Ingest one in <strong>Datasets</strong>.
+      </>
+    ),
+  },
+] as const satisfies ReadonlyArray<{
+  field: "skills" | "connections" | "datasets";
+  label: string;
+  hint: string;
+  empty: React.ReactNode;
+}>;
 
 /** The drawer's kind badge label + modifier (PURE / MODEL / TOOL). */
 function kindBadge(kind: BuilderStep["kind"]): { label: string; mod: string } {
@@ -42,6 +86,7 @@ export function StepConfigDrawer({
   step,
   models,
   modelsUnsupported,
+  appCapabilities = false,
   onChange,
   onDelete,
   onClose,
@@ -49,6 +94,13 @@ export function StepConfigDrawer({
   step: BuilderStep;
   models: readonly ModelSummary[] | undefined;
   modelsUnsupported: boolean;
+  /** Offer the per-node App capability axes (skills / integrations / grounding).
+   *
+   *  OFF by default, because this drawer is shared with the standalone workflow builder and
+   *  a plain `SubmitWorkflow` has no `references` rail for a name to point at — the lowering
+   *  refuses one outright. Showing the controls there would be a rail the runtime cannot
+   *  honour. The App canvas turns them on. */
+  appCapabilities?: boolean;
   onChange: (next: BuilderStep) => void;
   onDelete: () => void;
   onClose: () => void;
@@ -68,6 +120,26 @@ export function StepConfigDrawer({
   const badge = kindBadge(step.kind);
   // PR-6b-2: the LIVE registered-tool set for a TOOL step's picker (DiscoverTools).
   const { tools, notWired: toolsNotWired } = useDiscoverTools();
+  // The live catalogs the per-node capability chips are drawn from. Hooks are
+  // unconditional (rules of hooks); each query is already mounted elsewhere on the Apps
+  // route, so these resolve from cache rather than costing a round trip.
+  const skillCatalog = useListSkills();
+  const serverRegistry = useListMcpServers();
+  const datasets = useDatasets();
+  /** The available NAMES per axis. Grounding offers only datasets that hold an indexed
+   *  document — an empty one would ground the step on nothing, which is the same honesty
+   *  rule the App dataset rail already applies. */
+  const available: Record<(typeof CAPABILITY_AXES)[number]["field"], string[]> = {
+    skills: skillCatalog.skills.map((s) => s.name),
+    connections: serverRegistry.servers.map((s) => s.endpoint),
+    datasets: (datasets.data ?? []).filter((d) => d.docCount > 0).map((d) => d.name),
+  };
+  /** A connector's endpoint is what the envelope binds and what the runtime dials, but it
+   *  is not what a person recognises — show the registered name and bind the endpoint. */
+  const chipLabel = (field: string, value: string): string =>
+    field === "connections"
+      ? (serverRegistry.servers.find((s) => s.endpoint === value)?.serverName ?? value)
+      : value;
 
   // POC-C5: portal to <body> with the `--overlay` variants (the #330 pattern, per
   // `SaveAsAppDialog`/`BlueprintFormDrawer`). The drawer is a SIBLING of the builder
@@ -256,6 +328,52 @@ export function StepConfigDrawer({
                 the step's identity). The SERVER builds the union warrant + drives the loop (SN-8).
               </span>
             </div>
+
+            {/* THE PER-NODE CAPABILITY AXES. A node says what it does, what it may reach,
+                and what it knows — so the graph is the whole authoring surface and there
+                is no rail beside it that has to be kept in sync. */}
+            {appCapabilities
+              ? CAPABILITY_AXES.map((axis) => {
+                  const picked = step[axis.field];
+                  const options = available[axis.field];
+                  return (
+                    <div className="builder-field" key={axis.field}>
+                      <span className="builder-field__label">{axis.label}</span>
+                      {options.length === 0 ? (
+                        <p className="muted" data-testid={`step-config-no-${axis.field}`}>
+                          {axis.empty}
+                        </p>
+                      ) : (
+                        <div className="builder-chips" data-testid={`step-config-${axis.field}`}>
+                          {options.map((name) => {
+                            const on = picked.includes(name);
+                            return (
+                              <button
+                                key={name}
+                                type="button"
+                                className={`chip${on ? " chip--active" : ""}`}
+                                aria-pressed={on}
+                                data-testid={`step-config-${axis.field}-${name}`}
+                                onClick={() =>
+                                  onChange({
+                                    ...step,
+                                    [axis.field]: on
+                                      ? picked.filter((x) => x !== name)
+                                      : [...picked, name],
+                                  })
+                                }
+                              >
+                                {chipLabel(axis.field, name)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <span className="builder-field__hint">{axis.hint}</span>
+                    </div>
+                  );
+                })
+              : null}
 
             {Object.keys(step.toolContract).length > 0 ? (
               <>

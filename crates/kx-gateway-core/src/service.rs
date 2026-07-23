@@ -2386,6 +2386,9 @@ impl KxGateway for GatewayService {
                             kind: s.kind,
                             model_id: s.model_id,
                             tool_contract: s.tool_contract.into_iter().collect(),
+                            skills: s.skills,
+                            integrations: s.integrations,
+                            datasets: s.datasets,
                         })
                         .collect(),
                     edges: app

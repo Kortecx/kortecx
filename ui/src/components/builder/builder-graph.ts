@@ -48,6 +48,16 @@ export interface BuilderStep {
    *  (byte-identical to before). The SERVER builds the union warrant + drives the loop
    *  (SN-8: client tool_grants stay refused). */
   readonly toolContract: Readonly<Record<string, string>>;
+  /** APP ONLY: the catalog SKILL names bound to this step. This and the two below are the
+   *  per-node capability BINDINGS — they name entries in the App envelope's `references`,
+   *  which stays the declaration (instructions ref, credential name, corpus). Only the App
+   *  canvas offers them: a plain workflow has no `references` to name into. Empty ⇒ the
+   *  blueprint omits the key ⇒ byte-identical to a graph authored before they existed. */
+  readonly skills: readonly string[];
+  /** APP ONLY: the INTEGRATION endpoints bound to this step. */
+  readonly connections: readonly string[];
+  /** APP ONLY: the DATASET names this step grounds on. */
+  readonly datasets: readonly string[];
   /** MODEL agentic: the per-step model-turn budget (default 8; `0 < maxTurns ≤ 8`). */
   readonly maxTurns?: number;
   /** MODEL agentic: the per-step total tool-call budget (default 20, ceiling 20 —
@@ -318,6 +328,9 @@ export function newStep(kind: BuilderStepKind, id: string): BuilderStep {
     toolId: "",
     toolVersion: "",
     toolContract: {},
+    skills: [],
+    connections: [],
+    datasets: [],
   };
 }
 
@@ -435,6 +448,17 @@ function roleLabel(role: string): string {
 }
 
 /**
+ * A proposed step, optionally carrying the per-node capability bindings a DERIVED App step
+ * has and a plain `proposeWorkflow` step does not. One shape serves both callers: the
+ * proposer has no App to name capabilities into, so its steps simply omit them.
+ */
+export type ProposedStepWithCapabilities = ProposedWorkflowStep & {
+  readonly skills?: readonly string[];
+  readonly integrations?: readonly string[];
+  readonly datasets?: readonly string[];
+};
+
+/**
  * Lower an NL-proposed workflow (from the gateway `proposeWorkflow`) into builder steps +
  * edges the canvas can apply. Each proposed step becomes a MODEL node labelled by its role,
  * with the role's curated persona framing prepended to the intent — the SAME client-side,
@@ -444,7 +468,7 @@ function roleLabel(role: string): string {
  * warrants the confirmed DAG (SN-8); this only shapes what is proposed onto the canvas.
  */
 export function proposalToBuilderGraph(
-  steps: readonly ProposedWorkflowStep[],
+  steps: readonly ProposedStepWithCapabilities[],
   edges: readonly { readonly parent: number; readonly child: number }[],
   startId: number,
 ): PatternInsert {
@@ -462,6 +486,11 @@ export function proposalToBuilderGraph(
       prompt,
       modelId: s.modelId,
       toolContract: { ...s.toolContract },
+      // A derived step carries its own capability bindings onto the node; a plain
+      // proposal has none to carry.
+      skills: [...(s.skills ?? [])],
+      connections: [...(s.integrations ?? [])],
+      datasets: [...(s.datasets ?? [])],
     };
   });
   const outEdges: BuilderEdge[] = [];

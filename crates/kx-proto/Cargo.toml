@@ -7,7 +7,10 @@ name = "kx-proto"
 # reason 0.4.0 → 0.5.0 was taken for the additive GetScaffoldStatus fields.
 # 0.8.0 — GetAppManifestResponse gains `datasets` (field 7): wire-additive (proto-breaking
 # clean), but the generated struct gains a pub field ⇒ breaking-in-Rust, same minor bump.
-version = "0.10.0"
+# 0.10.0 -> 0.11.0: `DerivedAppStep` gained the per-step capability bindings. Additive on
+# the WIRE (new field numbers), but a prost struct's public fields make it a Rust
+# struct-literal break — which on a Cargo 0.x crate is a MINOR bump, never a patch.
+version = "0.11.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }

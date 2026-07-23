@@ -337,15 +337,53 @@ fn intersect_capabilities(
         ));
     }
 
+    if plan.folded_app_level {
+        notices.push(
+            "the design attached some capabilities to the app rather than to a step — they \
+             were placed on the first step; open any step to move them"
+                .to_string(),
+        );
+    }
+
+    // Every axis is resolved PER STEP and unioned into the app-level sets. The union is the
+    // DECLARATION a client writes into `references.*`; the per-step lists are the BINDINGS
+    // the runtime resolves against it. Both travel because they answer different questions:
+    // "what does this App need registered?" and "which node uses it?".
     let mut app_tools: BTreeMap<String, String> = BTreeMap::new();
-    let mut dropped_tools: Vec<String> = Vec::new();
+    let mut app_skills: Vec<String> = Vec::new();
+    let mut app_connections: Vec<String> = Vec::new();
+    let mut app_datasets: Vec<String> = Vec::new();
+    let mut dropped: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let steps: Vec<DerivedStep> = plan
         .steps
         .iter()
         .map(|s| {
-            let (granted, dropped) = menu.resolve(&s.tools);
-            dropped_tools.extend(dropped);
+            let (granted, tools_dropped) = menu.resolve(&s.tools);
+            dropped.entry("tools").or_default().extend(tools_dropped);
             app_tools.extend(granted.iter().map(|(k, v)| (k.clone(), v.clone())));
+
+            // Each axis independently: one invented name costs only itself, never the real
+            // capabilities beside it and never the step.
+            let mut resolve = |axis: &'static str, available: &[String], named: &[String]| {
+                let (kept, gone) = CapabilityMenu::resolve_names(available, named);
+                dropped.entry(axis).or_default().extend(gone);
+                kept
+            };
+            let skills = resolve("skills", &menu.skills, &s.skills);
+            let integrations = resolve("integrations", &menu.connections, &s.integrations);
+            let datasets = resolve("datasets", &menu.datasets, &s.datasets);
+            for (app, step) in [
+                (&mut app_skills, &skills),
+                (&mut app_connections, &integrations),
+                (&mut app_datasets, &datasets),
+            ] {
+                for n in step {
+                    if !app.contains(n) {
+                        app.push(n.clone());
+                    }
+                }
+            }
+
             let recipe = recipes.recipe(&RoleId(s.role.clone()));
             DerivedStep {
                 role: s.role.clone(),
@@ -355,33 +393,29 @@ fn intersect_capabilities(
                 kind: "plain".to_string(),
                 model_id: recipe.map(|r| r.model_id.0.clone()).unwrap_or_default(),
                 tool_contract: granted,
+                skills,
+                integrations,
+                datasets,
             }
         })
         .collect();
-    if !dropped_tools.is_empty() {
-        dropped_tools.sort_unstable();
-        dropped_tools.dedup();
-        notices.push(format!(
-            "not attached — outside what this account can fire: {}",
-            dropped_tools.join(", ")
-        ));
-    }
 
-    let (skills, skills_dropped) = CapabilityMenu::resolve_names(&menu.skills, &plan.skills);
-    let (connections, conn_dropped) =
-        CapabilityMenu::resolve_names(&menu.connections, &plan.integrations);
-    let (datasets, ds_dropped) = CapabilityMenu::resolve_names(&menu.datasets, &plan.datasets);
-    for (label, dropped) in [
-        ("skills", skills_dropped),
-        ("integrations", conn_dropped),
-        ("datasets", ds_dropped),
-    ] {
-        if !dropped.is_empty() {
-            notices.push(format!(
-                "{label} not found, so not attached: {}",
-                dropped.join(", ")
-            ));
+    // Report each axis ONCE across the whole design, not once per step: the author wants to
+    // know a name was unavailable, not which of four steps asked for it first.
+    for (axis, mut names) in dropped {
+        if names.is_empty() {
+            continue;
         }
+        names.sort_unstable();
+        names.dedup();
+        notices.push(if axis == "tools" {
+            format!(
+                "not attached — outside what this account can fire: {}",
+                names.join(", ")
+            )
+        } else {
+            format!("{axis} not found, so not attached: {}", names.join(", "))
+        });
     }
 
     let derived = DerivedApp {
@@ -393,9 +427,9 @@ fn intersect_capabilities(
             .filter_map(|&(p, c)| Some((u32::try_from(p).ok()?, u32::try_from(c).ok()?)))
             .collect(),
         tools: app_tools,
-        skills,
-        connections,
-        datasets,
+        skills: app_skills,
+        connections: app_connections,
+        datasets: app_datasets,
         notices,
         ..DerivedApp::default()
     };
@@ -599,12 +633,16 @@ mod tests {
         }
     }
 
+    /// The per-STEP shape the contract now teaches: step 0 reaches a tool, step 1 carries
+    /// the skill and the grounding, and the step that merely joins them asks for nothing.
     const FAN_OUT: &str = "{\"app\":{\"name\":\"Market Scan\",\"description\":\"Scans and \
 reports.\",\"steps\":[{\"role\":\"researcher\",\"intent\":\"Gather pricing\",\"tools\":\
-[\"mcp-echo/echo\"]},{\"role\":\"analyst\",\"intent\":\"Gather reviews\",\"tools\":[]},\
-{\"role\":\"writer\",\"intent\":\"Write the brief\",\"tools\":[]}],\"edges\":[{\"parent\":0,\
-\"child\":2},{\"parent\":1,\"child\":2}],\"skills\":[\"drafting\"],\"integrations\":[],\
-\"datasets\":[\"handbook\"]}}";
+[\"mcp-echo/echo\"],\"skills\":[],\"integrations\":[],\"datasets\":[]},\
+{\"role\":\"analyst\",\"intent\":\"Gather reviews\",\"tools\":[],\"skills\":[\"drafting\"],\
+\"integrations\":[\"gmail\"],\"datasets\":[\"handbook\"]},\
+{\"role\":\"writer\",\"intent\":\"Write the brief\",\"tools\":[],\"skills\":[],\
+\"integrations\":[],\"datasets\":[]}],\"edges\":[{\"parent\":0,\
+\"child\":2},{\"parent\":1,\"child\":2}]}}";
 
     /// The end-to-end shape claim: a fan-out survives decode, compile AND the mapping to the
     /// wire, so two steps with no incoming edge really do reach the console as parallel.
@@ -660,18 +698,81 @@ reports.\",\"steps\":[{\"role\":\"researcher\",\"intent\":\"Gather pricing\",\"t
         );
     }
 
-    /// The app-level axes are intersected too, with the same posture: a real skill beside an
-    /// invented one keeps the real one and reports the other.
+    /// ★ CAPABILITIES LAND ON THE STEP THAT ASKED. Every axis is intersected per step, and
+    /// the app-level lists are the UNION — the declaration set a client writes into
+    /// `references`. A step that asked for nothing carries nothing: that discrimination is
+    /// the whole reason the axes moved off the app.
     #[test]
-    fn app_level_axes_intersect_and_report() {
+    fn every_axis_binds_to_the_step_that_asked_and_the_app_carries_the_union() {
+        let app = derived(run(&[FAN_OUT], &scheduled("scan the market"), &menu()));
+        assert_eq!(app.steps.len(), 3);
+        assert_eq!(
+            app.steps[0].tool_contract.get("mcp-echo/echo"),
+            Some(&"1".into())
+        );
+        assert_eq!(app.steps[1].skills, vec!["drafting".to_string()]);
+        assert_eq!(app.steps[1].integrations, vec!["gmail".to_string()]);
+        assert_eq!(app.steps[1].datasets, vec!["handbook".to_string()]);
+        assert!(
+            app.steps[0].skills.is_empty() && app.steps[2].skills.is_empty(),
+            "a step that did not ask does not receive"
+        );
+        assert!(
+            app.steps[2].tool_contract.is_empty()
+                && app.steps[2].integrations.is_empty()
+                && app.steps[2].datasets.is_empty(),
+            "the joining step needs nothing"
+        );
+        // The union is the DECLARATION set — what must be registered for this design to run.
+        assert_eq!(app.skills, vec!["drafting".to_string()]);
+        assert_eq!(app.connections, vec!["gmail".to_string()]);
+        assert_eq!(app.datasets, vec!["handbook".to_string()]);
+        assert_eq!(app.tools.get("mcp-echo/echo"), Some(&"1".to_string()));
+    }
+
+    /// The good-beside-bad rule on the NON-tool axes: an invented skill costs only itself,
+    /// the real one on the same step survives, and the drop is reported once for the whole
+    /// design rather than once per step.
+    #[test]
+    fn an_invented_name_on_any_axis_costs_only_itself_and_is_reported_once() {
         let mixed = FAN_OUT.replace(
             "\"skills\":[\"drafting\"]",
             "\"skills\":[\"drafting\",\"no-such-skill\"]",
         );
         let app = derived(run(&[&mixed], &scheduled("scan"), &menu()));
+        assert_eq!(app.steps[1].skills, vec!["drafting".to_string()]);
         assert_eq!(app.skills, vec!["drafting".to_string()]);
-        assert_eq!(app.datasets, vec!["handbook".to_string()]);
-        assert!(app.notices.iter().any(|n| n.contains("no-such-skill")));
+        assert_eq!(
+            app.notices
+                .iter()
+                .filter(|n| n.contains("no-such-skill"))
+                .count(),
+            1,
+            "one advisory for the design, not one per step: {:?}",
+            app.notices
+        );
+    }
+
+    /// A model answering in the OLD app-level shape still gets a usable design — the names
+    /// fold onto the entry step (where `RunApp` would have bound them anyway) and the author
+    /// is TOLD the design was adjusted rather than left to wonder why step 0 grew a skill.
+    #[test]
+    fn a_legacy_app_level_design_folds_onto_the_entry_step_with_a_notice() {
+        const LEGACY: &str = "{\"app\":{\"name\":\"Scan\",\"description\":\"d\",\"steps\":[\
+{\"role\":\"researcher\",\"intent\":\"a\",\"tools\":[]},\
+{\"role\":\"writer\",\"intent\":\"b\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}],\
+\"skills\":[\"drafting\"],\"datasets\":[\"handbook\"]}}";
+        let app = derived(run(&[LEGACY], &scheduled("scan"), &menu()));
+        assert_eq!(app.steps[0].skills, vec!["drafting".to_string()]);
+        assert_eq!(app.steps[0].datasets, vec!["handbook".to_string()]);
+        assert!(app.steps[1].skills.is_empty());
+        assert!(
+            app.notices
+                .iter()
+                .any(|n| n.contains("rather than to a step")),
+            "the adjustment must be told: {:?}",
+            app.notices
+        );
     }
 
     /// A design naming a capability on a serve that offers NONE must still produce the app —

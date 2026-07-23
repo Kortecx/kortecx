@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from .blueprints import (
@@ -75,9 +75,23 @@ class Task:
     ``eq=False`` keeps the default identity hash/eq: a :class:`Task` is its own
     node, so reusing one object twice in an expression reuses the node (the DAG
     reuse rule). Build one via :func:`pure` / :func:`model`.
+
+    ``app_skills`` / ``app_connections`` / ``app_datasets`` are the per-node capability
+    BINDINGS — catalog names this step uses when the chain becomes an App (:func:`app`).
+    They name entries in the App envelope's ``references``, so they are meaningful ONLY on
+    the App path; the plain workflow lowering (:meth:`Chain.build` /
+    :meth:`Chain.from_blueprint`) has no ``references`` to resolve them against and REFUSES a
+    non-empty one. Off the wire: they ride in the blueprint JSON, never in a StepInput.
     """
 
     step: StepInput
+    app_skills: List[str] = field(default_factory=list)
+    app_connections: List[str] = field(default_factory=list)
+    app_datasets: List[str] = field(default_factory=list)
+
+    def has_app_bindings(self) -> bool:
+        """True when this step carries an App-envelope capability binding."""
+        return bool(self.app_skills or self.app_connections or self.app_datasets)
 
     # --- operator sugar (lower identically to the string DSL) ---
     def __rshift__(self, other: "_Node") -> "_Seq":
@@ -180,6 +194,9 @@ def model(
     max_turns: Optional[int] = None,
     max_tool_calls: Optional[int] = None,
     reasoning: Optional[str] = None,
+    skills: "Optional[Sequence[str]]" = None,
+    connections: "Optional[Sequence[str]]" = None,
+    datasets: "Optional[Sequence[str]]" = None,
     **params: Union[bytes, str],
 ) -> Task:
     """A MODEL step. ``prompt`` is the instruction; ``params`` are extra step params.
@@ -217,7 +234,10 @@ def model(
             max_turns=max_turns,
             max_tool_calls=max_tool_calls,
             local_tools=local_tools,
-        )
+        ),
+        app_skills=list(skills or []),
+        app_connections=list(connections or []),
+        app_datasets=list(datasets or []),
     )
 
 
@@ -387,7 +407,8 @@ class Chain:
         chain's context bundles (if any) ride on the request (PR-7b)."""
         nodes, edges = self._lower()
         builder = BlueprintBuilder(self._seed)
-        for t in nodes:
+        for i, t in enumerate(nodes):
+            _refuse_app_bindings_on_workflow(i, t)
             builder.add_step(replace(t.step, params=_effective_params(t.step)))
         for parent, child in edges:
             builder.add_edge(EdgeInput(parent=parent, child=child, edge="data"))
@@ -425,6 +446,14 @@ class Chain:
             if params:
                 # params values are pre-encoding strings (the lowering form).
                 step["params"] = {k: _as_str(v) for k, v in params.items()}
+            # The per-node App capability bindings. Emitted only when non-empty, so a chain
+            # that binds nothing produces byte-identical blueprint JSON.
+            if t.app_skills:
+                step["skills"] = list(t.app_skills)
+            if t.app_connections:
+                step["connections"] = list(t.app_connections)
+            if t.app_datasets:
+                step["datasets"] = list(t.app_datasets)
             steps.append(step)
         bp: Dict[str, object] = {
             "seed": self._seed,
@@ -460,9 +489,10 @@ class Chain:
         raw_steps = _get(spec, "steps", [])
         if not isinstance(raw_steps, list):
             raise ChainError("blueprint `steps` must be a list")
-        for d in raw_steps:
+        for i, d in enumerate(raw_steps):
             if not isinstance(d, Mapping):
                 raise ChainError("each blueprint step must be an object")
+            _refuse_spec_app_bindings(i, d)
             step = _step_from_spec(d)
             # Fold the budget exactly as `build()` does (a no-op when already folded).
             builder.add_step(replace(step, params=_effective_params(step)))
@@ -527,6 +557,49 @@ def _opt_int(v: object) -> Optional[int]:
 def _str_map(v: object) -> Dict[str, str]:
     """A ``{str: str}`` map from an untyped JSON value (non-maps ⇒ empty)."""
     return {str(k): str(val) for k, val in v.items()} if isinstance(v, Mapping) else {}
+
+
+def _refuse_app_bindings_on_workflow(index: int, t: Task) -> None:
+    """Refuse an App-envelope capability binding on the WORKFLOW lowering path.
+
+    A ``SubmitWorkflow`` has no ``references`` for a ``skills`` / ``connections`` /
+    ``datasets`` NAME to point at, so the runtime could only drop it. Fail at authoring with a
+    message that says where the field IS honoured — mirroring the Rust
+    ``kx_blueprint::to_request`` refusal, so all three surfaces agree.
+    """
+    if not t.has_app_bindings():
+        return
+    named = [
+        name
+        for name, present in (
+            ("skills", bool(t.app_skills)),
+            ("connections", bool(t.app_connections)),
+            ("datasets", bool(t.app_datasets)),
+        )
+        if present
+    ]
+    raise ChainError(
+        f"step {index} declares {' + '.join(named)} — a per-step capability list is an "
+        "App-envelope binding that names an entry in the App's references, and RunApp is what "
+        "resolves it. A workflow has no references to name into: author this as an App "
+        "(app(...)), or grant the step a tool directly with tools=[...]."
+    )
+
+
+def _refuse_spec_app_bindings(index: int, d: "Mapping[str, object]") -> None:
+    """As :func:`_refuse_app_bindings_on_workflow`, over a parsed blueprint step."""
+    named = [
+        name
+        for name in ("skills", "connections", "datasets")
+        if isinstance(d.get(name), list) and d.get(name)
+    ]
+    if not named:
+        return
+    raise ChainError(
+        f"step {index} declares {' + '.join(named)} — a per-step capability list is an "
+        "App-envelope binding resolved by RunApp; a workflow blueprint has no references to "
+        "name into. Author it as an App, or grant the step a tool directly via tool_contract."
+    )
 
 
 def _step_from_spec(d: "Mapping[str, object]") -> StepInput:

@@ -17,6 +17,8 @@
 
 import { toUiError } from "../../kx/errors";
 import { useSaveApp } from "../../kx/use-apps";
+import { unbindFromSteps } from "../../lib/app-envelope";
+import { BindingSummary } from "./BindingSummary";
 import { type PickedSkill, SkillsPicker } from "./CapabilityPickers";
 
 interface SkillRefJson {
@@ -60,12 +62,21 @@ export function SkillsRail({
       instructions_ref: s.instructionsRef,
       ...(s.tools && Object.keys(s.tools).length > 0 ? { tools: s.tools } : {}),
     }));
+    // Detaching a skill scrubs its binding from every step too, so the blueprint never names
+    // a step-binding to a `references.skills` entry that is gone.
+    const kept = new Set(next.map((s) => s.name));
+    let base = envelope;
+    for (const s of attached) {
+      if (!kept.has(s.name)) {
+        base = unbindFromSteps(base, "skills", s.name);
+      }
+    }
     // Omit-empty without `delete` (biome perf rule): rebuild the objects.
     const { skills: _drop, ...restRefs } = {
-      ...(envelope.references as Record<string, unknown> | undefined),
+      ...(base.references as Record<string, unknown> | undefined),
     };
     const refs: Record<string, unknown> = skills.length > 0 ? { ...restRefs, skills } : restRefs;
-    const { references: _dropRefs, ...restEnv } = envelope;
+    const { references: _dropRefs, ...restEnv } = base;
     const nextEnv: Record<string, unknown> =
       Object.keys(refs).length > 0 ? { ...restEnv, references: refs } : restEnv;
     save.mutate({ handle, envelope: nextEnv });
@@ -75,8 +86,9 @@ export function SkillsRail({
     <div className="skills-rail" data-testid="app-skills-rail">
       <h3>Skills</h3>
       <p className="muted">
-        Attached skills steer the App's entry step (instructions + tool <em>wishes</em>; granted
-        only at run, <code className="mono">wish ∩ grants ∩ fireable</code>).
+        Attached skills are available to the App (instructions + tool <em>wishes</em>; granted only
+        at run, <code className="mono">wish ∩ grants ∩ fireable</code>). Each binds to the step(s)
+        that use it — edit which on the canvas (Lineage → Edit structure).
         {locked ? " App is locked — unlock to change skills." : ""}
       </p>
       <SkillsPicker
@@ -86,6 +98,12 @@ export function SkillsRail({
         disabledTitle={locked ? "App is locked" : "Saving…"}
         groupTestId="app-skills"
         itemTestId="app-skill"
+      />
+      <BindingSummary
+        envelope={envelope}
+        axis="skills"
+        names={attached.map((s) => s.name)}
+        testId="app-skills-binds"
       />
       {err ? (
         <p className="field-error" data-testid="app-skills-error">

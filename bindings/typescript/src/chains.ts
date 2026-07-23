@@ -94,7 +94,26 @@ export class Task {
      * terminal and folds the server-derived name into `toolContract` ({@link Chain.build}).
      */
     readonly localTools: readonly LocalToolDef[] = [],
+    /**
+     * APP ONLY: the per-node capability BINDINGS — catalog skill names, connection
+     * descriptors, dataset names this step uses. They name entries in an App envelope's
+     * `references`, so they are meaningful ONLY when this chain becomes an App (`app(...)`);
+     * on the plain workflow path {@link Chain.build} / {@link Chain.fromBlueprint} have no
+     * `references` to resolve them against and REFUSE a non-empty one. Carried on the step,
+     * not the chain, because a fan-out binds different capabilities to different nodes.
+     */
+    readonly appSkills: readonly string[] = [],
+    readonly appConnections: readonly string[] = [],
+    readonly appDatasets: readonly string[] = [],
   ) {}
+
+  /** True when this step carries an App-envelope capability binding (skills / connections /
+   *  datasets) — meaningful only on the App path; refused on the workflow path. */
+  hasAppBindings(): boolean {
+    return (
+      this.appSkills.length > 0 || this.appConnections.length > 0 || this.appDatasets.length > 0
+    );
+  }
 
   /** The {@link StepInput} this task lowers to (the builder encodes params). */
   toStepInput(): StepInput {
@@ -250,6 +269,12 @@ export const task = {
       maxTurns?: number;
       maxToolCalls?: number;
       reasoning?: ReasoningMode;
+      /** APP ONLY: catalog skill names bound to this step (see {@link Task.appSkills}). */
+      skills?: readonly string[];
+      /** APP ONLY: connection descriptors bound to this step. */
+      connections?: readonly string[];
+      /** APP ONLY: dataset names this step grounds on. */
+      datasets?: readonly string[];
     } = {},
   ): Task {
     const stepParams: Record<string, string> = { ...params };
@@ -268,6 +293,9 @@ export const task = {
       opts.maxTurns,
       opts.maxToolCalls,
       locals,
+      [...(opts.skills ?? [])],
+      [...(opts.connections ?? [])],
+      [...(opts.datasets ?? [])],
     );
   },
   /**
@@ -899,7 +927,10 @@ export class Chain {
     resolved?: ReadonlyMap<LocalToolDef, string>,
   ): MessageInitShape<typeof SubmitWorkflowRequestSchema> {
     const builder = new BlueprintBuilder(this.seed);
-    for (const t of this.nodes) {
+    for (let i = 0; i < this.nodes.length; i++) {
+      const t = this.nodes[i];
+      if (t === undefined) continue;
+      refuseAppBindingsOnWorkflow(i, t);
       const step = t.toStepInput();
       if (resolved !== undefined && t.localTools.length > 0) {
         const contract: Record<string, string> = { ...step.toolContract };
@@ -935,12 +966,22 @@ export class Chain {
    */
   toBlueprint(): DagSpecJson {
     const low = this.lower();
-    const steps: DagSpecStep[] = low.steps.map((s) => {
+    // `lower()` returns wire StepInputs, which do not carry the App bindings — read those
+    // off the source Tasks by position (same order). The App path preserves them in the
+    // blueprint JSON; the workflow path never reaches here with one set.
+    const tasks = this.nodes;
+    const steps: DagSpecStep[] = low.steps.map((s, i) => {
       const step: DagSpecStep = { kind: s.kind };
       if (s.model_id) step.model_id = s.model_id;
       if (s.prompt) step.prompt = s.prompt;
       if (Object.keys(s.tool_contract).length > 0) step.tool_contract = s.tool_contract;
       if (Object.keys(s.params).length > 0) step.params = s.params;
+      const t = tasks[i];
+      // Emitted only when non-empty, so a chain that binds nothing produces byte-identical
+      // blueprint JSON to one authored before these existed.
+      if (t && t.appSkills.length > 0) step.skills = [...t.appSkills];
+      if (t && t.appConnections.length > 0) step.connections = [...t.appConnections];
+      if (t && t.appDatasets.length > 0) step.datasets = [...t.appDatasets];
       return step;
     });
     const bp: DagSpecJson = { seed: this.seed, execution_mode: "frozen", steps };
@@ -974,9 +1015,10 @@ export class Chain {
    */
   static fromBlueprint(spec: DagSpecJson): MessageInitShape<typeof SubmitWorkflowRequestSchema> {
     const builder = new BlueprintBuilder(spec.seed ?? 0);
-    for (const d of spec.steps ?? []) {
+    (spec.steps ?? []).forEach((d, i) => {
+      refuseSpecAppBindings(i, d);
       builder.addStep(stepFromSpec(d));
-    }
+    });
     for (const e of spec.edges ?? []) {
       builder.addEdge({
         parent: e.parent,
@@ -1015,6 +1057,24 @@ export interface DagSpecStep {
   args?: Record<string, string | number | boolean>;
   max_turns?: number;
   max_tool_calls?: number;
+  /**
+   * APP ONLY — the catalog SKILL names bound to this step, naming entries in the App
+   * envelope's `references.skills[].name`.
+   *
+   * This and the two below are BINDINGS, not declarations: `references` still holds the
+   * skill's instructions ref, the credential name and the corpus; the step says only which
+   * of them it uses. `RunApp` resolves them, and a capability NO step names binds where it
+   * always did — the entry step — so a blueprint that binds nothing behaves exactly as
+   * before and compiles to the same identity.
+   *
+   * A plain `SubmitWorkflow` has no `references` to name into, so lowering one of these as a
+   * workflow is refused rather than silently dropped.
+   */
+  skills?: string[];
+  /** APP ONLY — connection DESCRIPTORS bound to this step (`references.connections[]`). */
+  connections?: string[];
+  /** APP ONLY — DATASET names this step grounds on (`references.datasets[]`). */
+  datasets?: string[];
 }
 
 /** A portable blueprint (the `kx blueprint run --file` JSON shape). */
@@ -1037,6 +1097,36 @@ function inferKind(d: DagSpecStep): StepKind {
 /** One blueprint step object → a {@link StepInput}, folding the CLI args-separated form
  * (a `args` map ⇒ `kx.tool.args`; `max_turns`/`max_tool_calls` ⇒ the budget keys) so
  * both artifact forms import to the same request. */
+/** Refuse an App-envelope capability binding on the WORKFLOW lowering path — a
+ *  `SubmitWorkflow` has no `references` for a `skills`/`connections`/`datasets` NAME to
+ *  point at, so the runtime could only drop it. Fails at authoring with a message that says
+ *  where the field IS honoured — mirroring the Rust `kx_blueprint::to_request` refusal, so
+ *  all three surfaces agree. */
+function refuseAppBindingsOnWorkflow(index: number, t: Task): void {
+  if (!t.hasAppBindings()) return;
+  const named = [
+    t.appSkills.length > 0 ? "skills" : null,
+    t.appConnections.length > 0 ? "connections" : null,
+    t.appDatasets.length > 0 ? "datasets" : null,
+  ].filter((x): x is string => x !== null);
+  throw new ChainParseError(
+    `step ${index} declares ${named.join(" + ")} — a per-step capability list is an App-envelope binding that names an entry in the App's references, and RunApp is what resolves it. A workflow has no references to name into: author this as an App (app(...)), or grant the step a tool directly with { tools: [...] }.`,
+  );
+}
+
+/** As {@link refuseAppBindingsOnWorkflow}, over a parsed blueprint step. */
+function refuseSpecAppBindings(index: number, d: DagSpecStep): void {
+  const named = [
+    d.skills && d.skills.length > 0 ? "skills" : null,
+    d.connections && d.connections.length > 0 ? "connections" : null,
+    d.datasets && d.datasets.length > 0 ? "datasets" : null,
+  ].filter((x): x is string => x !== null);
+  if (named.length === 0) return;
+  throw new ChainParseError(
+    `step ${index} declares ${named.join(" + ")} — a per-step capability list is an App-envelope binding resolved by RunApp; a workflow blueprint has no references to name into. Author it as an App, or grant the step a tool directly via tool_contract.`,
+  );
+}
+
 function stepFromSpec(d: DagSpecStep): StepInput {
   const kind = d.kind ?? inferKind(d);
   const params: Record<string, Uint8Array | string> = { ...(d.params ?? {}) };

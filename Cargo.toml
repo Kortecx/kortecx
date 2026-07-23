@@ -187,8 +187,8 @@ kx-ollama            = { path = "crates/kx-ollama",            version = "0.1.0"
 kx-capability        = { path = "crates/kx-capability",        version = "0.1.1" }
 kx-executor          = { path = "crates/kx-executor",          version = "0.1.1" }
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.1.1" }
-kx-proto             = { path = "crates/kx-proto",             version = "0.10.0" }
-kx-blueprint         = { path = "crates/kx-blueprint",         version = "0.1.0" }
+kx-proto             = { path = "crates/kx-proto",             version = "0.11.0" }
+kx-blueprint         = { path = "crates/kx-blueprint",         version = "0.2.0" }
 kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.2.0" }
 kx-worker            = { path = "crates/kx-worker",            version = "0.2.0" }
 # The single-node engine — kx-chaos reuses its topology helpers (`derive_child_motes`,
@@ -196,7 +196,7 @@ kx-worker            = { path = "crates/kx-worker",            version = "0.2.0"
 kx-runtime           = { path = "crates/kx-runtime",           version = "0.1.1" }
 # The workflow engine (codename Morphic, P4.1) — compiles a WorkflowDef to a
 # Mote DAG. Sits above the scheduler; emits kx-mote + kx-warrant types only.
-kx-workflow          = { path = "crates/kx-workflow",          version = "0.1.1" }
+kx-workflow          = { path = "crates/kx-workflow",          version = "0.2.0" }
 # Deterministic document chunker (RC4a) — pure, std-only recursive character text
 # splitter; FFI-free, zero deps. Both the gateway ingest + the harness use it.
 kx-chunk             = { path = "crates/kx-chunk",             version = "0.1.0" }
