@@ -141,10 +141,12 @@ pub use memory::{
 };
 pub use propose::{ProposedStep, WorkflowProposal, WorkflowProposer};
 pub use scaffold::{
-    authoring_prompt, body_is_empty, derive_phase, distill_module_api, split_done_pending,
-    strip_code_fence, try_committed_body, AppScaffolder, ScaffoldFile, ScaffoldPhase,
-    ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
-    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, MANIFEST_MARKER_PATH, SKELETON,
+    authoring_prompt, body_is_empty, codified_consumed_path, codified_path_allowed,
+    codified_source_path, derive_phase, distill_module_api, split_done_pending, strip_code_fence,
+    try_committed_body, AppScaffolder, ScaffoldFile, ScaffoldLane, ScaffoldPhase, ScaffoldStatus,
+    ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE, APP_SCAFFOLD_WRITE_RECIPE_HANDLE,
+    CODIFIED_CONSUMED_PATHS, CODIFIED_SOURCE_EXTS, CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH,
+    MANIFEST_MARKER_PATH, SKELETON,
 };
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays

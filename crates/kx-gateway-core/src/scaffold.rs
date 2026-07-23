@@ -87,6 +87,85 @@ pub const SKELETON: &[ScaffoldFile] = &[
     },
 ];
 
+/// Which lane a scaffold is authoring for. Replaces the old `Option<&str> framework`, which
+/// could only say hosted-or-not and had no room for the scheduled lane's own split.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScaffoldLane<'a> {
+    /// The scheduled CONTEXTUAL lane: markdown only. The app's own notes steer the model at
+    /// run; nothing it writes is parsed by the runtime.
+    Contextual,
+    /// The scheduled CODIFIED lane: the model authors the configuration the runtime is
+    /// orchestrated from, plus supporting source and reference files.
+    Codified,
+    /// The hosted (Experience) lane, for the named framework wire label.
+    Hosted(&'a str),
+}
+
+/// The codified project file the runtime PARSES into the App's blueprint — the DAG the run
+/// executes. Read once at the end of a codified scaffold and folded back onto the envelope.
+pub const CODIFIED_WORKFLOW_PATH: &str = "workflow.json";
+
+/// The codified project file declaring the tool grants the App WISHES for, as
+/// `{"tools":{"<id>":"<version>"}}`. Folded onto `steering_config.tools.requested_grants`,
+/// which the run still intersects with the caller's own authority — a wish, never a grant.
+pub const CODIFIED_TOOLS_PATH: &str = "tools.json";
+
+/// Every codified project file the runtime CONSUMES rather than shows the model. Excluded
+/// from the run's context rail: they are the runtime's input, and feeding the model its own
+/// lowered DAG is noise that also spends the rail's byte budget.
+pub const CODIFIED_CONSUMED_PATHS: &[&str] = &[CODIFIED_WORKFLOW_PATH, CODIFIED_TOOLS_PATH];
+
+/// The file extensions a CODIFIED app may author beyond `.md`, and which ride the run's
+/// context rail so the model can read the project it is running inside.
+///
+/// An allow-list rather than "anything the model names": the rail folds these bodies into
+/// the launch Mote's context, so an unbounded set is an unbounded prompt. These are the
+/// shapes a configuration-and-notes project is actually made of; a binary or an archive has
+/// no business on a text rail.
+pub const CODIFIED_SOURCE_EXTS: &[&str] = &[
+    "json", "yaml", "yml", "toml", "py", "ts", "tsx", "js", "jsx", "sh", "sql", "txt",
+];
+
+/// `true` when a codified app may author `path` — `.md`, an allow-listed source extension,
+/// or one of the consumed configuration files.
+///
+/// Shared by the AUTHORING filter and the run's context rail so the two can never disagree
+/// about what a codified project contains. They ask different questions of the same answer:
+/// authoring asks "may the model write this?", the rail asks "does the model get to read it
+/// back?" — and the consumed files are the one place those differ.
+#[must_use]
+pub fn codified_path_allowed(path: &str) -> bool {
+    matches!(extension_of(path), Some("md")) || codified_source_path(path)
+}
+
+/// `true` for a codified path whose extension is in [`CODIFIED_SOURCE_EXTS`].
+#[must_use]
+pub fn codified_source_path(path: &str) -> bool {
+    extension_of(path).is_some_and(|e| CODIFIED_SOURCE_EXTS.contains(&e))
+}
+
+/// `true` for a project-root file the runtime parses rather than shows the model.
+///
+/// Matched at the ROOT only: `workflow.json` is the App's DAG, but `reference/workflow.json`
+/// is a worked example the model should read. Anchoring the two consumed names to the root
+/// keeps a plausible reference file from silently becoming the app's definition.
+#[must_use]
+pub fn codified_consumed_path(path: &str) -> bool {
+    !path.contains('/') && CODIFIED_CONSUMED_PATHS.contains(&path)
+}
+
+/// The lowercase extension of `path`, if it has one. Lowercase-EXACT (no case folding): the
+/// authoring filter and the rail must agree byte-for-byte on what they accept, and a rule
+/// that quietly accepts `.MD` in one place and not the other is the drift this avoids.
+fn extension_of(path: &str) -> Option<&str> {
+    let name = path.rsplit('/').next()?;
+    // `rsplit_once` rather than `rsplit`: a dotfile like `.gitignore` has no extension, and
+    // `rsplit('.').next()` would call the whole name one.
+    name.rsplit_once('.')
+        .map(|(_, ext)| ext)
+        .filter(|e| !e.is_empty())
+}
+
 /// The scaffold phase reported by `GetScaffoldStatus`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ScaffoldPhase {
@@ -134,8 +213,19 @@ pub trait AppScaffolder: Send + Sync {
     /// Start (or resume) the background scaffold of `branch_handle` toward `goal`.
     /// Returns `resumed` (true iff the branch already held ≥1 skeleton file). Spawns
     /// a background task and returns immediately (the propose-proxy contract).
-    fn start(&self, principal: &str, branch_handle: &str, goal: &str)
-        -> Result<bool, GatewayError>;
+    ///
+    /// `app_handle` + `envelope_json` mirror [`AppScaffolder::start_hosted`]: the host parses
+    /// the authoring MODE out of the opaque envelope (gateway-core keeps app bytes opaque),
+    /// and a codified scaffold folds what it authored back onto that App at the end — which
+    /// needs to know which App it is, and the branch handle is only conventionally the same.
+    fn start(
+        &self,
+        principal: &str,
+        app_handle: &str,
+        branch_handle: &str,
+        envelope_json: &[u8],
+        goal: &str,
+    ) -> Result<bool, GatewayError>;
 
     /// D213 Experience lane: start (or resume) a HOSTED-app scaffold — author the
     /// framework template's model-authored files (the visible page + README) into
@@ -730,10 +820,16 @@ pub fn distill_module_api(path: &str, body: &[u8]) -> Option<String> {
     Some(summary)
 }
 
-/// Build the authoring directive for one project file. `framework`:
-/// - `None` — the agentic (scheduled) lane: the fixed-skeleton markdown/JSON files.
-/// - `Some(fw)` — a hosted (Experience) framework project: the directive names the
-///   framework, hands the model the COMPLETE planned file set so it IMPORTS from sibling
+/// Build the authoring directive for one project file. `lane`:
+/// - [`ScaffoldLane::Contextual`] — the scheduled markdown lane: the fixed skeleton plus the
+///   planner's markdown extras.
+/// - [`ScaffoldLane::Codified`] — the scheduled lane where the model authors the
+///   configuration the runtime is orchestrated from. The two consumed files
+///   ([`CODIFIED_WORKFLOW_PATH`] / [`CODIFIED_TOOLS_PATH`]) get a STRICT-SHAPE directive,
+///   because the runtime parses them fail-closed: prose in `workflow.json` is not a bad
+///   file, it is an app with no DAG. Everything else gets the plain body directive.
+/// - [`ScaffoldLane::Hosted`] — a hosted (Experience) framework project: the directive names
+///   the framework, hands the model the COMPLETE planned file set so it IMPORTS from sibling
 ///   modules instead of inlining them (killing the single-file monolith), and demands
 ///   production-quality separation. `all_paths` is passed as prompt TEXT only (cheap;
 ///   orthogonal to the bounded sibling-BODY context that guards the model's decode batch).
@@ -750,7 +846,7 @@ pub fn authoring_prompt(
     path: &str,
     role: &str,
     goal: &str,
-    framework: Option<&str>,
+    lane: ScaffoldLane<'_>,
     all_paths: &[&str],
     has_siblings: bool,
     sibling_apis: &[(String, String)],
@@ -761,9 +857,9 @@ pub fn authoring_prompt(
     } else {
         ""
     };
-    match framework {
+    match lane {
         // Hosted (Experience) lane — a real, SEPARATED framework project.
-        Some(fw) => {
+        ScaffoldLane::Hosted(fw) => {
             let tree = if all_paths.len() > 1 {
                 format!(
                     "This file is ONE file of a project whose COMPLETE source set is: {}. \
@@ -804,13 +900,53 @@ pub fn authoring_prompt(
                 label = framework_label(fw),
             )
         }
-        // Scheduled (agentic) lane — the fixed agentic-app skeleton (unchanged directive).
-        None => format!(
+        // Scheduled CODIFIED lane — the two files the runtime PARSES get a strict-shape
+        // directive; the rest of the project is authored like any other file.
+        ScaffoldLane::Codified if codified_consumed_path(path) => {
+            format!(
+                "You are authoring the `{path}` of a durable, governed agentic application — \
+                 a file the RUNTIME PARSES, not documentation.\n\
+                 App goal: {goal}\n\n\
+                 {shape}\n\
+                 Return ONLY that JSON object — no commentary, no explanation, and no markdown \
+                 code fences. A file the runtime cannot parse leaves the app with nothing to run.",
+                shape = codified_shape_directive(path),
+            )
+        }
+        // Scheduled lane, ordinary file — the fixed agentic-app skeleton directive. Byte-
+        // identical to what the contextual lane has always emitted (the digest no-op).
+        ScaffoldLane::Contextual | ScaffoldLane::Codified => format!(
             "You are scaffolding files for a durable, governed agentic application.\n\
              App goal: {goal}\n\n\
              Write the COMPLETE contents of the file `{path}` — {role}. {siblings}\
              Return ONLY the file body — no commentary, no explanation, and no markdown code fences.",
         ),
+    }
+}
+
+/// The exact JSON shape the runtime will parse out of one consumed codified file.
+///
+/// Spelled out per file rather than as one generic "write valid JSON": these are decoded
+/// fail-closed, so a near-miss (a `steps` array of strings, a `tools` list instead of a map)
+/// costs a whole scaffold. The shapes mirror what `DagSpec` and `requested_grants` already
+/// accept, so nothing here is a second definition of either.
+fn codified_shape_directive(path: &str) -> &'static str {
+    if path == CODIFIED_TOOLS_PATH {
+        "Write a JSON object naming the MCP tools this app needs, as an id → version map:\n\
+         {\"tools\":{\"<tool id>\":\"<version>\"}}\n\
+         Name only tools the goal genuinely needs. Every entry is a REQUEST: the runtime \
+         still intersects it with what the caller is actually allowed to fire, so naming a \
+         tool cannot grant it. An app that needs no tools writes {\"tools\":{}}."
+    } else {
+        "Write a JSON object describing the workflow this app runs, as a step list plus the \
+         edges between them:\n\
+         {\"steps\":[{\"kind\":\"model\",\"prompt\":\"<what this step does>\"}],\
+         \"edges\":[{\"parent\":0,\"child\":1}]}\n\
+         Each step's `kind` is \"model\". `prompt` is the instruction that step runs. Edges \
+         are INDEXES into the step list and describe order: `{\"parent\":0,\"child\":1}` means \
+         step 1 runs after step 0 and reads its output. Keep it to the few steps the goal \
+         actually needs, in the order they must happen. A single-step app writes one step and \
+         no edges."
     }
 }
 
@@ -940,7 +1076,7 @@ mod tests {
             SKELETON[0].path,
             SKELETON[0].role,
             "summarize PDFs",
-            None,
+            ScaffoldLane::Contextual,
             &[],
             false,
             &[],
@@ -954,7 +1090,7 @@ mod tests {
             SKELETON[2].path,
             SKELETON[2].role,
             "summarize PDFs",
-            None,
+            ScaffoldLane::Contextual,
             &[],
             true,
             &[],
@@ -971,7 +1107,7 @@ mod tests {
             "src/App.tsx",
             "the root component",
             "a recipe card",
-            Some("vite_react"),
+            ScaffoldLane::Hosted("vite_react"),
             &all,
             false,
             &[],
@@ -1000,7 +1136,7 @@ mod tests {
             "src/App.tsx",
             "the root component",
             "a tip calculator",
-            Some("vite_react"),
+            ScaffoldLane::Hosted("vite_react"),
             &[
                 "src/App.tsx",
                 "src/actions.ts",
@@ -1013,7 +1149,15 @@ mod tests {
         assert!(p.contains("increment, decrement, reset"));
         assert!(p.contains("ResultDisplayProps { state: CalculatorState }"));
         // The scheduled lane never gets an API block, even if (hypothetically) handed one.
-        let sched = authoring_prompt("README.md", "the readme", "x", None, &[], true, &apis);
+        let sched = authoring_prompt(
+            "README.md",
+            "the readme",
+            "x",
+            ScaffoldLane::Contextual,
+            &[],
+            true,
+            &apis,
+        );
         assert!(!sched.contains("expose exactly these APIs"));
     }
 
@@ -1231,5 +1375,125 @@ mod tests {
         );
         assert_eq!(p, vec!["src/App.css".to_string()]);
         assert_eq!(derive_phase(&d, &p), ScaffoldPhase::Writing);
+    }
+
+    #[test]
+    fn codified_paths_accept_notes_config_and_source() {
+        for p in [
+            "README.md",
+            "reference/policy.md",
+            "config/routing.json",
+            "config/limits.yaml",
+            "schema/input.json",
+            "scripts/extract.py",
+            "queries/daily.sql",
+            "workflow.json",
+            "tools.json",
+        ] {
+            assert!(codified_path_allowed(p), "a codified app may author {p}");
+        }
+    }
+
+    #[test]
+    fn codified_paths_refuse_what_the_rail_cannot_carry() {
+        // The rail folds these BODIES into the launch Mote's context, so the allow-list is
+        // what keeps a project from becoming an unbounded prompt. A dotfile has no extension
+        // and must not be read as one.
+        for p in [
+            "assets/logo.png",
+            "data/dump.tar.gz",
+            "bin/tool.exe",
+            ".gitignore",
+            "Makefile",
+            "notes",
+        ] {
+            assert!(
+                !codified_path_allowed(p),
+                "a codified app must not author {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_consumed_files_are_matched_at_the_project_root_only() {
+        assert!(codified_consumed_path("workflow.json"));
+        assert!(codified_consumed_path("tools.json"));
+        // `reference/workflow.json` is a worked EXAMPLE the model should read, not the app's
+        // definition. Anchoring to the root is what keeps a plausible reference file from
+        // silently becoming the thing the runtime executes.
+        assert!(!codified_consumed_path("reference/workflow.json"));
+        assert!(!codified_consumed_path("config/tools.json"));
+        assert!(!codified_consumed_path("readme.md"));
+    }
+
+    #[test]
+    fn every_consumed_file_is_also_an_authorable_one() {
+        // Otherwise the lane would guarantee a file its own filter then drops.
+        for p in CODIFIED_CONSUMED_PATHS {
+            assert!(codified_path_allowed(p), "{p} must be authorable");
+            assert!(codified_consumed_path(p), "{p} must be consumed");
+        }
+    }
+
+    #[test]
+    fn extensions_are_matched_lowercase_exactly() {
+        // The authoring filter and the run's rail must agree BYTE for byte on what they
+        // accept; a rule that quietly folds case in one place and not the other is exactly
+        // the drift the shared predicate exists to prevent.
+        assert!(codified_path_allowed("a.md"));
+        assert!(!codified_path_allowed("a.MD"));
+        assert!(!codified_path_allowed("a.Json"));
+    }
+
+    #[test]
+    fn the_codified_directive_is_only_used_for_the_files_the_runtime_parses() {
+        // A consumed file gets the strict-shape directive…
+        let wf = authoring_prompt(
+            CODIFIED_WORKFLOW_PATH,
+            "the workflow",
+            "summarize a changelog",
+            ScaffoldLane::Codified,
+            &[],
+            false,
+            &[],
+        );
+        assert!(wf.contains("RUNTIME PARSES"), "{wf}");
+        assert!(wf.contains("\"steps\""), "names the shape it must emit");
+        assert!(wf.contains("summarize a changelog"), "carries the goal");
+
+        // …while an ordinary codified file gets the same directive the contextual lane has
+        // always emitted. That equality is load-bearing: it is why turning a scheduled app
+        // codified cannot change how its markdown is authored.
+        let note = authoring_prompt(
+            "reference/policy.md",
+            "the policy",
+            "g",
+            ScaffoldLane::Codified,
+            &[],
+            false,
+            &[],
+        );
+        let contextual = authoring_prompt(
+            "reference/policy.md",
+            "the policy",
+            "g",
+            ScaffoldLane::Contextual,
+            &[],
+            false,
+            &[],
+        );
+        assert_eq!(note, contextual);
+    }
+
+    #[test]
+    fn tools_and_workflow_get_different_shapes() {
+        let mk = |p: &str| authoring_prompt(p, "r", "g", ScaffoldLane::Codified, &[], false, &[]);
+        let tools = mk(CODIFIED_TOOLS_PATH);
+        assert!(tools.contains("id → version map"), "{tools}");
+        // The prompt must say the grant is a REQUEST, or a model reasonably assumes naming a
+        // tool is how it gets one.
+        assert!(tools.contains("cannot grant"), "{tools}");
+        assert!(!tools.contains("\"steps\""), "the tools file is not a DAG");
+        assert!(mk(CODIFIED_WORKFLOW_PATH).contains("edges"));
     }
 }

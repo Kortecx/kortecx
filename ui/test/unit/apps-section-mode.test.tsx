@@ -77,6 +77,7 @@ vi.mock("../../src/kx/use-scaffold-app", () => ({
  * handle. Enough for the form to complete a save, which is what makes the kind-follow
  * assertion real rather than a re-statement of the mock.
  */
+const modeCalls: string[] = [];
 vi.mock("@kortecx/sdk/web", () => {
   const builder: Record<string, unknown> = {};
   for (const m of [
@@ -90,10 +91,13 @@ vi.mock("@kortecx/sdk/web", () => {
     "useTool",
     "skill",
     "withConnection",
-    "mode",
   ]) {
     builder[m] = () => builder;
   }
+  builder.mode = (m: string) => {
+    modeCalls.push(m);
+    return builder;
+  };
   builder.save = () => Promise.resolve({ handle: "apps/local/my-app" });
   return {
     app: () => builder,
@@ -123,6 +127,7 @@ import { AppsSection, modeHint, modeLabel } from "../../src/components/sections/
 afterEach(() => {
   APPS = [];
   scaffoldMutate.mockReset();
+  modeCalls.length = 0;
 });
 
 function scheduledApp(over: Partial<TestApp> = {}): TestApp {
@@ -200,14 +205,30 @@ describe("the catalog follows the kind an App was authored as", () => {
 });
 
 describe("the authoring-mode toggle", () => {
-  it("offers Codified as honest-disabled until the codified scaffold rail exists", () => {
+  it("defaults to Contextual and switches to Codified", () => {
     render(<AppsSection section="scheduled" />);
     fireEvent.click(screen.getByTestId("new-app"));
-    // Discoverable, but not selectable: the envelope carries the field and the catalog
-    // reads it, while the scheduled scaffold still authors markdown only. Saving `codified`
-    // today would put a "Codified" chip on an app that is prose.
     expect(screen.getByTestId("new-app-mode-contextual")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("new-app-mode-codified")).toBeDisabled();
+    expect(screen.getByTestId("new-app-mode-codified")).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(screen.getByTestId("new-app-mode-codified"));
+    expect(screen.getByTestId("new-app-mode-codified")).toHaveAttribute("aria-pressed", "true");
+    // The lede follows the mode: the two scaffold genuinely different things, and a form
+    // that describes only one of them misleads about the other.
+    expect(screen.getByTestId("new-app-lede").textContent).toContain("orchestrated from");
+  });
+
+  it("saves the mode the user chose", async () => {
+    // Guards the wiring between the toggle and the envelope. `.mode()` is only called for
+    // codified — a contextual app must emit no mode key at all, which is what keeps its
+    // canonical bytes (and its app_ref) identical to every app authored before the field.
+    render(<AppsSection section="scheduled" />);
+    fireEvent.click(screen.getByTestId("new-app"));
+    fireEvent.click(screen.getByTestId("new-app-mode-codified"));
+    fireEvent.change(screen.getByTestId("new-app-name"), { target: { value: "Payouts" } });
+    fireEvent.change(screen.getByTestId("new-app-goal"), { target: { value: "reconcile" } });
+    fireEvent.click(screen.getByTestId("new-app-submit"));
+    await waitFor(() => expect(modeCalls).toEqual(["codified"]));
   });
 
   it("is not offered on the hosted lane", () => {
