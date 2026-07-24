@@ -181,13 +181,20 @@ mod tests {
         assert!(!o.allows("http://127.0.0.1:5174"), "a different port");
         assert!(!o.allows("http://evil.example:5173"), "not loopback");
         o.remove(5173);
-        assert!(!o.allows("http://127.0.0.1:5173"), "gone when the app stops");
+        assert!(
+            !o.allows("http://127.0.0.1:5173"),
+            "gone when the app stops"
+        );
     }
 
     #[test]
     fn a_minted_token_resolves_to_its_own_scope_and_nothing_else() {
         let store = AppTokenStore::new();
-        let t = store.mint("alice@acme", "apps/local/site", vec!["apps/local/research".into()]);
+        let t = store.mint(
+            "alice@acme",
+            "apps/local/site",
+            vec!["apps/local/research".into()],
+        );
         let scope = store.resolve(&t).expect("the minted token resolves");
         assert_eq!(scope.party, "alice@acme");
         assert!(scope.runnable.contains(&"apps/local/research".to_string()));
@@ -217,7 +224,10 @@ mod tests {
         let other = store.mint("alice@acme", "apps/local/other", vec![]);
         store.revoke("alice@acme", "apps/local/site");
         assert!(store.resolve(&mine).is_none());
-        assert!(store.resolve(&other).is_some(), "a sibling app is untouched");
+        assert!(
+            store.resolve(&other).is_some(),
+            "a sibling app is untouched"
+        );
     }
 
     /// Two mints must not collide, and a token must not be derivable from what a visitor can

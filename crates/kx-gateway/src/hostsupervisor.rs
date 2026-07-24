@@ -559,7 +559,11 @@ fn finish_readiness(ctx: &LifecycleCtx, port: u16, production: bool, outcome: Re
             ctx.hosted_origins.remove(port);
         }
         Readiness::TimedOut => {
-            advance(ctx, HostedState::Failed, "server did not become ready in time");
+            advance(
+                ctx,
+                HostedState::Failed,
+                "server did not become ready in time",
+            );
             if let Ok(mut app) = ctx.ra.lock() {
                 if let Some(mut child) = app.child.take() {
                     let _ = child.start_kill();

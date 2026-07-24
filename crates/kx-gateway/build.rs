@@ -145,7 +145,9 @@ fn embed_sdk_tarball(manifest_dir: &Path, out: &mut String) {
     );
 
     if tarball.is_file() {
-        let abs = tarball.canonicalize().expect("sdk tarball path canonicalizes");
+        let abs = tarball
+            .canonicalize()
+            .expect("sdk tarball path canonicalizes");
         let _ = write!(
             out,
             "\n/// The packed `@kortecx/sdk` tarball, or `None` when this build packed none.\n\

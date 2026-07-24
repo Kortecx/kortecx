@@ -95,9 +95,8 @@ fn packument(authority: &str, tarball: &[u8]) -> Vec<u8> {
     // SDK's deps from the default registry), with `dist` added pointing at this gateway. A
     // package.json that will not parse degrades to the minimal manifest — the package still
     // installs, only its deps do not resolve, which is the pre-fix behaviour and never a crash.
-    let mut version: serde_json::Value = serde_json::from_str(SDK_PACKAGE_JSON).unwrap_or_else(|_| {
-        serde_json::json!({ "name": SDK_PACKAGE, "version": SDK_VERSION })
-    });
+    let mut version: serde_json::Value = serde_json::from_str(SDK_PACKAGE_JSON)
+        .unwrap_or_else(|_| serde_json::json!({ "name": SDK_PACKAGE, "version": SDK_VERSION }));
     if let Some(obj) = version.as_object_mut() {
         obj.insert(
             "dist".into(),

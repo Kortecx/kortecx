@@ -2654,14 +2654,16 @@ fn build_cors_layer(
     let mut static_ok: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for o in origins {
         HeaderValue::from_str(o).map_err(|e| {
-            GatewayError::Config(format!("--cors-origin {o:?} is not a valid header value: {e}"))
+            GatewayError::Config(format!(
+                "--cors-origin {o:?} is not a valid header value: {e}"
+            ))
         })?;
         static_ok.insert(o.clone());
     }
     let predicate = move |origin: &HeaderValue, _req: &_| {
-        origin.to_str().is_ok_and(|o| {
-            (static_ok.contains(o)) || hosted_origins.allows(o)
-        })
+        origin
+            .to_str()
+            .is_ok_and(|o| (static_ok.contains(o)) || hosted_origins.allows(o))
     };
     Ok(CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(predicate))
