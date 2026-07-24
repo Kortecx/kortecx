@@ -89,16 +89,25 @@ fn packument(authority: &str, tarball: &[u8]) -> Vec<u8> {
         base64::engine::general_purpose::STANDARD.encode(digest)
     );
     let url = format!("http://{authority}/{NPM_ROOT}{SDK_PACKAGE}/-/sdk-{SDK_VERSION}.tgz");
+
+    // The version object IS the SDK's package.json (so `dependencies`, `peerDependencies`,
+    // `exports`, `type`, … are exactly what a real registry would return and npm resolves the
+    // SDK's deps from the default registry), with `dist` added pointing at this gateway. A
+    // package.json that will not parse degrades to the minimal manifest — the package still
+    // installs, only its deps do not resolve, which is the pre-fix behaviour and never a crash.
+    let mut version: serde_json::Value = serde_json::from_str(SDK_PACKAGE_JSON).unwrap_or_else(|_| {
+        serde_json::json!({ "name": SDK_PACKAGE, "version": SDK_VERSION })
+    });
+    if let Some(obj) = version.as_object_mut() {
+        obj.insert(
+            "dist".into(),
+            serde_json::json!({ "tarball": url, "integrity": integrity }),
+        );
+    }
     serde_json::json!({
         "name": SDK_PACKAGE,
         "dist-tags": { "latest": SDK_VERSION },
-        "versions": {
-            SDK_VERSION: {
-                "name": SDK_PACKAGE,
-                "version": SDK_VERSION,
-                "dist": { "tarball": url, "integrity": integrity },
-            }
-        },
+        "versions": { SDK_VERSION: version },
     })
     .to_string()
     .into_bytes()
@@ -321,6 +330,12 @@ mod tests {
         );
         assert_eq!(dist["integrity"].as_str().unwrap(), want);
         assert_eq!(v["dist-tags"]["latest"].as_str().unwrap(), SDK_VERSION);
+        // The version metadata must carry the SDK's DEPENDENCIES — npm reads them from here,
+        // not the tarball, so a minimal packument installs a package whose deps never resolve.
+        assert!(
+            v["versions"][SDK_VERSION]["dependencies"].is_object(),
+            "the packument must advertise the SDK's dependencies"
+        );
     }
 
     #[test]

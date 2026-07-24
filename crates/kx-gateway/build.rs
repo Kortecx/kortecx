@@ -123,21 +123,25 @@ fn embed_sdk_tarball(manifest_dir: &Path, out: &mut String) {
         .unwrap_or_else(|| manifest_dir.join("../../bindings/typescript/kortecx-sdk.tgz"));
     println!("cargo:rerun-if-changed={}", tarball.display());
 
-    // The version the packument advertises comes from the SDK's own package.json, so the
-    // served metadata can never disagree with the tarball beside it.
+    // The SDK's own package.json is embedded verbatim, so the served version metadata mirrors
+    // exactly what a real registry would return — most importantly its `dependencies`, which
+    // npm reads from the PACKUMENT (not the tarball) and resolves from the default registry.
+    // A minimal packument (name/version/dist only) installs the package but not its deps, so
+    // the import fails on the first `@connectrpc/*` — found live.
     let pkg_json = manifest_dir.join("../../bindings/typescript/package.json");
     println!("cargo:rerun-if-changed={}", pkg_json.display());
-    let version = fs::read_to_string(&pkg_json)
-        .ok()
-        .and_then(|s| {
-            s.split_once("\"version\":")
-                .and_then(|(_, rest)| rest.split('"').nth(1).map(str::to_string))
-        })
+    let raw = fs::read_to_string(&pkg_json).unwrap_or_default();
+    let version = raw
+        .split_once("\"version\":")
+        .and_then(|(_, rest)| rest.split('"').nth(1).map(str::to_string))
         .unwrap_or_default();
     let _ = write!(
         out,
         "\n/// The `@kortecx/sdk` version this build carries (empty when it carries none).\n\
-         pub(crate) static SDK_VERSION: &str = {version:?};\n",
+         pub(crate) static SDK_VERSION: &str = {version:?};\n\
+         /// The SDK's package.json verbatim — the packument's version metadata is derived\n\
+         /// from it so npm resolves the SDK's own dependencies.\n\
+         pub(crate) static SDK_PACKAGE_JSON: &str = {raw:?};\n",
     );
 
     if tarball.is_file() {
