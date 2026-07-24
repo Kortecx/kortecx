@@ -1617,6 +1617,14 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // (coordinator stays the sole journal writer; frozen trio untouched).
     let trigger_binder: Arc<dyn kx_gateway_core::RecipeBinder> = binder.clone();
     let trigger_submitter: Arc<dyn kx_gateway_core::RunSubmitter> = submitter.clone();
+    // The hosted channel's credential store. Created unconditionally (the auth interceptor
+    // always consults it) but only ever WRITTEN by the hosted-app supervisor, so a build
+    // without `hosted-apps` simply has an empty store and no page can authenticate.
+    let app_tokens = crate::app_tokens::AppTokenStore::new();
+    // The live set of hosted-app origins the CORS predicate consults (below). Written only by
+    // the supervisor; empty without `hosted-apps`.
+    let hosted_origins = crate::app_tokens::HostedOrigins::new();
+
     // D213 Experience lane: the hosted-app supervisor. Constructed BEFORE the builder
     // chain consumes `branches_db`; wired onto the gateway after the chain (behind the
     // `hosted-apps` feature). A plain host subprocess manager — off-journal, off-digest.
@@ -1627,6 +1635,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             apps_db.clone(),
             branches_db.clone(),
             content.clone(),
+            app_tokens.clone(),
+            hosted_origins.clone(),
+            // The gateway's own gRPC-web address, injected into every hosted app's env so its
+            // page connects back without hard-coding a port. `cfg.listen` is the configured
+            // bind; the served page and the console share this listener.
+            format!("http://{}", cfg.listen),
         ));
     let mut gateway = GatewayService::new(reader.clone(), submitter, content.clone())
         .with_signature_catalog(signature_catalog)
@@ -2105,7 +2119,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // two layers explicitly so the limit lands on the codec.)
     let svc = tonic::service::interceptor::InterceptedService::new(
         KxGatewayServer::new(gateway).max_decoding_message_size(decode_limit),
-        crate::auth::interceptor(resolver),
+        crate::auth::interceptor(resolver, app_tokens.clone()),
     );
     let local_addr = resolve_listen(cfg.listen).await?;
     // A1: build the (optional) server TLS config up front so a missing/unreadable
@@ -2145,7 +2159,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         cors_origins.push(format!("http://127.0.0.1:{}", addr.port()));
         cors_origins.push(format!("http://localhost:{}", addr.port()));
     }
-    let cors = build_cors_layer(&cors_origins)?;
+    let cors = build_cors_layer(&cors_origins, hosted_origins.clone())?;
     if !cors_origins.is_empty() {
         tracing::info!(
             origins = ?cors_origins,
@@ -2622,19 +2636,29 @@ async fn resolve_listen(listen: SocketAddr) -> Result<SocketAddr, GatewayError> 
 /// reads (`grpc-status`/`grpc-message`/`grpc-status-details-bin`). Credentials are
 /// NOT enabled — the token rides the `Authorization` header, not a cookie.
 #[cfg(feature = "embedded-worker")]
-fn build_cors_layer(origins: &[String]) -> Result<CorsLayer, GatewayError> {
-    let parsed: Vec<HeaderValue> = origins
-        .iter()
-        .map(|o| {
-            HeaderValue::from_str(o).map_err(|e| {
-                GatewayError::Config(format!(
-                    "--cors-origin {o:?} is not a valid header value: {e}"
-                ))
-            })
+fn build_cors_layer(
+    origins: &[String],
+    hosted_origins: std::sync::Arc<crate::app_tokens::HostedOrigins>,
+) -> Result<CorsLayer, GatewayError> {
+    // The static allowlist is validated up front (a bad header value is a fail-closed config
+    // error before the port binds), then frozen into the predicate. A HOSTED app's origin is
+    // a moving target — its port is assigned at start — so the predicate ALSO consults the
+    // live hosted-origin set: allowed iff the origin is a loopback origin currently being
+    // served. A dead app's origin stops matching the instant it stops.
+    let mut static_ok: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for o in origins {
+        HeaderValue::from_str(o).map_err(|e| {
+            GatewayError::Config(format!("--cors-origin {o:?} is not a valid header value: {e}"))
+        })?;
+        static_ok.insert(o.clone());
+    }
+    let predicate = move |origin: &HeaderValue, _req: &_| {
+        origin.to_str().is_ok_and(|o| {
+            (static_ok.contains(o)) || hosted_origins.allows(o)
         })
-        .collect::<Result<_, _>>()?;
+    };
     Ok(CorsLayer::new()
-        .allow_origin(AllowOrigin::list(parsed))
+        .allow_origin(AllowOrigin::predicate(predicate))
         .allow_methods([Method::POST, Method::OPTIONS])
         .allow_headers([
             HeaderName::from_static("content-type"),

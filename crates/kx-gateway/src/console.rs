@@ -119,25 +119,21 @@ fn npm_response(req: &Request<Incoming>) -> Response<Full<Bytes>> {
             )))
             .expect("static 501 response builds");
     };
-    let (body, ctype) = match classify(req.uri().path()) {
-        Resolution::SdkTarball => (
-            Bytes::from_static(tarball),
-            "application/octet-stream",
-        ),
+    let (body, ctype) = if classify(req.uri().path()) == Resolution::SdkTarball {
+        (Bytes::from_static(tarball), "application/octet-stream")
+    } else {
         // The authority the CLIENT used, so the tarball URL is reachable from wherever the
         // request came from. A missing Host (HTTP/1.0) falls back to the loopback default the
         // console listener binds.
-        _ => {
-            let authority = req
-                .headers()
-                .get(header::HOST)
-                .and_then(|h| h.to_str().ok())
-                .unwrap_or("127.0.0.1:8888");
-            (
-                Bytes::from(packument(authority, tarball)),
-                "application/json; charset=utf-8",
-            )
-        }
+        let authority = req
+            .headers()
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("127.0.0.1:8888");
+        (
+            Bytes::from(packument(authority, tarball)),
+            "application/json; charset=utf-8",
+        )
     };
     Response::builder()
         .status(StatusCode::OK)

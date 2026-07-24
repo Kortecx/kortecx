@@ -118,9 +118,7 @@ impl PrincipalResolver for TokenResolver {
     fn resolve(&self, metadata: &MetadataMap) -> Result<Principal, Status> {
         // One uniform error for every failure mode — no existence oracle.
         let unauth = || Status::unauthenticated("invalid or missing bearer token");
-        let raw = metadata.get("authorization").ok_or_else(unauth)?;
-        let value = raw.to_str().map_err(|_| unauth())?;
-        let token = value.strip_prefix(BEARER_PREFIX).ok_or_else(unauth)?;
+        let token = bearer(metadata).ok_or_else(unauth)?;
         let party = self.tokens.get(token).ok_or_else(unauth)?;
         Ok(Principal {
             subject: party.clone(),
@@ -137,8 +135,28 @@ impl PrincipalResolver for TokenResolver {
 #[cfg(feature = "embedded-worker")]
 pub(crate) fn interceptor(
     resolver: Arc<dyn PrincipalResolver>,
+    app_tokens: Arc<crate::app_tokens::AppTokenStore>,
 ) -> impl FnMut(Request<()>) -> Result<Request<()>, Status> + Clone {
     move |mut req: Request<()>| {
+        // A hosted app's scoped token is checked FIRST and never falls through to the
+        // operator resolver. Falling through would be the whole failure: a page's credential
+        // that also happened to parse as an operator token would silently become one.
+        if let Some(scope) = bearer(req.metadata()).and_then(|t| app_tokens.resolve(t)) {
+            req.extensions_mut()
+                .insert(kx_gateway_core::CallerParty(scope.party.clone()));
+            // The marker that says "this is a page, not the operator". Handlers that must
+            // narrow for a page read it; every other caller simply has none.
+            req.extensions_mut()
+                .insert(kx_gateway_core::CallerAppScope {
+                    app_handle: scope.handle.clone(),
+                    runnable: scope.runnable.clone(),
+                });
+            req.extensions_mut().insert(Principal {
+                subject: format!("app:{}", scope.handle),
+                party: scope.party,
+            });
+            return Ok(req);
+        }
         let principal = resolver.resolve(req.metadata())?;
         // Server-derived identity for the gateway handlers (the Invoke path, R2b)
         // — gateway-core reads `CallerParty`, not the host-owned `Principal`.
@@ -147,6 +165,19 @@ pub(crate) fn interceptor(
         req.extensions_mut().insert(principal);
         Ok(req)
     }
+}
+
+/// The bare bearer credential from `authorization`, or `None`.
+///
+/// Shared by the app-token check and [`TokenResolver`] so the two can never disagree about
+/// what counts as a bearer token — a page's credential accepted by one parser and not the
+/// other would be a hole in whichever is stricter.
+fn bearer(metadata: &MetadataMap) -> Option<&str> {
+    metadata
+        .get("authorization")?
+        .to_str()
+        .ok()?
+        .strip_prefix(BEARER_PREFIX)
 }
 
 #[cfg(test)]
@@ -228,12 +259,13 @@ mod tests {
         use kx_gateway_core::CallerParty;
 
         // Deny resolver short-circuits.
-        let mut deny = interceptor(Arc::new(DenyAll));
+        let empty = crate::app_tokens::AppTokenStore::new();
+        let mut deny = interceptor(Arc::new(DenyAll), empty.clone());
         assert!(deny(Request::new(())).is_err());
 
         // Allow resolver forwards the request with BOTH the host Principal and the
         // gateway-core CallerParty stashed (server-derived identity for handlers).
-        let mut allow = interceptor(Arc::new(DevAllowLocal));
+        let mut allow = interceptor(Arc::new(DevAllowLocal), empty.clone());
         let out = allow(Request::new(())).unwrap();
         assert_eq!(
             out.extensions()
@@ -252,7 +284,10 @@ mod tests {
     fn interceptor_stashes_token_resolved_party() {
         use kx_gateway_core::CallerParty;
 
-        let mut intercept = interceptor(Arc::new(token_resolver()));
+        let mut intercept = interceptor(
+            Arc::new(token_resolver()),
+            crate::app_tokens::AppTokenStore::new(),
+        );
         let mut req = Request::new(());
         req.metadata_mut()
             .insert("authorization", "Bearer s3cr3t".parse().unwrap());

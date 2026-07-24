@@ -57,6 +57,9 @@
 #[cfg(feature = "serve-engine")]
 mod assemble_serve;
 mod auth;
+// D213 + the hosted channel: per-app scoped credentials minted by the supervisor and
+// resolved by the auth seam. Off-journal, off-digest.
+mod app_tokens;
 mod config;
 // D139: the embedded web console — hyper serving the compile-time-embedded SPA
 // on a third loopback listener. Behind the off-by-default `console` feature so

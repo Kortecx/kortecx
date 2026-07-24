@@ -142,6 +142,9 @@ ureq               = { workspace = true, optional = true }
 # sha2 is NON-optional (always-on): the D113 webhook HMAC-SHA256 verify needs it in
 # the default build, and the inference GGUF SHA-256 verify reuses it. Pure-Rust/FFI-free.
 sha2               = { workspace = true }
+# Scoped hosted-app tokens (`app_tokens`): `getrandom::fill` only. Already in the lock graph
+# via kx-coordinator, so no new major enters the tree.
+getrandom          = "0.3"
 # The npm packument's `dist.integrity` is `sha512-<base64>` — npm verifies it, so the value is
 # computed over the bytes actually served (see `console::packument`).
 base64             = { workspace = true }

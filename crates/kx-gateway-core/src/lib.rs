@@ -161,7 +161,7 @@ pub use events::{
     check_run_ownership, frames_for_range, global_frames_for_range, seed_global_cursor,
     GlobalCursor,
 };
-pub use identity::CallerParty;
+pub use identity::{CallerAppScope, CallerParty};
 pub use mcp_gateway_admin::{
     CallToolOutcome, McpAdminError, McpGatewayAdmin, McpServerRegistration, McpServerView,
     RegisterServerOutcome,
