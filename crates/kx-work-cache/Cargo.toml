@@ -1,0 +1,28 @@
+[package]
+name         = "kx-work-cache"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx cross-run work cache — a content-addressed, run-INDEPENDENT memo of PURE results keyed by (mote_def_hash, input_data_id), so identical deterministic work computed once in any run is served to every other run. A rebuildable, non-authoritative projection OFF the truth path (lose it → recompute); exact-equality only, never similarity (similarity never reaches the identity/commit/memoization path). WorldMutating results are structurally never cached. A dependency-light leaf: kx-content (ContentRef) + kx-mote (identity components) + rusqlite/blake3 only; the frozen trio never depends on it."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+kx-content = { workspace = true }
+kx-mote    = { workspace = true }
+blake3     = { workspace = true }
+rusqlite   = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+serde      = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
