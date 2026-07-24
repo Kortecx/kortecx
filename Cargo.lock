@@ -1828,6 +1828,7 @@ dependencies = [
  "kx-toolcall",
  "kx-toolscout",
  "kx-warrant",
+ "kx-work-cache",
  "kx-worker",
  "kx-workflow",
  "nix 0.29.0",
@@ -2396,6 +2397,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-work-cache"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "kx-content",
+ "kx-mote",
+ "proptest",
+ "rusqlite",
+ "serde",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "kx-worker"
 version = "0.2.0"
 dependencies = [
@@ -2407,6 +2423,7 @@ dependencies = [
  "kx-mote",
  "kx-proto",
  "kx-warrant",
+ "kx-work-cache",
  "smallvec",
  "tempfile",
  "thiserror 1.0.69",

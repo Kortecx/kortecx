@@ -10,6 +10,7 @@ use kx_executor::{LocalResourceManager, MoteExecutor};
 use kx_mote::{ConfigKey, Mote, MoteId, NdClass, REACT_TURN_KEY, RERANK_TURN_KEY};
 use kx_proto::proto;
 use kx_warrant::{ExecutorClass, WarrantSpec};
+use kx_work_cache::WorkCache;
 use tokio::task::JoinHandle;
 
 use crate::client::WorkerClient;
@@ -80,6 +81,13 @@ pub struct Worker {
     /// forever. In-memory + off the truth path (like `attempts`); a restart resets it
     /// harmlessly. Set by the gateway from `KX_SERVE_TOOL_DEADLINE_SECS`.
     tool_deadline: Option<Duration>,
+    /// The serve's shared cross-run work cache (opt-in, `KX_FLAG_SERVE_WORK_CACHE`).
+    /// `None` (default) ⇒ every PURE Mote is computed, byte-identical to the pre-cache
+    /// worker. `Some` ⇒ a PURE Mote whose `(mote_def_hash, input_data_id)` was already
+    /// computed in ANY run on this serve is served from the cache (body skipped), and a
+    /// freshly-computed PURE result is populated. WorldMutating work is never cached
+    /// (the executor read hook is PURE-only). Off the truth path.
+    work_cache: Option<Arc<dyn WorkCache>>,
 }
 
 impl Worker {
@@ -120,7 +128,18 @@ impl Worker {
             attempts: std::collections::HashMap::new(),
             context_sink: None,
             tool_deadline: None,
+            work_cache: None,
         })
+    }
+
+    /// Attach the serve's shared cross-run [`WorkCache`] (opt-in). `None` ⇒
+    /// byte-identical to a worker without the cache. The gateway constructs ONE
+    /// `Arc<dyn WorkCache>` per serve behind `KX_FLAG_SERVE_WORK_CACHE` and clones it
+    /// into every pooled worker so a PURE result is computed once across all runs.
+    #[must_use]
+    pub fn with_work_cache(mut self, cache: Option<Arc<dyn WorkCache>>) -> Self {
+        self.work_cache = cache;
+        self
     }
 
     /// Set the optional per-Mote wall-clock deadline for effect (tool/MCP/IO)
@@ -178,6 +197,7 @@ impl Worker {
     /// hosted executor; non-PURE stages-then-fires via the broker, P3.6b/D58), and
     /// propose its commit. Returns the number of commits the coordinator accepted
     /// this round (0 when no ready work matches).
+    #[allow(clippy::too_many_lines)]
     pub async fn run_once(&mut self) -> Result<usize, WorkerError> {
         let (items, instance_id_bytes) = self
             .client
@@ -232,7 +252,14 @@ impl Worker {
             // `WORKER_MAX_ATTEMPTS`, then dead-letters. Either way we `continue` to the
             // next item. Transport/RPC errors on the lease/commit calls stay batch-level.
             let exec = if mote.nd_class() == NdClass::Pure {
-                run::run_pure(&mote, &warrant, &*self.executor, &self.resource_manager)
+                run::run_pure(
+                    &mote,
+                    &warrant,
+                    &*self.executor,
+                    &self.resource_manager,
+                    self.work_cache.as_deref(),
+                    Some(&*self.store),
+                )
             } else if dispatches_through_executor(&mote) {
                 // PR-2d-2: a coordinator-materialized ReAct TURN (the identity-
                 // bearing marker, NO tool_contract) is a prompt-carrying ROND

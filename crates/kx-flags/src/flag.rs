@@ -45,9 +45,26 @@ impl Flag {
         default: false,
     };
 
+    /// The cross-run WORK CACHE (`kx-work-cache`). ON ⇒ the serve opens a
+    /// `work-cache.db` sidecar and injects it so a PURE result computed once in any
+    /// run is served (not recomputed) in every other run with the same
+    /// `(mote_def_hash, input_data_id)`. OFF ⇒ the sidecar is never opened and the
+    /// executor is handed `None`, so the run path and `ProjectionDigest` are
+    /// byte-identical to a build without the feature. Never serves `WorldMutating` work.
+    pub const SERVE_WORK_CACHE: Flag = Flag {
+        name: "serve_work_cache",
+        env: "KX_FLAG_SERVE_WORK_CACHE",
+        legacy_env: None,
+        default: false,
+    };
+
     /// Every registered flag. Add new flags here — the registry invariants
     /// (default-OFF, unique names, `KX_FLAG_` prefix, no alias collisions) are
     /// property-tested across this slice, so a flag that is not listed is not
     /// covered by them.
-    pub const ALL: &'static [Flag] = &[Self::SERVE_MEMORY, Self::SERVE_AUTOGRANT];
+    pub const ALL: &'static [Flag] = &[
+        Self::SERVE_MEMORY,
+        Self::SERVE_AUTOGRANT,
+        Self::SERVE_WORK_CACHE,
+    ];
 }

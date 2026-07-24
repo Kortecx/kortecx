@@ -17,6 +17,7 @@
 
 mod common;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,6 +27,7 @@ use kx_coordinator::{CoordinatorService, MoteState, WorkerId, WorkerStatus};
 use kx_executor::{LocalResourceManager, MoteExecutor, TestMoteExecutor};
 use kx_journal::InMemoryJournal;
 use kx_mote::Mote;
+use kx_work_cache::{SqliteWorkCache, WorkCache};
 use kx_worker::{Worker, WorkerClient};
 use tempfile::TempDir;
 use tonic::transport::Server;
@@ -304,6 +306,172 @@ async fn two_workers_share_the_workload_via_placement() {
     assert_eq!(
         worker_b.peer_read(motes[0].id).await.unwrap(),
         result_bytes(&motes[0]),
+    );
+}
+
+/// A `MoteExecutor` that PUBLISHES result bytes to the shared store AND counts every
+/// physical run — so a cross-run cache HIT (which skips `run`) is observable as a flat
+/// counter.
+fn counting_storing_executor(
+    store: Arc<LocalFsContentStore>,
+    counter: Arc<AtomicUsize>,
+) -> Arc<dyn MoteExecutor> {
+    Arc::new(TestMoteExecutor::new(move |mote, _warrant| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        store
+            .put(&result_bytes(mote))
+            .expect("publish result bytes")
+    }))
+}
+
+/// The shared MoteDef both cross-run children use (identical ⇒ identical `mote_def_hash`).
+fn shared_child_def() -> kx_mote::MoteDef {
+    use std::collections::BTreeMap;
+
+    use kx_mote::{
+        EffectPattern, InferenceParams, LogicRef, ModelId, MoteDef, NdClass, PromptTemplateHash,
+        MOTE_DEF_SCHEMA_VERSION,
+    };
+    MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes([7u8; 32]),
+        model_id: ModelId("llama-3.1-8b-instruct-q4_k_m".into()),
+        prompt_template_hash: PromptTemplateHash::from_bytes([9u8; 32]),
+        tool_contract: BTreeMap::new(),
+        nd_class: NdClass::Pure,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    }
+}
+
+/// A PURE **child** mote that does byte-identical work regardless of `graph_seed`:
+/// identical `def` and a fixed `input_data_id`, so its `work_fingerprint` is constant,
+/// while `graph_seed` varies `graph_position` (⇒ a distinct `MoteId`) — the exact shape
+/// of the same PURE sub-task appearing in two different runs. `parent` only gates
+/// scheduling (it is not part of the identity or the fingerprint).
+fn shared_work_child(graph_seed: u8, parent: kx_mote::MoteId) -> Mote {
+    use kx_mote::{EdgeMeta, GraphPosition, InputDataId, ParentRef};
+    use smallvec::SmallVec;
+
+    let mut parents: SmallVec<[ParentRef; 4]> = SmallVec::new();
+    parents.push(ParentRef {
+        parent_id: parent,
+        edge: EdgeMeta::data(),
+    });
+    Mote::new(
+        shared_child_def(),
+        InputDataId::from_bytes([42u8; 32]),
+        GraphPosition(vec![graph_seed]),
+        parents,
+    )
+}
+
+/// **Cross-run work cache (the live distributed proof).** Two SEPARATE runs — two
+/// coordinators, each its own journal — share ONE `SqliteWorkCache` and ONE content
+/// store. A PURE child that does byte-identical work runs in run A (populating the
+/// cache) and then appears in run B; the worker in run B serves it FROM THE CACHE
+/// through the real gRPC lease→run→propose-commit path, computing it exactly once
+/// across the two runs. The in-run memoizer could not dedup these (distinct `MoteId`s);
+/// only the run-independent `work_fingerprint` does.
+#[tokio::test]
+async fn cross_run_work_cache_computes_a_pure_child_once_across_two_runs() {
+    let dir = TempDir::new().unwrap();
+    let store = Arc::new(LocalFsContentStore::open(dir.path()).unwrap());
+    let cache: Arc<dyn WorkCache> = Arc::new(SqliteWorkCache::open_in_memory().unwrap());
+    let computes = Arc::new(AtomicUsize::new(0));
+    let warrant = common::pure_warrant();
+
+    // Two independent runs, each a coordinator with its own journal, sharing the store.
+    let (svc_a, ep_a) = spawn_coordinator(store.clone()).await;
+    let (svc_b, ep_b) = spawn_coordinator(store.clone()).await;
+
+    // Run A: a root parent + a shared-work child.
+    let parent_a = common::pure_mote(1, &[]);
+    let child_a = shared_work_child(10, parent_a.id);
+    submit(&svc_a, &parent_a, &warrant).await;
+    submit(&svc_a, &child_a, &warrant).await;
+
+    // Run B: a DIFFERENT root parent + a child that does byte-identical work to child A.
+    let parent_b = common::pure_mote(2, &[]);
+    let child_b = shared_work_child(11, parent_b.id);
+    submit(&svc_b, &parent_b, &warrant).await;
+    submit(&svc_b, &child_b, &warrant).await;
+
+    // Distinct identities, identical work.
+    assert_ne!(
+        child_a.id, child_b.id,
+        "distinct MoteIds (different graph_position)"
+    );
+
+    // A worker per run, both sharing the ONE work cache.
+    let mut worker_a = Worker::register(
+        connect(&ep_a).await,
+        common::WORKER_CLASS,
+        "inproc://run-a",
+        counting_storing_executor(store.clone(), computes.clone()),
+        LocalResourceManager::dev_defaults(),
+        store.clone(),
+        common::noop_broker(),
+        16,
+    )
+    .await
+    .unwrap()
+    .with_work_cache(Some(cache.clone()));
+
+    let mut worker_b = Worker::register(
+        connect(&ep_b).await,
+        common::WORKER_CLASS,
+        "inproc://run-b",
+        counting_storing_executor(store.clone(), computes.clone()),
+        LocalResourceManager::dev_defaults(),
+        store.clone(),
+        common::noop_broker(),
+        16,
+    )
+    .await
+    .unwrap()
+    .with_work_cache(Some(cache.clone()));
+
+    // Run A: parent then child. The child MISSES (cold cache) and is computed +
+    // populated. 2 physical computes (parent_a + child_a).
+    assert_eq!(worker_a.run_once().await.unwrap(), 1, "parent A committed");
+    assert_eq!(worker_a.run_once().await.unwrap(), 1, "child A committed");
+    assert_eq!(
+        computes.load(Ordering::SeqCst),
+        2,
+        "run A computed parent + child"
+    );
+
+    // Run B: parent (a distinct entrypoint, so it computes) then the shared-work child.
+    assert_eq!(worker_b.run_once().await.unwrap(), 1, "parent B committed");
+    assert_eq!(
+        worker_b.run_once().await.unwrap(),
+        1,
+        "child B committed — served from the cross-run cache"
+    );
+
+    // THE PROOF: exactly 3 physical computes total (parent_a, child_a, parent_b) —
+    // child_b was served from the cache, NOT recomputed.
+    assert_eq!(
+        computes.load(Ordering::SeqCst),
+        3,
+        "child B was served from the cross-run work cache (not recomputed)"
+    );
+
+    // And child B's committed result IS child A's output (the cached ref), read back
+    // through the coordinator's committed log + the shared store.
+    assert_eq!(
+        svc_b.state_of(child_b.id).await.unwrap(),
+        MoteState::Committed
+    );
+    assert_eq!(
+        worker_b.peer_read(child_b.id).await.unwrap(),
+        result_bytes(&child_a),
+        "run B's committed child result is exactly run A's computed output"
     );
 }
 

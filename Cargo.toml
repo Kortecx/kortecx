@@ -19,6 +19,7 @@ members = [
     "crates/kx-grammar",
     "crates/kx-context-assembler",
     "crates/kx-memoizer",
+    "crates/kx-work-cache",
     "crates/kx-normalizer",
     "crates/kx-inference",
     "crates/kx-ollama",
@@ -171,6 +172,7 @@ kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.1.1"
 kx-grammar           = { path = "crates/kx-grammar",           version = "0.1.1" }
 kx-context-assembler = { path = "crates/kx-context-assembler", version = "0.1.1" }
 kx-memoizer          = { path = "crates/kx-memoizer",          version = "0.1.1" }
+kx-work-cache        = { path = "crates/kx-work-cache",        version = "0.1.0" }
 kx-normalizer        = { path = "crates/kx-normalizer",        version = "0.1.1" }
 # `default-features = false` (no llama.cpp FFI) is the WORKSPACE default for every
 # crate that depends on kx-inference, so the runtime's closure builds with no C++

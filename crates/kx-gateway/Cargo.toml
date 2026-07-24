@@ -96,6 +96,9 @@ kx-coordinator  = { workspace = true, optional = true }
 kx-worker       = { workspace = true, optional = true }
 kx-executor     = { workspace = true, optional = true }
 kx-capability   = { workspace = true, optional = true }
+# The cross-run work cache sidecar (opt-in `KX_FLAG_SERVE_WORK_CACHE`), constructed once
+# per serve and cloned into each pooled worker. Gated with the worker (embedded-worker).
+kx-work-cache   = { workspace = true, optional = true }
 # PR-9b: per-Mote input tempfile for the real, sandboxed body-exec router
 # (`real_exec.rs`). FFI-free + already in the lock (a dev-dep here + a normal dep
 # of kx-executor); gated under `embedded-worker` so the gateway-only closure that
@@ -331,7 +334,7 @@ mcp-gateway = ["dep:kx-mcp", "dep:kx-mcp-gateway", "embedded-worker"]
 # the binary is genuinely reachable end-to-end (SubmitRun -> Committed). A future library
 # consumer can disable it to embed a gateway-only front end (then `serve` requires an
 # external coordinator — a later step; R1 refuses without the feature).
-embedded-worker = ["dep:kx-coordinator", "dep:kx-worker", "dep:kx-executor", "dep:kx-capability", "dep:tempfile"]
+embedded-worker = ["dep:kx-coordinator", "dep:kx-worker", "dep:kx-executor", "dep:kx-capability", "dep:kx-work-cache", "dep:tempfile"]
 # serve-engine: the FFI-FREE serve model-loop for `kx serve` — the embedded worker
 # runs model Motes through a backend, drives the shaper/re-plan/critic/ReAct loop, and
 # serves an auto-detected Ollama daemon (`kx-ollama`). It pulls `kx-inference` WITHOUT

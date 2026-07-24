@@ -774,6 +774,27 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     } else {
         cfg.max_lease
     };
+    // Cross-run work cache (opt-in `KX_FLAG_SERVE_WORK_CACHE`, default OFF ⇒ None ⇒
+    // byte-identical serve). One `work-cache.db` sidecar per serve, cloned into every
+    // pooled worker so a PURE Mote whose `(mote_def_hash, input_data_id)` was already
+    // computed in ANY run is served from the cache. Rebuildable/non-authoritative: an
+    // open failure degrades to None (recompute), never fatal.
+    let work_cache: Option<Arc<dyn kx_work_cache::WorkCache>> = if kx_flags::enabled(
+        &kx_flags::Flag::SERVE_WORK_CACHE,
+    ) {
+        match kx_work_cache::SqliteWorkCache::open(catalog_dir.join("work-cache.db")) {
+            Ok(c) => {
+                tracing::info!("cross-run work cache ENABLED (work-cache.db)");
+                Some(Arc::new(c) as Arc<dyn kx_work_cache::WorkCache>)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "work-cache open failed; serving without cross-run cache");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut worker_tasks: Vec<JoinHandle<()>> = Vec::with_capacity(worker_pool);
     let mut heartbeat_tasks: Vec<JoinHandle<()>> = Vec::with_capacity(worker_pool);
     for i in 0..worker_pool {
@@ -799,6 +820,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         // default OFF ⇒ None ⇒ byte-identical) so a stuck external tool cannot pin this
         // pool worker's slot forever.
         let worker = worker.with_tool_deadline(crate::env_caps::tool_deadline());
+        // Share the ONE per-serve work cache with every pooled worker (None ⇒ byte-identical).
+        let worker = worker.with_work_cache(work_cache.clone());
         // Keep each idle worker live in the registry (background heartbeat) so a run
         // submitted after an idle period leases promptly (no false-death/reschedule).
         heartbeat_tasks.push(worker.spawn_heartbeat(DEFAULT_HEARTBEAT_CADENCE));
