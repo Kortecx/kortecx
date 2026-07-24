@@ -1,17 +1,81 @@
 {
   "suite_id": "bench-v1",
-  "suite_digest": "b3b7fb79f46c3a290ba032c22e4ac93f0f84be3bc0e081df687a71967a25b3d0",
+  "suite_digest": "8c5c7616a47ada66ed0938afe11a286ed6b2dbdfd489b4c4e3fa8d31052c3e15",
   "gates": [
     {
       "id": "task_success",
-      "per_mille": 1000
+      "per_mille": 800
     },
     {
       "id": "tool_call_f1",
+      "per_mille": 866
+    },
+    {
+      "id": "groundedness",
       "per_mille": 1000
     },
     {
       "id": "loop_efficiency",
+      "per_mille": 1000
+    },
+    {
+      "id": "memory_quality",
+      "per_mille": 1000
+    },
+    {
+      "id": "task_success@reach",
+      "per_mille": 666
+    },
+    {
+      "id": "tool_call_f1@reach",
+      "per_mille": 666
+    },
+    {
+      "id": "groundedness@reach",
+      "per_mille": 1000
+    },
+    {
+      "id": "loop_efficiency@reach",
+      "per_mille": 1000
+    },
+    {
+      "id": "memory_quality@reach",
+      "per_mille": 1000
+    },
+    {
+      "id": "task_success@react",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_call_f1@react",
+      "per_mille": 1000
+    },
+    {
+      "id": "loop_efficiency@react",
+      "per_mille": 1000
+    },
+    {
+      "id": "task_success@swarm",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_call_f1@swarm",
+      "per_mille": 1000
+    },
+    {
+      "id": "loop_efficiency@swarm",
+      "per_mille": 1000
+    },
+    {
+      "id": "task_success@tool",
+      "per_mille": 800
+    },
+    {
+      "id": "tool_call_f1@tool",
+      "per_mille": 933
+    },
+    {
+      "id": "loop_efficiency@tool",
       "per_mille": 1000
     }
   ]

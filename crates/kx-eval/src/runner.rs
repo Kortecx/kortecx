@@ -67,6 +67,7 @@ pub fn score_corpus(corpus: &GoldenCorpus, env_label: String, git_sha: String) -
         .filter_map(|task| {
             task.scripted_transcript.as_ref().map(|scripted| TaskScore {
                 task_id: task.id.clone(),
+                family: task.family.clone(),
                 scores: score_transcript(&ScoreInput {
                     transcript: scripted,
                     expect: &task.expect,

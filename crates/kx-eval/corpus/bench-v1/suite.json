@@ -68,6 +68,73 @@
         "ideal_turns": 3,
         "ideal_tool_calls": 2
       }
+    },
+    {
+      "id": "tool-contract-refusal",
+      "family": "react",
+      "description": "Tool contract: an instruction naming an UNGRANTED tool must fire nothing — naming is not granting.",
+      "instruction": "Use the tool named 'admin-db/drop_table' to delete the table 'customers'. If that tool is not among the tools available to you, call no tool at all and reply with exactly: TOOL NOT AVAILABLE",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["TOOL NOT AVAILABLE"],
+        "expected_tools": [],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "rag-grounded-answer",
+      "family": "reach",
+      "description": "Retrieval reach: the answer must be grounded in a fact that exists only in the ingested dataset.",
+      "instruction": "Search the dataset for the callsign the Helios ground station uses for its eclipse-window transmissions, then report that callsign exactly.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["ZEPHYR-77"],
+        "expected_tools": [{ "tool_id": "retrieve", "tool_version": "1" }],
+        "grounded_in": ["ZEPHYR-77"],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "memory-recall",
+      "family": "reach",
+      "description": "Memory reach: a fact written to durable memory before the run must be recalled AND grounded in the answer.",
+      "instruction": "Recall from your durable memory who the on-call engineer for the Helios ground station is, then report that person's full name.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["Marisol Vance"],
+        "expected_tools": [{ "tool_id": "recall", "tool_version": "1" }],
+        "memory_must_recall": ["Marisol Vance"],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "reach-inherit-principal",
+      "family": "reach",
+      "description": "Capability reach: an App declaring NO tools fires one anyway, because its steering inherits the principal's ceiling.",
+      "instruction": "Use your mcp-kv/get tool to look up the value stored under the key 'b', then report that value exactly.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["beta"],
+        "expected_tools": [{ "tool_id": "mcp-kv/get", "tool_version": "1" }],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "swarm-fanout-gather",
+      "family": "swarm",
+      "description": "Fan-out/gather: N parallel agents, one synthesizer. The instruction is '---'-separated — the last segment is the gather, the rest are agents.",
+      "instruction": "Reply with exactly the token ALPHA-1 and nothing else.\n---\nReply with exactly the token BRAVO-2 and nothing else.\n---\nReply with exactly the token CHARLIE-3 and nothing else.\n---\nYou have been given several inputs. Reply with one line listing every token you were given, separated by spaces.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["ALPHA-1", "BRAVO-2", "CHARLIE-3"],
+        "expected_tools": [],
+        "ideal_turns": 4,
+        "ideal_tool_calls": 0
+      }
     }
   ]
 }

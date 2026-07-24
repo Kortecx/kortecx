@@ -36,9 +36,19 @@ pub struct SpikeMetric {
 pub struct TaskScore {
     /// The task id.
     pub task_id: String,
+    /// The capability FAMILY the task belongs to (`GoldenTask::family`), carried so
+    /// [`aggregate`] can emit a per-family gate beside each suite-wide one. Defaults to
+    /// empty when reading an older trend record (which predates per-family gates).
+    #[serde(default)]
+    pub family: String,
     /// Every scorer's output for this task.
     pub scores: Vec<ScoreOutput>,
 }
+
+/// The separator between a metric id and a family in a per-family gate id
+/// (`task_success@swarm`). Chosen because no scorer id contains it, so a family gate can
+/// never collide with a suite-wide one.
+pub const FAMILY_GATE_SEP: char = '@';
 
 /// One aggregate Gate metric — a stable id and an integer per-mille value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,6 +147,15 @@ fn mean_per_mille(values: &[u32]) -> Option<u32> {
 /// Fold per-task scores + the corpus-level format-coverage score + any Tier-B spikes
 /// into an [`EvalReport`]. The aggregate Gate value for each transcript metric is the
 /// integer mean over the tasks where it applied.
+///
+/// Beside each suite-wide gate, a **per-family** gate (`task_success@swarm`) is emitted
+/// for every `(metric, family)` pair that applied. A suite covering several substrate
+/// families needs both: the suite-wide mean answers "did quality move", the per-family
+/// gates answer "where" — without them one family's regression is diluted by the others'
+/// task count, and a family whose tasks expect no tools (scoring a vacuous full
+/// `tool_call_f1`) silently lifts the suite-wide mean. Family gates are APPENDED after
+/// the suite-wide ones, so a baseline captured before they existed keeps its gate order
+/// and [`compare_to_baseline`] (which iterates the BASELINE's gates) is unaffected.
 #[must_use]
 pub fn aggregate(
     suite_id: String,
@@ -171,6 +190,31 @@ pub fn aggregate(
             id: format_coverage.metric_id.clone(),
             per_mille,
         });
+    }
+
+    // Per-family gates, appended in a deterministic (family, metric) order. A task with
+    // no family (an older trend record) contributes only to the suite-wide gates.
+    let families: std::collections::BTreeSet<&str> = per_task
+        .iter()
+        .map(|t| t.family.as_str())
+        .filter(|f| !f.is_empty())
+        .collect();
+    for family in families {
+        for id in TRANSCRIPT_SCORER_IDS {
+            let values: Vec<u32> = per_task
+                .iter()
+                .filter(|t| t.family == family)
+                .flat_map(|t| &t.scores)
+                .filter(|s| s.metric_id == id)
+                .filter_map(ScoreOutput::gate_per_mille)
+                .collect();
+            if let Some(m) = mean_per_mille(&values) {
+                gates.push(GateValue {
+                    id: format!("{id}{FAMILY_GATE_SEP}{family}"),
+                    per_mille: m,
+                });
+            }
+        }
     }
 
     // The trend record's Spikes (Tier-B latency etc.) — kept verbatim, never gated.
@@ -243,8 +287,13 @@ mod tests {
     use crate::scorers::{ScoreOutput, PER_MILLE};
 
     fn task(id: &str, success: u32, f1: u32) -> TaskScore {
+        task_in("core", id, success, f1)
+    }
+
+    fn task_in(family: &str, id: &str, success: u32, f1: u32) -> TaskScore {
         TaskScore {
             task_id: id.into(),
+            family: family.into(),
             scores: vec![
                 ScoreOutput::gate("task_success", success, ""),
                 ScoreOutput::gate("tool_call_f1", f1, ""),
@@ -318,5 +367,70 @@ mod tests {
             compare_to_baseline(&r, &base, 0),
             Err(EvalError::CorpusDrift { .. })
         ));
+    }
+
+    /// The point of a per-family gate: one family's collapse is VISIBLE even when the
+    /// suite-wide mean, diluted by the other families' task count, barely moves.
+    #[test]
+    fn a_family_gate_isolates_what_the_suite_wide_mean_dilutes() {
+        let r = aggregate(
+            "bench-v1".into(),
+            "deadbeef".into(),
+            vec![
+                task_in("tool", "t1", 1000, 1000),
+                task_in("tool", "t2", 1000, 1000),
+                task_in("tool", "t3", 1000, 1000),
+                task_in("swarm", "s1", 0, 1000), // the one family that collapsed
+            ],
+            &ScoreOutput::not_applicable("format_coverage", "N/A"),
+            &[],
+            "test-env".into(),
+            "sha".into(),
+        );
+        let gate = |id: &str| r.gates.iter().find(|g| g.id == id).map(|g| g.per_mille);
+        // Suite-wide: 3 perfect + 1 zero ⇒ 750. Still a comfortable-looking number.
+        assert_eq!(gate("task_success"), Some(750));
+        // Per-family: the collapse is unambiguous, and the healthy family is untouched.
+        assert_eq!(gate("task_success@swarm"), Some(0));
+        assert_eq!(gate("task_success@tool"), Some(1000));
+    }
+
+    /// A baseline captured BEFORE per-family gates existed must keep passing: the
+    /// comparison iterates the baseline's gates, so new report gates are additive.
+    #[test]
+    fn a_pre_family_baseline_still_compares_clean() {
+        let r = report();
+        let legacy = Baseline {
+            suite_id: r.suite_id.clone(),
+            suite_digest: r.suite_digest.clone(),
+            // Only the suite-wide gates, as an older capture would have written them.
+            gates: r
+                .gates
+                .iter()
+                .filter(|g| !g.id.contains(FAMILY_GATE_SEP))
+                .cloned()
+                .collect(),
+        };
+        assert!(legacy.gates.iter().any(|g| g.id == "task_success"));
+        assert!(compare_to_baseline(&r, &legacy, 0).unwrap().ok);
+    }
+
+    /// A task with no family (an older trend record round-tripped through serde)
+    /// contributes to the suite-wide gates and to no family gate.
+    #[test]
+    fn an_unfamilied_task_emits_no_family_gate() {
+        let mut t = task("a", 1000, 1000);
+        t.family = String::new();
+        let r = aggregate(
+            "bench-v1".into(),
+            "deadbeef".into(),
+            vec![t],
+            &ScoreOutput::not_applicable("format_coverage", "N/A"),
+            &[],
+            "test-env".into(),
+            "sha".into(),
+        );
+        assert!(r.gates.iter().any(|g| g.id == "task_success"));
+        assert!(r.gates.iter().all(|g| !g.id.contains(FAMILY_GATE_SEP)));
     }
 }

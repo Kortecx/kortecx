@@ -9,9 +9,11 @@ name: real-model gate (Gemma-4)
 # have. FLIP TO A REAL GATE: add a `pull_request` / `schedule` trigger once a capable runner is wired, and
 # list `real-model-gemma` in the branch-protection required checks.
 #
-# Follow-up: an external agentic benchmark (a public tool-use / task suite) that scores against an
-# EXTERNAL oracle — replacing the self-scored fixture with an independent capability signal — plugs into
-# the real-model step below. That is a larger, model-and-data-heavy effort tracked separately.
+# ⚠ ZERO self-hosted GPU runners are registered today, so this workflow is DORMANT: dispatching it
+# fails fast on the runner label. It is wired anyway so that the day a runner is registered, what runs
+# is the oracle benchmark (`just eval-bench`) rather than the older trajectory-only step — the wiring
+# is the cheap half, the runner is the deferred infrastructure half. Do not read a green (or absent)
+# result here as evidence of anything.
 
 on:
   workflow_dispatch:
@@ -42,14 +44,16 @@ jobs:
       - name: Deterministic eval gate first (must be green regardless of the model)
         run: just eval
 
-      - name: Real-model eval on Gemma-4 (env-labelled; persisted to the private trend record)
+      - name: Real-model ORACLE benchmark on Gemma-4 (env-labelled; ratcheted per engine)
         env:
           KX_MODEL_NAME: ${{ github.event.inputs.model }}
           KX_EVAL_ENV_LABEL: gh-self-hosted-gpu
         run: |
           set -euo pipefail
-          # Serve Gemma-4 + score a live ReAct chain (Tier-B). These are env-labelled Spike metrics for the
-          # capability trend — NOT a flake-proof integer gate (that stays `just eval`). The external-agentic
-          # -benchmark scorer plugs into this step once landed.
-          just eval-real
-          echo "✅ real-model (Gemma-4) eval ran — record the env-labelled numbers for the capability trend."
+          # Serve Gemma-4 and score every bench-v1 run with the ORACLE scorers, across all
+          # four substrate families (tool/react · reach · swarm). This replaced the older
+          # trajectory-only `just eval-real` step: that one read turns/tools/terminal and
+          # never the committed answer, so it could not fail when answer QUALITY degraded.
+          # `eval-bench` compares against the committed per-engine baseline and fails closed.
+          just eval-bench
+          echo "✅ real-model (Gemma-4) oracle benchmark ran — numbers ratcheted against the committed baseline."

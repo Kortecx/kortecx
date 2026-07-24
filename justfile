@@ -862,13 +862,26 @@ eval-real:
 # MEASURED agentic-quality proof, not a scripted replay. The oracle floors gate ONLY on a
 # capable model (Gemma-4-12B, NEVER the weak Qwen3 stand-in); env-labelled numbers land in
 # the gitignored `docs/benchmarks/`; the committed per-engine baseline is the fail-closed
-# ratchet. Drive BOTH engines (restart per run):
+# ratchet.
+#
+# COVERAGE: the suite spans four substrate families — `tool` + `react` (the ReAct loop and
+# its tool contract), `reach` (retrieval · durable memory · an App inheriting the
+# principal's capability ceiling) and `swarm` (fan-out → gather). `hnsw` is in the feature
+# set and `KX_SERVE_MEMORY` is set because react-rag / react-memory are provisioned ONLY
+# when their capabilities are registered; without them those families SKIP (loudly) and a
+# baseline capture is refused, because the committed baseline is keyed by the whole corpus
+# digest and a partial capture would ratchet every later run against a subset.
+#
+# Drive BOTH engines (restart per run):
 #   KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-bench   # local Gemma (Ollama)
 #   just fetch-gemma-model && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench   # llama.cpp
+# ⚠ `ollama stop <model>` BEFORE the llama.cpp arm: GPU residency is a cross-ENGINE
+# singleton, and an Ollama keep-alive resident 12B makes the in-process 12B OOM and
+# dead-letter every task (a false negative that looks like a capability collapse).
 # Capture/refresh the committed baseline: `KX_BENCH_UPDATE_BASELINE=1 just eval-bench`.
 eval-bench:
     cargo build -p kx-mcp  # the bundled stdio tool bins (echo / calc / kv) the oracle needs
-    cargo test -p kx-gateway --features inference --test eval_bench_real -- --ignored --nocapture --test-threads=1
+    KX_SERVE_MEMORY=1 cargo test -p kx-gateway --features inference,hnsw --test eval_bench_real -- --ignored --nocapture --test-threads=1
 
 # LOCAL / manual witness (NOT a CI job): drive a LIVE ReAct chain that FIRES a real
 # tool on a capable model. The DETERMINISTIC, CI-runnable regression guard for this
