@@ -229,6 +229,13 @@ mod model_lifecycle;
 mod active_model;
 #[cfg(feature = "serve-engine")]
 mod model_pull;
+// The live-run oracle benchmark: folds a served-model ReAct run into an
+// `kx_eval::Transcript` (client-side, over the read RPCs) and scores it with the
+// golden oracle scorers. Gated on `serve-engine` (any build that can serve a model to
+// benchmark, FFI-free); a reusable driver for the real-model eval slice + its later
+// coverage lane.
+#[cfg(feature = "serve-engine")]
+pub mod eval_bench;
 // Batch B: the host-side def resolver (the MoteDefView seam) — always wired
 // over the SAME content store the coordinator persists admitted defs into.
 mod mote_defs;

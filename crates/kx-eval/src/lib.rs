@@ -61,7 +61,8 @@ mod suite;
 mod transcript;
 
 pub use crate::corpus::{
-    embedded_baseline, load_golden_v1, FormatCorpus, GoldenCorpus, GOLDEN_V1_ID,
+    embedded_baseline, load_bench_v1, load_golden_v1, BenchCorpus, FormatCorpus, GoldenCorpus,
+    BENCH_V1_ID, GOLDEN_V1_ID,
 };
 pub use crate::error::EvalError;
 pub use crate::report::{
