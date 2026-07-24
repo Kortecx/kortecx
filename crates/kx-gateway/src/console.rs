@@ -39,6 +39,113 @@ enum Resolution {
     SpaFallback,
     /// An extension-bearing path that is not embedded.
     NotFound,
+    /// `GET /npm/@kortecx/sdk` — the package METADATA (a minimal npm packument).
+    SdkPackument,
+    /// `GET /npm/@kortecx/sdk/-/…​.tgz` — the package BYTES.
+    SdkTarball,
+}
+
+/// The scoped-registry root this gateway answers on.
+const NPM_ROOT: &str = "npm/";
+/// The one package it hosts.
+const SDK_PACKAGE: &str = "@kortecx/sdk";
+
+/// Resolve an `/npm/…` path, or `None` when it is not a registry request.
+///
+/// Deliberately exact rather than prefix-matched: this is a registry for ONE package, and a
+/// path that merely starts with the right bytes should 404 like anything else rather than be
+/// answered with the SDK.
+fn classify_npm(rel: &str) -> Option<Resolution> {
+    let rest = rel.strip_prefix(NPM_ROOT)?;
+    if rest == SDK_PACKAGE {
+        return Some(Resolution::SdkPackument);
+    }
+    // npm fetches the tarball at whatever `dist.tarball` said; we always publish the
+    // `<name>/-/sdk-<version>.tgz` form, so accept exactly that.
+    let tarball = format!("{SDK_PACKAGE}/-/sdk-{SDK_VERSION}.tgz");
+    (rest == tarball).then_some(Resolution::SdkTarball)
+}
+
+/// The npm packument for the embedded SDK, as JSON bytes.
+///
+/// `authority` is the request's own `Host`, so the `dist.tarball` URL points back at the port
+/// this gateway actually bound — the packument cannot advertise a URL the client cannot reach,
+/// and no configuration has to be kept in sync with the listener.
+///
+/// `integrity` is computed over the embedded bytes rather than recorded at build time: npm
+/// verifies it, so a value derived from anything other than the bytes being served would be a
+/// second source of truth waiting to disagree.
+fn packument(authority: &str, tarball: &[u8]) -> Vec<u8> {
+    use base64::Engine as _;
+    use sha2::{Digest, Sha512};
+    let digest = Sha512::digest(tarball);
+    let integrity = format!(
+        "sha512-{}",
+        base64::engine::general_purpose::STANDARD.encode(digest)
+    );
+    let url = format!("http://{authority}/{NPM_ROOT}{SDK_PACKAGE}/-/sdk-{SDK_VERSION}.tgz");
+    serde_json::json!({
+        "name": SDK_PACKAGE,
+        "dist-tags": { "latest": SDK_VERSION },
+        "versions": {
+            SDK_VERSION: {
+                "name": SDK_PACKAGE,
+                "version": SDK_VERSION,
+                "dist": { "tarball": url, "integrity": integrity },
+            }
+        },
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// Serve the registry: the packument, or the tarball bytes.
+///
+/// A build that packed no SDK answers **501 with a remedy** rather than 404. A 404 would read
+/// as "no such package" and send the author hunting for a typo, when the truth is that this
+/// binary carries no package to serve.
+// SAFETY: static, well-formed status codes and header values throughout (the
+// documented-infallible pattern the workspace lints sanction).
+#[allow(clippy::expect_used)]
+fn npm_response(req: &Request<Incoming>) -> Response<Full<Bytes>> {
+    let Some(tarball) = SDK_TARBALL else {
+        return Response::builder()
+            .status(StatusCode::NOT_IMPLEMENTED)
+            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+            .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+            .body(Full::new(Bytes::from_static(
+                b"this build carries no @kortecx/sdk package (build with `just console-dist`, \
+                  or set KX_SDK_TARBALL to an `npm pack` tarball)",
+            )))
+            .expect("static 501 response builds");
+    };
+    let (body, ctype) = match classify(req.uri().path()) {
+        Resolution::SdkTarball => (
+            Bytes::from_static(tarball),
+            "application/octet-stream",
+        ),
+        // The authority the CLIENT used, so the tarball URL is reachable from wherever the
+        // request came from. A missing Host (HTTP/1.0) falls back to the loopback default the
+        // console listener binds.
+        _ => {
+            let authority = req
+                .headers()
+                .get(header::HOST)
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("127.0.0.1:8888");
+            (
+                Bytes::from(packument(authority, tarball)),
+                "application/json; charset=utf-8",
+            )
+        }
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, ctype)
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .body(Full::new(body))
+        .expect("registry response builds")
 }
 
 /// Resolve a URL path against the embedded manifest. `path` is the raw request
@@ -46,6 +153,12 @@ enum Resolution {
 fn classify(path: &str) -> Resolution {
     let rel = path.trim_start_matches('/');
     let rel = if rel.is_empty() { "index.html" } else { rel };
+    // The registry lives under a reserved prefix, checked BEFORE the SPA fallback — otherwise
+    // `/npm/@kortecx/sdk` (no extension) would be served index.html and npm would try to parse
+    // the console as a packument.
+    if let Some(r) = classify_npm(rel) {
+        return r;
+    }
     if let Some(idx) = ASSETS.iter().position(|a| a.path == rel) {
         return Resolution::Asset(idx);
     }
@@ -88,6 +201,7 @@ fn respond(req: &Request<Incoming>) -> Response<Full<Bytes>> {
     let (status, asset) = match classify(req.uri().path()) {
         Resolution::Asset(idx) => (StatusCode::OK, &ASSETS[idx]),
         Resolution::SpaFallback => (StatusCode::OK, index_asset()),
+        Resolution::SdkPackument | Resolution::SdkTarball => return npm_response(req),
         Resolution::NotFound => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
@@ -141,6 +255,66 @@ pub(crate) async fn serve_console(listener: TcpListener) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The registry prefix must resolve BEFORE the SPA fallback. `/npm/@kortecx/sdk` carries no
+    /// file extension, so without this it would be served `index.html` and npm would try to
+    /// parse the console as package metadata — a confusing failure a long way from its cause.
+    #[test]
+    fn the_registry_prefix_wins_over_the_spa_fallback() {
+        assert_eq!(
+            classify("/npm/@kortecx/sdk"),
+            Resolution::SdkPackument,
+            "the packument path must not fall through to index.html"
+        );
+        assert_eq!(
+            classify(&format!("/npm/@kortecx/sdk/-/sdk-{SDK_VERSION}.tgz")),
+            Resolution::SdkTarball
+        );
+    }
+
+    /// One package, matched exactly. A path that merely starts with the right bytes must 404
+    /// like anything else rather than be answered with the SDK.
+    #[test]
+    fn a_near_miss_under_the_registry_prefix_is_not_the_sdk() {
+        for path in [
+            "/npm/@kortecx/sdk-evil",
+            "/npm/@kortecx/other",
+            "/npm/@kortecx/sdk/-/sdk-9.9.9.tgz",
+        ] {
+            assert!(
+                !matches!(
+                    classify(path),
+                    Resolution::SdkPackument | Resolution::SdkTarball
+                ),
+                "{path} must not resolve to the SDK"
+            );
+        }
+    }
+
+    /// The packument's `dist.tarball` must point back at the authority the CLIENT used, and its
+    /// `integrity` must be over the bytes actually served — npm verifies it, so a value derived
+    /// from anything else is a second source of truth waiting to disagree.
+    #[test]
+    fn the_packument_advertises_a_reachable_url_and_a_real_integrity() {
+        use base64::Engine as _;
+        use sha2::{Digest, Sha512};
+        let bytes = b"not really a tarball";
+        let doc = packument("127.0.0.1:9999", bytes);
+        let v: serde_json::Value = serde_json::from_slice(&doc).expect("valid JSON");
+
+        let dist = &v["versions"][SDK_VERSION]["dist"];
+        assert_eq!(
+            dist["tarball"].as_str().unwrap(),
+            format!("http://127.0.0.1:9999/npm/@kortecx/sdk/-/sdk-{SDK_VERSION}.tgz"),
+            "the URL must use the request's own authority, not a configured one"
+        );
+        let want = format!(
+            "sha512-{}",
+            base64::engine::general_purpose::STANDARD.encode(Sha512::digest(bytes))
+        );
+        assert_eq!(dist["integrity"].as_str().unwrap(), want);
+        assert_eq!(v["dist-tags"]["latest"].as_str().unwrap(), SDK_VERSION);
+    }
 
     #[test]
     fn the_embedded_manifest_has_the_spa_entrypoint() {

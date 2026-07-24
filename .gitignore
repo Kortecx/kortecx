@@ -85,3 +85,7 @@ kx-cloud/
 /scripts/*.sh
 !/scripts/install.sh
 /justfile.private
+
+# The packed SDK the gateway embeds and serves as an installable package — a BUILD
+# artifact of `just console-dist`, regenerated from bindings/typescript, never committed.
+bindings/typescript/kortecx-sdk.tgz

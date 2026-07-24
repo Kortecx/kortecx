@@ -1773,6 +1773,7 @@ dependencies = [
 name = "kx-gateway"
 version = "0.1.1"
 dependencies = [
+ "base64",
  "bincode 2.0.1",
  "bytes",
  "chrono",

@@ -142,6 +142,9 @@ ureq               = { workspace = true, optional = true }
 # sha2 is NON-optional (always-on): the D113 webhook HMAC-SHA256 verify needs it in
 # the default build, and the inference GGUF SHA-256 verify reuses it. Pure-Rust/FFI-free.
 sha2               = { workspace = true }
+# The npm packument's `dist.integrity` is `sha512-<base64>` — npm verifies it, so the value is
+# computed over the bytes actually served (see `console::packument`).
+base64             = { workspace = true }
 # PR-6b-1 (D159): the EXTERNAL MCP gateway — dials external MCP servers (stdio +
 # Streamable-HTTP) over kx-mcp's session seam, discovers their tools into the
 # durable tools.db, and governs them via an off-journal connections.db sidecar.

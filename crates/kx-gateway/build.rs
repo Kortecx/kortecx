@@ -97,8 +97,62 @@ fn main() {
     }
     out.push_str("];\n");
 
+    embed_sdk_tarball(&manifest_dir, &mut out);
+
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     fs::write(out_dir.join("console_assets.rs"), out).expect("write console_assets.rs");
+}
+
+/// Embed the packed TypeScript SDK so the gateway can SERVE it as an installable package.
+///
+/// A hosted app — or any app a user writes — needs `@kortecx/sdk` to talk to the runtime, and
+/// the SDK is not on a public registry. Rather than teach every project a `file:` path that
+/// only resolves in a dev checkout, the gateway hosts the package itself: this embeds the
+/// `npm pack` tarball, and `console.rs` serves it as a scoped registry so a plain
+/// `npm install @kortecx/sdk` works against a running `kx serve`.
+///
+/// **Absent is not fatal, unlike the console dist.** A missing `index.html` means the console
+/// feature would serve a blank page — a broken promise. A missing tarball means the registry
+/// endpoint honestly reports that this build carries no package, which is a smaller and
+/// truthful failure; `just console-dist` packs it, and the release build always has it. The
+/// alternative (fail the build) would make every `--features console` build depend on npm.
+fn embed_sdk_tarball(manifest_dir: &Path, out: &mut String) {
+    println!("cargo:rerun-if-env-changed=KX_SDK_TARBALL");
+    let tarball = env::var_os("KX_SDK_TARBALL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| manifest_dir.join("../../bindings/typescript/kortecx-sdk.tgz"));
+    println!("cargo:rerun-if-changed={}", tarball.display());
+
+    // The version the packument advertises comes from the SDK's own package.json, so the
+    // served metadata can never disagree with the tarball beside it.
+    let pkg_json = manifest_dir.join("../../bindings/typescript/package.json");
+    println!("cargo:rerun-if-changed={}", pkg_json.display());
+    let version = fs::read_to_string(&pkg_json)
+        .ok()
+        .and_then(|s| {
+            s.split_once("\"version\":")
+                .and_then(|(_, rest)| rest.split('"').nth(1).map(str::to_string))
+        })
+        .unwrap_or_default();
+    let _ = write!(
+        out,
+        "\n/// The `@kortecx/sdk` version this build carries (empty when it carries none).\n\
+         pub(crate) static SDK_VERSION: &str = {version:?};\n",
+    );
+
+    if tarball.is_file() {
+        let abs = tarball.canonicalize().expect("sdk tarball path canonicalizes");
+        let _ = write!(
+            out,
+            "\n/// The packed `@kortecx/sdk` tarball, or `None` when this build packed none.\n\
+             pub(crate) static SDK_TARBALL: Option<&'static [u8]> = Some(include_bytes!({abs:?}));\n",
+        );
+    } else {
+        out.push_str(
+            "\n/// The packed `@kortecx/sdk` tarball, or `None` when this build packed none.\n\
+             pub(crate) static SDK_TARBALL: Option<&'static [u8]> = None;\n",
+        );
+    }
 }
 
 /// Recursively collect files under `dir` as `/`-separated paths relative to `root`.
