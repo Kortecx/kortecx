@@ -487,6 +487,11 @@ review-serve-gemma journal="target/serve/kx.db" content="target/serve/blobs": fe
 console-dist:
     npm --prefix bindings/typescript ci
     npm --prefix bindings/typescript run build
+    # Pack the SDK so the gateway can SERVE it as an installable package. A hosted app — or
+    # any app a user writes — needs `@kortecx/sdk`, and it is on no public registry; the
+    # gateway hosts it instead (`console::npm_response`). Renamed to a stable filename so
+    # `build.rs` does not have to know the version.
+    cd bindings/typescript && npm pack --silent >/dev/null && mv -f kortecx-sdk-*.tgz kortecx-sdk.tgz
     npm --prefix ui ci
     npm --prefix ui run build
 

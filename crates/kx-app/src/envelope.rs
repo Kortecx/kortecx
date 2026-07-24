@@ -179,7 +179,16 @@ pub struct References {
     /// Memory artifacts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memory: Vec<ArtifactRef>,
-    /// Other Apps this App composes. Declared here; BOUND by a step naming the handle.
+    /// Other Apps this App may run.
+    ///
+    /// The field means one thing per lane, and both are the same idea — "the Apps this one is
+    /// allowed to invoke":
+    /// - **Functional** — the composition rail. A step names a handle here and the runtime
+    ///   lowers that App into the run (`app_run`); an undeclared name is refused.
+    /// - **Experience (hosted)** — the page's runnable set. The supervisor mints the served
+    ///   page a scoped token from exactly these handles, and `RunApp` refuses the page anything
+    ///   outside them. A hosted app has no blueprint, so nothing is *composed*; the declaration
+    ///   is instead what the browser-side SDK is permitted to call back and run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub apps: Vec<AppRef>,
 }
@@ -869,17 +878,6 @@ impl AppEnvelope {
                     return Err(AppError::Invalid(
                         "an experience app must not carry a mode (it is a project by \
                          construction, not a contextual/codified choice)"
-                            .into(),
-                    ));
-                }
-                // Composition is a BLUEPRINT concept: a declared App is reached by a step
-                // naming it, and an Experience app has no steps. Accepting the declaration
-                // would store an intent nothing can ever act on, which reads on the review
-                // surface as "this app calls that one" while the run never does.
-                if !self.references.apps.is_empty() {
-                    return Err(AppError::Invalid(
-                        "an experience app must not declare references.apps (it has no \
-                         blueprint, so no step can bind one)"
                             .into(),
                     ));
                 }
@@ -1646,6 +1644,23 @@ mod tests {
         env.mode = "codified".to_string();
         let err = env.validate().unwrap_err().to_string();
         assert!(err.contains("must not carry a mode"), "{err}");
+    }
+
+    /// A hosted app DECLARES the apps its served page may call back and run — its
+    /// `references.apps` is the page's runnable set, read by the supervisor to scope the
+    /// page's token. Once refused (a Functional-only reading of the field); now accepted,
+    /// because the field means "the apps this one may invoke" on both lanes.
+    #[test]
+    fn an_experience_app_may_declare_the_apps_its_page_can_run() {
+        let mut env = AppEnvelope::new_experience("x", HostedConfig::default(), "acme/apps/x");
+        env.references.apps.push(AppRef {
+            handle: "apps/local/greeting".into(),
+        });
+        env.validate()
+            .expect("a hosted app may declare the apps its page can run");
+        // And it survives the canonical round trip on the reference rail.
+        let again = AppEnvelope::from_json_slice(&env.to_canonical_json().unwrap()).unwrap();
+        assert_eq!(again.references.apps.len(), 1);
     }
 
     #[test]

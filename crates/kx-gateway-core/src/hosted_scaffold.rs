@@ -64,7 +64,8 @@ const VITE_REACT: &[TemplateFile] = &[
   },
   "dependencies": {
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "@kortecx/sdk": "^0.1.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -171,12 +172,66 @@ body {
         ),
     },
     TemplateFile {
+        // `import.meta.env` needs Vite's ambient types, or the serve-time `tsc --noEmit` gate
+        // rejects `src/kx.ts`. Vite ships them under `vite/client`.
+        path: "src/vite-env.d.ts",
+        source: FileSource::Static("/// <reference types=\"vite/client\" />\n"),
+    },
+    TemplateFile {
+        // The runtime client, written for the model rather than by it. Cross-file contract
+        // drift is the known way scaffolded hosted apps break, so the one file that talks to
+        // the runtime is FIXED and tsc-clean, and the authoring prompt tells the model to
+        // import from it and only call it. `import.meta.env.VITE_KX_*` is filled by the
+        // supervisor's `.env.local` at start — the page never hard-codes an endpoint or a
+        // token, and a build with no runtime simply gets an unconfigured client.
+        path: "src/kx.ts",
+        source: FileSource::Static(
+            r#"// The kortecx runtime client for this hosted app. Do not edit — the supervisor fills
+// VITE_KX_ENDPOINT / VITE_KX_TOKEN at start, and this app may only run the apps its
+// envelope declared in references.apps.
+import { KxClient } from "@kortecx/sdk/web";
+
+const endpoint = import.meta.env.VITE_KX_ENDPOINT ?? "";
+const token = import.meta.env.VITE_KX_TOKEN ?? "";
+
+/** True when this app was served by a running kortecx gateway (env is present). */
+export const kxConfigured: boolean = endpoint !== "" && token !== "";
+
+/** The runtime client. Present only when configured; guard on {@link kxConfigured}. */
+export const kx: KxClient | null = kxConfigured
+  ? new KxClient(endpoint, { token })
+  : null;
+
+/**
+ * Run one of this app's declared apps and wait for its answer as text.
+ *
+ * The handle must be one this hosted app declared in references.apps — the gateway refuses
+ * anything else. Returns the committed result as a string, or throws with the runtime's
+ * message.
+ */
+export async function runApp(
+  handle: string,
+  args: Record<string, string> = {},
+): Promise<string> {
+  if (!kx) throw new Error("the kortecx runtime is not configured for this app");
+  // `wait: true` resolves to a settled Result (whose `.text` is the committed answer), never
+  // the un-awaited Run handle.
+  const result = await kx.runApp(handle, { args, wait: true });
+  return "text" in result ? (result.text ?? "") : "";
+}
+"#,
+        ),
+    },
+    TemplateFile {
         path: "src/App.tsx",
         source: FileSource::Authored {
             role: "the main React component in `src/App.tsx` implementing the web app the user \
-                   described. Export a default React function component. Use ONLY `react` (no \
-                   extra npm dependencies) and inline styles or the classes in index.css. Keep \
-                   it a single self-contained component that renders immediately.",
+                   described. Export a default React function component. Use `react`, and — when \
+                   the app should run one of its kortecx apps — import `{ runApp, kxConfigured }` \
+                   from `./kx` and call `runApp(<handle>, <args>)`; do NOT construct a client or \
+                   import from `@kortecx/sdk` directly (the `./kx` module already did). Use \
+                   inline styles or the classes in index.css. Keep it a single self-contained \
+                   component that renders immediately.",
             default: r#"export default function App() {
   return (
     <main style={{ maxWidth: 680, margin: "4rem auto", padding: "0 1.5rem" }}>
@@ -646,6 +701,8 @@ mod tests {
                 "index.html",
                 "src/main.tsx",
                 "src/index.css",
+                "src/vite-env.d.ts",
+                "src/kx.ts",
                 "src/App.tsx",
                 "README.md",
             ]

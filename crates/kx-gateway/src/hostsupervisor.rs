@@ -48,6 +48,10 @@ const READINESS_TIMEOUT: Duration = Duration::from_secs(120);
 const READINESS_POLL: Duration = Duration::from_millis(250);
 /// The `install_cmd` sentinel that SKIPS `npm install` (used by hermetic tests).
 const SKIP_INSTALL: &str = "skip";
+/// Wall-clock ceiling on a one-shot lifecycle command (`npm install` / `npm run build`).
+/// Generous — a cold install of a real framework pulls a lot — but bounded, so a stuck
+/// command fails loudly instead of pinning the app in `installing` until the gateway dies.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(300);
 
 type AppKey = (String, String);
 
@@ -119,6 +123,9 @@ struct LaunchPlan {
     /// Advisory `npm run build` override; ignored in dev mode.
     build_cmd: String,
     workdir: PathBuf,
+    /// The App handles this hosted app's page may run — its envelope's `references.apps`.
+    /// Resolved here, at plan time, so the token minted from it reflects the app AS STARTED.
+    runnable: Vec<String>,
 }
 
 /// The hosted-app supervisor. Holds the catalog/branch/content seams + the working-dir
@@ -129,15 +136,37 @@ pub(crate) struct HostedSupervisor {
     branches: Arc<dyn BranchStore>,
     content: Arc<dyn ContentReader>,
     running: Mutex<HashMap<AppKey, Arc<Mutex<RunningApp>>>>,
+    /// The scoped-token store the served page authenticates with. Minted on start (per app,
+    /// replacing any prior), dropped on stop — so a page can only ever reach the runtime while
+    /// its app is actually running.
+    app_tokens: Arc<crate::app_tokens::AppTokenStore>,
+    /// The gateway's own `http://host:port` — where a served page's SDK client connects back.
+    /// Written into the app's env so the page never hard-codes it.
+    gateway_endpoint: String,
+    /// The console listener's `http://host:port` — where `/npm/@kortecx/sdk` is served, so the
+    /// scaffold's `.npmrc` installs the SDK from THIS gateway. Empty ⇒ no SDK registry (the
+    /// app installs no SDK, an honest degrade on a `--no-console` serve).
+    console_endpoint: String,
+    /// The live hosted-origin set the gateway's CORS predicate consults. A port is added when
+    /// this app starts serving and removed when it stops, so the gateway allows a page's
+    /// cross-origin calls exactly while its app is up.
+    hosted_origins: Arc<crate::app_tokens::HostedOrigins>,
 }
 
 impl HostedSupervisor {
     /// Create a supervisor rooted at `<data_root>/hosted/` (created lazily per app).
+    // Distinct Arc/String seams for one host supervisor; a config struct would only move the
+    // arity to the caller (the same Rule-1 reasoning `HostAppAuthor::new` documents).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         data_root: &Path,
         catalog: Arc<dyn AppCatalog>,
         branches: Arc<dyn BranchStore>,
         content: Arc<dyn ContentReader>,
+        app_tokens: Arc<crate::app_tokens::AppTokenStore>,
+        hosted_origins: Arc<crate::app_tokens::HostedOrigins>,
+        gateway_endpoint: String,
+        console_endpoint: String,
     ) -> Self {
         Self {
             data_root: data_root.join("hosted"),
@@ -145,6 +174,10 @@ impl HostedSupervisor {
             branches,
             content,
             running: Mutex::new(HashMap::new()),
+            app_tokens,
+            hosted_origins,
+            gateway_endpoint,
+            console_endpoint,
         }
     }
 
@@ -181,6 +214,12 @@ impl HostedSupervisor {
             serve_mode: HostedServeMode::from_label(&hosted.serve_mode),
             build_cmd: hosted.build_cmd,
             workdir: self.data_root.join(dir_key),
+            runnable: env
+                .references
+                .apps
+                .iter()
+                .map(|a| a.handle.clone())
+                .collect(),
         })
     }
 }
@@ -240,6 +279,14 @@ impl HostedAppSupervisor for HostedSupervisor {
             app.generation
         };
 
+        // Mint the page's scoped credential from the runnable set resolved AT THIS START — so
+        // an edit to references.apps takes effect on the next restart, a visible act, never
+        // under a live page. Replaces any prior token for this app (the restart invalidates
+        // the old page's credential).
+        let token = self
+            .app_tokens
+            .mint(principal, handle, plan.runnable.clone());
+
         // The lifecycle (materialize → install → spawn → readiness) runs in the
         // background; `start` returns immediately with the initial status.
         let ctx = LifecycleCtx {
@@ -250,6 +297,10 @@ impl HostedAppSupervisor for HostedSupervisor {
             plan,
             generation,
             rebuild,
+            token,
+            gateway_endpoint: self.gateway_endpoint.clone(),
+            console_endpoint: self.console_endpoint.clone(),
+            hosted_origins: Arc::clone(&self.hosted_origins),
         };
         tokio::spawn(run_lifecycle(ctx));
 
@@ -280,11 +331,18 @@ impl HostedAppSupervisor for HostedSupervisor {
         if let Some(mut child) = app.child.take() {
             let _ = child.start_kill();
         }
+        // The page's origin stops being allowed the moment the app stops.
+        if app.port != 0 {
+            self.hosted_origins.remove(app.port);
+        }
         // Bump the generation so the background task (if any) aborts its next write.
         app.generation = app.generation.wrapping_add(1);
         app.state = HostedState::Stopped;
         app.port = 0;
         app.detail = "stopped".into();
+        // The page's credential dies with the app it was minted for.
+        drop(app);
+        self.app_tokens.revoke(principal, handle);
         Ok(was_running)
     }
 
@@ -343,6 +401,14 @@ struct LifecycleCtx {
     plan: LaunchPlan,
     generation: u64,
     rebuild: bool,
+    /// The page's scoped bearer token, written into the app's env.
+    token: String,
+    /// The gateway address the page's SDK connects back to.
+    gateway_endpoint: String,
+    /// The console address serving the SDK registry (for the app's `.npmrc`).
+    console_endpoint: String,
+    /// The live-origin set to add/remove this app's port from as it starts/stops serving.
+    hosted_origins: Arc<crate::app_tokens::HostedOrigins>,
 }
 
 /// Set the app state IFF this task's generation is still current. Returns `false` when a
@@ -459,19 +525,27 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
         app.child = Some(child);
         app.port = port;
     }
+    // The app is now serving on `port` — allow its page's cross-origin calls to the gateway.
+    // Added AFTER the generation check, so a superseded spawn (which returned above) never
+    // leaves a stale origin allowed.
+    ctx.hosted_origins.insert(port);
 
-    // 5) Wait for the server to accept connections, then mark Running.
-    match wait_ready(&ctx, port).await {
+    // 5) Wait for the server to accept connections, then mark Running (or fail loudly).
+    finish_readiness(&ctx, port, production, wait_ready(&ctx, port).await);
+}
+
+/// Resolve the readiness outcome into a terminal state, and — on every failure path — stop
+/// allowing the page's origin. Its own function so `run_lifecycle` stays a linear pipeline and
+/// so the origin-removal on failure lives in ONE place rather than once per failure arm.
+fn finish_readiness(ctx: &LifecycleCtx, port: u16, production: bool, outcome: Readiness) {
+    match outcome {
         Readiness::Ready => {
-            advance(
-                &ctx,
-                HostedState::Running,
-                if production {
-                    "running (production build)"
-                } else {
-                    "running"
-                },
-            );
+            let detail = if production {
+                "running (production build)"
+            } else {
+                "running"
+            };
+            advance(ctx, HostedState::Running, detail);
         }
         // The child is already gone — nothing to kill, and the exit status plus its own last
         // words are the only useful thing we can say.
@@ -481,11 +555,12 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
             } else {
                 format!("server exited before becoming ready ({status}): {tail}")
             };
-            advance(&ctx, HostedState::Failed, &detail);
+            advance(ctx, HostedState::Failed, &detail);
+            ctx.hosted_origins.remove(port);
         }
         Readiness::TimedOut => {
             advance(
-                &ctx,
+                ctx,
                 HostedState::Failed,
                 "server did not become ready in time",
             );
@@ -494,6 +569,7 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
                     let _ = child.start_kill();
                 }
             }
+            ctx.hosted_origins.remove(port);
         }
     }
 }
@@ -584,6 +660,8 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
             ctx.plan.framework
         ));
     }
+    write_env_local(ctx)?;
+
     log_line(
         logs,
         format!(
@@ -591,6 +669,41 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
             ctx.plan.framework
         ),
     );
+    Ok(())
+}
+
+/// Write the page's runtime config into `.env.local` in the workdir — never into CAS.
+///
+/// The token is a per-RUN secret, minted fresh on every start; putting it in the project tree
+/// (the branch) would persist a dead credential and travel it in an export. `.env.local` is
+/// workdir-only, alongside `node_modules`, and is rewritten on every materialize.
+///
+/// Both the Vite (`VITE_`) and Next (`NEXT_PUBLIC_`) prefixes are written unconditionally.
+/// A scaffold reads only its own framework's pair; writing both costs two lines and means the
+/// supervisor does not have to branch on framework for a value the client picks up by name.
+fn write_env_local(ctx: &LifecycleCtx) -> Result<(), String> {
+    let e = &ctx.gateway_endpoint;
+    let t = &ctx.token;
+    let body = format!(
+        "# Written by the kortecx hosted-app supervisor on each start. Do not commit — the\n\
+         # token is a per-run credential that dies when this app stops.\n\
+         VITE_KX_ENDPOINT={e}\n\
+         VITE_KX_TOKEN={t}\n\
+         NEXT_PUBLIC_KX_ENDPOINT={e}\n\
+         NEXT_PUBLIC_KX_TOKEN={t}\n"
+    );
+    write_file(&ctx.plan.workdir, ".env.local", body.as_bytes())?;
+
+    // Point `@kortecx/*` installs at THIS gateway's own registry, so the scaffold's
+    // `@kortecx/sdk` dependency resolves from the running serve rather than a public npm the
+    // package is not on. Written per start (the console port could differ between serves), and
+    // only when a console is actually serving the registry — a `--no-console` serve leaves no
+    // `.npmrc`, and the app's SDK dependency then fails to install honestly rather than
+    // pointing at a registry that is not there.
+    if !ctx.console_endpoint.is_empty() {
+        let npmrc = format!("@kortecx:registry={}/npm/\n", ctx.console_endpoint);
+        write_file(&ctx.plan.workdir, ".npmrc", npmrc.as_bytes())?;
+    }
     Ok(())
 }
 
@@ -813,12 +926,24 @@ async fn run_capture(
     logs: &Arc<Mutex<VecDeque<String>>>,
 ) -> Result<(), String> {
     log_line(logs, format!("$ {prog} {}", args.join(" ")));
-    let output = Command::new(prog)
+    // Bound the whole command. `READINESS_TIMEOUT` covered only the dev server accepting a
+    // connection, so a hung `npm install` (a stalled registry, a lockfile fight) sat in the
+    // `installing` state FOREVER — the one hosted state a user could not escape without
+    // killing the gateway. A one-shot command that overruns is killed and fails loudly, which
+    // is the state the whole readiness machine exists to reach.
+    let run = Command::new(prog)
         .args(args)
         .current_dir(workdir)
-        .output()
-        .await
-        .map_err(|e| format!("cannot run {prog:?}: {e}"))?;
+        .kill_on_drop(true)
+        .output();
+    let Ok(res) = tokio::time::timeout(COMMAND_TIMEOUT, run).await else {
+        let secs = COMMAND_TIMEOUT.as_secs();
+        log_line(logs, format!("$ {prog}: timed out after {secs}s — killed"));
+        return Err(format!(
+            "{prog} did not finish within {secs}s (a stuck install/build); killed"
+        ));
+    };
+    let output = res.map_err(|e| format!("cannot run {prog:?}: {e}"))?;
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         log_line(logs, line.to_string());
     }
@@ -953,9 +1078,14 @@ mod tests {
                 serve_mode: HostedServeMode::default(),
                 build_cmd: String::new(),
                 workdir: workdir.path().to_path_buf(),
+                runnable: Vec::new(),
             },
             generation: 1,
             rebuild: false,
+            token: "test-token".into(),
+            gateway_endpoint: "http://127.0.0.1:50151".into(),
+            console_endpoint: "http://127.0.0.1:8888".into(),
+            hosted_origins: crate::app_tokens::HostedOrigins::new(),
         };
         Fixture {
             ctx,

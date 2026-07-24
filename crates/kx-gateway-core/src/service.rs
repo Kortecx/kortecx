@@ -16,7 +16,7 @@ use crate::capture_view::CaptureView;
 use crate::datasets::DatasetView;
 use crate::error::{hash_32, instance_id_16, GatewayError};
 use crate::fuzzy_discovery::FuzzyDiscoveryView;
-use crate::identity::CallerParty;
+use crate::identity::{CallerAppScope, CallerParty};
 use crate::memory::MemoryView;
 use crate::reader::{ContentReader, JournalReader};
 use crate::submit::{RunSubmitter, SubmitterError};
@@ -2447,7 +2447,24 @@ impl KxGateway for GatewayService {
             .get::<CallerParty>()
             .map(|p| p.0.clone())
             .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        // A HOSTED PAGE may run only the Apps its own envelope declared. The scope is present
+        // only for a page-minted token, so an operator request skips this entirely; when it IS
+        // present the declaration is the ceiling, and it was resolved when the app started
+        // rather than read from anything the page sent.
+        //
+        // Refused as `permission_denied` naming the handle: the page's author owns both sides
+        // of this — the App that is missing and the envelope that should declare it — so a
+        // uniform not-found would hide the one fact that makes it fixable.
+        let app_scope = request.extensions().get::<CallerAppScope>().cloned();
         let req = request.into_inner();
+        if let Some(scope) = &app_scope {
+            if !scope.may_run(&req.handle) {
+                return Err(Status::permission_denied(format!(
+                    "hosted app {:?} may not run {:?}: it is not in that app's                      references.apps (declare it, then restart the app)",
+                    scope.app_handle, req.handle
+                )));
+            }
+        }
 
         // The host reads the validated stored envelope, lowers its blueprint through
         // the canonical `kx-blueprint` path, resolves `references.connections` against
