@@ -57,8 +57,8 @@
 #[cfg(feature = "serve-engine")]
 mod assemble_serve;
 mod auth;
-// D213 + the hosted channel: per-app scoped credentials minted by the supervisor and
-// resolved by the auth seam. Off-journal, off-digest.
+// The hosted channel: per-app scoped credentials minted by the supervisor and resolved by the
+// auth seam, plus the live-origin set the CORS predicate consults. Off-journal, off-digest.
 mod app_tokens;
 mod config;
 // D139: the embedded web console — hyper serving the compile-time-embedded SPA
