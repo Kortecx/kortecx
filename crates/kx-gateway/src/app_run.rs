@@ -1827,7 +1827,8 @@ impl AppAuthor for HostAppAuthor {
 
         let req = to_request(dag).map_err(|e| AppRunError::InvalidArgs(e.to_string()))?;
         // Parse into the authoring vocabulary (SHARED with SubmitWorkflow) + author
-        // SERVER-SIDE (warrants from the party's grants, never the client — SN-8).
+        // SERVER-SIDE — every warrant comes from the party's own grants, never from the
+        // client, so authoring an App can never widen what the caller may do.
         // The context rail (context/prompts/rules/memory/refs) + skill instructions ride
         // as extra context items into the SAME entry bundle inject (empty set ⇒
         // byte-identical to the plain author path).
