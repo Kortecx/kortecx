@@ -57,13 +57,18 @@ const SDK_PACKAGE: &str = "@kortecx/sdk";
 /// answered with the SDK.
 fn classify_npm(rel: &str) -> Option<Resolution> {
     let rest = rel.strip_prefix(NPM_ROOT)?;
-    if rest == SDK_PACKAGE {
+    // npm encodes the scope separator: it requests `@kortecx%2fsdk`, not `@kortecx/sdk`. Found
+    // live — the exact match fell through to the SPA and npm choked on `<!doctype html>`. Only
+    // `%2f`/`%2F` needs decoding here (the only special byte in a scoped package name); a full
+    // percent-decoder would be scope creep for one known encoding.
+    let decoded = rest.replace("%2f", "/").replace("%2F", "/");
+    if decoded == SDK_PACKAGE {
         return Some(Resolution::SdkPackument);
     }
     // npm fetches the tarball at whatever `dist.tarball` said; we always publish the
     // `<name>/-/sdk-<version>.tgz` form, so accept exactly that.
     let tarball = format!("{SDK_PACKAGE}/-/sdk-{SDK_VERSION}.tgz");
-    (rest == tarball).then_some(Resolution::SdkTarball)
+    (decoded == tarball).then_some(Resolution::SdkTarball)
 }
 
 /// The npm packument for the embedded SDK, as JSON bytes.
@@ -261,6 +266,12 @@ mod tests {
             classify("/npm/@kortecx/sdk"),
             Resolution::SdkPackument,
             "the packument path must not fall through to index.html"
+        );
+        // npm actually requests the scope-encoded form — the shape that fell through live.
+        assert_eq!(
+            classify("/npm/@kortecx%2fsdk"),
+            Resolution::SdkPackument,
+            "the %2f-encoded scope npm sends must resolve too"
         );
         assert_eq!(
             classify(&format!("/npm/@kortecx/sdk/-/sdk-{SDK_VERSION}.tgz")),
