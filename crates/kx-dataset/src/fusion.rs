@@ -59,14 +59,32 @@ pub const INDEX_FORMAT_VERSION: u32 = 1;
 ///
 /// Rank-based ⇒ no score normalization and the two scales fuse cleanly. The union
 /// is built in sorted-ref order (a `BTreeMap`), never HashMap iteration order, so
-/// the result is reproducible.
+/// the result is reproducible. Thin wrapper over [`rrf_fuse_multi`] — the 2-leg
+/// (dense + sparse) case.
 #[must_use]
 pub fn rrf_fuse(dense: &[Hit], sparse: &[Hit], c: u32, k: usize) -> Vec<Hit> {
+    rrf_fuse_multi(&[dense, sparse], c, k)
+}
+
+/// Fuse `N` rankings via Reciprocal Rank Fusion — the general form of [`rrf_fuse`].
+///
+/// Each list is assumed already in its backend's deterministic order (score desc,
+/// ref asc). A document's contribution from a list it appears in is `1 / (c + rank)`
+/// (rank 1-based); a list it is absent from contributes nothing. This generalizes
+/// the 2-leg dense+sparse fuse to any number of legs (e.g. a third GRAPH leg), and
+/// because an **empty list contributes zero iterations**, appending an empty leg
+/// yields a byte-identical result to the shorter list set — the invariant that keeps
+/// a graph-RAG-off run identical to a plain hybrid one.
+///
+/// The union is built in sorted-ref order (a `BTreeMap`), so the fused order (RRF
+/// desc, then ascending ref) is reproducible regardless of leg or input order.
+#[must_use]
+pub fn rrf_fuse_multi(lists: &[&[Hit]], c: u32, k: usize) -> Vec<Hit> {
     if k == 0 {
         return Vec::new();
     }
     let mut acc: BTreeMap<ContentRef, f64> = BTreeMap::new();
-    for list in [dense, sparse] {
+    for list in lists {
         for (rank0, hit) in list.iter().enumerate() {
             let rank = (rank0 as u64) + 1;
             let denom = f64::from(c) + rank as f64;

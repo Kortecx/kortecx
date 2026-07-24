@@ -251,6 +251,21 @@ pub(crate) fn memory_enabled() -> bool {
     kx_flags::enabled(&kx_flags::Flag::SERVE_MEMORY)
 }
 
+/// Graph-RAG PR-1: is the GRAPH-RAG retrieval leg enabled? (default OFF — a new
+/// extraction-at-ingest + third-fusion-leg surface, opt-in). When ON (and a
+/// `serve-engine` build with a chat model), the serve wires a `HostExtractor` onto
+/// `HostDatasetView` so ingest builds a per-dataset knowledge graph and a query
+/// fuses a multi-hop graph leg; when OFF, no extractor is wired, the graph stays
+/// empty, and the retrieval path is byte-identical to a plain hybrid fuse.
+///
+/// A dark-launch flag: `KX_FLAG_SERVE_GRAPH_RAG` — see `kx_flags::Flag::SERVE_GRAPH_RAG`.
+/// Gated to the `serve-engine` build (the extractor needs a generation backend), so it
+/// is never dead code in an `hnsw`-only build.
+#[cfg(all(feature = "hnsw", feature = "serve-engine"))]
+pub(crate) fn graph_rag_enabled() -> bool {
+    kx_flags::enabled(&kx_flags::Flag::SERVE_GRAPH_RAG)
+}
+
 /// RC5b: run a reversible TTL+salience decay sweep across all namespaces at serve open?
 /// `KX_MEMORY_DECAY_AUTO` (default OFF — decay is normally an explicit operator op via
 /// `kx memory decay`; auto-sweep is opt-in). Off-digest; default OFF ⇒ serve start is

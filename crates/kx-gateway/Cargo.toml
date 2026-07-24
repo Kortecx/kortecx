@@ -188,6 +188,10 @@ kx-chunk           = { workspace = true }
 # RC4a: the SPARSE (BM25) leg of hybrid retrieval — OPTIONAL behind `hnsw`, rebuilt
 # from the same rows as the dense index (FFI-free, no external dep; dep-wall holds).
 kx-dataset-bm25    = { workspace = true, optional = true }
+# Graph-RAG PR-1: the GRAPH leg of retrieval — a pure-Rust, in-memory knowledge graph
+# with a multi-hop neighbour walk, fused (RRF) beside the dense + sparse legs. OPTIONAL
+# behind `hnsw` (the retrieval module). Off the truth path (SN-8); default-off flag.
+kx-dataset-graph   = { workspace = true, optional = true }
 # W1.A5: the advisory MCP-intelligence surface — TaskBundle (kx-bundle) +
 # manifest ranking / the fail-closed lowering dry-run (kx-toolscout). Both
 # pure-Rust, FFI-free, ALWAYS-ON (the manifests/score RPCs answer on every
@@ -368,7 +372,7 @@ inference = [
 # pure-Rust crates (the dep-wall + `build-no-inference` stay green). The server-embed
 # path ADDITIONALLY needs `inference` (an EmbeddingBackend); without it, server-embed
 # requests return FAILED_PRECONDITION. Independent of `inference` — they compose.
-hnsw = ["dep:kx-dataset-hnsw", "dep:kx-dataset-bm25", "dep:kx-memory"]
+hnsw = ["dep:kx-dataset-hnsw", "dep:kx-dataset-bm25", "dep:kx-dataset-graph", "dep:kx-memory"]
 # D139: `kx serve` hosts the embedded web console (the built React SPA) on a third
 # loopback listener (default 127.0.0.1:8888). OFF by default: the dist is embedded
 # at COMPILE time by build.rs, so a console build needs `ui/dist` (a repo checkout

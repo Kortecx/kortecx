@@ -45,6 +45,7 @@ kx-dataset.workspace = true
 # FFI-free leaves; the BM25 edge gives the harness the same hybrid retrieval the
 # live serve `HostDatasetView` already runs (`query_corpus_hybrid`).
 kx-dataset-bm25.workspace = true
+kx-dataset-graph.workspace = true
 kx-grammar.workspace = true
 kx-critic-types.workspace = true
 kx-capture.workspace = true

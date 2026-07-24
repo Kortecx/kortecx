@@ -53,7 +53,8 @@ mod store;
 pub use annotation::{Annotation, AnnotationStore};
 pub use error::DataError;
 pub use fusion::{
-    index_fingerprint, mmr_rerank, rrf_fuse, INDEX_FORMAT_VERSION, MMR_LAMBDA_BP, RRF_C,
+    index_fingerprint, mmr_rerank, rrf_fuse, rrf_fuse_multi, INDEX_FORMAT_VERSION, MMR_LAMBDA_BP,
+    RRF_C,
 };
 pub use index::{Hit, InMemoryRetrievalIndex, RetrievalIndex};
 pub use lexical::LexicalIndex;

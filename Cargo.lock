@@ -1669,6 +1669,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kx-dataset-graph"
+version = "0.1.0"
+dependencies = [
+ "kx-content",
+ "kx-dataset",
+]
+
+[[package]]
 name = "kx-dataset-hnsw"
 version = "0.1.1"
 dependencies = [
@@ -1802,6 +1810,7 @@ dependencies = [
  "kx-critic",
  "kx-dataset",
  "kx-dataset-bm25",
+ "kx-dataset-graph",
  "kx-dataset-hnsw",
  "kx-executor",
  "kx-flags",
@@ -2059,6 +2068,7 @@ dependencies = [
  "kx-critic-types",
  "kx-dataset",
  "kx-dataset-bm25",
+ "kx-dataset-graph",
  "kx-executor",
  "kx-grammar",
  "kx-inference",

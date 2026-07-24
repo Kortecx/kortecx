@@ -472,6 +472,24 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             crate::model_exec::shaper_warrant(&embed_model, default_executor_class()),
         )
     });
+    // Graph-RAG PR-1: the entity/relation EXTRACTOR for the dataset view. Built ONLY
+    // behind `KX_FLAG_SERVE_GRAPH_RAG`, and routed to the CHAT model (`r.primary`) — NOT
+    // the embed model, which returns `Unsupported` on a generation `dispatch`. When the
+    // flag is off, this is `None`: no extractor is wired, the graph stays empty, and
+    // retrieval is byte-identical to a build without the feature.
+    #[cfg(all(feature = "hnsw", feature = "serve-engine"))]
+    let dataset_extractor: Option<crate::datasets::HostExtractor> =
+        if crate::env_caps::graph_rag_enabled() {
+            serve_rt.as_ref().map(|r| {
+                crate::datasets::HostExtractor::new(
+                    r.routing.clone(),
+                    r.primary.clone(),
+                    crate::model_exec::shaper_warrant(&r.primary, default_executor_class()),
+                )
+            })
+        } else {
+            None
+        };
 
     // (1) Embedded coordinator — the SOLE journal writer. It opens the journal
     //     read-write (by value) and verifies each committed result_ref against
@@ -1129,6 +1147,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         #[cfg(feature = "serve-engine")]
         if let Some(embedder) = dataset_embedder {
             view = view.with_embedder(embedder);
+        }
+        // Graph-RAG PR-1: attach the extractor (only Some when `KX_FLAG_SERVE_GRAPH_RAG`
+        // is on). The feature-gated log is the live-proof signal that extraction is
+        // wired to the chat route rather than silently no-op'd.
+        #[cfg(feature = "serve-engine")]
+        if let Some(extractor) = dataset_extractor {
+            view = view.with_extractor(extractor);
+            tracing::info!(
+                "graph-RAG ENABLED (KX_FLAG_SERVE_GRAPH_RAG): entity/relation extraction at \
+                 ingest + a multi-hop graph fusion leg at query"
+            );
         }
         Arc::new(view)
     };
