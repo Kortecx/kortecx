@@ -47,6 +47,7 @@ struct NodeBindings {
     skills: Vec<String>,
     connections: Vec<String>,
     datasets: Vec<String>,
+    apps: Vec<String>,
 }
 
 impl NodeBindings {
@@ -64,6 +65,7 @@ impl NodeBindings {
             push(&mut out.skills, &s.skills);
             push(&mut out.connections, &s.connections);
             push(&mut out.datasets, &s.datasets);
+            push(&mut out.apps, &s.apps);
         }
         out
     }
@@ -270,6 +272,10 @@ pub struct NewSpec {
     pub tags: Vec<String>,
     /// Advisory description.
     pub description: Option<String>,
+    /// Advisory one-phrase statement of what a run PRODUCES — the line the composition
+    /// menu shows other Apps' authors. Without it this App is runnable but effectively
+    /// invisible to anything that might call it.
+    pub delivers: Option<String>,
     /// Optional per-App project branch handle (reserved; never created here).
     pub branch: Option<String>,
     /// Write the pretty envelope JSON here (else stdout).
@@ -322,6 +328,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
     let mut tags: Vec<String> = Vec::new();
     let mut skills: Vec<String> = Vec::new();
     let mut description: Option<String> = None;
+    let mut delivers: Option<String> = None;
     let mut branch: Option<String> = None;
     let mut wait_flag = false;
     let mut timeout_secs = DEFAULT_TIMEOUT_SECS;
@@ -375,6 +382,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             "--tag" => tags.push(next_value(&mut args, "--tag")?),
             "--skill" => skills.push(next_value(&mut args, "--skill")?),
             "--description" => description = Some(next_value(&mut args, "--description")?),
+            "--delivers" => delivers = Some(next_value(&mut args, "--delivers")?),
             "--branch" => branch = Some(next_value(&mut args, "--branch")?),
             "--goal" => goal = Some(next_value(&mut args, "--goal")?),
             "--kind" => kind = Some(next_value(&mut args, "--kind")?),
@@ -414,6 +422,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<AppArgs, CliError
             max_tool_calls,
             tags,
             description,
+            delivers,
             branch,
             wait_flag,
             timeout_secs,
@@ -449,6 +458,7 @@ struct Flags {
     max_tool_calls: Option<u32>,
     tags: Vec<String>,
     description: Option<String>,
+    delivers: Option<String>,
     branch: Option<String>,
     wait_flag: bool,
     timeout_secs: u64,
@@ -491,6 +501,7 @@ fn assemble_sub(kw: &str, f: Flags) -> Result<AppSub, CliError> {
             max_tool_calls: f.max_tool_calls,
             tags: f.tags,
             description: f.description,
+            delivers: f.delivers,
             branch: f.branch,
             output: f.output,
             skills: f.skills,
@@ -649,6 +660,7 @@ fn derived_to_blueprint(app: &proto::DerivedApp) -> serde_json::Value {
             put("skills", &s.skills);
             put("connections", &s.integrations);
             put("datasets", &s.datasets);
+            put("apps", &s.apps);
             serde_json::Value::Object(step)
         })
         .collect();
@@ -688,6 +700,9 @@ fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError>
     if let Some(d) = spec.description {
         env.description = d;
     }
+    if let Some(d) = spec.delivers {
+        env.delivers = d;
+    }
     env.tags = spec.tags;
     if let Some(m) = spec.model {
         env.steering_config.model.model_route = m;
@@ -725,6 +740,16 @@ fn execute_new(spec: NewSpec, skill_refs: Vec<SkillRef>) -> Result<(), CliError>
             env.references.datasets.push(DatasetRef {
                 dataset_ref: name.clone(),
                 cas_refs: Vec::new(),
+            });
+        }
+    }
+    // The composition declarations. Like connections and datasets these are bare names
+    // needing no online resolution — the runtime resolves each handle against the caller's
+    // own catalog at run — so an App that only composes other Apps still authors OFFLINE.
+    for handle in &bindings.apps {
+        if !env.references.apps.iter().any(|a| a.handle == *handle) {
+            env.references.apps.push(kx_app::AppRef {
+                handle: handle.clone(),
             });
         }
     }
@@ -1426,6 +1451,7 @@ mod tests {
                     skills: vec!["triage".into()],
                     integrations: vec!["gmail".into()],
                     datasets: vec!["support".into()],
+                    apps: vec!["apps/local/research".into()],
                 },
                 proto::DerivedAppStep {
                     role: "writer".into(),
@@ -1436,6 +1462,7 @@ mod tests {
                     skills: vec![],
                     integrations: vec![],
                     datasets: vec![],
+                    apps: vec![],
                 },
             ],
             edges: vec![proto::ProposedEdge {
@@ -1450,6 +1477,7 @@ mod tests {
         assert_eq!(dag.steps[0].skills, vec!["triage".to_string()]);
         assert_eq!(dag.steps[0].connections, vec!["gmail".to_string()]);
         assert_eq!(dag.steps[0].datasets, vec!["support".to_string()]);
+        assert_eq!(dag.steps[0].apps, vec!["apps/local/research".to_string()]);
         assert!(dag.steps[1].skills.is_empty());
         // The union the `kx app new` step would fold into references.
         let binds = NodeBindings::from_dag(&dag);
@@ -1489,6 +1517,7 @@ mod tests {
                 max_tool_calls: None,
                 tags: vec![],
                 description: None,
+                delivers: None,
                 branch: None,
                 output: Some(out_path.clone()),
                 skills: vec![],

@@ -4,7 +4,7 @@ name         = "kx-blueprint"
 # 0.1.0 -> 0.2.0: `StepSpec` gained the App-only per-step capability bindings
 # (skills/connections/datasets). Public struct-literal construction breaks, which on a
 # Cargo 0.x crate is a MINOR bump, never a patch.
-version      = "0.2.0"
+version      = "0.3.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }

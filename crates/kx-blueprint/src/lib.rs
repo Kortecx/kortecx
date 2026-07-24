@@ -179,16 +179,33 @@ pub struct StepSpec {
     /// steer, instead of the entry step getting them on the whole App's behalf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub datasets: Vec<String>,
+    /// APP ONLY: the other APPS this step calls, naming entries in
+    /// `references.apps[].handle`. Same declaration/binding split as [`Self::skills`].
+    ///
+    /// **This one changes the graph.** The other three axes give a step more to work with;
+    /// this one lowers the named App's OWN blueprint into the run and makes its terminal a
+    /// parent of this step — so the step reads that App's output exactly as it reads any
+    /// other parent's. That is what "an App is a capability, not just a job" means here.
+    ///
+    /// Unlike the other three there is NO legacy fallback site: a declared App that no step
+    /// names is simply not called. There is nothing to be backward-compatible with (no App
+    /// composed before this existed), and an App-wide default would silently run someone's
+    /// workflow.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<String>,
 }
 
 /// Refuse a step carrying an App-envelope capability binding on the WORKFLOW lowering path.
 ///
 /// A `SubmitWorkflowRequest` has no `references` rail, so there is nothing for a
-/// `skills`/`connections`/`datasets` NAME to resolve against — the runtime could only drop
-/// it. Dropping it would hand the author a workflow that silently lacks the knowledge and
+/// `skills`/`connections`/`datasets`/`apps` NAME to resolve against — the runtime could only
+/// drop it. Dropping it would hand the author a workflow that silently lacks the knowledge and
 /// reach they wrote down, so this fails at authoring with a message that says where the
 /// field IS honoured. Same posture as the reserved `exec` kind in
 /// [`StepSpec::resolve_kind`]: fail with a clear message rather than a server round-trip.
+///
+/// `apps` is the one whose silent drop would be worst: the workflow would lose an entire
+/// SUB-GRAPH rather than some context, and it would still run — just without the work.
 fn refuse_app_only_bindings(index: usize, s: &StepSpec) -> Result<(), BlueprintError> {
     if !s.has_app_bindings() {
         return Ok(());
@@ -197,6 +214,7 @@ fn refuse_app_only_bindings(index: usize, s: &StepSpec) -> Result<(), BlueprintE
         (!s.skills.is_empty()).then_some("skills"),
         (!s.connections.is_empty()).then_some("connections"),
         (!s.datasets.is_empty()).then_some("datasets"),
+        (!s.apps.is_empty()).then_some("apps"),
     ]
     .into_iter()
     .flatten()
@@ -212,7 +230,7 @@ fn refuse_app_only_bindings(index: usize, s: &StepSpec) -> Result<(), BlueprintE
 
 impl StepSpec {
     /// True when this step carries an App-envelope capability BINDING
-    /// ([`Self::skills`] / [`Self::connections`] / [`Self::datasets`]).
+    /// ([`Self::skills`] / [`Self::connections`] / [`Self::datasets`] / [`Self::apps`]).
     ///
     /// `RunApp` takes these off the spec before lowering, so by the time a blueprint
     /// reaches [`to_request`] on the App path they are always empty — which is exactly what
@@ -221,7 +239,10 @@ impl StepSpec {
     /// workflow path that has no App to resolve it against.
     #[must_use]
     pub fn has_app_bindings(&self) -> bool {
-        !self.skills.is_empty() || !self.connections.is_empty() || !self.datasets.is_empty()
+        !self.skills.is_empty()
+            || !self.connections.is_empty()
+            || !self.datasets.is_empty()
+            || !self.apps.is_empty()
     }
 
     /// Resolve the step's wire kind (Batch A authoring veneer). When `kind` is omitted
@@ -480,7 +501,7 @@ mod tests {
         assert!(to_request(spec).is_err());
     }
 
-    /// ★ THE DIGEST-INVARIANCE PROPERTY, at this layer. The three App-binding fields are
+    /// ★ THE DIGEST-INVARIANCE PROPERTY, at this layer. The four App-binding fields are
     /// omitted from the emitted JSON when empty and are absent from the lowering, so a
     /// blueprint written before they existed and the same blueprint parsed by this build
     /// compile to the IDENTICAL request. Every already-authored App's `MoteId`s depend on
@@ -495,7 +516,8 @@ mod tests {
         assert!(
             !emitted.contains("skills")
                 && !emitted.contains("connections")
-                && !emitted.contains("datasets"),
+                && !emitted.contains("datasets")
+                && !emitted.contains("apps"),
             "an unbound blueprint must not grow keys: {emitted}"
         );
         let reparsed: DagSpec = serde_json::from_str(&emitted).unwrap();
@@ -510,7 +532,7 @@ mod tests {
     /// workflow silently missing the reach they wrote down.
     #[test]
     fn refuses_app_only_bindings_on_the_workflow_lowering_path() {
-        for field in ["skills", "connections", "datasets"] {
+        for field in ["skills", "connections", "datasets", "apps"] {
             let spec: DagSpec = serde_json::from_str(&format!(
                 r#"{{ "steps": [ {{"kind":"pure"}}, {{"kind":"model","prompt":"go","{field}":["x"]}} ] }}"#
             ))
@@ -527,7 +549,8 @@ mod tests {
     #[test]
     fn app_bindings_round_trip_through_serialize() {
         let json = r#"{ "seed": 1, "steps": [ {"kind":"model","prompt":"go",
-             "skills":["triage"],"connections":["kx-connector-gmail"],"datasets":["support"]} ] }"#;
+             "skills":["triage"],"connections":["kx-connector-gmail"],"datasets":["support"],
+             "apps":["apps/local/research"]} ] }"#;
         let spec: DagSpec = serde_json::from_str(json).unwrap();
         assert!(spec.steps[0].has_app_bindings());
         let reparsed: DagSpec =
@@ -538,6 +561,10 @@ mod tests {
             vec!["kx-connector-gmail".to_string()]
         );
         assert_eq!(reparsed.steps[0].datasets, vec!["support".to_string()]);
+        assert_eq!(
+            reparsed.steps[0].apps,
+            vec!["apps/local/research".to_string()]
+        );
     }
 
     /// Batch B: a `DagSpec` survives Serialize → Deserialize and re-compiles to the

@@ -81,7 +81,7 @@ usage: kx <command> [args]
     kx secrets set --name <N> --value <V> | list | rm --name <N>   (MM-3/D110 local keychain; values write-only)
     kx triggers add --name <N> --kind <webhook|cron|grpc> (--recipe <h> | --app <h>) [--auth <a>] [--secret-ref <N>] [--schedule <secs | crontab>] [--timezone <IANA>] [--require-approval] [--enabled] | list | test | fire | rm   (D113 event ingress)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
-    kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--out <file>] | export <handle> (--output <file> | --bundle <file> [--with-data]) | import <bundle> [--yes] | clone <handle> <newname> | scaffold | files | cat | edit | structure | lock | unlock | delete   (Apps — kortecx.app/v1 envelopes)
+    kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--delivers <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--out <file>] | export <handle> (--output <file> | --bundle <file> [--with-data]) | import <bundle> [--yes] | clone <handle> <newname> | scaffold | files | cat | edit | structure | lock | unlock | delete   (Apps — kortecx.app/v1 envelopes)
     kx branch create <handle> [--parent <handle>] [--description <s>] | snapshot <handle> --path <p>... [--parent <handle>] | list | get <handle> | remove <handle>   (D155 file branches)
     kx recipe list | search <intent> [--keyword <k>]... [--limit N]   (advisory recipe discovery)
     kx models list|load <id>|offload <id>|pull <tag|--url U --sha256 H>|use <id|--clear>
@@ -835,7 +835,7 @@ kx models use <id> | use --clear [client flags]
             .into(),
         "app" => "\
 kx app derive \"<prompt>\" [--kind scheduled|hosted] [--mode contextual|codified] [--framework <fw>] [--attach <file>]... [--output <blueprint.json>]
-kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--branch <h>] [--output <file>]
+kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--delivers <s>] [--branch <h>] [--output <file>]
 kx app save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--timeout-secs N] [--out <file>]
 kx app export <handle> (--output <file> | --bundle <file> [--with-data] [--force]) | import <bundle> [--yes] [--force] | clone <handle> <newname>
 kx app scaffold <handle> [--goal <text>] [--wait] [--timeout-secs N] | files <handle> | cat <handle> <path> [--out <file>] | edit <handle> <path> --from <file> | structure <handle> | lock <handle> | unlock <handle>   (POC-5 Apps IDE)

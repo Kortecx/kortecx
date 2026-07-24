@@ -526,11 +526,47 @@ fn collect_dataset_bindings(env: &AppEnvelope) -> Vec<DatasetBinding> {
 /// `SubmitWorkflow` — `kx_blueprint::to_request` refuses them — and because a lowering that
 /// never sees them is a lowering byte-identical to the one every already-authored App was
 /// compiled through.
+/// How deep App composition may nest (the composing App is depth 0).
+///
+/// A bound, not a target: three levels is already an App calling an App calling an App,
+/// which is more indirection than a person can hold, and every level multiplies the steps
+/// one run authors. The refusal names the chain, so a legitimate deeper design is a visible
+/// re-shape rather than a mysterious ceiling.
+const MAX_APP_COMPOSE_DEPTH: usize = 3;
+
+/// Ceiling on the steps ONE composed run may reach, across every level.
+///
+/// Depth alone does not bound the work: a 3-deep chain where each App composes four others
+/// is 85 sub-graphs. This is the bound that actually holds (Rule 8c — never unbounded work
+/// from stored input), and it is checked after each splice so the refusal names the App that
+/// crossed the line rather than a total the author cannot attribute.
+const MAX_COMPOSED_STEPS: usize = 64;
+
+/// ONE App envelope, fully resolved: its lowered blueprint with every fold applied, plus
+/// the bindings that travel with it.
+///
+/// The unit composition joins. Each side is prepared under its OWN envelope and only then
+/// spliced, which is what makes "the caller cannot widen the callee" true by construction
+/// rather than by a check someone has to remember to write.
+struct Prepared {
+    /// The blueprint with the App-only bindings taken off and every fold applied.
+    dag: DagSpec,
+    /// The App's RUN-WIDE context rail — lands on every DAG root at author.
+    context_items: Vec<ContextItemRef>,
+    /// What this App bound to individual steps (context items + secret scopes).
+    per_step: crate::provision::PerStepBinds,
+    /// The context-bundle handles this App declared (blueprint + steering).
+    context_bundles: Vec<String>,
+    /// The declared composition rail, resolved: `(callee handle, the steps that named it)`.
+    composes: Vec<(String, Vec<usize>)>,
+}
+
 #[derive(Debug, Default)]
 struct AppBindings {
     skills: Vec<Vec<String>>,
     connections: Vec<Vec<String>>,
     datasets: Vec<Vec<String>>,
+    apps: Vec<Vec<String>>,
 }
 
 impl AppBindings {
@@ -541,13 +577,122 @@ impl AppBindings {
             skills: Vec::with_capacity(dag.steps.len()),
             connections: Vec::with_capacity(dag.steps.len()),
             datasets: Vec::with_capacity(dag.steps.len()),
+            apps: Vec::with_capacity(dag.steps.len()),
         };
         for s in &mut dag.steps {
             out.skills.push(std::mem::take(&mut s.skills));
             out.connections.push(std::mem::take(&mut s.connections));
             out.datasets.push(std::mem::take(&mut s.datasets));
+            out.apps.push(std::mem::take(&mut s.apps));
         }
         out
+    }
+}
+
+/// The steps with no INCOMING edge — where an App's run-wide context rail lands.
+fn roots_of(dag: &DagSpec) -> Vec<usize> {
+    let children: BTreeSet<usize> = dag.edges.iter().map(|e| e.child as usize).collect();
+    (0..dag.steps.len())
+        .filter(|i| !children.contains(i))
+        .collect()
+}
+
+/// The steps with no OUTGOING edge — an App's result is what its sinks produced.
+///
+/// Plural on purpose. A blueprint may legitimately end in several independent steps, and
+/// picking one of them as "the" result would silently drop the others' work; the composing
+/// step reads them all, exactly as it reads any other set of parents.
+fn sinks_of(dag: &DagSpec) -> Vec<usize> {
+    let parents: BTreeSet<usize> = dag.edges.iter().map(|e| e.parent as usize).collect();
+    (0..dag.steps.len())
+        .filter(|i| !parents.contains(i))
+        .collect()
+}
+
+/// Pin an App's RUN-WIDE context rail onto its OWN roots, and clear the run-wide set.
+///
+/// Composition makes "run-wide" ambiguous: the author injects the run-wide rail into every
+/// root of the FINAL graph, and after a splice that graph holds two Apps' roots. Left alone,
+/// a caller's rules and memory would land on a callee's steps and the callee's on the
+/// caller's — each App silently running with context its author never wrote.
+///
+/// The two forms are the same bytes: the author merges the run-wide set into the per-step
+/// set at each root and `encode_context_items` sorts + dedups, so pinning changes WHERE the
+/// rail can reach, never what a step sees. Only done when composition actually happens; an
+/// uncomposed App keeps the run-wide path untouched.
+fn pin_run_wide_items_to_roots(p: &mut Prepared) {
+    if p.context_items.is_empty() {
+        return;
+    }
+    let roots = roots_of(&p.dag);
+    p.per_step
+        .context_items
+        .resize(p.dag.steps.len(), Vec::new());
+    for r in roots {
+        p.per_step.context_items[r].extend_from_slice(&p.context_items);
+    }
+    p.context_items.clear();
+}
+
+/// Splice `callee` into `caller` so every callee sink becomes a parent of every step in
+/// `targets`.
+///
+/// Pure index surgery over two already-resolved graphs: append the steps, shift the callee's
+/// edges by the offset, then add one data edge per (sink, target) pair. The composing step
+/// reads the callee's output the way it reads any parent's — which is the whole claim that
+/// an App is a capability and not a special case.
+///
+/// **`targets` is a set, not a single step, and that is the performance story.** Two steps
+/// that both call the same App get ONE copy of it that fans out to both, rather than two
+/// copies racing to compute the same answer. Splicing per target would also work — identical
+/// sub-graphs lower to identical `MoteId`s and the coordinator dedups them — but relying on
+/// that would make "it only runs once" an accident of content-addressing that a later change
+/// could quietly undo, instead of a property of the graph anyone can read.
+// `caller`/`callee` differ by one letter and are flagged as too similar. They are also the
+// only two names for these things that a reader of composition code expects; anything else
+// would be clearer to the linter and worse for the human.
+#[allow(clippy::similar_names)]
+fn splice_callee(caller: &mut Prepared, mut callee: Prepared, targets: &[usize]) {
+    let offset = caller.dag.steps.len();
+    let sinks = sinks_of(&callee.dag);
+
+    // Per-step vectors are index-aligned with steps and may be short (a missing index means
+    // "none"), so pad to the exact length BEFORE concatenating — otherwise the callee's
+    // bindings would land on the caller's tail steps.
+    caller.per_step.context_items.resize(offset, Vec::new());
+    caller.per_step.secret_scope.resize(offset, None);
+    callee
+        .per_step
+        .context_items
+        .resize(callee.dag.steps.len(), Vec::new());
+    callee
+        .per_step
+        .secret_scope
+        .resize(callee.dag.steps.len(), None);
+    caller
+        .per_step
+        .context_items
+        .append(&mut callee.per_step.context_items);
+    caller
+        .per_step
+        .secret_scope
+        .append(&mut callee.per_step.secret_scope);
+
+    caller.dag.steps.append(&mut callee.dag.steps);
+    for e in &mut callee.dag.edges {
+        e.parent += u32::try_from(offset).unwrap_or(u32::MAX);
+        e.child += u32::try_from(offset).unwrap_or(u32::MAX);
+    }
+    caller.dag.edges.append(&mut callee.dag.edges);
+    for &at in targets {
+        for &s in &sinks {
+            caller.dag.edges.push(kx_blueprint::EdgeSpec {
+                parent: u32::try_from(offset + s).unwrap_or(u32::MAX),
+                child: u32::try_from(at).unwrap_or(u32::MAX),
+                edge: "data".to_string(),
+                non_cascade: false,
+            });
+        }
     }
 }
 
@@ -1217,19 +1362,28 @@ fn project_rail_items(
     Ok(())
 }
 
-#[tonic::async_trait]
-impl AppAuthor for HostAppAuthor {
-    // A single linear resolve→lower→author→stamp pipeline (context rail + skills + RAG +
-    // HITL); the steps read top-to-bottom and share local state, so splitting would only
-    // scatter it. The T-APP-TRIGGER-TARGET HITL fold pushed it one line over the default.
+impl HostAppAuthor {
+    /// Resolve ONE App envelope into the shape the author consumes: its lowered blueprint
+    /// with every fold applied (model route, skills, tool grants, grounding, HITL) plus the
+    /// context and secret-scope bindings that go with it.
+    ///
+    /// Split out of [`AppAuthor::author_app`] so composition can run it PER ENVELOPE. A
+    /// composed App is not one envelope's blueprint with extra steps bolted on — each side
+    /// resolves its own skills, its own grounding, its own connections and its own model
+    /// route, under its own envelope, and only then are the graphs joined. Doing it any
+    /// other way would let a caller's rail decide what a callee runs with, which is exactly
+    /// the widening the authority model forbids.
+    //
+    // A single linear resolve→lower→fold pipeline (context rail + skills + RAG + HITL); the
+    // steps read top-to-bottom and share local state, so splitting would only scatter it.
     #[allow(clippy::too_many_lines)]
-    async fn author_app(
+    async fn prepare_app(
         &self,
         party: &str,
         handle: &str,
         args: &[u8],
         require_approval: bool,
-    ) -> Result<BoundRecipe, AppRunError> {
+    ) -> Result<Prepared, AppRunError> {
         // (1) Read the validated stored envelope (server-owned; uniform not-found so an
         //     unauthorized caller learns nothing about what exists).
         let (_, envelope_bytes) = self
@@ -1295,10 +1449,10 @@ impl AppAuthor for HostAppAuthor {
         //     An Experience (hosted) App carries no blueprint — it is not runnable via RunApp
         //     (it is served by the hosted-app supervisor, never scheduled — D213). Fail closed.
         let blueprint = env.blueprint.ok_or_else(|| {
-            AppRunError::InvalidArgs(
-                "this is a hosted (experience) app with no blueprint; it cannot be run via RunApp"
-                    .to_string(),
-            )
+            AppRunError::InvalidArgs(format!(
+                "app {handle:?} is a hosted (experience) app with no blueprint; it cannot be \
+                 run via RunApp, nor composed by another app"
+            ))
         })?;
         let mut dag: DagSpec = serde_json::from_value(blueprint).map_err(|e| {
             AppRunError::InvalidArgs(format!("app blueprint is not a DagSpec: {e}"))
@@ -1463,24 +1617,7 @@ impl AppAuthor for HostAppAuthor {
             }
         }
 
-        let req = to_request(dag).map_err(|e| AppRunError::InvalidArgs(e.to_string()))?;
-
-        // T-RUNAPP-CONTEXT-RAIL: steering_config.context.bundle_handles attach as named
-        // context bundles alongside any the blueprint already carries (resolved fail-closed
-        // by author_with_context_items → resolve_context_items). Empty ⇒ req.context_bundles
-        // verbatim ⇒ byte-identical.
-        let mut context_bundles = req.context_bundles;
-        context_bundles.extend(env.steering_config.context.bundle_handles.iter().cloned());
-
-        // (4) Parse into the authoring vocabulary (SHARED with SubmitWorkflow) + author
-        //     SERVER-SIDE (warrants from the party's grants, never the client — SN-8).
-        //     The context rail (context/prompts/rules/memory/refs) + skill instructions ride
-        //     as extra context items into the SAME entry bundle inject (empty set ⇒
-        //     byte-identical to the plain author path).
-        let (steps, edges, mode) =
-            author_steps_from_proto(req.steps, req.edges, req.execution_mode)
-                .map_err(|s| AppRunError::InvalidArgs(s.message().to_string()))?;
-        // (5) The G2 load-bearing grant, now per STEP: each tool-firing warrant gets the
+        // (4) The G2 load-bearing grant, per STEP: each tool-firing warrant gets the
         //     secret scope its OWN bound connections justify (plus every connection no
         //     step bound), so the broker precheck lets a credentialed connector be dialed
         //     in that step's loop — and a step that bound none cannot dial one at all.
@@ -1492,6 +1629,211 @@ impl AppAuthor for HostAppAuthor {
             &env.steering_config.guards.secret_scope,
             step_count,
         );
+
+        // T-RUNAPP-CONTEXT-RAIL: steering_config.context.bundle_handles attach as named
+        // context bundles alongside any the blueprint already carries (resolved fail-closed
+        // by author_with_context_items → resolve_context_items). Empty ⇒ the blueprint's own
+        // list verbatim ⇒ byte-identical.
+        let mut context_bundles = std::mem::take(&mut dag.context_bundles);
+        context_bundles.extend(env.steering_config.context.bundle_handles.iter().cloned());
+
+        // (5) The declared composition rail. Resolved to (declared handle → the steps that
+        //     named it) HERE, while the envelope is still in hand — the caller of this
+        //     function sees only the resolved bindings, never the envelope.
+        let composes: Vec<(String, Vec<usize>)> = env
+            .references
+            .apps
+            .iter()
+            .map(|a| {
+                let targets = model_steps_naming(&binds.apps, &a.handle, &dag, "app");
+                (a.handle.clone(), targets)
+            })
+            .collect();
+        // A step naming an App the envelope never DECLARED would otherwise resolve to
+        // nothing at all — the run would author cleanly and simply not do that work. Every
+        // other axis degrades gracefully when a name misses (a skill drops, a dataset
+        // grounds on nothing); this one drops an entire sub-graph, and the App would look
+        // like it was working while producing an answer assembled from less than it claims.
+        // Refuse, and name the handle: an envelope hand-authored offline (where `save()`
+        // does not derive the declarations from the graph) is exactly where this happens.
+        for (i, named) in binds.apps.iter().enumerate() {
+            for handle in named {
+                if !env
+                    .references
+                    .apps
+                    .iter()
+                    .any(|a| a.handle.eq_ignore_ascii_case(handle))
+                {
+                    return Err(AppRunError::UncomposableApp {
+                        handle: handle.clone(),
+                        reason: format!(
+                            "step {i} calls it, but the app does not declare it in \
+                             references.apps — declare it (the SDK `save()` does this from \
+                             the graph; `with_app`/`withApp` does it offline)"
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(Prepared {
+            dag,
+            context_items,
+            per_step,
+            context_bundles,
+            composes,
+        })
+    }
+}
+
+impl HostAppAuthor {
+    /// Resolve `handle` AND every App it composes into ONE graph.
+    ///
+    /// Composition is settled at AUTHOR time, not at run time: the callee's blueprint is
+    /// lowered under its own envelope and joined to the caller's, so the whole thing is one
+    /// registered run over one journal. That is not a convenience — it is what makes
+    /// exactly-once free (there is no second run to reconcile) and what lets two steps that
+    /// compose the SAME App collapse to one execution, because identical sub-graphs lower to
+    /// identical `MoteId`s and the coordinator already dedups those.
+    ///
+    /// `chain` is the composition path in progress; it is both the cycle guard and the text
+    /// of the refusal, so an author sees the loop they wrote rather than a depth number.
+    async fn compose_app(
+        &self,
+        party: &str,
+        handle: &str,
+        args: &[u8],
+        require_approval: bool,
+        depth: usize,
+        chain: &mut Vec<String>,
+    ) -> Result<Prepared, AppRunError> {
+        let mut me = self
+            .prepare_app(party, handle, args, require_approval)
+            .await?;
+        if me.composes.iter().all(|(_, targets)| targets.is_empty()) {
+            return Ok(me);
+        }
+        if depth >= MAX_APP_COMPOSE_DEPTH {
+            return Err(AppRunError::InvalidArgs(format!(
+                "app composition nests deeper than {MAX_APP_COMPOSE_DEPTH} levels: {}",
+                chain.join(" -> ")
+            )));
+        }
+        // The caller's own rail is pinned to the caller's own roots BEFORE the first splice,
+        // while those roots are still known — a composing step that was a root stops being
+        // one the moment it gains the callee's terminal as a parent.
+        pin_run_wide_items_to_roots(&mut me);
+
+        // Declaration order, then step order: deterministic, so the composed graph (and
+        // therefore every `MoteId` in it) does not depend on map iteration.
+        let composes = std::mem::take(&mut me.composes);
+        for (callee_handle, targets) in composes {
+            if targets.is_empty() {
+                continue;
+            }
+            if chain.iter().any(|h| h == &callee_handle) {
+                return Err(AppRunError::InvalidArgs(format!(
+                    "app composition is cyclic: {} -> {callee_handle}",
+                    chain.join(" -> ")
+                )));
+            }
+            chain.push(callee_handle.clone());
+            // Entry args belong to the App the user RAN. A callee runs on its own
+            // defaults; it is a capability being invoked, not a re-parameterized copy.
+            let mut callee = Box::pin(self.compose_app(
+                party,
+                &callee_handle,
+                b"",
+                require_approval,
+                depth + 1,
+                chain,
+            ))
+            .await
+            // A missing callee is a broken DEPENDENCY of an App the caller owns, not a
+            // failed authorization of the run — collapsing it to `permission_denied`
+            // would send the author looking at grants for a handle that is simply gone.
+            .map_err(|e| match e {
+                AppRunError::NotAuthorized => AppRunError::UncomposableApp {
+                    handle: callee_handle.clone(),
+                    reason: "it is not in your app catalog".to_string(),
+                },
+                other => other,
+            })?;
+            chain.pop();
+            // The callee's OWN rail, pinned to the callee's OWN roots — for the same
+            // reason the caller's was, and because `splice_callee` carries per-step
+            // bindings only. Without this a composed App would run without the rules
+            // and memory its author declared, and nothing would say so.
+            pin_run_wide_items_to_roots(&mut callee);
+
+            // A callee's run-level grounding cannot be honoured: context bundles are
+            // resolved for the RUN, and this run belongs to the caller. Refuse rather
+            // than drop — an App silently missing the grounding its author declared is
+            // the failure mode that looks like a model getting worse.
+            if !callee.context_bundles.is_empty() {
+                return Err(AppRunError::UncomposableApp {
+                    handle: callee_handle.clone(),
+                    reason: format!(
+                        "it grounds on run-level context bundles ({}), which are resolved \
+                         for the whole run and cannot be scoped to one composed step — \
+                         attach that grounding to its steps instead",
+                        callee.context_bundles.join(", ")
+                    ),
+                });
+            }
+            let total = me.dag.steps.len() + callee.dag.steps.len();
+            if total > MAX_COMPOSED_STEPS {
+                return Err(AppRunError::InvalidArgs(format!(
+                    "composing {callee_handle} would take this run to {total} steps (max \
+                     {MAX_COMPOSED_STEPS})"
+                )));
+            }
+            tracing::info!(
+                caller = handle,
+                callee = %callee_handle,
+                steps = callee.dag.steps.len(),
+                consumers = targets.len(),
+                "composing an app into a run"
+            );
+            splice_callee(&mut me, callee, &targets);
+        }
+        Ok(me)
+    }
+}
+
+#[tonic::async_trait]
+impl AppAuthor for HostAppAuthor {
+    async fn author_app(
+        &self,
+        party: &str,
+        handle: &str,
+        args: &[u8],
+        require_approval: bool,
+    ) -> Result<BoundRecipe, AppRunError> {
+        // Resolve this App AND everything it composes into ONE graph. With no composition
+        // this is `prepare_app` and nothing else, so an App that names no other App authors
+        // byte-identically — `MoteId`s, warrants and recipe fingerprint included.
+        let mut chain = vec![handle.to_string()];
+        let composed = self
+            .compose_app(party, handle, args, require_approval, 0, &mut chain)
+            .await?;
+        let Prepared {
+            dag,
+            context_items,
+            per_step,
+            context_bundles,
+            ..
+        } = composed;
+
+        let req = to_request(dag).map_err(|e| AppRunError::InvalidArgs(e.to_string()))?;
+        // Parse into the authoring vocabulary (SHARED with SubmitWorkflow) + author
+        // SERVER-SIDE (warrants from the party's grants, never the client — SN-8).
+        // The context rail (context/prompts/rules/memory/refs) + skill instructions ride
+        // as extra context items into the SAME entry bundle inject (empty set ⇒
+        // byte-identical to the plain author path).
+        let (steps, edges, mode) =
+            author_steps_from_proto(req.steps, req.edges, req.execution_mode)
+                .map_err(|s| AppRunError::InvalidArgs(s.message().to_string()))?;
         let bound = self
             .author
             .author_with_context_items(
@@ -2225,8 +2567,28 @@ mod tests {
         (host, content, author)
     }
 
+    /// Save `env` under a handle derived from its NAME, and return that handle.
+    ///
+    /// Derived, not fixed. A fixed handle makes the catalog a single slot: a test that saves
+    /// two Apps silently overwrites the first, and then authoring "both" authors the second
+    /// twice — so any assertion that the two agree holds for the wrong reason. That is
+    /// exactly what had happened to the per-step-binding migration proof, which compared an
+    /// App to itself and would have passed no matter what the binding code did.
     fn save_app(host: &HostAppAuthor, env: &AppEnvelope) -> String {
-        let handle = "team/apps/t".to_string();
+        let sanitized: String = env
+            .name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                    c
+                } else if c.is_ascii_uppercase() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let handle = format!("team/apps/{}", sanitized.trim_matches('-'));
         host.apps
             .save(
                 "alice@acme",
@@ -2817,6 +3179,12 @@ mod tests {
             }),
         );
 
+        // Two DISTINCT catalog rows. Asserted, because this test spent its first life
+        // comparing one App to itself: both spellings saved to the same fixed handle, the
+        // second overwrote the first, and the equality below held no matter what the
+        // binding code did.
+        assert_ne!(legacy, bound, "the two spellings must be two stored Apps");
+
         let a = host
             .author_app("alice@acme", &legacy, b"", false)
             .await
@@ -2831,6 +3199,287 @@ mod tests {
             assert_eq!(w1, w2, "byte-identical warrants");
         }
         assert_eq!(a.recipe_fingerprint, b.recipe_fingerprint);
+    }
+
+    // ----- App composition (an App invoked as a capability by another App) -----
+
+    /// Save a callee App with `steps` model steps chained in a line, and return its handle.
+    fn save_callee(host: &HostAppAuthor, name: &str, steps: usize) -> String {
+        let s: Vec<serde_json::Value> = (0..steps)
+            .map(|i| serde_json::json!({ "kind": "model", "prompt": format!("callee {i}") }))
+            .collect();
+        let edges: Vec<serde_json::Value> = (1..steps)
+            .map(|i| serde_json::json!({ "parent": i - 1, "child": i }))
+            .collect();
+        let mut env = AppEnvelope::new(name, serde_json::json!({ "steps": s, "edges": edges }));
+        env.delivers = "a researched brief".into();
+        env.validate().unwrap();
+        save_app(host, &env)
+    }
+
+    /// Save a caller that declares `callee` and binds it on the steps in `on`.
+    fn save_caller(
+        host: &HostAppAuthor,
+        name: &str,
+        callee: &str,
+        steps: usize,
+        on: &[usize],
+    ) -> String {
+        let s: Vec<serde_json::Value> = (0..steps)
+            .map(|i| {
+                let apps: Vec<&str> = if on.contains(&i) { vec![callee] } else { vec![] };
+                serde_json::json!({ "kind": "model", "prompt": format!("caller {i}"), "apps": apps })
+            })
+            .collect();
+        let mut env = AppEnvelope::new(name, serde_json::json!({ "steps": s }));
+        env.references.apps.push(kx_app::AppRef {
+            handle: callee.to_string(),
+        });
+        env.validate().unwrap();
+        save_app(host, &env)
+    }
+
+    /// ★ THE POINT OF ITEM A. An App that names another App runs that App's OWN blueprint
+    /// inside its run, with the callee's terminal feeding the step that named it. The
+    /// composing step reads the result the way it reads any parent's — no new step kind, no
+    /// nested run, no second journal.
+    #[tokio::test]
+    #[allow(clippy::similar_names)] // caller/callee are the domain terms
+    async fn a_named_app_is_lowered_into_the_run_and_feeds_the_step_that_named_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        let callee = save_callee(&host, "research", 2);
+        let caller = save_caller(&host, "digest", &callee, 1, &[0]);
+
+        let solo = host
+            .author_app("alice@acme", &callee, b"", false)
+            .await
+            .unwrap();
+        let composed = host
+            .author_app("alice@acme", &caller, b"", false)
+            .await
+            .unwrap();
+
+        // 1 caller step + the callee's 2 = 3 motes in ONE registered run.
+        assert_eq!(solo.motes.len(), 2);
+        assert_eq!(
+            composed.motes.len(),
+            3,
+            "the callee's steps are really here"
+        );
+
+        // The composing step is the run's terminal, and it has a parent it did not have
+        // before — the callee's tail. Read off the motes rather than the DagSpec so this
+        // asserts what was AUTHORED, not what was intended.
+        let terminal = composed
+            .motes
+            .iter()
+            .find(|(m, _)| m.id == composed.terminal_mote_id)
+            .expect("the terminal mote is in the recipe");
+        assert!(
+            !terminal.0.parents.is_empty(),
+            "the composing step consumes the composed App's output"
+        );
+    }
+
+    /// The callee is authored under ITS OWN envelope, so a run that composes it contains the
+    /// same work that App does standalone. Not a byte-identity claim — the callee's tail
+    /// gains a child, which is the composition — but its ROOTS are parentless in both, so
+    /// they lower to the same identity and the composed run demonstrably reuses it.
+    #[tokio::test]
+    #[allow(clippy::similar_names)] // caller/callee are the domain terms
+    async fn a_composed_app_authors_its_own_root_identically_to_running_it_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        let callee = save_callee(&host, "research", 2);
+        let caller = save_caller(&host, "digest", &callee, 1, &[0]);
+
+        let solo = host
+            .author_app("alice@acme", &callee, b"", false)
+            .await
+            .unwrap();
+        let composed = host
+            .author_app("alice@acme", &caller, b"", false)
+            .await
+            .unwrap();
+
+        let solo_root = solo
+            .motes
+            .iter()
+            .find(|(m, _)| m.parents.is_empty())
+            .expect("the callee has a root");
+        assert!(
+            composed
+                .motes
+                .iter()
+                .any(|(m, w)| m.id == solo_root.0.id && *w == solo_root.1),
+            "the composed run carries the callee's own root mote, warrant included"
+        );
+    }
+
+    /// ★ THE PERFORMANCE PROPERTY. Two steps that call the SAME App get ONE copy of it that
+    /// feeds both — not two copies computing the same answer. Structural: the graph holds a
+    /// single sub-graph fanning out, so it does not depend on the coordinator deduplicating
+    /// identical `MoteId`s after the fact.
+    #[tokio::test]
+    #[allow(clippy::similar_names)] // caller/callee are the domain terms
+    async fn one_app_called_by_two_steps_is_lowered_once_and_fans_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        let callee = save_callee(&host, "research", 2);
+        let caller = save_caller(&host, "digest", &callee, 2, &[0, 1]);
+
+        let composed = host
+            .author_app("alice@acme", &caller, b"", false)
+            .await
+            .unwrap();
+        // 2 caller steps + ONE copy of the 2-step callee. Two copies would be 6.
+        assert_eq!(
+            composed.motes.len(),
+            4,
+            "the shared App is lowered once, not once per consumer"
+        );
+        // Every mote id is distinct — a second copy would collide rather than add.
+        let ids: BTreeSet<_> = composed.motes.iter().map(|(m, _)| m.id).collect();
+        assert_eq!(ids.len(), composed.motes.len());
+    }
+
+    /// An App that calls ITSELF is refused fail-closed, and the message names the loop the
+    /// author wrote rather than a depth number they have to decode.
+    #[tokio::test]
+    async fn a_self_composing_app_is_refused_and_the_message_names_the_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        // Save once to learn the handle, then re-save the same App naming itself.
+        let handle = save_callee(&host, "loop", 1);
+        let mut env = AppEnvelope::new(
+            "loop",
+            serde_json::json!({
+                "steps": [{ "kind": "model", "prompt": "go", "apps": [handle.clone()] }]
+            }),
+        );
+        env.references.apps.push(kx_app::AppRef {
+            handle: handle.clone(),
+        });
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+
+        let err = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .err()
+            .expect("a self-composing app must not author");
+        let AppRunError::InvalidArgs(detail) = err else {
+            panic!("expected an authoring refusal, got {err:?}");
+        };
+        assert!(detail.contains("cyclic"), "says what is wrong: {detail}");
+        assert!(detail.contains(&handle), "names the app: {detail}");
+    }
+
+    /// A two-App cycle (A calls B calls A) is caught the same way — the guard is the
+    /// composition PATH, not a self-reference check.
+    #[tokio::test]
+    #[allow(clippy::similar_names)] // caller/callee are the domain terms
+    async fn a_mutual_cycle_across_two_apps_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        let b_handle = save_callee(&host, "bee", 1);
+        let a_handle = save_caller(&host, "ay", &b_handle, 1, &[0]);
+        // Now close the loop: B calls A.
+        let mut b = AppEnvelope::new(
+            "bee",
+            serde_json::json!({
+                "steps": [{ "kind": "model", "prompt": "go", "apps": [a_handle.clone()] }]
+            }),
+        );
+        b.references.apps.push(kx_app::AppRef {
+            handle: a_handle.clone(),
+        });
+        b.validate().unwrap();
+        assert_eq!(save_app(&host, &b), b_handle);
+
+        let err = host
+            .author_app("alice@acme", &a_handle, b"", false)
+            .await
+            .err()
+            .expect("a mutual cycle must not author");
+        let AppRunError::InvalidArgs(detail) = err else {
+            panic!("expected an authoring refusal, got {err:?}");
+        };
+        assert!(detail.contains("cyclic"), "{detail}");
+    }
+
+    /// A declared App the caller does not own names the broken DEPENDENCY, rather than
+    /// collapsing to `permission_denied` and sending the author to look at grants.
+    #[tokio::test]
+    async fn composing_an_unknown_app_names_the_missing_dependency() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        let caller = save_caller(&host, "digest", "team/apps/gone", 1, &[0]);
+
+        let err = host
+            .author_app("alice@acme", &caller, b"", false)
+            .await
+            .err()
+            .expect("a missing callee must not author");
+        let AppRunError::UncomposableApp { handle, reason } = err else {
+            panic!("expected an uncomposable-app refusal, got {err:?}");
+        };
+        assert_eq!(handle, "team/apps/gone");
+        assert!(reason.contains("catalog"), "{reason}");
+    }
+
+    /// The mirror of the case above: a step that CALLS an App the envelope never declared is
+    /// refused, not silently skipped. Every other axis degrades when a name misses; this one
+    /// would drop a whole sub-graph and still produce a confident-looking answer.
+    #[tokio::test]
+    async fn calling_an_undeclared_app_is_refused_rather_than_silently_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        let callee = save_callee(&host, "research", 1);
+        // A blueprint that BINDS the callee, with an envelope that declares nothing — what
+        // an offline `to_envelope()` produces when the author forgot `with_app`.
+        let env = AppEnvelope::new(
+            "digest",
+            serde_json::json!({
+                "steps": [{ "kind": "model", "prompt": "go", "apps": [callee.clone()] }]
+            }),
+        );
+        env.validate().unwrap();
+        let handle = save_app(&host, &env);
+
+        let err = host
+            .author_app("alice@acme", &handle, b"", false)
+            .await
+            .err()
+            .expect("an undeclared call must not author");
+        let AppRunError::UncomposableApp { handle: h, reason } = err else {
+            panic!("expected an uncomposable-app refusal, got {err:?}");
+        };
+        assert_eq!(h, callee);
+        assert!(reason.contains("references.apps"), "{reason}");
+    }
+
+    /// A declared App that NO step names is not called. There is no App-wide fallback site
+    /// for composition (unlike a skill, which binds to the entry step): running someone's
+    /// whole workflow because it was mentioned is not a default anyone would want.
+    #[tokio::test]
+    #[allow(clippy::similar_names)] // caller/callee are the domain terms
+    async fn a_declared_but_unbound_app_is_not_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let (host, _content, _) = rig(dir.path(), &[]);
+        let callee = save_callee(&host, "research", 2);
+        let caller = save_caller(&host, "digest", &callee, 1, &[]);
+
+        let composed = host
+            .author_app("alice@acme", &caller, b"", false)
+            .await
+            .unwrap();
+        assert_eq!(
+            composed.motes.len(),
+            1,
+            "declaring an App without binding it to a step must not run it"
+        );
     }
 
     /// ★ THE POINT OF THE WHOLE CHANGE. On a two-root fan-out, a skill bound to the SECOND

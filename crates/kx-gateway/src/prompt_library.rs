@@ -74,35 +74,43 @@ Choose each step's ROLE from the provided role palette — use ONLY those role n
 invent one. Write each step's INTENT as one concrete, self-contained instruction for that role \
 (what it must produce), phrased so the role can act without seeing the others.\n\
 EVERY CAPABILITY BELONGS TO THE STEP THAT USES IT — never to the app. Each step names its \
-own TOOLS, SKILLS, INTEGRATIONS and DATASETS, picking from the provided capability menu and \
-ONLY from it, by the exact name the menu shows:\n\
+own TOOLS, SKILLS, INTEGRATIONS, DATASETS and APPS, picking from the provided capability menu \
+and ONLY from it, by the exact name the menu shows:\n\
 - tools: give a step a tool only when that step genuinely has to reach outside the model to \
 do its job.\n\
 - skills: attach one when a step needs that specific expertise to do its part.\n\
 - integrations: attach one only to the step that actually talks to that service.\n\
 - datasets: attach one to the step whose answer must be grounded in it.\n\
+- apps: when the menu already lists an app that DELIVERS what a step needs, name that app on \
+the step instead of designing the work again. The app runs and the step receives its result.\n\
 Most steps need few or none — use an empty list. Never invent a name, and never name a \
 permission, a credential, or a model. A step that merely combines what other steps produced \
 usually needs nothing at all.\n\
-Also give the app a short NAME (2-5 words, what it does) and a one-sentence DESCRIPTION.\n\
+Also give the app a short NAME (2-5 words, what it does) and a one-sentence DESCRIPTION, plus \
+DELIVERS: one short phrase naming what a run of it produces (e.g. \"a weekly digest of \
+pipeline and support activity\"), so other apps can find it later.\n\
 Reply with EXACTLY one JSON object and NOTHING else — no prose, no code fence, no \
 explanation. This example gathers two INDEPENDENT things and combines them — note that steps 0 \
-and 1 have no edge into them, so they run AT THE SAME TIME, step 2 waits for both, and each \
-step carries ONLY what it itself needs:\n\
+and 1 have no edge into them, so they run AT THE SAME TIME, step 2 waits for both, each step \
+carries ONLY what it itself needs, and step 1 calls an existing app rather than re-designing \
+the work it already does:\n\
 {\"app\":{\"name\":\"Weekly Sales Digest\",\"description\":\"Combines pipeline and support \
-signals into one weekly digest.\",\"steps\":[\
+signals into one weekly digest.\",\"delivers\":\"a weekly digest of pipeline and support \
+activity\",\"steps\":[\
 {\"role\":\"researcher\",\"intent\":\"Collect this week's closed deals and their values\",\
-\"tools\":[\"crm/query\"],\"skills\":[],\"integrations\":[\"crm\"],\"datasets\":[]},\
+\"tools\":[\"crm/query\"],\"skills\":[],\"integrations\":[\"crm\"],\"datasets\":[],\"apps\":[]},\
 {\"role\":\"researcher\",\"intent\":\"Collect this week's support escalations\",\
-\"tools\":[],\"skills\":[\"triage\"],\"integrations\":[],\"datasets\":[\"support\"]},\
+\"tools\":[],\"skills\":[\"triage\"],\"integrations\":[],\"datasets\":[\"support\"],\
+\"apps\":[\"apps/local/escalation-review\"]},\
 {\"role\":\"writer\",\"intent\":\"Write one digest covering both\",\
-\"tools\":[],\"skills\":[],\"integrations\":[],\"datasets\":[]}],\
+\"tools\":[],\"skills\":[],\"integrations\":[],\"datasets\":[],\"apps\":[]}],\
 \"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}]}}\n\
 Rules: step and edge indices are 0-based into steps[]; an edge's parent index must be smaller \
-than its child index; every list is always present on every step, empty when unused; do NOT \
-include a model id, a permission, or any field other than the ones shown. Do NOT connect every \
-step in one line — an edge means the child CONSUMES the parent's output, so two steps that read \
-different sources must not be chained.";
+than its child index; every list is always present on every step, empty when unused; an app \
+handle is written EXACTLY as the menu shows it and nothing else (no description, no \
+parentheses); do NOT include a model id, a permission, or any field other than the ones shown. \
+Do NOT connect every step in one line — an edge means the child CONSUMES the parent's output, \
+so two steps that read different sources must not be chained.";
 
 /// One curated authoring role: a stable `name` (aligned to the SDK persona library) + a
 /// one-line `framing` the planner palette shows the model. The heavy MoteDef axes come
@@ -255,13 +263,15 @@ mod tests {
     #[test]
     fn derive_example_decodes_and_uses_palette_roles() {
         const DERIVE_EXAMPLE: &str = "{\"app\":{\"name\":\"Weekly Sales Digest\",\
-\"description\":\"Combines pipeline and support signals into one weekly digest.\",\"steps\":[\
+\"description\":\"Combines pipeline and support signals into one weekly digest.\",\
+\"delivers\":\"a weekly digest of pipeline and support activity\",\"steps\":[\
 {\"role\":\"researcher\",\"intent\":\"Collect this week's closed deals and their values\",\
-\"tools\":[\"crm/query\"],\"skills\":[],\"integrations\":[\"crm\"],\"datasets\":[]},\
+\"tools\":[\"crm/query\"],\"skills\":[],\"integrations\":[\"crm\"],\"datasets\":[],\"apps\":[]},\
 {\"role\":\"researcher\",\"intent\":\"Collect this week's support escalations\",\
-\"tools\":[],\"skills\":[\"triage\"],\"integrations\":[],\"datasets\":[\"support\"]},\
+\"tools\":[],\"skills\":[\"triage\"],\"integrations\":[],\"datasets\":[\"support\"],\
+\"apps\":[\"apps/local/escalation-review\"]},\
 {\"role\":\"writer\",\"intent\":\"Write one digest covering both\",\
-\"tools\":[],\"skills\":[],\"integrations\":[],\"datasets\":[]}],\
+\"tools\":[],\"skills\":[],\"integrations\":[],\"datasets\":[],\"apps\":[]}],\
 \"edges\":[{\"parent\":0,\"child\":2},{\"parent\":1,\"child\":2}]}}";
         let d = crate::derive_plan::decode_derived(DERIVE_EXAMPLE.as_bytes())
             .expect("the taught envelope must decode via the same enforcer the runtime uses");
@@ -329,8 +339,45 @@ mod tests {
             d.steps[2].skills.is_empty()
                 && d.steps[2].integrations.is_empty()
                 && d.steps[2].datasets.is_empty()
-                && d.steps[2].tools.is_empty(),
+                && d.steps[2].tools.is_empty()
+                && d.steps[2].apps.is_empty(),
             "the joining step must be taught as needing nothing"
+        );
+        // ★ The composition axis, taught by example for the same reason as the others: an
+        // app that is only DESCRIBED as callable is an app the model re-designs from scratch
+        // every time. Exactly one step calls one — enough to teach the shape, not so much
+        // that "call an app" reads as the default answer to every step.
+        assert_eq!(
+            d.steps.iter().filter(|s| !s.apps.is_empty()).count(),
+            1,
+            "exactly one taught step must CALL an app"
+        );
+        assert_eq!(d.steps[1].apps, vec!["apps/local/escalation-review"]);
+        // And the app must propose its own `delivers`, or nothing it authors is ever
+        // discoverable by the next app's author.
+        assert!(
+            !d.delivers.is_empty(),
+            "the taught example must carry a delivers line"
+        );
+    }
+
+    /// The menu renders a handle WITH what the app delivers, and the decoder must recover the
+    /// bare handle from whatever the model echoes back.
+    ///
+    /// This is the `- retrieve (v1)` failure, pre-empted. That one cost a real grant: the menu
+    /// showed a decoration, the model returned it as the id, and the notice blamed the
+    /// account's authority. The composition menu cannot drop its decoration — a bare handle
+    /// tells a model nothing about which app to pick — so the decoder absorbs it instead.
+    #[test]
+    fn a_menu_decorated_app_handle_still_decodes_to_the_bare_handle() {
+        let echoed = "{\"app\":{\"name\":\"X\",\"description\":\"d\",\"steps\":[\
+{\"role\":\"writer\",\"intent\":\"go\",\"apps\":\
+[\"apps/local/research — a researched brief\"]}]}}";
+        let d = crate::derive_plan::decode_derived(echoed.as_bytes()).expect("decodes");
+        assert_eq!(
+            d.steps[0].apps,
+            vec!["apps/local/research"],
+            "the menu's display form must not survive as the handle"
         );
     }
 

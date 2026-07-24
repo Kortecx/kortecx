@@ -42,6 +42,19 @@ pub enum AppRunError {
     /// connection/credential name so the gateway can surface an actionable
     /// "register it with `kx connections add`" hint.
     MissingIntegration(String),
+    /// The App composes another App (`references.apps`) that the caller does not own, or
+    /// that cannot be composed (a hosted App has no blueprint to lower). Carries the
+    /// handle plus the reason.
+    ///
+    /// Actionable rather than a collapsed `NotAuthorized` for the SAME reason as
+    /// `MissingIntegration`: the App doing the composing is the caller's own, so naming
+    /// the dependency it cannot resolve leaks nothing the caller did not already write.
+    UncomposableApp {
+        /// The callee handle the composing App named.
+        handle: String,
+        /// Why it cannot be composed.
+        reason: String,
+    },
     /// The App's `steering_config.model.model_route` (or a per-step model id) names a
     /// model this serve does not offer (empty intersection with the served catalog).
     /// Carries the requested route so the gateway can surface which model is missing.

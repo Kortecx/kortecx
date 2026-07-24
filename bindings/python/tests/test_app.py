@@ -271,6 +271,7 @@ def test_corpus_covers_required_shapes() -> None:
         "reach",
         "codified",
         "node-bound",
+        "app-composed",
     } <= names
 
 

@@ -1835,6 +1835,9 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // Authoring mode ("contextual"/"codified"); empty ⇒ contextual on an old row, and
         // always empty for an experience app (which has no such axis).
         mode: r.mode,
+        // What one run PRODUCES — advisory, and the line the composition menu renders so
+        // another App can pick this one on purpose. Empty ⇒ an App authored before the field.
+        delivers: r.delivers,
     }
 }
 
@@ -2389,6 +2392,7 @@ impl KxGateway for GatewayService {
                             skills: s.skills,
                             integrations: s.integrations,
                             datasets: s.datasets,
+                            apps: s.apps,
                         })
                         .collect(),
                     edges: app
@@ -2409,6 +2413,8 @@ impl KxGateway for GatewayService {
                     skills: app.skills,
                     connections: app.connections,
                     datasets: app.datasets,
+                    apps: app.apps,
+                    delivers: app.delivers,
                     notices: app.notices,
                 })
             }
@@ -2466,6 +2472,11 @@ impl KxGateway for GatewayService {
                 crate::apps_run::AppRunError::MissingIntegration(name) => {
                     Status::failed_precondition(format!(
                         "missing integration: {name} (register it with `kx connections add`)"
+                    ))
+                }
+                crate::apps_run::AppRunError::UncomposableApp { handle, reason } => {
+                    Status::failed_precondition(format!(
+                        "cannot compose app {handle:?}: {reason}"
                     ))
                 }
                 crate::apps_run::AppRunError::UnservedModelRoute(route) => {

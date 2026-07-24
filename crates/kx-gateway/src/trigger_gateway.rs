@@ -111,6 +111,9 @@ fn app_err(e: AppRunError) -> TriggerAdminError {
         AppRunError::UnservedModelRoute(route) => TriggerAdminError::Unsupported(format!(
             "model route {route:?} is not served here (start `kx serve` with a matching model)"
         )),
+        AppRunError::UncomposableApp { handle, reason } => {
+            TriggerAdminError::Unsupported(format!("cannot compose app {handle:?}: {reason}"))
+        }
         AppRunError::Internal(d) => TriggerAdminError::Storage(d),
     }
 }
@@ -434,6 +437,9 @@ impl TriggerAdmin for HostTriggerAdmin {
                 }
                 Err(AppRunError::UnservedModelRoute(route)) => {
                     Ok((false, format!("model route {route:?} is not served here")))
+                }
+                Err(AppRunError::UncomposableApp { handle, reason }) => {
+                    Ok((false, format!("cannot compose app {handle:?}: {reason}")))
                 }
                 Err(AppRunError::Internal(d)) => Err(TriggerAdminError::Storage(d)),
             }

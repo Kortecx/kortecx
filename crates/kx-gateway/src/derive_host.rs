@@ -42,6 +42,13 @@ use crate::routing_backend::RoutingBackend;
 /// fallback there cannot describe different projects.
 const DEFAULT_FRAMEWORK: &str = "vite_react";
 
+/// How many Apps the composition menu reads from the catalog.
+///
+/// The render is byte-bounded anyway, so this only stops a catalog of thousands from being
+/// paged into memory to build a list that will be cut at the first kilobyte. Deterministic
+/// (the catalog lists in handle order), so the same account gets the same menu twice.
+const MAX_MENU_APPS: usize = 32;
+
 /// The vetted hosted templates. A framework outside this set is REPLACED by
 /// [`DEFAULT_FRAMEWORK`] with a notice, never passed through: the supervisor can only launch a
 /// template it has, and a design promising "solid" would scaffold a project that cannot start.
@@ -64,6 +71,9 @@ pub(crate) struct CapabilitySources {
     pub(crate) connections: Option<Arc<kx_mcp_gateway::SqliteConnectionStore>>,
     /// The live dataset store. `None` on a build without the retrieval seam (`hnsw` off).
     pub(crate) datasets: Option<Arc<dyn DatasetView>>,
+    /// The caller's App catalog — the composition registry. `None` ⇒ no Apps offered, so a
+    /// serve without the App seam derives designs that call nothing, which is honest.
+    pub(crate) apps: Option<Arc<dyn kx_gateway_core::AppCatalog>>,
 }
 
 /// The host deriver: the served-model backend, the vetted role catalog it compiles against, and
@@ -150,11 +160,32 @@ impl HostAppDeriver {
             })
             .unwrap_or_default();
 
+        // The composition registry: the caller's own Apps, each with what it DELIVERS —
+        // which is the half of the record that lets a model pick one on purpose rather than
+        // by guessing at a handle.
+        //
+        // Functional Apps only. A hosted App has no blueprint, so composing it is refused at
+        // author; offering it here would teach the model to write a design that cannot run.
+        let apps = self
+            .sources
+            .apps
+            .as_ref()
+            .and_then(|c| c.list(principal, MAX_MENU_APPS, None).ok())
+            .map(|(records, _has_more)| {
+                records
+                    .into_iter()
+                    .filter(|r| r.kind != "experience")
+                    .map(|r| (r.handle, r.delivers))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         CapabilityMenu {
             tools,
             skills,
             connections,
             datasets,
+            apps,
         }
     }
 }
@@ -322,12 +353,14 @@ fn derive_blocking<B: InferenceBackend>(
 /// Split out of `derive_blocking` because it is the part with a rule worth stating on its own:
 /// each axis is resolved independently and each drop is REPORTED. One invented id costs only
 /// itself — never the real grants beside it, and never silently.
-fn intersect_capabilities(
-    plan: &DerivedPlan,
-    menu: &CapabilityMenu,
-    recipes: &dyn RoleRecipeResolver,
-    truncation: &MenuTruncation,
-) -> (Vec<DerivedStep>, DerivedApp) {
+/// The advisories that come from the design itself rather than from any one capability —
+/// what the prompt could not SHOW the model, and what the model answered in the wrong shape.
+///
+/// Its own function because it reads top-to-bottom as prose and shares no state with the
+/// per-step intersection below; keeping it inline only made that pipeline longer to read.
+/// Every entry is the same promise: a design that quietly asked for something it did not
+/// receive would produce an App that quietly cannot do part of its job.
+fn design_notices(plan: &DerivedPlan, truncation: &MenuTruncation) -> Vec<String> {
     let mut notices = Vec::new();
     if truncation.tools_omitted > 0 {
         notices.push(format!(
@@ -336,7 +369,13 @@ fn intersect_capabilities(
             truncation.tools_omitted
         ));
     }
-
+    if truncation.apps_omitted > 0 {
+        notices.push(format!(
+            "{} more of your apps exist than fit the design prompt — attach any that should be \
+             called before creating the app",
+            truncation.apps_omitted
+        ));
+    }
     if plan.folded_app_level {
         notices.push(
             "the design attached some capabilities to the app rather than to a step — they \
@@ -344,6 +383,16 @@ fn intersect_capabilities(
                 .to_string(),
         );
     }
+    notices
+}
+
+fn intersect_capabilities(
+    plan: &DerivedPlan,
+    menu: &CapabilityMenu,
+    recipes: &dyn RoleRecipeResolver,
+    truncation: &MenuTruncation,
+) -> (Vec<DerivedStep>, DerivedApp) {
+    let mut notices = design_notices(plan, truncation);
 
     // Every axis is resolved PER STEP and unioned into the app-level sets. The union is the
     // DECLARATION a client writes into `references.*`; the per-step lists are the BINDINGS
@@ -353,6 +402,7 @@ fn intersect_capabilities(
     let mut app_skills: Vec<String> = Vec::new();
     let mut app_connections: Vec<String> = Vec::new();
     let mut app_datasets: Vec<String> = Vec::new();
+    let mut app_apps: Vec<String> = Vec::new();
     let mut dropped: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let steps: Vec<DerivedStep> = plan
         .steps
@@ -372,10 +422,16 @@ fn intersect_capabilities(
             let skills = resolve("skills", &menu.skills, &s.skills);
             let integrations = resolve("integrations", &menu.connections, &s.integrations);
             let datasets = resolve("datasets", &menu.datasets, &s.datasets);
+            // The composition axis resolves against the menu's HANDLES. Same
+            // one-invented-name-costs-only-itself rule, and the same canonical spelling
+            // comes back — so a design that lower-cased a handle still composes.
+            let menu_app_handles: Vec<String> = menu.apps.iter().map(|(h, _)| h.clone()).collect();
+            let apps = resolve("apps", &menu_app_handles, &s.apps);
             for (app, step) in [
                 (&mut app_skills, &skills),
                 (&mut app_connections, &integrations),
                 (&mut app_datasets, &datasets),
+                (&mut app_apps, &apps),
             ] {
                 for n in step {
                     if !app.contains(n) {
@@ -396,6 +452,7 @@ fn intersect_capabilities(
                 skills,
                 integrations,
                 datasets,
+                apps,
             }
         })
         .collect();
@@ -421,6 +478,7 @@ fn intersect_capabilities(
     let derived = DerivedApp {
         name: plan.name.clone(),
         description: plan.description.clone(),
+        delivers: plan.delivers.clone(),
         edges: plan
             .edges
             .iter()
@@ -430,6 +488,7 @@ fn intersect_capabilities(
         skills: app_skills,
         connections: app_connections,
         datasets: app_datasets,
+        apps: app_apps,
         notices,
         ..DerivedApp::default()
     };
@@ -600,6 +659,10 @@ mod tests {
             skills: vec!["drafting".into()],
             connections: vec!["gmail".into()],
             datasets: vec!["handbook".into()],
+            apps: vec![(
+                "apps/local/research".to_string(),
+                "a researched brief".to_string(),
+            )],
         }
     }
 

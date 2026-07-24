@@ -136,6 +136,8 @@ export class AppBuilder {
   private readonly _rules: ArtifactEntry[] = [];
   private readonly _memory: ArtifactEntry[] = [];
   private readonly _skills: SkillEntry[] = [];
+  private readonly _apps: { handle: string }[] = [];
+  private _delivers = "";
   private readonly _pending: Pending[] = [];
   private _modelRoute = "";
   private readonly _freeParams: Record<string, string> = {};
@@ -383,6 +385,28 @@ export class AppBuilder {
     return this;
   }
 
+  /** Say what one RUN of this App produces, in a phrase.
+   *
+   * `describe()` says what the App is; this says what comes back. It is the line another
+   * App's author reads when deciding whether to call this one, so an App without it is
+   * runnable but effectively undiscoverable to the composition menu. Advisory prose —
+   * never parsed for enforcement — and omitted entirely when unset, so an App authored
+   * without it keeps its `app_ref`. */
+  delivers(text: string): this {
+    this._delivers = text;
+    return this;
+  }
+
+  /** Declare another App this one composes, by catalog handle.
+   *
+   * Declaring is not calling: a step must NAME the handle in its own `apps` list for the
+   * App to run. `save()` derives these declarations from the graph, so this is only needed
+   * when authoring an envelope offline via {@link AppBuilder.toEnvelope}. */
+  withApp(handle: string): this {
+    if (!this._apps.some((a) => a.handle === handle)) this._apps.push({ handle });
+    return this;
+  }
+
   /** Set the (optional) per-App project branch handle (reserved; never created here). */
   branch(handle: string): this {
     this._branchHandle = handle;
@@ -427,6 +451,7 @@ export class AppBuilder {
     if (this._rules.length) refs.rules = this._rules;
     if (this._memory.length) refs.memory = this._memory;
     if (this._skills.length) refs.skills = this._skills;
+    if (this._apps.length) refs.apps = this._apps;
     return refs;
   }
 
@@ -476,6 +501,7 @@ export class AppBuilder {
         branch_handle: this._branchHandle,
       };
       if (this._description) env.description = this._description;
+      if (this._delivers) env.delivers = this._delivers;
       if (this._tags.length) env.tags = [...this._tags];
       const refs = this.referencesDict();
       if (Object.keys(refs).length) env.references = refs;
@@ -493,6 +519,7 @@ export class AppBuilder {
       blueprint: this._blueprint,
     };
     if (this._description) env.description = this._description;
+    if (this._delivers) env.delivers = this._delivers;
     if (this._tags.length) env.tags = [...this._tags];
     const refs = this.referencesDict();
     if (Object.keys(refs).length) env.references = refs;
@@ -559,6 +586,7 @@ export class AppBuilder {
       skills?: string[];
       connections?: string[];
       datasets?: string[];
+      apps?: string[];
     }>;
     const collect = (pick: (s: (typeof steps)[number]) => string[] | undefined): string[] => [
       ...new Set(steps.flatMap((s) => pick(s) ?? [])),
@@ -573,6 +601,12 @@ export class AppBuilder {
       if (!this._datasets.some((d) => d.dataset_ref === ds)) {
         this.dataset(ds);
       }
+    }
+    // A composed App is a bare handle the runtime resolves against the caller's own catalog
+    // at run, so nothing needs resolving here — unlike a skill, whose `instructions_ref` is
+    // server-derived and therefore refuses at save when the catalog cannot produce it.
+    for (const handle of collect((s) => s.apps)) {
+      this.withApp(handle);
     }
     for (const name of collect((s) => s.skills)) {
       if (this._skills.some((sk) => sk.name === name)) continue;

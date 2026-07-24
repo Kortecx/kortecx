@@ -159,6 +159,7 @@ export function appBlueprintToBuilderGraph(blueprint: DagSpecJson): {
         skills: [],
         connections: [],
         datasets: [],
+        apps: [],
         maxTurns: undefined,
         maxToolCalls: undefined,
       };
@@ -180,6 +181,7 @@ export function appBlueprintToBuilderGraph(blueprint: DagSpecJson): {
       skills: kind === "model" ? [...(d.skills ?? [])] : [],
       connections: kind === "model" ? [...(d.connections ?? [])] : [],
       datasets: kind === "model" ? [...(d.datasets ?? [])] : [],
+      apps: kind === "model" ? [...(d.apps ?? [])] : [],
       maxTurns: kind === "model" ? maxTurns : undefined,
       maxToolCalls: kind === "model" ? maxToolCalls : undefined,
     };
@@ -274,6 +276,9 @@ export function builderGraphToBlueprint(
       }
       if (s.datasets.length > 0) {
         step.datasets = [...s.datasets];
+      }
+      if (s.apps.length > 0) {
+        step.apps = [...s.apps];
       }
     }
     if (Object.keys(params).length > 0) {

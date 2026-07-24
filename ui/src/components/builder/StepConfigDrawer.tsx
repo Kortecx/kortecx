@@ -11,6 +11,7 @@ import { type ModelSummary, PERSONAS, personaNames } from "@kortecx/sdk/web";
 import { m } from "framer-motion";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useApps } from "../../kx/use-apps";
 import { useListMcpServers } from "../../kx/use-connections";
 import { useDatasets } from "../../kx/use-datasets";
 import { useListSkills } from "../../kx/use-skills";
@@ -54,8 +55,18 @@ const CAPABILITY_AXES = [
       </>
     ),
   },
+  {
+    field: "apps",
+    label: "Apps",
+    hint: "The app runs as part of this one and its result arrives as this step's input — reuse an app that already does the work instead of restating it.",
+    empty: (
+      <>
+        No other apps to call yet. Create one in <strong>Apps</strong>.
+      </>
+    ),
+  },
 ] as const satisfies ReadonlyArray<{
-  field: "skills" | "connections" | "datasets";
+  field: "skills" | "connections" | "datasets" | "apps";
   label: string;
   hint: string;
   empty: React.ReactNode;
@@ -126,6 +137,9 @@ export function StepConfigDrawer({
   const skillCatalog = useListSkills();
   const serverRegistry = useListMcpServers();
   const datasets = useDatasets();
+  // Only SCHEDULED apps are callable: a hosted app has no blueprint to lower, and the run
+  // refuses to compose one. Offering it here would be a chip that authors a broken app.
+  const appCatalog = useApps();
   /** The available NAMES per axis. Grounding offers only datasets that hold an indexed
    *  document — an empty one would ground the step on nothing, which is the same honesty
    *  rule the App dataset rail already applies. */
@@ -133,13 +147,22 @@ export function StepConfigDrawer({
     skills: skillCatalog.skills.map((s) => s.name),
     connections: serverRegistry.servers.map((s) => s.endpoint),
     datasets: (datasets.data ?? []).filter((d) => d.docCount > 0).map((d) => d.name),
+    apps: appCatalog.apps.filter((a) => a.kind !== "experience").map((a) => a.handle),
   };
   /** A connector's endpoint is what the envelope binds and what the runtime dials, but it
    *  is not what a person recognises — show the registered name and bind the endpoint. */
-  const chipLabel = (field: string, value: string): string =>
-    field === "connections"
-      ? (serverRegistry.servers.find((s) => s.endpoint === value)?.serverName ?? value)
-      : value;
+  const chipLabel = (field: string, value: string): string => {
+    if (field === "connections") {
+      return serverRegistry.servers.find((s) => s.endpoint === value)?.serverName ?? value;
+    }
+    // An app binds by HANDLE, which is what the envelope carries and the runtime resolves —
+    // but `apps/local/weekly-digest` is not what a person recognises. Show the app's name,
+    // bind the handle. Same split as a connector's endpoint.
+    if (field === "apps") {
+      return appCatalog.apps.find((a) => a.handle === value)?.name ?? value;
+    }
+    return value;
+  };
 
   // POC-C5: portal to <body> with the `--overlay` variants (the #330 pattern, per
   // `SaveAsAppDialog`/`BlueprintFormDrawer`). The drawer is a SIBLING of the builder

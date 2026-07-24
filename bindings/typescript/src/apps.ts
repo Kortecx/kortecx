@@ -148,6 +148,13 @@ export class AppSummary {
      * app, which has no such axis.
      */
     readonly mode: string = "",
+    /**
+     * What one RUN of this App produces, in a phrase. `description` says what the App is;
+     * this says what comes back — the line another App's author reads when deciding whether
+     * to call this one. Carried on the SUMMARY so one `listApps` is the whole composition
+     * registry. `""` on an App that never said, or an older server.
+     */
+    readonly delivers: string = "",
   ) {}
 
   static fromProto(s: PbAppSummary): AppSummary {
@@ -162,6 +169,7 @@ export class AppSummary {
       s.locked,
       s.kind,
       s.mode,
+      s.delivers,
     );
   }
 }

@@ -123,6 +123,7 @@ export function useCloneGraph(instanceId: string | null, anchorMoteId?: string):
           skills: [],
           connections: [],
           datasets: [],
+          apps: [],
         };
       });
       const edges: BuilderEdge[] = [];

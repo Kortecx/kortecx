@@ -52,6 +52,16 @@ separators, number format, or escaping fails the gate.
   since an App that never set a mode must serialize exactly as it did before the field
   existed, and therefore keep its `app_ref` / `app_digest`.
 
+- `node-bound` — the per-node capability BINDINGS (`skills`/`connections`/`datasets` on
+  the step, declared in `references`).
+- `app-composed` — COMPOSITION: an `apps` binding naming another App's catalog handle,
+  declared in `references.apps`, on the same App bound by TWO steps (the shape that lowers
+  one sub-graph fanning out to both consumers rather than two copies). Also pins `delivers`,
+  sorted between `blueprint` and `name`. The gate asserts that **no other case emits a
+  `delivers` key** — the same free-field reasoning as `mode`: an App that never said what it
+  delivers must serialize exactly as it did before the field existed, and keep its
+  `app_ref` / `app_digest`.
+
 Regenerate by constructing the envelopes via the typed `kx-app` API and printing
 `to_canonical_json()`; never hand-edit the `canonical` strings.
 

@@ -168,6 +168,11 @@ pub struct AppRecord {
     pub version: String,
     /// Advisory description (never parsed for enforcement).
     pub description: String,
+    /// Advisory one-line statement of what a run of this App PRODUCES (never parsed for
+    /// enforcement). Denormalized onto the catalog row so ONE `ListApps` yields every
+    /// candidate's output line — the composition menu is built inside the authoring path,
+    /// where an N+1 read per App would be a live registry walk per derive.
+    pub delivers: String,
     /// Catalog tags.
     pub tags: Vec<String>,
     /// Blueprint step count (display only; 0 for an Experience/hosted App).

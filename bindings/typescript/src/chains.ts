@@ -105,13 +105,22 @@ export class Task {
     readonly appSkills: readonly string[] = [],
     readonly appConnections: readonly string[] = [],
     readonly appDatasets: readonly string[] = [],
+    /**
+     * APP ONLY — the App HANDLES this step calls. The odd one out: the three above give
+     * this step more to work with, while this one lowers another App's whole blueprint into
+     * the run and feeds its result to this step.
+     */
+    readonly appApps: readonly string[] = [],
   ) {}
 
   /** True when this step carries an App-envelope capability binding (skills / connections /
    *  datasets) — meaningful only on the App path; refused on the workflow path. */
   hasAppBindings(): boolean {
     return (
-      this.appSkills.length > 0 || this.appConnections.length > 0 || this.appDatasets.length > 0
+      this.appSkills.length > 0 ||
+      this.appConnections.length > 0 ||
+      this.appDatasets.length > 0 ||
+      this.appApps.length > 0
     );
   }
 
@@ -275,6 +284,8 @@ export const task = {
       connections?: readonly string[];
       /** APP ONLY: dataset names this step grounds on. */
       datasets?: readonly string[];
+      /** APP ONLY: App handles this step calls (see {@link Task.appApps}). */
+      apps?: readonly string[];
     } = {},
   ): Task {
     const stepParams: Record<string, string> = { ...params };
@@ -296,6 +307,7 @@ export const task = {
       [...(opts.skills ?? [])],
       [...(opts.connections ?? [])],
       [...(opts.datasets ?? [])],
+      [...(opts.apps ?? [])],
     );
   },
   /**
@@ -982,6 +994,7 @@ export class Chain {
       if (t && t.appSkills.length > 0) step.skills = [...t.appSkills];
       if (t && t.appConnections.length > 0) step.connections = [...t.appConnections];
       if (t && t.appDatasets.length > 0) step.datasets = [...t.appDatasets];
+      if (t && t.appApps.length > 0) step.apps = [...t.appApps];
       return step;
     });
     const bp: DagSpecJson = { seed: this.seed, execution_mode: "frozen", steps };
@@ -1075,6 +1088,9 @@ export interface DagSpecStep {
   connections?: string[];
   /** APP ONLY — DATASET names this step grounds on (`references.datasets[]`). */
   datasets?: string[];
+  /** APP ONLY — App HANDLES this step calls (`references.apps[].handle`). Each is lowered
+   * into the run as its own sub-graph, feeding this step. */
+  apps?: string[];
 }
 
 /** A portable blueprint (the `kx blueprint run --file` JSON shape). */
@@ -1108,6 +1124,7 @@ function refuseAppBindingsOnWorkflow(index: number, t: Task): void {
     t.appSkills.length > 0 ? "skills" : null,
     t.appConnections.length > 0 ? "connections" : null,
     t.appDatasets.length > 0 ? "datasets" : null,
+    t.appApps.length > 0 ? "apps" : null,
   ].filter((x): x is string => x !== null);
   throw new ChainParseError(
     `step ${index} declares ${named.join(" + ")} — a per-step capability list is an App-envelope binding that names an entry in the App's references, and RunApp is what resolves it. A workflow has no references to name into: author this as an App (app(...)), or grant the step a tool directly with { tools: [...] }.`,
@@ -1120,6 +1137,7 @@ function refuseSpecAppBindings(index: number, d: DagSpecStep): void {
     d.skills && d.skills.length > 0 ? "skills" : null,
     d.connections && d.connections.length > 0 ? "connections" : null,
     d.datasets && d.datasets.length > 0 ? "datasets" : null,
+    d.apps && d.apps.length > 0 ? "apps" : null,
   ].filter((x): x is string => x !== null);
   if (named.length === 0) return;
   throw new ChainParseError(

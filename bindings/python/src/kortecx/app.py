@@ -88,9 +88,11 @@ class App:
             "rules": [],
             "skills": [],
             "memory": [],
+            "apps": [],
         }
         # pending text bodies to upload at save(): (rail, name, body, skill_or_None).
         self._pending: List[tuple] = []
+        self._delivers = ""
         self._model_route = ""
         self._free_params: Dict[str, str] = {}
         self._requested_grants: Dict[str, str] = {}
@@ -327,6 +329,27 @@ class App:
         self._description = text
         return self
 
+    def delivers(self, text: str) -> "App":
+        """Say what one RUN of this App produces, in a phrase.
+
+        :meth:`describe` says what the App is; this says what comes back. It is the line
+        another App's author reads when deciding whether to call this one, so an App without
+        it is runnable but effectively undiscoverable to the composition menu. Advisory prose
+        — never parsed for enforcement — and omitted when unset, so an App authored without
+        it keeps its ``app_ref``."""
+        self._delivers = text
+        return self
+
+    def with_app(self, handle: str) -> "App":
+        """Declare another App this one composes, by catalog handle.
+
+        Declaring is not calling: a step must NAME the handle in its own ``apps`` list for
+        the App to run. :meth:`save` derives these declarations from the graph, so this is
+        only needed when authoring an envelope offline via :meth:`to_envelope`."""
+        if not any(a["handle"] == handle for a in self._rails["apps"]):
+            self._rails["apps"].append({"handle": handle})
+        return self
+
     def branch(self, handle: str) -> "App":
         """Set the (optional) per-App project branch handle (reserved; never created here)."""
         self._branch_handle = handle
@@ -404,6 +427,8 @@ class App:
         }
         if self._description:
             env["description"] = self._description
+        if self._delivers:
+            env["delivers"] = self._delivers
         if self._tags:
             env["tags"] = list(self._tags)
         if self._input_schema is not None:
@@ -483,6 +508,11 @@ class App:
         for ds in collect("datasets"):
             if not any(d["dataset_ref"] == ds for d in self._rails["datasets"]):
                 self.dataset(ds)
+        # A composed App is a bare handle the runtime resolves against the caller's own
+        # catalog at run, so nothing needs resolving here — unlike a skill, whose
+        # ``instructions_ref`` is server-derived and therefore refuses at save.
+        for handle in collect("apps"):
+            self.with_app(handle)
         for name in collect("skills"):
             if any(sk["name"] == name for sk in self._rails["skills"]):
                 continue

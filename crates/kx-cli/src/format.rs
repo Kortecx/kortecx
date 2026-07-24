@@ -1660,6 +1660,7 @@ fn app_summary_json(s: &proto::AppSummary) -> Value {
         "name": s.name,
         "version": s.version,
         "description": s.description,
+        "delivers": s.delivers,
         "tags": s.tags,
         "step_count": s.step_count,
         "locked": s.locked,
@@ -4183,6 +4184,7 @@ mod tests {
             name: "Payouts".into(),
             version: "1".into(),
             description: "reconcile".into(),
+            delivers: "a reconciled payout ledger".into(),
             tags: vec![],
             step_count: 3,
             locked: false,
@@ -4193,6 +4195,9 @@ mod tests {
         assert_eq!(v["kind"], "functional");
         assert_eq!(v["mode"], "codified");
         assert_eq!(v["step_count"], 3);
+        // `delivers` is what makes an App pickable by another App, so a consumer scripting
+        // against this output must be able to read it without a second RPC.
+        assert_eq!(v["delivers"], "a reconciled payout ledger");
 
         // An older server sends neither; empty is the honest value and reads as the default
         // the runtime applies (functional / contextual) rather than a missing key.

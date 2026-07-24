@@ -105,6 +105,11 @@ class AppSummary:
     description: str
     tags: List[str]
     step_count: int
+    # What one RUN of this App produces, in a phrase. ``description`` says what the App is;
+    # this says what comes back — the line another App's author reads when deciding whether
+    # to call this one. Carried on the SUMMARY so one ``list_apps`` is the whole composition
+    # registry. "" on an App authored before the field, or an older server.
+    delivers: str = ""
     locked: bool = False  # POC-5b: the App's project branch is locked (edits refused)
 
     @classmethod
@@ -115,6 +120,7 @@ class AppSummary:
             name=s.name,
             version=s.version,
             description=s.description,
+            delivers=s.delivers,
             tags=list(s.tags),
             step_count=s.step_count,
             locked=s.locked,

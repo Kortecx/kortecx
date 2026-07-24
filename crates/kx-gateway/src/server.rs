@@ -1878,6 +1878,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                         skills: Some(skills_db.clone() as Arc<dyn kx_gateway_core::SkillCatalog>),
                         connections: derive_connections.clone(),
                         datasets: derive_datasets,
+                        // The composition registry — the SAME catalog `RunApp` resolves a
+                        // named App against, so the menu can never offer one the run would
+                        // then fail to compose.
+                        apps: Some(apps_db.clone() as Arc<dyn kx_gateway_core::AppCatalog>),
                     },
                 ));
                 gateway = gateway.with_app_deriver(deriver);

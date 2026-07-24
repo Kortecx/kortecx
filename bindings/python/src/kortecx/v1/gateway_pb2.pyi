@@ -1475,7 +1475,7 @@ class SetActiveModelResponse(_message.Message):
     def __init__(self, active_model_id: _Optional[str] = ...) -> None: ...
 
 class AppSummary(_message.Message):
-    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked", "kind", "mode")
+    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked", "kind", "mode", "delivers")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     APP_REF_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -1486,6 +1486,7 @@ class AppSummary(_message.Message):
     LOCKED_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     MODE_FIELD_NUMBER: _ClassVar[int]
+    DELIVERS_FIELD_NUMBER: _ClassVar[int]
     handle: str
     app_ref: bytes
     name: str
@@ -1496,7 +1497,8 @@ class AppSummary(_message.Message):
     locked: bool
     kind: str
     mode: str
-    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ..., kind: _Optional[str] = ..., mode: _Optional[str] = ...) -> None: ...
+    delivers: str
+    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ..., kind: _Optional[str] = ..., mode: _Optional[str] = ..., delivers: _Optional[str] = ...) -> None: ...
 
 class SaveAppRequest(_message.Message):
     __slots__ = ("handle", "envelope_json", "source_digest")
@@ -1673,7 +1675,7 @@ class DeriveAppRequest(_message.Message):
     def __init__(self, kind: _Optional[str] = ..., mode: _Optional[str] = ..., prompt: _Optional[str] = ..., framework: _Optional[str] = ..., attachments: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DerivedAppStep(_message.Message):
-    __slots__ = ("role", "intent", "kind", "model_id", "tool_contract", "skills", "integrations", "datasets")
+    __slots__ = ("role", "intent", "kind", "model_id", "tool_contract", "skills", "integrations", "datasets", "apps")
     class ToolContractEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -1689,6 +1691,7 @@ class DerivedAppStep(_message.Message):
     SKILLS_FIELD_NUMBER: _ClassVar[int]
     INTEGRATIONS_FIELD_NUMBER: _ClassVar[int]
     DATASETS_FIELD_NUMBER: _ClassVar[int]
+    APPS_FIELD_NUMBER: _ClassVar[int]
     role: str
     intent: str
     kind: str
@@ -1697,7 +1700,8 @@ class DerivedAppStep(_message.Message):
     skills: _containers.RepeatedScalarFieldContainer[str]
     integrations: _containers.RepeatedScalarFieldContainer[str]
     datasets: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, role: _Optional[str] = ..., intent: _Optional[str] = ..., kind: _Optional[str] = ..., model_id: _Optional[str] = ..., tool_contract: _Optional[_Mapping[str, str]] = ..., skills: _Optional[_Iterable[str]] = ..., integrations: _Optional[_Iterable[str]] = ..., datasets: _Optional[_Iterable[str]] = ...) -> None: ...
+    apps: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, role: _Optional[str] = ..., intent: _Optional[str] = ..., kind: _Optional[str] = ..., model_id: _Optional[str] = ..., tool_contract: _Optional[_Mapping[str, str]] = ..., skills: _Optional[_Iterable[str]] = ..., integrations: _Optional[_Iterable[str]] = ..., datasets: _Optional[_Iterable[str]] = ..., apps: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class DerivedAppFile(_message.Message):
     __slots__ = ("path", "role")
@@ -1708,7 +1712,7 @@ class DerivedAppFile(_message.Message):
     def __init__(self, path: _Optional[str] = ..., role: _Optional[str] = ...) -> None: ...
 
 class DerivedApp(_message.Message):
-    __slots__ = ("name", "description", "steps", "edges", "files", "framework", "tools", "skills", "connections", "datasets", "notices")
+    __slots__ = ("name", "description", "steps", "edges", "files", "framework", "tools", "skills", "connections", "datasets", "notices", "apps", "delivers")
     class ToolsEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -1727,6 +1731,8 @@ class DerivedApp(_message.Message):
     CONNECTIONS_FIELD_NUMBER: _ClassVar[int]
     DATASETS_FIELD_NUMBER: _ClassVar[int]
     NOTICES_FIELD_NUMBER: _ClassVar[int]
+    APPS_FIELD_NUMBER: _ClassVar[int]
+    DELIVERS_FIELD_NUMBER: _ClassVar[int]
     name: str
     description: str
     steps: _containers.RepeatedCompositeFieldContainer[DerivedAppStep]
@@ -1738,7 +1744,9 @@ class DerivedApp(_message.Message):
     connections: _containers.RepeatedScalarFieldContainer[str]
     datasets: _containers.RepeatedScalarFieldContainer[str]
     notices: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., steps: _Optional[_Iterable[_Union[DerivedAppStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[ProposedEdge, _Mapping]]] = ..., files: _Optional[_Iterable[_Union[DerivedAppFile, _Mapping]]] = ..., framework: _Optional[str] = ..., tools: _Optional[_Mapping[str, str]] = ..., skills: _Optional[_Iterable[str]] = ..., connections: _Optional[_Iterable[str]] = ..., datasets: _Optional[_Iterable[str]] = ..., notices: _Optional[_Iterable[str]] = ...) -> None: ...
+    apps: _containers.RepeatedScalarFieldContainer[str]
+    delivers: str
+    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., steps: _Optional[_Iterable[_Union[DerivedAppStep, _Mapping]]] = ..., edges: _Optional[_Iterable[_Union[ProposedEdge, _Mapping]]] = ..., files: _Optional[_Iterable[_Union[DerivedAppFile, _Mapping]]] = ..., framework: _Optional[str] = ..., tools: _Optional[_Mapping[str, str]] = ..., skills: _Optional[_Iterable[str]] = ..., connections: _Optional[_Iterable[str]] = ..., datasets: _Optional[_Iterable[str]] = ..., notices: _Optional[_Iterable[str]] = ..., apps: _Optional[_Iterable[str]] = ..., delivers: _Optional[str] = ...) -> None: ...
 
 class DeriveAppResponse(_message.Message):
     __slots__ = ("app", "rejected")

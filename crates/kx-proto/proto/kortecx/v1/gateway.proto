@@ -1265,6 +1265,7 @@ message AppSummary {
   bool   locked        = 8;  // POC-5b: the App's project branch is locked (agentic edits refused); false when no branch / not locked / lock store unwired
   string kind          = 9;  // D213 lane: "functional" (schedulable capability) or "experience" (hosted web app); empty on an old server ⇒ treat as functional
   string mode          = 10; // authoring mode: "contextual" (a text app steered by its own markdown) or "codified" (the model authors the code/config the runtime orchestrates from); always empty for "experience" (no such axis); empty on an old server ⇒ treat as contextual
+  string delivers      = 11; // advisory one-line statement of what one run PRODUCES; the half of the record that makes an App pickable by another App. Carried on the summary so ONE ListApps is the whole composition registry. Never parsed for enforcement; empty on an old row/server
 }
 message SaveAppRequest {
   string handle        = 1;  // catalog key (upsert key within the caller's scope)
@@ -1446,6 +1447,7 @@ message DerivedAppStep {
   repeated string skills       = 6;      // catalog skill names, intersected against the caller's catalog
   repeated string integrations = 7;      // connection names, intersected against the caller's registry
   repeated string datasets     = 8;      // dataset names, intersected against the caller's non-empty datasets
+  repeated string apps         = 9;      // APP handles this step calls; each becomes that App's own workflow, lowered into the run and feeding this step
 }
 
 // One planned project file — the HOSTED lane's review surface.
@@ -1471,6 +1473,8 @@ message DerivedApp {
   // the derive can be trusted about its own limits — a design that quietly asked for
   // a tool it did not receive would produce an App that quietly cannot do part of its job.
   repeated string notices = 11;
+  repeated string apps    = 12;          // app handles the design calls (the union of every step's surviving picks) — the DECLARATION a client writes into `references.apps`
+  string delivers    = 13;               // proposed one-phrase statement of what a run produces; the line the composition menu shows other apps' authors
 }
 
 message DeriveAppResponse {

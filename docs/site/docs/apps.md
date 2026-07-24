@@ -354,6 +354,70 @@ Details worth knowing:
   declared name — the behavior described above — and `kx app import` tells you which
   datasets still need one.
 
+## Apps that call other Apps
+
+An App is not only something you run — it is something another App can **use**. A step names
+an App the way it names a skill or a dataset, and at run that App's own workflow executes as
+part of yours, with its result arriving as that step's input:
+
+```python
+import kortecx as kx
+
+# The App being called says what it PRODUCES. That line is what makes it findable.
+(kx.app("Escalation Review")
+   .delivers("a risk-ranked list of this week's support escalations")
+   .blueprint(kx.flow().agent("Rank this week's support escalations by customer risk."))
+ ).save(handle="apps/local/escalation-review")
+
+# A step NAMES it. Declaring is not calling — the step's `apps` list is what runs it.
+(kx.app("Weekly Digest")
+   .delivers("a one-paragraph weekly risk digest")
+   .blueprint(kx.flow().agent(
+       "Write one paragraph summarising the ranking above.",
+       apps=["apps/local/escalation-review"]))
+ ).save(handle="apps/local/weekly-digest")
+```
+
+```typescript
+import { app, flow } from "@kortecx/sdk";
+
+await app("Weekly Digest")
+  .delivers("a one-paragraph weekly risk digest")
+  .blueprint(flow().agent("Write one paragraph summarising the ranking above.", {
+    apps: ["apps/local/escalation-review"],
+  }))
+  .save({ handle: "apps/local/weekly-digest" });
+```
+
+**What actually happens.** Composition is resolved when the run is authored, not by starting
+a second run: the called App's blueprint is lowered under **its own** envelope — its own
+skills, grounding, integrations and model route — and joined to yours, its last step becoming
+a parent of the step that named it. So there is one run, one journal, and one lineage to
+inspect. The called App re-resolves its own authority; naming it can neither widen nor narrow
+what it may reach.
+
+**It runs once.** If two of your steps call the same App, it is lowered **once** and feeds
+both. You do not pay for it twice.
+
+**Things it refuses, on purpose:**
+
+- a cycle (`A` calls `B` calls `A`, or an App calling itself) — the error names the loop;
+- nesting deeper than three levels, or a composition that would take one run past 64 steps;
+- a step that calls an App the envelope does not declare in `references.apps`. `save()`
+  derives those declarations from your graph; if you hand-author an envelope with
+  `to_envelope()`, add them with `.with_app(...)` / `.withApp(...)`;
+- calling a **hosted** App — it has no workflow to lower.
+
+**Choosing one.** `delivers()` is a single advisory line saying what a run of the App
+produces. It is carried on the catalog summary, so `kx app list` and the console show it —
+and when you describe an App in one prompt, the designer offers your existing Apps as
+capabilities and can bind one to the step that needs it, instead of designing that work
+again. An App with no `delivers` still runs; it is just harder for anything to find.
+
+> Concurrency here is logical, not wall-clock: two independent steps are free to run at the
+> same time, but a gateway serving with the default single worker still executes them one at
+> a time. Start `kx serve --workers N` for real parallelism.
+
 ## Permissions & the capability manifest
 
 An App declares a **request** for capability (the tools, connections, and model it wants
