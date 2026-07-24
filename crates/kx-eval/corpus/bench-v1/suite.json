@@ -1,0 +1,73 @@
+{
+  "id": "bench-v1",
+  "tasks": [
+    {
+      "id": "kv-lookup-x",
+      "family": "tool",
+      "description": "Single tool: look up a store-only value and report it.",
+      "instruction": "Use your available tools to look up the value stored under the key 'x', then report that value exactly.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["42"],
+        "expected_tools": [{ "tool_id": "mcp-kv/get", "tool_version": "1" }],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "kv-lookup-beta",
+      "family": "tool",
+      "description": "Single tool: a non-guessable store fact — the answer proves the tool fired.",
+      "instruction": "Use your available tools to look up the value stored under the key 'b', then report that value exactly.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["beta"],
+        "expected_tools": [{ "tool_id": "mcp-kv/get", "tool_version": "1" }],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "calc-add",
+      "family": "tool",
+      "description": "Single tool: arithmetic via the calculator (tool-use is the load-bearing check).",
+      "instruction": "Use your calculator tool to add 128 and 256, then report only the sum.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["384"],
+        "expected_tools": [{ "tool_id": "mcp-calc/calc", "tool_version": "1" }],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "echo-roundtrip",
+      "family": "tool",
+      "description": "Single tool: echo a token and report exactly what came back.",
+      "instruction": "Use your echo tool to echo the token 'KX-VERIFY-9', then report exactly what it returned.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["KX-VERIFY-9"],
+        "expected_tools": [{ "tool_id": "mcp-echo/echo", "tool_version": "1" }],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "kv-then-calc",
+      "family": "tool",
+      "description": "Sequential two-tool chain: a store lookup feeds an arithmetic step.",
+      "instruction": "Use your available tools to look up the value stored under the key 'x', then add 8 to that value, and report the resulting number.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": ["50"],
+        "expected_tools": [
+          { "tool_id": "mcp-kv/get", "tool_version": "1" },
+          { "tool_id": "mcp-calc/calc", "tool_version": "1" }
+        ],
+        "ideal_turns": 3,
+        "ideal_tool_calls": 2
+      }
+    }
+  ]
+}

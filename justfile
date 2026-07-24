@@ -856,6 +856,20 @@ eval-real:
     cargo build -p kx-mcp  # the bundled stdio tool bins (echo / calc / kv)
     cargo test -p kx-gateway --features inference --test eval_real_model -- --ignored --nocapture --test-threads=1
 
+# The real-model ORACLE benchmark (LOCAL, hard-but-local; NOT a CI job). Drives the
+# `bench-v1` task slice on a served model and scores every REAL run with the golden
+# oracle scorers (task_success / tool_call_f1 / …) via `kx_gateway::eval_bench` — the
+# MEASURED agentic-quality proof, not a scripted replay. The oracle floors gate ONLY on a
+# capable model (Gemma-4-12B, NEVER the weak Qwen3 stand-in); env-labelled numbers land in
+# the gitignored `docs/benchmarks/`; the committed per-engine baseline is the fail-closed
+# ratchet. Drive BOTH engines (restart per run):
+#   KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-bench   # local Gemma (Ollama)
+#   just fetch-gemma-model && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench   # llama.cpp
+# Capture/refresh the committed baseline: `KX_BENCH_UPDATE_BASELINE=1 just eval-bench`.
+eval-bench:
+    cargo build -p kx-mcp  # the bundled stdio tool bins (echo / calc / kv) the oracle needs
+    cargo test -p kx-gateway --features inference --test eval_bench_real -- --ignored --nocapture --test-threads=1
+
 # LOCAL / manual witness (NOT a CI job): drive a LIVE ReAct chain that FIRES a real
 # tool on a capable model. The DETERMINISTIC, CI-runnable regression guard for this
 # lives model-free in `crates/kx-coordinator/tests/react_live.rs` — it pins the

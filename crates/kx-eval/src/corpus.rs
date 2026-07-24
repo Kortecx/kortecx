@@ -20,6 +20,11 @@ const SUITE_JSON: &str = include_str!("../corpus/golden-v1/suite.json");
 const FORMAT_JSON: &str = include_str!("../corpus/golden-v1/format_cases.json");
 const BASELINE_JSON: &str = include_str!("../corpus/golden-v1/baseline.json");
 
+/// The id of the v1 real-model benchmark suite.
+pub const BENCH_V1_ID: &str = "bench-v1";
+
+const BENCH_V1_SUITE_JSON: &str = include_str!("../corpus/bench-v1/suite.json");
+
 /// The cross-format parse corpus: the grant context the cases run under + the per-format
 /// raw model strings and their intended decodes.
 #[derive(Debug, Clone, Deserialize)]
@@ -63,6 +68,42 @@ pub fn load_golden_v1() -> Result<GoldenCorpus, EvalError> {
     })
 }
 
+/// The loaded, content-addressed `bench-v1` real-model benchmark suite.
+///
+/// Unlike [`GoldenCorpus`], a bench suite carries no format-parse corpus: it is scored
+/// only from LIVE served-model transcripts (each task is real-only — `instruction` +
+/// `expect`, no scripted Tier-A fixture), so there is no deterministic format matrix to
+/// fold. The `suite_digest` is a blake3 over the embedded suite bytes, so a task change
+/// shifts the digest and [`crate::compare_to_baseline`] fails closed until the per-engine
+/// baseline is deliberately re-captured — the same drift discipline as `golden-v1`.
+#[derive(Debug, Clone)]
+pub struct BenchCorpus {
+    /// The real-model task suite (each task carries an `instruction` + `expect`, no
+    /// scripted transcript).
+    pub suite: GoldenSuite,
+    /// The content digest (hex blake3 over the embedded suite bytes).
+    pub suite_digest: String,
+}
+
+/// Load + parse the embedded `bench-v1` real-model benchmark suite and compute its content
+/// digest. The suite is driven live by the gateway benchmark harness (the only layer with
+/// a served model + a client); this crate stays proto-free and only owns the corpus + the
+/// scorers it is fed.
+///
+/// # Errors
+/// [`EvalError::Malformed`] if the embedded suite file is not well-formed JSON.
+pub fn load_bench_v1() -> Result<BenchCorpus, EvalError> {
+    let suite: GoldenSuite =
+        serde_json::from_str(BENCH_V1_SUITE_JSON).map_err(|e| EvalError::Malformed {
+            what: "bench-v1 suite",
+            detail: e.to_string(),
+        })?;
+    Ok(BenchCorpus {
+        suite,
+        suite_digest: digest_hex(&[BENCH_V1_SUITE_JSON.as_bytes()]),
+    })
+}
+
 /// The committed `golden-v1` baseline (embedded), the gate's default yardstick. Embedded
 /// so the gate runs from an INSTALLED binary, not just the source tree.
 ///
@@ -98,5 +139,35 @@ mod tests {
         // The digest is a pure function of the embedded bytes ⇒ stable across calls.
         let again = load_golden_v1().expect("reload");
         assert_eq!(c.suite_digest, again.suite_digest);
+    }
+
+    #[test]
+    fn bench_v1_loads_addressed_and_is_real_only() {
+        let c = load_bench_v1().expect("bench-v1 suite parses");
+        assert_eq!(c.suite.id, BENCH_V1_ID);
+        assert!(!c.suite.tasks.is_empty(), "bench suite has tasks");
+        assert_eq!(c.suite_digest.len(), 64, "blake3 hex is 64 chars");
+        // Every bench task is REAL-ONLY: no scripted Tier-A fixture (scored live only),
+        // and every task carries a non-empty instruction to send a served model.
+        for t in &c.suite.tasks {
+            assert!(
+                t.scripted_transcript.is_none(),
+                "bench task {} must be real-only (no scripted transcript)",
+                t.id
+            );
+            assert!(
+                !t.instruction.is_empty(),
+                "bench task {} has an instruction",
+                t.id
+            );
+        }
+        // Content-addressed ⇒ stable, and distinct from golden-v1's corpus digest.
+        let again = load_bench_v1().expect("reload");
+        assert_eq!(c.suite_digest, again.suite_digest);
+        assert_ne!(
+            c.suite_digest,
+            load_golden_v1().expect("golden-v1").suite_digest,
+            "bench-v1 is a distinct corpus"
+        );
     }
 }

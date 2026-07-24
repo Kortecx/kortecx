@@ -1,0 +1,18 @@
+{
+  "suite_id": "bench-v1",
+  "suite_digest": "b3b7fb79f46c3a290ba032c22e4ac93f0f84be3bc0e081df687a71967a25b3d0",
+  "gates": [
+    {
+      "id": "task_success",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_call_f1",
+      "per_mille": 933
+    },
+    {
+      "id": "loop_efficiency",
+      "per_mille": 800
+    }
+  ]
+}

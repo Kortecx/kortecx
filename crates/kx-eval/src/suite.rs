@@ -92,8 +92,8 @@ pub struct Expectation {
     pub ideal_tool_calls: u32,
 }
 
-/// One golden task: an instruction (Tier-B), a scripted transcript (Tier-A), and the
-/// [`Expectation`] both are scored against.
+/// One golden task: an instruction (Tier-B), an OPTIONAL scripted transcript (Tier-A),
+/// and the [`Expectation`] both are scored against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoldenTask {
     /// The task id (stable; labels every metric).
@@ -109,8 +109,12 @@ pub struct GoldenTask {
     pub instruction: String,
     /// What the run must achieve.
     pub expect: Expectation,
-    /// The deterministic Tier-A fixture (a scripted run that meets the expectation).
-    pub scripted_transcript: Transcript,
+    /// The deterministic Tier-A fixture (a scripted run that meets the expectation), or
+    /// `None` for a REAL-ONLY task whose transcript is built live from a served-model run
+    /// (the `bench-v1` slice). A `None` task has no deterministic tier — the Tier-A
+    /// [`crate::score_corpus`] runner skips it; it is scored only from a live transcript.
+    #[serde(default)]
+    pub scripted_transcript: Option<Transcript>,
 }
 
 fn default_family() -> String {

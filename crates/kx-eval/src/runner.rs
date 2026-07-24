@@ -57,16 +57,21 @@ pub fn score_golden_v1_family(
 /// Score an already-loaded corpus (Tier A — scripted transcripts).
 #[must_use]
 pub fn score_corpus(corpus: &GoldenCorpus, env_label: String, git_sha: String) -> EvalReport {
+    // Only tasks that carry a Tier-A scripted transcript are scored deterministically;
+    // a real-only task (`scripted_transcript: None`, the `bench-v1` slice) has no
+    // deterministic tier and is scored solely from a live transcript elsewhere.
     let per_task: Vec<TaskScore> = corpus
         .suite
         .tasks
         .iter()
-        .map(|task| TaskScore {
-            task_id: task.id.clone(),
-            scores: score_transcript(&ScoreInput {
-                transcript: &task.scripted_transcript,
-                expect: &task.expect,
-            }),
+        .filter_map(|task| {
+            task.scripted_transcript.as_ref().map(|scripted| TaskScore {
+                task_id: task.id.clone(),
+                scores: score_transcript(&ScoreInput {
+                    transcript: scripted,
+                    expect: &task.expect,
+                }),
+            })
         })
         .collect();
     let format_coverage = score_format_coverage(&corpus.format.grants, &corpus.format.cases);

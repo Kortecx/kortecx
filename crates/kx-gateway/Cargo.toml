@@ -99,6 +99,12 @@ kx-capability   = { workspace = true, optional = true }
 # The cross-run work cache sidecar (opt-in `KX_FLAG_SERVE_WORK_CACHE`), constructed once
 # per serve and cloned into each pooled worker. Gated with the worker (embedded-worker).
 kx-work-cache   = { workspace = true, optional = true }
+# The agentic-eval scoring/corpus leaf (proto-free, FFI-free). The `eval_bench` module
+# folds a LIVE served-model run into an `kx_eval::Transcript` (client-side, over the read
+# RPCs) and scores it with the golden oracle scorers. Gated under `serve-engine` — any
+# build that can serve a model to benchmark (FFI-free, so no C++ toolchain) — so the
+# default binary's dep set is unchanged.
+kx-eval         = { workspace = true, optional = true }
 # PR-9b: per-Mote input tempfile for the real, sandboxed body-exec router
 # (`real_exec.rs`). FFI-free + already in the lock (a dev-dep here + a normal dep
 # of kx-executor); gated under `embedded-worker` so the gateway-only closure that
@@ -354,6 +360,9 @@ serve-engine = [
     "dep:kx-mcp",
     # RC3 (T-REACT-TOOL-MENU): the shared tool-menu renderer for the live ReAct prompt.
     "dep:kx-context-assembler",
+    # The live-run oracle benchmark (`eval_bench`): folds a served-model run into a
+    # transcript and scores it with the golden oracle scorers (FFI-free).
+    "dep:kx-eval",
     "mcp-gateway",
 ]
 # inference: serve-engine PLUS the in-process llama.cpp backend (the C++ FFI via

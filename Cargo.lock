@@ -1812,6 +1812,7 @@ dependencies = [
  "kx-dataset-bm25",
  "kx-dataset-graph",
  "kx-dataset-hnsw",
+ "kx-eval",
  "kx-executor",
  "kx-flags",
  "kx-fleet",
