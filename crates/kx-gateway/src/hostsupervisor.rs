@@ -143,6 +143,10 @@ pub(crate) struct HostedSupervisor {
     /// The gateway's own `http://host:port` — where a served page's SDK client connects back.
     /// Written into the app's env so the page never hard-codes it.
     gateway_endpoint: String,
+    /// The console listener's `http://host:port` — where `/npm/@kortecx/sdk` is served, so the
+    /// scaffold's `.npmrc` installs the SDK from THIS gateway. Empty ⇒ no SDK registry (the
+    /// app installs no SDK, an honest degrade on a `--no-console` serve).
+    console_endpoint: String,
     /// The live hosted-origin set the gateway's CORS predicate consults. A port is added when
     /// this app starts serving and removed when it stops, so the gateway allows a page's
     /// cross-origin calls exactly while its app is up.
@@ -151,6 +155,9 @@ pub(crate) struct HostedSupervisor {
 
 impl HostedSupervisor {
     /// Create a supervisor rooted at `<data_root>/hosted/` (created lazily per app).
+    // Distinct Arc/String seams for one host supervisor; a config struct would only move the
+    // arity to the caller (the same Rule-1 reasoning `HostAppAuthor::new` documents).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         data_root: &Path,
         catalog: Arc<dyn AppCatalog>,
@@ -159,6 +166,7 @@ impl HostedSupervisor {
         app_tokens: Arc<crate::app_tokens::AppTokenStore>,
         hosted_origins: Arc<crate::app_tokens::HostedOrigins>,
         gateway_endpoint: String,
+        console_endpoint: String,
     ) -> Self {
         Self {
             data_root: data_root.join("hosted"),
@@ -169,6 +177,7 @@ impl HostedSupervisor {
             app_tokens,
             hosted_origins,
             gateway_endpoint,
+            console_endpoint,
         }
     }
 
@@ -290,6 +299,7 @@ impl HostedAppSupervisor for HostedSupervisor {
             rebuild,
             token,
             gateway_endpoint: self.gateway_endpoint.clone(),
+            console_endpoint: self.console_endpoint.clone(),
             hosted_origins: Arc::clone(&self.hosted_origins),
         };
         tokio::spawn(run_lifecycle(ctx));
@@ -395,6 +405,8 @@ struct LifecycleCtx {
     token: String,
     /// The gateway address the page's SDK connects back to.
     gateway_endpoint: String,
+    /// The console address serving the SDK registry (for the app's `.npmrc`).
+    console_endpoint: String,
     /// The live-origin set to add/remove this app's port from as it starts/stops serving.
     hosted_origins: Arc<crate::app_tokens::HostedOrigins>,
 }
@@ -676,7 +688,19 @@ fn write_env_local(ctx: &LifecycleCtx) -> Result<(), String> {
          NEXT_PUBLIC_KX_ENDPOINT={e}\n\
          NEXT_PUBLIC_KX_TOKEN={t}\n"
     );
-    write_file(&ctx.plan.workdir, ".env.local", body.as_bytes())
+    write_file(&ctx.plan.workdir, ".env.local", body.as_bytes())?;
+
+    // Point `@kortecx/*` installs at THIS gateway's own registry, so the scaffold's
+    // `@kortecx/sdk` dependency resolves from the running serve rather than a public npm the
+    // package is not on. Written per start (the console port could differ between serves), and
+    // only when a console is actually serving the registry — a `--no-console` serve leaves no
+    // `.npmrc`, and the app's SDK dependency then fails to install honestly rather than
+    // pointing at a registry that is not there.
+    if !ctx.console_endpoint.is_empty() {
+        let npmrc = format!("@kortecx:registry={}/npm/\n", ctx.console_endpoint);
+        write_file(&ctx.plan.workdir, ".npmrc", npmrc.as_bytes())?;
+    }
+    Ok(())
 }
 
 /// Write `bytes` to `workdir/rel`, creating parent directories.
@@ -1055,7 +1079,8 @@ mod tests {
             generation: 1,
             rebuild: false,
             token: "test-token".into(),
-            gateway_endpoint: "http://127.0.0.1:8888".into(),
+            gateway_endpoint: "http://127.0.0.1:50151".into(),
+            console_endpoint: "http://127.0.0.1:8888".into(),
             hosted_origins: crate::app_tokens::HostedOrigins::new(),
         };
         Fixture {

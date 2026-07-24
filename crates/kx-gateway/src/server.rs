@@ -1638,9 +1638,15 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             app_tokens.clone(),
             hosted_origins.clone(),
             // The gateway's own gRPC-web address, injected into every hosted app's env so its
-            // page connects back without hard-coding a port. `cfg.listen` is the configured
-            // bind; the served page and the console share this listener.
+            // page connects back without hard-coding a port.
             format!("http://{}", cfg.listen),
+            // The console listener's address — where `/npm/@kortecx/sdk` is served, so the
+            // scaffold's `.npmrc` can install the SDK. Empty without the `console` feature,
+            // in which case the app simply has no SDK to install (an honest degrade).
+            cfg.console_listen
+                .resolve()
+                .map(|a| format!("http://{a}"))
+                .unwrap_or_default(),
         ));
     let mut gateway = GatewayService::new(reader.clone(), submitter, content.clone())
         .with_signature_catalog(signature_catalog)
