@@ -73,8 +73,9 @@ pub use broker::{BrokerObserver, ModelBroker};
 pub use executor::ModelExecutor;
 pub use metered::MeteredBackend;
 pub use rag::{
-    encode_vector_le, ingest_corpus, ingest_corpus_hybrid, query_corpus, query_corpus_hybrid,
-    rerank_hits, Embedder, RagError,
+    encode_vector_le, extract_query_entities, extract_triples, ingest_corpus, ingest_corpus_graph,
+    ingest_corpus_hybrid, query_corpus, query_corpus_graph, query_corpus_hybrid, rerank_hits,
+    Embedder, Extractor, RagError,
 };
 pub use react::{run_react_loop, ReactBudget, ReactLoopOutcome, ReactStop};
 pub use registration::{register_kortecx, RegistrationError};

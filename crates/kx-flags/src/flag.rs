@@ -58,6 +58,20 @@ impl Flag {
         default: false,
     };
 
+    /// The GRAPH-RAG retrieval leg (`kx-dataset-graph`). ON ⇒ a served dataset
+    /// extracts `(subject, predicate, object)` triples at ingest (via the chat model)
+    /// into a per-dataset in-memory knowledge graph, and a query fuses a third,
+    /// multi-hop GRAPH leg alongside the dense (HNSW) + sparse (BM25) legs — surfacing
+    /// bridge chunks a pure similarity search misses. OFF ⇒ no extractor is wired, the
+    /// graph stays empty, and the empty fusion leg is byte-identical to the 2-leg
+    /// hybrid fuse, so the retrieval path is byte-unchanged from a build without it.
+    pub const SERVE_GRAPH_RAG: Flag = Flag {
+        name: "serve_graph_rag",
+        env: "KX_FLAG_SERVE_GRAPH_RAG",
+        legacy_env: None,
+        default: false,
+    };
+
     /// Every registered flag. Add new flags here — the registry invariants
     /// (default-OFF, unique names, `KX_FLAG_` prefix, no alias collisions) are
     /// property-tested across this slice, so a flag that is not listed is not
@@ -66,5 +80,6 @@ impl Flag {
         Self::SERVE_MEMORY,
         Self::SERVE_AUTOGRANT,
         Self::SERVE_WORK_CACHE,
+        Self::SERVE_GRAPH_RAG,
     ];
 }

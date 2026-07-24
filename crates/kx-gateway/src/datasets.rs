@@ -38,8 +38,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use kx_chunk::{chunk, ChunkParams};
 use kx_content::ContentRef;
-use kx_dataset::{mmr_rerank, rrf_fuse, Hit, LexicalIndex, RetrievalIndex, MMR_LAMBDA_BP, RRF_C};
+use kx_dataset::{
+    mmr_rerank, rrf_fuse_multi, Hit, LexicalIndex, RetrievalIndex, MMR_LAMBDA_BP, RRF_C,
+};
 use kx_dataset_bm25::{Bm25Index, Bm25Params};
+use kx_dataset_graph::{InMemoryGraph, KnowledgeGraph, Triple};
 use kx_dataset_hnsw::HnswRetrievalIndex;
 // The index-fingerprint axes are used only on the server-embed path (the
 // client-vector path owns its own vector space, so it has no embed fingerprint).
@@ -271,6 +274,12 @@ struct DatasetState {
     prov: HashMap<ContentRef, ChunkProv>,
     /// parent_ref → number of chunks (for the per-hit `chunk_count`).
     parent_chunks: HashMap<ContentRef, u32>,
+    /// The GRAPH-RAG leg: a per-dataset knowledge graph of extracted triples (graph-RAG
+    /// PR-1). In-memory ONLY — populated at ingest when an extractor is wired
+    /// (`SERVE_GRAPH_RAG` + a chat model), empty otherwise, and rebuilt-empty on open (a
+    /// durable triple store is a follow-up). An empty graph fuses to a byte-identical
+    /// result, so a graph-RAG-off serve is unchanged.
+    graph: InMemoryGraph,
 }
 
 impl DatasetState {
@@ -286,6 +295,7 @@ impl DatasetState {
             docs: HashMap::new(),
             prov: HashMap::new(),
             parent_chunks: HashMap::new(),
+            graph: InMemoryGraph::new(),
         }
     }
 }
@@ -320,6 +330,7 @@ impl Inner {
         rows: Vec<ChunkRow>,
         chunked: bool,
         fingerprint: Option<String>,
+        triples: Vec<Triple>,
     ) -> Result<IngestOutcome, DatasetError> {
         let first = rows
             .first()
@@ -389,6 +400,7 @@ impl Inner {
             chunked,
             fingerprint,
             to_apply,
+            triples,
         );
 
         Ok(IngestOutcome {
@@ -468,8 +480,9 @@ impl Inner {
     }
 
     /// Apply a committed batch to the in-memory dense + sparse indices, the
-    /// content + provenance maps (infallible). Returns the dataset's distinct
-    /// PARENT-document count.
+    /// content + provenance maps + the graph leg (infallible). Returns the dataset's
+    /// distinct PARENT-document count.
+    #[allow(clippy::too_many_arguments)] // the batch + its derived state across all legs
     fn apply_to_state(
         &mut self,
         dataset: &str,
@@ -478,6 +491,7 @@ impl Inner {
         chunked: bool,
         fingerprint: Option<String>,
         to_apply: Vec<ChunkRow>,
+        triples: Vec<Triple>,
     ) -> u64 {
         let bm25 = self.config.bm25_params();
         let state = self
@@ -493,6 +507,7 @@ impl Inner {
                 state.embed_fingerprint = fp;
             }
         }
+        let mut applied: HashSet<ContentRef> = HashSet::new();
         for r in to_apply {
             state.index.insert(r.chunk_ref, r.vector);
             if let Ok(text) = std::str::from_utf8(&r.content) {
@@ -507,6 +522,15 @@ impl Inner {
                 },
             );
             *state.parent_chunks.entry(r.parent_ref).or_insert(0) += 1;
+            applied.insert(r.chunk_ref);
+        }
+        // Graph-RAG: add triples whose SOURCE chunk was actually applied (skip a
+        // deduped chunk whose edges are already in the graph). Empty unless an
+        // extractor is wired (`SERVE_GRAPH_RAG`), so this is a no-op by default.
+        for t in triples {
+            if applied.contains(&t.source) {
+                state.graph.insert_triple(t);
+            }
         }
         u64::try_from(state.parent_chunks.len()).unwrap_or(u64::MAX)
     }
@@ -566,14 +590,147 @@ impl HostEmbedder {
     }
 }
 
+/// The bundled server EXTRACTOR (graph-RAG PR-1, the `serve-engine` path) — a
+/// text-GENERATION backend + model route + warrant for entity/relation extraction.
+/// Routes to the CHAT model (not the embed model, which returns `Unsupported` on
+/// `dispatch`). Every call is one-shot, greedy, fail-closed: a dispatch error or a
+/// malformed reply yields no triples/entities — never garbage.
+#[cfg(feature = "serve-engine")]
+pub struct HostExtractor {
+    backend: std::sync::Arc<dyn kx_inference::InferenceBackend>,
+    model_id: kx_mote::ModelId,
+    warrant: kx_warrant::WarrantSpec,
+}
+
+/// The per-extraction output ceiling (tokens), clamped to the warrant's ceiling.
+#[cfg(feature = "serve-engine")]
+const EXTRACT_OUTPUT_CAP: u32 = 512;
+
+#[cfg(feature = "serve-engine")]
+impl HostExtractor {
+    /// Bind a generation backend + model route + warrant for extraction.
+    #[must_use]
+    pub fn new(
+        backend: std::sync::Arc<dyn kx_inference::InferenceBackend>,
+        model_id: kx_mote::ModelId,
+        warrant: kx_warrant::WarrantSpec,
+    ) -> Self {
+        Self {
+            backend,
+            model_id,
+            warrant,
+        }
+    }
+
+    /// Greedy, no-grammar inference params clamped to the warrant's output ceiling.
+    fn params(&self) -> kx_inference::InferenceParams {
+        kx_inference::InferenceParams {
+            grammar: None,
+            temperature_bps: 0,
+            max_output_tokens: EXTRACT_OUTPUT_CAP.min(self.warrant.model_route.max_output_tokens),
+            ..kx_inference::InferenceParams::default()
+        }
+    }
+
+    /// The raw completion for `prompt`, or `None` on a dispatch error (fail-closed).
+    fn complete(&self, prompt: String) -> Option<String> {
+        let input = kx_inference::InferenceInput::text(prompt);
+        let out = self
+            .backend
+            .dispatch(&self.model_id, &input, &self.params(), &self.warrant)
+            .ok()?;
+        Some(String::from_utf8_lossy(&out.bytes).into_owned())
+    }
+
+    /// Extract `(subject, predicate, object)` triples from a chunk (fail-closed).
+    fn triples(&self, chunk_text: &str) -> Vec<(String, String, String)> {
+        let prompt = format!(
+            "Extract the factual (subject, predicate, object) relationships stated in the text \
+             below. Reply with ONLY a JSON array of objects, each exactly \
+             {{\"subject\": \"...\", \"predicate\": \"...\", \"object\": \"...\"}}, using short \
+             entity names. If the text states no clear relationships, reply []. Text:\n{chunk_text}"
+        );
+        self.complete(prompt)
+            .map(|t| parse_triples(&t))
+            .unwrap_or_default()
+    }
+
+    /// Extract the named entities of a query as graph seeds (fail-closed).
+    fn entities(&self, query: &str) -> Vec<String> {
+        let prompt = format!(
+            "List the named entities in the question below as a JSON array of short strings \
+             (e.g. [\"Acme\", \"Orion\"]). Reply with ONLY the JSON array. Question:\n{query}"
+        );
+        self.complete(prompt)
+            .map(|t| parse_entities(&t))
+            .unwrap_or_default()
+    }
+}
+
+/// The `[ ... ]` slice of `text` (first `[` to the last `]`), or `None`. A model
+/// often wraps the array in prose; this isolates the JSON before parsing.
+#[cfg(feature = "serve-engine")]
+fn json_array_slice(text: &str) -> Option<&str> {
+    let start = text.find('[')?;
+    let end = text.rfind(']')?;
+    (end > start).then(|| &text[start..=end])
+}
+
+/// Fail-closed parse of a triples JSON array — only objects with three non-empty
+/// string fields survive; anything else is dropped (never garbage).
+#[cfg(feature = "serve-engine")]
+fn parse_triples(text: &str) -> Vec<(String, String, String)> {
+    let Some(slice) = json_array_slice(text) else {
+        return Vec::new();
+    };
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(slice)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let field = |k: &str| item.get(k).and_then(|v| v.as_str()).unwrap_or("").trim();
+        let (s, p, o) = (field("subject"), field("predicate"), field("object"));
+        if !s.is_empty() && !p.is_empty() && !o.is_empty() {
+            out.push((s.to_string(), p.to_string(), o.to_string()));
+        }
+    }
+    out
+}
+
+/// Fail-closed parse of an entity JSON array (non-empty trimmed strings only).
+#[cfg(feature = "serve-engine")]
+fn parse_entities(text: &str) -> Vec<String> {
+    let Some(slice) = json_array_slice(text) else {
+        return Vec::new();
+    };
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(slice)
+    else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|v| {
+            v.as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        })
+        .collect()
+}
+
 /// A [`DatasetView`] over a durable SQLite store + a rebuilt-on-open HNSW ANN index.
 /// VIEW + INGEST (no journal write). Optionally carries a server `HostEmbedder`
 /// (the `serve-engine` path); without it, only the client-vector path is available.
+/// Optionally carries a `HostExtractor` (graph-RAG PR-1) — when present, ingest builds
+/// a per-dataset knowledge graph and a query fuses a multi-hop graph leg.
 pub struct HostDatasetView {
     inner: Mutex<Inner>,
     config: RagConfig,
     #[cfg(feature = "serve-engine")]
     embedder: Option<HostEmbedder>,
+    #[cfg(feature = "serve-engine")]
+    extractor: Option<HostExtractor>,
 }
 
 impl HostDatasetView {
@@ -613,6 +770,8 @@ impl HostDatasetView {
             config,
             #[cfg(feature = "serve-engine")]
             embedder: None,
+            #[cfg(feature = "serve-engine")]
+            extractor: None,
         })
     }
 
@@ -641,6 +800,57 @@ impl HostDatasetView {
     pub fn with_embedder(mut self, embedder: HostEmbedder) -> Self {
         self.embedder = Some(embedder);
         self
+    }
+
+    /// Attach a server EXTRACTOR (graph-RAG PR-1) — enabling triple extraction at
+    /// ingest + a fused multi-hop graph leg at query. Wire it only behind
+    /// `SERVE_GRAPH_RAG`; without it the graph stays empty and retrieval is unchanged.
+    #[cfg(feature = "serve-engine")]
+    #[must_use]
+    pub fn with_extractor(mut self, extractor: HostExtractor) -> Self {
+        self.extractor = Some(extractor);
+        self
+    }
+
+    /// Extract triples for the resolved chunks (graph-RAG), tagged with each chunk's
+    /// content ref — empty unless an extractor is wired. Runs OFF the dataset lock
+    /// (a generation dispatch per chunk), like embedding.
+    #[cfg(feature = "serve-engine")]
+    fn extract_triples_for(&self, rows: &[ChunkRow]) -> Vec<Triple> {
+        let Some(ex) = self.extractor.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for r in rows {
+            if let Ok(text) = std::str::from_utf8(&r.content) {
+                for (s, p, o) in ex.triples(text) {
+                    out.push(Triple::new(s, p, o, r.chunk_ref));
+                }
+            }
+        }
+        out
+    }
+
+    #[cfg(not(feature = "serve-engine"))]
+    #[allow(clippy::unused_self)]
+    fn extract_triples_for(&self, _rows: &[ChunkRow]) -> Vec<Triple> {
+        Vec::new()
+    }
+
+    /// The query's entity seeds for the graph leg — empty unless an extractor is
+    /// wired. Runs OFF the dataset lock (one generation dispatch).
+    #[cfg(feature = "serve-engine")]
+    fn extract_seeds(&self, query_text: &str) -> Vec<String> {
+        match self.extractor.as_ref() {
+            Some(ex) if !query_text.is_empty() => ex.entities(query_text),
+            _ => Vec::new(),
+        }
+    }
+
+    #[cfg(not(feature = "serve-engine"))]
+    #[allow(clippy::unused_self)]
+    fn extract_seeds(&self, _query_text: &str) -> Vec<String> {
+        Vec::new()
     }
 
     /// Pre-load the embed model by firing ONE throwaway embed (`KX_SERVE_WARM_EMBED`).
@@ -738,6 +948,7 @@ impl HostDatasetView {
     /// staleness, then run dense ANN + (for hybrid) BM25, RRF-fuse, MMR-rerank —
     /// all under ONE lock. Returns `(chunk_ref, content, score, parent_ref,
     /// chunk_index, chunk_count)`. One source of the search logic; no re-lock race.
+    #[allow(clippy::too_many_lines)] // one linear search core (dense + sparse + graph legs)
     fn search(
         &self,
         dataset: &str,
@@ -781,6 +992,9 @@ impl HostDatasetView {
                 self.compute_fingerprint(dim)
             })
             .flatten();
+        // Graph-RAG: the query's entity seeds, extracted OFF the lock (one generation
+        // dispatch). Empty unless an extractor is wired (`SERVE_GRAPH_RAG`).
+        let seeds = self.extract_seeds(query_text);
 
         let inner = self
             .inner
@@ -814,9 +1028,23 @@ impl HostDatasetView {
         let sparse_on = effective_mode == RetrievalMode::Hybrid
             && !query_text.is_empty()
             && !state.lex.is_empty();
-        let fused: Vec<Hit> = if sparse_on {
-            let sparse = state.lex.query(query_text, n);
-            rrf_fuse(&dense, &sparse, self.config.rrf_k, n)
+        // Graph-RAG leg: multi-hop neighbours of the query's entity seeds. Empty unless
+        // an extractor is wired AND this dataset has a graph — and an empty leg fuses to
+        // a byte-identical result, so a graph-RAG-off serve is unchanged.
+        let graph_leg: Vec<Hit> = if seeds.is_empty() || state.graph.is_empty() {
+            Vec::new()
+        } else {
+            state.graph.neighbors(&seeds, 2, n)
+        };
+        let fused: Vec<Hit> = if sparse_on || !graph_leg.is_empty() {
+            let sparse = if sparse_on {
+                state.lex.query(query_text, n)
+            } else {
+                Vec::new()
+            };
+            // rrf_fuse_multi over dense + sparse + graph. An empty graph (or sparse) leg
+            // is a no-op, so this byte-equals the prior 2-leg rrf_fuse when off.
+            rrf_fuse_multi(&[&dense, &sparse, &graph_leg], self.config.rrf_k, n)
         } else {
             let mut d = dense;
             d.truncate(n);
@@ -980,10 +1208,13 @@ impl DatasetView for HostDatasetView {
         } else {
             None
         };
+        // Graph-RAG: extract triples OFF the lock (a generation dispatch per chunk),
+        // like embedding above. Empty unless an extractor is wired (`SERVE_GRAPH_RAG`).
+        let triples = self.extract_triples_for(&rows);
         self.inner
             .lock()
             .map_err(|_| DatasetError::Internal("dataset store lock poisoned".to_string()))?
-            .ingest_resolved(dataset, rows, used_server_embed, fingerprint)
+            .ingest_resolved(dataset, rows, used_server_embed, fingerprint, triples)
     }
 
     fn query(
@@ -1412,6 +1643,115 @@ mod tests {
             .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].content, b"bravo two");
+    }
+
+    /// Graph-RAG PR-1: a stub extractor backend — fixed triples per chunk + fixed query
+    /// entities — so the graph leg is exercised through `HostDatasetView` with NO live
+    /// model. Chat `dispatch` only (never embeds).
+    #[cfg(feature = "serve-engine")]
+    struct GraphExtractStub;
+    #[cfg(feature = "serve-engine")]
+    impl kx_inference::InferenceBackend for GraphExtractStub {
+        fn dispatch(
+            &self,
+            _model_id: &kx_mote::ModelId,
+            input: &kx_inference::InferenceInput,
+            _params: &kx_inference::InferenceParams,
+            _warrant: &kx_warrant::WarrantSpec,
+        ) -> Result<kx_inference::InferenceOutput, kx_inference::InferenceError> {
+            let prompt = match input {
+                kx_inference::InferenceInput::Text(s) => s.as_str(),
+                _ => "",
+            };
+            let reply = if prompt.contains("named entities") {
+                "[\"Acme\"]"
+            } else if prompt.contains("partnered") {
+                "[{\"subject\":\"Acme\",\"predicate\":\"partnered\",\"object\":\"Beta\"}]"
+            } else if prompt.contains("owns") {
+                "[{\"subject\":\"Beta\",\"predicate\":\"owns\",\"object\":\"Gamma\"}]"
+            } else if prompt.contains("Orion") {
+                "[{\"subject\":\"Gamma\",\"predicate\":\"built\",\"object\":\"Orion\"}]"
+            } else if prompt.contains("widgets") {
+                "[{\"subject\":\"Delta\",\"predicate\":\"makes\",\"object\":\"widgets\"}]"
+            } else {
+                "[]"
+            };
+            Ok(kx_inference::InferenceOutput {
+                bytes: reply.as_bytes().to_vec(),
+                output_tokens: 0,
+                backend_name: "graph-extract-stub",
+                model_id: kx_mote::ModelId("stub".into()),
+                elapsed: std::time::Duration::ZERO,
+            })
+        }
+        fn supports(&self, _model_id: &kx_mote::ModelId) -> bool {
+            true
+        }
+        fn name(&self) -> &'static str {
+            "graph-extract-stub"
+        }
+    }
+
+    #[cfg(feature = "serve-engine")]
+    #[test]
+    fn graph_leg_surfaces_a_bridge_chunk_dense_excludes() {
+        // Client-vector docs whose dense order is A > B > D > C (the answer, C, last), so
+        // a plain dense top-3 is {A, B, D}. The graph (Acme→Beta→Gamma) bridges to C —
+        // a chunk that names neither the query entity (Acme) nor its direct neighbour.
+        let a = vec![1.0f32, 0.0, 0.0, 0.0];
+        let b = vec![0.8f32, 0.6, 0.0, 0.0];
+        let dd = vec![0.6f32, 0.8, 0.0, 0.0];
+        let c = vec![0.1f32, 0.0, 0.0, 1.0];
+        let qvec = vec![1.0f32, 0.0, 0.0, 0.0];
+        let answer = *ContentRef::of(b"Gamma built Orion reactor").as_bytes();
+        let corpus = |view: &HostDatasetView| {
+            view.ingest(
+                "corpus",
+                &[
+                    doc(b"Acme partnered with Beta", &a),
+                    doc(b"Beta owns Gamma", &b),
+                    doc(b"Delta makes widgets", &dd),
+                    doc(b"Gamma built Orion reactor", &c),
+                ],
+            )
+            .unwrap();
+        };
+        let top3 = |view: &HostDatasetView| -> Vec<[u8; 32]> {
+            view.query(
+                "corpus",
+                Some(&qvec),
+                "What does Acme control?",
+                3,
+                RetrievalMode::Dense,
+                Some(false),
+            )
+            .unwrap()
+            .into_iter()
+            .map(|h| h.content_ref)
+            .collect()
+        };
+
+        // OFF: no extractor ⇒ empty graph ⇒ dense-only top-3 excludes the answer.
+        let dir_off = tempfile::tempdir().unwrap();
+        let view_off = open_view(dir_off.path());
+        corpus(&view_off);
+        assert!(
+            !top3(&view_off).contains(&answer),
+            "dense alone must miss the 2-hop bridge chunk"
+        );
+
+        // ON: extractor wired ⇒ ingest builds the graph ⇒ the graph leg surfaces it.
+        let dir_on = tempfile::tempdir().unwrap();
+        let view_on = open_view(dir_on.path()).with_extractor(HostExtractor::new(
+            std::sync::Arc::new(GraphExtractStub),
+            kx_mote::ModelId("stub".into()),
+            kx_warrant::WarrantSpec::default(),
+        ));
+        corpus(&view_on);
+        assert!(
+            top3(&view_on).contains(&answer),
+            "the multi-hop graph leg must surface the bridge chunk"
+        );
     }
 
     #[test]

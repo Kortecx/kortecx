@@ -19,9 +19,10 @@
 use kx_content::ContentRef;
 use kx_context_assembler::{render_rerank_prompt, rerank_output_cap};
 use kx_dataset::{
-    mmr_rerank, rrf_fuse, ContentSchema, DataError, DataStore, Dataset, Hit, LexicalIndex,
-    RetrievalIndex, MMR_LAMBDA_BP, RRF_C,
+    mmr_rerank, rrf_fuse, rrf_fuse_multi, ContentSchema, DataError, DataStore, Dataset, Hit,
+    LexicalIndex, RetrievalIndex, MMR_LAMBDA_BP, RRF_C,
 };
+use kx_dataset_graph::{KnowledgeGraph, Triple};
 use kx_grammar::{GrammarSpec, PermutationSpec};
 use kx_inference::{
     EmbeddingBackend, EmbeddingOutput, EmbeddingPooling, Grammar, InferenceBackend, InferenceError,
@@ -296,4 +297,240 @@ pub fn rerank_hits(
         Some(order) => order.into_iter().map(|i| hits[i]).collect(),
         None => hits.to_vec(), // not a valid permutation ⇒ fail-closed to upstream order
     }
+}
+
+// ─────────────────────────── graph-RAG (PR-1) ───────────────────────────
+//
+// Entity/relation extraction + the graph-fusion glue. Extraction is a ONE-SHOT,
+// greedy, non-Mote, non-memoized dispatch (the `rerank_hits` precedent) enforced by
+// a FAIL-CLOSED JSON parse — the llama.cpp GBNF sampler crashes on constraints even
+// simpler than a JSON array (see the `T-RERANK-GBNF-CRASH` note above), so extraction
+// uses NO grammar and leans entirely on the parser. The committed retrieval fact is
+// still the ordered ref SET (scores/graph excluded, SN-8); the graph only WIDENS the
+// candidate pool a query fuses.
+
+/// The per-extraction output ceiling (tokens), clamped to the warrant's ceiling.
+const EXTRACT_OUTPUT_CAP: u32 = 512;
+
+/// The extraction context: a text-GENERATION backend + model route + warrant that
+/// travel together for triple / query-entity extraction. Mirrors [`Embedder`]; the
+/// backend must be a chat/generation route (NOT an embed-only model, which returns
+/// `Unsupported` on `dispatch`).
+pub struct Extractor<'a> {
+    backend: &'a dyn InferenceBackend,
+    model_id: &'a ModelId,
+    warrant: &'a WarrantSpec,
+}
+
+impl<'a> Extractor<'a> {
+    /// Bind a generation backend + model route + warrant for extraction.
+    #[must_use]
+    pub fn new(
+        backend: &'a dyn InferenceBackend,
+        model_id: &'a ModelId,
+        warrant: &'a WarrantSpec,
+    ) -> Self {
+        Self {
+            backend,
+            model_id,
+            warrant,
+        }
+    }
+
+    /// Extract `(subject, predicate, object)` triples from a chunk (fail-closed).
+    #[must_use]
+    pub fn triples(&self, chunk_text: &str) -> Vec<(String, String, String)> {
+        extract_triples(self.backend, self.model_id, self.warrant, chunk_text)
+    }
+
+    /// Extract the named entities of a query as graph seeds (fail-closed).
+    #[must_use]
+    pub fn entities(&self, query: &str) -> Vec<String> {
+        extract_query_entities(self.backend, self.model_id, self.warrant, query)
+    }
+}
+
+/// Extraction inference params: greedy (a decision, not creative output), no grammar
+/// (the fail-closed parser is the enforcer), clamped to the warrant's output ceiling.
+fn extract_params(warrant: &WarrantSpec) -> InferenceParams {
+    InferenceParams {
+        grammar: None,
+        temperature_bps: 0,
+        max_output_tokens: EXTRACT_OUTPUT_CAP.min(warrant.model_route.max_output_tokens),
+        ..InferenceParams::default()
+    }
+}
+
+/// The `[ ... ]` slice of `text` (first `[` to the matching last `]`), or `None`.
+/// A model often wraps the array in prose; this isolates the JSON before parsing.
+fn json_array_slice(text: &str) -> Option<&str> {
+    let start = text.find('[')?;
+    let end = text.rfind(']')?;
+    (end > start).then(|| &text[start..=end])
+}
+
+/// Extract `(subject, predicate, object)` triples from `chunk_text` via a one-shot
+/// greedy dispatch + a fail-closed JSON parse: only objects whose three fields are
+/// all non-empty strings are kept; a dispatch error, non-array, or malformed element
+/// yields no triples — **never garbage**.
+#[must_use]
+pub fn extract_triples(
+    backend: &dyn InferenceBackend,
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    chunk_text: &str,
+) -> Vec<(String, String, String)> {
+    let prompt = format!(
+        "Extract the factual (subject, predicate, object) relationships stated in the text \
+         below. Reply with ONLY a JSON array of objects, each exactly \
+         {{\"subject\": \"...\", \"predicate\": \"...\", \"object\": \"...\"}}, using short \
+         entity names. If the text states no clear relationships, reply []. Text:\n{chunk_text}"
+    );
+    let input = InferenceInput::text(prompt);
+    let Ok(out) = backend.dispatch(model_id, &input, &extract_params(warrant), warrant) else {
+        return Vec::new(); // dispatch failure ⇒ fail-closed (no triples)
+    };
+    let text = String::from_utf8_lossy(&out.bytes);
+    parse_triples(&text)
+}
+
+/// Fail-closed parse of a triples JSON array. Keeps only objects with three non-empty
+/// string fields; anything else is dropped.
+#[must_use]
+fn parse_triples(text: &str) -> Vec<(String, String, String)> {
+    let Some(slice) = json_array_slice(text) else {
+        return Vec::new();
+    };
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(slice)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let field = |k: &str| item.get(k).and_then(|v| v.as_str()).unwrap_or("").trim();
+        let (s, p, o) = (field("subject"), field("predicate"), field("object"));
+        if !s.is_empty() && !p.is_empty() && !o.is_empty() {
+            out.push((s.to_string(), p.to_string(), o.to_string()));
+        }
+    }
+    out
+}
+
+/// Extract the named entities of `query` (the graph seeds) via a one-shot greedy
+/// dispatch + fail-closed parse: a JSON array of non-empty strings; anything else
+/// yields no seeds (⇒ the graph leg is simply empty for that query).
+#[must_use]
+pub fn extract_query_entities(
+    backend: &dyn InferenceBackend,
+    model_id: &ModelId,
+    warrant: &WarrantSpec,
+    query: &str,
+) -> Vec<String> {
+    let prompt = format!(
+        "List the named entities in the question below as a JSON array of short strings \
+         (e.g. [\"Acme\", \"Orion\"]). Reply with ONLY the JSON array. Question:\n{query}"
+    );
+    let input = InferenceInput::text(prompt);
+    let Ok(out) = backend.dispatch(model_id, &input, &extract_params(warrant), warrant) else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&out.bytes);
+    parse_entities(&text)
+}
+
+/// Fail-closed parse of an entity JSON array (non-empty trimmed strings only).
+#[must_use]
+fn parse_entities(text: &str) -> Vec<String> {
+    let Some(slice) = json_array_slice(text) else {
+        return Vec::new();
+    };
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(slice)
+    else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|v| {
+            v.as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        })
+        .collect()
+}
+
+/// Like [`ingest_corpus_hybrid`] but ALSO extracts `(subject, predicate, object)`
+/// triples per document into `graph`, tagged with the document's content ref — so a
+/// later [`query_corpus_graph`] can fuse a multi-hop GRAPH leg. Mirrors the live serve
+/// ingest, which builds the dense + sparse + graph legs together.
+///
+/// # Errors
+/// [`RagError::Embedding`] if a document fails to embed; [`RagError::Store`] on a
+/// store failure. (Extraction is fail-closed — a document that yields no triples
+/// simply contributes no graph edges; it never errors the ingest.)
+#[allow(clippy::too_many_arguments)] // the corpus + all three retrieval legs' seams
+pub fn ingest_corpus_graph(
+    store: &dyn DataStore,
+    index: &mut dyn RetrievalIndex,
+    lexical: &mut dyn LexicalIndex,
+    graph: &mut dyn KnowledgeGraph,
+    embedder: &Embedder<'_>,
+    extractor: &Extractor<'_>,
+    docs: &[&str],
+    lineage: &[MoteId],
+) -> Result<Dataset, RagError> {
+    let mut rows = Vec::with_capacity(docs.len().saturating_mul(2));
+    for doc in docs {
+        let out = embedder.embed(doc)?;
+        let vec_bytes = encode_vector_le(&out.vector);
+        let text_ref = store.put_typed(doc.as_bytes(), ContentSchema::Text)?;
+        let vec_ref = store.put_typed(&vec_bytes, ContentSchema::Vector { dim: out.dim })?;
+        index.insert(text_ref.content_ref, out.vector);
+        lexical.insert(text_ref.content_ref, doc);
+        for (s, p, o) in extractor.triples(doc) {
+            graph.insert_triple(Triple::new(s, p, o, text_ref.content_ref));
+        }
+        rows.push(text_ref);
+        rows.push(vec_ref);
+    }
+    Ok(Dataset::new(rows, lineage.to_vec()))
+}
+
+/// Like [`query_corpus_hybrid`] but fuses a THIRD, multi-hop GRAPH leg: extract the
+/// query's entities (one dispatch) as seeds, walk `graph` up to 2 hops for the nearest
+/// source refs, and RRF-fuse dense + sparse + graph via [`rrf_fuse_multi`]. An empty
+/// seed set / empty graph leaves the fusion byte-identical to [`query_corpus_hybrid`].
+///
+/// Returns the SN-8-safe committed-fact ref (ordered refs, **scores excluded**) AND
+/// the fused [`Hit`]s (scores for DISPLAY only).
+///
+/// # Errors
+/// [`RagError::Embedding`] if the query fails to embed.
+#[allow(clippy::too_many_arguments)] // all three retrieval legs' seams + query params
+pub fn query_corpus_graph(
+    index: &dyn RetrievalIndex,
+    lexical: &dyn LexicalIndex,
+    graph: &dyn KnowledgeGraph,
+    embedder: &Embedder<'_>,
+    extractor: &Extractor<'_>,
+    query: &str,
+    k: usize,
+    rerank: bool,
+) -> Result<(ContentRef, Vec<Hit>), RagError> {
+    let out = embedder.embed(query)?;
+    let pool = k.saturating_mul(HYBRID_POOL_MULT).clamp(k, HYBRID_POOL_MAX);
+    let dense = index.query(&out.vector, pool);
+    let sparse = lexical.query(query, pool);
+    let seeds = extractor.entities(query);
+    let graph_leg = graph.neighbors(&seeds, 2, pool);
+    let fused = rrf_fuse_multi(&[&dense, &sparse, &graph_leg], RRF_C, pool);
+    let ranked = if rerank {
+        #[allow(clippy::cast_precision_loss)] // bp ∈ [0, 10_000] ⇒ exact in f32
+        let lambda = (MMR_LAMBDA_BP as f32) / 10_000.0;
+        mmr_rerank(&fused, |id| index.vector_of(id), lambda, k)
+    } else {
+        fused.into_iter().take(k).collect()
+    };
+    let fact_ref = retrieval_result_ref(&ranked);
+    Ok((fact_ref, ranked))
 }

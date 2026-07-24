@@ -189,7 +189,7 @@ fn insert_dedup_overwrites_and_preserves_results() {
 
 // ---- hybrid fusion (RRF) + diversity rerank (MMR) + index fingerprint ----
 
-use crate::fusion::{index_fingerprint, mmr_rerank, rrf_fuse};
+use crate::fusion::{index_fingerprint, mmr_rerank, rrf_fuse, rrf_fuse_multi};
 use crate::Hit;
 
 fn hit(tag: u8, score: f32) -> Hit {
@@ -219,6 +219,43 @@ fn rrf_is_deterministic_and_truncates() {
         rrf_fuse(&dense, &sparse, 60, 9)
     );
     assert!(rrf_fuse(&dense, &sparse, 60, 0).is_empty());
+}
+
+/// Byte-identical to bytes: assert two fused lists agree on ids AND score bits.
+fn assert_hits_byte_equal(a: &[Hit], b: &[Hit]) {
+    assert_eq!(a.len(), b.len(), "hit counts differ");
+    for (x, y) in a.iter().zip(b.iter()) {
+        assert_eq!(x.id, y.id, "ids differ");
+        assert_eq!(x.score.to_bits(), y.score.to_bits(), "score bits differ");
+    }
+}
+
+#[test]
+fn rrf_fuse_is_the_two_leg_rrf_fuse_multi() {
+    // `rrf_fuse` is a thin wrapper; prove it byte-equals the 2-list general form.
+    let dense = vec![hit(0, 0.9), hit(1, 0.8), hit(3, 0.1)];
+    let sparse = vec![hit(2, 5.0), hit(1, 4.0), hit(4, 0.5)];
+    for k in [0usize, 1, 2, 5, 9] {
+        assert_hits_byte_equal(
+            &rrf_fuse(&dense, &sparse, 60, k),
+            &rrf_fuse_multi(&[&dense, &sparse], 60, k),
+        );
+    }
+}
+
+#[test]
+fn an_empty_extra_leg_is_a_no_op_for_fusion() {
+    // The graph-RAG-off invariant: appending an EMPTY third leg yields a
+    // byte-identical result to the 2-leg fuse (an empty list = zero RRF iterations).
+    let dense = vec![hit(0, 0.9), hit(1, 0.8), hit(3, 0.1)];
+    let sparse = vec![hit(2, 5.0), hit(1, 4.0), hit(4, 0.5)];
+    let empty: Vec<Hit> = Vec::new();
+    for k in [1usize, 3, 9] {
+        assert_hits_byte_equal(
+            &rrf_fuse_multi(&[&dense, &sparse], 60, k),
+            &rrf_fuse_multi(&[&dense, &sparse, &empty], 60, k),
+        );
+    }
 }
 
 #[test]
