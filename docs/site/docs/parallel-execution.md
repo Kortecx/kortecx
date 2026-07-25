@@ -49,7 +49,7 @@ stage → fire → commit chain, admitted through a bounded per-worker queue:
 # how many of its leased Motes ONE worker runs at once. Default: 8.
 KX_SERVE_EFFECT_CONCURRENCY=8 kx serve
 
-# 1 = strictly sequential per worker (the pre-0.2 behaviour), if you ever need it back.
+# 1 = strictly sequential per worker, if you ever need that back.
 KX_SERVE_EFFECT_CONCURRENCY=1 kx serve
 ```
 
