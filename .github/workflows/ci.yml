@@ -830,11 +830,21 @@ jobs:
           cargo clippy -p kx-gateway --features console,hosted-apps --all-targets -- -D warnings
           cargo test -p kx-gateway --features console,hosted-apps
 
-      - name: Unit + component + contract tests (vitest; contract vs a real `kx serve`)
+      # Coverage, not a bare test run: the console has 123 spec files and 967 tests and
+      # NOTHING measured what they reach, so the number was simply unknown. `coverage:check`
+      # is a RATCHET against the committed `ui/coverage-baseline.json` — it asks only that a
+      # change not make things worse, which is the property that holds a line, and it fails
+      # closed the way the eval harness does. Raising the bar is deliberate
+      # (KX_UI_COVERAGE_UPDATE=1), never automatic.
+      - name: Unit + component + contract tests with coverage (contract vs a real `kx serve`)
         working-directory: ui
         env:
           KX_BIN: ${{ github.workspace }}/target/debug/kx
-        run: npx vitest run
+        run: npx vitest run --coverage
+
+      - name: Coverage ratchet (no regression vs the committed baseline)
+        working-directory: ui
+        run: npm run coverage:check
 
       - name: Install the Playwright browser (chromium only)
         working-directory: ui

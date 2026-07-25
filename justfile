@@ -46,14 +46,16 @@ pre-push-sdk:
         && npx vitest run )
     echo "✓ SDK gates green"
 
-# Run the UI CI gates locally — the `ui` job from ci.yml minus Playwright (biome + tsc + vitest +
-# build + bundle-size). Run before a UI PR. Assumes `npm ci` was run in ui/ (and the TS SDK built).
-# `npx playwright test` is CI-only here (needs a browser + a live serve). Keep in lock-step with ci.yml.
+# Run the UI CI gates locally — the `ui` job from ci.yml minus Playwright (biome + tsc + vitest
+# with COVERAGE + the coverage ratchet + build + bundle-size). Run before a UI PR. Assumes
+# `npm ci` was run in ui/ (and the TS SDK built). `npx playwright test` is CI-only here (needs a
+# browser + a live serve). Keep in lock-step with ci.yml.
 pre-push-ui:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "▶ ui — biome + tsc + vitest + build + size"
-    ( cd ui && npx biome ci . && npx tsc --noEmit && npx vitest run && npm run build && npm run size )
+    echo "▶ ui — biome + tsc + vitest(+coverage) + ratchet + build + size"
+    ( cd ui && npx biome ci . && npx tsc --noEmit && npm run coverage && npm run coverage:check \
+        && npm run build && npm run size )
     echo "✓ UI gates green (run \`cd ui && npx playwright test\` for the e2e — CI does this)"
 
 # Run the docs-site CI gate locally — the `docs-site` job from ci.yml (orphan pages +

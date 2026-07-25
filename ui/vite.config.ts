@@ -55,5 +55,24 @@ export default defineConfig({
     hookTimeout: 180_000,
     // One gateway per file keeps the run-instance-per-recipe rule simple.
     fileParallelism: false,
+    coverage: {
+      provider: "v8",
+      // Text for a human, json-summary for the ratchet (`npm run coverage:check`).
+      reporter: ["text", "json-summary"],
+      reportsDirectory: "./coverage",
+      // Measure the app, not its scaffolding. `all: true` counts files no test
+      // imports — without it the number flatters itself by ignoring whole
+      // untested modules, which is the opposite of what a coverage gate is for.
+      all: true,
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        // Generated route registrations + the app entry: no branches to cover, and
+        // exercising them means booting the router, which the e2e suite already does.
+        "src/main.tsx",
+        "src/router/**",
+        // Type-only modules contribute no statements.
+        "src/**/*.d.ts",
+      ],
+    },
   },
 });
