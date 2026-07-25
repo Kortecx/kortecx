@@ -171,7 +171,21 @@ impl CapabilityBroker for ParkingBroker {
 
         let mut bytes = b"wm-effect:".to_vec();
         bytes.extend_from_slice(mote.id.as_bytes());
-        let staged_ref = self.store.put(&bytes).expect("stage effect bytes");
+        // Return a typed failure rather than panicking if the store has gone away.
+        //
+        // Two tests here ABANDON an effect on purpose (the deadline and the orphan-guard
+        // cases), so a parked dispatch legitimately outlives the test that started it —
+        // by which point the `TempDir` backing this store is gone. Panicking on that
+        // would put a dying thread inside a passing test: noise at best, and at worst a
+        // future flake or a poisoned lock. The caller has already stopped waiting for
+        // this result, so a refusal is both honest and inert.
+        let staged_ref = self
+            .store
+            .put(&bytes)
+            .map_err(|e| BrokerError::StageWriteFailed {
+                capability: capability.clone(),
+                diagnostic: format!("{e}"),
+            })?;
         Ok(BrokerHandle {
             staged_ref,
             capability: capability.clone(),
