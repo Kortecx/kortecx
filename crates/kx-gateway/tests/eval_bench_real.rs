@@ -183,17 +183,16 @@ const REACH_MEMORY: &[u8] = b"The on-call engineer for the Helios ground station
 /// pins the same budget every other family runs under, so families are compared on equal
 /// terms rather than one silently inheriting a different default.
 ///
-/// ⚠ **KNOWN-FAILING at time of capture, on BOTH engines.** `GetAppManifest` reports
-/// `reach_inherit` with 7 inherited tools, but the run dead-letters on turn 0 — "the chain
-/// could not progress (a tool dispatch failed or no further turn was admissible)" — with
-/// no tool row ever committed. Naming the tool and pinning the budget did NOT change it,
-/// so this is not tool selection and not the budget. The static checks all pass and the
-/// fire path does not: a capability can be inherited, admitted to the warrant, and
-/// reported by the manifest, yet still not be dispatchable on the App run path. The
-/// committed baseline records that MEASURED state rather than the intended one; the
-/// trajectory witness prints the reason on every run, and the ratchet will notice when it
-/// starts passing. Tracked as a follow-up — the benchmark's job here is to make the gap
-/// visible, not to hide it behind a task that avoids the path.
+/// This task FOUND a real defect and is now its regression guard. It dead-lettered on
+/// turn 0 on both engines — "the chain could not progress" — while `GetAppManifest`
+/// cheerfully reported `reach_inherit` with 7 inherited tools. The cause was not reach
+/// and not the model: the blueprint base every authored step is built from carried the
+/// PURE demo recipe's 30 s inference budget, so an App's agentic turn ran on a quarter of
+/// what the same model gets under `kx/recipes/react` and simply timed out. It presented
+/// as nondeterministic (fine on a fast turn, dead on a slow one), which is why a
+/// single green run would have "confirmed" any theory. Fixed in
+/// `provision::served_blueprint_base`; the committed baseline now records the working
+/// behaviour, so a regression to the demo budget fails this gate.
 fn reach_app_envelope() -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "schema": "kortecx.app/v1",
