@@ -396,15 +396,36 @@ where
         // fail-closed tool dispatch leaves one non-committed (PR-1 `Failed`) ⇒ stop
         // cleanly rather than feed a non-existent observation forward).
         let post = Projection::from_journal(&*journal)?;
-        if tool_wms
+        let failed: Option<usize> = tool_wms
             .iter()
-            .any(|tw| post.state_of(&tw.mote.id) != MoteState::Committed)
-        {
-            tracing::warn!(
-                turn,
-                "react: a tool dispatch did not commit — stopping the loop fail-closed"
-            );
-            break (run, ReactStop::DeadLettered);
+            .position(|tw| post.state_of(&tw.mote.id) != MoteState::Committed);
+        if let Some(idx) = failed {
+            // The tool ran and failed. Re-prompt with the reason instead of ending the
+            // run — the SAME treatment a refused proposal gets above, and the same the
+            // served coordinator now applies (`drive_react_chain`'s observation arm).
+            // These two loops must agree: a chain that survives on a serve and dies
+            // single-node is the drift this twin exists to prevent.
+            //
+            // The back-pressure invariant is UNCHANGED and is why only the turn is
+            // pushed below: a non-committed observation is still NEVER fed forward. The
+            // model learns what happened from the re-prompt reason, not from a phantom
+            // observation. And the failed observation is never re-dispatched, so its
+            // effect still fires at most once; repeating the identical call is refused
+            // by the duplicate-call guard.
+            let call = &calls[idx];
+            let reason = react_reason::bounded_reason(kx_journal::observation_failure_reason(
+                &call.name.0,
+                &call.version.0,
+                post.failure_reason_of(&tool_wms[idx].mote.id),
+            ));
+            tracing::warn!(turn, %reason, "react: a tool dispatch failed — re-prompting");
+            trajectory.push(turn_id);
+            tool_calls += u32::try_from(tool_wms.len()).unwrap_or(u32::MAX);
+            if tool_calls >= budget.max_tool_calls || turns_used >= budget.max_turns {
+                break (run, ReactStop::BudgetExhausted);
+            }
+            pending_reprompt = Some(reason);
+            continue;
         }
         trajectory.push(turn_id);
         for tw in &tool_wms {

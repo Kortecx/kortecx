@@ -3411,10 +3411,25 @@ fn collect_prior_fired_calls(
     warrant: &WarrantSpec,
     max_args: usize,
 ) -> Vec<kx_toolcall::ToolCall> {
-    // The latest fact per prior turn (a turn is `Pending` then a frozen branch;
-    // highest seq wins) — the same selection `resolve_parent_context` uses.
+    // The latest FIRING fact per prior turn (a turn is `Pending` then a frozen branch;
+    // highest seq wins among the firing ones).
+    //
+    // Selecting the latest fact of ANY kind would be wrong now that a turn whose
+    // observation failed is superseded by a `Rejected` fact ([`observation_failure_
+    // reason`]): the turn really did fire, so dropping it here would let the model
+    // re-propose the IDENTICAL call and fire the same effect a second time. What the
+    // dedup set must answer is "was this call ever fired on this chain", and that is a
+    // property of the turn's firing fact, not of whichever fact happens to be newest.
+    // For every chain that existed before, the newest fact of a fired turn IS its
+    // `Tool`/`ToolBatch` fact, so this selection is behaviour-identical there.
     let mut latest: BTreeMap<u32, &ReactRoundRecord> = BTreeMap::new();
-    for r in rounds.iter().filter(|r| r.turn < this_turn) {
+    for r in rounds.iter().filter(|r| {
+        r.turn < this_turn
+            && matches!(
+                r.branch,
+                ReactBranch::Tool { .. } | ReactBranch::ToolBatch { .. }
+            )
+    }) {
         latest
             .entry(r.turn)
             .and_modify(|slot| {
@@ -4044,8 +4059,36 @@ fn progress_tool_batch<J: Journal>(
             if crash_retryable {
                 return ReactChainStatus::Active;
             }
-            // One hard-failed call dead-letters the WHOLE chain (a batch with a
-            // non-existent observation is never fed into a next turn's assemble).
+            // The tool ran and failed. Tell the model, and let it take another turn —
+            // the SAME treatment a refusal at decode time already gets.
+            //
+            // This used to dead-letter the whole chain, which made the loop's two
+            // "no" paths behave incomparably: propose an UNGRANTED tool and you are
+            // refused, re-prompted, and get to try something else; propose a granted
+            // tool that then fails to run and the entire run is over. One unusable
+            // capability in a wide grant set could therefore kill an otherwise healthy
+            // agent — and, because the reason never reached the model, it died without
+            // ever being told why.
+            //
+            // Exactly-once is UNAFFECTED, and deliberately so:
+            //   * the failed observation Mote stays terminal and is NEVER re-dispatched
+            //     (this arm does not retry it — it only lets the CHAIN continue), so its
+            //     effect still fires at most once;
+            //   * the next turn cannot re-propose the identical call — the dedup guard
+            //     refuses it, and `collect_prior_fired_calls` keeps counting this turn's
+            //     firing fact even though the branch below supersedes it;
+            //   * a DIFFERENT call is a different Mote with its own exactly-once.
+            // What the model may now do is choose a different action after being told
+            // the first one failed, which is the whole point.
+            //
+            // The budget is still the terminal authority: a chain that burns its turns
+            // failing tools dead-letters on exhaustion, via the same path as before.
+            let reason =
+                crate::react_shape::bounded_reason(kx_journal::observation_failure_reason(
+                    tool_id,
+                    tool_version,
+                    projection.failure_reason_of(&obs.id),
+                ));
             append_react_branch(
                 journal,
                 projection,
@@ -4053,9 +4096,9 @@ fn progress_tool_batch<J: Journal>(
                 anchor,
                 turn_mote_id,
                 turn,
-                ReactBranch::DeadLettered,
+                ReactBranch::Rejected { reason },
             );
-            return ReactChainStatus::Settled;
+            return ReactChainStatus::Active;
         }
         // Pending / Scheduled / never-materialized ⇒ (re-)materialize idempotently.
         // PR-9a (BUG-27): an observation whose args can never resolve (the granted
