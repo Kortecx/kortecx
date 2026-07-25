@@ -16,8 +16,12 @@ const config: Config = {
   organizationName: "Kortecx",
   projectName: "kortecx",
 
-  // Surface broken-link problems at build time — the gate depends on it.
+  // Surface broken-link problems at build time. These only bite when something
+  // RUNS the build: the `docs-site` CI job does, and `scripts/check-docs.mjs` covers
+  // the two classes Docusaurus cannot see (orphan pages, and anchors into
+  // GitHub-hosted files).
   onBrokenLinks: "throw",
+  onBrokenAnchors: "throw",
 
   markdown: {
     hooks: {

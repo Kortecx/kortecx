@@ -73,8 +73,10 @@ const { turns } = await kx.listRerankTurns({ limit: 20 });
 turns.forEach((t) => console.log(t.round, t.outcome, t.modelId, t.candidateCount, t.permutation));
 ```
 
-In the **console**, the **Monitoring → ReRank rounds** panel shows each round's outcome
-(`reranked` / `failed_closed` / `pending`), model, candidate count, and permutation.
+Each round records its outcome (`reranked` / `failed_closed` / `pending`), model,
+candidate count, and permutation. `ListRerankTurns` is the read — from the CLI,
+`kx rerank list [--instance <hex16>] [--json]`. The console has no rerank-rounds
+panel today.
 
 ## Quality gate
 

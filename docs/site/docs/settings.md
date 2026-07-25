@@ -64,7 +64,9 @@ with KxClient("http://127.0.0.1:50151", token="…") as kx:
     info = kx.get_server_info()
     print(info.model_id, info.model_path)
     print(info.auth_mode, info.tls_enabled)   # posture, never a token or key
-    print(info.features)                       # hnsw / inference / console / vision
+    # the build features are four flat booleans, not a collection
+    print(info.feature_hnsw, info.feature_inference)
+    print(info.feature_console, info.feature_vision)
 ```
 
 ## TypeScript

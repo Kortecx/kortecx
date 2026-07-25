@@ -26,13 +26,15 @@ public entry point moves, update `entryPoints` there.
 
 ```bash
 # from docs/site/, with the kortecx SDK importable on the active interpreter:
-pip install pdoc kortecx
+pip install pdoc
+pip install -e ../../bindings/python
 npm run api:py         # pdoc -o static/api/python kortecx  →  static/api/python/
 ```
 
-`pdoc` introspects the installed `kortecx` package, so the SDK must be importable
-(`pip install kortecx`, or `pip install -e bindings/python`). No `protoc` is
-needed — the SDK ships committed stubs.
+`pdoc` introspects the installed `kortecx` package, so the SDK must be importable.
+Install it from **this tree**, not from PyPI — PyPI's `kortecx` is an earlier release,
+and generating the reference from it would document a different SDK than the one this
+repo ships. No `protoc` is needed — the SDK ships committed stubs.
 
 ## Wiring into a build (future)
 
