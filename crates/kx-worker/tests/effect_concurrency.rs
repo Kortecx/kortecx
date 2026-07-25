@@ -11,8 +11,9 @@
 //!   inner future first and returns `Ok` when it is `Ready`, so a synchronous dispatch
 //!   with no await point completes in ONE poll and the deadline never fires. Only a
 //!   real await point (`spawn_blocking`) makes the guard live.
-//! - **G3** `concurrent_dispatch_is_exactly_once` — concurrency must not weaken the
-//!   D38 §1 tool-boundary dedup.
+//! - **G3** `concurrent_dispatch_carries_a_distinct_idempotency_key_per_mote` —
+//!   concurrency must not weaken the D38 §1 tool-boundary dedup, in either direction:
+//!   a dropped key, or one key shared across two different effects.
 //!
 //! Determinism: no wall-clock in the gating path. The capabilities rendezvous over
 //! channels (enter → park → release), so "concurrent" is proven by two entries observed
@@ -316,52 +317,72 @@ async fn tool_deadline_fires_on_a_hung_effect() {
 // G3 — concurrency must not weaken exactly-once
 // ---------------------------------------------------------------------------
 
-/// The D38 §1 tool-boundary key still collapses repeat dispatches of the SAME Mote to
-/// one net world effect when those dispatches overlap in time. Guards against a
-/// concurrent pipeline that derives or drops the key per task.
+/// Every concurrently-dispatched Mote must still carry its OWN D38 §1 tool-boundary key.
+///
+/// That key is the whole basis of exactly-once at the world boundary: a re-dispatch after
+/// a crash or a timeout is a no-op only because the tool recognises the key. A concurrent
+/// pipeline can break it in two ways, and this pins both — a DROPPED key (nothing dedups
+/// on a later re-fire) and a SHARED key (two genuinely different effects collapse into
+/// one, silently losing work). Hoisting the request out of the per-item path would do
+/// either, which is what makes this worth asserting here.
+///
+/// Exactly-once ACROSS a re-dispatch is proven separately, and serially, by
+/// `wm_dispatch::w3_worker_death_after_stage_is_exactly_once`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn concurrent_dispatch_is_exactly_once() {
+async fn concurrent_dispatch_carries_a_distinct_idempotency_key_per_mote() {
     let dir = TempDir::new().unwrap();
     let store = Arc::new(LocalFsContentStore::open(dir.path()).unwrap());
     let svc = CoordinatorService::with_store(InMemoryJournal::new(), store.clone());
     let endpoint = serve(svc.clone());
 
-    let m = common::wm_mote(31, EffectPattern::StageThenCommit, &[]);
-    submit(&svc, &m, &common::wm_warrant()).await;
+    let a = common::wm_mote(31, EffectPattern::StageThenCommit, &[]);
+    let b = common::wm_mote(32, EffectPattern::StageThenCommit, &[]);
+    submit(&svc, &a, &common::wm_warrant()).await;
+    submit(&svc, &b, &common::wm_warrant()).await;
 
     let (entered_tx, _entered_rx) = std::sync::mpsc::sync_channel(64);
     let (release_tx, release_rx) = std::sync::mpsc::channel();
-    // Pre-arm the release channel so nothing parks: this test is about the key, not
+    // Pre-arm the release channel so nothing parks: this test is about the keys, not
     // about rendezvous.
     for _ in 0..64 {
         release_tx.send(()).unwrap();
     }
     let net_effects = Arc::new(AtomicUsize::new(0));
     let dispatches = Arc::new(AtomicUsize::new(0));
+    let applied_keys = Arc::new(Mutex::new(std::collections::BTreeSet::new()));
     let broker = Arc::new(ParkingBroker {
         store: store.clone(),
         entered: entered_tx,
         release: Arc::new(Mutex::new(release_rx)),
         dispatches: dispatches.clone(),
         net_effects: net_effects.clone(),
-        applied_keys: Arc::new(Mutex::new(std::collections::BTreeSet::new())),
+        applied_keys: applied_keys.clone(),
     });
 
-    let mut worker = register_worker(&endpoint, store.clone(), broker, "once").await;
-    // Drive several rounds; a committed Mote leaves the ready set, so extra rounds are
-    // no-ops unless something re-offers it.
-    for _ in 0..3 {
-        worker.run_once().await.unwrap();
-    }
+    let mut worker = register_worker(&endpoint, store.clone(), broker, "keys").await;
+    assert_eq!(worker.run_once().await.unwrap(), 2, "both Motes commit");
 
-    assert_eq!(svc.state_of(m.id).await.unwrap(), MoteState::Committed);
+    assert_eq!(
+        dispatches.load(Ordering::SeqCst),
+        2,
+        "both effects fired exactly once"
+    );
+    // The ParkingBroker records a key only when the request carried one, so a dropped key
+    // shows up here as 0 and a shared key as 1.
+    assert_eq!(
+        applied_keys.lock().unwrap().len(),
+        2,
+        "each concurrently-dispatched Mote carried its OWN idempotency key \
+         (0 = the key was dropped, 1 = the two Motes SHARED one)"
+    );
     assert_eq!(
         net_effects.load(Ordering::SeqCst),
-        1,
-        "at most ONE net world effect regardless of how many dispatches ran \
-         (dispatches: {})",
-        dispatches.load(Ordering::SeqCst)
+        2,
+        "two distinct Motes are two distinct world effects — a shared key would \
+         silently collapse them into one"
     );
+    assert_eq!(svc.state_of(a.id).await.unwrap(), MoteState::Committed);
+    assert_eq!(svc.state_of(b.id).await.unwrap(), MoteState::Committed);
 }
 
 // ---------------------------------------------------------------------------
