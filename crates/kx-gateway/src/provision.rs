@@ -1277,13 +1277,7 @@ impl DemoLibrary {
         // dispatch (served ≠ placeholder). The other axes stay `demo_warrant`'s (the
         // PURE/EXEC authoring scope); only the model_route id is re-pointed. Warrants
         // are off the MoteDef/journal/digest, so this is identity-invariant.
-        let blueprint_base = {
-            let mut w = demo_warrant(exec_class);
-            if let Some(model_id) = serve_model {
-                w.model_route.model_id = model_id.clone();
-            }
-            w
-        };
+        let blueprint_base = served_blueprint_base(exec_class, serve_model);
         seed_blueprint_asset(
             &grants,
             &owner,
@@ -3293,6 +3287,52 @@ impl SchemaResolver for DemoSchemaResolver {
     }
 }
 
+/// The inference wall-clock every SERVED-MODEL step gets, in ms.
+///
+/// The dispatch uses `resource_ceiling.wall_clock_ms` as the inference budget, and a
+/// local model is slow: a 12B decoding on CPU/Metal routinely needs more than half a
+/// minute for one turn. Every path that runs a real model must therefore share ONE
+/// value — the provisioned recipes AND the blueprint base an authored App/workflow step
+/// inherits. They were duplicated literals before, and the blueprint base silently kept
+/// the PURE demo recipe's 30 s: an App's agentic turn was given a quarter of the budget
+/// the same model got under `kx/recipes/react`, so it dead-lettered on turn 0 with
+/// "the chain could not progress" — nondeterministically, whenever the turn happened to
+/// run long. A number that must agree in two places is a number that will drift.
+pub(crate) const SERVED_MODEL_WALL_CLOCK_MS: u64 = 120_000;
+
+/// The owner-root warrant on the `kx/blueprints/author` asset — the base EVERY authored
+/// step's warrant is built from (Apps, blueprints, and the swarm/chain lowering all go
+/// through it).
+///
+/// On a model-less serve this is exactly [`demo_warrant`] (the PURE/EXEC authoring
+/// scope). When a model IS served, the base must be re-pointed at it on **every** axis
+/// the model uses, not just the route id:
+///
+/// * `model_route.model_id` — else an authored MODEL step routes to the demo placeholder
+///   and dead-letters at dispatch.
+/// * `resource_ceiling.wall_clock_ms` — the dispatch uses this as the INFERENCE budget.
+///   Leaving the demo's 30 s gave an authored step a quarter of what the identical model
+///   gets under `kx/recipes/react`, so a slow turn simply failed and the chain froze
+///   `DeadLettered` on turn 0 with the generic "could not progress" reason: no refusal,
+///   no rejection text, nothing naming a timeout. It presented as nondeterministic —
+///   fine on a fast turn, dead on a slow one — which is the worst way for a budget to be
+///   wrong.
+/// * `model_route.max_calls` — an agentic step may take up to `REACT_MAX_TURNS` model
+///   calls, and the demo's 3 sat below its own declared budget. Raised, never lowered
+///   (`max`), so a deliberately generous demo value is never narrowed here.
+///
+/// Warrants are off the MoteDef / journal / digest, so this is identity-invariant. Pure
+/// (Rule 5.2) — the fix is unit-testable without seeding a library.
+fn served_blueprint_base(exec_class: ExecutorClass, serve_model: Option<&ModelId>) -> WarrantSpec {
+    let mut w = demo_warrant(exec_class);
+    if let Some(model_id) = serve_model {
+        w.model_route.model_id = model_id.clone();
+        w.model_route.max_calls = w.model_route.max_calls.max(react_caps::REACT_MAX_TURNS);
+        w.resource_ceiling.wall_clock_ms = SERVED_MODEL_WALL_CLOCK_MS;
+    }
+    w
+}
+
 /// The AL1 model recipe warrant: a PURE (greedy ⇒ recomputable) model step
 /// routed to `model_id`. `executor_class` MUST equal the embedded worker's so the
 /// bound run leases; positive `model_route` ceilings (a zero ceiling is rejected
@@ -3317,7 +3357,7 @@ fn model_warrant(exec_class: ExecutorClass, model_id: &ModelId) -> WarrantSpec {
             mem_bytes: 0,
             // The dispatch uses this as the inference wall-clock; CPU decode of a
             // few-B model can take many seconds, so keep it generous.
-            wall_clock_ms: 120_000,
+            wall_clock_ms: SERVED_MODEL_WALL_CLOCK_MS,
             fd_count: 0,
             disk_bytes: 0,
         },
@@ -3367,7 +3407,7 @@ pub(crate) fn react_warrant(
             mem_bytes: 0,
             // The dispatch uses this as the inference wall-clock; CPU decode of a
             // few-B model can take many seconds per TURN, so keep it generous.
-            wall_clock_ms: 120_000,
+            wall_clock_ms: SERVED_MODEL_WALL_CLOCK_MS,
             fd_count: 0,
             disk_bytes: 0,
         },
@@ -3416,7 +3456,7 @@ pub(crate) fn react_fs_warrant(
         resource_ceiling: ResourceCeiling {
             cpu_milli: 0,
             mem_bytes: 0,
-            wall_clock_ms: 120_000,
+            wall_clock_ms: SERVED_MODEL_WALL_CLOCK_MS,
             fd_count: 0,
             disk_bytes: 0,
         },
@@ -3459,7 +3499,7 @@ pub(crate) fn react_memory_warrant(
         resource_ceiling: ResourceCeiling {
             cpu_milli: 0,
             mem_bytes: 0,
-            wall_clock_ms: 120_000,
+            wall_clock_ms: SERVED_MODEL_WALL_CLOCK_MS,
             fd_count: 0,
             disk_bytes: 0,
         },
@@ -4207,7 +4247,7 @@ pub(crate) fn react_auto_base_warrant(
         resource_ceiling: ResourceCeiling {
             cpu_milli: 0,
             mem_bytes: 0,
-            wall_clock_ms: 120_000,
+            wall_clock_ms: SERVED_MODEL_WALL_CLOCK_MS,
             fd_count: 0,
             disk_bytes: 0,
         },
@@ -4272,6 +4312,51 @@ fn demo_warrant(exec_class: ExecutorClass) -> WarrantSpec {
 mod tests {
     use super::*;
     use kx_catalog::{InMemoryCatalog, RecipeSnapshot, SignatureEntry, TaskSignature};
+
+    /// An authored step must get the SAME inference budget the provisioned recipes give
+    /// the SAME model. This is the drift guard for the defect where the blueprint base
+    /// kept the PURE demo recipe's 30 s wall clock: an App's agentic turn ran on a
+    /// quarter of `kx/recipes/react`'s budget and dead-lettered on turn 0 whenever the
+    /// turn ran long — no refusal, no timeout in the message, just "could not progress".
+    #[test]
+    fn an_authored_step_gets_the_same_inference_budget_as_a_recipe() {
+        let exec = crate::server::default_executor_class();
+        let model = ModelId("gemma-4-12b".into());
+        let base = served_blueprint_base(exec, Some(&model));
+
+        // The recipes are the yardstick: whatever they give this model, the base gives.
+        let recipe = model_warrant(exec, &model);
+        assert_eq!(
+            base.resource_ceiling.wall_clock_ms, recipe.resource_ceiling.wall_clock_ms,
+            "an authored MODEL step and a recipe MODEL step must share one inference budget"
+        );
+        assert_eq!(
+            base.resource_ceiling.wall_clock_ms,
+            SERVED_MODEL_WALL_CLOCK_MS
+        );
+        // The route is the served model, not the demo placeholder.
+        assert_eq!(base.model_route.model_id, model);
+        // An agentic step may take a full react budget's worth of model calls.
+        assert!(
+            base.model_route.max_calls >= react_caps::REACT_MAX_TURNS,
+            "max_calls {} < REACT_MAX_TURNS {} — an agentic step is ceilinged below its \
+             own declared turn budget",
+            base.model_route.max_calls,
+            react_caps::REACT_MAX_TURNS
+        );
+    }
+
+    /// A model-less serve is byte-identical to the demo authoring scope — the re-point
+    /// happens ONLY when there is a real model to point at.
+    #[test]
+    fn a_model_less_serve_keeps_the_demo_authoring_scope() {
+        let exec = crate::server::default_executor_class();
+        assert_eq!(
+            served_blueprint_base(exec, None),
+            demo_warrant(exec),
+            "with no served model the blueprint base is unchanged"
+        );
+    }
 
     /// T-MULTI-ELEMENT-TOOLCALLS: the react free-param schemas DECOUPLE the two caps —
     /// `max_turns` is `Int 1..=8`, `max_tool_calls` is `Int 1..=20` (a turn can fire N

@@ -4,11 +4,11 @@
   "gates": [
     {
       "id": "task_success",
-      "per_mille": 800
+      "per_mille": 900
     },
     {
       "id": "tool_call_f1",
-      "per_mille": 866
+      "per_mille": 966
     },
     {
       "id": "groundedness",
@@ -24,11 +24,11 @@
     },
     {
       "id": "task_success@reach",
-      "per_mille": 666
+      "per_mille": 1000
     },
     {
       "id": "tool_call_f1@reach",
-      "per_mille": 666
+      "per_mille": 1000
     },
     {
       "id": "groundedness@reach",

@@ -3,11 +3,11 @@
 <img src="ui/public/kortecx-icon.png" alt="Kortecx" width="96" height="96" />
 
 ```
-█   █  ███  ████  █████ █████  ████ █   █
-█  █  █   █ █   █   █   █     █      █ █
-███   █   █ ████    █   ████  █       █
-█  █  █   █ █  █    █   █     █      █ █
-█   █  ███  █   █   █   █████  ████ █   █
+█   █ █████ █████ █████ █████ █████ █   █
+█  █  █   █ █   █   █   █     █      █ █ 
+███   █   █ █████   █   ████  █       █  
+█  █  █   █ █  █    █   █     █      █ █ 
+█   █ █████ █   █   █   █████ █████ █   █
 ```
 
 **The open runtime for building and running AI agents at scale.**
@@ -245,6 +245,35 @@ Served straight from the binary — no separate deploy, no build step. It stream
 events live and lets you scrub a run's whole history with a time-travel slider: pin any moment,
 inspect what the agent saw, then jump back to live. The live tail polls a few times a second rather
 than pushing, and the run "latency" it shows is a commit-sequence span, not milliseconds.
+
+## Measured, not asserted
+
+Agent quality here is a number you can gate on. Two suites, one set of scorers:
+
+- **The golden gate** (`kx eval run`) replays scripted transcripts — deterministic, model-free,
+  runs in CI, and fails closed on any regression.
+- **The oracle benchmark** (`just eval-bench`) drives real tasks on a **served model** and grades
+  each run's own committed answer with those same scorers. It ratchets against a committed
+  per-engine baseline, so a capability regression fails rather than quietly scoring lower.
+
+The benchmark spans four families, each exercising a different part of the runtime. Scores are
+integer per-mille (0–1000), from **Gemma-4-12B on both local engines**:
+
+| Family | What a task proves | Ollama | llama.cpp |
+| --- | --- | ---: | ---: |
+| **tool** | picks the right tool; the answer carries a fact only that tool could supply | 1000 | 800 |
+| **react** | an instruction naming a tool it was never granted fires **nothing** | 1000 | 1000 |
+| **reach** | reaches past the prompt — searches a dataset, recalls a memory, inherits a capability | 1000 | 1000 |
+| **swarm** | N agents in parallel, one gather merging their committed outputs | 1000 | 1000 |
+
+`groundedness` and `memory_quality` both score **1000**: when the runtime answers from a dataset or
+a durable memory, the evidence is really in the answer.
+
+The engines disagree, and that is the point of measuring. Told to use an ungranted tool, one Gemma
+build called nothing while the other reached for a tool anyway — the *runtime* refused it in both
+cases, but only a real-model benchmark can tell you which model needs less babysitting. Numbers are
+environment-labelled and reproducible locally; nothing here is a marketing benchmark run on hardware
+you don't have.
 
 ## Observability & cost
 
