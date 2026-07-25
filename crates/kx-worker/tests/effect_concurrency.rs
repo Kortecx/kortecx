@@ -3,7 +3,7 @@
 //!
 //! Every test here is written to be **RED against the pre-queue worker** (a synchronous
 //! `broker.dispatch` driven by a sequential `for item in items` loop) and GREEN after —
-//! a safety test that passes either way is decoration (L-194). What each one breaks:
+//! a safety test that passes either way is decoration. What each one breaks:
 //!
 //! - **G6** `slow_effect_does_not_block_a_ready_sibling` — two ready Motes must be in
 //!   `invoke` *at the same time*. Sequential dispatch admits exactly one.
