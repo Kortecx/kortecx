@@ -1,6 +1,6 @@
 {
   "name": "@kortecx/ui",
-  "version": "0.1.0",
+  "version": "0.2.0-rc.1",
   "private": true,
   "description": "kortecx runtime console \u2014 a static-hostable React+Vite SPA over the frozen KxGateway (gRPC-web). T3.2 shell.",
   "license": "LicenseRef-Kortecx-Sustainable-Use-1.0",

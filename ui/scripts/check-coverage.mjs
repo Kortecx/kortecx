@@ -25,7 +25,7 @@
  *   KX_UI_COVERAGE_UPDATE=1 npm run coverage:check   # rewrite the baseline, reviewed
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -44,7 +44,10 @@ function main() {
   }
   const total = JSON.parse(readFileSync(SUMMARY, "utf8")).total;
   const measured = Object.fromEntries(
-    METRICS.map((m) => [m, { pct: total[m].pct, covered: total[m].covered, total: total[m].total }]),
+    METRICS.map((m) => [
+      m,
+      { pct: total[m].pct, covered: total[m].covered, total: total[m].total },
+    ]),
   );
 
   if (process.env.KX_UI_COVERAGE_UPDATE === "1" || !existsSync(BASELINE)) {
@@ -75,7 +78,9 @@ function main() {
         `${measured[m].covered}/${measured[m].total}`,
     );
     if (delta < -TOLERANCE_PP) {
-      regressions.push(`${m} fell ${Math.abs(delta).toFixed(2)} pp (${was.toFixed(2)}% → ${now.toFixed(2)}%)`);
+      regressions.push(
+        `${m} fell ${Math.abs(delta).toFixed(2)} pp (${was.toFixed(2)}% → ${now.toFixed(2)}%)`,
+      );
     } else if (delta > TOLERANCE_PP) {
       gains.push(`${m} rose ${delta.toFixed(2)} pp`);
     }

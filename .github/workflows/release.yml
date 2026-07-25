@@ -133,17 +133,51 @@ jobs:
           echo "=== release assets ==="; ls -la
           echo "=== checksums.txt ==="; cat checksums.txt
 
+      # The release body is the CHANGELOG's own section for this tag, not a generated
+      # list of merged PR titles. `--generate-notes` answers "which branches landed";
+      # the CHANGELOG answers "what this release IS", which is what a reader wants and
+      # what was written deliberately. The checkout is needed only for this.
+      - name: Checkout (for the CHANGELOG)
+        uses: actions/checkout@v6
+
+      - name: Extract the release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          bash scripts/release-notes.sh "$tag" CHANGELOG.md > notes.md
+          # Fail LOUDLY rather than fall back. A silent fallback to generated notes is how
+          # a release ships with the wrong body: the heading drifts, nobody looks, and the
+          # curated notes are quietly never used again.
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no '## [${tag#v}]' section — add it before tagging," \
+                 "or the release body would silently become a list of PR titles."
+            exit 1
+          fi
+          echo "extracted $(wc -l < notes.md) lines of release notes for $tag"
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
+          # DELIBERATELY NOT `--prerelease`, even for an `-rc.N` tag.
+          #
+          # `scripts/install.sh` defaults to `releases/latest/download`, and GitHub computes
+          # `latest` from non-prerelease releases ONLY. So marking a release candidate as a
+          # prerelease would leave every `curl | sh` install pinned to the last stable
+          # release — which is the more misleading outcome by far, and gets worse the longer
+          # the RC line runs. The notes say plainly that this is a candidate.
+          #
+          # If you want honest prerelease labelling, `install.sh` has to learn to resolve a
+          # channel first; do both in one change or not at all.
           if gh release view "$tag" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --repo "${{ github.repository }}" --clobber
+            gh release edit "$tag" --repo "${{ github.repository }}" --notes-file notes.md
           else
             gh release create "$tag" dist/* \
               --repo "${{ github.repository }}" \
               --title "$tag" \
-              --generate-notes
+              --notes-file notes.md
           fi

@@ -79,11 +79,15 @@ kx-cloud/
 # The public repo ships the runtime code plus scripts/install.sh. Other top-level
 # dev/release helper scripts and their config are maintained out of tree; they are
 # ignored here so they never land in a public checkout by accident. Any new
-# scripts/*.sh is treated as local by default — only install.sh ships.
+# scripts/*.sh is treated as local by default — a script that SHIPS needs an
+# explicit exception below, or it silently never reaches a public checkout.
 /shared-paths.toml
 /feature-ledger.toml
 /scripts/*.sh
 !/scripts/install.sh
+# The release workflow reads this to publish the CHANGELOG section as the release
+# body, so it must be in the checkout the workflow runs against.
+!/scripts/release-notes.sh
 /justfile.private
 
 # The packed SDK the gateway embeds and serves as an installable package — a BUILD
