@@ -2223,7 +2223,34 @@ async fn failed_observation_rejects_the_turn_and_the_chain_reprompts() {
     .await
     .unwrap();
 
-    let facts = react_facts(&svc, &dir).await;
+    // The drive loop advances at most ONE step per pass, so the re-prompted turn opens on
+    // a later pass than the refusal. Drive it deterministically rather than reading one
+    // snapshot and hoping — a single read passes or fails on machine timing, which is a
+    // flaky test, not a proof.
+    let mut leased_ids: Vec<Vec<u8>> = Vec::new();
+    let mut facts = react_facts(&svc, &dir).await;
+    for _ in 0..8 {
+        if facts.iter().any(|f| {
+            matches!(
+                f,
+                JournalEntry::ReactRound {
+                    turn: 1,
+                    branch: ReactBranch::Pending,
+                    ..
+                }
+            )
+        }) {
+            break;
+        }
+        leased_ids.extend(
+            common::lease_work(&svc, worker, MAC, 16)
+                .await
+                .into_iter()
+                .filter_map(|w| w.mote.map(|m| m.mote_id)),
+        );
+        facts = react_facts(&svc, &dir).await;
+    }
+
     // The turn is REFUSED, not the chain killed — and the reason names the tool so the
     // re-prompt can steer the model somewhere else.
     assert!(
@@ -2256,14 +2283,17 @@ async fn failed_observation_rejects_the_turn_and_the_chain_reprompts() {
         )),
         "the chain re-prompts the next turn: {facts:#?}"
     );
-    // THE EXACTLY-ONCE GUARD: whatever is leasable next, it is never the failed
-    // observation again. The effect fired at most once and is not retried.
-    let next = common::lease_work(&svc, worker, MAC, 16).await;
+    // THE EXACTLY-ONCE GUARD: across EVERY lease the continuing chain handed out, the
+    // failed observation is never among them. The effect fired at most once and the
+    // chain carrying on does not retry it.
+    leased_ids.extend(
+        common::lease_work(&svc, worker, MAC, 16)
+            .await
+            .into_iter()
+            .filter_map(|w| w.mote.map(|m| m.mote_id)),
+    );
     assert!(
-        !next.iter().any(|w| w
-            .mote
-            .as_ref()
-            .is_some_and(|m| m.mote_id == obs.id.as_bytes().to_vec())),
+        !leased_ids.iter().any(|id| id == obs.id.as_bytes()),
         "the failed observation must NEVER be re-leased — that would double-fire it"
     );
 }
