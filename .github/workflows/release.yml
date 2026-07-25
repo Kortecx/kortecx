@@ -118,6 +118,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      # CHECKOUT FIRST, BEFORE the artifacts are downloaded. `actions/checkout` defaults
+      # to `clean: true`, which runs `git clean -ffdx` and so DELETES untracked paths —
+      # including a `dist/` that was populated before it. Ordering it after the download
+      # cost v0.2.0-rc.1 its release: all three binaries built, the notes extracted, and
+      # the publish step then failed with `no matches found for dist/*`. Nothing could
+      # have caught it earlier — `release.yml` runs only on a tag, so a tag IS its first
+      # execution. Keep this step first.
+      - name: Checkout (for the CHANGELOG)
+        uses: actions/checkout@v6
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -136,10 +146,7 @@ jobs:
       # The release body is the CHANGELOG's own section for this tag, not a generated
       # list of merged PR titles. `--generate-notes` answers "which branches landed";
       # the CHANGELOG answers "what this release IS", which is what a reader wants and
-      # what was written deliberately. The checkout is needed only for this.
-      - name: Checkout (for the CHANGELOG)
-        uses: actions/checkout@v6
-
+      # what was written deliberately.
       - name: Extract the release notes from CHANGELOG.md
         shell: bash
         run: |
