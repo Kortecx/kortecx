@@ -75,6 +75,34 @@ const q = await kx.eval.scoreRun("00112233445566778899aabbccddeeff");
 console.log(q.terminal, q.reachedAnswer, q.turnsUsed, q.rejections);
 ```
 
+## The real-model oracle benchmark (`bench-v1`)
+
+The golden gate scores *scripted* transcripts. `bench-v1` scores **real ones**: every task is
+driven on a served model and its actual committed answer is graded by the same oracle
+scorers — so agentic quality is a measured number, not a replay.
+
+```bash
+# Both engines; restart per run. Numbers land in the (gitignored) docs/benchmarks/.
+KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-bench   # Ollama
+KX_SERVE_MODEL_GGUF=<gemma-12b.gguf> just eval-bench                   # llama.cpp
+```
+
+It is a **local** gate — never part of `just ci`, which stays model-free and flake-proof.
+A committed per-engine baseline is the fail-closed ratchet, and the oracle floors are
+asserted only for a model capable enough to be worth gating on.
+
+The suite spans four **families**, each exercising a different part of the runtime:
+
+| Family | What a task proves |
+| --- | --- |
+| `tool` | The agent picks the right tool and its answer carries a fact only the tool could supply. |
+| `react` | An instruction naming a tool the run was never granted fires **nothing** — naming is not granting. |
+| `reach` | How far the runtime reaches beyond the prompt: a [dataset](./datasets.md) it searches, a [memory](./memory.md) it recalls, and an app whose capability set is inherited rather than declared. |
+| `swarm` | N agents run in parallel and a gather merges their committed outputs — the answer must carry every agent's contribution. |
+
+Each family reports its own gate (`task_success@swarm`) beside the suite-wide one, so a
+regression in one capability is visible instead of being averaged away by the others.
+
 ## How it works
 
 - **Two tiers, one scorer.** Every scorer is a pure function of a *transcript* — the
@@ -92,8 +120,13 @@ console.log(q.terminal, q.reachedAnswer, q.turnsUsed, q.rejections);
 ## Determinism — the precise scope
 
 The golden gate is byte-deterministic (scripted fixtures, integer scoring) and is the
-regression ratchet. Live-model numbers (latency, real-model task success) are
-**advisory** — recorded to the private benchmark trend, never a hard CI assertion —
-because local OSS-model sampling and quantisation are not bit-reproducible across
-machines. See [Observability](./observability.md) for the per-run telemetry the readout
-complements.
+always-on regression ratchet.
+
+Real-model numbers are **not** bit-reproducible — local model sampling and quantisation
+vary across machines — so they are never a hard CI assertion. That does not make them
+unfalsifiable: `bench-v1` ratchets each engine against its own committed baseline with a
+tolerance sized to absorb single-task nondeterminism, and fails closed both when a gate
+drops below that baseline and when the corpus changes underneath it. What stays advisory
+is the *trend* record (latency, per-run spikes), not the gate.
+
+See [Observability](./observability.md) for the per-run telemetry the readout complements.
