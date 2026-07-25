@@ -337,6 +337,64 @@ mod tests {
         );
     }
 
+    /// A scaffolded hosted project must ask for the version this gateway ADVERTISES.
+    ///
+    /// These are two derivations of one number: the packument's `dist-tags.latest` comes
+    /// from `bindings/typescript/package.json` at build time, and the scaffolded
+    /// `package.json` is pinned at write time by the supervisor. Nothing tied them, and
+    /// the template's own literal (`^0.1.1`) matched only because 0.1.1 happened to be
+    /// served — a caret range on a `0.x` version pins the minor, so the next bump would
+    /// have made every new hosted project's `npm install` unsatisfiable.
+    ///
+    /// Two halves, because rewriting the template here and then comparing the result
+    /// would only re-test the rewrite: the template's DECLARED range must be the unpinned
+    /// sentinel (so the writer is obliged to pin it), and pinning it must land exactly on
+    /// the advertised version. That the writer actually calls the pin is asserted on the
+    /// written bytes in `hosted_supervisor_e2e` under `console,hosted-apps`.
+    #[test]
+    fn a_scaffolded_project_asks_for_the_version_this_gateway_advertises() {
+        use kx_gateway_core::{
+            hosted_template, hosted_with_sdk_version, HostedFileSource, HOSTED_SDK_PACKAGE,
+            HOSTED_SDK_UNPINNED_RANGE,
+        };
+
+        let pkg = hosted_template("vite_react")
+            .iter()
+            .find(|f| f.path == "package.json")
+            .expect("the vite-react template has a package.json");
+        let HostedFileSource::Static(body) = pkg.source else {
+            panic!("package.json must be static");
+        };
+
+        let declared: serde_json::Value = serde_json::from_str(body).expect("template parses");
+        assert_eq!(
+            declared["dependencies"][HOSTED_SDK_PACKAGE].as_str(),
+            Some(HOSTED_SDK_UNPINNED_RANGE),
+            "the template must declare the SDK unpinned — a concrete version here is a \
+             second copy of the number this registry derives from, and the two drift"
+        );
+
+        let pinned = hosted_with_sdk_version("package.json", body, SDK_VERSION);
+        let project: serde_json::Value =
+            serde_json::from_str(&pinned).expect("the pinned package.json still parses");
+        let asked = project["dependencies"][HOSTED_SDK_PACKAGE]
+            .as_str()
+            .expect("the vite-react template declares the SDK dependency");
+
+        let advertised = packument("127.0.0.1:9999", b"tarball bytes");
+        let advertised: serde_json::Value =
+            serde_json::from_slice(&advertised).expect("valid packument");
+        let latest = advertised["dist-tags"]["latest"]
+            .as_str()
+            .expect("the packument advertises a latest version");
+
+        assert_eq!(
+            asked, latest,
+            "a scaffolded hosted app asks npm for {asked:?} while this gateway's registry \
+             serves only {latest:?} — `npm install` would find no matching version"
+        );
+    }
+
     #[test]
     fn the_embedded_manifest_has_the_spa_entrypoint() {
         assert!(!ASSETS.is_empty(), "build.rs embedded at least index.html");

@@ -6,7 +6,76 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ## [Unreleased]
 
+## [0.2.0-rc.1] — 2026-07-25
+
+The first release candidate. Everything below has accumulated since 0.1.1: **Apps** — the
+durable unit of agentic capability, authored from a sentence, runnable on a schedule or
+served as a real web project, and callable by each other — plus chains and swarms, skills,
+durable memory, the bundled MCP connectors, the datasets/RAG data-plane with
+graph-augmented retrieval, and a benchmark that grades real served-model runs against a
+committed per-engine baseline.
+
+The prebuilt `kx`, both SDKs and the web console move to `0.2.0-rc.1` (PyPI normalizes to
+`0.2.0rc1`). Library crates keep their own version lines, governed per-crate by
+`cargo-semver-checks`; `kx-proto` is unchanged at `0.12.0`.
+
+Interfaces may still change before 1.0 — pin a commit if you build on it.
+
 ### Added
+
+- **Author an App by describing it — derive, review, then approve.** The Apps section is
+  one prompt box: `DeriveApp` turns a sentence into a *proposed* App you read and edit
+  before anything is created, and the capability menu it may draw from is built from the
+  caller's own resolved grants — the model proposes, the runtime decides. Naming a tool is
+  not being granted one. (gateway/ui)
+
+- **Capabilities attach to the node that uses them.** Tools, connections, datasets and
+  skills are declared on the step in the graph rather than as app-wide side fields, so what
+  a node may reach is visible where the work happens, and the DAG is the whole create
+  surface. (gateway/ui)
+
+- **An App is a capability another App can call.** A node names another App; at author time
+  the callee's blueprint is lowered under its **own** envelope — its own skills, grounding
+  and connections — so composing two Apps never widens the caller's reach. (proto/gateway/sdk/ui)
+
+- **Contextual and codified Apps.** An App envelope carries an authoring `mode`. A
+  *contextual* App authors markdown only; a *codified* App additionally authors the
+  configuration the runtime is orchestrated **from** — `workflow.json` becomes its
+  blueprint and `tools.json` its tool wishes, folded onto the envelope on completion. An
+  App that sets no mode emits no key, so its canonical bytes, `app_ref` and `app_digest`
+  are unchanged. (kx-app/gateway/ui)
+
+- **Hosted Apps talk to the runtime that serves them.** A hosted App installs
+  `@kortecx/sdk` from its own gateway — which hosts the package as a scoped npm registry on
+  the console listener — and calls the runtime through it, scoped to exactly what its
+  envelope declared. (gateway/ui)
+
+- **A cross-run work cache.** Identical deterministic work was deduplicated only *within* a
+  run, because a `MoteId` folds a run-scoped graph position. A pure result computed in any
+  run can now serve an identical sub-task in another. Off the truth path — a hit proposes
+  the cached ref and skips the kernel; a miss is byte-identical to before.
+  (kx-worker/kx-work-cache)
+
+- **A graph-RAG retrieval leg (default off).** Ingest extracts `(subject, predicate,
+  object)` triples from each chunk into a per-dataset knowledge graph; query fuses a
+  multi-hop walk of the query's entity seeds into the existing dense + sparse ranking.
+  Behind a flag, so retrieval is byte-identical until you turn it on.
+  (kx-dataset-graph/gateway)
+
+- **`bench-v1` — an oracle benchmark over real served-model runs.** The eval harness graded
+  a served model only through its trajectory (turns, tools, terminal state), never its
+  committed **answer** against a task's expectation. `bench-v1` folds a real run into a
+  transcript and scores it with the same oracle the scripted tier uses, ratcheting against
+  a committed per-engine baseline — so a capability regression fails a check instead of
+  quietly scoring lower. (kx-eval/gateway)
+
+- **Benchmark coverage across four substrate families.** `bench-v1` spans ten tasks and
+  three invoke shapes: **tool** (picks the right tool; the answer carries a fact only that
+  tool could supply) · **react** (an instruction naming a tool it was never granted must
+  fire nothing) · **reach** (searches a dataset, recalls a memory, inherits a capability
+  ceiling) · **swarm** (fan-out → gather). Each family reports its own gate beside the
+  suite-wide ones. An unknown family is a hard error, never a silent fall-through — a task
+  driven down the wrong shape still produces a plausible number. (kx-eval/gateway/docs)
 
 - **Apps — the durable, shareable unit of agentic capability.** An App is a
   `kortecx.app/v1` envelope that wraps a portable blueprint with by-reference
@@ -126,6 +195,41 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Fixed
 
+- **An authored agentic step now gets a recipe's inference budget.** Every authored step —
+  Apps, blueprints, and swarm/chain lowering — was built from the demo warrant with only
+  the model id re-pointed, so it kept the demo's **30 s** inference budget while the same
+  model under a provisioned recipe gets **120 s**. A slow turn simply failed and the chain
+  dead-lettered on turn 0 reporting only "the chain could not progress", naming nothing.
+  Every model-facing axis is now re-pointed together, and the budget lives in one constant
+  rather than five copies — the duplication is *how* the two paths drifted. Warrants are off
+  the journal, so run identity is unchanged. (gateway)
+
+- **A tool that fails to run no longer kills the chain.** An *ungranted* tool was refused
+  and re-prompted, so the agent tried something else; a *granted* tool that then failed to
+  dispatch — an unreachable MCP server, a capability that cannot serve this run —
+  dead-lettered the entire run, and the reason never reached the model, so the agent died
+  without being told why. One unusable capability in a wide grant set could end a healthy
+  agent. A dispatch failure is now a rejected turn carrying the reason. Exactly-once is
+  unaffected: the failed observation is never re-dispatched, and a failed attempt spends its
+  tool-call budget, so a permanently broken tool cannot be re-proposed for free.
+  (kx-coordinator/kx-journal/kx-model-harness)
+
+- **A hosted App's type-check gate ran on a relative data dir, and failed inverted.**
+  Moving the child's working directory before the OS resolved the program path made a
+  relative `tsc` vanish, while the probe that decided whether to run it resolved the same
+  path against the gateway's own directory and reported it present. Every `--journal
+  target/…` serve hit it: a project **with** TypeScript could not start, and one **without**
+  it skipped the gate and served unchecked. (gateway)
+
+- **A scaffolded hosted App asks for the SDK version its gateway serves.** The Vite-React
+  template declared `"@kortecx/sdk": "^0.1.1"` as a literal. The gateway serves exactly one
+  version of that package from its own registry, derived from the SDK's manifest at build
+  time, and a caret range on a `0.x` version pins the minor — so the range matched only
+  because 0.1.1 happened to be what was being served, and this release's version bump would
+  have made every newly scaffolded hosted App's `npm install` unsatisfiable. The template
+  now declares the dependency unpinned and the supervisor pins it at write time to the
+  version actually being served. (gateway)
+
 - **Stale per-model recipe after a model/engine switch.** Reusing a `--catalog-dir`
   across a model or engine switch no longer leaves a per-model chat recipe
   (`kx/recipes/m-<id>`) bound to a model the server no longer serves (which previously
@@ -175,6 +279,24 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
   in the Data Lab. (serve/sdk/ui)
 
 ### Changed
+
+- **kortecx is fair-code under the Sustainable Use License.** Every manifest, the lockfile
+  roots, the docs footer and the third-party notices carry
+  `LicenseRef-Kortecx-Sustainable-Use-1.0`. The README is rewritten showcase-first around
+  what you can build, and carries a measured benchmark section read off the committed
+  `bench-v1` baselines rather than asserted.
+
+- **The documentation describes the runtime that shipped.** The install instructions name
+  the paths that work — the TypeScript SDK is served by a running gateway's own scoped npm
+  registry, not a public one — and the observability page says where each read actually
+  lives now that the console is a flat set of sections. The docs site is built in CI, so its
+  broken-link settings finally fire, and three checks the build cannot make (orphan pages,
+  anchors into GitHub-hosted files, and the README's benchmark table against the committed
+  baselines) are gated too. (docs/ci)
+
+- **An App states the authority rule instead of citing an identifier for it.** User-facing
+  copy explains *why* a capability is or is not reachable, in words, where it previously
+  pointed at an internal id. (ui)
 
 - **The bootstrap demo team is now a workspace team** (`kx/teams/workspace`) whose
   members are the real configured parties (the `--auth-token` parties + the

@@ -46,14 +46,16 @@ pre-push-sdk:
         && npx vitest run )
     echo "✓ SDK gates green"
 
-# Run the UI CI gates locally — the `ui` job from ci.yml minus Playwright (biome + tsc + vitest +
-# build + bundle-size). Run before a UI PR. Assumes `npm ci` was run in ui/ (and the TS SDK built).
-# `npx playwright test` is CI-only here (needs a browser + a live serve). Keep in lock-step with ci.yml.
+# Run the UI CI gates locally — the `ui` job from ci.yml minus Playwright (biome + tsc + vitest
+# with COVERAGE + the coverage ratchet + build + bundle-size). Run before a UI PR. Assumes
+# `npm ci` was run in ui/ (and the TS SDK built). `npx playwright test` is CI-only here (needs a
+# browser + a live serve). Keep in lock-step with ci.yml.
 pre-push-ui:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "▶ ui — biome + tsc + vitest + build + size"
-    ( cd ui && npx biome ci . && npx tsc --noEmit && npx vitest run && npm run build && npm run size )
+    echo "▶ ui — biome + tsc + vitest(+coverage) + ratchet + build + size"
+    ( cd ui && npx biome ci . && npx tsc --noEmit && npm run coverage && npm run coverage:check \
+        && npm run build && npm run size )
     echo "✓ UI gates green (run \`cd ui && npx playwright test\` for the e2e — CI does this)"
 
 # Run the docs-site CI gate locally — the `docs-site` job from ci.yml (orphan pages +
@@ -883,9 +885,16 @@ eval-real:
 # baseline capture is refused, because the committed baseline is keyed by the whole corpus
 # digest and a partial capture would ratchet every later run against a subset.
 #
-# Drive BOTH engines (restart per run):
-#   KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-bench   # local Gemma (Ollama)
+# Drive BOTH engines (restart per run). The Ollama arm needs a DEDICATED EMBEDDER, or
+# `ingest_documents` fails and the whole `reach` family skips — the run then prints
+# `reach_fixtures=false` and covers 7 of 10 tasks. The invocation documented here used to
+# omit it, so following this header exactly produced a partial run that still reported a
+# result (and could not capture a baseline at all, which is the fail-closed preflight doing
+# its job against instructions that could never satisfy it):
+#   KX_SERVE_OLLAMA=1 KX_SERVE_OLLAMA_MODELS=gemma3:12b,embeddinggemma:latest \
+#     KX_SERVE_EMBED_MODEL=embeddinggemma:latest just eval-bench          # local Gemma (Ollama)
 #   just fetch-gemma-model && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench   # llama.cpp
+# Read `reach_fixtures=true` in the run's own preamble before believing a number.
 # ⚠ `ollama stop <model>` BEFORE the llama.cpp arm: GPU residency is a cross-ENGINE
 # singleton, and an Ollama keep-alive resident 12B makes the in-process 12B OOM and
 # dead-letter every task (a false negative that looks like a capability collapse).

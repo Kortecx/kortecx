@@ -25,6 +25,7 @@
 //! Behind the `hosted-apps` cargo feature (adds `tokio/process`); absent, the four hosted
 //! RPCs return `unimplemented`.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -33,12 +34,29 @@ use std::time::Duration;
 
 use kx_content::ContentRef;
 use kx_gateway_core::{
-    build_command_args, dev_command_args, hosted_entry_path, hosted_template, preview_command_args,
-    AppCatalog, BranchStore, ContentReader, GatewayError, HostedAppSupervisor, HostedFileSource,
-    HostedServeMode, HostedState, HostedStatus, MANIFEST_MARKER_PATH,
+    build_command_args, dev_command_args, hosted_entry_path, hosted_template,
+    hosted_with_sdk_version, preview_command_args, AppCatalog, BranchStore, ContentReader,
+    GatewayError, HostedAppSupervisor, HostedFileSource, HostedServeMode, HostedState,
+    HostedStatus, MANIFEST_MARKER_PATH,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+
+/// The `@kortecx/sdk` version THIS gateway serves from its own scoped registry, when it
+/// carries one.
+///
+/// A build without the console serves no registry at all, so there is no version to pin to
+/// and the template's unpinned range stands — `console.rs` already answers such a request
+/// with a `501` naming the remedy, which is the honest failure. Deliberately no fallback
+/// literal: a hard-coded fallback is exactly how the stale `^0.1.1` survived.
+#[cfg(feature = "console")]
+fn served_sdk_version() -> Option<&'static str> {
+    (!crate::console::SDK_VERSION.is_empty()).then_some(crate::console::SDK_VERSION)
+}
+#[cfg(not(feature = "console"))]
+fn served_sdk_version() -> Option<&'static str> {
+    None
+}
 
 /// Cap on the retained log ring per hosted app (advisory tail).
 const MAX_LOG_LINES: usize = 200;
@@ -585,6 +603,13 @@ fn materialize(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
         let body = match tf.source {
             HostedFileSource::Static(s) => s,
             HostedFileSource::Authored { default, .. } => default,
+        };
+        // Ask for the SDK version this gateway actually serves. The template cannot know it
+        // (it is a `&'static str`, and the served version is derived at build time from
+        // `bindings/typescript/package.json`), so pinning happens here, at write time.
+        let body: Cow<'_, str> = match served_sdk_version() {
+            Some(v) => hosted_with_sdk_version(tf.path, body, v),
+            None => Cow::Borrowed(body),
         };
         write_file(&ctx.plan.workdir, tf.path, body.as_bytes())?;
     }

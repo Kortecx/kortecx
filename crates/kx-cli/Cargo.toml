@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 [package]
 name         = "kx-cli"
-version      = "0.1.1"
+version      = "0.2.0-rc.1"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }

@@ -83,9 +83,15 @@ scorers — so agentic quality is a measured number, not a replay.
 
 ```bash
 # Both engines; restart per run. Numbers land in the (gitignored) docs/benchmarks/.
-KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-bench   # Ollama
+# Ollama needs a DEDICATED EMBEDDER or the whole `reach` family skips:
+KX_SERVE_OLLAMA=1 KX_SERVE_OLLAMA_MODELS=gemma3:12b,embeddinggemma:latest \
+  KX_SERVE_EMBED_MODEL=embeddinggemma:latest just eval-bench           # Ollama
 KX_SERVE_MODEL_GGUF=<gemma-12b.gguf> just eval-bench                   # llama.cpp
 ```
+
+The run's own preamble tells you what it actually covered — `reach_fixtures=true` means the
+dataset, memory and capability-inheritance tasks ran; `false` means it scored seven of ten
+and said so. Read that line before believing a number.
 
 It is a **local** gate — never part of `just ci`, which stays model-free and flake-proof.
 A committed per-engine baseline is the fail-closed ratchet, and the oracle floors are

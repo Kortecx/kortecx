@@ -58,6 +58,24 @@ fn http_get(port: u16) -> std::io::Result<String> {
     Ok(buf)
 }
 
+/// The project `package.json` the supervisor materialized, found by walking the gateway's
+/// data dir. Located by search rather than by recomputing `<catalog>/hosted/<hash>`: a
+/// second copy of that derivation would agree with the code by construction, which is
+/// exactly the property a test must not have.
+fn find_materialized_package_json(root: &std::path::Path) -> Option<String> {
+    for entry in std::fs::read_dir(root).ok()? {
+        let path = entry.ok()?.path();
+        if path.is_dir() {
+            if let Some(found) = find_materialized_package_json(&path) {
+                return Some(found);
+            }
+        } else if path.file_name().is_some_and(|n| n == "package.json") {
+            return std::fs::read_to_string(&path).ok();
+        }
+    }
+    None
+}
+
 #[tokio::test]
 async fn hosted_app_starts_serves_and_stops() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -119,6 +137,35 @@ async fn hosted_app_starts_serves_and_stops() {
     }
     assert!(reached_running, "the hosted app reached Running");
     assert!(port > 0, "a loopback port was allocated");
+
+    // The SDK dependency in the MATERIALIZED project — the bytes npm will actually read.
+    //
+    // The gateway serves exactly one version of `@kortecx/sdk` from its own scoped
+    // registry, derived at build time from `bindings/typescript/package.json`, so the
+    // template cannot carry a version and the supervisor pins it at write time. Assert the
+    // written file, not the template: a template guard cannot see a writer that stopped
+    // pinning. Both configurations are asserted, since only their pair is falsifiable —
+    // WITHOUT the console there is no registry, so the unpinned range is correct and a
+    // pinned one would be a fiction; WITH it, an unpinned range means the pin was skipped.
+    let written = find_materialized_package_json(dir.path())
+        .expect("the supervisor materialized a package.json");
+    let project: serde_json::Value =
+        serde_json::from_str(&written).expect("the materialized package.json parses");
+    let range = project["dependencies"]["@kortecx/sdk"]
+        .as_str()
+        .expect("the vite-react project declares the SDK dependency");
+    if cfg!(feature = "console") {
+        assert_ne!(
+            range, "*",
+            "this build serves an SDK registry, so the project must ask for a concrete \
+             version — an unpinned range means the write-time pin was skipped"
+        );
+    } else {
+        assert_eq!(
+            range, "*",
+            "this build serves no SDK registry, so there is no version to pin to"
+        );
+    }
 
     // The dev server serves HTTP 200 on the loopback port.
     let port_u16 = u16::try_from(port).unwrap();
