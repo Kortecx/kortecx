@@ -814,10 +814,21 @@ jobs:
       # The ONLY job that can lint/test the console feature (it needs the dist) —
       # this IS the console feature-guard; the justfile features-guard stays
       # node-free by design.
+      #
+      # The second run adds `hosted-apps`. Until now NO job ran those two features
+      # TOGETHER — `console` here, `hosted-apps` in the cheap job above — and the
+      # hosted-app SDK channel only exists in their intersection: the gateway serves
+      # `@kortecx/sdk` from its registry (console) and the supervisor pins a scaffolded
+      # project to the version being served (hosted-apps). A test of that pairing would
+      # have compiled to ZERO tests and reported `ok`. This is the arm that fails when
+      # the write-time pin is skipped and a scaffolded project asks npm for a version
+      # the registry does not carry.
       - name: Clippy + tests for the console feature (kx-gateway)
         run: |
           cargo clippy -p kx-gateway --features console --all-targets -- -D warnings
           cargo test -p kx-gateway --features console
+          cargo clippy -p kx-gateway --features console,hosted-apps --all-targets -- -D warnings
+          cargo test -p kx-gateway --features console,hosted-apps
 
       - name: Unit + component + contract tests (vitest; contract vs a real `kx serve`)
         working-directory: ui

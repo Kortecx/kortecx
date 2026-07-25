@@ -22,6 +22,8 @@
 //! keeps app bytes opaque — the [`crate::AppCatalog`] discipline). `"auto"` and any unknown
 //! label resolve to Vite-React (the simplest dev server).
 
+use std::borrow::Cow;
+
 /// How one template file's body is produced.
 pub enum FileSource {
     /// A fixed, byte-known body (content-addressed + advanced directly; no model call).
@@ -65,7 +67,7 @@ const VITE_REACT: &[TemplateFile] = &[
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@kortecx/sdk": "^0.1.1"
+    "@kortecx/sdk": "*"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
@@ -599,6 +601,49 @@ pub fn template_paths(framework: &str) -> Vec<&'static str> {
     template(framework).iter().map(|f| f.path).collect()
 }
 
+/// The npm package a hosted project installs to talk to the runtime it is served by.
+pub const SDK_PACKAGE: &str = "@kortecx/sdk";
+
+/// The dependency range a template declares for [`SDK_PACKAGE`] before the host pins it.
+///
+/// It is deliberately NOT a version. A template body is a `&'static str`, so any concrete
+/// version here is a second copy of a number that lives in `bindings/typescript/package.json`
+/// — and the two disagree at the first bump. They already did: this was `^0.1.1`, which
+/// matched only because 0.1.1 happened to be the version the gateway served, and a caret
+/// range on a `0.x` version pins the MINOR, so the next minor bump would have left every
+/// newly scaffolded project's `npm install` unsatisfiable.
+pub const SDK_UNPINNED_RANGE: &str = "*";
+
+/// Rewrite a template file's body so its [`SDK_PACKAGE`] dependency asks for EXACTLY
+/// `version` — the one the serving gateway carries in its own scoped registry.
+///
+/// An exact pin rather than a range: that registry offers exactly one version, and
+/// prerelease range semantics (`^0.2.0-rc.1`) are a subtlety with nothing to gain here.
+///
+/// Anything that is not `package.json`, or a body that declares no SDK dependency, is
+/// returned borrowed and byte-unchanged.
+#[must_use]
+pub fn with_sdk_version<'a>(path: &str, body: &'a str, version: &str) -> Cow<'a, str> {
+    if path != "package.json" {
+        return Cow::Borrowed(body);
+    }
+    let key = format!("\"{SDK_PACKAGE}\": \"");
+    let Some(start) = body.find(&key) else {
+        return Cow::Borrowed(body);
+    };
+    let range_at = start + key.len();
+    let Some(len) = body[range_at..].find('"') else {
+        // An unterminated string is not a JSON body we can safely edit; leave it be and
+        // let the project's own parse fail loudly rather than corrupt it further.
+        return Cow::Borrowed(body);
+    };
+    let mut out = String::with_capacity(body.len() + version.len());
+    out.push_str(&body[..range_at]);
+    out.push_str(version);
+    out.push_str(&body[range_at + len..]);
+    Cow::Owned(out)
+}
+
 /// The framework's ENTRY component — the one authored file the template's static entry
 /// imports by name, and therefore the file that decides whether the served page is the
 /// user's app or the template's placeholder.
@@ -804,6 +849,91 @@ mod tests {
                     "{fw}: package.json must declare @types/react"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn no_template_hardcodes_an_sdk_version() {
+        // THE GUARD THAT MAKES THE DEFECT UNREPRESENTABLE. A template body is a
+        // `&'static str`, so a concrete version here is a second copy of the number in
+        // `bindings/typescript/package.json` — and the gateway serves exactly ONE version,
+        // derived from that file at build time. `^0.1.1` matched only because 0.1.1 was the
+        // served version; a caret on `0.x` pins the minor, so the next minor bump made
+        // every scaffolded project's `npm install` unsatisfiable. The host pins it at write
+        // time via `with_sdk_version`; the template must not guess.
+        for fw in ["vite_react", "next_js", "svelte"] {
+            let pkg = template(fw)
+                .iter()
+                .find(|f| f.path == "package.json")
+                .expect("a package.json");
+            let FileSource::Static(body) = pkg.source else {
+                panic!("package.json must be static");
+            };
+            let v: serde_json::Value = serde_json::from_str(body).expect("package.json parses");
+            if let Some(range) = v["dependencies"][SDK_PACKAGE].as_str() {
+                assert_eq!(
+                    range, SDK_UNPINNED_RANGE,
+                    "{fw}: package.json pins {SDK_PACKAGE} to {range:?}; the template must \
+                     leave it {SDK_UNPINNED_RANGE:?} and let the host pin the version it serves"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn with_sdk_version_pins_exactly_and_moves_nothing_else() {
+        let pkg = template("vite_react")
+            .iter()
+            .find(|f| f.path == "package.json")
+            .expect("a package.json");
+        let FileSource::Static(body) = pkg.source else {
+            panic!("package.json must be static");
+        };
+
+        let pinned = with_sdk_version("package.json", body, "0.2.0-rc.1");
+        let v: serde_json::Value = serde_json::from_str(&pinned).expect("still parses");
+        assert_eq!(
+            v["dependencies"][SDK_PACKAGE].as_str(),
+            Some("0.2.0-rc.1"),
+            "the SDK dependency must be an EXACT pin on the served version"
+        );
+        // Every other dependency is byte-untouched — the rewrite is surgical, not a
+        // re-serialization (which would reorder keys and move the project's bytes).
+        let before: serde_json::Value = serde_json::from_str(body).expect("parses");
+        for (key, want) in before["dependencies"].as_object().expect("deps") {
+            if key == SDK_PACKAGE {
+                continue;
+            }
+            assert_eq!(&v["dependencies"][key], want, "{key} moved");
+        }
+        assert_eq!(before["devDependencies"], v["devDependencies"]);
+    }
+
+    #[test]
+    fn with_sdk_version_leaves_other_files_and_sdk_less_bodies_alone() {
+        // Not a package.json: borrowed, byte-identical.
+        let other = with_sdk_version("vite.config.ts", "export default {};\n", "9.9.9");
+        assert!(matches!(other, Cow::Borrowed(_)));
+
+        // A package.json that declares no SDK dependency (Next and Svelte today): borrowed.
+        for fw in ["next_js", "svelte"] {
+            let pkg = template(fw)
+                .iter()
+                .find(|f| f.path == "package.json")
+                .expect("a package.json");
+            let FileSource::Static(body) = pkg.source else {
+                panic!("package.json must be static");
+            };
+            if body.contains(SDK_PACKAGE) {
+                continue; // it declares one; the pin test above covers it
+            }
+            assert!(
+                matches!(
+                    with_sdk_version("package.json", body, "9.9.9"),
+                    Cow::Borrowed(_)
+                ),
+                "{fw}: a body with no SDK dependency must be returned untouched"
+            );
         }
     }
 

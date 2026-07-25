@@ -132,8 +132,9 @@ pub use fuzzy_discovery::{score_to_bp, FuzzyDiscoveryView, FuzzyHitEntry};
 pub use hosted_scaffold::{
     authored_role as hosted_authored_role, build_command_args, dev_command_args,
     entry_path as hosted_entry_path, preview_command_args, template as hosted_template,
-    template_paths as hosted_template_paths, FileSource as HostedFileSource,
-    TemplateFile as HostedTemplateFile,
+    template_paths as hosted_template_paths, with_sdk_version as hosted_with_sdk_version,
+    FileSource as HostedFileSource, TemplateFile as HostedTemplateFile,
+    SDK_PACKAGE as HOSTED_SDK_PACKAGE, SDK_UNPINNED_RANGE as HOSTED_SDK_UNPINNED_RANGE,
 };
 pub use hosted_view::{HostedAppSupervisor, HostedServeMode, HostedState, HostedStatus};
 pub use locks_view::{LockStore, LOCKED_BRANCH_REFUSAL_CODE};
