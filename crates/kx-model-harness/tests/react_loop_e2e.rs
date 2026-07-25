@@ -999,16 +999,18 @@ impl McpTransport for FailingTransport {
 }
 
 #[test]
-fn tool_dispatch_failure_dead_letters_and_loop_returns() {
-    // **F4 — the regression this PR fixes.** The model proposes a tool call, but the
-    // MCP transport is hard-down. The observation Mote is a WM `StageThenCommit`, so
-    // its commit protocol stages `EffectStaged` BEFORE the (failing) broker dispatch.
-    // PRE-FIX, the budget-exhausted dead-letter was written as `TimedOut` (a
-    // pre-commit-crash), which under `EffectStaged` stayed re-dispatchable forever →
-    // `run_with_seams` SPUN (the original test hung 60s+ and was removed). POST-FIX
-    // the dead-letter is the terminal `DeadLettered`, so the engine RETURNS, the
-    // driver sees the non-committed observation, and the loop stops cleanly with
-    // `ReactStop::DeadLettered`.
+fn tool_dispatch_failure_reprompts_and_the_model_recovers() {
+    // The model proposes a tool call, but the MCP transport is hard-down. The agent is
+    // TOLD the tool failed and takes another turn — here it answers instead, which is
+    // the whole point: one unusable capability no longer ends an otherwise healthy run.
+    //
+    // **F4 — the invariant this test has always really guarded, and still does.** The
+    // observation Mote is a WM `StageThenCommit`, so its commit protocol stages
+    // `EffectStaged` BEFORE the (failing) broker dispatch. Written as a pre-commit
+    // crash it would stay re-dispatchable forever and `run_with_seams` would SPIN. It
+    // is the terminal `DeadLettered`, so the engine RETURNS, the observation stays
+    // terminally Failed, and it is NEVER re-dispatched. Continuing the CHAIN does not
+    // retry the failed OBSERVATION — that distinction is what keeps exactly-once.
     //
     // We run the drive on a worker thread with a HARD 10s deadline so a regression of
     // the F4 spin FAILS CI (a timeout) rather than hanging the whole suite.
@@ -1019,10 +1021,9 @@ fn tool_dispatch_failure_dead_letters_and_loop_returns() {
             dir.path(),
             vec![
                 envelope("mcp-tool", "1", "investigate"),
-                // A fallback final answer — it must NOT be reached (the loop stops at
-                // the dead-letter), but a script entry guards against an accidental
-                // extra turn silently exhausting the script.
-                b"fallback answer (should be unreached)".to_vec(),
+                // The recovery turn: told the tool failed, the model answers instead.
+                // Pre-fix this was unreachable — the loop died on the failed dispatch.
+                b"the tool was unavailable, answering from what I have".to_vec(),
             ],
             Box::new(FailingTransport),
             &warrant_granting(),
@@ -1058,16 +1059,19 @@ fn tool_dispatch_failure_dead_letters_and_loop_returns() {
 
     assert_eq!(
         stop,
-        ReactStop::DeadLettered,
-        "a failed tool dispatch dead-letters the observation and stops the loop"
+        ReactStop::Answered,
+        "told the tool failed, the agent takes another turn and answers — one unusable \
+         capability does not end the run"
     );
     assert_eq!(
-        tool_calls, 0,
-        "a dead-lettered observation is NOT counted as a successful tool call"
+        tool_calls, 1,
+        "the failed attempt SPENDS its budget — else a permanently broken tool could be \
+         re-proposed for free until the turn budget ran out"
     );
     assert!(
         failed >= 1,
-        "the observation Mote dead-lettered (terminal Failed), not committed"
+        "the observation Mote is terminally Failed and is NEVER re-dispatched — the \
+         chain continued, the effect did not"
     );
     assert!(
         total < 25,

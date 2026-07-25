@@ -2190,13 +2190,19 @@ async fn ungranted_proposal_rejects_and_re_prompts() {
     );
 }
 
-/// A TOOL-EXECUTION failure (the worker F4 dead-letters the OBSERVATION — an
-/// MCP error / non-resolvable tool) freezes a same-turn `DeadLettered` fact and
-/// settles the chain: the harness fail-closed stop ("tool dispatch did not
-/// commit — stopping the loop", `react.rs`) — a non-existent observation is
-/// never fed into a next turn's assemble.
+/// A TOOL-EXECUTION failure (the worker F4 dead-letters the OBSERVATION — an MCP
+/// error / a capability that cannot serve this run) freezes a same-turn `Rejected`
+/// fact and the chain RE-PROMPTS, exactly as a decode-time refusal does.
+///
+/// This used to dead-letter the chain. The two guards that mattered then still hold
+/// and are asserted below — the failed observation is never re-fired, and a
+/// non-existent observation is never fed into the next turn's assemble (the turn's
+/// latest branch is `Rejected`, and only `Tool`/`ToolBatch` branches contribute an
+/// observation to the trajectory). What changed is that one unusable tool no longer
+/// ends an otherwise healthy run, and the model is told why so it can choose
+/// differently.
 #[tokio::test]
-async fn failed_observation_dead_letters_the_chain_same_turn() {
+async fn failed_observation_rejects_the_turn_and_the_chain_reprompts() {
     let dir = TempDir::new().unwrap();
     let (svc, store) = coordinator(&dir);
     let w = warrant(true);
@@ -2217,19 +2223,139 @@ async fn failed_observation_dead_letters_the_chain_same_turn() {
     .await
     .unwrap();
 
-    let facts = react_facts(&svc, &dir).await;
-    assert_eq!(facts.len(), 3, "anchor + Tool + the same-turn DeadLettered");
-    assert!(matches!(
-        facts.last().unwrap(),
-        JournalEntry::ReactRound {
-            turn: 0,
-            branch: ReactBranch::DeadLettered,
-            ..
+    // The drive loop advances at most ONE step per pass, so the re-prompted turn opens on
+    // a later pass than the refusal. Drive it deterministically rather than reading one
+    // snapshot and hoping — a single read passes or fails on machine timing, which is a
+    // flaky test, not a proof.
+    let mut leased_ids: Vec<Vec<u8>> = Vec::new();
+    let mut facts = react_facts(&svc, &dir).await;
+    for _ in 0..8 {
+        if facts.iter().any(|f| {
+            matches!(
+                f,
+                JournalEntry::ReactRound {
+                    turn: 1,
+                    branch: ReactBranch::Pending,
+                    ..
+                }
+            )
+        }) {
+            break;
         }
-    ));
+        leased_ids.extend(
+            common::lease_work(&svc, worker, MAC, 16)
+                .await
+                .into_iter()
+                .filter_map(|w| w.mote.map(|m| m.mote_id)),
+        );
+        facts = react_facts(&svc, &dir).await;
+    }
+
+    // The turn is REFUSED, not the chain killed — and the reason names the tool so the
+    // re-prompt can steer the model somewhere else.
     assert!(
-        common::lease_work(&svc, worker, MAC, 16).await.is_empty(),
-        "the chain is dead — no next turn, no re-fire"
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound { turn: 0, branch: ReactBranch::Rejected { reason }, .. }
+                if reason.contains("did not complete")
+        )),
+        "a failed observation freezes a same-turn Rejected carrying the reason: {facts:#?}"
+    );
+    assert!(
+        !facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::DeadLettered,
+                ..
+            }
+        )),
+        "one failed tool must not dead-letter the chain"
+    );
+    // The chain re-prompts: turn 1 opens.
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                turn: 1,
+                branch: ReactBranch::Pending,
+                ..
+            }
+        )),
+        "the chain re-prompts the next turn: {facts:#?}"
+    );
+    // THE EXACTLY-ONCE GUARD: across EVERY lease the continuing chain handed out, the
+    // failed observation is never among them. The effect fired at most once and the
+    // chain carrying on does not retry it.
+    leased_ids.extend(
+        common::lease_work(&svc, worker, MAC, 16)
+            .await
+            .into_iter()
+            .filter_map(|w| w.mote.map(|m| m.mote_id)),
+    );
+    assert!(
+        !leased_ids.iter().any(|id| id == obs.id.as_bytes()),
+        "the failed observation must NEVER be re-leased — that would double-fire it"
+    );
+}
+
+/// THE EXACTLY-ONCE GUARD for the re-prompt above: after a tool's observation FAILED,
+/// re-proposing the IDENTICAL call is still refused as a duplicate.
+///
+/// This is what makes continuing the chain safe. The failed observation is never
+/// re-dispatched, so its effect fired at most once — but the model gets another turn,
+/// and a model that simply repeats itself would fire the same effect twice. The dedup
+/// guard closes that, and it only works because `collect_prior_fired_calls` counts a
+/// turn's FIRING fact even though the `Rejected` fact supersedes it. Select the latest
+/// fact of any kind instead and this test fails — the call vanishes from the dedup set
+/// and the identical re-fire is admitted.
+#[tokio::test]
+async fn an_identical_call_is_still_refused_after_its_observation_failed() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &turn0, &w, TOOL_ENVELOPE, worker).await;
+
+    // Turn 0 fired, and the tool failed to run.
+    let (obs, _args) = lease_observation(&svc, worker, &turn0).await;
+    common::report_failure(
+        &svc,
+        &obs,
+        worker,
+        kx_coordinator::proto::FailureReason::DeadLettered,
+    )
+    .await
+    .unwrap();
+
+    // Turn 1 opens; the model repeats the EXACT same call. The drive loop advances at
+    // most one step per pass, so the re-prompted turn materializes on a later pass.
+    let mut turn1: Option<Mote> = None;
+    for _ in 0..8 {
+        if let Some(m) = common::lease_work(&svc, worker, MAC, 16)
+            .await
+            .into_iter()
+            .find_map(|w| w.mote)
+        {
+            turn1 = Some(m.try_into().unwrap());
+            break;
+        }
+    }
+    let turn1 = turn1.expect("turn 1 is leasable after the re-prompt");
+    commit_raw(&svc, &store, &turn1, &w, TOOL_ENVELOPE, worker).await;
+
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound { turn: 1, branch: ReactBranch::Rejected { reason }, .. }
+                if kx_toolcall::is_duplicate_reason(reason)
+        )),
+        "repeating a call whose observation failed must be refused as a duplicate, \
+         never fired a second time: {facts:#?}"
     );
 }
 

@@ -975,6 +975,52 @@ pub const fn is_pre_commit_crash(reason: FailureReason) -> bool {
     )
 }
 
+/// The refusal reason a ReAct turn freezes when its tool RAN and failed — the
+/// dispatch-time counterpart of the decode-time `decode_error_reason`.
+///
+/// **Lives here because two drivers must render it identically.** The served
+/// coordinator and the single-node harness each own a copy of the ReAct loop, and both
+/// must re-prompt with byte-identical text: the reason folds into the re-prompted turn's
+/// `MoteId`, so two spellings would give the same chain two identities depending on
+/// which driver ran it. Keyed on [`FailureReason`], which this crate owns — the same
+/// reason [`is_pre_commit_crash`] lives here.
+///
+/// Deterministic in its inputs and nothing else: no timestamp, no OS error number, no
+/// address, so a cold re-fold re-derives the same string. The phrasing steers the model
+/// toward a DIFFERENT action rather than a retry, because repeating the identical call
+/// is refused by the duplicate-call guard anyway.
+#[must_use]
+pub fn observation_failure_reason(
+    tool_id: &str,
+    tool_version: &str,
+    reason: Option<FailureReason>,
+) -> String {
+    let detail = match reason {
+        Some(FailureReason::ExecutorRefused) => "the runtime refused to dispatch it",
+        Some(FailureReason::UnsafeWorldMutatingConstruction) => {
+            "the runtime refused it as an unsafe world-mutating construction"
+        }
+        Some(FailureReason::ValidatorRejected) => "its result failed validation",
+        Some(FailureReason::UpstreamRepudiated) => "an input it depended on was withdrawn",
+        Some(FailureReason::CompensatedAtLeastOnce) => {
+            "it could not be completed safely and was rolled back"
+        }
+        Some(FailureReason::QuarantinedAtLeastOnce) => {
+            "it could not be completed safely and was quarantined for review"
+        }
+        // `DeadLettered` is the ordinary dispatch failure (a transient infrastructure
+        // error that exhausted its retries, or a terminal-logic failure) and is what a
+        // capability that cannot serve this run reports — an unbound dataset, an
+        // unreachable server. That is exactly the case worth surviving.
+        _ => "it failed to run",
+    };
+    format!(
+        "the tool `{tool_id}@{tool_version}` was called but did not complete — {detail}. \
+         Do not call it again with the same arguments; use a different tool or different \
+         arguments, or answer with what you already have."
+    )
+}
+
 // ---------------------------------------------------------------------------
 // ParentEntry (the on-disk per-parent shape, D19 / journal-entry.md §5)
 // ---------------------------------------------------------------------------
