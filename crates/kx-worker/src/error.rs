@@ -69,11 +69,14 @@ pub enum WorkerError {
 
     /// A leased WORLD-MUTATING / READ-ONLY-NONDET effect (tool / MCP / IO)
     /// exceeded the operator-set per-Mote wall-clock deadline (`KX_SERVE_TOOL_DEADLINE_SECS`,
-    /// default OFF). The in-flight dispatch future is cancelled — equivalent to a
-    /// mini-crash of that one Mote, made safe by the broker's idempotency-key dedup +
-    /// the R-13 re-dispatch guard on any retry. Classified TRANSIENT so it retries
-    /// within the F4 budget, then dead-letters (a persistently-hung tool never pins a
-    /// pool worker's slot forever). Off-journal: a live wall-clock check, never a fact.
+    /// default OFF). The dispatch is ABANDONED — the worker stops waiting and takes its
+    /// slot back — made safe by the broker's idempotency-key dedup, the R-13 re-dispatch
+    /// guard, and [`Self::EffectStillInFlight`]. Classified TRANSIENT so it retries within
+    /// the F4 budget, then dead-letters (a persistently-hung tool never pins a worker's
+    /// slot forever). Off-journal: a live wall-clock check, never a fact.
+    ///
+    /// Abandoned is not cancelled: a blocking capability call cannot be interrupted from
+    /// outside, so the effect is still running when this is raised.
     #[error("mote {0:?} exceeded the per-Mote execution deadline")]
     ExecutionTimedOut(kx_mote::MoteId),
 

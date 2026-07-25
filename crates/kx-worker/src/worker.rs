@@ -98,12 +98,18 @@ pub struct Worker {
     /// whose executor does not assemble — its dispatch is byte-identical to pre-F-7.
     context_sink: Option<Arc<dyn ContextSink>>,
     /// Optional per-Mote wall-clock deadline for a WORLD-MUTATING / READ-ONLY-
-    /// NONDET effect (tool / MCP / IO) dispatch. `None` (the default) ⇒ no timeout wrap
-    /// ⇒ byte-identical to the prior default. `Some(d)` ⇒ a dispatch exceeding `d` is cancelled
-    /// and surfaced as the TRANSIENT `ExecutionTimedOut` (retried within the F4 budget,
-    /// then dead-lettered), so a hung external tool never pins a pool worker's slot
-    /// forever. In-memory + off the truth path (like `attempts`); a restart resets it
-    /// harmlessly. Set by the gateway from `KX_SERVE_TOOL_DEADLINE_SECS`.
+    /// NONDET effect (tool / MCP / IO) dispatch. `None` (the default) ⇒ no timeout wrap.
+    /// `Some(d)` ⇒ a dispatch exceeding `d` is ABANDONED and surfaced as the TRANSIENT
+    /// `ExecutionTimedOut` (retried within the F4 budget, then dead-lettered), so a hung
+    /// external tool never pins a worker's slot forever. In-memory + off the truth path
+    /// (like `attempts`); a restart resets it harmlessly. Set by the gateway from
+    /// `KX_SERVE_TOOL_DEADLINE_SECS`.
+    ///
+    /// **Abandoned, not cancelled** — a blocking capability call cannot be interrupted
+    /// from outside, so the effect keeps running on its own thread and only the slot comes
+    /// back. `inflight` is what stops the retry from firing it a second time. (Before the
+    /// effect queue this deadline could not fire at all: `tokio::time::timeout` polls its
+    /// inner future first, and a synchronous dispatch offered no await point.)
     tool_deadline: Option<Duration>,
     /// The serve's shared cross-run work cache (opt-in, `KX_FLAG_SERVE_WORK_CACHE`).
     /// `None` (default) ⇒ every PURE Mote is computed, byte-identical to the pre-cache
@@ -133,7 +139,12 @@ enum ItemOutcome {
     Failed(MoteId, WorkerError),
     /// A batch-level fault — a rejected commit or a transport/RPC error on the
     /// propose call. Matches the pre-queue `?` behaviour: the round ends with this error.
-    Fatal(WorkerError),
+    ///
+    /// Carries the `MoteId` because both cases arise only AFTER the Mote executed
+    /// cleanly, and the pre-queue loop cleared the retry counter on execution success
+    /// rather than on commit acceptance. Without the id here, a Mote that had earlier
+    /// transient failures would carry a stale count past a clean run.
+    Fatal(MoteId, WorkerError),
 }
 
 /// Everything one batch item needs to run independently of `&mut self`. All fields are
@@ -387,7 +398,10 @@ impl Worker {
                     committed += 1;
                 }
                 Ok(ItemOutcome::Failed(mote_id, error)) => failures.push((mote_id, error)),
-                Ok(ItemOutcome::Fatal(error)) => {
+                Ok(ItemOutcome::Fatal(mote_id, error)) => {
+                    // The Mote ran cleanly — only its commit proposal failed — so its
+                    // retry counter clears exactly as it did pre-queue.
+                    succeeded.push(mote_id);
                     // Keep the FIRST fatal and keep draining, so the siblings that already
                     // committed are still counted and their leases are not left dangling.
                     fatal.get_or_insert(error);
@@ -694,7 +708,7 @@ async fn run_item(
         Ok(response) => response,
         // A transport/RPC error on the propose call is batch-level, matching the
         // pre-queue `?`.
-        Err(error) => return ItemOutcome::Fatal(error),
+        Err(error) => return ItemOutcome::Fatal(mote.id, error),
     };
 
     match proto::CommitOutcome::try_from(response.outcome) {
@@ -707,7 +721,7 @@ async fn run_item(
             );
             ItemOutcome::Committed(mote.id)
         }
-        _ => ItemOutcome::Fatal(WorkerError::CommitRejected(response.detail)),
+        _ => ItemOutcome::Fatal(mote.id, WorkerError::CommitRejected(response.detail)),
     }
 }
 
