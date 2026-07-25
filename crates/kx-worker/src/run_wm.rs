@@ -24,6 +24,8 @@
 //! is glue over the broker trait, not an engine fork: `kx-executor` source is
 //! untouched (the P2 thesis test holds).
 
+use std::sync::Arc;
+
 use kx_capability::{
     idempotency_token_for, run_scoped_token, CapabilityBroker, EffectRequest, INSTANCE_ID_LEN,
 };
@@ -33,10 +35,24 @@ use kx_warrant::{FsScope, NetScope, ToolGrant, WarrantSpec};
 
 use crate::client::WorkerClient;
 use crate::error::WorkerError;
+use crate::inflight::InFlightEffects;
 
 /// Drive stage→fire for a non-PURE Mote and return the staged `result_ref` to
 /// PROPOSE via `ReportCommit`. Async because `ReportEffectStaged` is an RPC; the
 /// broker's `dispatch` is the trait's synchronous method.
+///
+/// **EFFECT-QUEUE:** that synchronous dispatch runs on [`tokio::task::spawn_blocking`], not on
+/// the caller's async task. `Capability::invoke` fronts a blocking round-trip by design
+/// (`kx-mcp` hand-rolls a synchronous client precisely to avoid a nested-runtime
+/// `block_on`), so calling it inline pinned a tokio runtime thread for the whole effect
+/// and left `tokio::time::timeout` — which polls its inner future first — with no await
+/// point at which to observe an elapsed deadline. Off-loading it makes ready Motes
+/// genuinely concurrent AND makes the deadline real. The trait stays synchronous: no
+/// `Capability` impl changes, and `kx-capability` keeps its no-tokio dependency posture.
+///
+/// `inflight` refuses a re-dispatch while an ABANDONED dispatch of the same Mote is
+/// still running — `spawn_blocking` cannot be cancelled, so a timed-out effect is still
+/// executing when the coordinator re-offers its Mote (see [`crate::inflight`]).
 ///
 /// `instance_id` is the registered run (M1.2/D64): when `Some`, the cross-boundary
 /// idempotency token is run-scoped (`run_scoped_token`), so the same Mote in a
@@ -52,20 +68,29 @@ use crate::error::WorkerError;
 /// warrant and whose pattern is `StageThenCommit` (the observation shape) but
 /// that carries NO args is REFUSED (`MissingToolArgs`, terminal) — the worker
 /// never fires a granted tool with an empty payload.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_wm(
     client: &mut WorkerClient,
-    broker: &dyn CapabilityBroker,
+    broker: Arc<dyn CapabilityBroker>,
     mote: &Mote,
     warrant: &WarrantSpec,
     worker_id: u64,
     instance_id: Option<[u8; INSTANCE_ID_LEN]>,
     tool_args: Option<(Vec<u8>, NetScope, FsScope)>,
+    inflight: &InFlightEffects,
 ) -> Result<ContentRef, WorkerError> {
     let capability = resolve_capability(mote)?;
     if tool_args.is_none() && requires_tool_args(mote, warrant, &capability) {
         return Err(WorkerError::MissingToolArgs(mote.id));
     }
     let request = effect_request_for(mote, instance_id, tool_args);
+
+    // Refuse BEFORE staging: an abandoned dispatch of this same Mote is still running,
+    // so firing again would risk a double effect. Claimed here rather than inside the
+    // blocking closure so the refusal costs no `ReportEffectStaged` round-trip.
+    let Some(guard) = inflight.claim(mote.id) else {
+        return Err(WorkerError::EffectStillInFlight(mote.id));
+    };
 
     // Stage the intent durably BEFORE firing (StageThenCommit only). Await the ack:
     // `report_effect_staged` returns `Err(EffectStagedRejected)` if the coordinator
@@ -75,7 +100,22 @@ pub(crate) async fn run_wm(
         client.report_effect_staged(id, id, worker_id).await?;
     }
 
-    let handle = broker.dispatch(mote, warrant, &capability, request)?;
+    // Fire OFF the async task. The clones are what `spawn_blocking`'s `'static` bound
+    // costs; a `Mote` is a small owned struct and a `WarrantSpec` a handful of scope
+    // sets, both dwarfed by the effect itself. `guard` rides INTO the closure so the
+    // in-flight claim is released when the effect truly ends — including when the
+    // caller has already given up on it.
+    let mote_id = mote.id;
+    let dispatch_mote = mote.clone();
+    let dispatch_warrant = warrant.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        broker.dispatch(&dispatch_mote, &dispatch_warrant, &capability, request)
+    })
+    .await
+    // A panic inside a capability leaves the world in an unknown state — the effect may
+    // have half-applied — so this is TERMINAL, never a retry. Fail closed.
+    .map_err(|_| WorkerError::DispatchPanicked(mote_id))??;
     Ok(handle.staged_ref)
 }
 

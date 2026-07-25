@@ -813,6 +813,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     } else {
         None
     };
+    let effect_concurrency = crate::env_caps::resolve_effect_concurrency();
     let mut worker_tasks: Vec<JoinHandle<()>> = Vec::with_capacity(worker_pool);
     let mut heartbeat_tasks: Vec<JoinHandle<()>> = Vec::with_capacity(worker_pool);
     for i in 0..worker_pool {
@@ -838,6 +839,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         // default OFF ⇒ None ⇒ byte-identical) so a stuck external tool cannot pin this
         // pool worker's slot forever.
         let worker = worker.with_tool_deadline(crate::env_caps::tool_deadline());
+        // EFFECT-QUEUE: the bounded effect queue's width. Each worker runs this many of its
+        // leased Motes at once instead of one at a time, so a slow tool or MCP call no
+        // longer head-of-line-blocks every other ready Mote — including Motes from other
+        // runs on the same serve. Override with `KX_SERVE_EFFECT_CONCURRENCY`; `1` is the
+        // pre-queue sequential batch.
+        let worker = worker.with_effect_concurrency(effect_concurrency);
         // Share the ONE per-serve work cache with every pooled worker (None ⇒ byte-identical).
         let worker = worker.with_work_cache(work_cache.clone());
         // Keep each idle worker live in the registry (background heartbeat) so a run

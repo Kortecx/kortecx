@@ -76,6 +76,24 @@ pub enum WorkerError {
     /// pool worker's slot forever). Off-journal: a live wall-clock check, never a fact.
     #[error("mote {0:?} exceeded the per-Mote execution deadline")]
     ExecutionTimedOut(kx_mote::MoteId),
+
+    /// EFFECT-QUEUE: this Mote's effect dispatch was ABANDONED by the per-Mote deadline and is
+    /// **still running** on its blocking thread (`spawn_blocking` cannot be cancelled —
+    /// dropping the `JoinHandle` abandons the result, not the work). Re-firing now would
+    /// risk a double effect, so the worker refuses and leaves the Mote leasable.
+    ///
+    /// Deliberately NOT counted against the F4 retry budget (see `handle_execution_failure`):
+    /// this is back-pressure on a Mote whose effect may well be succeeding, not evidence
+    /// that the Mote is failing. Off the truth path; a restart clears it, because a
+    /// restart also destroys the orphaned thread it was tracking.
+    #[error("mote {0:?} has an abandoned effect still in flight; refusing to re-dispatch")]
+    EffectStillInFlight(kx_mote::MoteId),
+
+    /// The blocking task carrying this Mote's effect panicked. The world is in an
+    /// unknown state (the effect may have half-applied), so this is TERMINAL — the Mote
+    /// dead-letters rather than re-firing.
+    #[error("the effect dispatch for mote {0:?} panicked")]
+    DispatchPanicked(kx_mote::MoteId),
 }
 
 impl From<kx_capability::BrokerError> for WorkerError {
@@ -138,6 +156,9 @@ pub(crate) fn classify_worker_failure(err: &WorkerError) -> FailureClass {
         | WorkerError::EffectStagedRejected(_)
         | WorkerError::ContentMissing(_)
         | WorkerError::ExecutionTimedOut(_)
+        // EFFECT-QUEUE: an abandoned-but-live effect. Transient by nature; `handle_execution_failure`
+        // additionally exempts it from the retry BUDGET (it is back-pressure, not failure).
+        | WorkerError::EffectStillInFlight(_)
         | WorkerError::Transport(_)
         | WorkerError::Rpc(_) => TransientInfra,
         // Everything else is deterministic — a malformed lease item, an unresolvable
@@ -149,6 +170,8 @@ pub(crate) fn classify_worker_failure(err: &WorkerError) -> FailureClass {
         | WorkerError::CapabilityResolution(_)
         | WorkerError::MissingToolArgs(_)
         | WorkerError::CommitRejected(_)
+        // EFFECT-QUEUE: a panicked effect leaves the world in an unknown state — never re-fire.
+        | WorkerError::DispatchPanicked(_)
         | WorkerError::NotCommitted(_) => TerminalLogic,
     }
 }

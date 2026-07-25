@@ -11,16 +11,36 @@ use kx_mote::{ConfigKey, Mote, MoteId, NdClass, REACT_TURN_KEY, RERANK_TURN_KEY}
 use kx_proto::proto;
 use kx_warrant::{ExecutorClass, WarrantSpec};
 use kx_work_cache::WorkCache;
-use tokio::task::JoinHandle;
+use tokio::sync::Semaphore;
+use tokio::task::{JoinHandle, JoinSet};
 
 use crate::client::WorkerClient;
 use crate::context_sink::ContextSink;
 use crate::error::{classify_worker_failure, FailureClass, WorkerError};
+use crate::inflight::InFlightEffects;
 use crate::read_model::ReadModel;
 use crate::{commit_builder, run, run_wm};
 
 /// `ReadEntries` page size when folding the local read model.
 const READ_PAGE: u32 = 256;
+
+/// How many of a lease batch's Motes a single worker runs **concurrently** (EFFECT-QUEUE).
+///
+/// The ONE definition of this constant in the workspace: the gateway resolves its
+/// operator knob against this value rather than restating it, so the two can never
+/// disagree.
+///
+/// Before this change the batch was a sequential `for` loop, which made one slow tool or MCP
+/// call head-of-line-block every other ready Mote — including Motes belonging to other
+/// runs on the same serve. The items in one batch are provably independent: the
+/// coordinator leases from *"Pending, parents committed"*, so a parent and its child can
+/// never share a batch, and the per-Mote stage→fire→commit ordering is preserved inside
+/// each item's own pipeline.
+///
+/// The default is deliberately **greater than one**. Shipping the queue at width 1 would
+/// leave the mechanism configured but never invoked — the defect this change exists to
+/// remove would still be live on every default serve.
+pub const DEFAULT_EFFECT_CONCURRENCY: usize = 8;
 
 /// How many times the worker retries a Mote whose execution fails *transiently*
 /// before giving up and dead-lettering it (F4). A *terminal* failure (a deterministic
@@ -48,7 +68,11 @@ pub struct Worker {
     id: u64,
     executor_class: ExecutorClass,
     executor: Arc<dyn MoteExecutor>,
-    resource_manager: LocalResourceManager,
+    /// Behind an `Arc` since EFFECT-QUEUE so concurrently-running batch items share one
+    /// accounting view. `LocalResourceManager` is already internally `Arc<Mutex<_>>`, so
+    /// its caps now bound the batch as a whole rather than one Mote at a time — which is
+    /// what a resource ceiling was always supposed to mean.
+    resource_manager: Arc<LocalResourceManager>,
     store: SharedStore,
     /// Fires WORLD-MUTATING / READ-ONLY-NONDET effects (P3.6b, D58): staging the
     /// response bytes into the shared `store` (data plane). PURE Motes never touch it.
@@ -88,6 +112,44 @@ pub struct Worker {
     /// freshly-computed PURE result is populated. WorldMutating work is never cached
     /// (the executor read hook is PURE-only). Off the truth path.
     work_cache: Option<Arc<dyn WorkCache>>,
+    /// EFFECT-QUEUE: how many of a lease batch's Motes this worker runs concurrently. See
+    /// [`DEFAULT_EFFECT_CONCURRENCY`]. `1` reproduces the pre-queue sequential batch.
+    effect_concurrency: usize,
+    /// EFFECT-QUEUE: Motes whose effect dispatch was abandoned by the per-Mote deadline and is
+    /// still running. A re-lease of one is REFUSED rather than re-fired — `spawn_blocking`
+    /// cannot be cancelled, so the abandoned effect is still live. See [`crate::inflight`].
+    inflight: InFlightEffects,
+}
+
+/// What one item of a lease batch produced. Returned by each concurrently-driven item so
+/// the batch driver can apply retry accounting and dead-lettering **sequentially** after
+/// the join — those touch `&mut self` and are cheap, so there is nothing to gain from
+/// racing them.
+enum ItemOutcome {
+    /// The coordinator accepted this Mote's commit proposal.
+    Committed(MoteId),
+    /// A per-Mote execution failure (F4): classified, then either dead-lettered or left
+    /// for a bounded retry. Never aborts the batch.
+    Failed(MoteId, WorkerError),
+    /// A batch-level fault — a rejected commit or a transport/RPC error on the
+    /// propose call. Matches the pre-queue `?` behaviour: the round ends with this error.
+    Fatal(WorkerError),
+}
+
+/// Everything one batch item needs to run independently of `&mut self`. All fields are
+/// cheap clones (`Arc`s and a tonic `Channel`, which is designed to be cloned and
+/// multiplexes over one connection).
+struct ItemContext {
+    client: WorkerClient,
+    worker_id: u64,
+    executor: Arc<dyn MoteExecutor>,
+    resource_manager: Arc<LocalResourceManager>,
+    store: SharedStore,
+    broker: Arc<dyn CapabilityBroker>,
+    work_cache: Option<Arc<dyn WorkCache>>,
+    tool_deadline: Option<Duration>,
+    inflight: InFlightEffects,
+    permits: Arc<Semaphore>,
 }
 
 impl Worker {
@@ -119,7 +181,7 @@ impl Worker {
             id,
             executor_class,
             executor,
-            resource_manager,
+            resource_manager: Arc::new(resource_manager),
             store,
             broker,
             read_model: ReadModel::new(),
@@ -129,7 +191,19 @@ impl Worker {
             context_sink: None,
             tool_deadline: None,
             work_cache: None,
+            effect_concurrency: DEFAULT_EFFECT_CONCURRENCY,
+            inflight: InFlightEffects::default(),
         })
+    }
+
+    /// Set how many of a lease batch's Motes this worker runs concurrently (EFFECT-QUEUE).
+    /// Values below `1` are raised to `1`; `1` reproduces the pre-queue sequential batch
+    /// exactly. The gateway resolves this from its operator knob; direct embedders get
+    /// [`DEFAULT_EFFECT_CONCURRENCY`].
+    #[must_use]
+    pub fn with_effect_concurrency(mut self, concurrency: usize) -> Self {
+        self.effect_concurrency = concurrency.max(1);
+        self
     }
 
     /// Attach the serve's shared cross-run [`WorkCache`] (opt-in). `None` ⇒
@@ -197,6 +271,23 @@ impl Worker {
     /// hosted executor; non-PURE stages-then-fires via the broker, P3.6b/D58), and
     /// propose its commit. Returns the number of commits the coordinator accepted
     /// this round (0 when no ready work matches).
+    ///
+    /// **EFFECT-QUEUE — the batch is a bounded effect QUEUE, not a sequential loop.** Up to
+    /// [`Self::with_effect_concurrency`] items run at once, each driving its own
+    /// stage→fire→commit chain. What makes that safe:
+    ///
+    /// - the coordinator leases only from *"Pending, parents committed"*, so a batch's
+    ///   items are **mutually independent** — a parent and its child can never share one;
+    /// - **stage→fire ordering (D58 §2) is per-Mote** and stays inside each item's own
+    ///   pipeline; it never constrained cross-Mote order;
+    /// - the coordinator remains the sole journal writer, so commits are serialized
+    ///   there — nothing about the wire, the journal or the digest changes;
+    /// - executor context is delivered **for the whole batch before any item runs**, and
+    ///   the sink is keyed by `MoteId` (the pre-queue single slot relied on this loop
+    ///   being sequential, which was already untrue under `--workers > 1`).
+    ///
+    /// Retry accounting and dead-lettering happen after the join, sequentially — they
+    /// need `&mut self` and are cheap.
     #[allow(clippy::too_many_lines)]
     pub async fn run_once(&mut self) -> Result<usize, WorkerError> {
         let (items, instance_id_bytes) = self
@@ -219,7 +310,11 @@ impl Worker {
             let _ = self.client.heartbeat(self.id, now_ms(), in_flight).await;
         }
 
-        let mut committed = 0usize;
+        // The bounded effect queue. Every item is admitted through one semaphore, so a
+        // large lease can never open more concurrent effects than the operator allowed.
+        let permits = Arc::new(Semaphore::new(self.effect_concurrency));
+        let mut running: JoinSet<ItemOutcome> = JoinSet::new();
+
         for item in items {
             let mote: Mote = item
                 .mote
@@ -232,6 +327,8 @@ impl Worker {
 
             // F-7 (assemble-into-serve): hand the executor this Mote's out-of-band
             // context BEFORE dispatch (the frozen `MoteExecutor::run` carries no snapshot).
+            // Delivered for the WHOLE batch up front, which is sound because the sink is
+            // keyed by `MoteId`; each item takes its own entry when it runs.
             self.deliver_executor_context(
                 mote.id,
                 &item.parent_results,
@@ -239,112 +336,80 @@ impl Worker {
                 &item.image_ref,
             );
 
-            // PURE recomputes locally through the hosted executor (verbatim, D40 — a
-            // throwaway journal). Non-PURE (WORLD-MUTATING / READ-ONLY-NONDET) drives
-            // stage→fire→commit via RPCs + the broker (P3.6b, D58 §4): the worker is not
-            // the journal writer, so it cannot run `run_wm_mote`. Either path yields the
-            // `result_ref` (= the broker's `staged_ref` for non-PURE) the worker PROPOSES.
-            //
-            // F4: a per-Mote execution failure must NOT `?`-abort the whole batch — that
-            // discards the rest of the lease AND re-leases the failing Mote forever (the
-            // spin PR-9b's startup probe only narrowly patched). Instead classify it:
-            // a terminal failure dead-letters now; a transient one retries within
-            // `WORKER_MAX_ATTEMPTS`, then dead-letters. Either way we `continue` to the
-            // next item. Transport/RPC errors on the lease/commit calls stay batch-level.
-            let exec = if mote.nd_class() == NdClass::Pure {
-                run::run_pure(
-                    &mote,
-                    &warrant,
-                    &*self.executor,
-                    &self.resource_manager,
-                    self.work_cache.as_deref(),
-                    Some(&*self.store),
-                )
-            } else if dispatches_through_executor(&mote) {
-                // PR-2d-2: a coordinator-materialized ReAct TURN (the identity-
-                // bearing marker, NO tool_contract) is a prompt-carrying ROND
-                // model Mote — it dispatches through the hosted EXECUTOR (whose
-                // react arm decodes + fences pre-commit), never the capability
-                // broker (it proposes; the observation Mote fires). Direct
-                // dispatch matches the IdempotentByConstruction pattern.
-                //
-                // T-AGENT2: the opt-in LLM-JUDGE critic is the SAME shape — a ROND
-                // model Mote the executor's `run_judge` arm grades + commits as a
-                // verdict (no broker effect). A *native* critic is `Pure` (caught by
-                // the first arm ⇒ `run_pure`), so `critic_check.is_some()` HERE
-                // uniquely identifies the ReadOnlyNondet judge; the executor routes
-                // both react turns and judges through this direct dispatch.
-                run::run_react_turn(&mote, &warrant, &*self.executor)
-            } else {
-                // PR-2d-2: the coordinator-validated args + egress for a ReAct
-                // observation (`WorkItem.tool_args`) — decoded here, consumed by
-                // `run_wm` into the `EffectRequest`. A malformed wire NetScope
-                // decodes to `None` args, which `run_wm` then REFUSES for a
-                // granted-tool Mote (fail-closed — never fire empty/garbled).
-                let tool_args: Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)> =
-                    item.tool_args.and_then(|ta| {
-                        let net_scope = ta.net_scope?.try_into().ok()?;
-                        // PR-6a/D155 (fs-list): an ABSENT fs_scope decodes to empty
-                        // (an old coordinator / a non-fs tool ⇒ byte-identical).
-                        let fs_scope = ta
-                            .fs_scope
-                            .map(TryInto::try_into)
-                            .transpose()
-                            .ok()
-                            .flatten()
-                            .unwrap_or_default();
-                        Some((ta.args_bytes, net_scope, fs_scope))
-                    });
-                let dispatch = run_wm::run_wm(
-                    &mut self.client,
-                    &*self.broker,
-                    &mote,
-                    &warrant,
-                    self.id,
-                    instance_id,
-                    tool_args,
-                );
-                // Bound a hung tool/MCP/IO dispatch by the optional per-Mote
-                // wall-clock deadline. On timeout the in-flight future is dropped
-                // (cancelled) — equivalent to a mini-crash of this one Mote, kept
-                // exactly-once by the broker's idempotency-key dedup + R-13 on retry —
-                // and surfaced as the TRANSIENT `ExecutionTimedOut` (retried within the
-                // F4 budget, then dead-lettered). `None` ⇒ awaited directly (byte-identical).
-                match self.tool_deadline {
-                    Some(deadline) => match tokio::time::timeout(deadline, dispatch).await {
-                        Ok(result) => result,
-                        Err(_elapsed) => Err(WorkerError::ExecutionTimedOut(mote.id)),
-                    },
-                    None => dispatch.await,
-                }
-            };
-            let result_ref = match exec {
-                Ok(result_ref) => {
-                    self.attempts.remove(&mote.id); // a clean run clears the retry counter
-                    result_ref
-                }
-                Err(error) => {
-                    self.handle_execution_failure(mote.id, &error).await;
-                    continue;
-                }
-            };
-            let request =
-                commit_builder::report_commit_request(&mote, &warrant, result_ref, self.id);
-            let response = self.client.report_commit(request).await?;
+            // PR-2d-2: the coordinator-validated args + egress for a ReAct observation
+            // (`WorkItem.tool_args`) — decoded HERE (one decode site) and consumed by
+            // `run_wm` into the `EffectRequest`. A malformed wire NetScope decodes to
+            // `None` args, which `run_wm` then REFUSES for a granted-tool Mote
+            // (fail-closed — never fire empty/garbled).
+            let tool_args: Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)> =
+                item.tool_args.and_then(|ta| {
+                    let net_scope = ta.net_scope?.try_into().ok()?;
+                    // PR-6a/D155 (fs-list): an ABSENT fs_scope decodes to empty
+                    // (an old coordinator / a non-fs tool ⇒ byte-identical).
+                    let fs_scope = ta
+                        .fs_scope
+                        .map(TryInto::try_into)
+                        .transpose()
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+                    Some((ta.args_bytes, net_scope, fs_scope))
+                });
 
-            match proto::CommitOutcome::try_from(response.outcome) {
-                Ok(proto::CommitOutcome::Committed | proto::CommitOutcome::AlreadyCommitted) => {
-                    tracing::info!(
-                        worker_id = self.id,
-                        seq = response.committed_seq,
-                        mote = ?mote.id,
-                        "commit proposal accepted"
-                    );
-                    self.attempts.remove(&mote.id);
+            let ctx = ItemContext {
+                client: self.client.clone(),
+                worker_id: self.id,
+                executor: Arc::clone(&self.executor),
+                resource_manager: Arc::clone(&self.resource_manager),
+                store: Arc::clone(&self.store),
+                broker: Arc::clone(&self.broker),
+                work_cache: self.work_cache.clone(),
+                tool_deadline: self.tool_deadline,
+                inflight: self.inflight.clone(),
+                permits: Arc::clone(&permits),
+            };
+            running.spawn(run_item(ctx, mote, warrant, instance_id, tool_args));
+        }
+
+        // Collect as items finish — `join_next` yields in COMPLETION order, so a fast
+        // Mote's commit is observed while a slow sibling is still in flight.
+        let mut committed = 0usize;
+        let mut succeeded: Vec<MoteId> = Vec::new();
+        let mut failures: Vec<(MoteId, WorkerError)> = Vec::new();
+        let mut fatal: Option<WorkerError> = None;
+        while let Some(joined) = running.join_next().await {
+            // `in_flight` tracks live work, so it drops per completion rather than all at
+            // once — the D56 placement heartbeat reads it while the batch is draining.
+            self.in_flight.fetch_sub(1, Ordering::Relaxed);
+            match joined {
+                Ok(ItemOutcome::Committed(mote_id)) => {
+                    succeeded.push(mote_id);
                     committed += 1;
                 }
-                _ => return Err(WorkerError::CommitRejected(response.detail)),
+                Ok(ItemOutcome::Failed(mote_id, error)) => failures.push((mote_id, error)),
+                Ok(ItemOutcome::Fatal(error)) => {
+                    // Keep the FIRST fatal and keep draining, so the siblings that already
+                    // committed are still counted and their leases are not left dangling.
+                    fatal.get_or_insert(error);
+                }
+                // A panicked item task is a bug in the worker, not in the Mote. Log and
+                // keep draining: aborting here would strand the siblings' outcomes.
+                Err(join_error) => {
+                    tracing::error!(worker_id = self.id, %join_error, "a batch item task panicked");
+                }
             }
+        }
+        // A clean run clears the retry counter (applied after the join — `attempts` is
+        // `&mut self` state and there is nothing to gain from racing it).
+        for mote_id in succeeded {
+            self.attempts.remove(&mote_id);
+        }
+        for (mote_id, error) in failures {
+            self.handle_execution_failure(mote_id, &error).await;
+        }
+        if let Some(error) = fatal {
+            self.in_flight.store(0, Ordering::Relaxed);
+            return Err(error);
         }
         self.in_flight.store(0, Ordering::Relaxed);
         if in_flight > 0 {
@@ -359,6 +424,11 @@ impl Worker {
     /// AGENTIC-VISION grounding-image ref. ALWAYS set — including empties — so a prior
     /// Mote's context can never leak into this one; malformed/empty refs decode to `None`
     /// (byte-identical to the pre-feature path). A no-op when the executor holds no sink.
+    ///
+    /// **EFFECT-QUEUE:** delivery is keyed by `MoteId` and the sink stores one entry per Mote, so
+    /// the whole batch's context can be delivered before any item runs. The pre-queue sink
+    /// was a single last-write-wins slot whose safety rested on this loop being
+    /// sequential — an argument that `--workers > 1` had already invalidated.
     fn deliver_executor_context(
         &self,
         mote_id: MoteId,
@@ -398,6 +468,18 @@ impl Worker {
     /// lease. Never propagates — the caller `continue`s to the next leased item, so one
     /// Mote's failure can neither abort the batch nor spin the worker.
     async fn handle_execution_failure(&mut self, mote_id: MoteId, error: &WorkerError) {
+        // EFFECT-QUEUE: a refusal to re-dispatch while an ABANDONED effect is still running is
+        // back-pressure, not evidence the Mote is failing — its effect may well be
+        // succeeding right now. Counting it against the F4 budget would dead-letter a
+        // Mote for being slow, so it is exempt: leave it leasable and try again later.
+        if let WorkerError::EffectStillInFlight(_) = error {
+            tracing::debug!(
+                worker_id = self.id,
+                mote = ?mote_id,
+                "an abandoned effect is still in flight; leaving the Mote for a later lease"
+            );
+            return;
+        }
         match classify_worker_failure(error) {
             FailureClass::TerminalLogic => {
                 tracing::warn!(
@@ -496,6 +578,136 @@ impl Worker {
                 }
             }
         })
+    }
+}
+
+/// Drive ONE leased Mote's whole stage → fire → commit chain (EFFECT-QUEUE).
+///
+/// Extracted from the old sequential batch loop verbatim in behaviour; what changed is
+/// that it owns everything it needs, so N of these run concurrently under one semaphore.
+/// The three dispatch arms and their routing rules are unchanged — only where the
+/// blocking work happens moved.
+///
+/// The permit is held for the WHOLE chain, not just the effect: a Mote that has fired is
+/// not finished until its commit is proposed, and releasing early would let the queue run
+/// deeper than the operator asked for.
+async fn run_item(
+    mut ctx: ItemContext,
+    mote: Mote,
+    warrant: WarrantSpec,
+    instance_id: Option<[u8; INSTANCE_ID_LEN]>,
+    tool_args: Option<(Vec<u8>, kx_warrant::NetScope, kx_warrant::FsScope)>,
+) -> ItemOutcome {
+    // The semaphore lives as long as the batch, so acquiring cannot fail; if it somehow
+    // did, refusing to run is the fail-closed direction for a world-mutating effect.
+    let Ok(_permit) = Arc::clone(&ctx.permits).acquire_owned().await else {
+        return ItemOutcome::Failed(mote.id, WorkerError::EffectStillInFlight(mote.id));
+    };
+
+    // PURE recomputes locally through the hosted executor (verbatim, D40 — a throwaway
+    // journal). Non-PURE (WORLD-MUTATING / READ-ONLY-NONDET) drives stage→fire→commit via
+    // RPCs + the broker (P3.6b, D58 §4): the worker is not the journal writer, so it
+    // cannot run `run_wm_mote`. Either path yields the `result_ref` (= the broker's
+    // `staged_ref` for non-PURE) the worker PROPOSES.
+    //
+    // F4: a per-Mote execution failure must NOT abort the whole batch — that discards the
+    // rest of the lease AND re-leases the failing Mote forever (the spin PR-9b's startup
+    // probe only narrowly patched). It is returned as `Failed` for the driver to classify:
+    // a terminal failure dead-letters now; a transient one retries within
+    // `WORKER_MAX_ATTEMPTS`, then dead-letters.
+    let exec = if mote.nd_class() == NdClass::Pure {
+        // The executor body is synchronous and, for a model Mote, an entire inference.
+        // Run it OFF the async task for the same reason as the broker effect: inline, it
+        // pins a tokio runtime thread for the duration.
+        let (m, w) = (mote.clone(), warrant.clone());
+        let (executor, resources) = (Arc::clone(&ctx.executor), Arc::clone(&ctx.resource_manager));
+        let (cache, store) = (ctx.work_cache.clone(), Arc::clone(&ctx.store));
+        match tokio::task::spawn_blocking(move || {
+            run::run_pure(
+                &m,
+                &w,
+                &*executor,
+                &*resources,
+                cache.as_deref(),
+                Some(&*store),
+            )
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(WorkerError::DispatchPanicked(mote.id)),
+        }
+    } else if dispatches_through_executor(&mote) {
+        // PR-2d-2: a coordinator-materialized ReAct TURN (the identity-bearing marker, NO
+        // tool_contract) is a prompt-carrying ROND model Mote — it dispatches through the
+        // hosted EXECUTOR (whose react arm decodes + fences pre-commit), never the
+        // capability broker (it proposes; the observation Mote fires). Direct dispatch
+        // matches the IdempotentByConstruction pattern.
+        //
+        // T-AGENT2: the opt-in LLM-JUDGE critic is the SAME shape — a ROND model Mote the
+        // executor's `run_judge` arm grades + commits as a verdict (no broker effect). A
+        // *native* critic is `Pure` (caught by the first arm ⇒ `run_pure`), so
+        // `critic_check.is_some()` HERE uniquely identifies the ReadOnlyNondet judge.
+        let (m, w, executor) = (mote.clone(), warrant.clone(), Arc::clone(&ctx.executor));
+        match tokio::task::spawn_blocking(move || run::run_react_turn(&m, &w, &*executor)).await {
+            Ok(result) => result,
+            Err(_) => Err(WorkerError::DispatchPanicked(mote.id)),
+        }
+    } else {
+        let dispatch = run_wm::run_wm(
+            &mut ctx.client,
+            Arc::clone(&ctx.broker),
+            &mote,
+            &warrant,
+            ctx.worker_id,
+            instance_id,
+            tool_args,
+            &ctx.inflight,
+        );
+        // Bound a hung tool/MCP/IO dispatch by the optional per-Mote wall-clock deadline.
+        //
+        // Off-loading the dispatch is what makes this REAL: `tokio::time::timeout` polls its inner future
+        // first and returns `Ok` the moment it is `Ready`, so while `broker.dispatch` was
+        // a synchronous call with no await point, a hang completed in ONE poll and the
+        // deadline could never fire. Now the dispatch is a `spawn_blocking` join — a
+        // genuine await point — so the timer is observable.
+        //
+        // On timeout the future is dropped, which abandons the RESULT but not the WORK
+        // (`spawn_blocking` is not cancellable). `run_wm`'s in-flight registry is what
+        // stops the ensuing retry from firing the same effect a second time.
+        match ctx.tool_deadline {
+            Some(deadline) => match tokio::time::timeout(deadline, dispatch).await {
+                Ok(result) => result,
+                Err(_elapsed) => Err(WorkerError::ExecutionTimedOut(mote.id)),
+            },
+            None => dispatch.await,
+        }
+    };
+
+    let result_ref = match exec {
+        Ok(result_ref) => result_ref,
+        Err(error) => return ItemOutcome::Failed(mote.id, error),
+    };
+
+    let request = commit_builder::report_commit_request(&mote, &warrant, result_ref, ctx.worker_id);
+    let response = match ctx.client.report_commit(request).await {
+        Ok(response) => response,
+        // A transport/RPC error on the propose call is batch-level, matching the
+        // pre-queue `?`.
+        Err(error) => return ItemOutcome::Fatal(error),
+    };
+
+    match proto::CommitOutcome::try_from(response.outcome) {
+        Ok(proto::CommitOutcome::Committed | proto::CommitOutcome::AlreadyCommitted) => {
+            tracing::info!(
+                worker_id = ctx.worker_id,
+                seq = response.committed_seq,
+                mote = ?mote.id,
+                "commit proposal accepted"
+            );
+            ItemOutcome::Committed(mote.id)
+        }
+        _ => ItemOutcome::Fatal(WorkerError::CommitRejected(response.detail)),
     }
 }
 

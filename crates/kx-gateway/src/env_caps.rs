@@ -174,6 +174,29 @@ const MAX_WORKER_POOL: usize = 64;
 #[cfg(feature = "embedded-worker")]
 const MAX_TOOL_DEADLINE_SECS: u64 = 3_600;
 
+/// The maximum per-worker effect concurrency an operator may set.
+#[cfg(feature = "embedded-worker")]
+const MAX_EFFECT_CONCURRENCY: usize = 64;
+
+/// Resolve how many of a lease batch's Motes each embedded worker runs concurrently
+/// (EFFECT-QUEUE, `KX_SERVE_EFFECT_CONCURRENCY`). Clamped to `1..=MAX_EFFECT_CONCURRENCY`; an
+/// unparseable or `0` value falls back to the default rather than becoming silent
+/// garbage. `1` reproduces the pre-queue sequential batch, which is the escape hatch if a
+/// deployment ever needs it.
+///
+/// The default is [`kx_worker::DEFAULT_EFFECT_CONCURRENCY`] — **read from the worker, not
+/// restated here.** A constant that appears in two places will eventually disagree, and
+/// the one that matters is the one the worker actually applies.
+#[cfg(feature = "embedded-worker")]
+pub(crate) fn resolve_effect_concurrency() -> usize {
+    parse_cap(
+        std::env::var("KX_SERVE_EFFECT_CONCURRENCY").ok().as_deref(),
+        kx_worker::DEFAULT_EFFECT_CONCURRENCY,
+        1,
+        MAX_EFFECT_CONCURRENCY,
+    )
+}
+
 /// Resolve the embedded-worker POOL size. Precedence: the `--workers` flag
 /// wins; else `KX_WORKERS`; else `KX_SERVE_WORKER_POOL`; else [`DEFAULT_WORKER_POOL`]
 /// (1). Clamped to `1..=MAX_WORKER_POOL` (a `0` or unparseable value falls back to the
