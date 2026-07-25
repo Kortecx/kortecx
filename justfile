@@ -885,9 +885,16 @@ eval-real:
 # baseline capture is refused, because the committed baseline is keyed by the whole corpus
 # digest and a partial capture would ratchet every later run against a subset.
 #
-# Drive BOTH engines (restart per run):
-#   KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-bench   # local Gemma (Ollama)
+# Drive BOTH engines (restart per run). The Ollama arm needs a DEDICATED EMBEDDER, or
+# `ingest_documents` fails and the whole `reach` family skips — the run then prints
+# `reach_fixtures=false` and covers 7 of 10 tasks. The invocation documented here used to
+# omit it, so following this header exactly produced a partial run that still reported a
+# result (and could not capture a baseline at all, which is the fail-closed preflight doing
+# its job against instructions that could never satisfy it):
+#   KX_SERVE_OLLAMA=1 KX_SERVE_OLLAMA_MODELS=gemma3:12b,embeddinggemma:latest \
+#     KX_SERVE_EMBED_MODEL=embeddinggemma:latest just eval-bench          # local Gemma (Ollama)
 #   just fetch-gemma-model && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench   # llama.cpp
+# Read `reach_fixtures=true` in the run's own preamble before believing a number.
 # ⚠ `ollama stop <model>` BEFORE the llama.cpp arm: GPU residency is a cross-ENGINE
 # singleton, and an Ollama keep-alive resident 12B makes the in-process 12B OOM and
 # dead-letter every task (a false negative that looks like a capability collapse).
