@@ -7,14 +7,18 @@ description: Author Kortecx chains in TypeScript/JavaScript — the string DSL a
 
 # Chains in TypeScript
 
-The TypeScript SDK (`npm install @kortecx/sdk`) authors chains two equivalent
-ways: a **string DSL** and a **combinator API**. Both lower to the same canonical
+The TypeScript SDK (`@kortecx/sdk`) authors chains two equivalent ways: a
+**string DSL** and a **combinator API**. Both lower to the same canonical
 `(steps, edges)` as the CLI and the Python SDK — see the
 [DSL reference](./dsl-reference.md#canonical-lowering).
 
 ## Install
 
+The SDK is not on a public registry; a gateway serving the console hosts it
+(see [Quickstart](../quickstart.md#typescript)).
+
 ```bash
+npm config set @kortecx:registry http://127.0.0.1:8888/npm/
 npm install @kortecx/sdk       # node + browser entry points
 npm install ws                 # optional: node live-tail
 ```

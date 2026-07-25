@@ -5,9 +5,12 @@ import { paletteIn } from "../../app/motion";
 import { Icon } from "./Icon";
 import { HIDDEN_SECTIONS, NAV_SECTIONS, type NavSection, SETTINGS_SECTION } from "./nav-model";
 
-// POC-5c (D168): jump to any section — the eight flat sidebar sections PLUS the
-// five demoted-but-reachable routes (Blueprints/Datasets/Branches/Policies/Dashboard,
-// {@link HIDDEN_SECTIONS}) — so ⌘K never loses a capability the sidebar no longer lists.
+// Jump to any section — every {@link NAV_SECTIONS} sidebar button PLUS the
+// demoted-but-reachable routes in {@link HIDDEN_SECTIONS} (Blueprints/Datasets/
+// Branches) and pinned Settings — so ⌘K never loses a capability the sidebar no
+// longer lists. Counts are deliberately NOT written out here: they drifted from the
+// arrays once already (naming a Policies and a Dashboard route that no longer exist),
+// and the arrays are one import away.
 const DESTINATIONS: readonly NavSection[] = [...NAV_SECTIONS, ...HIDDEN_SECTIONS, SETTINGS_SECTION];
 
 function matches(section: NavSection, query: string): boolean {

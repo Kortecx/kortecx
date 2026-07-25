@@ -7,16 +7,20 @@ description: Author Kortecx chains in Python — the string DSL and the operator
 
 # Chains in Python
 
-The Python SDK (`pip install kortecx`) authors chains two equivalent ways: a
-**string DSL** and **operator sugar** (`>>` / `&` / `|`). Both lower to the same
-canonical `(steps, edges)` as the CLI and the TypeScript SDK — see the
+The Python SDK (`kortecx`) authors chains two equivalent ways: a **string DSL**
+and **operator sugar** (`>>` / `&` / `|`). Both lower to the same canonical
+`(steps, edges)` as the CLI and the TypeScript SDK — see the
 [DSL reference](./dsl-reference.md#canonical-lowering).
 
 ## Install
 
+PyPI's `kortecx` is an earlier release; install from the source tree for a client
+that matches the gateway you are running
+(see [Quickstart](../quickstart.md#python)).
+
 ```bash
-pip install kortecx            # core client (grpcio + protobuf)
-pip install 'kortecx[ws]'      # + the optional WebSocket live-tail
+pip install ./bindings/python          # core client (grpcio + protobuf)
+pip install './bindings/python[ws]'    # + the optional WebSocket live-tail
 ```
 
 ## The fluent builder (recommended)

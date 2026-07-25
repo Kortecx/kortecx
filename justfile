@@ -56,6 +56,17 @@ pre-push-ui:
     ( cd ui && npx biome ci . && npx tsc --noEmit && npx vitest run && npm run build && npm run size )
     echo "✓ UI gates green (run \`cd ui && npx playwright test\` for the e2e — CI does this)"
 
+# Run the docs-site CI gate locally — the `docs-site` job from ci.yml (orphan pages +
+# cross-file anchors, then the docusaurus build whose onBrokenLinks/onBrokenAnchors are
+# `throw`). NOT part of `just ci` (Rust-only), so a docs change needs this explicitly.
+# Assumes `npm ci` was run in docs/site. Keep in lock-step with ci.yml.
+pre-push-docs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "▶ docs-site — orphan pages + cross-file anchors + build"
+    ( cd docs/site && npm run check:docs && npm run build )
+    echo "✓ docs gates green"
+
 # Verify code is formatted per rustfmt.toml. Fails on any drift.
 fmt-check:
     cargo fmt --all -- --check

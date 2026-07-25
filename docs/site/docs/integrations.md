@@ -152,11 +152,13 @@ kx triggers add launch-digest \
 ## 4. Govern it from the console
 
 When a `require-approval` App reaches an irreversible action, the runtime **pauses** it and
-records the request. Govern it from **Monitoring → Approvals** in the console (or the CLI):
+records the request. Govern it from the console's **approvals bell** (or the CLI):
 
-- The **Approvals** inbox lists each withheld action — its tool, intent, run, deadline, and
-  the run's **spend so far** (turns · tool calls · estimated µUSD). A count badge on the
-  **Monitoring** nav item shows how many are awaiting you.
+- The bell sits in the **navbar** — approvals are a cross-App concern, not an
+  Apps-catalog one — and carries a count badge of how many actions are awaiting you.
+  Clicking it opens the approvals drawer, which lists each withheld action: its tool,
+  intent, run, deadline, and the run's **spend so far** (turns · tool calls ·
+  estimated µUSD).
 - **Grant** releases the staged action to fire exactly once; **Deny** rejects it and the
   chain dead-letters. The decision **survives a crash** — a granted action is never re-asked.
 

@@ -4,7 +4,7 @@ title: Policies
 sidebar_label: Policies
 ---
 
-# Policies — the per-App agent-write gate (POC-5b)
+# Policies — the per-App agent-write gate
 
 An App's project lives in a content-addressed (CoW) branch, and the agent can rewrite
 its files in place (see [Apps](./apps.md)). **Policies** is where you control that
@@ -23,7 +23,8 @@ kx app lock apps/local/my-app      # agentic edits now refused
 kx app unlock apps/local/my-app    # edits re-enabled
 ```
 
-In the console, open **Policies** in the sidebar: each App shows its lock state and a
+In the console the gate lives with the App it governs, not in a section of its own:
+the **Apps** list shows each App's lock state, and an App's own header carries the
 **Lock** / **Unlock** control.
 
 ## Guarantees

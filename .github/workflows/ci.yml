@@ -1320,6 +1320,40 @@ jobs:
           done
           echo "✅ fuzz-smoke clean — no crash in the smoke window (deep fuzzing is a separate scheduled run)."
 
+  # docs-site: BUILD the documentation site, so its own guards finally run. The site has
+  # always set `onBrokenLinks: "throw"` / `onBrokenMarkdownLinks: "throw"` and nothing ever
+  # invoked a build, which is the same as having no guard at all — a broken link or a renamed
+  # heading shipped with every gate green. `check:docs` adds the two classes the build cannot
+  # see: an orphan page missing from the hand-authored sidebar (unreachable but a valid route,
+  # so Docusaurus is happy), and an anchor on a link that goes out through github.com (an
+  # external URL to Docusaurus, so never resolved). Node-only and FFI-free: no Rust toolchain,
+  # no submodules, nothing from the product build.
+  docs-site:
+    name: docs-site (docusaurus build — broken links/anchors + orphan pages)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — the docs site is node-only)
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install the docs site (clean, from the committed lockfile)
+        working-directory: docs/site
+        run: npm ci
+
+      # Runs FIRST: it is seconds, and its failures name the page, while a Docusaurus
+      # link failure names a resolved URL.
+      - name: Orphan pages + cross-file anchors
+        working-directory: docs/site
+        run: npm run check:docs
+
+      - name: Build (onBrokenLinks/onBrokenAnchors = throw)
+        working-directory: docs/site
+        run: npm run build
+
   # proto-breaking: the kortecx.v1 gRPC contract (KxGateway + Coordinator) is additive-only (D120.6). That
   # was convention-only + the codegen-fresh guards; this makes it a mechanical gate — a removed / renumbered
   # / renamed / retyped field on a released message fails against origin/main. Only on a PR (the baseline is

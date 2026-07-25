@@ -2,7 +2,7 @@
 id: observability
 title: Observability
 sidebar_label: Observability
-description: The Dashboard, gateway-wide Monitoring, per-model telemetry, failure triage, health, Prometheus metrics export, and the operator audit log.
+description: The Activity drawer, per-model telemetry, run cost, the alerts inbox, failure triage, health, Prometheus metrics export, and the operator audit log.
 ---
 
 # Observability
@@ -11,47 +11,43 @@ Kortecx records every state change as a durable journal fact and exposes a
 read-only view of that truth through the console and the SDK. Nothing here is
 fabricated: each number traces to a committed fact or an honest empty state.
 
-## The Dashboard
+## Where each view lives
 
-The **Dashboard** (a Workspace nav item) is the operator's at-a-glance landing. It
-folds data already on the wire into a small, honest KPI grid plus a live activity
-tail:
+The console is a flat set of sections, so observability is not one "Monitoring"
+destination. It is split by scope, and three of the reads are **CLI/SDK-only today**:
 
-- **Runs** — the durable run count (`ListRuns` merged with the per-endpoint session
-  history).
-- **Output tokens** and **p50 wall ms** — summed / percentiled over the **loaded
-  telemetry window** (`ListMoteTelemetry`). The sublabel ("over last N motes") is
-  literal: telemetry is cursor-paged, so these cover the page you have loaded, not
-  all of history.
-- **Serving models** — the number of models backing the live serve loop
-  (`ListModels`). On an FFI-free serve this is honestly `0` / `—`.
-- **Recent runs** + **Live activity** — the newest runs (click through to a run's
-  detail) and the cross-run event tail.
+| What you want | Where it is |
+|---|---|
+| The cross-run live event tail, triage-able | the **Activity drawer** (navbar) |
+| One run's metrics + time travel | the **Activity drawer**, after picking a run |
+| Run history, newest-first | **Workflows → Runs** |
+| One run's DAG / step detail | the run-detail view |
+| Per-model telemetry + the token economy | `kx telemetry` / the SDK |
+| A run's cost guardrail | `kx cost` / the SDK |
+| The terminal-failure alerts inbox | `kx alerts` / the SDK |
+| RED counters for Prometheus | `--metrics-listen` |
 
-The default landing is still **Chat** — the Dashboard is an additional entry point,
-not a redirect.
+Telemetry, cost and alerts had console homes before the console flattened to its
+current sections, and do not have one now. The RPCs, CLI verbs and SDK methods below
+are unchanged and fully supported; only the browser surface is absent, and this page
+says so rather than describing a tab you cannot open.
 
-## Monitoring
+## The Activity drawer
 
-The **Monitoring** section is the deeper, gateway-wide view. Its tabs are
-URL-addressable (the active view rides the `?tab=` query param):
+**Activity** is a navbar drawer rather than a section, so the node-wide pulse is one
+click from anywhere (`/activity` redirects to Workflows — the drawer replaced the
+route). It opens on the **global cross-run feed** (`StreamAllEvents`), newest-first,
+each row attributed to its run, with quick actions.
 
-- **Overview** — cross-run rollups: run counts by blueprint, the self-correction
-  trails (`ListReplanRounds` / `ListReactTurns`), the action-capture stream
-  (`ListCaptureRecords`), and gateway health — including **MCP connector health**
-  (each registered connector's folded liveness dot + a reachability re-dial;
-  registering / revoking a connector stays in **Integrations → Connections**). Each
-  panel degrades to an honest "not wired on this gateway" note rather than a hollow
-  placeholder.
-- **Live feed** — the continuous cross-run event tail (`StreamAllEvents`), newest
-  first, each row attributed to its run. The feed is **triage-able**: toggle kind
-  chips (with per-kind count badges), filter by run id / mote / reason free-text,
-  and **export the filtered buffer as NDJSON**.
-- **Telemetry** — the host-measured execution exhaust (`ListMoteTelemetry`):
-  wall-clock, model/tool usage, and the committed `seq`, cursor-paged.
-- **Cost** — a per-run **spend guardrail** readout (`GetRunCost`): enter a run's
-  instance id for its turns · tool calls · estimated micro-USD against its ceiling.
-  Display-only and honest — see [Run cost (guardrail)](#run-cost-guardrail).
+Pick a run — from the picker or a feed row — and it drills into that run:
+
+- **Metrics** derived from the run's projection: mote counts by state, success rate,
+  in-flight, the journal frontier, and a **commit-`seq` span** latency *proxy*. It is
+  a proxy on purpose: a projection carries no wall-clock, so no millisecond figure is
+  invented here. Wall-clock lives in telemetry.
+- **The run-scoped event feed** and a **time-travel scrubber** — pin an `at-seq` and
+  the metrics re-derive at that point, then scrub forward to live.
+- **Gateway health**, always shown.
 
 ### Live-feed triage
 
@@ -74,23 +70,27 @@ kx events --all --kind committed,failed --json > feed.ndjson
 kx events --all --kind failed --follow
 ```
 
-### Per-model telemetry rollup
+### Per-mote telemetry
 
-The Telemetry tab derives a **per-model rollup** client-side over the loaded
-window — `count`, `p50` / `p95` wall-clock ms (nearest-rank), and total
-`output_tokens` per model — beside a KPI strip of the window aggregates. The table
-is captioned **"over the last N motes (this page, not all-time)"** and is honestly
-**absent when no model mote ran** (e.g. an FFI-free serve, where motes carry no
-model id). Cost and per-expert billing are shown as a disabled **Cloud** tile: OSS
-serves locally and has no price, input-token, or expert entity to bill.
+`ListMoteTelemetry` is the host-measured execution exhaust — wall-clock, model and
+tool usage, and the committed `seq` — cursor-paged, newest-first:
+
+```bash
+kx telemetry list --limit 50
+kx telemetry list --instance <hex16> --json
+```
+
+Because it is cursor-paged, any aggregate you compute from it covers **the page you
+fetched, not all of history**. For an exact total, use the server-side summary below
+rather than summing pages. Motes on an FFI-free serve carry no model id, so a
+per-model breakdown is honestly empty there. Priced input tokens and per-expert
+billing do not exist in OSS — it serves locally and has no price book to bill from.
 
 ### Token economy
 
-Beside the page-windowed rollup, the Telemetry tab shows an **all-runs token
-economy** — output tokens and wall-clock per model, summed **server-side** so a
-long agentic run is totalled exactly (not capped to a page). It is backed by
-`ListTelemetrySummary` (a single `SUM … GROUP BY model_id` over the same
-`telemetry.db` sidecar):
+`ListTelemetrySummary` totals **server-side** (a single `SUM … GROUP BY model_id`
+over the same `telemetry.db` sidecar), so a long agentic run is counted exactly
+rather than capped to a page:
 
 ```bash
 kx telemetry summary               # per-model output tokens + wall-clock, all runs
@@ -112,12 +112,12 @@ savings number is computable). **Cost / $** stays the disabled
 
 ### Run cost (guardrail) {#run-cost-guardrail}
 
-The **Cost** tab reads `GetRunCost` for one run — the turns and tool calls it has
-committed, priced at the serve's **micro-USD** rates against an optional **ceiling**.
-It is a **local budget guardrail, not billing**: a display-only estimate over the
-durable counters, with an operator-set price book
-(`KX_PRICING_PER_TURN_MICRO_USD` / `KX_PRICING_PER_TOOL_CALL_MICRO_USD`; the ceiling
-defaults to `0` = OFF). Tri-surface parity — CLI, SDK, and the console read the same RPC:
+`GetRunCost` reports one run's committed turns and tool calls, priced at the serve's
+**micro-USD** rates against an optional **ceiling**. It is a **local budget
+guardrail, not billing**: a display-only estimate over the durable counters, with an
+operator-set price book (`KX_PRICING_PER_TURN_MICRO_USD` /
+`KX_PRICING_PER_TOOL_CALL_MICRO_USD`; the ceiling defaults to `0` = OFF). The CLI and
+both SDKs read the same RPC:
 
 ```bash
 kx cost <instance-hex16>          # turns · tool calls · estimated µUSD vs. ceiling
@@ -143,22 +143,23 @@ carried no reason shows no badge — the reason is never invented.
 
 ## Alerts inbox
 
-The **Alerts** sub-tab in Monitoring is a read-only operator inbox of **terminal
-failures** — the runtime's durable signal that a run gave up. It is folded from the
+`ListAlerts` is a read-only operator inbox of **terminal failures** — the runtime's
+durable signal that a run gave up. It is folded from the
 journal's terminal `Failed` facts (dead-letters and worker-reported terminal
 failures); the liveness retries (`TIMED OUT` / `WORKER CRASHED`, which re-dispatch)
 are deliberately excluded, so a row here means a run that is genuinely done and
 failed.
 
 ```bash
-# the same inbox from the CLI (newest-first, paginated):
+# the inbox, newest-first and paginated:
 kx alerts list
 kx alerts list --instance <hex16> --limit 50
 kx alerts list --json   # alert_id · mote_id · reason_class · reason_code · severity · seq
 ```
 
-Each alert deep-links to the failed run's graph and carries the journal `seq` of the
-`Failed` fact. The inbox lives in a rebuildable, off-journal `alerts.db` sidecar that
+Each alert carries the failed mote plus the journal `seq` of the
+`Failed` fact, so it joins straight back to the run. The inbox lives in a
+rebuildable, off-journal `alerts.db` sidecar that
 is **folded from committed facts**: delete it and restart, and the same alert set
 re-materializes — it is derived, never authoritative, and never changes the canonical
 projection digest. When the serve has no sidecar (an older build) the view degrades
@@ -170,15 +171,16 @@ become journal facts, and they surface in the live feed instead.
 
 The **triage lifecycle** (acknowledge / resolve), an **alert-rule engine**, and
 outbound **notifications** (Slack / PagerDuty / webhook) are a managed
-[Cloud](https://github.com/Kortecx/kortecx#cloud) capability and appear here as an
-honest-disabled card — OSS ships the durable read-only view.
+[Cloud](https://github.com/Kortecx/kortecx#cloud) capability — OSS ships the durable
+read-only view and invents nothing beyond it.
 
 ## Health
 
 Gateway liveness is inferred from a cheap unary round-trip on an interval (the same
-probe the connect flow uses) and rendered as a `LIVE` / `DEGRADED` / `DOWN` pill on
-the Dashboard and in Monitoring. From the CLI, `kx health` reports the same
-liveness. The gateway also serves the standard `grpc.health.v1.Health` service for
+probe the connect flow uses) and rendered as a `LIVE` / `DEGRADED` / `DOWN` pill in
+the Activity drawer. From the CLI, `kx health` reports the same liveness and **exits
+`0` only when the gateway answers `SERVING`**, so it works as a bare readiness probe.
+The gateway also serves the standard `grpc.health.v1.Health` service for
 `grpc_health_probe` / Kubernetes gRPC probes.
 
 ## Metrics export (Prometheus)

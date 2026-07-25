@@ -16,11 +16,20 @@ layer for the kortecx dashboard) — only the transport differs:
 
 ## Install
 
+This package is **not published to a public registry**. A gateway serving the web
+console hosts it itself, as a scoped npm registry on the console listener, so
+point npm at the serve you are talking to:
+
 ```bash
+npm config set @kortecx:registry http://127.0.0.1:8888/npm/
 npm install @kortecx/sdk
 # the optional WebSocket live-tail in Node needs `ws`:
 npm install ws
 ```
+
+From a checkout, `npm install ./bindings/typescript` works with no gateway
+running. A gateway built without the console, or without a packed SDK, answers
+the registry request with a `501` naming the remedy rather than a bare `404`.
 
 ## Quickstart
 

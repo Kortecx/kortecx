@@ -130,9 +130,13 @@ kx chain run "a > [b & c]" \
 ### Python
 
 ```bash
-pip install kortecx            # core client
-pip install 'kortecx[ws]'      # + the optional WebSocket live-tail
+pip install ./bindings/python          # core client, from this checkout
+pip install './bindings/python[ws]'    # + the optional WebSocket live-tail
 ```
+
+PyPI's `kortecx` is an earlier release and predates the App, chain, swarm, skill
+and memory APIs documented here. Install from the source tree (or a release
+tarball) for a client that matches the gateway you are running.
 
 ```python
 from kortecx import KxClient
@@ -148,10 +152,19 @@ The chain string DSL and the per-language operator API are in
 
 ### TypeScript
 
+The TypeScript SDK is not published to a public registry. A gateway serving the
+web console hosts it itself, as a scoped registry on the console listener, so
+point npm at the serve you are talking to:
+
 ```bash
+npm config set @kortecx:registry http://127.0.0.1:8888/npm/
 npm install @kortecx/sdk       # node + browser entry points
 npm install ws                 # optional: node live-tail
 ```
+
+From a checkout, `npm install ./bindings/typescript` works without a running
+gateway. A build that carries no packed SDK answers the registry request with a
+`501` naming the remedy, rather than a `404` that would read as a typo.
 
 ```ts
 import { KxClient } from "@kortecx/sdk";

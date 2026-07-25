@@ -13,9 +13,13 @@ binding: no Rust, no C++, no `kx-*` crate, no compiler needed to install.
 ## Install
 
 ```bash
-pip install kortecx            # core client (grpcio + protobuf)
-pip install 'kortecx[ws]'      # + the optional WebSocket live-tail client
+pip install ./bindings/python          # core client (grpcio + protobuf)
+pip install './bindings/python[ws]'    # + the optional WebSocket live-tail client
 ```
+
+PyPI's `kortecx` is an earlier release and predates the App, chain, swarm, skill
+and memory APIs documented below. Install from the source tree (or a release
+tarball) for a client that matches the gateway you are running.
 
 Run a gateway to talk to (FFI-free, no toolchain):
 
