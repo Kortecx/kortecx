@@ -40,12 +40,35 @@ KX_SERVE_WORKER_POOL=4 kx serve
 is a *different* knob — it bounds how many ready Motes one worker pulls per poll; under a
 pool the per-worker lease is spread automatically so no single worker hoards the ready set.
 
+## Each worker is itself concurrent
+
+A worker does **not** run its leased batch one Mote at a time. Each leased Mote drives its own
+stage → fire → commit chain, admitted through a bounded per-worker queue:
+
+```bash
+# how many of its leased Motes ONE worker runs at once. Default: 8.
+KX_SERVE_EFFECT_CONCURRENCY=8 kx serve
+
+# 1 = strictly sequential per worker (the pre-0.2 behaviour), if you ever need it back.
+KX_SERVE_EFFECT_CONCURRENCY=1 kx serve
+```
+
+This is what stops one slow tool from stalling the rest of a batch — **including Motes
+belonging to other runs on the same serve**. It is safe because a lease batch's items are
+mutually independent: the coordinator only leases work whose parents have already committed,
+so a parent and its child can never be in the same batch. Ordering that matters — staging a
+world-mutating intent before firing it — is a *per-Mote* rule and stays inside each Mote's own
+chain. The coordinator is still the sole journal writer.
+
+Total in-flight work is therefore `--workers` × `KX_SERVE_EFFECT_CONCURRENCY`, bounded above
+by `--max-lease`.
+
 ## What a pool actually parallelizes
 
 | Work class | Concurrency under `--workers N` |
 |---|---|
-| **Pure** (deterministic compute) | Truly concurrent — up to N at once. |
-| **Tool / IO** (MCP tools, HTTP connectors, retrieval) | Truly concurrent — up to N at once. |
+| **Pure** (deterministic compute) | Truly concurrent. |
+| **Tool / IO** (MCP tools, HTTP connectors, retrieval) | Truly concurrent — the blocking call runs off the async runtime, so it never pins a thread. |
 | **Model inference** (llama.cpp) | **Serializes** on the one in-process model owner thread — `--workers` overlaps its *tool/IO* turns but not the decode itself. |
 | **Model inference** (Ollama) | **Concurrent requests, but GPU-bound throughput** — each worker fires an independent request and the daemon serves up to `OLLAMA_NUM_PARALLEL` at once, so the *requests* overlap. Whether that speeds up wall-clock depends on GPU headroom (see the note below): a model that already saturates the GPU will not decode faster in parallel. |
 
@@ -70,21 +93,28 @@ work — see the GPU note below for what concurrency means for the *decode* itse
 ## Back-pressure
 
 Execution is **pull-based**: work becomes *ready* the instant its inputs commit, but nothing
-runs until a worker leases it. A fan-out of 100 agents therefore runs **N at a time** with
-the rest queued in the coordinator's ready-set — it never stampedes local resources by firing
-everything at once. Model inference is additionally queued at the owner thread.
+runs until a worker leases it. A fan-out of 100 agents therefore runs
+`--workers` × `KX_SERVE_EFFECT_CONCURRENCY` at a time, with the rest queued in the
+coordinator's ready-set — it never stampedes local resources by firing everything at once.
+Model inference is additionally queued at the owner thread.
 
 To bound a *hung* tool (an external MCP/HTTP call that never returns and would otherwise pin a
 worker's slot), set an optional per-Mote deadline:
 
 ```bash
-# cancel + retry (then dead-letter) a tool/IO dispatch that exceeds 120s. Default: off.
+# abandon + retry (then dead-letter) a tool/IO dispatch that exceeds 120s. Default: off.
 KX_SERVE_TOOL_DEADLINE_SECS=120 kx serve --workers 4
 ```
 
 The deadline is a live wall-clock bound (never a journaled fact); a timed-out dispatch is
 retried within the worker's failure budget and then dead-lettered, so one stuck tool cannot
 wedge the pool.
+
+**What the deadline does and does not do.** It returns the worker's slot; it does not kill the
+in-flight call — a blocking tool call cannot be interrupted from outside. The abandoned
+dispatch runs to completion on its own thread, and the worker **refuses to re-fire that Mote
+until it returns**, so the retry can never double-apply a world-mutating effect. Set the
+deadline to bound *how long a slot is held*, not as a way to cancel remote work.
 
 ## See the configured pool
 
