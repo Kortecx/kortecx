@@ -7,10 +7,17 @@
 //! side-channel *before* each dispatch; the gateway's model executor implements
 //! [`ContextSink`] and reads the slot inside `run`. The frozen trait is untouched.
 //!
-//! The worker processes a lease batch sequentially on one thread, so a single slot
-//! keyed by `MoteId` is sufficient and race-free: `set_parent_results` immediately
-//! precedes the executor's `run`, which consumes the slot iff it matches the Mote.
-//! A worker whose executor does not assemble simply holds no sink (`None`).
+//! **Delivery is keyed by `MoteId`, and the sink must store one entry PER Mote.** The
+//! implementation shipped before the bounded effect queue was a single last-write-wins
+//! slot, justified by "the worker processes a lease batch sequentially on one thread".
+//! That justification did not hold: the serve clones ONE sink `Arc` into every pooled
+//! worker, so with `--workers > 1` a peer's delivery overwrote the slot and the losing
+//! Mote's context was dropped silently. A concurrent batch removes the sequential premise
+//! altogether.
+//!
+//! An implementation that cannot find an entry for the Mote being run must assemble
+//! NOTHING (the pre-F-7 behaviour) — never another Mote's context. A worker whose
+//! executor does not assemble simply holds no sink (`None`).
 
 use kx_content::ContentRef;
 use kx_mote::MoteId;

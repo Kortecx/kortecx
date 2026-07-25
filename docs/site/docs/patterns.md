@@ -70,7 +70,9 @@ This supervisor is **static-hierarchical**: a fixed team, authored up front. `ro
 are reserved for the runtime **topology shaper** (a planner that decides team size and re-plans
 each round); they sit in the signature so the API is stable when the shaper wires them, but
 passing `rounds > 1` or `pool` raises today rather than silently ignoring it. Local worker
-concurrency is set by the server worker pool (`kx serve --workers` / `KX_WORKERS`).
+concurrency is set at the server (`kx serve --workers` / `KX_WORKERS`, and
+`KX_SERVE_EFFECT_CONCURRENCY` for how many Motes each worker runs at once — see
+[Parallel execution](./parallel-execution.md)).
 :::
 
 ## Consensus — judge or vote

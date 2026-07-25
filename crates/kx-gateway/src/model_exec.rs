@@ -1135,6 +1135,67 @@ fn resolve_cache_capacity() -> Option<usize> {
 /// pairs the worker delivers via [`kx_worker::ContextSink`] for F-7 assembly.
 type ParentResults = Vec<(MoteId, ContentRef)>;
 
+/// How many undelivered context entries [`KeyedSlots`] retains before evicting the
+/// oldest. Comfortably above any realistic in-flight set (a default lease batch is 16
+/// Motes and the worker pool is small), so eviction only ever reaches entries whose Mote
+/// was dead-lettered before it ran. Bounded on purpose: the map is fed by every lease and
+/// drained only by an actual dispatch, so an unbounded one would grow with abandoned work.
+const CONTEXT_SLOT_CAPACITY: usize = 256;
+
+/// The worker → executor context side-channel, keyed by `MoteId`.
+///
+/// **EFFECT-QUEUE.** This was three single `Option<(MoteId, T)>` slots whose stated safety
+/// argument was *"the worker runs a lease batch sequentially on one thread"*. That was
+/// already untrue: the serve clones ONE `Arc<ModelRouterExecutor>` into every pooled
+/// worker, so under `--workers > 1` a peer's `set_*` overwrote the slot, the consumer's
+/// `id == mote_id` check missed, and the Mote's grounding context was dropped — silently,
+/// with no error and no log. the concurrent batch would have made that the common case
+/// rather than a race.
+///
+/// Keyed storage removes the argument entirely: an entry can only ever be taken by the
+/// Mote it was delivered for. A miss still degrades to "no context" (byte-identical to
+/// pre-F-7), never to another Mote's context.
+struct KeyedSlots<T> {
+    /// Insertion-ordered so eviction can drop the OLDEST entry. A `VecDeque` beats a map
+    /// here: the live set is bounded by the lease batch, so a linear scan is a handful of
+    /// comparisons and it keeps the eviction order for free.
+    entries: Mutex<std::collections::VecDeque<(MoteId, T)>>,
+}
+
+impl<T> Default for KeyedSlots<T> {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::new(std::collections::VecDeque::new()),
+        }
+    }
+}
+
+impl<T> KeyedSlots<T> {
+    /// Stash `value` for `mote_id`, replacing any prior entry for that same Mote (a
+    /// re-lease re-delivers) and evicting the oldest entry when at capacity.
+    ///
+    /// A poisoned lock degrades to "not delivered" rather than panicking — the consumer
+    /// then assembles nothing, which is the pre-F-7 behaviour.
+    fn set(&self, mote_id: MoteId, value: T) {
+        let Ok(mut entries) = self.entries.lock() else {
+            return;
+        };
+        entries.retain(|(id, _)| *id != mote_id);
+        while entries.len() >= CONTEXT_SLOT_CAPACITY {
+            entries.pop_front();
+        }
+        entries.push_back((mote_id, value));
+    }
+
+    /// Take `mote_id`'s entry, removing it. `None` when nothing was delivered for this
+    /// Mote — never another Mote's entry.
+    fn take(&self, mote_id: MoteId) -> Option<T> {
+        let mut entries = self.entries.lock().ok()?;
+        let at = entries.iter().position(|(id, _)| *id == mote_id)?;
+        entries.remove(at).map(|(_, value)| value)
+    }
+}
+
 /// Generic over the backend `B` so a deterministic stub injects in tests; production uses
 /// [`LlamaInferenceBackend`]. The whole module is `#[cfg(feature = "inference")]`.
 pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
@@ -1145,25 +1206,23 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// the model names a role, the recipe gives the child's vetted identity axes). `None`
     /// ⇒ no shaper support provisioned (a shaper Mote then fails closed, dead-lettered).
     recipes: Option<Arc<dyn RoleRecipeResolver>>,
-    /// F-7 (assemble-into-serve): the per-dispatch context slot the worker fills via
+    /// F-7 (assemble-into-serve): the per-dispatch context the worker delivers via
     /// [`kx_worker::ContextSink`] BEFORE each `run` (the frozen `MoteExecutor::run`
-    /// carries no snapshot). Keyed by `MoteId` so a stale slot can never leak into the
-    /// wrong Mote; consumed (taken) inside `dispatch_model`. The worker runs a lease
-    /// batch sequentially on one thread, so the slot is set-then-consumed with no race.
-    parent_ctx: Mutex<Option<(MoteId, ParentResults)>>,
+    /// carries no snapshot). Keyed by `MoteId` so an entry can only be taken by the Mote
+    /// it was delivered for; consumed (taken) inside `dispatch_model`.
+    parent_ctx: KeyedSlots<ParentResults>,
     /// PR-9d (per-turn context-carry): the worker → executor side-channel for a
     /// SUCCESSOR ReAct turn's grounding-context bundle ref (set by
     /// [`kx_worker::ContextSink::set_context_items`] BEFORE each `run`, consumed inside
-    /// `dispatch_model`). `None`/non-matching ⇒ no carried context (byte-identical to
-    /// pre-PR-9d). Same set-then-consume single-thread discipline as `parent_ctx`.
-    context_items_ctx: Mutex<Option<(MoteId, Option<ContentRef>)>>,
+    /// `dispatch_model`). Absent / `None` ⇒ no carried context (byte-identical to
+    /// pre-PR-9d).
+    context_items_ctx: KeyedSlots<Option<ContentRef>>,
     /// AGENTIC-VISION (image-in-the-ReAct-loop): the worker → executor side-channel for a
     /// SUCCESSOR ReAct turn's grounding-image ref (set by
     /// [`kx_worker::ContextSink::set_image_ref`] BEFORE each `run`, consumed inside
     /// `dispatch_model` when the Mote carries no inline `config_subset[IMAGE_REF_KEY]`).
-    /// `None`/non-matching ⇒ no carried image (byte-identical to pre-AGENTIC-VISION). Same
-    /// set-then-consume single-thread discipline as `context_items_ctx`.
-    image_ref_ctx: Mutex<Option<(MoteId, Option<ContentRef>)>>,
+    /// Absent / `None` ⇒ no carried image (byte-identical to pre-AGENTIC-VISION).
+    image_ref_ctx: KeyedSlots<Option<ContentRef>>,
     /// Batch C: the optional telemetry usage hook — records `(mote, model that
     /// ACTUALLY ran, output_tokens)` at the ONE place `InferenceOutput` exists
     /// (every model arm funnels through `dispatch_model`). Non-blocking +
@@ -1203,9 +1262,9 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             backend,
             store,
             recipes,
-            parent_ctx: Mutex::new(None),
-            context_items_ctx: Mutex::new(None),
-            image_ref_ctx: Mutex::new(None),
+            parent_ctx: KeyedSlots::default(),
+            context_items_ctx: KeyedSlots::default(),
+            image_ref_ctx: KeyedSlots::default(),
             usage: None,
             token_publisher: None,
             tool_registry: None,
@@ -1243,44 +1302,29 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         self
     }
 
-    /// Take this Mote's F-7 context if the worker delivered any for it (and clear the
-    /// slot). Returns the parents iff the slot matches `mote_id` — a non-matching or
-    /// empty slot yields `None`, so a leaf with no Data context assembles nothing
-    /// (byte-identical to pre-F-7). A poisoned lock degrades to "no context" rather
-    /// than aborting the dispatch.
+    /// Take this Mote's F-7 context if the worker delivered any for it (and remove the
+    /// entry). A Mote with no delivered entry yields `None`, so a leaf with no Data
+    /// context assembles nothing (byte-identical to pre-F-7). A poisoned lock degrades to
+    /// "no context" rather than aborting the dispatch.
     fn take_parent_context(&self, mote_id: MoteId) -> Option<Vec<(MoteId, ContentRef)>> {
-        let mut slot = self.parent_ctx.lock().ok()?;
-        match slot.as_ref() {
-            Some((id, _)) if *id == mote_id => slot.take().map(|(_, parents)| parents),
-            _ => None,
-        }
+        self.parent_ctx.take(mote_id)
     }
 
-    /// PR-9d: take this Mote's carried grounding-context ref (and clear the slot).
-    /// Returns the ref iff the slot matches `mote_id` AND is `Some` — a non-matching /
-    /// empty / `None` slot yields `None` (so a turn-0 / leaf Mote, which carries its
-    /// bundle inline, assembles nothing here — byte-identical to pre-PR-9d). A poisoned
-    /// lock degrades to "no carried context" rather than aborting the dispatch.
+    /// PR-9d: take this Mote's carried grounding-context ref (and remove the entry).
+    /// Returns the ref iff one was delivered for THIS Mote and is `Some` — an absent or
+    /// `None` entry yields `None` (so a turn-0 / leaf Mote, which carries its bundle
+    /// inline, assembles nothing here — byte-identical to pre-PR-9d).
     fn take_context_items(&self, mote_id: MoteId) -> Option<ContentRef> {
-        let mut slot = self.context_items_ctx.lock().ok()?;
-        match slot.as_ref() {
-            Some((id, _)) if *id == mote_id => slot.take().and_then(|(_, r)| r),
-            _ => None,
-        }
+        self.context_items_ctx.take(mote_id).flatten()
     }
 
-    /// AGENTIC-VISION: take this Mote's carried grounding-image ref (and clear the slot).
-    /// Returns the ref iff the slot matches `mote_id` AND is `Some` — a non-matching /
-    /// empty / `None` slot yields `None` (so a turn-0 Mote, which carries its image inline
-    /// in `config_subset[IMAGE_REF_KEY]`, takes the inline path — byte-identical to
-    /// pre-AGENTIC-VISION). A poisoned lock degrades to "no carried image" rather than
-    /// aborting the dispatch.
+    /// AGENTIC-VISION: take this Mote's carried grounding-image ref (and remove the
+    /// entry). Returns the ref iff one was delivered for THIS Mote and is `Some` — an
+    /// absent or `None` entry yields `None` (so a turn-0 Mote, which carries its image
+    /// inline in `config_subset[IMAGE_REF_KEY]`, takes the inline path — byte-identical
+    /// to pre-AGENTIC-VISION).
     fn take_image_ref(&self, mote_id: MoteId) -> Option<ContentRef> {
-        let mut slot = self.image_ref_ctx.lock().ok()?;
-        match slot.as_ref() {
-            Some((id, _)) if *id == mote_id => slot.take().and_then(|(_, r)| r),
-            _ => None,
-        }
+        self.image_ref_ctx.take(mote_id).flatten()
     }
 
     /// `true` iff the Mote carries a `prompt` — i.e. it is a MODEL step
@@ -2183,21 +2227,15 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
 /// consumes. Setting an empty list clears any stale prior slot for safety.
 impl<B: InferenceBackend> kx_worker::ContextSink for ModelRouterExecutor<B> {
     fn set_parent_results(&self, mote_id: MoteId, parents: Vec<(MoteId, ContentRef)>) {
-        if let Ok(mut slot) = self.parent_ctx.lock() {
-            *slot = Some((mote_id, parents));
-        }
+        self.parent_ctx.set(mote_id, parents);
     }
 
     fn set_context_items(&self, mote_id: MoteId, context_items_ref: Option<ContentRef>) {
-        if let Ok(mut slot) = self.context_items_ctx.lock() {
-            *slot = Some((mote_id, context_items_ref));
-        }
+        self.context_items_ctx.set(mote_id, context_items_ref);
     }
 
     fn set_image_ref(&self, mote_id: MoteId, image_ref: Option<ContentRef>) {
-        if let Ok(mut slot) = self.image_ref_ctx.lock() {
-            *slot = Some((mote_id, image_ref));
-        }
+        self.image_ref_ctx.set(mote_id, image_ref);
     }
 }
 
@@ -2389,6 +2427,111 @@ fn internal(reason: &str) -> MoteExecutorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // EFFECT-QUEUE / G4 — the worker→executor context side-channel is PER MOTE
+    // -----------------------------------------------------------------------
+
+    /// A distinct `MoteId` per index. Derived from the index bytes rather than a
+    /// repeated byte so the capacity test can mint more than 256 distinct ids.
+    fn slot_mote(seed: u8) -> MoteId {
+        slot_mote_n(usize::from(seed))
+    }
+
+    fn slot_mote_n(n: usize) -> MoteId {
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&(n as u64).to_le_bytes());
+        MoteId::from_bytes(bytes)
+    }
+
+    fn slot_ref(seed: u8) -> ContentRef {
+        ContentRef::from_bytes([seed; 32])
+    }
+
+    /// Two Motes' contexts are delivered before EITHER runs — the shape produced by a
+    /// concurrent lease batch, and (since the serve shares one sink `Arc` across the
+    /// worker pool) the shape `--workers > 1` already produced. Each Mote must get back
+    /// exactly what was delivered for it.
+    ///
+    /// **RED against the pre-queue single-slot sink**: the second `set` overwrote the
+    /// first, so `take(a)` found a `MoteId` mismatch and returned `None` — the Mote ran
+    /// ungrounded, with no error and no log. That is the bug this test exists to pin.
+    #[test]
+    fn interleaved_delivery_gives_each_mote_its_own_context() {
+        let slots: KeyedSlots<ParentResults> = KeyedSlots::default();
+        let (a, b) = (slot_mote(1), slot_mote(2));
+
+        slots.set(a, vec![(slot_mote(10), slot_ref(11))]);
+        slots.set(b, vec![(slot_mote(20), slot_ref(21))]);
+
+        assert_eq!(
+            slots.take(a),
+            Some(vec![(slot_mote(10), slot_ref(11))]),
+            "a Mote's context must survive a LATER delivery for a different Mote"
+        );
+        assert_eq!(slots.take(b), Some(vec![(slot_mote(20), slot_ref(21))]));
+    }
+
+    /// Taking is destructive and never substitutes another Mote's entry: a second take,
+    /// or a take for a Mote nothing was delivered for, yields `None` (assemble nothing —
+    /// the pre-F-7 behaviour), never a neighbour's context.
+    #[test]
+    fn a_missing_entry_yields_nothing_not_a_neighbours_context() {
+        let slots: KeyedSlots<ParentResults> = KeyedSlots::default();
+        slots.set(slot_mote(1), vec![(slot_mote(10), slot_ref(11))]);
+
+        assert!(slots.take(slot_mote(9)).is_none(), "no entry ⇒ no context");
+        assert!(slots.take(slot_mote(1)).is_some());
+        assert!(
+            slots.take(slot_mote(1)).is_none(),
+            "an entry is consumed exactly once"
+        );
+    }
+
+    /// A re-lease re-delivers for the same Mote; the newest delivery wins and no
+    /// duplicate entry accumulates.
+    #[test]
+    fn redelivery_for_the_same_mote_replaces_it() {
+        let slots: KeyedSlots<ParentResults> = KeyedSlots::default();
+        let m = slot_mote(1);
+        slots.set(m, vec![(slot_mote(10), slot_ref(11))]);
+        slots.set(m, vec![(slot_mote(20), slot_ref(21))]);
+
+        assert_eq!(slots.take(m), Some(vec![(slot_mote(20), slot_ref(21))]));
+        assert!(slots.take(m).is_none(), "only ONE entry existed");
+    }
+
+    /// The map is bounded: context delivered for a Mote that is never run (dead-lettered
+    /// before dispatch) cannot accumulate without limit. Eviction is oldest-first, so the
+    /// most recent `CONTEXT_SLOT_CAPACITY` deliveries — the ones with live Motes — survive.
+    #[test]
+    fn undelivered_context_is_bounded_and_evicts_oldest_first() {
+        let slots: KeyedSlots<ParentResults> = KeyedSlots::default();
+        let oldest = slot_mote_n(0);
+        for n in 0..CONTEXT_SLOT_CAPACITY {
+            slots.set(slot_mote_n(n), vec![(slot_mote_n(n), slot_ref(0))]);
+        }
+        assert_eq!(slots.entries.lock().unwrap().len(), CONTEXT_SLOT_CAPACITY);
+
+        // One past capacity: the retained set does not grow, and it is the OLDEST entry
+        // that goes — the newest deliveries are the ones with live Motes.
+        let newest = slot_mote_n(CONTEXT_SLOT_CAPACITY);
+        slots.set(newest, vec![(newest, slot_ref(0))]);
+
+        assert_eq!(
+            slots.entries.lock().unwrap().len(),
+            CONTEXT_SLOT_CAPACITY,
+            "the retained set stays bounded"
+        );
+        assert!(
+            slots.take(newest).is_some(),
+            "the NEWEST delivery survives eviction"
+        );
+        assert!(
+            slots.take(oldest).is_none(),
+            "eviction drops the OLDEST entry"
+        );
+    }
 
     #[test]
     fn consensus_plurality_picks_the_modal_value() {

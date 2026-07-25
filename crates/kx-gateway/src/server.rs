@@ -777,14 +777,23 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // owner thread (llama.cpp `!Send`); Pure/IO/tool Motes run truly concurrently, and
     // Ollama swarms get real concurrent inference over independent HTTP. The coordinator
     // stays the sole journal writer ⇒ no journal/checkpoint/digest change.
+    //
+    // Sharing that one `executor` Arc means its worker→executor context side-channel is
+    // shared too. It is keyed by `MoteId` (`model_exec::KeyedSlots`) precisely so a peer
+    // worker's delivery cannot displace this one's — when it was a single slot, a pool
+    // silently ran model Motes without their grounding context.
     let worker_pool = crate::env_caps::resolve_worker_pool(cfg.worker_pool);
     // Back-pressure (small fold-in; the full resource-aware admission layer is
     // deferred): under a pool, SPREAD the lease budget so a single worker cannot hoard
-    // `max_lease` leases while running them serially (the `is_leased` gate would then
-    // block idle workers from stealing that queued work). Dividing `max_lease` across
-    // the pool keeps the operator's total in-flight-lease budget while letting whoever
-    // is free pick up the next Mote → better balance + finer-grained pull back-pressure.
-    // pool=1 uses `max_lease` verbatim ⇒ byte-identical.
+    // `max_lease` leases (the `is_leased` gate would then block idle workers from
+    // stealing that queued work). Dividing `max_lease` across the pool keeps the
+    // operator's total in-flight-lease budget while letting whoever is free pick up the
+    // next Mote → better balance + finer-grained pull back-pressure. pool=1 uses
+    // `max_lease` verbatim ⇒ byte-identical.
+    //
+    // A worker no longer runs its lease serially — it drains it through the bounded
+    // effect queue below — so hoarding is now about lease FAIRNESS across workers, not
+    // about work sitting idle behind one slow Mote.
     let per_worker_lease = if worker_pool > 1 {
         cfg.max_lease
             .div_ceil(u32::try_from(worker_pool).unwrap_or(u32::MAX))
@@ -813,6 +822,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     } else {
         None
     };
+    let effect_concurrency = crate::env_caps::resolve_effect_concurrency();
     let mut worker_tasks: Vec<JoinHandle<()>> = Vec::with_capacity(worker_pool);
     let mut heartbeat_tasks: Vec<JoinHandle<()>> = Vec::with_capacity(worker_pool);
     for i in 0..worker_pool {
@@ -838,6 +848,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         // default OFF ⇒ None ⇒ byte-identical) so a stuck external tool cannot pin this
         // pool worker's slot forever.
         let worker = worker.with_tool_deadline(crate::env_caps::tool_deadline());
+        // EFFECT-QUEUE: the bounded effect queue's width. Each worker runs this many of its
+        // leased Motes at once instead of one at a time, so a slow tool or MCP call no
+        // longer head-of-line-blocks every other ready Mote — including Motes from other
+        // runs on the same serve. Override with `KX_SERVE_EFFECT_CONCURRENCY`; `1` is the
+        // pre-queue sequential batch.
+        let worker = worker.with_effect_concurrency(effect_concurrency);
         // Share the ONE per-serve work cache with every pooled worker (None ⇒ byte-identical).
         let worker = worker.with_work_cache(work_cache.clone());
         // Keep each idle worker live in the registry (background heartbeat) so a run

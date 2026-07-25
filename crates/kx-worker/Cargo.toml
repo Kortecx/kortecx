@@ -1,6 +1,6 @@
 [package]
 name = "kx-worker"
-version = "0.2.0"
+version = "0.3.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }
@@ -41,7 +41,9 @@ tracing = { workspace = true }
 # The background liveness heartbeat (P3.1): a spawned task ticks on an interval so an
 # idle worker stays live in the coordinator's registry. `rt` (via the workspace
 # `rt-multi-thread`) + `time` are additive over the workspace tokio features.
-tokio = { workspace = true, features = ["time"] }
+# The bounded effect queue adds `sync` for the bounded effect queue's `Semaphore`; `spawn_blocking` and
+# `JoinSet` come from `rt`, already present via the workspace `rt-multi-thread`.
+tokio = { workspace = true, features = ["time", "sync"] }
 
 [dev-dependencies]
 # The e2e test hosts a real CoordinatorService over an in-process gRPC server and
