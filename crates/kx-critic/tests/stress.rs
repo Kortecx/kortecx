@@ -4,7 +4,7 @@
 //! `cargo test -p kx-critic --release -- --ignored`. Asserts the two properties
 //! that matter at scale: (1) the evaluator stays total + fast as record counts
 //! grow across a scaling table, and (2) verdicts are byte-identical across two
-//! independent evaluations of the same input (the SN-8 reproducibility guarantee
+//! independent evaluations of the same input (the reproducibility guarantee
 //! the runtime relies on — identical input ⇒ identical committed verdict ref).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]

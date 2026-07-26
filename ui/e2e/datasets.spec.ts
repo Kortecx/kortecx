@@ -36,7 +36,7 @@ test("Datasets: lists a seeded corpus + degrades cleanly without an embedder", a
   await expect(chip).toContainText("3 docs");
   await expect(chip).toHaveAttribute("aria-pressed", "true");
 
-  // GR15 guard (PR-C2): the reference app's DatasetCard ships a Delete button, but
+  // honesty guard (PR-C2): the reference app's DatasetCard ships a Delete button, but
   // OUR gateway has NO DeleteDataset RPC — so the re-skin must expose NO delete
   // affordance (a faked, non-functional control would violate don't-fake-gaps).
   const section = page.getByTestId("datasets-section");

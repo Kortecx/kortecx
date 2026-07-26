@@ -11,7 +11,7 @@
 //! commit, NOT a `Failed` — the gate (not the critic) withholds the producer.
 //! Because [`kx_critic::evaluate`] is pure/total/deterministic and the verdict's
 //! ref is `blake3(verdict.encode())`, the same producer bytes commit a
-//! byte-identical verdict on every run/process/machine (SN-8 exact equality;
+//! byte-identical verdict on every run/process/machine (exact equality;
 //! integer-only evidence, no float on the identity/commit path).
 
 use kx_content::{ContentRef, ContentStore};

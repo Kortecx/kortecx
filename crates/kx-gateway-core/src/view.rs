@@ -1,6 +1,6 @@
 //! Map a folded [`Projection`] into the server-derived
 //! [`ProjectionView`](proto::ProjectionView). Every `MoteSnapshot` field comes
-//! from the read API of the fold — the client never computes a `MoteId` (SN-8).
+//! from the read API of the fold — the client never computes a `MoteId`.
 //! Also hosts the read-only fold helper and the `GetContent` authorization.
 
 use std::collections::{BTreeMap, BTreeSet};

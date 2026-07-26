@@ -2,7 +2,7 @@
 
 Thin, typed wrappers over the generated ``KxGatewayStub``: credential resolution,
 channel lifecycle, and the eight RPCs, plus the high-level ``invoke(..., wait=True)``
-"runtime as a function". Identity is server-derived (SN-8): the client sends a
+"runtime as a function". Identity is server-derived: the client sends a
 *credential* (a bearer token), never a claimed identity, and never computes an id.
 """
 
@@ -119,7 +119,7 @@ def _fill_default_model(
     ``default_model``, in place, just before submit. A no-op when ``default_model`` is
     unset OR no step omitted its model — so the canonical lowering (which the corpus
     pins, client-free) is untouched and the server still binds ``""`` → the served
-    model (SN-8) when neither is set. Returns ``request`` for chaining."""
+    model when neither is set. Returns ``request`` for chaining."""
     if not default_model:
         return request
     model_kind = _g.WorkflowStepKind.WORKFLOW_STEP_KIND_MODEL
@@ -158,7 +158,7 @@ def _inject_app_args(blueprint: dict, args: Optional[Dict[str, str]]) -> dict:
     prompt as a clearly-delimited "Inputs" block, returning a NEW blueprint (never
     mutates the source). A NO-OP when ``args`` is empty/absent OR the blueprint has no
     model step ⇒ byte-identical to the pre-POC-5d compile. The server still re-resolves
-    every warrant from the caller's grants (SN-8); args steer, never grant."""
+    every warrant from the caller's grants; args steer, never grant."""
     entries = [(k, v) for k, v in (args or {}).items() if v is not None]
     if not entries:
         return blueprint
@@ -585,7 +585,7 @@ class _Approvals:
     """The ``kx.approvals`` namespace — the HITL pre-action approval gate's operator
     control plane (D114): ``list_pending`` / ``grant`` / ``deny``. Grant/deny are
     OPERATOR decisions over a server-derived ``request_id`` — they release/reject a
-    STAGED world-mutating action, never mint a client warrant (SN-8)."""
+    STAGED world-mutating action, never mint a client warrant."""
 
     def __init__(self, client: "KxClient") -> None:
         self._c = client
@@ -793,7 +793,7 @@ class KxClient:
         """AGENTIC-VISION: bind ``kx/recipes/react-vision`` (the image-grounded agent loop),
         injecting ``image_ref`` into the react args so the served VLM reasons over the image
         on every turn. Honest-degrades with a clear error when no vision model is served —
-        never silently drops the image (GR15)."""
+        never silently drops the image."""
         try:
             form = self.get_recipe_form(REACT_VISION_RECIPE_HANDLE)
         except Exception as e:  # recipe not provisioned (text-only serve / old gateway)
@@ -811,7 +811,7 @@ class KxClient:
         """RC4b: bind ``kx/recipes/vision-rag`` — the VLM answers about the image WHILE
         grounded on the dataset's retrieved text (one generation). Honest-degrades with a
         clear error when vision-RAG is not provisioned (needs BOTH a vision model AND the
-        dataset/hnsw features) — never silently drops the dataset (GR15)."""
+        dataset/hnsw features) — never silently drops the dataset."""
         try:
             form = self.get_recipe_form(VISION_RAG_RECIPE_HANDLE)
         except Exception as e:  # recipe not provisioned (text-only / non-hnsw / old gateway)
@@ -856,7 +856,7 @@ class KxClient:
         "k": k}`` instead — the server embeds the prompt, retrieves the dataset's
         top-``k`` documents, folds them into the prompt, and answers. If the
         dataset is missing/empty the server HONESTLY degrades to a plain answer
-        (it never fakes grounding); the grounding refs stay server-side (SN-8), so
+        (it never fakes grounding); the grounding refs stay server-side, so
         this returns only the answer text.
 
         Raises :class:`~kortecx.errors.KxRunFailed` if the run fails and
@@ -875,7 +875,7 @@ class KxClient:
         the turn a BOUNDED agentic (ReAct) turn — one MODEL step granted ONLY those tools,
         looping reason→tool→observe up to ``max_turns`` (default 8) / ``max_tool_calls``
         (default 20). The server builds the scoped warrant from the grants and re-verifies
-        each at every fire (SN-8) — never a blanket auto-grant. Lowers through the same
+        each at every fire — never a blanket auto-grant. Lowers through the same
         ``flow().agent(tools=...)`` path as the CLI ``kx chat --tools`` and scopes the wait
         to THIS turn's chain (``react_chain_salt``). Does not compose with
         ``dataset``/``image`` yet (a clear :class:`KxUsage`, never a silent drop)."""
@@ -938,7 +938,7 @@ class KxClient:
     ) -> Union[Run, Result]:
         """Author a Tier-1 DAG (a :class:`BlueprintBuilder` ``build()``) and run it.
         The server COMPILES the DAG, derives all identity, and builds every warrant
-        from the party's grants (SN-8) — the client sends only the topology + params.
+        from the party's grants — the client sends only the topology + params.
         Returns a :class:`~kortecx.run.Run` handle (V2a — ``.wait()`` / ``.events()``),
         or — with ``wait=True`` — the first committed :class:`Result`. A workflow has no
         statically-known terminal, so the ``Run`` waits for the FIRST committed Mote. An
@@ -961,7 +961,7 @@ class KxClient:
         """NL authoring (propose-then-confirm): turn a natural-language ``goal`` into a
         PROPOSED multi-step workflow DAG. The served model plans; the gateway decodes +
         compiles the plan through the vetted planner (the model names only role + intent +
-        edges — every capability axis is server-vetted, SN-8). VALIDATE-ONLY: nothing runs
+        edges — every capability axis is server-vetted). VALIDATE-ONLY: nothing runs
         until the caller authors the returned steps (e.g. via a builder / :meth:`save_app`
         / :meth:`submit_workflow`). Returns ``proposed=False`` with a ``reason`` when the
         gateway can't plan (no served model, an inadmissible plan). An old gateway without
@@ -1019,8 +1019,8 @@ class KxClient:
     ) -> Union[Run, Result]:
         """Lower a :class:`~kortecx.chains.Chain` (operator sugar or the string DSL)
         and run it. A thin convenience over :meth:`submit_workflow` — the server
-        still COMPILES the DAG + builds every warrant from the party's grants
-        (SN-8). Returns a :class:`~kortecx.run.Run` handle, or — with ``wait=True`` —
+        still COMPILES the DAG + builds every warrant from the party's grants.
+        Returns a :class:`~kortecx.run.Run` handle, or — with ``wait=True`` —
         the first committed :class:`Result`.
 
         V2b: any ``@kx.tool`` local functions referenced by the chain are registered
@@ -1057,8 +1057,8 @@ class KxClient:
 
     def put_content(self, payload: bytes, *, media_type: str = "", filename: str = "") -> PutResult:
         """Upload bytes to the gateway's content store (Batch A). A CONTENT-STORE
-        write, never a journal write: the returned ref is SERVER-DERIVED blake3
-        (SN-8). ``media_type``/``filename`` are advisory audit fields. The server
+        write, never a journal write: the returned ref is SERVER-DERIVED blake3.
+        ``media_type``/``filename`` are advisory audit fields. The server
         caps the payload fail-closed (``kx serve --content-max-bytes``, default
         32 MiB). An old gateway raises ``KxUnimplemented``."""
         resp = self._call(
@@ -1102,7 +1102,7 @@ class KxClient:
         ``items`` is a sequence of ``(name, content_ref)`` or
         ``(name, content_ref, media_type)``; each ``content_ref`` is a ref already
         in the content store (e.g. from :meth:`put_content`). The server derives
-        ``bundle_ref`` (SN-8) into an off-journal sidecar, scoped to this party.
+        ``bundle_ref`` into an off-journal sidecar, scoped to this party.
         Attach the handle to a run with ``invoke(..., context=[handle])``. An old
         gateway raises ``KxUnimplemented``."""
         proto_items = []
@@ -1158,7 +1158,7 @@ class KxClient:
         source_digest: bytes = b"",
     ) -> SaveAppResult:
         """Persist a ``kortecx.app/v1`` envelope to the caller-scoped catalog. The
-        server validates + canonicalizes it and derives ``app_ref`` (SN-8); the
+        server validates + canonicalizes it and derives ``app_ref``; the
         envelope carries NO authority. ``handle`` defaults to
         ``apps/local/<sanitized-name>``. ``source_digest`` is an OPTIONAL 32-byte
         off-identity lineage hint (an import/clone stamps the source's ``app_digest``;
@@ -1267,8 +1267,8 @@ class KxClient:
         """Fetch an App's READ-ONLY capability manifest ("what this App needs vs. what
         you have"): its requested tools/connections/model diffed against your live
         policy. ``None`` if not found / not owned (uniform — no existence oracle). The
-        manifest gates nothing; the runtime enforces the same intersection at run
-        (SN-8). An old gateway without the seam raises ``KxUnimplemented``."""
+        manifest gates nothing; the runtime enforces the same intersection at run.
+        An old gateway without the seam raises ``KxUnimplemented``."""
         resp = self._call(
             lambda: self._stub.GetAppManifest(
                 _g.GetAppManifestRequest(handle=handle), metadata=self._md
@@ -1284,7 +1284,7 @@ class KxClient:
         """Add (upsert) a ``kortecx.skill/v1`` skill to the caller-scoped catalog.
         The server validates the manifest fail-closed (authority deny-keys), stores
         the ``instructions`` body content-addressed, and derives ``skill_ref`` +
-        ``instructions_ref`` (SN-8). Omit ``instructions`` iff the manifest already
+        ``instructions_ref``. Omit ``instructions`` iff the manifest already
         names a 64-hex ``instructions_ref`` (stored form). A skill is a WISH bundle
         — adding one grants nothing. An old gateway raises ``KxUnimplemented``."""
         resp = self._call(
@@ -1335,7 +1335,7 @@ class KxClient:
         gateway reads the validated stored envelope and honors its
         ``references.connections`` + ``guards.secret_scope`` (so a credentialed
         connector, e.g. Gmail, can be dialed inside the agentic loop) — and re-resolves
-        EVERY warrant from the caller's grants (SN-8). On an older server without the
+        EVERY warrant from the caller's grants. On an older server without the
         seam (``UNIMPLEMENTED``) it falls back to the legacy client-orchestrated
         ``GetApp`` → ``SubmitWorkflow`` (which drops the references). Raises
         :class:`KxUsage` if the App is not found. ``args`` (the App's ``input_schema``
@@ -1531,7 +1531,7 @@ class KxClient:
 
         A ``parent`` handle forks a point-in-time CoW sub-branch (it inherits the
         parent's resolved items at create time; later parent edits do not
-        propagate). The server derives ``branch_ref`` (SN-8) into an off-journal
+        propagate). The server derives ``branch_ref`` into an off-journal
         sidecar, scoped to this party. An old gateway raises ``KxUnimplemented``."""
         resp = self._call(
             lambda: self._stub.CreateBranch(
@@ -1627,7 +1627,7 @@ class KxClient:
         the diff then either approves (``advance_branch(handle, path, result_ref)``) or
         rejects (discards — the proposed blob is a harmless content-addressed orphan).
         The host is NEVER written. Raises ``KxError`` if the step produced no committed
-        answer or an empty body (GR15 fail-closed — same guards as :meth:`edit_branch`)."""
+        answer or an empty body (fail-closed — same guards as :meth:`edit_branch`)."""
         branch = self.get_branch(handle)
         if branch is None:
             raise KxError(f"branch {handle!r} not found")
@@ -1650,7 +1650,7 @@ class KxClient:
         )
         if not isinstance(result, Result) or not result.ok or result.result_ref is None:
             raise KxError("react-edit produced no committed answer to advance the branch to")
-        # Fail CLOSED on an empty edit (GR15): never propose an empty file (a
+        # Fail CLOSED on an empty edit: never propose an empty file (a
         # heavy-reasoning model can return only stripped reasoning).
         if not result.payload:
             raise KxError(
@@ -1767,7 +1767,7 @@ class KxClient:
 
     def list_models(self) -> List[ModelSummary]:
         """Discover the models the connected gateway serves (Batch A). Display
-        only (SN-8): selection stays a recipe ENUM free-param validated
+        only: selection stays a recipe ENUM free-param validated
         server-side. Each entry reports live RAM residency (``loaded``) and the
         recipe ``chat_handle`` that routes a turn to it. An FFI-free gateway
         returns an EMPTY list; an old gateway raises ``KxUnimplemented``."""
@@ -1800,7 +1800,7 @@ class KxClient:
         served model, listen/bridge/console/metrics addresses, content/journal/
         catalog locations, the admission caps, the CORS allow-list, and the
         compiled-in feature flags. Authenticated like every other RPC; DISPLAY/
-        SETTINGS-ONLY (SN-8) and NEVER a secret. An old gateway without the RPC
+        SETTINGS-ONLY and NEVER a secret. An old gateway without the RPC
         raises ``KxUnimplemented``."""
         resp = self._call(
             lambda: self._stub.GetServerInfo(_g.GetServerInfoRequest(), metadata=self._md)
@@ -1819,7 +1819,7 @@ class KxClient:
         ``huggingface.co`` ``/resolve/`` GGUF link) WITH ``sha256``. Returns the
         ``model_id`` to poll via :meth:`get_pull_status`. Deny-by-default: a refusal
         (downloads disabled / host not allowlisted / missing sha256) raises
-        ``KxFailedPrecondition``. HOST INFRASTRUCTURE, not a client Mote (SN-8)."""
+        ``KxFailedPrecondition``. HOST INFRASTRUCTURE, not a client Mote."""
         if (ollama_tag is None) == (url is None):
             raise ValueError("pull_model requires exactly one of ollama_tag or url")
         req = _g.PullModelRequest(sha256=sha256 or "")
@@ -1978,7 +1978,7 @@ class KxClient:
     def get_mote_detail(self, instance_id: IdType, mote_id: IdType) -> MoteDetail:
         """Resolve one Mote's admitted definition (Batch B) — the node-inspector
         read: step kind, model, prompt, capped params, tool contract. DISPLAY
-        ONLY (SN-8). Commit-gated: an uncommitted mote (or one admitted by a
+        ONLY. Commit-gated: an uncommitted mote (or one admitted by a
         pre-Batch-B binary) answers ``def_found=False`` honestly; an unknown
         mote in an owned run raises ``KxNotFound``; a wrong ticket raises the
         uniform ``KxPermissionDenied``. An old gateway raises ``KxUnimplemented``."""
@@ -2148,7 +2148,7 @@ class KxClient:
         """The durable tools registry INVENTORY (PR-6a ``DiscoverTools``) —
         registered tools + their authority/provenance, in ``(name, version)``
         order. DISTINCT from ``list_tool_manifests`` (advisory ranking).
-        Registration grants NO authority (SN-8). An old gateway (or one without
+        Registration grants NO authority. An old gateway (or one without
         the registry) raises ``KxUnimplemented``."""
         req = _g.DiscoverToolsRequest(
             limit=limit, after_name=after_name, after_version=after_version
@@ -2173,7 +2173,7 @@ class KxClient:
         """Register a declarative EXTERNAL MCP tool (PR-6a ``RegisterTool``). The
         server SSRF-vets ``server_host``, derives identity + capability, and
         durably stores it; the returned ``tool_id`` (hex) is SERVER-derived (the
-        client never names/forges it, SN-8). Registration grants NO authority — a
+        client never names/forges it). Registration grants NO authority — a
         tool fires only under a server-issued warrant. DIALING ``server_host`` is a
         Cloud / PR-6b capability. An internal/link-local host is refused
         (``permission_denied``)."""
@@ -2286,7 +2286,7 @@ class KxClient:
         through the broker (``CallMcpTool``). ``args`` is a JSON object string
         (validated against the tool's inputSchema; ``None``/empty ⇒ ``{}``). NOT a
         durable agentic effect (no journal fact) — the "does this connector work"
-        check; the agentic loop fires the same tools durably. SN-8 is re-enforced
+        check; the agentic loop fires the same tools durably. The authority gate is re-enforced
         server-side (single-grant warrant from the tool's own scopes)."""
         req = _g.CallMcpToolRequest(
             server_name=name,
@@ -2491,7 +2491,7 @@ class KxClient:
     @property
     def approvals(self) -> _Approvals:
         """The HITL approval namespace — ``kx.approvals.list_pending / grant / deny``
-        (D114). Grant/deny release/reject a staged world-mutating action (SN-8)."""
+        (D114). Grant/deny release/reject a staged world-mutating action."""
         return _Approvals(self)
 
     @property
@@ -2601,7 +2601,7 @@ class KxClient:
     ) -> List[ScoredRecipe]:
         """ADVISORY recipe discovery (PR-4 Batch D) — rank the provisioned
         recipes against ``intent`` (+ optional ``keywords``), best-first, capped
-        at ``limit``. SN-8: each ``score_bp`` is DISPLAY-ONLY (a hit SURFACES a
+        at ``limit``. Each ``score_bp`` is DISPLAY-ONLY (a hit SURFACES a
         recipe, never invokes one — :meth:`invoke` stays the authorization gate).
         An old gateway / a catalog with no ranker raises ``KxUnimplemented``."""
         req = _g.SearchRecipesRequest(intent=intent, keywords=keywords or [])
@@ -2650,7 +2650,7 @@ class KxClient:
         carries ``content`` (always) + an OPTIONAL client-computed ``embedding`` (the
         FFI-free path); a vector-less doc needs a gateway with the ``inference``
         feature (else ``KxFailedPrecondition``). The server derives each doc's id from
-        its content (SN-8); re-ingesting identical content is a no-op."""
+        its content; re-ingesting identical content is a no-op."""
         req = _g.IngestDocumentsRequest(dataset=dataset, documents=_to_documents(documents))
         resp = self._call(lambda: self._stub.IngestDocuments(req, metadata=self._md))
         return IngestResult.from_proto(resp)
@@ -2670,7 +2670,7 @@ class KxClient:
         needs the ``inference`` feature). ``mode`` (RC4a) selects dense vs hybrid
         (BM25 + dense); ``rerank`` (RC4c) overrides the operator's MMR diversity-rerank
         default per query (``None`` ⇒ the server default). Hits are ordered by the
-        DISPLAY-ONLY score (SN-8). An unknown dataset raises ``KxNotFound``."""
+        DISPLAY-ONLY score. An unknown dataset raises ``KxNotFound``."""
         req = _g.QueryDatasetRequest(
             dataset=dataset,
             query_text=text or "",
@@ -2695,7 +2695,7 @@ class KxClient:
     ) -> List[FuzzyHit]:
         """Slice-B advisory fuzzy-in / exact-out discovery over ``dataset`` (D151).
         Like :meth:`query_dataset`, but each :class:`FuzzyHit` carries ONLY the
-        content-addressed ref + a DISPLAY-ONLY basis-point score (SN-8) — join back
+        content-addressed ref + a DISPLAY-ONLY basis-point score — join back
         to bytes with an EXACT :meth:`get_content` on the ref. An old / ``hnsw``-less
         gateway raises ``KxUnimplemented``."""
         req = _g.FuzzyDiscoveryRequest(
@@ -2712,7 +2712,7 @@ class KxClient:
     def list_tool_manifests(self) -> List[ToolManifest]:
         """Enumerate the registered tools' ADVISORY manifests (W1.A5 toolscout),
         in deterministic ``(tool_id, tool_version)`` order — ranking/display
-        material ONLY (SN-8): a manifest can surface a tool, never grant one; the
+        material ONLY: a manifest can surface a tool, never grant one; the
         sole grant gate stays exact ``(name, version)`` equality in lowering + the
         broker. An old gateway raises ``KxUnimplemented``."""
         resp = self._call(
@@ -2722,7 +2722,7 @@ class KxClient:
 
     def score_task_bundle(self, spec: BundleSpec) -> BundleScore:
         """Score a client-authored :class:`BundleSpec` against every registered
-        manifest (W1.A5 toolscout) — ADVISORY/DISPLAY-ONLY (SN-8): integer
+        manifest (W1.A5 toolscout) — ADVISORY/DISPLAY-ONLY: integer
         basis-point ranks that never authorize. The verdict is a server-side
         DRY-RUN of the real lowering gate against the SERVER-built react warrant
         (no client warrant input); the lowered WorkflowDef is discarded — nothing
@@ -2766,7 +2766,7 @@ class KxClient:
 
     def recall_memory(self, text: str, *, k: int = 5) -> List[MemoryHit]:
         """Recall the top-k memories most similar to ``text`` (RC5a). Each hit's
-        ``score`` is DISPLAY-ONLY (SN-8). Scoped to the caller's own principal."""
+        ``score`` is DISPLAY-ONLY. Scoped to the caller's own principal."""
         req = _g.RecallMemoryRequest(query_text=text, k=k, namespace="")
         resp = self._call(lambda: self._stub.RecallMemory(req, metadata=self._md))
         return [MemoryHit.from_proto(h) for h in resp.hits]
@@ -3086,7 +3086,7 @@ class AsyncKxClient:
         The server degrades honestly to a plain answer when the dataset is
         missing/empty (never fakes grounding); RC4b: ``dataset`` + ``image`` together
         binds ``kx/recipes/vision-rag`` (image answer grounded on retrieved text).
-        Pass ``tools`` for a bounded agentic (ReAct) turn granted ONLY those tools (SN-8;
+        Pass ``tools`` for a bounded agentic (ReAct) turn granted ONLY those tools (
         does not compose with ``dataset``/``image`` yet)."""
         if tools:
             if dataset is not None or image is not None:
@@ -3268,7 +3268,7 @@ class AsyncKxClient:
     async def get_server_info(self) -> ServerInfo:
         """Async mirror of :meth:`KxClient.get_server_info` (POC-1 Settings) — the
         connected gateway's effective config (display/settings-only, never a
-        secret, SN-8). An old gateway raises ``KxUnimplemented``."""
+        secret). An old gateway raises ``KxUnimplemented``."""
         resp = await self._acall(
             self._stub.GetServerInfo(_g.GetServerInfoRequest(), metadata=self._md)
         )
@@ -3720,7 +3720,7 @@ class AsyncKxClient:
     ) -> List[FuzzyHit]:
         """Slice-B advisory fuzzy-in / exact-out discovery (D151) — async twin of
         :meth:`KxClient.fuzzy_discovery`. Returns refs + DISPLAY-ONLY basis-point
-        scores (SN-8); join back to bytes with an EXACT ``get_content``."""
+        scores; join back to bytes with an EXACT ``get_content``."""
         req = _g.FuzzyDiscoveryRequest(
             dataset=dataset,
             query_text=text or "",

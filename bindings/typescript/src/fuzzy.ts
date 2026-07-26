@@ -3,7 +3,7 @@
  * (`FuzzyDiscovery`, D151). Kept in its own module so `types.ts` stays a thin
  * aggregator, mirroring the Rust core's module-per-concern discipline.
  *
- * SN-8 (load-bearing): `scoreBp` is DISPLAY-ONLY — never an identity input. The
+ * Identity (load-bearing): `scoreBp` is DISPLAY-ONLY — never an identity input. The
  * result a downstream consumer trusts is the ordered `contentRef` SET; the caller
  * joins back to bytes with an EXACT `getContent` on the ref ("fuzzy in, exact
  * out"). The approximate ANN ranking never reaches identity.
@@ -18,7 +18,7 @@ export class FuzzyHit {
   constructor(
     /** The 32-byte content-addressed id (hex) of the CHUNK — the EXACT-OUT join key. */
     readonly contentRef: string,
-    /** Display-only similarity in basis points (0..=10000); NEVER identity (SN-8). */
+    /** Display-only similarity in basis points (0..=10000); NEVER identity. */
     readonly scoreBp: number,
     /** RC4a: hex of the parent document (== `contentRef` for an un-chunked corpus). */
     readonly parentRef: string = "",

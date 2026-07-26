@@ -39,7 +39,7 @@ const CAPABILITY_VERSION: &str = "kx-model-harness-0.1.0";
 /// gate — the **single audited tool-firing path**, shared by [`ModelBroker`]'s
 /// fused single-call arm (M5.2) and the PR-4 [`crate::react`] loop's per-turn tool
 /// Mote. Given a `call` that [`crate::toolcall::parse_tool_call`] already accepted
-/// (tool ∈ `warrant.tool_grants`, args size-bounded, SN-8), this resolves the tool
+/// (tool ∈ `warrant.tool_grants`, args size-bounded), this resolves the tool
 /// def for its declared egress, validates the args against the tool's typed
 /// `inputSchema` FAIL-CLOSED (D110.4), and dispatches a `StageThenCommit` effect
 /// (D66) keyed by the run-scoped idempotency token (D38 §1 / M1.2 — a recovery
@@ -272,9 +272,9 @@ where
                     diagnostic: format!("model dispatch: {e}"),
                 })?;
 
-            // M5.2 — IMP-5: decode a model-PROPOSED tool call, fail-closed. The
+            // M5.2 — decode a model-PROPOSED tool call, fail-closed. The
             // model selects a tool from the menu M5.1 placed in its context; the
-            // runtime ENFORCES (SN-8). On a valid, warrant-granted call we route it
+            // runtime ENFORCES. On a valid, warrant-granted call we route it
             // through `tool_broker` — whose `precheck` is the authoritative warrant
             // gate (net_scope ⊆ warrant, tool_grants, pattern) — and return its
             // handle (already carrying the MCP capability identity as provenance,

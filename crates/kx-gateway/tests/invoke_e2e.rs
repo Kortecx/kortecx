@@ -124,7 +124,7 @@ async fn invoke_runs_demo_recipe_to_committed() {
         .await
         .unwrap()
         .into_inner();
-    // GR15: `echo` is a TRUE echo — it commits its bound `topic` verbatim.
+    // `echo` is a TRUE echo — it commits its bound `topic` verbatim.
     assert_eq!(
         blob.payload, b"incidents",
         "GetContent returns the bytes the worker committed for the invoked recipe (the echoed topic)"

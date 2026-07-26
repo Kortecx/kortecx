@@ -4,7 +4,7 @@
  * client-known {@link RunRecord}; the OPTIONAL {@link RunBundle} (the committed
  * DAG + each Mote's resolved output text) is assembled by the impure
  * `use-run-export` hook from a fetched `GetProjection`/`GetContent` pair, so
- * this module stays free of any network/React dependency (SN-8: the bundle is
+ * this module stays free of any network/React dependency (the bundle is
  * exactly what the gateway returned, never recomputed here).
  */
 

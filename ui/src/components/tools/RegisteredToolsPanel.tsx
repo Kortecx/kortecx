@@ -3,7 +3,7 @@
  * view: every registered tool with its kind, provenance, status, egress host and
  * net-scope, plus an operator deregister control. Built-ins are re-seeded on open
  * and never deregisterable (the control is disabled with a tooltip). Registration
- * grants NO authority (SN-8); listing leaks none. DIALING a registered external
+ * grants NO authority; listing leaks none. DIALING a registered external
  * MCP server is a Cloud / PR-6b capability — this view records + governs only.
  */
 

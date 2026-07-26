@@ -1,7 +1,7 @@
 /**
  * Upload bytes to the gateway's content store (`PutContent`, Batch A) — the
  * chat attach path. A CONTENT-STORE write, never a journal write; the returned
- * ref is SERVER-DERIVED blake3 (SN-8). The 32 MiB default server cap is
+ * ref is SERVER-DERIVED blake3. The 32 MiB default server cap is
  * pre-checked client-side for a fast, friendly failure (the server stays the
  * fail-closed authority).
  */

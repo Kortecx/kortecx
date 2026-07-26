@@ -3,7 +3,7 @@
  * metadata). Kept in its own module so `types.ts` stays a thin aggregator,
  * mirroring the Rust core's module-per-concern discipline.
  *
- * SN-8: the parent id is server-derived; the SDK only *encodes* the bytes to
+ * the parent id is server-derived; the SDK only *encodes* the bytes to
  * hex (never computes an id). An out-of-range `EdgeKind` renders `"unknown"` —
  * never a crash, never a silent mislabel (mirrors `stateName` in `types.ts`).
  */

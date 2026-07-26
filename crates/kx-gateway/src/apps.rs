@@ -10,7 +10,7 @@
 //! `MoteId` input, never a digest input — dropping the file cannot move the
 //! canonical projection digest.
 //!
-//! ## Server-derived id (SN-8)
+//! ## Server-derived id
 //! `app_ref = blake3("kx-app\0" ‖ handle ‖ 0 ‖ canonical(envelope))[..16]` via
 //! [`kx_content::ContentRef::of`] (the `bundle_ref_of` precedent). The host
 //! RE-CANONICALIZES the received bytes ([`kx_app::canonical_json`]) so client
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS apps (
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 ";
 
-/// `app_ref = blake3("kx-app\0" ‖ handle ‖ 0 ‖ canonical_envelope)[..16]` (SN-8).
+/// `app_ref = blake3("kx-app\0" ‖ handle ‖ 0 ‖ canonical_envelope)[..16]`.
 fn app_ref_of(handle: &str, canonical: &[u8]) -> [u8; 16] {
     let mut keyed = Vec::with_capacity(16 + handle.len() + canonical.len());
     keyed.extend_from_slice(b"kx-app\0");

@@ -1,4 +1,4 @@
-//! The security boundary (SN-8 / BLOCKER #5): an App envelope carries REFERENCES
+//! The security boundary: an App envelope carries REFERENCES
 //! and an authorship claim ONLY — never authority. The server re-resolves every
 //! axis at bind from the importer's OWN grants. These negatives pin that the
 //! serializer is structurally incapable of emitting a secret value or an authority

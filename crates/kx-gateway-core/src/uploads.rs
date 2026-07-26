@@ -14,7 +14,7 @@
 //!   (content-addressed). Never journaled, never a `MoteId` input, never a
 //!   digest input.
 //! - **Advisory metadata only.** `media_type`/`filename` are display/audit
-//!   fields; identity is the server-derived blake3 ref alone (SN-8).
+//! fields; identity is the server-derived blake3 ref alone.
 //! - **`None` seam ⇒ degrade.** A host without the sidecar leaves `PutContent`
 //!   `unimplemented` and the uploads scope uniformly not-authorized.
 

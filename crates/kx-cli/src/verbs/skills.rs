@@ -5,7 +5,7 @@
 //! A skill is a DECLARATIVE `kortecx.skill/v1` bundle — instructions + a tool
 //! grant-WISH set. Adding one grants nothing: at `kx app run` the server
 //! intersects the wish against the caller's grants and the live broker
-//! (`wish ∩ grants ∩ fireable`). SN-8: the server validates the manifest
+//! (`wish ∩ grants ∩ fireable`). The server validates the manifest
 //! fail-closed (authority deny-keys), stores the instructions body via the
 //! content-write seam, and derives `skill_ref` — the CLI never sends identity.
 

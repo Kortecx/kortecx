@@ -6,7 +6,7 @@
  * file currently being authored token-by-token (POC-6 — `useTokenStream` over the
  * write mote the server surfaces), swapping to the committed body once a file
  * lands. Driven ENTIRELY by the server's real `filesDone` / `filesPending` +
- * phase + live-writing ids (GR15: never a timer, never fabricated progress). On
+ * phase + live-writing ids (never a timer, never fabricated progress). On
  * `failed` it shows the server `detail` and keeps the partial files; on `done` it
  * offers an "Open" CTA into the full App IDE. Polling stops the instant the phase
  * is terminal.

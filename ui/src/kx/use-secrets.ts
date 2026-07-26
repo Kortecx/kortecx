@@ -6,7 +6,7 @@
  * `PutSecret` argument and is never returned on any read (D81). `ListSecretNames`
  * surfaces NAMES + audit timestamps only.
  *
- * SN-8: writes are gated loopback-only + an authenticated party server-side; the
+ * writes are gated loopback-only + an authenticated party server-side; the
  * SDK only *carries* the value to the handler. Degrades to a not-wired empty state
  * on a gateway without the secret store (UNIMPLEMENTED).
  */

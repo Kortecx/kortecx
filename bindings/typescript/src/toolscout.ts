@@ -4,7 +4,7 @@
  * `types.ts` stays a thin aggregator, mirroring the Rust core's module-per-concern
  * discipline.
  *
- * SN-8: every score/verdict here is ADVISORY/DISPLAY-ONLY — a score can surface a
+ * every score/verdict here is ADVISORY/DISPLAY-ONLY — a score can surface a
  * tool, never grant one. The sole grant gate stays the exact (toolId, toolVersion)
  * equality check in lowering + the broker. The {@link BundleScore.verdict} is a
  * server-side DRY-RUN of the real lowering gate against the SERVER-built warrant
@@ -90,7 +90,7 @@ export class ToolManifest {
 }
 
 /** One manifest's advisory rank against the bundle intent, in integer basis points
- *  (0..=10000; floats never cross the wire — SN-8 no-persisted-confidence). */
+ * (0..=10000; floats never cross the wire — no-persisted-confidence). */
 export class ManifestScore {
   constructor(
     readonly toolId: string,
@@ -107,7 +107,7 @@ export class ManifestScore {
 }
 
 /** The advisory `ScoreTaskBundle` outcome: every registered manifest ranked
- *  best-first + the lowering-gate DRY-RUN verdict. DISPLAY-ONLY (SN-8) — the
+ * best-first + the lowering-gate DRY-RUN verdict. DISPLAY-ONLY — the
  *  broker re-gates any future real dispatch. */
 export class BundleScore {
   constructor(
@@ -181,11 +181,11 @@ export function bundleSpecToProto(
 //
 // DISTINCT from the advisory ToolManifest above: the durable registry INVENTORY
 // (what is registered, by whom, with what authority). Registration grants NO
-// authority — a tool fires only under a server-issued warrant (SN-8); `toolId`
+// authority — a tool fires only under a server-issued warrant; `toolId`
 // is server-derived. DIALING a registered external MCP server is Cloud / PR-6b.
 
 /** One durable-registry row (`DiscoverTools`). `netScope` is a display summary;
- *  authority never rides this wire (SN-8). */
+ * authority never rides this wire. */
 export class RegisteredTool {
   constructor(
     /** 16-byte server-derived id, as lowercase hex. */
@@ -231,7 +231,7 @@ export interface RegisteredToolsPage {
 }
 
 /** A declared, typed tool input parameter (the MCP inputSchema analogue — CLOSED
- *  set, no float, SN-8). `ty` in `str|bytes|int|bool|enum`. */
+ * set, no float). `ty` in `str|bytes|int|bool|enum`. */
 export interface ToolParam {
   readonly name: string;
   /** `str` | `bytes` | `int` | `bool` | `enum` (defaults to `str`). */
@@ -294,7 +294,7 @@ export interface RegisterServerResult {
 }
 
 /** The outcome of an operator DIAGNOSTIC tool fire (`callMcpTool`) — a model-free
- *  "exercise this tool" check through the broker (SN-8 re-enforced; no journal fact).
+ * "exercise this tool" check through the broker (authority re-enforced; no journal fact).
  *  `ok` is `false` with a non-empty `error` on a refusal / connector failure. */
 export interface CallToolResult {
   readonly ok: boolean;
@@ -306,7 +306,7 @@ export interface CallToolResult {
 
 /** A `RegisterMcpServer` request shape (PR-6b-1). The runtime DIALS the server;
  *  the host is SSRF-vetted (admission + dial). A credential is referenced by NAME
- *  only (never the secret, D81). The server derives the connection/tool ids (SN-8). */
+ * only (never the secret, D81). The server derives the connection/tool ids. */
 export interface RegisterMcpServerInput {
   readonly name: string;
   /** `"stdio"` | `"http"` (defaults to `"stdio"`). */
@@ -324,7 +324,7 @@ export interface RegisterMcpServerInput {
 }
 
 /** A `RegisterTool` request shape. The host is SSRF-vetted; the server derives
- *  identity + capability (the client never sends a warrant / toolId, SN-8). */
+ * identity + capability (the client never sends a warrant / toolId). */
 export interface RegisterToolInput {
   readonly name: string;
   readonly version: string;

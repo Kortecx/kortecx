@@ -80,7 +80,7 @@ impl RunSubmitter for MockSubmitter {
         });
         Ok(SubmitMoteOutcome {
             // The re-derived identity (the wire advisory id was discarded at
-            // TryFrom) — the SN-8 property at the submit boundary.
+            // TryFrom) — the identity property at the submit boundary.
             mote_id: *mote.id.as_bytes(),
             instance_id: INSTANCE_ID,
             status: SubmitStatus::Accepted,

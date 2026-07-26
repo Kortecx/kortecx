@@ -1,4 +1,4 @@
-/** W1.A5 toolscout views — pure, no server. Advisory/display-only (SN-8). */
+/** W1.A5 toolscout views — pure, no server. Advisory/display-only. */
 
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";

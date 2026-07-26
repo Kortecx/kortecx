@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! **P1.11 — R49 cold-re-fold proof.** The load-bearing replay-faithfulness
 //! test for D48 + D49. Anchors standing invariant **#5**
-//! (`04-testing-and-gates.md`: "Topology-decision determinism — a committed
+//! ("Topology-decision determinism — a committed
 //! shaper decision rebuilds identical edges on re-fold and on recovery — no
 //! orphaned/duplicated children").
 //!

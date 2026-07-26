@@ -5,7 +5,7 @@
  * it to supply a gRPC vs gRPC-web transport and the platform WebSocket — that is
  * the ONLY thing that differs between them.
  *
- * Identity is server-derived (SN-8): the client sends a *credential* (a bearer
+ * Identity is server-derived: the client sends a *credential* (a bearer
  * token), never a claimed identity, and never computes an id.
  */
 
@@ -192,7 +192,7 @@ export interface KxClientOptions {
  * Batch A: fill any MODEL step that left `modelId` empty with `defaultModel`, in
  * place, just before submit. A no-op when `defaultModel` is unset OR no step omitted
  * its model — so the canonical lowering (corpus-pinned, client-free) is untouched and
- * the server still binds `""` → served (SN-8) when neither is set.
+ * the server still binds `""` → served when neither is set.
  */
 export function fillDefaultModel(
   request: MessageInitShape<typeof SubmitWorkflowRequestSchema>,
@@ -234,7 +234,7 @@ function toolsToContract(tools: readonly string[]): Record<string, string> {
  * prompt as a clearly-delimited "Inputs" block, returning a NEW blueprint (never
  * mutates the source). A NO-OP when `args` is empty/absent OR the blueprint has no
  * model step ⇒ byte-identical to the pre-POC-5d compile. The server still
- * re-resolves every warrant from the caller's grants (SN-8); args steer, never grant.
+ * re-resolves every warrant from the caller's grants; args steer, never grant.
  */
 export function injectAppArgs(
   blueprint: DagSpecJson,
@@ -486,7 +486,7 @@ export abstract class KxClientBase {
    * `dataset` it binds `kx/recipes/chat` (`{ prompt }`); with `opts.dataset` it
    * binds `kx/recipes/chat-rag` (`{ prompt, dataset, k }`) so the SERVER embeds the
    * prompt, retrieves the dataset's top-`k` docs, folds them in, and answers —
-   * grounding is server-side (SN-8). A missing/empty dataset HONESTLY degrades to a
+   * grounding is server-side. A missing/empty dataset HONESTLY degrades to a
    * plain answer (never faked). Returns the decoded answer string (`""` if the
    * committed payload was not UTF-8 text), reusing {@link Result.text} — the SAME
    * answer extraction as the `invoke` path. Throws {@link KxRunFailed} /
@@ -505,7 +505,7 @@ export abstract class KxClientBase {
     } = {},
   ): Promise<string> {
     // Attaching `tools` makes the turn a BOUNDED agentic (ReAct) turn — one MODEL step
-    // granted ONLY those tools (the server builds the scoped warrant, SN-8; never the
+    // granted ONLY those tools (the server builds the scoped warrant; never the
     // autogrant blanket). Lowers through the same `flow().agent({ tools })` path as the CLI
     // `kx chat --tools` and scopes the wait to THIS turn's chain (reactChainSalt). Does not
     // compose with dataset/image yet (a clear usage error, never a silent drop).
@@ -646,7 +646,7 @@ export abstract class KxClientBase {
    * AGENTIC-VISION: resolve `image` to a content ref and bind `kx/recipes/react-vision`
    * (the image-grounded agent loop), injecting `image_ref` into the react `args` so the
    * served VLM reasons over the image on every turn. Honest-degrades with a clear error
-   * when no vision model is served — never silently drops the image (GR15). Public so the
+   * when no vision model is served — never silently drops the image. Public so the
    * standalone `runAgent` / `Agent` entrypoints can bind it.
    */
   async bindReactVision(
@@ -686,7 +686,7 @@ export abstract class KxClientBase {
   /**
    * Author a Tier-1 DAG (a {@link BlueprintBuilder}'s `build()`) and run it. The
    * server COMPILES the DAG, derives all identity, and builds every warrant from the
-   * party's grants (SN-8) — the client sends only the topology + params. Returns the
+   * party's grants — the client sends only the topology + params. Returns the
    * run handle, or — with `wait: true` — the first committed {@link Result}. An old
    * gateway without the seam throws {@link KxUnimplemented}.
    */
@@ -720,7 +720,7 @@ export abstract class KxClientBase {
    * NL authoring (propose-then-confirm): turn a natural-language `goal` into a PROPOSED
    * multi-step workflow DAG. The SERVED model plans; the gateway decodes + compiles the
    * plan through the vetted planner (the model names only role + intent + edges — every
-   * capability axis is server-vetted, SN-8). It VALIDATES ONLY — nothing runs until the
+   * capability axis is server-vetted). It VALIDATES ONLY — nothing runs until the
    * caller confirms by authoring the returned steps (e.g. via the builder → `saveApp` /
    * {@link KxClientBase.submitWorkflow}). Returns `{ proposed: false, reason }` when the
    * gateway can't plan (no served model, an inadmissible plan). An old gateway without the
@@ -760,7 +760,7 @@ export abstract class KxClientBase {
    *
    * The model may NAME tool ids, but only from a server-built menu of what this caller could
    * already fire, and everything it names is intersected back against that menu — naming is
-   * not granting (SN-8). Whatever did not survive is reported in `notices`.
+   * not granting. Whatever did not survive is reported in `notices`.
    *
    * Returns `{ derived: false, reason }` when the gateway can't design (no served model, an
    * inadmissible workflow). An old gateway without the seam throws {@link KxUnimplemented}.
@@ -815,7 +815,7 @@ export abstract class KxClientBase {
    * Lower a {@link Chain} (the Chains DSL) to a `SubmitWorkflow` request and run it
    * — a thin sugar over {@link KxClientBase.submitWorkflow} (`runChain(c) ==
    * submitWorkflow(c.build())`). The server still COMPILES the lowered DAG, derives
-   * all identity, and builds every warrant from the party's grants (SN-8); the chain
+   * all identity, and builds every warrant from the party's grants; the chain
    * only changes what is PROPOSED. Returns the run handle, or — with `wait: true` —
    * the first committed {@link Result}. An old gateway without the workflow seam
    * throws {@link KxUnimplemented}.
@@ -852,8 +852,8 @@ export abstract class KxClientBase {
 
   /**
    * Upload bytes to the gateway's content store (Batch A). A CONTENT-STORE
-   * write, never a journal write: the returned ref is SERVER-DERIVED blake3
-   * (SN-8). `mediaType`/`filename` are advisory audit fields. The server caps
+   * write, never a journal write: the returned ref is SERVER-DERIVED blake3.
+   * `mediaType`/`filename` are advisory audit fields. The server caps
    * the payload fail-closed (`kx serve --content-max-bytes`, default 32 MiB).
    * An old gateway without this RPC throws {@link KxUnimplemented}.
    */
@@ -899,7 +899,7 @@ export abstract class KxClientBase {
   /**
    * Author (upsert) a context bundle (PR-7) at `handle` for this party. Each item
    * names a `contentRef` already in the content store (e.g. from
-   * {@link putContent}). The server derives `bundleRef` (SN-8) into an off-journal
+   * {@link putContent}). The server derives `bundleRef` into an off-journal
    * sidecar. Attach the handle to a run with `invoke(handle, args, { context: [h] })`.
    */
   async putContextBundle(
@@ -947,7 +947,7 @@ export abstract class KxClientBase {
 
   /**
    * Persist a `kortecx.app/v1` envelope to the caller-scoped catalog. The server
-   * validates + canonicalizes it and derives `appRef` (SN-8); the envelope carries
+   * validates + canonicalizes it and derives `appRef`; the envelope carries
    * NO authority. `handle` defaults to `apps/local/<sanitized-name>`. An old gateway
    * throws {@link KxUnimplemented}.
    */
@@ -987,7 +987,7 @@ export abstract class KxClientBase {
    * Fetch an App's READ-ONLY capability manifest ("what this App needs vs. what you
    * have"): its requested tools/connections/model diffed against your live policy.
    * `null` if not found / not owned (uniform — no existence oracle). The manifest gates
-   * nothing; the runtime enforces the same intersection at run (SN-8). An old gateway
+   * nothing; the runtime enforces the same intersection at run. An old gateway
    * without the seam throws {@link KxUnimplemented}.
    */
   async getAppManifest(handle: string): Promise<AppManifest | null> {
@@ -1082,7 +1082,7 @@ export abstract class KxClientBase {
    * Add (upsert) a `kortecx.skill/v1` skill to the caller-scoped catalog. The
    * server validates the manifest fail-closed (authority deny-keys), stores the
    * instructions body content-addressed, and derives `skillRef` +
-   * `instructionsRef` (SN-8). A skill is a WISH bundle — adding one grants
+   * `instructionsRef`. A skill is a WISH bundle — adding one grants
    * nothing. An old gateway throws {@link KxUnimplemented}.
    */
   async addSkill(input: AddSkillInput): Promise<AddSkillResult> {
@@ -1120,7 +1120,7 @@ export abstract class KxClientBase {
    * Run a saved App (exactly-once). G2: prefers the server-side `RunApp` — the gateway
    * reads the validated stored envelope and honors its `references.connections` +
    * `guards.secret_scope` (so a credentialed connector, e.g. Gmail, can be dialed inside
-   * the agentic loop) — and re-resolves EVERY warrant from the caller's grants (SN-8).
+   * the agentic loop) — and re-resolves EVERY warrant from the caller's grants.
    * On an older server without the seam (`UNIMPLEMENTED`) it falls back to the legacy
    * client-orchestrated `GetApp` → `submitWorkflow` (which drops the references). Throws
    * {@link KxUsage} if the App is not found. `args` fold server-side into the entry model
@@ -1347,7 +1347,7 @@ export abstract class KxClientBase {
    * Create (or fork via `opts.parent`) a D155 branch at `handle` for this party.
    * A `parent` handle forks a point-in-time CoW sub-branch (it inherits the
    * parent's resolved items at create time; later parent edits do not propagate).
-   * The server derives `branchRef` (SN-8) into an off-journal sidecar.
+   * The server derives `branchRef` into an off-journal sidecar.
    */
   async createBranch(
     handle: string,
@@ -1428,7 +1428,7 @@ export abstract class KxClientBase {
    * proposed) and then either approves (`advanceBranch(handle, path, resultRef)`) or
    * rejects (discards — the proposed blob is a harmless content-addressed orphan).
    * The host is NEVER written. Rejects if the chain produced no committed answer or
-   * an empty body (GR15 fail-closed — same guards as the one-shot {@link editBranch}).
+   * an empty body (fail-closed — same guards as the one-shot {@link editBranch}).
    *
    * `opts.contextPaths` (item6): additionally attach those sibling files' bodies as
    * read-only context, so a single high-level instruction — run once per target file —
@@ -1473,7 +1473,7 @@ export abstract class KxClientBase {
     if (!(result instanceof Result) || !result.ok || result.resultRef === null) {
       throw new Error("react-edit produced no committed answer to advance the branch to");
     }
-    // Fail CLOSED on an empty edit (GR15): never propose an empty file (a
+    // Fail CLOSED on an empty edit: never propose an empty file (a
     // heavy-reasoning model can return only stripped reasoning).
     if (result.payload === null || result.payload.length === 0) {
       throw new Error(
@@ -1622,8 +1622,8 @@ export abstract class KxClientBase {
   }
 
   /**
-   * Discover the models the connected gateway serves (Batch A). Display only
-   * (SN-8): selection stays a recipe ENUM free-param validated server-side.
+   * Discover the models the connected gateway serves (Batch A). Display only:
+   * selection stays a recipe ENUM free-param validated server-side.
    * An FFI-free gateway returns an EMPTY list; an old gateway without this
    * RPC throws {@link KxUnimplemented}.
    */
@@ -1656,7 +1656,7 @@ export abstract class KxClientBase {
   /**
    * The resolved configuration the connected gateway is running (POC-1 Settings) —
    * model, bind addresses, store paths, caps, and feature flags. Read by an
-   * authenticated caller; DISPLAY-ONLY (SN-8): server-derived, never a secret
+   * authenticated caller; DISPLAY-ONLY: server-derived, never a secret
    * (`tlsEnabled` is a POSTURE flag, never the key). An old gateway without this
    * RPC throws {@link KxUnimplemented}.
    */
@@ -1671,7 +1671,7 @@ export abstract class KxClientBase {
    * `huggingface.co` `/resolve/` GGUF link). Returns the `modelId` to poll via
    * {@link getPullStatus}. Deny-by-default: a refusal (downloads disabled / host
    * not allowlisted / missing sha256) throws {@link KxFailedPrecondition}. HOST
-   * INFRASTRUCTURE, not a client Mote (SN-8).
+   * INFRASTRUCTURE, not a client Mote.
    */
   async pullModel(args: { ollamaTag?: string; url?: string; sha256?: string }): Promise<string> {
     if ((args.ollamaTag == null) === (args.url == null)) {
@@ -1849,7 +1849,7 @@ export abstract class KxClientBase {
   /**
    * Resolve one Mote's admitted definition (Batch B) — the node-inspector
    * read: step kind, model, prompt, capped params, tool contract. DISPLAY
-   * ONLY (SN-8). The detail is commit-gated: an uncommitted mote (or one
+   * ONLY. The detail is commit-gated: an uncommitted mote (or one
    * admitted by a pre-Batch-B binary) answers `defFound: false` honestly; an
    * unknown mote in an owned run throws {@link KxNotFound}; a wrong ticket
    * throws the uniform {@link KxPermissionDenied}. An old gateway without
@@ -1997,7 +1997,7 @@ export abstract class KxClientBase {
    * The durable tools registry INVENTORY (PR-6a `DiscoverTools`) — registered
    * tools + their authority/provenance, in `(name, version)` order. DISTINCT from
    * {@link KxClientBase.listToolManifests} (advisory ranking). Registration grants
-   * NO authority (SN-8). An old gateway (or one without the registry) throws
+   * NO authority. An old gateway (or one without the registry) throws
    * {@link KxUnimplemented}.
    */
   async discoverTools(
@@ -2017,7 +2017,7 @@ export abstract class KxClientBase {
    * Register a declarative EXTERNAL MCP tool (PR-6a `RegisterTool`). The server
    * SSRF-vets `serverHost`, derives identity + capability, and durably stores it;
    * the returned `toolId` (hex) is SERVER-derived (the client never names/forges
-   * it, SN-8). Registration grants NO authority — a tool fires only under a
+   * it). Registration grants NO authority — a tool fires only under a
    * server-issued warrant. DIALING `serverHost` is a Cloud / PR-6b capability. An
    * internal/link-local host is refused (`permission_denied`).
    */
@@ -2132,7 +2132,7 @@ export abstract class KxClientBase {
    * the broker (`CallMcpTool`). `args` is a JSON object string (validated against the
    * tool's inputSchema; empty ⇒ `{}`). NOT a durable agentic effect (no journal fact)
    * — the "does this connector work" check; the agentic loop fires the same tools
-   * durably. SN-8 re-enforced server-side (single-grant warrant from the tool's scopes).
+   * durably. Authority is re-enforced server-side (single-grant warrant from the tool's scopes).
    */
   async callMcpTool(name: string, tool: string, args?: string): Promise<CallToolResult> {
     const resp = await rpc(
@@ -2238,7 +2238,7 @@ export abstract class KxClientBase {
    * A cron `scheduleSpec` is interval seconds (`"300"`) OR a 5-field crontab expr
    * (`"0 9 * * 1-5"`) in `timezone`. `requireApproval` adds a per-trigger HITL gate
    * (D114). The auth secret is referenced by NAME only (D81); the server derives the
-   * trigger id (SN-8). Returns the trigger id (hex).
+   * trigger id. Returns the trigger id (hex).
    */
   async registerTrigger(input: RegisterTriggerInput): Promise<RegisterTriggerResult> {
     const resp = await rpc(
@@ -2379,7 +2379,7 @@ export abstract class KxClientBase {
   /**
    * The HITL approval namespace — `kx.approvals.listPending / grant / deny` (D114).
    * Grant/deny release/reject a staged world-mutating action over a server-derived
-   * `requestId` (SN-8).
+   * `requestId`.
    */
   get approvals() {
     return {
@@ -2477,7 +2477,7 @@ export abstract class KxClientBase {
   /**
    * ADVISORY recipe discovery (PR-4 Batch D) — rank the provisioned recipes
    * against `intent` (+ optional `keywords`), best-first, capped at `limit`.
-   * SN-8: each `scoreBp` is DISPLAY-ONLY (a hit SURFACES a recipe, never invokes
+   * each `scoreBp` is DISPLAY-ONLY (a hit SURFACES a recipe, never invokes
    * one — {@link KxClientBase.invoke} stays the authorization gate). An old
    * gateway / a catalog with no ranker throws {@link KxUnimplemented}.
    */
@@ -2548,8 +2548,8 @@ export abstract class KxClientBase {
    * Ingest `documents` into `dataset` (created on first ingest). Each doc carries
    * `content` (always) + an OPTIONAL client-computed `embedding` (the FFI-free
    * path); a vector-less doc needs a gateway with the `inference` feature (else
-   * {@link KxFailedPrecondition}). The server derives each doc's id from its content
-   * (SN-8); re-ingesting identical content is a no-op (content-addressed dedup).
+   * {@link KxFailedPrecondition}). The server derives each doc's id from its content;
+   * re-ingesting identical content is a no-op (content-addressed dedup).
    */
   async ingestDocuments(dataset: string, documents: readonly IngestDoc[]): Promise<IngestResult> {
     const resp = await rpc(
@@ -2571,7 +2571,7 @@ export abstract class KxClientBase {
    * FFI-free client-vector path, takes precedence) or `text` (server-embed, needs
    * the `inference` feature). `mode` (RC4a) selects dense vs hybrid; `rerank` (RC4c)
    * overrides the operator's MMR diversity-rerank default per query (omitted ⇒ the
-   * server default). Hits are ordered by the DISPLAY-ONLY score (SN-8). An unknown
+   * server default). Hits are ordered by the DISPLAY-ONLY score. An unknown
    * dataset throws {@link KxNotFound}.
    */
   async queryDataset(
@@ -2641,7 +2641,7 @@ export abstract class KxClientBase {
 
   /**
    * Recall the top-`k` memories most similar to `text` (RC5a). Each hit's `score` is
-   * DISPLAY-ONLY (SN-8). Scoped to the caller's own principal.
+   * DISPLAY-ONLY. Scoped to the caller's own principal.
    */
   async recallMemory(text: string, opts: { k?: number } = {}): Promise<MemoryHit[]> {
     const resp = await rpc(
@@ -2768,7 +2768,7 @@ export abstract class KxClientBase {
    * Slice-B advisory fuzzy-in / exact-out discovery over `dataset` (D151). Like
    * {@link queryDataset} (pass `embedding` for the FFI-free client-vector path, or
    * `text` for server-embed), but each {@link FuzzyHit} carries ONLY the
-   * content-addressed ref + a DISPLAY-ONLY basis-point score (SN-8) — join back to
+   * content-addressed ref + a DISPLAY-ONLY basis-point score — join back to
    * bytes with an EXACT {@link getContent} on the ref. An old gateway / a build
    * without the `hnsw` feature throws {@link KxUnimplemented}.
    */
@@ -2790,7 +2790,7 @@ export abstract class KxClientBase {
 
   /**
    * Enumerate the registered tools' advisory manifests (W1.A5; deterministic
-   * (toolId, toolVersion) order). DISPLAY-ONLY (SN-8): manifests rank/describe,
+   * (toolId, toolVersion) order). DISPLAY-ONLY: manifests rank/describe,
    * never authorize — the broker never reads them. An old gateway without this
    * RPC throws {@link KxUnimplemented}.
    */
@@ -2803,7 +2803,7 @@ export abstract class KxClientBase {
    * Score a client-authored TaskBundle `spec` against every registered manifest
    * (W1.A5): advisory basis-point ranks + a server-side DRY-RUN of the real
    * lowering gate (the SERVER-built warrant — no client warrant input; nothing
-   * submits, nothing journals). ADVISORY/DISPLAY-ONLY (SN-8): a score can surface
+   * submits, nothing journals). ADVISORY/DISPLAY-ONLY: a score can surface
    * a tool, never grant one. An invalid spec throws {@link KxInvalidArgument}; an
    * old gateway without this RPC throws {@link KxUnimplemented}.
    */

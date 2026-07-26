@@ -1,6 +1,6 @@
 // Integration-test file: compiled as a separate crate from the host lib.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Concurrency tests for `kx-capability` (SN-4 v2 #6).
+//! Concurrency tests for `kx-capability`.
 //!
 //! - Compile-time `Send + Sync` over the full public-type set, including
 //!   `Arc<dyn CapabilityBroker>` (proves the trait shape admits a hosted
@@ -31,7 +31,7 @@ use kx_warrant::{
 use smallvec::SmallVec;
 
 // ---------------------------------------------------------------------------
-// Compile-time Send + Sync over the public surface (SN-4 v2 #6 part 1)
+// Compile-time Send + Sync over the public surface
 // ---------------------------------------------------------------------------
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -151,7 +151,7 @@ fn request(payload: Vec<u8>) -> EffectRequest {
 }
 
 // ---------------------------------------------------------------------------
-// 4-thread thread-independence of dispatch (SN-4 v2 #6 part 2)
+// 4-thread thread-independence of dispatch
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -332,7 +332,7 @@ impl Capability for SlowCapability {
     }
 }
 
-/// SN-4 lock hygiene (local.rs §4): an in-flight capability effect must NOT
+/// lock hygiene (local.rs §4): an in-flight capability effect must NOT
 /// hold the registry read lock, so `register_capability` (which needs the
 /// write lock) can proceed promptly while a slow effect is still running.
 ///

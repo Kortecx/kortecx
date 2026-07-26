@@ -67,7 +67,7 @@ client.submit_workflow(req, wait=True)
 ```
 
 The artifact is self-describing (explicit `kind`) and portable — `model_id` stays as
-authored (empty binds the serve's model at submit, SN-8). Export → import re-compiles to
+authored (empty binds the serve's model at submit). Export → import re-compiles to
 the IDENTICAL request as `.build()`. See [Blueprint builder → Portable blueprints](../blueprint-builder.md#portable-blueprints--export--import).
 
 ### A reusable Agent
@@ -181,7 +181,7 @@ plan = model("kx-serve:my-model", "Research the topic.",
 
 `tools=` accepts a list of names (version `"1"`) or a `{name: version}` map; the
 budget (`max_turns` / `max_tool_calls`) defaults to 8 / 6 when omitted. The server
-vets every tagged tool and builds the per-step warrant (SN-8).
+vets every tagged tool and builds the per-step warrant.
 
 :::info Live
 The bounded-loop **execution** is live: a `model@tool` step (and the
@@ -213,7 +213,7 @@ spec = chain("gen > sum", tasks=tasks)   # two steps, edge 0→1
 Authoring asks only for what is essential — the runtime infers the rest.
 
 **Optional `model_id` + a client `default_model`.** Omit `model_id` and the server
-binds the served model (SN-8). Set a `default_model` on the client (or the
+binds the served model. Set a `default_model` on the client (or the
 `KX_DEFAULT_MODEL` env var) to fill it for every MODEL step that left it blank:
 
 ```python
@@ -287,7 +287,7 @@ with KxClient("http://127.0.0.1:50151") as kx:
 
 Every `instance_id` and `MoteId` is **server-derived** — the SDK carries the
 server's bytes and never constructs an identity
-([SN-8](../security.md#identity-is-server-derived)).
+([identity is server-derived](../security.md#identity-is-server-derived)).
 
 ## See also
 

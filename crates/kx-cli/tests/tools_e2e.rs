@@ -1,6 +1,6 @@
 //! `kx tools list | score` over the wire (W1.A5 toolscout CLI parity). The demo
 //! provisioning registers the OSS built-in tools, so `list` returns them; `score`
-//! ranks them against an intent and dry-runs the lowering gate. ADVISORY (SN-8):
+//! ranks them against an intent and dry-runs the lowering gate. ADVISORY:
 //! the scores/verdict are display-only — the CLI sends no warrant and the run
 //! list stays empty (scoring registers nothing).
 

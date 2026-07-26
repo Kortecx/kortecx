@@ -10,7 +10,7 @@
  *
  * Model-free: SaveApp + the diagram are a read path, so no model need be served. The real
  * agentic proof that these bindings are what the run actually uses is the Gemma serve
- * (Rule 41). Both themes per D142.1/GR13, and a screenshot gallery is attached as review
+ * (Rule 41). Both themes per the theme policy, and a screenshot gallery is attached as review
  * evidence (Rule 12/13) — the Lineage pane had no visual coverage at all before this.
  */
 

@@ -14,10 +14,10 @@ import { Badge } from "../ds/Badge";
 /**
  * The Models view — the catalog over the models serving this gateway (`ListModels`),
  * plus Model Control v2 switching + acquisition. Display/selection stays a
- * server-validated recipe parameter (SN-8); the controls here manage RAM residency
+ * server-validated recipe parameter; the controls here manage RAM residency
  * (load/offload), the server's ACTIVE default (`SetActiveModel` — an off-journal
  * advisory hint), and model DOWNLOADS (`PullModel` — operator-gated, deny-by-default).
- * Every state is designed + honest (D142 / GR15 don't-fake-gaps): an FFI-free serve
+ * Every state is designed + honest (D142 / don't-fake-gaps): an FFI-free serve
  * lists empty; downloads OFF render an honest-disabled Pull panel with the reason.
  */
 export function ModelsSection() {
@@ -38,7 +38,7 @@ export function ModelsSection() {
           <p className="muted">
             The models serving this gateway, grouped by engine. Load or offload one, make a model
             the active default for new chats, or pull a new one. Switching never routes a turn
-            directly — selection stays a server-validated recipe parameter (SN-8).
+            directly — selection stays a server-validated recipe parameter.
           </p>
         </div>
       </div>
@@ -231,7 +231,7 @@ export function ModelsSection() {
         : null}
 
       {/* Model Control v2: pull a model (operator-gated). A real panel when downloads
-          are enabled; an honest-disabled card with the reason when off (D142/GR15). */}
+          are enabled; an honest-disabled card with the reason when off. */}
       <PullPanel />
 
       {/* Honest-disabled Cloud capability (D129): managed vendor keys + OAuth are Cloud. */}
@@ -264,7 +264,7 @@ export function ModelsSection() {
  * Model Control v2 — the "Pull a model" panel. Enabled only when the operator set
  * `KX_SERVE_ALLOW_MODEL_PULL` (deny-by-default); otherwise an honest-disabled card
  * with the exact reason. Progress is REAL (polled `GetPullStatus` byte facts), never
- * a fabricated bar (GR15). Two sources: an Ollama tag (quick/easy) or a direct
+ * a fabricated bar. Two sources: an Ollama tag (quick/easy) or a direct
  * HuggingFace `/resolve/` GGUF URL + its SHA-256 (verified before registration).
  */
 function PullPanel() {

@@ -164,7 +164,7 @@ describe("Agent routing", () => {
   const add = localTool({ name: "add", params: { a: "integer" }, run: ({ a }) => a });
 
   it("frozen + tools resolves the local tool + fires via runChain", async () => {
-    // BUG-32 fix: the frozen one-liner now RESOLVES the local tool onto its step and
+    // Fix: the frozen one-liner now RESOLVES the local tool onto its step and
     // runs it via runChain — no pre-flight throw, NOT the dynamic react-auto invoke.
     const fc = new FakeClient();
     await new Agent("go", { tools: [add] }).run("2+2", { client: fc });

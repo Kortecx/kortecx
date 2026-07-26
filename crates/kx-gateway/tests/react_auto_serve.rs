@@ -145,12 +145,12 @@ async fn autogrant_serve_provisions_react_auto_and_drives_a_live_chain() {
     std::env::remove_var("KX_SERVE_AUTOGRANT");
 }
 
-/// PR-1/BUG-32 (real-model integration witness, LOCAL / `--ignored`): drive a served
+/// PR-1 (real-model integration witness, LOCAL / `--ignored`): drive a served
 /// Gemma-4 model on a tool-forcing instruction against the bundled `mcp-echo`
 /// (namespaced/dialed) tool and assert the chain reaches a **terminal answer** — i.e.
 /// when the model dials the tool by the (bare/decorated) name it reads from the menu,
 /// the authority gate RESOLVES it to the namespaced grant and the tool FIRES, instead
-/// of refusing it `UngrantedTool` (the BUG-32 symptom: a refused dial dead-letters the
+/// of refusing it `UngrantedTool` (the symptom: a refused dial dead-letters the
 /// chain with no answer). The assertion is the non-flaky invariant (the chain settles,
 /// never dead-letters on a dialed tool); whether a `tool` round actually fired is
 /// model-nondeterministic (the model may answer a trivial echo directly), so it is
@@ -190,7 +190,7 @@ async fn react_auto_dialed_tool_resolves_and_the_chain_settles() {
     }
 
     // A tool-forcing instruction. `mcp-echo` is a dialed/namespaced tool — the model
-    // proposes whatever short name it reads from the menu, and the BUG-32 gate resolves
+    // proposes whatever short name it reads from the menu, and the gate resolves
     // that to the grant (a refused dial would dead-letter the chain ⇒ no answer below).
     let resp = c
         .invoke(proto::InvokeRequest {
@@ -264,8 +264,8 @@ async fn react_auto_dialed_tool_resolves_and_the_chain_settles() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    // The §2.246 live close-out: a real model's dialed-tool call RESOLVES + FIRES
-    // end-to-end (A3 repairs the JSON5 args Gemma emits; BUG-32 resolves the name),
+    // The live close-out: a real model's dialed-tool call RESOLVES + FIRES
+    // end-to-end (A3 repairs the JSON5 args Gemma emits; the name now resolves),
     // OR the model answers directly — and the loop is bounded, never a silent wedge.
     assert!(
         bounded,

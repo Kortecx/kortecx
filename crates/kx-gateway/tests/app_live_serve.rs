@@ -7,11 +7,11 @@
 //!
 //! This exercises the FULL App path end-to-end against a live model: the envelope
 //! canonicalizes + round-trips through the off-journal catalog (server-derived
-//! `app_ref`, SN-8), and the stored blueprint — submitted exactly as `kx app run`
+//! `app_ref`), and the stored blueprint — submitted exactly as `kx app run`
 //! compiles it (`SubmitWorkflow` of the agentic step) — drives the live loop.
 //!
 //! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a
-//! GGUF. **Drive on Gemma-4 locally** (the deep-test model, GR15):
+//! GGUF. **Drive on Gemma-4 locally** (the deep-test model):
 //! `KX_SERVE_MODEL_GGUF=target/models/gemma-4-12b-it-q4_k_m.gguf \`
 //! `  cargo test -p kx-gateway --features inference --test app_live_serve -- --ignored --nocapture`
 
@@ -41,7 +41,7 @@ fn serve_model() -> Option<PathBuf> {
 }
 
 /// Whether the operator opted the Ollama engine in (`KX_SERVE_OLLAMA` truthy) — the
-/// GR24 dual-engine arm. Mirrors `eval_real_model::ollama_opted_in`.
+/// Dual-engine arm. Mirrors `eval_real_model::ollama_opted_in`.
 fn ollama_opted_in() -> bool {
     matches!(
         std::env::var("KX_SERVE_OLLAMA")
@@ -243,7 +243,7 @@ async fn app_catalog_round_trips_and_runs_on_a_live_model() {
 /// The `SubmitWorkflow` request the CLI `kx chat --tools <tool>@1` + SDK `chat(tools=…)` build
 /// (`kx-cli::verbs::chat::build_agentic_request`): ONE agentic MODEL step whose `tool_contract`
 /// names ONLY the granted tool, plus the bounded ReAct budget in the canonical react keys. The
-/// SERVER builds the SCOPED warrant FROM the contract (SN-8) — no client warrant, no autogrant.
+/// SERVER builds the SCOPED warrant FROM the contract — no client warrant, no autogrant.
 fn chat_tools_request(prompt: &str, granted_tool: &str) -> proto::SubmitWorkflowRequest {
     proto::SubmitWorkflowRequest {
         seed: 0,
@@ -269,14 +269,14 @@ fn chat_tools_request(prompt: &str, granted_tool: &str) -> proto::SubmitWorkflow
 }
 
 /// (`kx chat --tools` / `chat(tools=…)`): a chat turn with an EXPLICIT `tool_contract` fires
-/// the named tool through a SERVER-BUILT SCOPED warrant (SN-8), proven WITHOUT
+/// the named tool through a SERVER-BUILT SCOPED warrant, proven WITHOUT
 /// `KX_SERVE_AUTOGRANT` — the bundled `mcp-echo/echo` capability is registered whenever a model
 /// is served (`register_echo_capability`, gated on the model, NOT autogrant), so the grant that
 /// fires comes from the CONTRACT, never the react-auto blanket. The settle poll is SCOPED by the
 /// server-returned `react_chain_salt` so a shared-journal serve surfaces THIS turn's chain.
-/// Dual-engine (GR28): Gemma-4 completes fire→answer; gemma3 fires but may honestly dead-letter on
+/// Dual-engine: Gemma-4 completes fire→answer; gemma3 fires but may honestly dead-letter on
 /// a missing required arg (`T-GEMMA3-OLLAMA-TOOL-ARG-SCHEMA`) — settling to a terminal is the
-/// robust invariant (GR15); `tool_fired` is LOGGED (model-nondeterministic).
+/// robust invariant; `tool_fired` is LOGGED (model-nondeterministic).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a served model + bundled kx-mcp-echo; opt in with --ignored"]
 async fn chat_with_explicit_tools_fires_scoped_by_salt_no_autogrant() {
@@ -353,7 +353,7 @@ async fn chat_with_explicit_tools_fires_scoped_by_salt_no_autogrant() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     eprintln!("chat --tools LIVE ({engine}): tool_fired={tool_fired} settled={settled}");
-    // SN-8: the model could fire ONLY mcp-echo/echo (the sole granted tool) — the scoped warrant
+    // the model could fire ONLY mcp-echo/echo (the sole granted tool) — the scoped warrant
     // fail-closes any other tool at the broker, so a fired tool IS the grant. Settling is robust.
     assert!(
         settled,
@@ -362,7 +362,7 @@ async fn chat_with_explicit_tools_fires_scoped_by_salt_no_autogrant() {
     running.shutdown().await.unwrap();
 }
 
-/// SN-8 (DETERMINISTIC — no model): a `chat --tools` `SubmitWorkflow` that CANNOT be admitted
+/// (DETERMINISTIC — no model): a `chat --tools` `SubmitWorkflow` that CANNOT be admitted
 /// is REFUSED at AUTHORING (`InvalidArgument`), never bound — the agentic path fails closed
 /// client-side, so an un-vetted tool is never silently accepted. The specific reason is
 /// environment-dependent (a model-free serve refuses the MODEL step "requires a served model";
@@ -401,7 +401,7 @@ fn connector_bin(bin_name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Resolve the serve engine (GR24): the Ollama opt-in FIRST (a served GGUF standin would
+/// Resolve the serve engine: the Ollama opt-in FIRST (a served GGUF standin would
 /// otherwise register as PRIMARY and mask `KX_SERVE_OLLAMA`), else a GGUF drives llama.cpp
 /// (Gemma-4 locally / Qwen3 in CI). Sets `KX_SERVE_MODEL_GGUF` for the llama.cpp arm.
 fn resolve_engine() -> Option<&'static str> {
@@ -459,28 +459,28 @@ struct ConnectorCase {
     credential_value: &'static str,
     /// The FAKE env switch (offline canned responses).
     fake_env: &'static str,
-    /// The single granted tool the agent may fire (SN-8).
+    /// The single granted tool the agent may fire.
     granted_tool: &'static str,
     /// The task prompt.
     prompt: &'static str,
-    /// gemma3 connector-tool-fire (GR28): HARD-assert the tool fired on this run. Set for
+    /// gemma3 connector-tool-fire: HARD-assert the tool fired on this run. Set for
     /// cases validated on BOTH engines (the union format makes gemma3 emit a parseable call,
     /// so a tool-NECESSITATING prompt reliably fires on both llama.cpp AND Ollama gemma3).
     require_fire: bool,
-    /// `T-GEMMA3-TOOL-LOOP-ANSWER-FORCE` (GR28): OBSERVE (log, never assert) whether the chain
+    /// `T-GEMMA3-TOOL-LOOP-ANSWER-FORCE`: OBSERVE (log, never assert) whether the chain
     /// COMPLETES after firing. Set for cases we EXPECT to complete once the separate
     /// missing-required-args gap (`T-GEMMA3-OLLAMA-TOOL-ARG-SCHEMA`) lands. Not a hard gate: a
     /// weak model can honestly dead-letter (e.g. it omits a required tool arg → the observation
-    /// fails), which is CORRECT per GR15. The answer-force itself is proven deterministically +
+    /// fails), which is CORRECT. The answer-force itself is proven deterministically +
     /// by `answer_only_format_forces_gemma3_to_settle_live`.
     require_answer: bool,
 }
 
-/// GR15/GR24 LIVE witness + the `T-RUNAPP-SECRET-SCOPE-OBSERVATION` regression, generalized
+/// LIVE witness + the `T-RUNAPP-SECRET-SCOPE-OBSERVATION` regression, generalized
 /// over ANY bundled connector (the parallel-session enabler): register the connection, scope
 /// its credential, save the App, RUN via `RunApp`, and OBSERVE the agentic loop on a live
-/// model. A GR16 OBSERVE-witness (mirroring `react_serve_connector.rs`) — asserts only ROBUST
-/// invariants (settles to a terminal; a fired tool is the granted one, SN-8) and LOGS the
+/// model. A OBSERVE-witness (mirroring `react_serve_connector.rs`) — asserts only ROBUST
+/// invariants (settles to a terminal; a fired tool is the granted one) and LOGS the
 /// trajectory. The fix's deterministic REGRESSION PROOFS live in CI:
 /// `kx-proto::secret_scope_allowlist_survives_the_coordinator_wire` +
 /// `kx-coordinator::observation_dispatch_preserves_the_chain_secret_scope`.
@@ -633,7 +633,7 @@ async fn runapp_connection_live(case: &ConnectorCase) {
             case.granted_tool
         );
     }
-    // GR28: the gemma3 connector-tool-fire proof — a tool-necessitating prompt FIRES the
+    // the gemma3 connector-tool-fire proof — a tool-necessitating prompt FIRES the
     // granted tool on BOTH engines (the union format + priming).
     if case.require_fire {
         assert!(
@@ -649,7 +649,7 @@ async fn runapp_connection_live(case: &ConnectorCase) {
     // `answer_only_format_forces_gemma3_to_settle_live` witness; a hard "always answers" gate
     // would be INVALID — gemma3 has failure modes BEYOND the duplicate-loop this PR fixes
     // (notably MISSING required tool args → the observation fails → an HONEST dead-letter at
-    // turn 0, correct per GR15: never fabricate an answer the model couldn't produce; tracked
+    // turn 0, correct: never fabricate an answer the model couldn't produce; tracked
     // as `T-GEMMA3-OLLAMA-TOOL-ARG-SCHEMA`). So we log completion, never assert it.
     if case.require_answer && !answered {
         eprintln!(
@@ -994,8 +994,8 @@ async fn runapp_slack_connection_and_secret_scope_live() {
         granted_tool: "slack/read_channel",
         prompt: "Read the most recent messages from channel 123 using the \
                  slack/read_channel tool, then briefly summarize them.",
-        require_fire: true, // GR28: gemma3 + llama.cpp both FIRE slack/read_channel (union format)
-        require_answer: true, // GR28: OBSERVE completion (soft) — expected once the args-schema gap lands
+        require_fire: true, // gemma3 + llama.cpp both FIRE slack/read_channel (union format)
+        require_answer: true, // OBSERVE completion (soft) — expected once the args-schema gap lands
     })
     .await;
 }
@@ -1016,17 +1016,17 @@ async fn runapp_notion_connection_and_secret_scope_live() {
         granted_tool: "notion/search",
         prompt: "Search the Notion workspace for pages about the launch using the \
                  notion/search tool, then briefly summarize what you found.",
-        require_fire: true, // GR28: gemma3 + llama.cpp both FIRE notion/search (union format)
-        require_answer: true, // GR28: OBSERVE completion (soft) — expected once the args-schema gap lands
+        require_fire: true, // gemma3 + llama.cpp both FIRE notion/search (union format)
+        require_answer: true, // OBSERVE completion (soft) — expected once the args-schema gap lands
     })
     .await;
 }
 
-/// T-APP-TRIGGER-TARGET GR24 LIVE witness: a credentialed App fires from a gRPC TRIGGER
+/// T-APP-TRIGGER-TARGET LIVE witness: a credentialed App fires from a gRPC TRIGGER
 /// (not a direct `RunApp`) and drives the agentic loop to a terminal on a live model — the
 /// automation vertical the trigger→App wiring exists for. Mirrors `runapp_connection_live`'s
 /// setup, then registers an App-TARGET trigger + `SubmitTrigger`, and OBSERVES the resulting
-/// run (a GR16 observe-witness: settles to a terminal; a fired tool is the granted one, SN-8).
+/// run (a observe-witness: settles to a terminal; a fired tool is the granted one).
 /// Dual-engine (llama.cpp + Ollama), model restarted per engine.
 async fn trigger_fires_connector_app_live(case: &ConnectorCase) {
     let Some(engine) = resolve_engine() else {
@@ -1187,7 +1187,7 @@ async fn trigger_fires_connector_app_live(case: &ConnectorCase) {
             case.granted_tool
         );
     }
-    // GR28: the gemma3 connector-tool-fire proof — a tool-necessitating prompt FIRES the
+    // the gemma3 connector-tool-fire proof — a tool-necessitating prompt FIRES the
     // granted tool on BOTH engines (the union format + priming).
     if case.require_fire {
         assert!(
@@ -1203,7 +1203,7 @@ async fn trigger_fires_connector_app_live(case: &ConnectorCase) {
     // `answer_only_format_forces_gemma3_to_settle_live` witness; a hard "always answers" gate
     // would be INVALID — gemma3 has failure modes BEYOND the duplicate-loop this PR fixes
     // (notably MISSING required tool args → the observation fails → an HONEST dead-letter at
-    // turn 0, correct per GR15: never fabricate an answer the model couldn't produce; tracked
+    // turn 0, correct: never fabricate an answer the model couldn't produce; tracked
     // as `T-GEMMA3-OLLAMA-TOOL-ARG-SCHEMA`). So we log completion, never assert it.
     if case.require_answer && !answered {
         eprintln!(
@@ -1333,13 +1333,13 @@ fn grounded_app_envelope_ex(
     env.to_canonical_json().unwrap()
 }
 
-/// GR15/GR24 LIVE witness — the T-RUNAPP-CONTEXT-RAIL "come alive" proof: an App that
+/// LIVE witness — the T-RUNAPP-CONTEXT-RAIL "come alive" proof: an App that
 /// declares a dataset + a rule (NO hand-authored tool grant) SELF-GROUNDS at RunApp — the
 /// dataset rail folds `retrieve@1` onto the entry step + steers it, and the rule rides the
 /// entry context. Runs the agentic loop on a REAL model over BOTH engines (Gemma, restart
 /// per engine). Needs `--features inference,hnsw` + an embedder; runtime-skips otherwise.
 /// Asserts only ROBUST invariants (settles to a terminal; if a tool fired it was `retrieve`
-/// — SN-8) and LOGS the trajectory; the deterministic fold/inject proofs live in the
+/// —) and LOGS the trajectory; the deterministic fold/inject proofs live in the
 /// `app_run` unit tests + the `grounded` golden case.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real LLM inference + dataset embedding; needs a served Gemma + --features inference,hnsw; opt in with --ignored"]
@@ -1462,7 +1462,7 @@ async fn runapp_grounded_app_self_grounds_live() {
         answered || dead,
         "the grounded App self-grounds + settles to a terminal on the live model [{engine}]"
     );
-    // SN-8: the dataset rail folds EXACTLY retrieve@1 — no other tool can fire.
+    // the dataset rail folds EXACTLY retrieve@1 — no other tool can fire.
     assert!(
         fired.iter().all(|id| id.is_empty() || id == "retrieve"),
         "only retrieve fires from the dataset rail; fired={fired:?}"
@@ -1721,11 +1721,11 @@ fn swarm_request() -> proto::SubmitWorkflowRequest {
     }
 }
 
-/// LIVE swarm witness (GR15/GR24): a 2-agent swarm → gather runs end-to-end on a live
+/// LIVE swarm witness: a 2-agent swarm → gather runs end-to-end on a live
 /// model, both engines. Proves the multi-agent vertical: two INDEPENDENT parallel model
-/// chains commit, then the gather synthesizes over BOTH committed outputs (F-7). A GR16
+/// chains commit, then the gather synthesizes over BOTH committed outputs (F-7). A
 /// OBSERVE-witness — asserts the swarm settled with all three motes committed and the gather
-/// produced REAL non-empty output (GR15), and LOGS the synthesis. Pure composition of
+/// produced REAL non-empty output, and LOGS the synthesis. Pure composition of
 /// existing step kinds (no new wire shape); the deterministic shape is pinned by the golden
 /// `swarm_agentic_gather` corpus row + the SDK unit tests.
 #[tokio::test(flavor = "multi_thread")]
@@ -1801,7 +1801,7 @@ async fn swarm_runs_parallel_agents_and_gathers_live() {
         .into_inner();
     let text = String::from_utf8_lossy(&content.payload);
     eprintln!("LIVE swarm [{engine}] synthesis: {}", text.trim());
-    // GR15: the gather produced REAL model output over the two agents' committed results.
+    // the gather produced REAL model output over the two agents' committed results.
     assert!(
         !text.trim().is_empty(),
         "the swarm gather produced a non-empty synthesis on the live model [{engine}]"
@@ -1810,12 +1810,12 @@ async fn swarm_runs_parallel_agents_and_gathers_live() {
     running.shutdown().await.unwrap();
 }
 
-/// C4 / Rule-41 (D209.3, SN-8): NL authoring end-to-end on a live model. A natural-language
+/// C4 / Rule-41 (D209.3): NL authoring end-to-end on a live model. A natural-language
 /// GOAL is turned into a PROPOSED multi-step DAG by `ProposeWorkflow` (the served model plans;
 /// the gateway decodes + compiles the plan through the vetted `kx-planner` path — the model
 /// names only role + intent + edges, every capability axis comes from the vetted role catalog).
 /// Then the CONFIRMED DAG (authored from the proposal, exactly the console apply→submit path)
-/// runs and settles on the live model. Fresh serve per test (the App/fire dedup — L-097). The
+/// runs and settles on the live model. Fresh serve per test (the App/fire dedup). The
 /// proposal is model-nondeterministic, so a `Rejected` outcome is LOGGED + the run leg skipped;
 /// a `Plan` MUST be a real multi-step DAG that then commits. Per-step tools are the C3 surface,
 /// so the proposed steps are pure model roles here (real multi-agent reasoning, not a tool fire).
@@ -1866,7 +1866,7 @@ async fn propose_workflow_authors_a_multistep_dag_and_runs_live() {
         "the model proposed a MULTI-step plan on the live model [{engine}] (got {})",
         plan.steps.len()
     );
-    // Every proposed step resolved a vetted role (SN-8 — the model cannot invent one).
+    // Every proposed step resolved a vetted role (the model cannot invent one).
     for s in &plan.steps {
         assert!(!s.role.is_empty(), "each proposed step names a vetted role");
     }
@@ -2044,15 +2044,15 @@ async fn run_wide_swarm(dir_tag: &str, pool: usize, n_leaves: u32) -> (Duration,
     (elapsed, committed, text)
 }
 
-/// LIVE pool witness (GR15/GR24): the SAME wide swarm run under a single worker
+/// LIVE pool witness: the SAME wide swarm run under a single worker
 /// (`--workers 1`, the historical serial drain) vs. a pool of 4, on a live model. Proves the
 /// pool executes an authored fan-out end-to-end and produces REAL output at both sizes, and
 /// LOGS the wall-clock speedup. The speedup is OBSERVED (logged), not asserted: a single live
-/// inference sample is too noisy for a non-flaky timing assertion (GR12 — flakes are fixed,
+/// inference sample is too noisy for a non-flaky timing assertion (flakes are fixed,
 /// not tolerated), and the true concurrent-inference gain depends on the operator's
 /// `OLLAMA_NUM_PARALLEL`. The deterministic proof that pool>1 partitions work + stays
 /// digest-invariant lives in `kx-coordinator/tests/pool_determinism.rs`; the measured speedup
-/// is recorded via `just profile` + the manual GR24 drive.
+/// is recorded via `just profile` + the manual dual-engine drive.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally) or KX_SERVE_OLLAMA=on"]
 async fn swarm_pool_parallel_speedup_live() {
@@ -2076,7 +2076,7 @@ async fn swarm_pool_parallel_speedup_live() {
     eprintln!("  pool1 synthesis: {txt1}");
     eprintln!("  pool4 synthesis: {txt4}");
 
-    // GR15 (non-flaky): both pool sizes commit the FULL swarm and produce real output.
+    // Non-flaky: both pool sizes commit the FULL swarm and produce real output.
     assert_eq!(c1, total, "pool=1 committed the full swarm on [{engine}]");
     assert_eq!(c4, total, "pool=4 committed the full swarm on [{engine}]");
     assert!(
@@ -2089,7 +2089,7 @@ async fn swarm_pool_parallel_speedup_live() {
 //
 // These prove the ORCHESTRATION layer end-to-end on a live model (both engines): a
 // hierarchical supervisor, a best-of-N judge, and an exact-equality majority vote all
-// run to a committed terminal producing REAL output (GR15). Each lowers to the SAME
+// run to a committed terminal producing REAL output. Each lowers to the SAME
 // fan-out/fan-in DAG the SDK `supervisor()`/`consensus()` methods and the `kx swarm`
 // verb author (raw proto built here); the deterministic shapes are pinned by the SDK +
 // UI unit tests and the golden corpus. Pure composition of existing step kinds — no new
@@ -2176,7 +2176,7 @@ fn consensus_judge_request() -> proto::SubmitWorkflowRequest {
 
 /// `consensus(vote="majority")` lowers to `[voter(0) & voter(1) & voter(2)] > sink(3)`,
 /// where the sink is a PURE step carrying `config_subset[kx.consensus.vote] = "majority"`;
-/// the server reduces the voters to the exact-equality plurality winner (SN-8). The three
+/// the server reduces the voters to the exact-equality plurality winner. The three
 /// voters are given the SAME constrained prompt so a real majority is likely.
 fn consensus_majority_request() -> proto::SubmitWorkflowRequest {
     let voter = || {
@@ -2314,7 +2314,7 @@ async fn run_fanin(
     (terminal, leaves)
 }
 
-/// LIVE supervisor witness (GR15/GR24): planner → 2 workers → gather runs end-to-end on a
+/// LIVE supervisor witness: planner → 2 workers → gather runs end-to-end on a
 /// live model; the gather (the 2-parent terminal) integrates a REAL non-empty answer.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally) or KX_SERVE_OLLAMA=on"]
@@ -2332,7 +2332,7 @@ async fn supervisor_plans_delegates_and_integrates_live() {
     );
 }
 
-/// LIVE consensus(judge) witness (GR15/GR24): 2 voters → a model judge that SELECTS the
+/// LIVE consensus(judge) witness: 2 voters → a model judge that SELECTS the
 /// best; the judge (the 2-parent terminal) commits a REAL non-empty selection.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real in-process LLM inference; needs a GGUF (Gemma-4 locally) or KX_SERVE_OLLAMA=on"]
@@ -2350,7 +2350,7 @@ async fn consensus_judge_selects_best_of_n_live() {
     );
 }
 
-/// LIVE consensus(majority) witness (GR15/GR24/SN-8): 3 constrained voters → a PURE
+/// LIVE consensus(majority) witness: 3 constrained voters → a PURE
 /// server-reduced majority. Proves the EXACT-equality reduce: the committed winner is
 /// byte-equal to one of the voter outputs VERBATIM (never a merged/similar answer).
 #[tokio::test(flavor = "multi_thread")]
@@ -2371,7 +2371,7 @@ async fn consensus_majority_reduces_to_a_voter_verbatim_live() {
         !String::from_utf8_lossy(&winner).trim().is_empty(),
         "the majority sink committed a non-empty winner on [{engine}]"
     );
-    // SN-8: the reduce is EXACT byte-equality — the winner MUST equal a voter output VERBATIM.
+    // the reduce is EXACT byte-equality — the winner MUST equal a voter output VERBATIM.
     assert!(
         voters.contains(&winner),
         "the majority winner must be byte-equal to one of the voter outputs on [{engine}]"

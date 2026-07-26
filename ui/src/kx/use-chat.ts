@@ -8,7 +8,7 @@
  * `image_ref` slot (we NEVER send an undeclared arg — Invoke binding is
  * fail-closed). Without the vision recipe the attachment stays display-only on
  * the user bubble. The picked model likewise only rides when the form declares a
- * `model` ENUM (the server validates the value — SN-8). A FAILED turn retries
+ * `model` ENUM (the server validates the value). A FAILED turn retries
  * with its IDENTICAL args: refs are content-addressed and the runtime dedups,
  * so the retry either re-runs or joins the existing run.
  *

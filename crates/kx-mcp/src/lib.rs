@@ -39,7 +39,7 @@
 //!
 //! ## Security posture (MCP is UNTRUSTED)
 //!
-//! - **Fail-closed inbound decode (IMP-5/IMP-16):** [`decode::decode_tool_result`]
+//! - **Fail-closed inbound decode:** [`decode::decode_tool_result`]
 //!   is total + panic-free over arbitrary / truncated bytes, size-capped, and
 //!   refuses anything that is not a well-formed JSON-RPC `tools/call` result.
 //! - **Effects are world-mutating by default → `StageThenCommit` (D66):**

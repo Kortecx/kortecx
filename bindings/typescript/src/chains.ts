@@ -13,7 +13,7 @@
  * `tests/golden/chains/SPEC.md`, pinned by `corpus.json`: the Python, TypeScript,
  * and Rust (CLI) surfaces all parse + lower to byte-identical `(steps, edges)`.
  *
- * SN-8: the DSL describes topology ONLY. The server still compiles + warrants
+ * the DSL describes topology ONLY. The server still compiles + warrants
  * every step (derives identity, builds every warrant from the party's grants);
  * a chain only changes what is PROPOSED, never the identity a step gets.
  */
@@ -242,7 +242,7 @@ export const TOOL_ARGS_KEY = "kx.tool.args";
 /**
  * Serialize a flat tool-call arg map to the canonical-JSON string the three SDK
  * surfaces lower byte-identically: keys sorted ascending, compact separators, no
- * floats (SN-8 — the server schema is integer/bytes/bool/enum-typed).
+ * floats (the server schema is integer/bytes/bool/enum-typed).
  */
 function canonicalArgsJson(args: Readonly<Record<string, string | number | boolean>>): string {
   const sorted: Record<string, string | number | boolean> = {};
@@ -260,7 +260,7 @@ export const task = {
   },
   /**
    * A `model` step. Batch A: `modelId` is OPTIONAL — omit it (or pass `""`) and the
-   * SERVER binds the served model (SN-8); set a client `defaultModel` to fill it, or
+   * SERVER binds the served model; set a client `defaultModel` to fill it, or
    * name a specific served model. `opts.reasoning` (`full`/`minimal`/`off`/`strip`)
    * sets the opt-in reasoning mode (absent ⇒ the model's own behavior + a byte-identical
    * MoteId). PR-9b (D161.1): pass `opts.tools` (an array of names → version `"1"`, or a
@@ -312,7 +312,7 @@ export const task = {
   },
   /**
    * A `tool` step (PR-6b-2): fire a single REGISTERED tool. `toolId` + `version`
-   * name the tool the SERVER resolves (SN-8); `args` are the tool-call arguments,
+   * name the tool the SERVER resolves; `args` are the tool-call arguments,
    * lowered to one canonical-JSON object under {@link TOOL_ARGS_KEY}.
    */
   tool(
@@ -721,8 +721,8 @@ export interface Lowered {
   edges: LoweredEdge[];
   /**
    * PR-7b: the chain-level context-bundle handles, emitted verbatim (caller order
-   * — the SERVER canonicalizes the sorted ref-set into each entry Mote at bind,
-   * SN-8). Absent on the wire ⇒ `[]`; the corpus pins its byte-identity.
+   * — the SERVER canonicalizes the sorted ref-set into each entry Mote at
+   * bind). Absent on the wire ⇒ `[]`; the corpus pins its byte-identity.
    */
   context_bundles: string[];
 }
@@ -973,7 +973,7 @@ export class Chain {
    * IDENTICAL `SubmitWorkflowRequest` as {@link Chain.build}. `params` are in their
    * FOLDED form (a tool step's args under `kx.tool.args`; an agentic MODEL step's
    * budget under `max_turns`/`max_tool_calls`) — import is fold-idempotent. `model_id`
-   * stays as authored (empty ⇒ the server binds the served model, SN-8) so the
+   * stays as authored (empty ⇒ the server binds the served model) so the
    * artifact is portable across serves. Each `kind` is explicit (self-describing).
    */
   toBlueprint(): DagSpecJson {

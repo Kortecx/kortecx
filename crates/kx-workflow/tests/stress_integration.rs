@@ -18,7 +18,7 @@
 //! * **4.1c kx-dataset seam** — populate an [`InMemoryDataStore`] +
 //!   [`InMemoryRetrievalIndex`] with thousands of typed vectors; top-k retrieval
 //!   is deterministic and the corpus's [`DatasetId`] is pure over rows + lineage.
-//! * **4.1d graph-RAG retrieval Mote (SN-8)** — at volume, the committed
+//! * **4.1d graph-RAG retrieval Mote** — at volume, the committed
 //!   retrieval *fact* is the ordered ref set ONLY: two hit sets with identical
 //!   refs but different similarity scores encode to the SAME fact / `ContentRef`.
 //! * **4.1e sharing manifest** — the recipe-as-product [`Manifest`] (with the
@@ -192,7 +192,7 @@ fn h5_integrated_pipeline_at_scale() {
             "retrieval order is deterministic + tie-stable at {vecs} vectors"
         );
 
-        // --- 4.1d: SN-8 — the committed fact is score-INDEPENDENT at volume. ---
+        // --- 4.1d: the committed fact is score-INDEPENDENT at volume. ---
         let perturbed: Vec<Hit> = hits_a
             .iter()
             .map(|h| Hit {
@@ -206,7 +206,7 @@ fn h5_integrated_pipeline_at_scale() {
             fact_a == fact_b && retrieval_result_ref(&hits_a) == retrieval_result_ref(&perturbed);
         assert!(
             sn8_holds,
-            "SN-8: similarity scores never leak into the committed fact at scale"
+            "similarity scores never leak into the committed fact at scale"
         );
 
         // --- 4.1c: DatasetId is pure over rows + lineage (compile-independent). ---

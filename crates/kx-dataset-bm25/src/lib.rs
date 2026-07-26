@@ -9,7 +9,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** Used ONLY inside the ReadOnlyNondet retrieval Mote. The BM25 score
+//! - **Identity.** Used ONLY inside the ReadOnlyNondet retrieval Mote. The BM25 score
 //!   is a display/ranking aid that is rank-fused (`kx_dataset::fusion::rrf_fuse`)
 //!   and then discarded; only the ordered content-ref SET is committed, matched
 //!   downstream by exact hash. A score never reaches a `MoteId`.

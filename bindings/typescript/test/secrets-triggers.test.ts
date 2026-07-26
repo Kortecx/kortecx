@@ -1,7 +1,7 @@
 /**
  * MM-3 secrets + D113 triggers friendly views — pure, no server. Mirrors the
  * `toolscout.test.ts` connections precedent: the proto→friendly mappers + the
- * friendly enum unions (SN-8: the SDK only *encodes* server bytes to hex; secret
+ * friendly enum unions (the SDK only *encodes* server bytes to hex; secret
  * VALUES are write-only and never on a read wire).
  */
 

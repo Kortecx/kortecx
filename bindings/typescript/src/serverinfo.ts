@@ -1,7 +1,7 @@
 /**
  * The Settings server-info view — the resolved `GetServerInfo` configuration the
  * connected gateway is running (POC-1). Read by an authenticated caller; a DISPLAY
- * projection only (SN-8): nothing here is identity, a secret, or a digest input —
+ * projection only: nothing here is identity, a secret, or a digest input —
  * the TLS field is a POSTURE flag (whether in-binary TLS is on), never the key.
  *
  * Kept in its own module so `types.ts` / `common.ts` stay thin aggregators,

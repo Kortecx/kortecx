@@ -53,7 +53,7 @@ pub struct ConfigVal(pub Vec<u8>);
 /// is promoted to the shared substrate so every layer that writes or reads a
 /// prompt (the workflow recipe library, the model harness, the planner)
 /// references **one** source rather than hand-mirroring the literal `"prompt"`
-/// across crates (closes the IMP-7 hand-mirrored-constant hazard).
+/// across crates (closes the hand-mirrored-constant hazard).
 ///
 /// Only the *string value* participates in identity (it is a [`ConfigKey`]'s
 /// inner `String`); the constant binding itself is never serialized, so adding
@@ -74,7 +74,7 @@ pub const JUDGE_RUBRIC_KEY: &str = "kx.judge.rubric";
 /// The [`ConfigKey`] *name* marking a PURE sink Mote as an exact-equality
 /// CONSENSUS vote (`consensus(vote="majority")`). Its value selects the reduce:
 /// `"majority"` = commit the most-frequent parent output by EXACT byte equality
-/// (SN-8: exact equality ONLY, never a similarity score), ties broken by
+/// (exact equality ONLY, never a similarity score), ties broken by
 /// first-appearance (the lowest parent index). The gateway's `ModelRouterExecutor`
 /// routes on key PRESENCE to the plurality-reduce arm (the same PRESENCE routing
 /// [`REACT_TURN_KEY`]/rerank use); absent ⇒ a plain PURE transform, byte-unchanged.
@@ -216,7 +216,7 @@ pub const RETRIEVAL_MODE_KEY: &str = "kx.retrieval.mode";
 /// so adding the constant moves no existing digest. Like every routing marker it lives
 /// in `config_subset` ⇒ folds into [`crate::MoteDef::hash`] → `MoteId` (D53), so it
 /// cannot be dropped in transit without changing the identity the coordinator
-/// re-derives (structurally fail-closed). SN-8: the marker alone fires nothing — the
+/// re-derives (structurally fail-closed). The marker alone fires nothing — the
 /// coordinator's `settle_rerank_rounds` keys only off its own `ReRankRound` facts and
 /// re-decodes the permutation on the sole writer.
 pub const RERANK_TURN_KEY: &str = "kx.rerank.turn";

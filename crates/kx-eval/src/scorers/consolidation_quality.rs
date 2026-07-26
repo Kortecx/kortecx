@@ -8,7 +8,7 @@
 //! produced/recalled nothing — the fail-closed class (memory disabled, a mis-routed
 //! promptless turn, the model ignored the tool) — scores **0**: that is the point of the
 //! gate (the `T-RERANK-WORKER-ROUTE` lesson applied to consolidation). Tasks that declare
-//! no `consolidation_must_capture` are N/A. Deterministic, LLM-free, integer per-mille (SN-8).
+//! no `consolidation_must_capture` are N/A. Deterministic, LLM-free, integer per-mille.
 
 use crate::scorers::{ScoreOutput, PER_MILLE};
 

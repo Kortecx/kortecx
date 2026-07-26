@@ -15,7 +15,7 @@
 //! content-addressed refs + a DISPLAY-ONLY integer basis-point score, and the
 //! caller joins back to bytes with an EXACT `GetContent` on the ref.
 //!
-//! # SN-8 (load-bearing)
+//! # Identity (load-bearing)
 //!
 //! [`FuzzyHitEntry::score_bp`] is DISPLAY-ONLY — it never enters a committed
 //! fact, a `MoteId`, or any identity decision; only the ordered content-ref SET
@@ -32,7 +32,7 @@ use crate::datasets::{DatasetError, RetrievalMode};
 pub struct FuzzyHitEntry {
     /// The 32-byte content-addressed id of the candidate CHUNK (EXACT-OUT, RC4a).
     pub content_ref: [u8; 32],
-    /// The similarity, in basis points (0..=10000) — DISPLAY-ONLY (SN-8). NEVER
+    /// The similarity, in basis points (0..=10000) — DISPLAY-ONLY. NEVER
     /// an identity input; the host derives it from the approximate ANN score.
     pub score_bp: u32,
     /// RC4a: the 32-byte id of the PARENT document (== `content_ref` for
@@ -66,7 +66,7 @@ pub trait FuzzyDiscoveryView: Send + Sync {
 
 /// Convert an approximate cosine similarity into a DISPLAY-ONLY basis-point score
 /// (0..=10000). A non-finite or out-of-range score (cosine can be negative for
-/// opposed vectors) is clamped — this value is for the eye only (SN-8), never an
+/// opposed vectors) is clamped — this value is for the eye only, never an
 /// identity or ordering input on the wire.
 #[must_use]
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

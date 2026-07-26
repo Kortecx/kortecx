@@ -2,7 +2,7 @@
 //!
 //! Canonical-encoding discipline (the `MoteDef::hash` / `task_signature_hash`
 //! precedent): every collection is a `BTreeMap`/`BTreeSet` (deterministic
-//! order), every numeric field is an integer (no floats anywhere — SN-8
+//! order), every numeric field is an integer (no floats anywhere — server-derived
 //! forbids float confidence on anything that could be persisted), and the
 //! fingerprint is `blake3(domain-tag ‖ canonical bincode)` so two bundles
 //! built in different insertion orders hash identically.
@@ -54,9 +54,9 @@ impl TaskBundleFingerprint {
 /// `tool_sequence` is the ORDERED list of `(name, version)` pairs the lowered
 /// workflow will run as a chain; it MUST be a subset of the executing
 /// warrant's `tool_grants` — `kx-toolscout::lower_to_workflow_def` refuses
-/// otherwise (exact equality, the planner-IMP-5 gate). `tolerance_threshold_bp`
+/// otherwise (exact equality, the planner gate). `tolerance_threshold_bp`
 /// is the advisory ranking cut in basis points (`0..=10_000`) — an integer by
-/// construction so no float confidence can ever be persisted (SN-8).
+/// construction so no float confidence can ever be persisted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskBundle {
     /// See [`TASK_BUNDLE_SCHEMA_VERSION`] (encoded → identity-bearing).

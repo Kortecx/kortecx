@@ -20,15 +20,15 @@ Decorating a Python function turns it into a real, governed, fireable tool with
 **stdio MCP server** (:mod:`kortecx._toolserver`) and the runtime DIALS it through
 the existing PR-6b MCP gateway (``RegisterMcpServer`` / ``DiscoverServerTools``).
 A local tool is just another external MCP tool the runtime fires under a
-server-built warrant (SN-8 — the client never supplies a warrant).
+server-built warrant (the client never supplies a warrant).
 
 **Dev-scoped by design.** The runtime spawns the stdio server subprocess, so the
 runtime, this interpreter, and the tool module must be co-located (the SDK user is
 the operator on their own machine). Registering a stdio MCP server is the same
-host-trusted operation as ``kx connections add --command`` (PR-6b/D81/GR19); V2b
+host-trusted operation as ``kx connections add --command``; V2b
 adds no new attack surface. Cloud governs the bridge.
 
-**Three firing lanes (D161, GR15-honest):**
+**Three firing lanes (D161, honest):**
 
 - **deterministic** — ``flow().tool(fn, **args)`` fires ONE tool as a standalone
   node (works today, even model-free).
@@ -319,7 +319,7 @@ def local_tool_node(tdef: LocalToolDef, args: Mapping[str, object]) -> "Task":
 
 def _server_name_for(script_path: str) -> str:
     """A stable, deterministic server name per defining script (so re-runs upsert
-    the same connection — ``connection_id_of(name)`` is deterministic, SN-8)."""
+    the same connection — ``connection_id_of(name)`` is deterministic)."""
     import hashlib
 
     digest = hashlib.blake2b(script_path.encode("utf-8"), digest_size=8).hexdigest()

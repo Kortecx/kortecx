@@ -1,7 +1,7 @@
 //! `kx blueprint run --file <dag.json> [--wait] ...` — author a Tier-1 DAG (a
 //! vetted palette of PURE / MODEL / TOOL steps + DATA/CONTROL edges) and run it via
 //! the `SubmitWorkflow` path. The server compiles the DAG, derives all identity, and
-//! builds every warrant from the party's grants (SN-8) — the client sends only the
+//! builds every warrant from the party's grants — the client sends only the
 //! topology + params. The authored run is then viewable in the console (Runs → the
 //! live DAG, Monitoring).
 //!

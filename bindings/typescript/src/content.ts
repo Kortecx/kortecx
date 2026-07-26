@@ -1,9 +1,9 @@
 /**
  * The Batch A content views — a `PutContent` upload outcome and one
  * `GetContentBatch` item. Kept in its own module so `types.ts` stays a thin
- * aggregator (the Rust core's module-per-concern discipline, GR3).
+ * aggregator (the Rust core's module-per-concern discipline).
  *
- * SN-8: `contentRef` is SERVER-DERIVED (blake3 over the payload) — the client
+ * `contentRef` is SERVER-DERIVED (blake3 over the payload) — the client
  * never names an identity. An upload is a CONTENT-STORE write, never a journal
  * write; `mediaType`/`filename` are advisory audit fields. A batch item whose
  * ref was unauthorized / missing / malformed comes back UNIFORMLY EMPTY

@@ -6,7 +6,7 @@
 //! [`crate::mcp_gateway_admin::McpGatewayAdmin`] pattern. The host (`kx-gateway`)
 //! implements it over the OS keychain + an off-journal `secret_index.db` NAME index.
 //!
-//! # Boundaries (SN-8 / D81 / D110)
+//! # Boundaries
 //!
 //! - **Write-only value.** The secret VALUE is supplied ONLY to [`SecretAdmin::put`]
 //!   (where the impl stores it in the OS keychain and drops it). It NEVER appears on

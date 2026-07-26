@@ -2,7 +2,7 @@
 
 The headline test proves **byte-parity**: the SDK's ``invoke(..., wait=True)`` and
 the reference ``kx`` CLI, hitting the same gateway with the same recipe + args,
-produce identical server-derived ids and result (SN-8 holds across both surfaces).
+produce identical server-derived ids and result (the identity rule holds across both surfaces).
 The rest exercise the projection/content/events flow and the edge cases a mature
 agentic runtime must handle: ownership rejection, auth, timeout, distinct-args
 isolation, idempotency, and the signature catalog.
@@ -35,7 +35,7 @@ from kortecx import (
 ECHO_HANDLE = "kx/recipes/echo"
 
 # Fields of the invoke --wait --json shape that are derived from content (and so
-# are identical across any server, language, or process — the SN-8 guarantee).
+# are identical across any server, language, or process — the identity guarantee).
 # `instance_id` is the one exception: it is assigned per journal registration, so
 # it agrees only WITHIN a single server (proven by the read-back test below).
 _DETERMINISTIC = ("terminal_mote_id", "result_ref", "result_hex", "result_len", "state")
@@ -56,7 +56,7 @@ def _cli(kx_bin, endpoint, *argv):
 
 def test_invoke_wait_matches_cli(serve, kx_bin):
     """The SDK's invoke→wait result equals the reference CLI's, field-for-field,
-    on every content-derived (server-derived, SN-8) field. Two fresh servers so
+    on every content-derived (server-derived) field. Two fresh servers so
     each owns the single invocation of `{"topic":"hello"}` (one run instance per
     recipe, so the same server can't be invoked with identical args twice)."""
     s_sdk, s_cli = serve("--dev-allow-local"), serve("--dev-allow-local")
@@ -179,7 +179,7 @@ def test_distinct_args_distinct_terminal_same_instance(dev_server):
 
 def test_determinism_across_fresh_servers(serve):
     """The same recipe + args on two fresh servers yields the SAME content-derived
-    ids (terminal Mote, result ref, result bytes) — SN-8 determinism."""
+    ids (terminal Mote, result ref, result bytes) — determinism."""
     s1, s2 = serve("--dev-allow-local"), serve("--dev-allow-local")
     with KxClient(s1.endpoint) as a, KxClient(s2.endpoint) as b:
         ra = a.invoke(ECHO_HANDLE, {"topic": "det"}, wait=True)

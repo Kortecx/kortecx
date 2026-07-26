@@ -1,4 +1,4 @@
-//! Concurrency contract — SN-4 v2:
+//! Concurrency contract — the structural review:
 //!   - Send + Sync compile-time assertions on every public type.
 //!   - Thread-independence under `Arc<dyn InferenceBackend>` (4 threads,
 //!     each running disjoint dispatches; aggregated counters confirm

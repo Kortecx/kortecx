@@ -100,8 +100,7 @@ impl AssembledContext {
     }
 
     /// Compute a content-addressed `ContentRef` over the assembled bytes
-    /// in emission order. Useful as a cache key for cross-Mote context reuse
-    /// (per D33 §2.5).
+    /// in emission order. Useful as a cache key for cross-Mote context reuse.
     ///
     /// `assembled_ref = blake3(concat_in_order(item.bytes))`. Note this hashes
     /// only the resolved bytes (not the labels or source_refs) so two contexts

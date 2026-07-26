@@ -1,6 +1,6 @@
 //! `kx models list | load <id> | offload <id>` — model discovery + local
 //! lifecycle over the gateway (`ListModels` / `LoadModel` / `OffloadModel`).
-//! Cross-surface parity with the UI + the SDKs. `list` is DISPLAY-ONLY (SN-8) and
+//! Cross-surface parity with the UI + the SDKs. `list` is DISPLAY-ONLY and
 //! reports live RAM residency (`loaded`); `load`/`offload` warm/evict a REGISTERED
 //! model (an unregistered id is a fail-closed `not found`). An FFI-free serve
 //! answers `list` with an honest empty list and refuses lifecycle (`unimplemented`).

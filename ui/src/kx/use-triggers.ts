@@ -5,10 +5,10 @@
  * trigger binds an inbound event (a webhook POST, a cron interval, or a bare
  * `SubmitTrigger` RPC) to a recipe handle the event Invokes.
  *
- * SN-8: `triggerId`/`instanceId` are server-derived; the auth secret is referenced
+ * `triggerId`/`instanceId` are server-derived; the auth secret is referenced
  * by NAME only (never the value, D81 — a `ListTriggers` row carries
  * `authSecretPresent`, never the secret itself). The minimal-local single-user
- * trigger; the hosted multi-tenant trigger gateway at scale is CLOUD (GR19).
+ * trigger; the hosted multi-tenant trigger gateway at scale is CLOUD.
  * Degrades to a not-wired empty state on a gateway without triggers (UNIMPLEMENTED).
  */
 

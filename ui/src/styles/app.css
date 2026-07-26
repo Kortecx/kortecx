@@ -4633,7 +4633,7 @@ button.card-grid__title:hover {
 
 /* POC-5c (D168): the New Chat status loop — an HONEST single-line current-phase
  * indicator (replaces the inline ReactProgress strip). The dot is the ONLY cosmetic
- * motion; the text is fact-driven (GR15). Tokens only → both themes + AA by
+ * motion; the text is fact-driven. Tokens only → both themes + AA by
  * construction. */
 .status-loop {
   display: flex;

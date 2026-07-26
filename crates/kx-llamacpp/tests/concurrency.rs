@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Real-thread concurrency tests (SN-4 v2 #7).
+//! Real-thread concurrency tests.
 //!
 //! `kx-llamacpp` claims `unsafe impl Send` on `LlamaBackend`, `Model`,
 //! `Context`, `Batch`, and `Sampler`. It does NOT claim `Sync` on any of

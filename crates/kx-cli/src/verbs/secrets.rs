@@ -4,7 +4,7 @@
 //!
 //! A secret is host credential material referenced elsewhere by NAME only (a
 //! `kx-warrant` SecretRef — e.g. a connection's `--credential-ref` or a trigger's
-//! `--secret-ref`). SN-8/D110: the VALUE is WRITE-ONLY — `set` sends it once and it
+//! `--secret-ref`). Write-only: the VALUE is WRITE-ONLY — `set` sends it once and it
 //! is NEVER returned by any RPC; `list` yields NAMES + timestamps only. `set` /
 //! `rm` are gated loopback-only + an authenticated party server-side.
 

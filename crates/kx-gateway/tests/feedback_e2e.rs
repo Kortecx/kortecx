@@ -1,5 +1,5 @@
 //! PR-4.1 `SubmitFeedback` / `ListFeedback` end-to-end over a REAL bound tonic
-//! port — the GR8 proofs for the client-origin product-signal write:
+//! port — the proofs for the client-origin product-signal write:
 //!
 //! - **no-journal-write**: a feedback burst moves the journal head by ZERO (the
 //!   write lands in the `feedback.db` sidecar, never the journal — the digest

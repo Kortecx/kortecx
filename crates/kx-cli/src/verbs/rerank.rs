@@ -4,7 +4,7 @@
 //! run-salted rerank Mote id, the resolved model, the frozen outcome
 //! (`pending` | `reranked` | `failed_closed`), how many candidates were ranked,
 //! and — for a `reranked` outcome — the exact permutation the runtime enforced
-//! (SN-8: a permutation, never a similarity score). Read-only, newest-first;
+//! (a permutation, never a similarity score). Read-only, newest-first;
 //! `--instance` scopes to one run (serve's journal is shared).
 
 use kx_proto::proto;

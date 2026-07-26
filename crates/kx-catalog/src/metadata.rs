@@ -2,7 +2,7 @@
 //! Advisory catalog metadata (M7.3, D84) — discovery [`Tag`]s + an integer-scaled
 //! confidence, modelled on `kx_dataset::AnnotationStore`.
 //!
-//! # The wall (SN-8, load-bearing)
+//! # The wall (load-bearing)
 //!
 //! This projection is **off the trust path**. It is NEVER journaled, NEVER on the
 //! identity / commit / memoization path, and it NEVER gates selection, eviction,

@@ -6,7 +6,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx ADVISORY tool discovery (W1.A5, the MCP-intelligence core) — multilingual ToolFingerprints, the exact-kw → Jaro-Winkler → embedding-cosine tolerance ladder (integer basis points, no floats persisted), a tool-manifest index over kx-dataset::RetrievalIndex, and TaskBundle → WorkflowDef lowering behind the planner-style EXACT (name, version) tool_grants gate. SN-8 by construction: scores ORDER and RETRIEVE, never AUTHORIZE — lowering takes no score input and the broker's exact-equality gate stays the sole authority. Pure leaf: never the journal, the gateway, or the frozen trio."
+description = "kortecx ADVISORY tool discovery (W1.A5, the MCP-intelligence core) — multilingual ToolFingerprints, the exact-kw → Jaro-Winkler → embedding-cosine tolerance ladder (integer basis points, no floats persisted), a tool-manifest index over kx-dataset::RetrievalIndex, and TaskBundle → WorkflowDef lowering behind the planner-style EXACT (name, version) tool_grants gate. By construction: scores ORDER and RETRIEVE, never AUTHORIZE — lowering takes no score input and the broker's exact-equality gate stays the sole authority. Pure leaf: never the journal, the gateway, or the frozen trio."
 
 [lib]
 path = "src/lib.rs"
@@ -21,7 +21,7 @@ kx-mote     = { workspace = true }
 kx-warrant  = { workspace = true }
 # WorkflowDef/StepDef builders + the FROZEN compile (the structural gate).
 kx-workflow = { workspace = true }
-# RetrievalIndex/Hit — the SN-8-confined similarity seam the manifest index
+# RetrievalIndex/Hit — the identity-confined similarity seam the manifest index
 # composes (embedding rung 3).
 kx-dataset  = { workspace = true }
 # ContentRef — the fingerprint-hash key type shared with the retrieval index.

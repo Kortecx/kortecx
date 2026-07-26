@@ -61,7 +61,7 @@ pub(crate) fn failure_reason_token(reason: Option<FailureReason>) -> &'static st
 /// (`failures` MUST be pre-sorted by `mote_id.as_bytes()`, each reason rendered via
 /// the stable [`failure_reason_token`]), so a cold re-fold reconstructs the SAME
 /// prompt ⇒ the SAME shaper `MoteId` (R49). The reasons are the low-entropy
-/// [`FailureReason`] enum only (never result bytes / secrets — SN-8). A byte-for-byte
+/// [`FailureReason`] enum only (never result bytes / secrets). A byte-for-byte
 /// copy of `kx_model_harness::topology_provider::corrected_prompt`.
 #[must_use]
 pub(crate) fn corrected_prompt(base: &str, failures: &[(MoteId, Option<FailureReason>)]) -> String {
@@ -205,7 +205,7 @@ mod tests {
         );
         assert!(out.starts_with(base));
         assert!(out.contains(CORRECTED_SUFFIX));
-        // The low-entropy token is rendered, never raw bytes / secrets (SN-8).
+        // The low-entropy token is rendered, never raw bytes / secrets.
         assert!(out.contains("failed (reason: dead-lettered)"));
     }
 

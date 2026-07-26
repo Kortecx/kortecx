@@ -1,4 +1,4 @@
-//! Trait-seam test (per D35 + 02-crate-specs.md DoD):
+//! Trait-seam test (per D35 + the crate definition of done):
 //!
 //! Proves a backend with an OUT-OF-PROCESS-SHAPED internal pattern
 //! (here: a queue + worker-style indirection) compiles against the

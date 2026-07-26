@@ -1,8 +1,8 @@
 /**
- * PR-C2 GR15 guard — the Datasets re-skin adopts the reference app's card language,
+ * PR-C2 honesty guard — the Datasets re-skin adopts the reference app's card language,
  * but the reference `DatasetCard` ships a red "Delete" button and OUR gateway has NO
  * `DeleteDataset`/`DropDataset` RPC. A faked, non-functional delete would violate
- * GR15 (don't-fake-gaps), so this pins the ABSENCE of any delete affordance: a future
+ * (don't-fake-gaps), so this pins the ABSENCE of any delete affordance: a future
  * copy-paste re-skin that smuggles one back in fails CI here (and in datasets.spec.ts).
  */
 
@@ -24,7 +24,7 @@ vi.mock("../../src/kx/use-datasets", () => ({
 
 import { DatasetsPanel } from "../../src/components/datasets/DatasetsPanel";
 
-describe("Datasets — no faked delete (GR15 guard)", () => {
+describe("Datasets — no faked delete (honesty guard)", () => {
   it("renders the corpora but exposes NO delete/drop affordance", () => {
     const { container } = render(
       <DatasetsPanel selectedDataset="demo-corpus" onSelect={() => {}} />,

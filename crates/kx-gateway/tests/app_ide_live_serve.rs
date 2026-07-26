@@ -13,7 +13,7 @@
 //! deterministic UI tests + the live console walk-through rather than re-proven here.
 //!
 //! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a GGUF.
-//! **Drive on Gemma-4 locally** (the deep-test model, GR15):
+//! **Drive on Gemma-4 locally** (the deep-test model):
 //! `KX_SERVE_MODEL_GGUF=target/models/gemma-4-12b-it-q4_k_m.gguf \`
 //! `  cargo test -p kx-gateway --features inference --test app_ide_live_serve -- --ignored --nocapture`
 

@@ -6,7 +6,7 @@
  * A branch is a named, content-addressed `{path → ContentRef}` manifest over
  * operator-approved host files: `snapshot` reads confined host files (under
  * `KX_SERVE_FS_ROOT`, default-OFF) INTO the content store; the agent loop edits
- * them in-CAS (the host is never written in this phase). SN-8: `branchRef` is
+ * them in-CAS (the host is never written in this phase). `branchRef` is
  * SERVER-derived; branches are caller-scoped (a not-found / not-owned branch is
  * uniform). Degrades to a not-wired empty state on a gateway without the branch
  * store (UNIMPLEMENTED).

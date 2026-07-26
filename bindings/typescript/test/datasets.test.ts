@@ -61,7 +61,7 @@ describe("FuzzyHit.fromProto", () => {
     const hit = FuzzyHit.fromProto(h);
     expect(hit.contentRef).toBe("cd".repeat(32));
     expect(hit.scoreBp).toBe(8750);
-    expect(hit.score).toBeCloseTo(0.875); // bp/10000 fraction (SN-8 display only)
+    expect(hit.score).toBeCloseTo(0.875); // bp/10000 fraction (display only)
     expect(hit.toJSON()).toEqual({
       content_ref: "cd".repeat(32),
       score_bp: 8750,

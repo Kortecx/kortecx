@@ -3,7 +3,7 @@
  * wire handle like `"kx/recipes/echo"` into a readable display headline
  * (`"Echo"`) while the raw handle stays available as a secondary mono chip.
  * PURE + total — no React, no SDK. DISPLAY ONLY: identity never derives from
- * this (SN-8); the handle on the wire is unchanged.
+ * this; the handle on the wire is unchanged.
  */
 
 /** The bare leaf of a slash-separated handle (`"kx/recipes/echo"` → `"echo"`). */

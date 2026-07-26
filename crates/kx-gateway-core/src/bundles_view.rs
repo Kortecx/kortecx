@@ -15,7 +15,7 @@
 //!   the manifest index, and re-authoring restores it at the SAME `bundle_ref`
 //!   (content-addressed). Never journaled, never a `MoteId` input, never a digest
 //!   input — dropping the file cannot move the canonical projection digest.
-//! - **Server-derived id (SN-8).** `bundle_ref = blake3("kx-bundle\0" ‖ handle ‖
+//! - **Server-derived id.** `bundle_ref = blake3("kx-bundle\0" ‖ handle ‖
 //!   canonical(items))[..16]`; the client names a handle, never an identity.
 //! - **Caller-scoped.** Every method takes the SERVER-RESOLVED `principal` (from
 //!   the auth interceptor); a bundle is visible only to the party that authored
@@ -47,7 +47,7 @@ pub struct BundleItemRecord {
 /// A bundle's bound manifest (the governance / display view + the bind source).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BundleManifest {
-    /// 16-byte SERVER-DERIVED manifest hash (SN-8; display + dedup signal).
+    /// 16-byte SERVER-DERIVED manifest hash (display + dedup signal).
     pub bundle_ref: [u8; 16],
     /// The canonical `namespace/collection/name` handle (the upsert key).
     pub handle: String,

@@ -1,4 +1,4 @@
-//! M1.3 property tests for `validate_mote_submission` (SN-4: ≥3 properties).
+//! M1.3 property tests for `validate_mote_submission` (≥3 properties).
 //!
 //! P1 — a non-WORLD-MUTATING plain producer is NEVER refused on resolution
 //!      grounds (D66 is WM-only; a non-WM Mote carries no double-fire hazard).

@@ -21,7 +21,7 @@
 //! process the runtime dials over **stdio** (a subprocess) or **Streamable-HTTP**.
 //! The runtime is a SECURE GATEWAY (D132): it never runs arbitrary in-process code;
 //! a connector contributes *tools* the agentic loop may fire only under a warrant
-//! that grants them (SN-8 — model proposes, runtime enforces).
+//! that grants them (model proposes, runtime enforces).
 //!
 //! ## The dial path (what happens when a connector is registered)
 //!
@@ -31,7 +31,7 @@
 //!   ├─ dial:      open a session over the kx-mcp transport
 //!   ├─ discover:  tools/list  (the connector's JSON-Schema tool manifests)
 //!   ├─ register:  each tool into the durable registry as ToolKind::Mcp,
-//!   │             namespaced `<server>/<remote>` (server-derived id, SN-8)
+//! │ namespaced `<server>/<remote>` (server-derived id)
 //!   └─ govern:    persist the connection in the off-journal connections.db
 //! ```
 //!
@@ -40,7 +40,7 @@
 //! - **Out-of-process.** A connector runs as its own process; the runtime links
 //!   none of its code. The conformance harness asserts the registered tool is
 //!   [`ToolKind::Mcp`](crate::prelude::ToolKind), never `Builtin`.
-//! - **Warrant-gated (SN-8).** A registered tool fires ONLY through a warrant that
+//! - **Warrant-gated.** A registered tool fires ONLY through a warrant that
 //!   grants its `(name, version)` and whose scopes cover the tool's
 //!   `required_capability`. Mere presence never fires anything.
 //! - **Secrets by reference (D81).** A credential is referenced by NAME

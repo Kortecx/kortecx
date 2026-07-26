@@ -1,9 +1,9 @@
 /**
  * Skill-catalog views — a declarative `kortecx.skill/v1` bundle
  * (instructions + a tool grant-WISH set). Kept in its own module (the Rust
- * core's module-per-concern discipline, GR3).
+ * core's module-per-concern discipline).
  *
- * SN-8: `skillRef` and `instructionsRef` are SERVER-DERIVED (blake3 over the
+ * `skillRef` and `instructionsRef` are SERVER-DERIVED (blake3 over the
  * canonical manifest / the stored body) — the client sends bytes, never an
  * identity. A wish is never authority: attaching a skill grants nothing; at
  * `runApp` the server intersects the wish against the caller's grants and the

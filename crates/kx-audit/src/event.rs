@@ -43,7 +43,7 @@ impl DispatchKind {
 ///
 /// Every field is an ALREADY-DERIVED join key (a `MoteId`/`ContentRef` hash, an
 /// `NdClass`, an integer count, or the 32-byte product digest). The sink echoes
-/// runtime state — it NEVER recomputes a `MoteId` (SN-8). There is **no float and
+/// runtime state — it NEVER recomputes a `MoteId`. There is **no float and
 /// no timestamp** anywhere here: time is added by the sink at the wire layer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuditEvent {

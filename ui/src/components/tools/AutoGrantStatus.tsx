@@ -6,7 +6,7 @@ import { useRecipes } from "../../kx/use-recipes";
  * `KX_SERVE_AUTOGRANT`, the runtime seeds `kx/recipes/react-auto` (a live ReAct
  * loop that auto-grants the registered/dialed tool set, capped). Its presence in
  * `ListRecipes` is the source of truth, so this row reflects the REAL serve
- * posture — never a faked control (SN-8 / GR15): OSS exposes no toggle; enabling
+ * posture — never a faked control: OSS exposes no toggle; enabling
  * it is an operator/Cloud concern. Absent / loading / unwired all read OFF (the
  * recipe genuinely isn't live), which is the honest default-OFF.
  */

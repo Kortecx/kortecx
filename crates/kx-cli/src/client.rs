@@ -3,7 +3,7 @@
 //! resolution, dialing a [`KxGatewayClient`], and attaching a bearer token to a
 //! request.
 //!
-//! Identity is server-derived (SN-8): the CLI sends a *credential* (a bearer
+//! Identity is server-derived: the CLI sends a *credential* (a bearer
 //! token), never a claimed identity. A `--dev-allow-local` server needs no token.
 
 use std::path::PathBuf;

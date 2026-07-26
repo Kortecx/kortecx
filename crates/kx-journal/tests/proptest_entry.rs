@@ -5,8 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for `JournalEntry` encode/decode + journal append round-trip
-//! (SN-4 v2 #6).
+//! Property tests for `JournalEntry` encode/decode + journal append round-trip.
 //!
 //! These pin the contracts that `journal-entry.md` (P0.11) defines for the
 //! canonical byte layout — across the entire input space rather than a few
@@ -544,7 +543,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// Compile-time + reader-writer interleaving tests (SN-4 v2 #7 extension)
+// Compile-time + reader-writer interleaving tests (the structural review extension)
 // ---------------------------------------------------------------------------
 
 /// `Journal` impls must be `Send + Sync` so the executor can share a single

@@ -3,7 +3,7 @@
 `corpus.json` is the **byte-shape parity gate** for the App envelope. It pins the
 exact **canonical** serialization of representative `kortecx.app/v1` envelopes so the
 Rust (`kx-app`), Python (`kortecx.app`), and TypeScript (`@kortecx/sdk`) serializers
-stay byte-for-byte identical (GR12 tri-surface).
+stay byte-for-byte identical (tri-surface).
 
 Each entry is `{ "name": <case>, "canonical": <string> }` where `canonical` is the
 exact bytes `to_canonical_json()` (Rust) / `json.dumps(env, sort_keys=True,
@@ -16,7 +16,7 @@ separators=(",",":"), ensure_ascii=False)` (Python) / the TS equivalent must emi
    `serde_json`'s `preserve_order` feature being **off** (pinned by a unit test).
 2. **Compact separators** — `,` between members, `:` between key and value, no
    whitespace.
-3. **Integers only** — no floats anywhere (SN-8; identity bytes are integer-only).
+3. **Integers only** — no floats anywhere (identity bytes are integer-only).
    A float in any field fails validation.
 4. **UTF-8** — non-ASCII emitted verbatim (`ensure_ascii=False`), `/` not escaped.
 5. **Omit-empty** — an optional/empty field is omitted entirely (not `null`/`[]`/

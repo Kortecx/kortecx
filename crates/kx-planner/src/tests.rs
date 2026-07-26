@@ -1,4 +1,4 @@
-//! Unit + property tests for the planner: fail-closed decode (IMP-5), the
+//! Unit + property tests for the planner: fail-closed decode, the
 //! never-widen warrant property (D75), loop→shaper-not-cycle (D76), the
 //! no-confidence-channel guard (D77), exact-role-equality (D70), and
 //! deterministic lowering (D74).
@@ -138,7 +138,7 @@ fn json(s: &str) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// decode (IMP-5)
+// decode
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -309,7 +309,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// decode_loop_proposal (IMP-5) — the agentic-loop round trust boundary.
+// decode_loop_proposal — the agentic-loop round trust boundary.
 // Mirrors the decode_plan suite: same fail-closed discipline, distinct envelope.
 // ---------------------------------------------------------------------------
 
@@ -658,7 +658,7 @@ fn replan_flag_human_reason_is_bounded() {
 #[test]
 fn replan_corrected_context_lowers_to_topology_decision() {
     // The corrective round lowers through the SAME vetted-recipe path as an
-    // initial round (SN-8): role names → recipe identity axes.
+    // initial round: role names → recipe identity axes.
     let (_roles, recipes) = standard_registries();
     let bytes = json(
         r#"{"replan":{"version":1,"next_steps":[{"role":"reader","intent":"again"},{"role":"summarizer","intent":"again"}]}}"#,
@@ -750,7 +750,7 @@ fn unknown_role_and_recipe_and_near_miss_refuse_d70() {
 #[test]
 fn ungrantable_tool_in_recipe_is_refused() {
     // A role whose warrant grants only t1, but whose recipe declares t2 → the
-    // step could never legally call t2 → refused up front (IMP-5).
+    // step could never legally call t2 → refused up front.
     let roles = InMemoryRoleRegistry::new();
     roles.register(RoleId("r".into()), role_with_tools("r", &[("t1", "1")]));
     let recipes = InMemoryRoleRecipes::new();

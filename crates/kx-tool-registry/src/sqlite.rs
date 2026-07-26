@@ -19,7 +19,7 @@
 //! to the gateway — so a freshly registered tool is immediately resolvable
 //! (register-then-resolvable by construction).
 //!
-//! ## Off-journal, off-digest (SN-8 / GR8)
+//! ## Off-journal, off-digest
 //!
 //! `tools.db` is entirely off the journal and off the projection digest. The
 //! server-derived `tool_id` is [`registration_token_of`]`(def, provenance)[..16]`
@@ -91,7 +91,7 @@ impl RegisteredEntry {
 }
 
 /// The 16-byte server-derived `tool_id` for a registration token (the first half
-/// of the content-addressed `RegistrationToken`). SN-8: derived runtime-side from
+/// of the content-addressed `RegistrationToken`). Derived runtime-side from
 /// the registration bytes; the client cannot name or forge it.
 #[must_use]
 pub fn tool_id_of(token: &RegistrationToken) -> [u8; 16] {
@@ -168,7 +168,7 @@ impl SqliteToolRegistry {
     }
 
     /// Durably register an operator-authored tool (always `HumanAuthored` ⇒
-    /// `Approved`; SN-8: the OSS RPC path never lets a client self-assert
+    /// `Approved`; the OSS RPC path never lets a client self-assert
     /// `SelfGenerated` to launder lineage). `server_host` is the vetted egress
     /// endpoint captured for the PR-6b MCP gateway (`None` for a no-egress tool).
     /// Re-registering the same `(name, version)` replaces the row (and its
@@ -599,8 +599,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "GR10 micro-profile; run with `cargo test -p kx-tool-registry gr10 -- --ignored --nocapture`"]
-    fn gr10_registry_spike() {
+    #[ignore = "Micro-profile; run with `cargo test -p kx-tool-registry registry_spike -- --ignored --nocapture`"]
+    fn registry_spike() {
         // Realistic cardinality (built-ins + a few dozen registered tools).
         let reg =
             SqliteToolRegistry::open(tempfile::tempdir().unwrap().path().join("tools.db")).unwrap();
@@ -629,7 +629,7 @@ mod tests {
         }
         look_t.sort_unstable();
         eprintln!(
-            "GR10 tools-registry (n={n}): register_durable p50={:?} p99={:?} · discover(all)={:?} · lookup p50={:?}",
+            "tools-registry (n={n}): register_durable p50={:?} p99={:?} · discover(all)={:?} · lookup p50={:?}",
             reg_t[n / 2],
             reg_t[(n * 99) / 100],
             discover,

@@ -9,7 +9,7 @@
  * per-trigger HITL approval posture), list the registered triggers with their folded
  * state, then per row Test (dry-run the binding — fires nothing), Fire (submit the
  * inbound event), or Remove. D81: the auth secret is referenced by NAME only — a row
- * shows `authSecretPresent` (signed), never the secret itself. SN-8: the trigger id /
+ * shows `authSecretPresent` (signed), never the secret itself. The trigger id /
  * run instance id are server-derived.
  *
  * `kind`/`auth` are chosen via CHIP buttons (never a controlled `<select>` — the UI-3

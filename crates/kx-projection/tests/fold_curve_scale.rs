@@ -1,7 +1,7 @@
 // Integration-test file: compiled as a separate crate from the host lib; tests
 // legitimately use `.unwrap()` for fixture construction.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! IMP-4 (D116) — the **projection-fold curve** (number v): the read/recovery side of
+//! The **projection-fold curve** (number v): the read/recovery side of
 //! the single-writer ceiling. Cold recovery folds the committed log into projection
 //! state, so the per-entry fold cost is the resume-availability ceiling; a super-linear
 //! fold turns a large-log resume into an outage. This publishes the µs/entry curve at
@@ -115,7 +115,7 @@ fn fold_curve_is_linear() {
     } else {
         assert!(
             ratio < 8.0,
-            "fold per-entry cost grew {ratio:.1}x (1k->100k) — super-linear; the IMP-4 \
+            "fold per-entry cost grew {ratio:.1}x (1k->100k) — super-linear; the \
              resume-availability ceiling (cold recovery folds the whole log) is violated"
         );
     }

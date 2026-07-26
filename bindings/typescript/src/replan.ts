@@ -5,7 +5,7 @@
  * failed steps that triggered it, and whether the model escalated to a human (the
  * run quiesces). Kept in its own module (the runs.ts module-per-concern precedent).
  *
- * SN-8: ids are server-derived; the SDK only *encodes* the bytes to hex.
+ * ids are server-derived; the SDK only *encodes* the bytes to hex.
  */
 
 import type { ReplanRoundSummary as PbReplanRoundSummary } from "./gen/kortecx/v1/gateway_pb.js";

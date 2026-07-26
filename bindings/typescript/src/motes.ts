@@ -1,6 +1,6 @@
 /**
- * The per-mote definition view — `GetMoteDetail` (Batch B). DISPLAY-ONLY
- * (SN-8): the capped definition summary the coordinator persisted at admission,
+ * The per-mote definition view — `GetMoteDetail` (Batch B). DISPLAY-ONLY:
+ * the capped definition summary the coordinator persisted at admission,
  * resolved by `mote_def_hash`; nothing here authorizes anything. A mote that
  * has not committed (or was admitted by a pre-Batch-B binary) answers
  * `defFound: false` honestly. Kept in its own module per the module-per-concern

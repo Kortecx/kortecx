@@ -265,12 +265,12 @@ mod tests {
         assert_eq!(state.success_ratio_bp(), None);
     }
 
-    /// GR10 spike (run `cargo test -p kx-otel --release -- --ignored fold_spike
+    /// Latency spike (run `cargo test -p kx-otel --release -- --ignored fold_spike
     /// --nocapture`): the cost of a full cold fold over an N-entry journal + a
     /// render. The fold is incremental in production (a tick reads only the new
     /// tail), so this cold pass is the conservative ceiling. Off the hot path; the
     /// scrape never folds (it serves the cached snapshot). Numbers persist to the
-    /// PRIVATE `docs/benchmarks/` (SN-2), never asserted (a ratio gate would belong
+    /// PRIVATE `docs/benchmarks/`, never asserted (a ratio gate would belong
     /// in `scale-smoke`).
     #[test]
     #[ignore = "perf spike — run explicitly with --release --ignored --nocapture"]

@@ -571,7 +571,7 @@ fn concurrent_appends_and_queries_are_safe() {
 
 /// The structural wall: NO guarantee-path crate may depend on `kx-catalog`, so
 /// the compiler can never wire catalog governance onto the identity / commit /
-/// selection path (SN-8 / D70 / D87). Read the manifests directly — a future
+/// selection path. Read the manifests directly — a future
 /// `kx-catalog` edge into any of these is a compile-independent regression this
 /// test catches.
 #[test]
@@ -592,7 +592,7 @@ fn guarantee_path_does_not_depend_on_catalog() {
             std::fs::read_to_string(&manifest).unwrap_or_else(|e| panic!("read {manifest}: {e}"));
         assert!(
             !toml.contains("kx-catalog"),
-            "{c} must NOT depend on kx-catalog (the SN-8 governance wall)"
+            "{c} must NOT depend on kx-catalog (the governance wall)"
         );
     }
 }

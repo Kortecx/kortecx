@@ -14,7 +14,7 @@ syntax = "proto3";
 // IDENTITY INVARIANT (load-bearing, same as coordinator.proto). Every MoteId /
 // content ref / instance_id is computed Rust-side by the runtime. ProjectionView
 // and MoteSnapshot are SERVER-DERIVED from the journal fold — the client NEVER
-// computes a MoteId (SN-8 / D70). Protobuf carries field VALUES only.
+// computes a MoteId. Protobuf carries field VALUES only.
 //
 // Every enum carries an explicit *_UNSPECIFIED = 0 sentinel; domain
 // discriminants are +1-shifted; the Rust TryFrom boundary REJECTS UNSPECIFIED.
@@ -78,7 +78,7 @@ message SubmitRunRequest {
 // `react_seed` (PR-2d-1, additive, default-false): mark this Mote as the SEED of
 // a live ReAct chain. The coordinator swaps in a RUN-SALTED turn-0 Mote built
 // from the seed's prompt + warrant + model route (the salt is the server-assigned
-// `instance_id`, unknowable client-side — SN-8: no client-controlled identity)
+// `instance_id`, unknowable client-side — no client-controlled identity)
 // and anchors a durable `ReactRound` fact. A wire/admission flag ONLY — it never
 // enters `MoteId`/any digest; old clients send `false` and behave byte-
 // identically (the `accept_at_least_once` precedent).
@@ -100,11 +100,11 @@ message RunHandle {
   // the coordinator uses verbatim as the chain's `step_salt` (state.rs: `step_salt =
   // *launch_id.as_bytes()`). EMPTY (0 bytes) when there is no agentic step, or more than
   // one (ambiguous — the client falls back to instance_id-only scoping, like an old
-  // server). Never client-supplied (SN-8).
+  // server). Never client-supplied.
   bytes react_chain_salt = 3;            // 32B — the agentic-step chain key; EMPTY if none / ambiguous
   // (additive, mirrors InvokeResponse.terminal_mote_id): the bound recipe's TERMINAL
   // (sink) Mote — the one whose committed result is the run's output. Server-derived from
-  // the binder (SN-8); never client-supplied.
+  // the binder; never client-supplied.
   //
   // WHY THIS EXISTS SEPARATELY FROM `react_chain_salt`. Both identify a Mote in THIS
   // submission, but they answer different questions and must not be conflated. The salt is
@@ -124,7 +124,7 @@ message RunHandle {
 // ---------------------------------------------------------------------------
 // Invoke — bind a PUBLISHED recipe by handle to args and run it (R2 / D121).
 // Additive RPC (D120.6). The caller's party is SERVER-DERIVED from the auth
-// interceptor (there is NO party/principal field on the wire — SN-8). The
+// interceptor (there is NO party/principal field on the wire). The
 // gateway resolves handle+args under the party's authoritative Use warrant via
 // the host's recipe binder (kx-invoke: resolve→validate→bind→intersect), then
 // register-then-submits through the SAME propose-proxy as SubmitRun (no new
@@ -133,7 +133,7 @@ message RunHandle {
 // A run is keyed by recipe identity (RegisterRun dedups by recipe_fingerprint),
 // so every invocation of the SAME recipe joins ONE run instance; distinct args
 // yield distinct Motes WITHIN it (exactly-once-per-input). Invoke therefore
-// returns the SERVER-DERIVED `terminal_mote_id` (never client-supplied — SN-8)
+// returns the SERVER-DERIVED `terminal_mote_id` (never client-supplied)
 // so the caller knows which committed Mote in the run is THIS invocation's
 // output: poll GetProjection on instance_id, find terminal_mote_id, then
 // GetContent on its result_ref.
@@ -152,7 +152,7 @@ message InvokeResponse {
   bytes terminal_mote_id = 3;            // 32B — SERVER-DERIVED sink Mote; its committed result is THIS invocation's output
   // PR-R1 (additive): the per-invocation ReAct chain key for a react Invoke. A live
   // `kx serve` shares ONE journal/instance_id across every Invoke, so the chain key
-  // (= the bound react seed Mote's id, server-derived from the bound args — SN-8)
+  // (= the bound react seed Mote's id, server-derived from the bound args)
   // scopes ListReactTurns/the answer poll to THIS invocation's chain. Empty (0 bytes)
   // for a non-react Invoke. An old client ignores it; a new client reads "" from an
   // old server (D120.6) and falls back to instance_id-only scoping.
@@ -324,7 +324,7 @@ message ListRunsResponse {
 // The Invoke args submitted with a run are captured into an OFF-JOURNAL,
 // OFF-DIGEST sidecar (the feedback.db/uploads.db posture: rebuildable-to-EMPTY,
 // principal server-resolved audit-only, NO read-time party filter — the
-// kx-cloud SN-8 wall enforces tenancy above). GetRunInputs reads them back so a
+// kx-cloud identity wall enforces tenancy above). GetRunInputs reads them back so a
 // run recovered from ListRuns (no client-side localStorage) can pre-fill its
 // recipe form and be re-invoked with edits. The args never become committed
 // facts ⇒ the canonical projection digest is invariant by construction.
@@ -404,7 +404,7 @@ message GetRecipeFormResponse {
 // ---------------------------------------------------------------------------
 // PR-4 Batch D — SearchRecipes: ADVISORY recipe discovery over the kx-catalog
 // DiscoveryIndex (fuzzy-in/exact-out) + AdvisoryMetadataStore. Additive RPC
-// (D120.6). SN-8: score_bp is DISPLAY-ONLY (integer basis points, never a float,
+// (D120.6). Score_bp is DISPLAY-ONLY (integer basis points, never a float,
 // never a committed fact, never an authorization) — a search can SURFACE a
 // recipe, never invoke one. Invoke stays the sole authorization gate. An old
 // gateway without the seam returns UNIMPLEMENTED.
@@ -415,7 +415,7 @@ message SearchRecipesRequest {
   optional uint32 limit = 3;             // cap on returned results (server-clamped); absent ⇒ server default
 }
 // One recipe's advisory rank against the intent, in integer basis points (floats
-// never cross this wire — the SN-8 no-persisted-confidence rule): exact handle =
+// never cross this wire — the no-persisted-confidence rule): exact handle =
 // 10000 > path-prefix > tag-match > fuzzy; absent string rungs alone decide.
 message ScoredRecipe {
   RecipeSummary recipe = 1;              // the matched recipe (with advisory metadata)
@@ -500,7 +500,7 @@ message ListAssetGrantsResponse {
 // named retrieval corpus held in the gateway's catalog dir: content-addressed
 // document bytes in the durable content store + a flat-LE (ContentRef,vector)
 // cache rebuilt into an HNSW graph on open (kx-dataset-hnsw, off the default
-// path / SN-8). FORWARD-COMPATIBLE embedding: every ingest document carries
+// path). FORWARD-COMPATIBLE embedding: every ingest document carries
 // `content` bytes ALWAYS + an OPTIONAL client-computed `embedding`; a query
 // carries `query_text` OR `query_embedding`. The client-vector path runs
 // FFI-FREE (gateway `hnsw` feature) — the exact seam an external embedder
@@ -508,7 +508,7 @@ message ListAssetGrantsResponse {
 // plugs into with no runtime change. The server-embed path (text only) needs
 // the `inference` feature + a wired EmbeddingBackend, else FAILED_PRECONDITION.
 //
-// SN-8 (load-bearing): the similarity `score` here is DISPLAY-ONLY. It never
+// Identity (load-bearing): the similarity `score` here is DISPLAY-ONLY. It never
 // enters a committed fact or a MoteId; only the ordered content-ref SET is the
 // durable retrieval result (kx_workflow::retrieval_result_ref), matched
 // downstream by EXACT hash. A client MUST NOT route identity through `score`.
@@ -525,7 +525,7 @@ message ListAssetGrantsResponse {
 // the server-configured default (operator-authoritative), NOT an error (unlike the
 // identity enums). HYBRID silently falls back to dense when there is no query_text
 // (the FFI-free client-vector path has no text to BM25-match). The hybrid weights
-// (RRF k, MMR lambda) are operator-config only — never a client float (SN-8).
+// (RRF k, MMR lambda) are operator-config only — never a client float.
 enum RetrievalMode {
   RETRIEVAL_MODE_UNSPECIFIED = 0;        // use the server-configured default
   RETRIEVAL_MODE_DENSE       = 1;        // dense (embedding) ANN only — reproducible
@@ -552,7 +552,7 @@ message IngestDocument {
   bytes  content              = 1;       // the retrievable payload (ALWAYS present)
   repeated float embedding    = 2;       // OPTIONAL client-computed vector; empty ⇒ server-embed (needs `inference`)
   // RESERVED (forward-compat): accepted on the wire but NOT YET persisted or
-  // returned. The durable id is ALWAYS the server-derived content hash (SN-8), so a
+  // returned. The durable id is ALWAYS the server-derived content hash, so a
   // client `doc_id` is advisory only; per-document metadata is a planned CLOUD add.
   optional string doc_id      = 3;
   map<string,string> metadata = 4;
@@ -579,7 +579,7 @@ message QueryDatasetRequest {
 message DatasetHit {
   bytes content_ref = 1;                 // 32B content-addressed id of the retrieved CHUNK (RC4a: a chunk, not the whole doc)
   bytes content     = 2;                 // the chunk payload bytes (so a UI can show the snippet)
-  float score       = 3;                 // SN-8: DISPLAY-ONLY similarity; NEVER an identity input
+  float score = 3; // DISPLAY-ONLY similarity; NEVER an identity input
   bytes  parent_ref  = 4;                // RC4a: 32B content-addressed id of the PARENT document (== content_ref for legacy/un-chunked)
   uint32 chunk_index = 5;                // RC4a: 0-based ordinal of this chunk within the parent (display/ordering)
   uint32 chunk_count = 6;                // RC4a: total chunks in the parent (display)
@@ -595,7 +595,7 @@ message QueryDatasetResponse {
 // ONLY content-addressed refs + a DISPLAY-ONLY integer basis-point score — the
 // caller joins back to bytes with an EXACT GetContent on the ref. The "fuzzy in,
 // exact out" contract: the approximate similarity ranking surfaces candidates,
-// but identity is always the exact content hash (SN-8 — the score never enters a
+// but identity is always the exact content hash (the score never enters a
 // committed fact / a MoteId / an identity decision; it is off-digest, advisory).
 // Same scope + degrade as the dataset RPCs: operator-global (per-party isolation
 // is CLOUD, D129); a None FuzzyDiscoveryView seam ⇒ UNIMPLEMENTED; an unknown
@@ -611,7 +611,7 @@ message FuzzyDiscoveryRequest {
 }
 message FuzzyHit {
   bytes  content_ref = 1;                // 32B content-addressed id — the EXACT-OUT join key (GetContent)
-  uint32 score_bp    = 2;                // 0..=10000 DISPLAY-ONLY basis points; NEVER an identity input (SN-8)
+  uint32 score_bp = 2; // 0..=10000 DISPLAY-ONLY basis points; NEVER an identity input
   bytes  parent_ref  = 3;                // RC4a: 32B content-addressed id of the PARENT document (== content_ref for legacy/un-chunked)
   uint32 chunk_index = 4;                // RC4a: 0-based ordinal of this chunk within the parent (display/ordering)
 }
@@ -705,7 +705,7 @@ message ReactTurnSummary {
   // Governance observability (additive): the chain's run-fixed warrant axes, decoded
   // from the anchor `ReactRound.warrant_ref` — the tool ids the chain may fire and the
   // secret refs it may resolve (D110.3). NAMES/REFS ONLY — never a secret value
-  // (SN-8/D81), the same discipline as ListSecretNames. Every row of a chain repeats
+  // (Refs-not-values), the same discipline as ListSecretNames. Every row of a chain repeats
   // its chain-level grants (the warrant is run-fixed); EMPTY when the warrant blob is
   // absent. Makes a dropped capability axis VISIBLE instead of silent (the class behind
   // T-RUNAPP-SECRET-SCOPE-OBSERVATION). Additive (D120.6): an old client ignores them; a
@@ -742,7 +742,7 @@ message ReRankTurnSummary {
   string outcome          = 5;           // "pending" | "reranked" | "failed_closed" (frozen at append)
   uint32 candidate_count  = 6;           // number of candidates reranked (the Permutation(n) bound)
   // The reordered SOURCE indices (a permutation of 0..candidate_count) — the Vec
-  // index is the NEW rank. Set iff outcome == "reranked"; empty otherwise. SN-8:
+  // index is the NEW rank. Set iff outcome == "reranked"; empty otherwise.
   // an exact permutation the runtime enforced, never a similarity score.
   repeated uint32 permutation = 7;
   uint64 seq              = 8;           // journal seq of the ReRankRound fact (ordering)
@@ -755,8 +755,8 @@ message ListReRankTurnsResponse {
 // ---------------------------------------------------------------------------
 // RC5a: durable multi-tier MEMORY — semantic recall + episodic store.
 //
-// A cross-run, per-namespace store of what an agent LEARNED. Off the truth path
-// (SN-8): a recall returns only the ordered memory-ref SET; the similarity `score`
+// A cross-run, per-namespace store of what an agent LEARNED. Off the truth path:
+// a recall returns only the ordered memory-ref SET; the similarity `score`
 // is DISPLAY-ONLY, never an identity input. The store (memory.db) is a rebuildable
 // projection — NO journal schema bump (the retrieve@1 precedent). `namespace` is the
 // caller's ISOLATION scope; a "" request namespace ⇒ the server-derived caller
@@ -813,7 +813,7 @@ message RecallMemoryRequest {
 message MemoryHit {
   bytes memory_id = 1;                   // 32B content-addressed id (the citation key)
   bytes content   = 2;                   // the remembered payload bytes
-  float score     = 3;                   // SN-8: DISPLAY-ONLY similarity; NEVER an identity input
+  float score = 3; // DISPLAY-ONLY similarity; NEVER an identity input
 }
 message RecallMemoryResponse {
   repeated MemoryHit hits = 1;           // ordered: score desc, then ascending ref (deterministic)
@@ -900,7 +900,7 @@ message ListCaptureRecordsResponse {
 
 // ---------------------------------------------------------------------------
 // W1.A5 toolscout additive (D120.6): ADVISORY tool discovery + TaskBundle
-// preview. SN-8: every score/verdict below is DISPLAY-ONLY — never a committed
+// preview. Every score/verdict below is DISPLAY-ONLY — never a committed
 // fact, never an authorization. The sole grant gate stays the exact
 // (name, version) equality check in lowering + the broker; a score can surface
 // a tool, never grant one (advisory-never-authorizes is structural in
@@ -943,7 +943,7 @@ message ScoreTaskBundleRequest {
   uint32 tolerance_threshold_bp         = 4; // advisory ranking cut, 0..=10000 (an integer — never a float)
 }
 // One manifest's advisory rank against the bundle intent, in integer basis
-// points (floats never cross this wire — the SN-8 no-persisted-confidence
+// points (floats never cross this wire — the no-persisted-confidence
 // rule): exact keyword/phrase = 10000 > Jaro-Winkler fuzz ≤ 9000 > embedding
 // cosine ≤ 8000 (absent without a server embedder — string rungs alone decide).
 message ManifestScore {
@@ -973,7 +973,7 @@ message ScoreTaskBundleResponse {
 // ---------------------------------------------------------------------------
 // SubmitWorkflow — author a Tier-1 DAG from a VETTED palette and run it.
 // Additive RPC (D120.6). The caller's party is SERVER-DERIVED from the auth
-// interceptor (NO party field on the wire — SN-8). Unlike SubmitRun (which takes
+// interceptor (NO party field on the wire). Unlike SubmitRun (which takes
 // pre-derived Motes + a client warrant), the client here sends only TOPOLOGY +
 // PARAMS: the server assigns each step's logic_ref from its StepKind (the client
 // CANNOT inject an executable body — that is Tier 2 / W3, needs a D-number),
@@ -992,7 +992,7 @@ enum WorkflowStepKind {
   WORKFLOW_STEP_KIND_PURE        = 1;  // deterministic transform; server logic_ref = content-derived sentinel
   WORKFLOW_STEP_KIND_MODEL       = 2;  // greedy model step routed by model_id + prompt (server logic_ref = MODEL sentinel)
   WORKFLOW_STEP_KIND_EXEC        = 3;  // references a REGISTERED body by signature id; server logic_ref = that body's content ref
-  WORKFLOW_STEP_KIND_TOOL        = 4;  // PR-6a: a single registered tool step. The client sends kind + tool_contract={name:version}; the SERVER builds the per-step warrant narrowed against the party grant (client tool_grants stay structurally refused — BLOCKER #5/SN-8). The tool MUST resolve in the durable registry or the step is refused.
+  WORKFLOW_STEP_KIND_TOOL = 4; // PR-6a: a single registered tool step. The client sends kind + tool_contract={name:version}; the SERVER builds the per-step warrant narrowed against the party grant (client tool_grants stay structurally refused — BLOCKER #5). The tool MUST resolve in the durable registry or the step is refused.
 }
 
 // Execution mode (blueprint-execution-modes.md). Additive, default = FROZEN.
@@ -1009,7 +1009,7 @@ message WorkflowStep {
   string model_id          = 2;          // required for MODEL (must equal the served model); ignored for PURE/EXEC
   string prompt            = 3;          // MODEL prompt (bound into config_subset[PROMPT_KEY]); empty otherwise
   bytes  body_signature_id = 4;          // 32B — EXEC only: the REGISTERED body's content/signature id
-  map<string, string> tool_contract = 5; // TOOL: the single {tool_id: version} the step fires. MODEL (PR-9b/D161.1): a non-empty contract = the deterministic-agentic grant SET (`model@tool` in the chains DSL); authored cross-surface in PR-9b-1, the bounded reason→tool→observe LOOP executes in PR-9b-2 (until then the server fails closed). AUTHORITY still comes only from server vetting (client tool_grants stay refused — SN-8).
+  map<string, string> tool_contract = 5; // TOOL: the single {tool_id: version} the step fires. MODEL (PR-9b/D161.1): a non-empty contract = the deterministic-agentic grant SET (`model@tool` in the chains DSL); authored cross-surface in PR-9b-1, the bounded reason→tool→observe LOOP executes in PR-9b-2 (until then the server fails closed). AUTHORITY still comes only from server vetting (client tool_grants stay refused).
   map<string, bytes>  params        = 6; // free config_subset entries (size-capped server-side); an agentic MODEL step carries its bounded-loop budget under params["max_turns"]/["max_tool_calls"] (canonical-JSON u32)
 }
 
@@ -1030,7 +1030,7 @@ message SubmitWorkflowRequest {
 }
 
 // ---------------------------------------------------------------------------
-// NL workflow authoring — propose-then-confirm (D209.3 / SN-8). ProposeWorkflow
+// NL workflow authoring — propose-then-confirm. ProposeWorkflow
 // runs the SERVED model ONCE to turn a natural-language goal into a PROPOSED
 // multi-step DAG, then decodes + compiles it through the vetted kx-planner path:
 // the model names ONLY role + intent + edges (the minimal trust surface); every
@@ -1056,7 +1056,7 @@ message ProposeWorkflowRequest {
 // One proposed step. role/intent/kind are the model's plan (minimal trust
 // surface); model_id + tool_contract are the SERVER-resolved recipe axes,
 // returned for DISPLAY only so the client can render the granted capabilities —
-// the authoritative axes are re-derived server-side at author/run (SN-8).
+// the authoritative axes are re-derived server-side at author/run.
 message ProposedStep {
   string role   = 1;                     // the vetted role name this step plays
   string intent = 2;                     // the model's free-form per-step instruction
@@ -1093,7 +1093,7 @@ message ProposeWorkflowResponse {
 // ---------------------------------------------------------------------------
 // Batch A — client uploads + batch content reads + model discovery. Additive
 // RPCs (D120.6). PutContent is a CONTENT-STORE write, never a journal write:
-// the returned ref is SERVER-DERIVED blake3 over the payload bytes (SN-8 — the
+// the returned ref is SERVER-DERIVED blake3 over the payload bytes (the
 // client cannot name an identity), media_type/filename are ADVISORY audit
 // fields only (recorded in an off-journal uploads sidecar that is rebuildable-
 // to-empty; truth stays in the content store). The server caps the payload
@@ -1110,7 +1110,7 @@ message PutContentRequest {
 }
 
 message PutContentResponse {
-  bytes content_ref = 1;                 // 32B — SERVER-DERIVED blake3 of payload (SN-8)
+  bytes content_ref = 1; // 32B — SERVER-DERIVED blake3 of payload
   uint64 size = 2;                       // stored byte count
   bool deduplicated = 3;                 // true iff the blob already existed in the store
 }
@@ -1158,7 +1158,7 @@ message ModelSummary {
   string source = 10;                    // Model Control v2: provenance — "local" (startup GGUF) |
                                          //   "ollama" (daemon-discovered) | "pulled-ollama" |
                                          //   "pulled-url" (runtime `kx models pull`). Display/audit
-                                         //   only (SN-8); empty on an old host (additive)
+                                         // only; empty on an old host (additive)
   bool active = 11;                      // Model Control v2: true iff this is the server's ACTIVE
                                          //   default (the SetActiveModel choice — an off-journal
                                          //   advisory hint; the server never silently re-routes
@@ -1197,7 +1197,7 @@ message OffloadModelResponse {
 
 // Model Control v2 (model acquisition): download a model and REGISTER it at runtime
 // so it is immediately usable WITHOUT restarting `kx serve`. HOST INFRASTRUCTURE, not
-// a client Mote (SN-8): a download mutates operator/host state (filesystem, served
+// a client Mote: a download mutates operator/host state (filesystem, served
 // set, network egress) — axes a client warrant never asserts. TWO-KEY GATE: an
 // authenticated caller REQUESTS the pull; the operator's env opt-in
 // (KX_SERVE_ALLOW_MODEL_PULL) AUTHORIZES the egress. Off-journal / off-digest.
@@ -1236,7 +1236,7 @@ message GetPullStatusResponse {
 // off-journal advisory hint a client uses to pick the per-model chat handle, so the
 // default is switchable from CLI/SDK (a client-local default cannot be). The server
 // NEVER silently re-routes kx/recipes/chat; routing stays the recipe-handle / ENUM
-// free-param (SN-8). The model_id MUST be in the served catalog (fail-closed).
+// free-param. The model_id MUST be in the served catalog (fail-closed).
 message SetActiveModelRequest { string model_id = 1; }  // empty ⇒ clear (back to the primary)
 message SetActiveModelResponse {
   string active_model_id = 1;  // the active model AFTER the op ("" ⇒ cleared/primary)
@@ -1248,9 +1248,9 @@ message SetActiveModelResponse {
 // skill/memory artifact rail, a 4-axis steering config, and per-step replay
 // intent. The envelope carries NO authority (no warrant/grant/secret/credential/
 // instance_id): `app run` re-compiles the blueprint and the server re-resolves
-// every warrant from the caller's OWN grants (SN-8). Persisted in an off-journal,
+// every warrant from the caller's OWN grants. Persisted in an off-journal,
 // rebuildable-to-EMPTY `apps.db` sidecar scoped to the authoring party; the server
-// derives `app_ref` from the canonical envelope (SN-8). Import/clone are LOCAL +
+// derives `app_ref` from the canonical envelope. Import/clone are LOCAL +
 // client-orchestrated (PutContent the App's content closure, then SaveApp under the
 // importer's OWN principal with `source_digest` recording local lineage) — there is
 // no dedicated server import RPC. All three RPCs are off-journal / off-digest.
@@ -1273,7 +1273,7 @@ message SaveAppRequest {
   bytes  source_digest = 3;  // OPTIONAL 32B lineage hint — the app_digest an import/clone came from (off-identity; NULL/authored-here when empty). A hint, never authenticity.
 }
 message SaveAppResponse {
-  bytes  app_ref      = 1;   // 16B server-derived (SN-8)
+  bytes app_ref = 1; // 16B server-derived
   string handle       = 2;   // echoed canonical handle
   bool   deduplicated = 3;   // true iff an identical envelope was already bound to this handle
 }
@@ -1327,7 +1327,7 @@ message GetAppManifestResponse {
 // (bounded by the declared connections) so a credentialed connector (e.g. Gmail) can
 // actually be dialed inside the agentic loop. The envelope carries NO authority (it is
 // server-owned + validated; the client cannot forge references or run arbitrary steps
-// under the App's credentials — SN-8). Returns the same RunHandle as SubmitWorkflow.
+// under the App's credentials). Returns the same RunHandle as SubmitWorkflow.
 // Off-journal / off-digest for connection/secret resolution; the resolved warrant is
 // deterministic (recovery replays it byte-identically). `args` (optional) merge into
 // the blueprint's entry params (server-side, the same shape the CLI injected). A
@@ -1348,7 +1348,7 @@ message RunAppRequest {
 // off-digest. ScaffoldApp drives a server-side async orchestration (plan step
 // -> N fixed-skeleton write steps -> N AdvanceBranch) into a fresh CoW-on-CAS
 // branch, reusing the proven single-step react-edit pattern; the frozen
-// coordinator loop is UNTOUCHED. Warrants are SERVER-minted (SN-8/BLOCKER#5):
+// coordinator loop is UNTOUCHED. Warrants are SERVER-minted:
 // the `instruction` is DATA only. The lock gates the single AdvanceBranch write
 // chokepoint (a locked App refuses further agentic in-CAS edits).
 // ---------------------------------------------------------------------------
@@ -1399,7 +1399,7 @@ message GetScaffoldStatusResponse {
 // SERVER computed from this caller's own ceiling (party authority INTERSECT
 // broker-fireable INTERSECT registry — the same ceiling GetAppManifest reports
 // against), and everything it names is intersected back against that ceiling
-// host-side. Naming is not granting (SN-8): what survives is a WISH that RunApp
+// host-side. Naming is not granting: what survives is a WISH that RunApp
 // intersects AGAIN at fire. The model can only ask for what the caller could
 // already have attached by hand; it can never grant, and never reach past the
 // ceiling.
@@ -1431,7 +1431,7 @@ message DeriveAppRequest {
 // One designed step. role/intent are the model's design; kind/model_id are the
 // SERVER-resolved recipe axes; tool_contract is what SURVIVED the intersection —
 // the ceiling's version, never the model's. Display only: every axis is re-derived
-// server-side when the approved App is authored and run (SN-8).
+// server-side when the approved App is authored and run.
 message DerivedAppStep {
   string role   = 1;
   string intent = 2;
@@ -1589,7 +1589,7 @@ message AddSkillRequest {
   bytes instructions_body = 2;  // instructions markdown, stored via the content-write seam; empty iff the manifest already names instructions_ref
 }
 message AddSkillResponse {
-  bytes  skill_ref        = 1;  // 16B server-derived (SN-8)
+  bytes skill_ref = 1; // 16B server-derived
   string name             = 2;  // echoed canonical name
   string instructions_ref = 3;  // 64-hex — the stored (or echoed) instructions ref
   bool   deduplicated     = 4;  // true iff an identical canonical manifest was already bound to this name
@@ -1629,7 +1629,7 @@ message RemoveSkillResponse { bool removed = 1; }  // false: absent OR not-owned
 // (uniform "not authorized", no existence oracle — D120.1). A mote that has
 // not committed, or one admitted by a pre-Batch-B binary, answers
 // `def_found = false` (honest empty, never an error). Nothing in this message
-// is authority: config values are OPAQUE bytes for display (SN-8 — secrets
+// is authority: config values are OPAQUE bytes for display (secrets
 // cannot reach config_subset by construction, D81; the caps are defensive
 // bounds, not redaction).
 // ---------------------------------------------------------------------------
@@ -1755,7 +1755,7 @@ message ListMoteTelemetryResponse {
 // whole `telemetry.db` sidecar server-side (`SUM ... GROUP BY model_id`) so
 // CLI/SDK/UI render ONE truth (no per-surface drift). Same boundary as
 // `ListMoteTelemetry`: off-journal, off-digest, rebuildable-to-EMPTY,
-// AUDIT/DISPLAY ONLY. No cost/$ field — billing is CLOUD (D129/D156/GR19). A
+// AUDIT/DISPLAY ONLY. No cost/$ field — billing is CLOUD. A
 // serve without the sidecar answers `unimplemented` (forward-compat degrade).
 message ListTelemetrySummaryRequest {
   optional bytes instance_id = 1;        // 16B — scope to one run (absent = all runs)
@@ -1782,7 +1782,7 @@ message ListTelemetrySummaryResponse {
 // the host records. The TARGET keys (instance_id / mote_id / content_ref) are
 // display/join only — feedback never gates execution, never a `MoteId` input,
 // never a digest input. The caller PARTY is SERVER-resolved (the PutContent
-// precedent), never trusted off the wire (SN-8). The `feedback_id` is SERVER-
+// precedent), never trusted off the wire. The `feedback_id` is SERVER-
 // derived. A serve without the sidecar answers `unimplemented` (forward-compat
 // degrade). `ListFeedback` is the read-back / inspection surface.
 // ---------------------------------------------------------------------------
@@ -1805,7 +1805,7 @@ message SubmitFeedbackRequest {
 }
 
 message SubmitFeedbackResponse {
-  bytes feedback_id = 1;                 // 16B SERVER-derived id (deterministic over (message_id, principal); SN-8)
+  bytes feedback_id = 1; // 16B SERVER-derived id (deterministic over (message_id, principal))
 }
 
 message ListFeedbackRequest {
@@ -1843,7 +1843,7 @@ message ListFeedbackResponse {
 // ending EMPTY stream (honest, never an error). The committed result is the
 // authority; a client MUST reconcile to it (overwrite streamed text on commit).
 //
-// SN-8 (load-bearing): `instance_id` is the ownership ticket — the SAME gate as
+// Identity (load-bearing): `instance_id` is the ownership ticket — the SAME gate as
 // per-run StreamEvents (uniform permission_denied, no existence oracle, caller
 // must own the run). `mote_id` is the broker KEY (a server-derived, unguessable
 // 32-byte id) selecting which model mote to stream — NOT a second journal gate,
@@ -1853,7 +1853,7 @@ message ListFeedbackResponse {
 // *** PARTY-SCOPED by instance_id ownership (UNLIKE StreamAllEvents which is
 // *** operator-global). Safe to serve multi-tenant: the gate is the SAME
 // *** run-ownership fold as the frozen per-run StreamEvents; cross-tenant scoping
-// *** is enforced by the cloud SN-8 wall ABOVE gateway-core (as for StreamEvents).
+// *** is enforced by the cloud identity wall ABOVE gateway-core (as for StreamEvents).
 // ---------------------------------------------------------------------------
 
 message StreamModelTokensRequest {
@@ -1895,7 +1895,7 @@ message TokenChunk {
 // *** OSS = the read-only Alerts VIEW. The TRIAGE LIFECYCLE (acknowledge /
 // *** resolve), the alert-RULE engine, and outbound NOTIFICATIONS (a new egress
 // *** surface) are a CLOUD capability (D156 / D129) — deliberately NOT in this
-// *** OSS contract (GR19: reserve production-grade management surfaces for Cloud).
+// *** OSS contract (reserve production-grade management surfaces for Cloud).
 // ---------------------------------------------------------------------------
 
 message ListAlertsRequest {
@@ -1905,7 +1905,7 @@ message ListAlertsRequest {
 }
 
 message AlertSummary {
-  bytes alert_id = 1;                    // 16B SERVER-derived, re-fold-stable id (blake3 over (mote_id, seq); SN-8 — no existence oracle)
+  bytes alert_id = 1; // 16B SERVER-derived, re-fold-stable id (blake3 over (mote_id, seq); no existence oracle)
   bytes mote_id = 2;                     // 32B — the failed Mote (deep-link target)
   bytes instance_id = 3;                 // 16B watermark attribution (may be EMPTY)
   string reason_class = 4;               // the terminal FailureReason wire token (e.g. "dead_lettered", "validator_rejected")
@@ -1923,7 +1923,7 @@ message ListAlertsResponse {
 // ---------------------------------------------------------------------------
 // PR-6a — declarative tools registry. Additive RPCs (D120.6). The durable
 // inventory + governance surface over the off-journal `tools.db`, DISTINCT from
-// the advisory ListToolManifests (ranking). SN-8: `tool_id` is SERVER-DERIVED
+// the advisory ListToolManifests (ranking). `tool_id` is SERVER-DERIVED
 // (blake3 of the canonical registration bytes, first 16 B) — the client NEVER
 // names or forges a registration identity, and REGISTRATION GRANTS NO AUTHORITY:
 // a registered tool fires only when a SERVER-issued warrant grants the exact
@@ -1934,11 +1934,11 @@ message ListAlertsResponse {
 // *** OSS = the registry + view + admission-time SSRF vetting of `server_host`.
 // *** DIALING external MCP servers (the live remote tool round), credentialed
 // *** Connections, and parallel tool fan-out are the PR-6b / Cloud surface
-// *** (D159/D132/GR19) — `server_host` here is vetted + stored, never dialed.
+// *** — `server_host` here is vetted + stored, never dialed.
 // ---------------------------------------------------------------------------
 
 // A tool parameter's declared type + bound (the MCP inputSchema analogue;
-// CLOSED set, NO float — SN-8). `ty`: "str"|"bytes"|"int"|"bool"|"enum".
+// CLOSED set, NO float). `ty`: "str"|"bytes"|"int"|"bool"|"enum".
 message ToolParamSpec {
   string name            = 1;
   string ty              = 2;            // closed vocabulary (see above)
@@ -1968,7 +1968,7 @@ message RegisterToolRequest {
   string remote_name        = 7;         // the tool's name on the remote server (default = tool_name)
 }
 message RegisterToolResponse {
-  bytes  tool_id              = 1;        // 16B SERVER-DERIVED id (SN-8)
+  bytes tool_id = 1; // 16B SERVER-DERIVED id
   string registration_status  = 2;       // "Approved" (HumanAuthored)
 }
 
@@ -1986,7 +1986,7 @@ message DiscoverToolsRequest {
   string after_version = 3;              // cursor tiebreak: the (version)
 }
 // One registered tool's durable INVENTORY row (governance view). net_scope /
-// fs_scope are DISPLAY summaries; authority never rides this wire (SN-8).
+// fs_scope are DISPLAY summaries; authority never rides this wire.
 message RegisteredTool {
   bytes  tool_id            = 1;         // 16B server-derived
   string tool_name          = 2;
@@ -2009,7 +2009,7 @@ message DiscoverToolsResponse {
 // (a local stdio command or a remote HTTP endpoint); the runtime DIALS it
 // (initialize -> tools/list), discovers its tools into the SAME durable registry
 // (each id namespaced `<server_name>/<remote>`), and governs the connection in an
-// off-journal connections.db sidecar. SN-8: connection_id + tool ids are
+// off-journal connections.db sidecar. Connection_id + tool ids are
 // server-derived; the credential is referenced by NAME only (never the secret).
 message RegisterMcpServerRequest {
   string server_name    = 1;             // unique handle; namespaces discovered tool ids; must not contain '/'
@@ -2021,7 +2021,7 @@ message RegisterMcpServerRequest {
   string session_mode   = 7;             // PR-6b-3: "stateful" | "stateless"; empty ⇒ "stateless" (stateless-first default)
 }
 message RegisterMcpServerResponse {
-  bytes  connection_id = 1;              // 16B server-derived (SN-8)
+  bytes connection_id = 1; // 16B server-derived
   uint32 discovered    = 2;              // tools discovered + registered (0 when unreachable)
   string health        = 3;              // "connected" | "unreachable" | "unknown"
 }
@@ -2073,7 +2073,7 @@ message DeregisterMcpServerResponse {
 // T-CONNECTOR-AUTOGRANT: an OPERATOR DIAGNOSTIC fire of ONE registered tool on a
 // dialed connector — the deterministic, model-free "exercise this tool" affordance
 // behind the UI Connections live-fire panel / `kx connections fire`. It routes
-// through the SAME broker the agentic loop uses, so SN-8 is re-enforced (the tool
+// through the SAME broker the agentic loop uses, so the authority gate is re-enforced (the tool
 // must be registered + a single-grant warrant is synthesized server-side). NOT a
 // durable agentic effect: no journal fact, no replay — like `TestMcpServer`/
 // `DiscoverServerTools`, it is a live operator action, not a recorded run.
@@ -2099,7 +2099,7 @@ message CallMcpToolResponse {
 // the handle -> item refs and injects the sorted ref-set into the ENTRY Mote's
 // identity-bearing config_subset (different context => different MoteId =>
 // exactly-once-per-(input+context)). No new journal write path; the canonical
-// digest is invariant (a run with no bundle is byte-identical). SN-8: the client
+// digest is invariant (a run with no bundle is byte-identical). The client
 // names a handle; the server derives the ref + scopes List/Get/Delete to the
 // caller's principal (no cross-party existence oracle).
 // ---------------------------------------------------------------------------
@@ -2116,7 +2116,7 @@ message PutContextBundleRequest {
   repeated ContextItem items = 3;        // the bundle's items (each refs a PutContent blob; count-capped server-side)
 }
 message PutContextBundleResponse {
-  bytes  bundle_ref   = 1;               // 16B SERVER-DERIVED manifest hash (SN-8)
+  bytes bundle_ref = 1; // 16B SERVER-DERIVED manifest hash
   string handle       = 2;               // echoed canonical handle
   bool   deduplicated = 3;               // true iff an identical manifest was already bound to this handle
 }
@@ -2126,7 +2126,7 @@ message ListContextBundlesRequest {
   string after_handle = 2;               // exclusive cursor: the handle of the last row of the prior page
 }
 // One bundle's manifest (governance / display view). content_refs are DISPLAY;
-// authority never rides this wire (SN-8).
+// authority never rides this wire.
 message ContextBundle {
   bytes  bundle_ref          = 1;        // 16B server-derived
   string handle              = 2;
@@ -2165,7 +2165,7 @@ message DeleteContextBundleResponse {
 // invariant). A sub-branch (parent_handle) is a point-in-time CoW fork: it
 // inherits the parent's resolved refs at create time and re-points only the
 // paths a later snapshot overrides (unchanged paths share the parent's CAS blob
-// — zero-copy). SN-8: the client names a handle; the server derives the ref and
+// — zero-copy). The client names a handle; the server derives the ref and
 // scopes List/Get/Delete to the caller's principal (no cross-party oracle).
 // ---------------------------------------------------------------------------
 
@@ -2175,7 +2175,7 @@ message BranchItem {
 }
 
 message Branch {
-  bytes  branch_ref          = 1;        // 16B SERVER-DERIVED manifest hash (SN-8; display + dedup)
+  bytes branch_ref = 1; // 16B SERVER-DERIVED manifest hash (display + dedup)
   string handle              = 2;        // "namespace/collection/name" AssetPath handle
   string parent_handle       = 3;        // the CoW parent (lineage); empty = a root branch
   string description         = 4;        // free-form; NEVER parsed for enforcement
@@ -2263,7 +2263,7 @@ message GetBranchContentResponse {
 // ---------------------------------------------------------------------------
 
 // POC-1 (Settings "Workspace"): GetServerInfo request (no fields — the caller is
-// server-resolved; SN-8) + a NON-SECRET response projection of GatewayConfig +
+// server-resolved) + a NON-SECRET response projection of GatewayConfig +
 // the resolved serve model + the build's feature flags. Additive, read-only.
 message GetServerInfoRequest {}
 message GetServerInfoResponse {
@@ -2322,7 +2322,7 @@ message GetServerInfoResponse {
 // is NEVER journaled, in a MoteId/StepRecord, the model's context, or any RPC
 // RESPONSE. `value` appears ONLY as a PutSecret request argument (write-only).
 // PutSecret/DeleteSecret are gated loopback-only + an authenticated party (host
-// credential material); ListSecretNames returns NAMES + timestamps only. SN-8: the
+// credential material); ListSecretNames returns NAMES + timestamps only. The
 // broker secret_scope precheck remains the sole resolve-authorization gate.
 // ===========================================================================
 message PutSecretRequest {
@@ -2354,10 +2354,10 @@ message DeleteSecretResponse { bool removed = 1; }  // false iff absent
 // FRESH registered run via the existing Invoke path (the coordinator stays the
 // sole journal writer; the frozen trio is untouched). The trigger is the run's
 // origin (an off-journal triggers.db record). Idempotency-key dedup makes a
-// replayed event a no-op. SN-8: trigger_id is server-derived; the run binds under
+// replayed event a no-op. Trigger_id is server-derived; the run binds under
 // the REGISTRANT's party (D102.2); the auth secret is referenced by NAME only.
 // The minimal-local trigger (single-user webhook/cron); the hosted multi-tenant
-// trigger gateway at scale is CLOUD (D113/D170.b/GR19).
+// trigger gateway at scale is CLOUD.
 // ===========================================================================
 enum TriggerKind {
   TRIGGER_KIND_UNSPECIFIED = 0;
@@ -2431,7 +2431,7 @@ message TestTriggerResponse { bool ok = 1; string detail = 2; }
 
 // ===========================================================================
 // D114 — HITL pre-action approval gate. The OPERATOR control plane over pending
-// world-mutating action approvals. request_id is SERVER-DERIVED 16B (SN-8); Grant/
+// world-mutating action approvals. Request_id is SERVER-DERIVED 16B; Grant/
 // Deny RELEASE/REJECT a STAGED action (it fires exactly once, or the chain dead-
 // letters) — never mint a client warrant. Off-DAG fold view; UNIMPLEMENTED on a
 // serve without the approval substrate.
@@ -2456,7 +2456,7 @@ message DenyApprovalResponse  { bool denied  = 1; }
 // ===========================================================================
 // M11 — DISPLAY-ONLY deterministic LOCAL spend estimate over the durable turn/tool
 // counters at operator-set micro_usd rates. A BUDGET GUARDRAIL readout, NOT Cloud
-// per-expert billing — the D129/D156/GR19 boundary holds (no token / price-per-
+// per-expert billing — the cloud-tier boundary holds (no token / price-per-
 // expert data crosses this wire). UNIMPLEMENTED on a serve without the counters.
 // ===========================================================================
 message GetRunCostRequest  { bytes instance_id = 1; }  // 16B ownership ticket
@@ -2554,7 +2554,7 @@ service KxGateway {
   // Blueprint-builder additive (D120.6): author a Tier-1 DAG (vetted palette) and
   // run it — server-compiled identity + server-built warrants + R-1..R-15 admission.
   rpc SubmitWorkflow(SubmitWorkflowRequest) returns (RunHandle);
-  // NL authoring additive (D209.3 / SN-8): propose a multi-step DAG from a
+  // NL authoring additive: propose a multi-step DAG from a
   // natural-language goal (served model → vetted kx-planner compile). Validates
   // only — never registers or runs; the client confirms via SubmitWorkflow/SaveApp.
   rpc ProposeWorkflow(ProposeWorkflowRequest) returns (ProposeWorkflowResponse);
@@ -2581,7 +2581,7 @@ service KxGateway {
   rpc ListTelemetrySummary(ListTelemetrySummaryRequest) returns (ListTelemetrySummaryResponse);
   // PR-4.1 additive (D120.6): user 👍/👎 feedback on an answer — a client-origin
   // write into a rebuildable-to-empty feedback.db sidecar (advisory; off-journal,
-  // off-digest, off-identity; SN-8 server-resolved principal). `ListFeedback` is
+  // off-digest, off-identity; server-resolved principal). `ListFeedback` is
   // the read-back / inspection surface. UNIMPLEMENTED when the seam yields None.
   rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
   rpc ListFeedback(ListFeedbackRequest) returns (ListFeedbackResponse);
@@ -2599,9 +2599,9 @@ service KxGateway {
   // PR-6a additive (D120.6): the declarative tools registry. RegisterTool /
   // DeregisterTool write the durable off-journal tools.db (server-derived tool_id,
   // SSRF-vetted server_host); DiscoverTools is the inventory/governance VIEW
-  // (distinct from the advisory ListToolManifests). SN-8: registration grants NO
+  // (distinct from the advisory ListToolManifests). Registration grants NO
   // authority; client tool_grants stay refused. DIALING external MCP servers +
-  // Connections + parallel fan-out are PR-6b/Cloud (D159/GR19).
+  // Connections + parallel fan-out are PR-6b/Cloud.
   rpc RegisterTool(RegisterToolRequest) returns (RegisterToolResponse);
   rpc DeregisterTool(DeregisterToolRequest) returns (DeregisterToolResponse);
   rpc DiscoverTools(DiscoverToolsRequest) returns (DiscoverToolsResponse);
@@ -2609,17 +2609,17 @@ service KxGateway {
   // remote MCP server (stdio + Streamable-HTTP) and registers its discovered
   // tools into the SAME tools.db (each namespaced `<server>/<remote>`, fireable
   // via the broker); List/Discover/Test/Deregister govern the connections. The
-  // live untrusted-egress surface (GR8): admission + dial-time SSRF vetting,
+  // live untrusted-egress surface: admission + dial-time SSRF vetting,
   // per-server rate-limit, warrant-gated egress, secret-less CredentialRef.
-  // SN-8: server-derived connection/tool ids; client tool_grants stay refused.
-  // OAuth/device-flow + a hosted credential marketplace are CLOUD (D159/GR19).
+  // server-derived connection/tool ids; client tool_grants stay refused.
+  // OAuth/device-flow + a hosted credential marketplace are CLOUD.
   rpc RegisterMcpServer(RegisterMcpServerRequest) returns (RegisterMcpServerResponse);
   rpc ListMcpServers(ListMcpServersRequest) returns (ListMcpServersResponse);
   rpc DiscoverServerTools(DiscoverServerToolsRequest) returns (DiscoverServerToolsResponse);
   rpc TestMcpServer(TestMcpServerRequest) returns (TestMcpServerResponse);
   rpc DeregisterMcpServer(DeregisterMcpServerRequest) returns (DeregisterMcpServerResponse);
   // T-CONNECTOR-AUTOGRANT additive: an operator DIAGNOSTIC fire of one registered
-  // tool through the broker (SN-8 re-enforced; no journal fact — see CallMcpToolRequest).
+  // tool through the broker (authority re-enforced; no journal fact — see CallMcpToolRequest).
   rpc CallMcpTool(CallMcpToolRequest) returns (CallMcpToolResponse);
 
   // MM-3 (D110) additive — the LOCAL OS-keychain secret store. PutSecret/DeleteSecret
@@ -2637,7 +2637,7 @@ service KxGateway {
   // host webhook/cron listeners); TestTrigger dry-runs the binding without firing.
   // Each event starts a fresh registered run via the existing Invoke path (no journal
   // writer dep added; frozen trio untouched). UNIMPLEMENTED when no trigger admin is
-  // wired. The hosted multi-tenant trigger gateway is CLOUD (D113/D170.b/GR19).
+  // wired. The hosted multi-tenant trigger gateway is CLOUD.
   rpc RegisterTrigger(RegisterTriggerRequest) returns (RegisterTriggerResponse);
   rpc ListTriggers(ListTriggersRequest) returns (ListTriggersResponse);
   rpc DeregisterTrigger(DeregisterTriggerRequest) returns (DeregisterTriggerResponse);
@@ -2653,13 +2653,13 @@ service KxGateway {
   // RC1 (D172) — kx-eval per-run quality readout (expectation-free trajectory fold).
   rpc ScoreRun(ScoreRunRequest) returns (RunScore);
 
-  // PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
+  // PR-7 — context bundles (off-journal bundles.db sidecar; server-derived ref).
   rpc PutContextBundle(PutContextBundleRequest) returns (PutContextBundleResponse);
   rpc ListContextBundles(ListContextBundlesRequest) returns (ListContextBundlesResponse);
   rpc GetContextBundle(GetContextBundleRequest) returns (GetContextBundleResponse);
   rpc DeleteContextBundle(DeleteContextBundleRequest) returns (DeleteContextBundleResponse);
 
-  // D155 Phase-A — branched data (off-journal branches.db sidecar; SN-8
+  // D155 Phase-A — branched data (off-journal branches.db sidecar; server-derived
   // server-derived ref). SnapshotInto reads operator-approved host files
   // (confined under KX_SERVE_FS_ROOT, default-OFF) INTO the content store and
   // records the {path -> ref} manifest; the agent loop edits IN-CAS (no host
@@ -2698,7 +2698,7 @@ service KxGateway {
   // PullModel downloads a model (Ollama /api/pull or a huggingface.co /resolve/ GGUF
   // URL) and REGISTERS it at runtime so it is immediately usable WITHOUT restart;
   // it returns immediately (poll GetPullStatus). Deny-by-default: refused unless the
-  // operator sets KX_SERVE_ALLOW_MODEL_PULL and the URL host is allowlisted (SN-8 —
+  // operator sets KX_SERVE_ALLOW_MODEL_PULL and the URL host is allowlisted (
   // a client requests, the operator authorizes). SetActiveModel switches the server's
   // active default (an advisory hint; the server never silently re-routes chat).
   // Authenticated caller required (UNAUTHENTICATED otherwise).
@@ -2708,7 +2708,7 @@ service KxGateway {
 
   // POC-4 (Apps "App-authoring + envelope") — save / list / get a durable App
   // envelope in the caller-scoped, off-journal apps.db catalog. SaveApp validates
-  // + canonicalizes the kortecx.app/v1 envelope and derives app_ref (SN-8); the
+  // + canonicalizes the kortecx.app/v1 envelope and derives app_ref; the
   // envelope carries NO authority. Authenticated caller required (UNAUTHENTICATED
   // otherwise); unimplemented when the apps.db sidecar is absent. NO cross-instance
   // import entrypoint (deferred). Off-journal, off-digest.
@@ -2736,7 +2736,7 @@ service KxGateway {
   // client-orchestrated GetApp -> SubmitWorkflow path). The server reads the validated
   // envelope, lowers its blueprint through the canonical path, resolves connections
   // against the caller's own registry, and narrows the run warrant's secret scope to
-  // the App's declared secrets. Server-minted warrants (SN-8). Authenticated caller
+  // the App's declared secrets. Server-minted warrants. Authenticated caller
   // required; unimplemented when the app-run seam (apps.db + MCP gateway) is absent
   // (clients then fall back to the legacy GetApp -> SubmitWorkflow path).
   rpc RunApp(RunAppRequest) returns (RunHandle);
@@ -2745,12 +2745,12 @@ service KxGateway {
   // fixed skeleton into a fresh CoW-on-CAS branch (plan -> N writes -> N
   // AdvanceBranch). Returns immediately (the orchestration runs in the
   // background; observe via GetScaffoldStatus + GetBranch + StreamEvents).
-  // Warrants are server-minted (SN-8). Unimplemented when no served model /
+  // Warrants are server-minted. Unimplemented when no served model /
   // branch store. Off-journal, off-digest.
   // DeriveApp: one prompt -> a reviewable App design (steps + SHAPE + capabilities,
   // or a hosted file plan). Validate-only; saves nothing. The model may NAME tool ids
   // from a server-built ids-only menu of the caller's OWN ceiling and every id is
-  // intersected back against it (SN-8: naming is not granting). `unimplemented` with
+  // intersected back against it (naming is not granting). `unimplemented` with
   // no served model.
   rpc DeriveApp(DeriveAppRequest) returns (DeriveAppResponse);
   rpc ScaffoldApp(ScaffoldAppRequest) returns (ScaffoldAppResponse);
@@ -2779,7 +2779,7 @@ service KxGateway {
   // Additive (D120.6/D175) — the per-principal skill catalog (skills.db).
   // AddSkill validates the manifest fail-closed (kortecx.skill/v1 closed shape +
   // authority deny-keys) and stores the instructions body via the content-write
-  // seam; skill_ref is server-derived over the canonical bytes (SN-8). A skill
+  // seam; skill_ref is server-derived over the canonical bytes. A skill
   // is a WISH bundle — attaching one grants nothing; the bind intersects its
   // tool wishes against the caller's grants and the live broker. Authenticated
   // caller required; UNIMPLEMENTED when the catalog seam is absent.

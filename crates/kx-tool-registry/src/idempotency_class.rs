@@ -31,8 +31,8 @@ use serde::{Deserialize, Serialize};
 ///   than blindly re-dispatching it.
 /// - [`AtLeastOnce`](Self::AtLeastOnce) — the tool has no closing mechanism
 ///   (D38 §2c). The executor refuses to dispatch it unless the workflow
-///   submission context's `accept_at_least_once` is `true` (per
-///   `docs/design/workflow-submission.md` — submission-spec, NOT warrant).
+///   submission context's `accept_at_least_once` is `true` (a property of the
+///   submission spec, NOT the warrant).
 ///
 /// # Example
 ///

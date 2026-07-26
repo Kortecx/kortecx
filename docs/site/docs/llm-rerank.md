@@ -23,7 +23,7 @@ It then applies automatically on both live RAG paths:
   before the single answer step dispatches (the answer is held until the rerank settles).
 
 There is no client-chosen knob: the rerank runs model-side under the run's own warrant
-(the model proposes an order; the runtime enforces exact validity — SN-8). The
+(the model proposes an order; the runtime enforces exact validity). The
 deterministic MMR rerank remains the always-on default and is unaffected.
 
 ## Contract

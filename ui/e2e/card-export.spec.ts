@@ -2,7 +2,7 @@
  * PR-4.1b: the Workflows + Blueprints card EXPORT affordances download real
  * JSON over the live gateway (the lightweight record, the rich GetProjection/
  * GetContent bundle, and the blueprint definition), and Open-in-new-tab carries
- * `rel="noopener"`. This is the GR17 integration check for the new card menus.
+ * `rel="noopener"`. This is the integration check for the new card menus.
  */
 
 import { expect, test } from "@playwright/test";

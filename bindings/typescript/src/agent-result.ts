@@ -6,14 +6,14 @@
  * A thin, read-only projection over the steered `kx/recipes/react` chain — no new
  * wire surface, no proto change (assembled client-side from `ListReactTurns` +
  * `GetContent`). Platform-neutral (no Node imports): re-exported by both the node
- * and web entries via `common`. SN-8: every id + action is server-derived.
+ * and web entries via `common`. Every id + action is server-derived.
  */
 
 import { decodeCriticVerdict } from "./critic.js";
 import type { ReactTurn } from "./react.js";
 
 /** One tool action the agent took — a settled ReAct `tool` turn. The `toolId` /
- *  `toolVersion` are the GRANTED tool's (SN-8), never the model's raw proposal.
+ * `toolVersion` are the GRANTED tool's, never the model's raw proposal.
  *  T-MULTI-ELEMENT-TOOLCALLS: when a turn fires N tools at once, each is a distinct
  *  action sharing `turn`, ordered by `callIndex` (0..N-1). */
 export class AuditedAction {
@@ -61,7 +61,7 @@ export class AgentResult {
 
   /** T-AGENT2: if this run's terminal is an LLM-judge (`kx/recipes/judge`), the
    *  decoded `"valid"` / `"invalid: <reason>"` summary; `null` for a plain answer.
-   *  Display-only (SN-8). */
+   * Display-only. */
   get verdict(): string | null {
     return this.answerBytes === null ? null : decodeCriticVerdict(this.answerBytes);
   }

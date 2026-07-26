@@ -73,7 +73,7 @@ fn rendered_envelope_shape_is_accepted_by_the_parser() {
         let decoded = parse_tool_call(envelope.as_bytes(), &warrant, 4096)
             .unwrap_or_else(|e| panic!("grammar-shaped envelope for {name} must parse, got {e:?}"))
             .unwrap_or_else(|| panic!("grammar-shaped envelope for {name} must be a call"));
-        // Resolves to the SAME granted tool the grammar pinned (SN-8 exact grant).
+        // Resolves to the SAME granted tool the grammar pinned (exact grant).
         assert_eq!(
             decoded.name,
             ToolName(name.into()),

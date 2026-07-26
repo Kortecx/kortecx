@@ -16,7 +16,7 @@ kx-projection.workspace = true
 kx-executor.workspace = true
 kx-capability.workspace = true
 kx-warrant.workspace = true
-# The model-proposed tool-call authority gate (IMP-5) — EXTRACTED to a pure leaf
+# The model-proposed tool-call authority gate — EXTRACTED to a pure leaf
 # in PR-2d-1 so gateway + coordinator share the one gate; re-exported below as
 # `toolcall` so every harness call site is unchanged.
 kx-toolcall.workspace = true
@@ -54,7 +54,7 @@ smallvec.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 # `raw_value` carries a model-proposed tool call's args verbatim (opaque bytes,
-# never a dynamic `Value`/floats) in `toolcall::parse_tool_call` (M5.2, IMP-5).
+# never a dynamic `Value`/floats) in `toolcall::parse_tool_call` (M5.2).
 serde_json = { workspace = true, features = ["raw_value"] }
 tracing.workspace = true
 
@@ -75,7 +75,7 @@ kx-critic.workspace = true
 # decoupled from the MCP client (it routes through `dyn CapabilityBroker`).
 kx-mcp.workspace = true
 # RC4c: the second inference engine for the gated dual-engine `rerank_live` e2e
-# (Ollama ∥ llama.cpp, GR24). A DEV-dependency only — the harness lib uses the
+# (Ollama ∥ llama.cpp). A DEV-dependency only — the harness lib uses the
 # `dyn InferenceBackend` seam, never the concrete Ollama backend.
 kx-ollama.workspace = true
 

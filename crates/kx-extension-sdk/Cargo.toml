@@ -7,7 +7,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx Connector/Extension SDK (D167 E0) — the curated, semver-pinned authoring surface for external MCP connectors: a `prelude` re-exporting the dial / tool-registry / warrant / secret seams + a per-connector conformance harness that mechanizes a subset of the Extension Acceptance Gate (out-of-process kind · warrant/SN-8 · secret-by-ref · on/off). An FFI-FREE leaf (the dep_wall pins it): never the journal, the gateway service, the frozen trio, or kx-llamacpp. The optional `gateway-admin` feature additionally surfaces the host McpGatewayAdmin/ToolRegistryAdmin seams (it pulls kx-gateway-core → proto/tonic; still FFI-free)."
+description = "kortecx Connector/Extension SDK (D167 E0) — the curated, semver-pinned authoring surface for external MCP connectors: a `prelude` re-exporting the dial / tool-registry / warrant / secret seams + a per-connector conformance harness that mechanizes a subset of the Extension Acceptance Gate (out-of-process kind · warrant · secret-by-ref · on/off). An FFI-FREE leaf (the dep_wall pins it): never the journal, the gateway service, the frozen trio, or kx-llamacpp. The optional `gateway-admin` feature additionally surfaces the host McpGatewayAdmin/ToolRegistryAdmin seams (it pulls kx-gateway-core → proto/tonic; still FFI-free)."
 
 [lib]
 path = "src/lib.rs"

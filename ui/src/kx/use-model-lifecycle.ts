@@ -5,7 +5,7 @@
  * unregistered id is a fail-closed `not found`; an FFI-free / old gateway
  * degrades (the controls surface the error honestly, never a fake success).
  *
- * SN-8: load/offload only manage RAM residency — never authority. Selection /
+ * load/offload only manage RAM residency — never authority. Selection /
  * routing stays the recipe `chatHandle` the server validates.
  */
 

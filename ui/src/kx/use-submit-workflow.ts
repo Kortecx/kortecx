@@ -2,7 +2,7 @@
  * Author + run a Tier-1 DAG via `SubmitWorkflow` (the visual builder's submit
  * path). The client sends ONLY topology + params (the SDK `BlueprintBuilder`
  * shape) — the SERVER compiles the DAG, derives every identity, and builds every
- * per-step warrant from the party's grants (SN-8 / the BLOCKER-#5 rule). Returns
+ * per-step warrant from the party's grants (server-minted). Returns
  * the server-derived run handles so the caller routes to the live run.
  */
 

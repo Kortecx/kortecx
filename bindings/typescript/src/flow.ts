@@ -14,7 +14,7 @@
  * A thin, discoverable veneer over the combinator API in `chains.ts`: every method
  * folds into the SAME `seq` / `par` fragment graph the string DSL lowers from, so a
  * `Flow` lowers BYTE-IDENTICALLY to the equivalent chain (a Flow is sugar, never a new
- * wire shape). SN-8: a Flow describes TOPOLOGY only — the server compiles + warrants.
+ * wire shape). a Flow describes TOPOLOGY only — the server compiles + warrants.
  */
 
 import type { MessageInitShape } from "@bufbuild/protobuf";
@@ -100,7 +100,7 @@ const DEFAULT_CONSENSUS_JUDGE =
   "reply with that answer verbatim, without merging or editing the candidates.";
 /** The `config_subset` key (mirrors `kx_mote::CONSENSUS_VOTE_KEY`) marking a PURE sink as an
  * exact-equality consensus vote — the server reduces its parents to the plurality winner
- * (SN-8: exact byte-equality, ties → first-appearance). Only `"majority"` today. */
+ * (exact byte-equality, ties → first-appearance). Only `"majority"` today. */
 const CONSENSUS_VOTE_KEY = "kx.consensus.vote";
 /** The default reviewer prompt for {@link Flow.reviewLoop} — each pass reviews the previous
  * output for errors/gaps and emits an improved version. Byte-identical to the Python
@@ -178,7 +178,7 @@ export interface SupervisorOptions {
 /** Options for {@link Flow.consensus} / the top-level {@link consensus}. */
 export interface ConsensusOptions {
   /** `"judge"` (default) = a MODEL judge SELECTS the single best candidate; `"majority"` = the
-   * server reduces to the exact-equality plurality (SN-8; ties → first-appearance). */
+   * server reduces to the exact-equality plurality (ties → first-appearance). */
   vote?: "judge" | "majority";
   /** The shared task each voter works on (appended to its prompt). */
   goal?: string;
@@ -277,7 +277,7 @@ export class Flow {
   }
 
   /** Append an agent (MODEL) step. `model` defaults to the served model (the client's
-   * `defaultModel` fills a blank one at submit, SN-8); `tools` makes it a
+   * `defaultModel` fills a blank one at submit); `tools` makes it a
    * deterministic-agentic step (PR-9b; execution is LIVE as of PR-9b-2).
    *
    * AGENTIC-VISION: a preceding {@link image} grounds this step — the served VLM reasons
@@ -566,8 +566,8 @@ export class Flow {
    * {@link Flow.swarm}). Two reduce modes: `vote: "judge"` (default) — a MODEL judge SELECTS
    * the single best candidate (distinct from swarm's *merge*; steer with `opts.judge`);
    * `vote: "majority"` — the server reduces to the **exact-equality plurality** (most-frequent
-   * voter output by EXACT byte-equality, ties → first-appearance; SN-8, best for CONSTRAINED
-   * outputs). Pure client composition; the SERVER drives + warrants each voter (SN-8). */
+   * voter output by EXACT byte-equality, ties → first-appearance; best for CONSTRAINED
+   * outputs). Pure client composition; the SERVER drives + warrants each voter. */
   consensus(voters: SwarmParticipant[], opts: ConsensusOptions = {}): this {
     if (voters.length === 0) throw new ChainParseError("consensus() needs at least one voter");
     const vote = opts.vote ?? "judge";

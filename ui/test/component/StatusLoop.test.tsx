@@ -1,5 +1,5 @@
 /**
- * POC-5c (D168): the New Chat honest status loop. These tests pin the GR15 contract —
+ * POC-5c (D168): the New Chat honest status loop. These tests pin the honesty contract —
  * every displayed phase corresponds to a REAL runtime fact (a durable ReactRound
  * branch or the run projection), and the loop renders NOTHING when idle (never a
  * faked-busy spinner). The word is fact-driven; only the dot animates (CSS).
@@ -46,7 +46,7 @@ function projection(moteCount: number): ProjectionVM {
   };
 }
 
-describe("derivePhase (honest, fact-driven — GR15)", () => {
+describe("derivePhase (honest, fact-driven)", () => {
   it("returns null when nothing is in flight (the message renders the answer)", () => {
     expect(
       derivePhase({ busy: false, reactTurns: undefined, activeProjection: undefined }),
@@ -83,7 +83,7 @@ describe("derivePhase (honest, fact-driven — GR15)", () => {
     ).toEqual({ phase: "tool-call", text: "Calling tool mcp-echo@1" });
   });
 
-  it("agent: a rejected turn → re-planning (a refused proposal, GR15 honest recovery)", () => {
+  it("agent: a rejected turn → re-planning (a refused proposal, honest recovery)", () => {
     expect(
       derivePhase({
         busy: true,

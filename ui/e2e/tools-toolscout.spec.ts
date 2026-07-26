@@ -49,7 +49,7 @@ test("Tools: the built-in manifests, an exact-hit bundle score, and the dry-run 
   await expect(page.getByTestId("bundle-fingerprint")).toHaveText(/^[0-9a-f]{64}$/);
 
   // No inference on this serve → the lowering dry-run reports no live model
-  // (advisory verdict — SN-8: display-only, never authorization).
+  // (advisory verdict — display-only, never authorization).
   await expect(page.getByTestId("verdict-badge")).toContainText("No live model");
   await expect(page.getByText("Advisory only — scores never authorize.")).toBeVisible();
 });

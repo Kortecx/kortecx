@@ -17,7 +17,7 @@ app.run({"topic": "kortecx"})   # compile the blueprint + run it (exactly-once)
 An App WRAPS a blueprint (the byte-stable ``to_blueprint()`` output) with a minimal
 prompt/rule/skill/memory reference rail, a 4-axis steering config, and per-step
 replay intent. It carries NO authority — ``run`` re-compiles the blueprint and the
-server re-resolves every warrant from the caller's own grants (SN-8). The envelope
+server re-resolves every warrant from the caller's own grants. The envelope
 serializes byte-identically to the Rust ``kx-app`` + the TS SDK (the golden corpus).
 """
 
@@ -563,8 +563,7 @@ class App:
         Discord) actually fires inside the agentic loop (the G2/#285 path). Saving is
         expected: an ``App`` is an explicitly-named durable object (``kx.app(name)`` /
         ``flow().as_app(name)``); the save is idempotent (content-addressed envelope +
-        handle upsert). The server re-resolves every warrant from the caller's grants
-        (SN-8).
+        handle upsert). The server re-resolves every warrant from the caller's grants.
 
         Per-run human-in-the-loop: the wire field ``RunAppRequest.require_approval``
         gates a run behind the approval inbox — an irreversible / world-mutating tool

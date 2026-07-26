@@ -1,6 +1,6 @@
 //! The Mote-definition read seam behind `GetMoteDetail` (Batch B).
 //!
-//! Display ONLY (SN-8): nothing resolved here authorizes anything — the def is
+//! Display ONLY: nothing resolved here authorizes anything — the def is
 //! the coordinator-admitted ground truth persisted content-addressed at
 //! admission (its canonical encode's blake3 IS `mote_def_hash`), read back for
 //! inspection. The seam speaks `kx_mote::MoteDef` — already in gateway-core's

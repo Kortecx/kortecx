@@ -85,7 +85,7 @@ describe("AppViewPopover (POC-5c)", () => {
     expect(screen.getByTestId("app-view-branch")).toHaveTextContent("5");
   });
 
-  it("shows an HONEST empty state when the App has no project branch yet (GR15)", () => {
+  it("shows an HONEST empty state when the App has no project branch yet", () => {
     useAppMock.mockReturnValue({
       data: { summary: summary(), envelope: {} },
       isLoading: false,

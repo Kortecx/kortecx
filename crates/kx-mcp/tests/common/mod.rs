@@ -142,7 +142,7 @@ pub enum HttpMode {
     /// 200 with `result.echoed = <request body's params.arguments>` (deterministic
     /// in the args — content-addressed dedup, like the stdio echo).
     Echo,
-    /// 200 with a `result` string of `n` bytes (drives the IMP-16 oversize cap).
+    /// 200 with a `result` string of `n` bytes (drives the oversize cap).
     Big(usize),
     /// 200 with a JSON-RPC `error` object (decoder ProtocolError path).
     Error,

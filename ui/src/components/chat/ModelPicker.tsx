@@ -27,14 +27,14 @@ function modelSpecs(m: ModelSummary): string {
  * an honest, disabled empty state instead of a fake knob; only a gateway that
  * predates the RPC (or one still loading) renders nothing. The selection only
  * ever rides as a recipe ENUM free-param the SERVER validates at binding
- * (SN-8) — picking a model here grants nothing.
+ * — picking a model here grants nothing.
  *
  * Default is AUTO: the user defers the choice and the runtime picks — the server's
  * ACTIVE default (Model Control v2 — shared across surfaces), then this browser's
  * client-local default (Models section), then the first listed. The first option
  * ("Auto") makes that deferral explicit and honest — it names the model the runtime
  * would pick — and the user STEERS by choosing a concrete model instead. An empty /
- * unset selection IS Auto (the server resolves it to the default at binding, SN-8).
+ * unset selection IS Auto (the server resolves it to the default at binding).
  * Each option shows its engine so an Ollama ∥ llama.cpp switch is unmistakable.
  */
 export function ModelPicker({

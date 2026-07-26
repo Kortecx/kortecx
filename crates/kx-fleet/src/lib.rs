@@ -38,7 +38,7 @@
 //! [`GrantLedger`], composed without coupling either impl — Rule 1, exactly
 //! `kx_catalog::GovernedCatalog`).
 //!
-//! ## The SN-8 wall (load-bearing)
+//! ## The identity wall (load-bearing)
 //!
 //! Like `kx-catalog`, the fleet layer is **off the trust path**: it never gates
 //! selection, eviction, or promotion, and carries **no floats** (so even a future

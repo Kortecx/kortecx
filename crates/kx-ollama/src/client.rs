@@ -63,7 +63,7 @@ pub struct ShowMeta {
     /// The declared context window (`<arch>.context_length`), `0` when absent.
     pub context_length: u32,
     /// `true` iff the model declares vision (`/api/show` `capabilities ∋ "vision"`
-    /// or a `projector_info` block). Display/discovery only (SN-8).
+    /// or a `projector_info` block). Display/discovery only.
     pub vision: bool,
 }
 
@@ -85,7 +85,7 @@ impl std::fmt::Debug for OllamaClient {
 impl OllamaClient {
     /// Build a client for `base_url` (e.g. `http://127.0.0.1:11434`).
     ///
-    /// **Security (SN-8).** The default is **loopback only**: a non-loopback host
+    /// **Security.** The default is **loopback only**: a non-loopback host
     /// is refused unless `allow_remote` is `true` (the operator's explicit opt-in).
     /// The URL is operator config — never model / client / Mote-controlled.
     ///

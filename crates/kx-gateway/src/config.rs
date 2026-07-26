@@ -111,7 +111,7 @@ pub struct GatewayConfig {
     /// (repeatable). **Empty ⇒ deny-by-default**: no CORS layer is installed, so a
     /// browser gets no cross-origin grant (native/`curl` clients are unaffected —
     /// CORS is a browser same-origin-policy mechanism). A wildcard (`*`) is refused
-    /// at parse time — the allowlist is always explicit (SN-8 fail-closed posture).
+    /// at parse time — the allowlist is always explicit (fail-closed posture).
     pub cors_origins: Vec<String>,
     /// The embedded web console (D139): default / `--no-console` /
     /// `--console-listen <addr:port>`. Loopback-only; served only by a

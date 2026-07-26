@@ -38,7 +38,7 @@
 //!   `MoteDef`, so distinct args yield distinct `MoteId`s (a fresh run) and
 //!   identical args re-derive identical identities (the coordinator dedups → an
 //!   idempotent re-invoke).
-//! - **No privilege escalation (SN-8).** `Use` authority is resolved from the
+//! - **No privilege escalation.** `Use` authority is resolved from the
 //!   authoritative ledger via [`UseWarrantResolver`] — never a caller-supplied
 //!   warrant; each Mote runs under `intersect(effective, step)` ⊆ both.
 //! - **Fail-closed.** Untyped/unknown/over-range args, an unbound variable slot,

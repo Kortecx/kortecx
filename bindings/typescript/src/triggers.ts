@@ -2,10 +2,10 @@
  * The local trigger admin views (D113 / D170.b). A trigger binds an inbound EVENT
  * (a webhook POST, a cron interval, or a bare `SubmitTrigger` RPC) to a recipe
  * handle the event Invokes. The minimal-local single-user trigger; the hosted
- * multi-tenant trigger gateway at scale is CLOUD (GR19). Kept in its own module
+ * multi-tenant trigger gateway at scale is CLOUD. Kept in its own module
  * (the `alerts.ts`/`toolscout.ts` module-per-concern precedent).
  *
- * SN-8: `triggerId`/`instanceId` are server-derived (the SDK only *encodes* the
+ * `triggerId`/`instanceId` are server-derived (the SDK only *encodes* the
  * bytes to hex); the auth secret is referenced by NAME only (never the value, a
  * `ListTriggers` row carries `authSecretPresent`, never the secret itself).
  */
@@ -72,7 +72,7 @@ export function triggerAuthName(auth: number): TriggerAuthName {
 }
 
 /** A `RegisterTrigger` request shape. The auth secret is referenced by NAME only
- *  (never the value, D81). The server derives the trigger id (SN-8). */
+ * (never the value, D81). The server derives the trigger id. */
 export interface RegisterTriggerInput {
   /** Unique operator handle (derives the trigger id). */
   readonly name: string;

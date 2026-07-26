@@ -14,7 +14,7 @@
 //! `index_path` from the registry/ledger, exactly as lineage is "computed, never
 //! stored". A stale index degrades *discoverability* only — a miss can never gate
 //! a committed selection (discovery is fuzzy-in / exact-out, D87), so it is
-//! advisory in the SN-8 sense.
+//! advisory in the identity sense.
 //!
 //! # How the range scan works
 //!
@@ -42,7 +42,7 @@ pub const MAX_DISCOVERY_RESULT: usize = 65_536;
 /// A backend-agnostic secondary index over catalog asset paths that answers
 /// namespace / collection / path-prefix queries in `O(log n + result)`.
 ///
-/// A rebuildable PROJECTION (not a source of truth), advisory in the SN-8 sense:
+/// A rebuildable PROJECTION (not a source of truth), advisory in the identity sense:
 /// it never gates a committed selection. A durable / cloud backend (D94) is a
 /// later impl behind this same trait, exactly as [`crate::CatalogRegistry`] and
 /// `kx_dataset::RetrievalIndex`.
@@ -68,7 +68,7 @@ pub trait DiscoveryIndex {
     /// ledger, so discovery survives a restart by rebuilding from the durable
     /// truth (G1 / D94). Idempotent ([`DiscoveryIndex::index_path`] is); ADVISORY —
     /// a partial rebuild only degrades discoverability, never gates (a discovery
-    /// miss can't reach a committed selection: fuzzy-in / exact-out, SN-8 / D87).
+    /// miss can't reach a committed selection: fuzzy-in / exact-out, fuzzy-in, exact-out).
     fn rebuild_from_versions(&self, ledger: &dyn crate::VersionLedger) {
         for version in ledger.list_versions() {
             self.index_path(version.handle());

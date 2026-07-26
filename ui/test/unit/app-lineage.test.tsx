@@ -134,7 +134,7 @@ describe("App Lineage (per-step detail)", () => {
     };
     render(<AppLineageSection handle="apps/local/x" />);
     expect(screen.getByTestId("lineage-model-s0")).toHaveTextContent("gemma-4-12b");
-    // "requests", never "has" — a tool_contract is a wish the server intersects (SN-8).
+    // "requests", never "has" — a tool_contract is a wish the server intersects.
     expect(screen.getByTestId("lineage-tools-s0")).toHaveTextContent("requests");
     expect(screen.getByTestId("lineage-tools-s0")).toHaveTextContent("web/search");
     expect(screen.getByTestId("lineage-meta-s0")).toHaveTextContent("8 turns · 6 calls");

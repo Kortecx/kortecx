@@ -5,7 +5,7 @@ The durable, queryable history of a live listwise LLM re-rank loop in ``kx serve
 ``outcome`` (``pending`` | ``reranked`` | ``failed_closed``), the candidate count,
 and — for a ``reranked`` outcome — the exact ``permutation`` (reordered source
 indices) the runtime enforced. Kept in its own module (the react.py / replan.py
-module-per-concern precedent). SN-8: every id is server-derived; the SDK only
+module-per-concern precedent). Every id is server-derived; the SDK only
 hex-encodes the bytes, and the permutation is an exact reordering, never a score.
 """
 

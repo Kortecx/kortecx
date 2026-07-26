@@ -191,7 +191,7 @@ impl SqliteMemoryStore {
 
     /// The semantic [`MemoryStore::bundle`] path — fetch the live, kind/window-filtered
     /// candidate set (with vectors), re-rank by cosine to `query_vec`, truncate to
-    /// `limit`. The similarity score never leaves this function (SN-8).
+    /// `limit`. The similarity score never leaves this function.
     fn bundle_semantic(
         &self,
         namespace: &str,

@@ -1,4 +1,4 @@
-//! Property-based tests for the dispatcher / backend seam — SN-4 v2:
+//! Property-based tests for the dispatcher / backend seam — the structural review:
 //! at least 3 proptest properties × 64 cases each.
 //!
 //! Properties exercised:
@@ -163,7 +163,7 @@ proptest! {
 
     /// Property 4 (bonus): the FakeBackend, registered for an exact
     /// `ModelId`, always returns Ok for that id and `ModelNotFound`
-    /// for any other. Reinforces SN-8 "exact cryptographic equality"
+    /// for any other. Reinforces "exact cryptographic equality"
     /// — substring matches do not count.
     #[test]
     fn prop_fake_supports_is_exact(

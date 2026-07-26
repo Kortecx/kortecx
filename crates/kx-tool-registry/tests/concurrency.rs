@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Concurrency tests for `kx-tool-registry` (SN-4 v2 #7).
+//! Concurrency tests for `kx-tool-registry`.
 //!
 //! - Compile-time `Send + Sync` over the full public-type set.
 //! - 4-thread thread-independence of `resolve` (Arc<InMemoryToolRegistry>;

@@ -1,4 +1,4 @@
-//! Graph-RAG / vector retrieval as a **`ReadOnlyNondet` Mote** — the SN-8-safe
+//! Graph-RAG / vector retrieval as a **`ReadOnlyNondet` Mote** — the identity-safe
 //! way to bring similarity search into a Morphic workflow.
 //!
 //! A retrieval step reads a [`kx_dataset::RetrievalIndex`] (a nondeterministic,
@@ -6,7 +6,7 @@
 //! **content-addressed fact**; everything downstream consumes that fact by
 //! **exact** hash. The similarity lives entirely inside the Mote body — it is
 //! NEVER an operator on the identity / commit / memoization path (the runtime
-//! matches by exact cryptographic equality only, SN-8).
+//! matches by exact cryptographic equality only).
 //!
 //! The committed fact is the ORDERED set of retrieved content refs — **scores
 //! are deliberately excluded** ([`encode_retrieval_fact`]). Two index states
@@ -26,7 +26,7 @@ use crate::synthesis::step;
 /// neighbours come back depends on the (mutable) index state — a nondet read;
 /// `StageThenCommit` because the retrieved set is staged then committed as the
 /// Mote's fact. The similarity search itself is the Mote's runtime logic
-/// (`logic_ref`), confined behind the SN-8 boundary.
+/// (`logic_ref`), confined behind the identity boundary.
 #[must_use]
 pub fn retrieval(
     logic_ref: LogicRef,
@@ -49,7 +49,7 @@ pub fn retrieval(
 ///
 /// **Scores are excluded by design.** Similarity stays inside the retrieval
 /// Mote; the committed fact is the neighbour *set*, matched downstream by exact
-/// hash (SN-8). This is the one place the "similarity in, exact fact out"
+/// hash. This is the one place the "similarity in, exact fact out"
 /// boundary is enforced in code.
 #[must_use]
 pub fn encode_retrieval_fact(hits: &[Hit]) -> Vec<u8> {

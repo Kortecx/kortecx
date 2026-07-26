@@ -6,7 +6,7 @@
 //!   - react-rag: the agent's `retrieve@1` observation is reranked before the next turn
 //!     (soft — the model's retrieve proposal is probabilistic, so the rerank is logged).
 //!
-//! Drive on BOTH engines (GR24; #[ignore], runtime-skips without a served model):
+//! Drive on BOTH engines (#[ignore], runtime-skips without a served model):
 //! ```text
 //!   # llama.cpp (Gemma-4 GGUF; degrade-to-parser on the permutation grammar):
 //!   KX_SERVE_MODEL_GGUF=.../gemma-4-12b-it-q4_k_m.gguf KX_SERVE_RAG_LLM_RERANK=1 \
@@ -128,7 +128,7 @@ async fn chat_rag_grounded_answer_is_reranked() {
         return;
     }
 
-    // M7c (GR10): the LIVE wall-clock from submit → the durable `ReRankRound` settling —
+    // M7c: the LIVE wall-clock from submit → the durable `ReRankRound` settling —
     // model-INCLUSIVE (unlike M7a/M7b, the rerank turn is coordinator-materialized, not
     // client-submittable, so it cannot be driven model-free; this is the real dual-engine
     // number for the private trend). Structured, greppable; no hard threshold.
@@ -169,7 +169,7 @@ async fn chat_rag_grounded_answer_is_reranked() {
                 "✓ chat-rag rerank fired: outcome={} candidates={} permutation={:?}",
                 t.outcome, t.candidate_count, t.permutation
             );
-            // M7c — copy into the private `docs/benchmarks/` trend (SN-2).
+            // M7c — copy into the private `docs/benchmarks/` trend.
             eprintln!(
                 "M7c rerank | engine={engine} | candidates={} | submit_to_settled_ms={settled_ms:.1} | outcome={}",
                 t.candidate_count, t.outcome
@@ -180,7 +180,7 @@ async fn chat_rag_grounded_answer_is_reranked() {
     }
     running.shutdown().await.unwrap();
     let outcome = outcome.expect("a chat-rag ReRankRound must settle");
-    // RC4c-2c (GR24 parity gate): BOTH engines — llama.cpp Gemma-4 (grammar-free, the
+    // RC4c-2c (parity gate): BOTH engines — llama.cpp Gemma-4 (grammar-free, the
     // chat-template fix) AND Ollama gemma3 (strict `format`) — must ACTUALLY rerank the
     // chat-rag context bundle, not fail-closed to base order. Before RC4c-2c llama.cpp
     // fail-closed here (an un-templated prompt degenerated the instruct model).

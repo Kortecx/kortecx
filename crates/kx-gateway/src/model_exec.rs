@@ -135,7 +135,7 @@ pub(crate) fn shaper_warrant(model_id: &ModelId, exec_class: ExecutorClass) -> W
 /// invariant). The carrier is a serialized [`ToolEnvelopeSpec`] (envelope + name
 /// enum; envelope-first — args stay a generic object, the per-tool arg-schema
 /// stretch is a follow-on once live results justify it). The grammar is the
-/// ACCEPT-side constraint only; the authority gate stays `kx_toolcall` (SN-8).
+/// ACCEPT-side constraint only; the authority gate stays `kx_toolcall`.
 ///
 /// `answer_force` (`T-GEMMA3-TOOL-LOOP-ANSWER-FORCE`): when the turn is a
 /// duplicate-rejection re-prompt or the near-budget settle-nudge (derived by
@@ -287,7 +287,7 @@ fn pure_model_recipe(model_id: &ModelId) -> RoleRecipe {
 /// the warrant `RoleRegistry` (a model-only, least-privilege `shaper_warrant`, intersected
 /// with the parent at lowering — narrowing-only, D75) AND the `RoleRecipeResolver` (a PURE
 /// model recipe). Every `tool_contract` is empty ⇒ always grantable (per-step tools/policy
-/// are attached later in the builder — the C3 surface). SN-8: the model names a role; the
+/// are attached later in the builder — the C3 surface). The model names a role; the
 /// runtime supplies every capability axis from this catalog, never from model output.
 pub(crate) fn build_authoring_role_catalog(
     model_id: &ModelId,
@@ -439,7 +439,7 @@ fn is_dedicated_embedder(model_id: &str) -> bool {
 }
 
 /// Resolve the dataset server-embed model. `KX_SERVE_EMBED_MODEL` (operator-config,
-/// SN-8 — never client-chosen) when set AND served by some engine; else the primary
+/// never client-chosen) when set AND served by some engine; else the primary
 /// chat model (back-compat). NOTE: this is a SERVED-set check, NOT an embed-CAPABILITY
 /// check — neither the Ollama daemon nor a GGUF exposes a per-model "can embed" flag,
 /// so a non-embedding model passes here and surfaces an honest `BackendFailure` on the
@@ -470,7 +470,7 @@ fn resolve_embed_model(
 }
 
 /// Auto-detect a running Ollama daemon and build its backend + engine-tagged catalog
-/// entries. Operator-config ONLY (SN-8 — never model/client-controlled):
+/// entries. Operator-config ONLY (never model/client-controlled):
 /// `KX_SERVE_OLLAMA` (`auto` default | `1`/`on` | `off`), `KX_SERVE_OLLAMA_URL`
 /// (loopback default; non-loopback refused unless `KX_SERVE_OLLAMA_ALLOW_REMOTE=1`),
 /// `KX_SERVE_OLLAMA_MODELS` (tag allowlist). `auto` serves Ollama only when no GGUF is
@@ -600,7 +600,7 @@ fn ollama_catalog_entry(
         description: model_id.0.clone(),
         serving,
         // The daemon owns the context window; surfaced best-effort via `/api/show`
-        // at discovery (`0` when the daemon doesn't report one). Display-only (SN-8),
+        // at discovery (`0` when the daemon doesn't report one). Display-only,
         // un-clamped — the daemon serves its own window, unlike the GGUF KV ceiling.
         context_len: backend.context_len(model_id),
         loaded: false,
@@ -657,7 +657,7 @@ const SERVE_SYSTEM: &str = "You are a precise assistant. Follow the instruction 
 /// the loop + the canonical tool-call envelope (the exact shape
 /// `kx_toolcall::parse_tool_call` accepts — `crates/kx-toolcall/src/parse.rs`) so a
 /// real model knows the PROTOCOL even before the per-turn menu names specific tools,
-/// plus the act-vs-answer decision. Presentation only (SN-8): fed to `render_chat` /
+/// plus the act-vs-answer decision. Presentation only: fed to `render_chat` /
 /// [`chatml_with`] exactly like [`SERVE_SYSTEM`] ⇒ off the MoteId / off-digest /
 /// never journaled (so `7d22d4bd` and recovery are untouched). The model is told to
 /// use ONLY listed tools; the runtime still enforces grant membership + the arg
@@ -678,7 +678,7 @@ version, or argument that is not listed.";
 /// memory" instead of firing. Respects the `fold_react_rag_dataset` NOTE (`provision.rs`):
 /// it NAMES the behavior, never shows a `{tool_call}` example — the menu + [`REACT_SYSTEM`]
 /// already own the exact envelope (a second inline example primed some models to emit a
-/// stray `call:` prefix that broke Gemma-4 native recovery). Presentation only (SN-8), off
+/// stray `call:` prefix that broke Gemma-4 native recovery). Presentation only, off
 /// the MoteId / off-digest (it rides the ephemeral menu, never a committed fact), and it
 /// reaches BOTH the connector agentic turn AND react-rag on BOTH engines from the ONE menu
 /// choke point — the exact gap that left the connector path unprimed.
@@ -695,7 +695,7 @@ same tool again with the same arguments.";
 /// render the model's own chat template (PR-1 model-agnostic templating). RC3
 /// selects the system per turn kind in `dispatch_model` (`REACT_SYSTEM` for a
 /// tool-eligible ReAct turn, else [`SERVE_SYSTEM`]); the system text is
-/// presentation only (SN-8) — never an identity/journal input.
+/// presentation only — never an identity/journal input.
 #[must_use]
 fn chatml_with(system: &str, prompt: &str) -> String {
     format!(
@@ -704,7 +704,7 @@ fn chatml_with(system: &str, prompt: &str) -> String {
 }
 
 /// The fixed system instruction for the opt-in LLM-JUDGE gate (T-AGENT2). It
-/// constrains the judge to a single discrete decision token — SN-8: the runtime
+/// constrains the judge to a single discrete decision token — the runtime
 /// parses a Valid/Invalid VERDICT, never a similarity score; the model proposes,
 /// the runtime decides promotion.
 const JUDGE_SYSTEM: &str = "You are a strict output evaluator. Decide whether the OUTPUT \
@@ -747,7 +747,7 @@ const JUDGE_UNPARSEABLE_CODE: u16 = 1;
 
 /// Parse a judge model completion into a discrete [`kx_critic::CriticVerdict`].
 ///
-/// **Total + fail-closed** (SN-8 / GR15). The decision is the **LAST standalone
+/// **Total + fail-closed**. The decision is the **LAST standalone
 /// `VALID` / `INVALID` token** in the completion: a reasoning model (Gemma-4's
 /// `<|think|>`, Qwen's `<think>`, …) concludes with its verdict, so an earlier
 /// reasoning mention ("is this *invalid*? no") does NOT override the final
@@ -820,7 +820,7 @@ pub(crate) fn serve_model_id(gguf: &Path) -> ModelId {
 /// The Batch A `ListModels` display entry for the resolved serve model — built
 /// from the SAME facts the backend registers (the stem-derived id, the resolved
 /// `n_ctx`, the vision-projector presence) plus a display-only description from
-/// the GGUF `general.name` (file stem fallback). Display/discovery ONLY (SN-8):
+/// the GGUF `general.name` (file stem fallback). Display/discovery ONLY:
 /// nothing here authorizes a model route — selection stays a recipe ENUM
 /// free-param.
 #[cfg(feature = "inference")]
@@ -1202,7 +1202,7 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     inner: Arc<dyn MoteExecutor>,
     backend: Arc<B>,
     store: LocalFsContentStore,
-    /// The role→recipe allowlist the shaper arm lowers a model proposal through (SN-8 —
+    /// The role→recipe allowlist the shaper arm lowers a model proposal through (
     /// the model names a role, the recipe gives the child's vetted identity axes). `None`
     /// ⇒ no shaper support provisioned (a shaper Mote then fails closed, dead-lettered).
     recipes: Option<Arc<dyn RoleRecipeResolver>>,
@@ -1345,7 +1345,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     /// The untrusted-model boundary is closed BEFORE anything commits: `decode_loop_proposal`
     /// (size-cap-before-parse, `deny_unknown_fields`, `<think>`-strip, versioned) + the
     /// `SHAPER_MAX_CHILDREN` run-policy cap + `lower_loop_to_topology_decision` (role NAMES
-    /// only; logic_ref/nd_class/effect_pattern come from the recipe — SN-8/IMP-5/D70). Any
+    /// only; logic_ref/nd_class/effect_pattern come from the recipe — /D70). Any
     /// failure (no recipes, malformed/oversized/over-budget proposal, unknown role) returns
     /// a terminal `MoteExecutorError`, so the worker dead-letters the shaper (F4) and the
     /// run completes past it — never a panic, never raw model bytes committed as a decision.
@@ -1491,11 +1491,11 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // backend that can't render (the deterministic test stub) returns `None`,
         // so we fall back to the long-standing hand-rolled ChatML — byte-identical
         // to pre-PR-1 for those paths. The wrapping is presentation only, never an
-        // identity/authority input (SN-8); the raw `instruction` already fixed the
+        // identity/authority input; the raw `instruction` already fixed the
         // Mote identity via `config_subset[PROMPT_KEY]`.
         // RC3: a ReAct turn uses the curated AGENTIC contract (or the operator
         // `KX_SERVE_REACT_SYSTEM` persona override); all other turns keep the
-        // precise-assistant `SERVE_SYSTEM`. Presentation only (SN-8) — off-MoteDef /
+        // precise-assistant `SERVE_SYSTEM`. Presentation only — off-MoteDef /
         // off-digest, never journaled. (See [`Self::dispatch_system_prompt`].)
         let system = Self::dispatch_system_prompt(mote);
         let format = |user: &str| -> String {
@@ -1648,7 +1648,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     /// `warrant.tool_grants` via the SHARED [`kx_context_assembler::render_tool_menu`]
     /// (the SAME renderer the context-assembly path uses — no harness↔serve drift),
     /// gated EXACTLY like the RC2 grammar path. The menu is advisory prompt bytes only
-    /// (SN-8) and is computed OFF the MoteDef identity (never written to
+    /// and is computed OFF the MoteDef identity (never written to
     /// `config_subset` / journaled), so the canonical no-tools demo renders nothing
     /// and `7d22d4bd` + replay are untouched.
     fn react_tool_menu(&self, mote: &Mote, warrant: &WarrantSpec) -> Option<String> {
@@ -1674,7 +1674,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     /// RC3: the system prompt for this dispatch. A ReAct turn uses the operator
     /// `KX_SERVE_REACT_SYSTEM` persona override if set, else the curated agentic
     /// contract [`REACT_SYSTEM`]; every other turn keeps the precise-assistant
-    /// [`SERVE_SYSTEM`] (byte-identical to pre-RC3). Presentation only (SN-8) — never
+    /// [`SERVE_SYSTEM`] (byte-identical to pre-RC3). Presentation only — never
     /// an identity / journal input, so it is off-MoteDef and off-digest.
     fn dispatch_system_prompt(mote: &Mote) -> std::borrow::Cow<'static, str> {
         if !Self::is_react_turn(mote) {
@@ -1716,7 +1716,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     ///   dead-letters the turn (F4) and the chain settles `DeadLettered`. A
     ///   half-formed proposal never commits (the harness fresh-turn contract) and
     ///   a prompt-injected, warrant-UNGRANTED tool name never reaches the journal
-    ///   (SN-8 — injection cannot escalate).
+    /// (injection cannot escalate).
     /// - `Ok(Some(_))` ⇒ the RAW envelope COMMITS as the turn's `result_ref`
     ///   (PR-2d-2 — the PR-2d-1 answer-only fence is replaced by the live tool
     ///   round): the committed turn IS the frozen decision's source; the
@@ -1797,9 +1797,9 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // Clamp the desired rerank budget to the warrant's output ceiling. The rerank
         // turn inherits the answer warrant's `max_output_tokens`, so an unclamped
         // `rerank_output_cap` above it is REFUSED as a scope violation → the rerank
-        // Mote dead-letters → fail-closed to base order (the GR24 llama.cpp parity gap
+        // Mote dead-letters → fail-closed to base order (the llama.cpp parity gap
         // root cause: with `rerank_output_cap` raised for reasoning headroom, `n*6+512`
-        // exceeded the inherited 512 ceiling). GR16 class: a dispatch's requested
+        // exceeded the inherited 512 ceiling). Regression class: a dispatch's requested
         // `max_output_tokens` MUST be clamped to the warrant ceiling (swept to the
         // harness rerank in `kx-model-harness::rag` too).
         let cap =
@@ -1811,12 +1811,12 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             ..InferenceParams::default()
         };
         // Render the rerank prompt through the served model's OWN chat template — the
-        // GR24 llama.cpp parity root cause: an instruct model (Gemma-4) fed a RAW,
+        // llama.cpp parity root cause: an instruct model (Gemma-4) fed a RAW,
         // un-templated prompt greedy-degenerates into repetition garbage (`[4] and and
         // …`), so `parse_permutation` fail-closes to base order. The react turn already
         // templates via `render_chat`; the rerank turn must too. Ollama auto-templates
         // server-side, which is why only llama.cpp exhibited the gap. Presentation only
-        // (SN-8) — off-MoteDef / off-digest, never journaled.
+        // — off-MoteDef / off-digest, never journaled.
         let user = kx_context_assembler::render_rerank_prompt(&query, &texts);
         let system = Self::dispatch_system_prompt(mote);
         let prompt = self
@@ -1945,7 +1945,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
 
         // (4) Evaluate IN-PROCESS — pure / total / deterministic. The verdict's content
         // ref is `blake3(verdict.encode())`, byte-identical to the frozen executor for
-        // the same `(spec, producer_bytes)` (SN-8: exact crypto-equality, integer-only
+        // the same `(spec, producer_bytes)` (exact crypto-equality, integer-only
         // evidence; the model never decides promotion — the deterministic check does).
         let verdict = kx_critic::evaluate(spec, &producer_bytes);
         let result_ref = self
@@ -1960,7 +1960,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     }
 
     /// Reduce a CONSENSUS **majority** sink: commit the most-frequent committed
-    /// parent output by EXACT byte-equality (SN-8 — exact equality only, never a
+    /// parent output by EXACT byte-equality (exact equality only, never a
     /// similarity score), ties broken by first-appearance (the lowest parent
     /// index). A PURE, total, deterministic fold of the committed voter facts: no
     /// model, no egress. Re-running re-derives the identical winner (content-
@@ -1992,7 +1992,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
             }
             outputs.push(bytes.to_vec());
         }
-        // (3) Exact-equality plurality (SN-8: exact byte-equality, ties → first-appearance).
+        // (3) Exact-equality plurality (exact byte-equality, ties → first-appearance).
         let best = consensus_plurality_index(&outputs);
         // (4) Commit the winner's exact bytes (content-addressed — a re-run puts the
         // same bytes ⇒ the same ref; exactly-once / replay-stable).
@@ -2026,7 +2026,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     /// replay (a committed verdict is never re-dispatched — the digest of an
     /// opt-in workflow is replay-stable).
     ///
-    /// **SN-8 / GR15 — fail-closed on EVERY path** (never promote unverified
+    /// **/ — fail-closed on EVERY path** (never promote unverified
     /// output): an ill-formed judge shape (R-15), an unserved model, a missing
     /// producer, an oversized input, or an unparseable judge completion all
     /// withhold (`Invalid`), never `Valid`. The judge cannot escalate authority —
@@ -2159,7 +2159,7 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
             };
         }
         // CONSENSUS majority: a PURE sink carrying the exact-equality vote marker
-        // reduces its committed parents to the plurality winner (SN-8: exact
+        // reduces its committed parents to the plurality winner (exact
         // byte-equality, ties → first-appearance). Route on marker PRESENCE before the
         // PURE fall-through — a consensus sink has no prompt/critic, so it would
         // otherwise reach the generic transform arm (which does NOT compute majority).
@@ -2187,7 +2187,7 @@ impl<B: InferenceBackend> MoteExecutor for ModelRouterExecutor<B> {
         // `model_route` names a model that isn't served — the P1.1 class) silently
         // committed the demo executor's `kx demo result for mote <hex>` placeholder,
         // which then poisoned downstream F-7/ReAct context. A misroute must dead-letter
-        // VISIBLY (F4), not produce plausible-looking garbage (SN-8 / honest failure).
+        // VISIBLY (F4), not produce plausible-looking garbage (honest failure).
         if Self::has_prompt(mote) {
             if !self.backend.supports(&mote.def.model_id) {
                 return Err(internal(&format!(
@@ -2276,7 +2276,7 @@ fn consensus_vote_from_config(mote: &Mote) -> Option<String> {
 /// The exact-equality **plurality** winner index over `outputs` (in first-appearance
 /// order): the index of the modal value by EXACT byte-equality; on a tie the earliest
 /// first-appearance wins (scan in order, replace ONLY on a strictly greater count) —
-/// total + deterministic, no floats/similarity (SN-8). All-distinct ⇒ index 0 (each
+/// total + deterministic, no floats/similarity. All-distinct ⇒ index 0 (each
 /// count 1, the earliest holds). Panics only on an empty slice (callers guarantee ≥1).
 fn consensus_plurality_index(outputs: &[Vec<u8>]) -> usize {
     let mut best = 0usize;
@@ -2578,7 +2578,7 @@ mod tests {
 
     #[test]
     fn consensus_plurality_is_exact_equality_not_similarity() {
-        // byte-exact: "Yes" != "yes" (no case folding, no similarity — SN-8).
+        // byte-exact: "Yes" != "yes" (no case folding, no similarity).
         let outputs = vec![b"Yes".to_vec(), b"yes".to_vec(), b"yes".to_vec()];
         assert_eq!(
             consensus_plurality_index(&outputs),
@@ -3337,7 +3337,7 @@ mod tests {
                 frozen_verdict_ref(&producer, &critic, payload),
                 "gateway run_critic must commit the SAME verdict ref as the frozen executor ({label})"
             );
-            // (2) And it decodes to exactly `evaluate(check, producer_bytes)` (SN-8).
+            // (2) And it decodes to exactly `evaluate(check, producer_bytes)`.
             let bytes = store.get(&out.result_ref).unwrap();
             let committed = kx_critic::CriticVerdict::decode(&bytes).unwrap();
             assert_eq!(
@@ -4116,7 +4116,7 @@ mod tests {
     #[test]
     fn react_arm_with_empty_grants_commits_anything_raw() {
         // The PR-2d-1 serve reality: every role grants NO tools, so ANY output —
-        // even a perfectly-formed envelope — is a normal completion (the SN-8
+        // even a perfectly-formed envelope — is a normal completion (the boundary
         // security default) and raw-commits.
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFsContentStore::open(dir.path()).unwrap();
@@ -4176,7 +4176,7 @@ mod tests {
         ));
         // A clear INVALID ⇒ Invalid (the word-boundary token, not a substring).
         assert!(is_invalid(b"INVALID", 0));
-        // ★ The live-Gemma fix (GR20): a reasoning block that MENTIONS "invalid"
+        // ★ The live-Gemma fix: a reasoning block that MENTIONS "invalid"
         // while concluding VALID must read as VALID — the LAST decision token wins.
         assert!(matches!(
             parse_judge_verdict(

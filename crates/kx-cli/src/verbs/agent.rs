@@ -3,8 +3,8 @@
 //! A thin wrapper over Invoke of `kx/recipes/react`: the runtime completes the
 //! goal AGENTICALLY (reason → permission-gated tool calls → answer) and the verb
 //! prints the answer plus the AUDITED action set (the chain's settled `tool`
-//! turns). NEVER SubmitRun (BLOCKER #5); the warrant is always server-derived
-//! (SN-8). `--input k=v` folds into the goal prompt — the react contract has no
+//! turns). NEVER SubmitRun (BLOCKER #5); the warrant is always server-derived.
+//! `--input k=v` folds into the goal prompt — the react contract has no
 //! structured input slot yet (instruction / max_turns / max_tool_calls only).
 
 use std::time::Duration;

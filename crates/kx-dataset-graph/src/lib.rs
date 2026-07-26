@@ -11,7 +11,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** Used ONLY inside the ReadOnlyNondet retrieval Mote. The graph is a
+//! - **Identity.** Used ONLY inside the ReadOnlyNondet retrieval Mote. The graph is a
 //!   nondeterministic, extraction-derived read of the world; only the ordered
 //!   neighbour-ref SET is committed, matched downstream by exact hash. Traversal
 //!   never reaches a `MoteId` — so extraction non-determinism is safe here.

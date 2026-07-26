@@ -2,7 +2,7 @@
 //!
 //! A deterministic keyword embedder makes retrieval predictable + assertable
 //! without a GGUF, so this runs in the default `cargo test` pass. It proves the
-//! whole `ingest_corpus` → `query_corpus` path: relevance ranking, the SN-8
+//! whole `ingest_corpus` → `query_corpus` path: relevance ranking, the boundary
 //! scores-excluded fact, `DatasetId` reproducibility, content-addressed dedup,
 //! and the empty/oversize-k edges. Real-model embedding numerics are covered by
 //! the `kx-llamacpp` smoke (`embed_with`); a model-gated end-to-end belongs to a
@@ -148,7 +148,7 @@ fn result_fact_excludes_scores_and_is_stable() {
     let (fact_a, hits_a) = query_corpus(&index, &embedder, "apple", 2).unwrap();
     let (fact_b, _hits_b) = query_corpus(&index, &embedder, "apple", 2).unwrap();
     assert_eq!(fact_a, fact_b, "the same query yields the same exact fact");
-    // The fact is purely the ordered refs — scores excluded (SN-8).
+    // The fact is purely the ordered refs — scores excluded.
     assert_eq!(
         fact_a,
         retrieval_result_ref(&hits_a),

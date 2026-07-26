@@ -6,12 +6,12 @@
 //! This is the **OSS local guardrail**: a deterministic, operator-priced estimate
 //! of a run's spend, used to enforce the `cost_ceiling` warrant axis at the broker
 //! precheck (a `FinOps` ceiling AND a runaway-agent kill-switch). It is **NOT** Cloud
-//! per-token billing/metering — OSS surfaces no input-token / price-per-expert data
-//! (D129 / D156 / GR19). Cloud swaps a rich per-token price-book behind this same
+//! per-token billing/metering — OSS surfaces no input-token / price-per-expert data.
+//! Cloud swaps a rich per-token price-book behind this same
 //! shape (D129 / D170.b "OSS simple seam, Cloud rich impl").
 //!
 //! ## Invariants
-//! - **Integer micro-USD only** — never a float on any path (SN-8); a dollar
+//! - **Integer micro-USD only** — never a float on any path; a dollar
 //!   ceiling is an exact enforcement decision, never a fuzzy score (D115.2).
 //! - **A pure, total fold** — `spent = turns·per_turn + tool_calls·per_tool_call`,
 //!   saturating so a runaway can never wrap the ceiling. The inputs are the

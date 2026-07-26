@@ -6,7 +6,7 @@
 //!
 //! Same minimal-surface contract as `kx-mcp-echo`: deterministic in the request args, no
 //! egress (`net_scope_required: None`), no modes, never echoes its environment. INTEGER
-//! ONLY (no float — SN-8): a non-integer op or a division by zero is a fail-closed
+//! ONLY (no float): a non-integer op or a division by zero is a fail-closed
 //! JSON-RPC error (the caller's `decode_tool_result` surfaces it as a capability failure).
 
 use std::io::{BufRead, Write};

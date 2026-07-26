@@ -98,7 +98,7 @@ export function summarizeRerank(turns: readonly ReRankTurn[]): RerankSummary {
 }
 
 /** A compact, audit-honest rendering of an enforced re-rank permutation (the
- *  reordered SOURCE indices; SN-8: an exact reordering, never a score). Empty (a
+ * reordered SOURCE indices; an exact reordering, never a score). Empty (a
  *  non-`reranked` outcome) → "—"; a long permutation is elided with its length so
  *  the trail row stays single-line. Pure — a deterministic function of the input. */
 export function rerankPermutationLabel(permutation: readonly number[]): string {

@@ -650,7 +650,7 @@ const GRAMMAR_ROOT: &str = "root";
 /// grammar arms and constrains the rest of the envelope to a grant-pinned shape.
 /// Native-marker tool-call formats (Gemma `<|tool_call>`, Llama `<|python_tag|>`,
 /// Qwen `<tool_call>`) never match this opener, so they pass through UNCONSTRAINED
-/// to the fail-closed `kx_toolcall` parser — an honest GR15 capability gap, not a
+/// to the fail-closed `kx_toolcall` parser — an honest capability gap, not a
 /// silent one (the accept-side gate is identical for both paths).
 const TOOL_CALL_TRIGGERS: [&str; 1] = [r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#];
 
@@ -674,7 +674,7 @@ const TOOL_CALL_TRIGGERS: [&str; 1] = [r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#];
 ///   tokenizers (Gemma's digit/punctuation tokens span the char-level grammar's
 ///   boundaries — `T-RERANK-GBNF-CRASH`). The model emits a clean array after its
 ///   reasoning anyway, and `kx_toolcall::parse_permutation` strips the preamble +
-///   enforces a valid permutation (SN-8). (Ollama, which has no such sampler, applies
+/// enforces a valid permutation. (Ollama, which has no such sampler, applies
 ///   the permutation as a strict whole-response `format`.)
 fn build_sampler<'b>(
     backend: &'b LlamaBackend,

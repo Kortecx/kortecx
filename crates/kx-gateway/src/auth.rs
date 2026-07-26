@@ -16,7 +16,7 @@
 //! [`PrincipalResolver`] seam WITHOUT changing the trait: [`Principal`] grows
 //! additively (a `party` field), and the interceptor wiring is unchanged.
 //!
-//! Identity is **server-derived** from transport metadata (SN-8) — the client
+//! Identity is **server-derived** from transport metadata — the client
 //! supplies a *credential* (a bearer token), never a claimed identity. mTLS /
 //! OIDC are later impls of the SAME trait (OIDC stays cloud, D94/D101.1).
 //! gateway-core stays auth-free (its dep-wall + `lib.rs` comment); auth lives
@@ -84,7 +84,7 @@ impl PrincipalResolver for DevAllowLocal {
 /// A bearer-token [`PrincipalResolver`]: a configured map of opaque token → party
 /// handle. The token is read from the `authorization: Bearer <token>` gRPC
 /// metadata header; the caller supplies a *credential*, never a claimed identity
-/// (SN-8 — identity is server-derived). OIDC stays cloud (D94/D101.1); this is
+/// (identity is server-derived). OIDC stays cloud (D94/D101.1); this is
 /// the OSS single-system credential check.
 ///
 /// Every failure mode — missing header, wrong scheme, malformed value, unknown

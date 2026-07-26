@@ -3,7 +3,7 @@
  * parallel-branches → gather run legible at a glance: a pattern badge, then one row
  * per branch (short id + live {@link StatePill} + a "won" marker on the branch whose
  * output the gather emitted). Derived purely from the projection via
- * {@link detectSwarm} — no new RPC, no score (SN-8). Renders NOTHING for a plain
+ * {@link detectSwarm} — no new RPC, no score. Renders NOTHING for a plain
  * linear run (no fan-in) so ordinary runs show no swarm chrome.
  */
 

@@ -3,7 +3,7 @@
 //! SSRF vetting of a `RegisterTool`'s `server_host`.
 //!
 //! The runtime is a SECURE GATEWAY to external MCP servers, never an executor of
-//! arbitrary code (D132/D159/GR19). PR-6a *registers + vets + stores* an external
+//! arbitrary code. PR-6a *registers + vets + stores* an external
 //! MCP tool's endpoint; DIALING it (the live remote tool round), credentialed
 //! Connections, and parallel fan-out are PR-6b/Cloud. So the SSRF check here is
 //! the FIRST gate (reject obviously-internal hosts at admission); the behavioural
@@ -28,7 +28,7 @@ use kx_tool_registry::{
 };
 use kx_warrant::{FsScope, Host, NetScope, ResourceCeiling, ToolRequirement};
 
-/// The audit-only author stamped on an operator registration. SN-8: the author
+/// The audit-only author stamped on an operator registration. The author
 /// is NOT enforcement-bearing (authority comes only from the server-issued
 /// warrant); it is an audit/display field. A single-party OSS serve stamps a
 /// fixed principal; the per-party principal is a Cloud concern (multi-tenant).
@@ -87,7 +87,7 @@ impl ToolRegistryAdmin for HostToolRegistry {
                 ))
             })?;
 
-        // (3) Map the optional typed schema fail-closed (no float — SN-8).
+        // (3) Map the optional typed schema fail-closed (no float).
         let input_schema = match reg.input_schema {
             None => None,
             Some(s) => Some(map_input_schema(s).map_err(ToolAdminError::InvalidArgument)?),
@@ -127,7 +127,7 @@ impl ToolRegistryAdmin for HostToolRegistry {
             input_schema,
         };
 
-        // (5) Durable write — always HumanAuthored (Approved). SN-8: the client
+        // (5) Durable write — always HumanAuthored (Approved). The client
         // cannot self-assert SelfGenerated to launder lineage.
         let token = self
             .registry

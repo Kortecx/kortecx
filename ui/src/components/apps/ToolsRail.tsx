@@ -2,7 +2,7 @@
  * The App MCP-TOOLS rail — attach/detach registered tools + set reach on a stored
  * App. Mirrors {@link SkillsRail}: attaching writes a WISH into the envelope
  * (`steering_config.tools.requested_grants`, mirrored to `references.tools`) and
- * re-saves via `SaveApp` — it grants NOTHING (SN-8); at RunApp the server intersects
+ * re-saves via `SaveApp` — it grants NOTHING; at RunApp the server intersects
  * the wish against the caller's grants + the live broker. A LOCKED App refuses the
  * structure edit (the control renders disabled with the reason, D142 every-state).
  *

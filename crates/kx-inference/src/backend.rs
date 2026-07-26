@@ -96,7 +96,7 @@ pub trait InferenceBackend: Send + Sync {
     /// stays dyn-compatible (no generics, no `Self` in the return). A backend
     /// that can emit tokens in-process (the OSS llama backend) OVERRIDES this.
     /// With a `None` sink the result is byte-identical to `dispatch` (the digest
-    /// anchor); the stream is NEVER an authority or identity input (SN-8).
+    /// anchor); the stream is NEVER an authority or identity input.
     ///
     /// # Errors
     ///
@@ -126,7 +126,7 @@ pub trait InferenceBackend: Send + Sync {
     ///
     /// `None` ⇒ the caller should format the prompt itself (e.g. hand-rolled
     /// `ChatML`). This is purely presentation: the rendered string is NOT an
-    /// identity or authority input (SN-8) — it is tokenized and fed to the model.
+    /// identity or authority input — it is tokenized and fed to the model.
     fn render_chat(&self, model_id: &ModelId, system: &str, user: &str) -> Option<String> {
         let (_, _, _) = (model_id, system, user);
         None

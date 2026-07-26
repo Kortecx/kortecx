@@ -5,7 +5,7 @@
 //! `|`, matching Python's `>>` / `&` / `|`) — plus `[ ]` grouping. It lowers to the
 //! SAME `(steps, edges)` the visual `blueprint run` builds, then feeds the one
 //! canonical proto assembly (`blueprint::to_request`). The server
-//! still compiles + warrants every step (SN-8) — a chain only changes what is
+//! still compiles + warrants every step — a chain only changes what is
 //! PROPOSED.
 //!
 //! The cross-surface contract (grammar + canonical lowering + the golden corpus the
@@ -27,14 +27,14 @@
 //! `tool` (PR-6b-2 — fire a registered tool; `args` lower to the canonical
 //! `kx.tool.args` blob). `--context <handle>` (PR-7, repeatable) attaches named
 //! context bundles to the run — the server injects them into every entry Mote at
-//! bind (SN-8); verbatim order, empty ⇒ byte-identical to pre-PR-7.
+//! bind; verbatim order, empty ⇒ byte-identical to pre-PR-7.
 //!
 //! PR-9b (D161.1) — the `@` grammar: a MODEL handle may tag tools to become a
 //! **deterministic-agentic step** — `plan@web-search@fs-list > review`. The `@tool`
 //! tags (order-preserving, deduped) merge into the model step's `tool_contract`
 //! (version `"1"`); its bounded reason→tool→observe budget (`max_turns` /
 //! `max_tool_calls`) rides the task spec. The SERVER vets every tagged tool against
-//! its live registry + builds the per-step warrant (SN-8). `@` on a non-model handle
+//! its live registry + builds the per-step warrant. `@` on a non-model handle
 //! is a fail-closed authoring error.
 
 use std::collections::{BTreeMap, HashMap};
@@ -71,7 +71,7 @@ pub struct ChainArgs {
     /// The chain seed (`--seed`, default 0; folds into entrypoint identity).
     pub seed: u32,
     /// PR-7: context-bundle handles to attach (`--context <handle>`, repeatable).
-    /// Verbatim order; the server resolves + injects into every entry Mote (SN-8).
+    /// Verbatim order; the server resolves + injects into every entry Mote.
     pub context: Vec<String>,
     /// Run to completion and print the committed result (`--wait`).
     pub wait: bool,
@@ -532,7 +532,7 @@ fn lower(dsl: &str) -> Result<Lowered, CliError> {
 
 /// Kahn's algorithm — a cycle (including a `a > a` self-loop, which yields the edge
 /// `(i, i)`) means some node never reaches in-degree 0. Client-side guard; the
-/// server compile is the backstop (SN-8).
+/// server compile is the backstop.
 fn detect_cycle(node_count: usize, edges: &[(u32, u32)]) -> Result<(), CliError> {
     let mut indeg = vec![0usize; node_count];
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); node_count];

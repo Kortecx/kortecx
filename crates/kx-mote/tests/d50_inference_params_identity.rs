@@ -121,7 +121,7 @@ fn default_inference_params_preserve_greedy_identity_across_schema_bump() {
 }
 
 proptest! {
-    /// SN-4 v2 #5 (property test): any pair of MoteDefs differing in any
+    /// the structural review (property test): any pair of MoteDefs differing in any
     /// single decoding-param field MUST produce a different `mote_def_hash`.
     /// Closes the input-space-of-bugs that hand-picked tests cannot.
     #[test]

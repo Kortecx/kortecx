@@ -7,7 +7,7 @@
 //! measurement of the current (`T-GEMMA-PAREN`) parse coverage, the "before" RC2 raises.
 //!
 //! A Gate value is an integer per-mille (`0..=1000`); a pass/fail decision is therefore
-//! an exact integer comparison, never a float (SN-8).
+//! an exact integer comparison, never a float.
 
 mod consolidation_quality;
 mod format_coverage;

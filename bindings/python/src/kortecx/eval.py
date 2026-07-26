@@ -4,7 +4,7 @@ count), surfaced by ``ScoreRun``.
 
 The golden-suite GATE (task success / tool-call correctness / groundedness vs a known
 expectation) runs OFFLINE via the ``kx eval run`` CLI / ``just eval`` — it never crosses
-this wire. Kept in its own module (module-per-concern, GR3).
+this wire. Kept in its own module (module-per-concern).
 """
 
 from __future__ import annotations

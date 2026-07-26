@@ -1,4 +1,4 @@
-//! SN-8 security policy stress harness (P4.1 scale & performance validation campaign).
+//! Security policy stress harness (P4.1 scale & performance validation campaign).
 //!
 //! `#[ignore]`d; run explicitly in RELEASE:
 //!
@@ -7,7 +7,7 @@
 //!     -- --ignored --nocapture --test-threads=1
 //! ```
 //!
-//! Proves the SN-8 invariant under VOLUME — "the runtime ENFORCES (exact
+//! Proves the identity invariant under VOLUME — "the runtime ENFORCES (exact
 //! crypto/subset equality); the model only proposes". Two campaigns:
 //!
 //! * **ALLOW volume** — 50_000 valid (`req ⊆ warrant`) requirement checks AND
@@ -27,7 +27,7 @@
 //! lineage-subset (`InvalidLineageSubset`) path, and the `kx-model-validator`
 //! (`ValidatorOutcome`) path are intentionally NOT exercised here — this file is
 //! scoped to the kx-capability + kx-warrant enforcement surfaces it directly
-//! depends on; the other crates have their own SN-8 proptests.
+//! depends on; the other crates have their own identity proptests.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
@@ -348,7 +348,7 @@ fn run_deny() -> (usize, usize) {
 
 #[test]
 #[ignore = "stress: run with --release --ignored --nocapture --test-threads=1"]
-fn sn8_policy_allow_and_deny_volume() {
+fn policy_allow_and_deny_volume() {
     // warrant_ref_of determinism sanity (crypto equality basis).
     let w = warrant_with_grant(ToolGrant {
         tool_id: ToolName("x".into()),
@@ -364,7 +364,7 @@ fn sn8_policy_allow_and_deny_volume() {
     let (deny_rejected, forged_admitted) = run_deny();
     let deny_ms = deny_start.elapsed().as_millis();
 
-    assert_eq!(forged_admitted, 0, "SN-8: NO forged case may be admitted");
+    assert_eq!(forged_admitted, 0, "NO forged case may be admitted");
 
     println!(
         "POLICY: allow_ok={allow_ok} allow_ms={allow_ms} deny_rejected={deny_rejected} \

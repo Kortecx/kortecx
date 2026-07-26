@@ -7,7 +7,7 @@
  * answered · rejected · dead-lettered), and a rejected turn's fail-closed reason as a
  * keyboard-toggleable disclosure. A pure-DAG (non-agent) run has NO ReAct turns, so the
  * tab honestly falls back to a compact per-Mote step list from the projection + step
- * kinds — never a blank tab. Read-only / display-only (SN-8): NO new RPC — reuses the
+ * kinds — never a blank tab. Read-only / display-only: NO new RPC — reuses the
  * shipped `useReactProgress` + `useRunStepKinds` + `GetProjection`. REVIEW (the run's
  * committed outputs) rides the same tab via {@link RunChanges}.
  */

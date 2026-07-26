@@ -9,7 +9,7 @@
 //! reproducible test surface) while production draws OS entropy: a run identity
 //! must be unpredictable to serve as a cross-boundary idempotency-token root.
 //!
-//! SN-8 (reframed v2, D64): run identity is a registered nonce, NOT a content
+//! Run identity (reframed): run identity is a registered nonce, NOT a content
 //! hash. The nonce never enters a content-addressed digest; it is identity by
 //! registration, not by derivation.
 
@@ -32,7 +32,7 @@ pub struct OsRandomNonce;
 
 impl RunNonceSource for OsRandomNonce {
     // The OS entropy source (getrandom) is infallible on every supported target
-    // (Linux CI / Apple-Silicon local, SN-7); a failure means the host RNG is
+    // (Linux CI / Apple-Silicon local); a failure means the host RNG is
     // unavailable, which is not a recoverable runtime condition. We surface it
     // loudly rather than fabricate a predictable nonce — a guessable run identity
     // would defeat D64's unguessable-identity / idempotency-token-root guarantee.

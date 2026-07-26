@@ -11,7 +11,7 @@
 //!
 //! Keying both on one `RoleId` keeps a step's warrant and `MoteDef` coherent.
 //! (Forward note: M7's catalog unifies the two into one content-addressed role
-//! catalog — see the SN-5 plan.)
+//! catalog — see the planned catalog.)
 
 use std::collections::BTreeMap;
 use std::sync::RwLock;

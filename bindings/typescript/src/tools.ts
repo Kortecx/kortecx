@@ -17,14 +17,14 @@
  * `localTool` exposes a JS function as a real, governed tool: the SDK runs it as a
  * local **stdio MCP server** (`_toolserver`) the runtime DIALS through the existing
  * PR-6b MCP gateway — zero new runtime substrate; the runtime fires it under a
- * server-built warrant (SN-8).
+ * server-built warrant.
  *
  * **Node + dev-scoped.** The runtime spawns the stdio server subprocess, so this is
  * the Node SDK only (a browser cannot spawn a subprocess) and the tool MODULE must
  * be Node-importable (compiled JS / `.mjs`) and co-located with the serve. Unlike
  * Python (type hints → schema), TS types are erased, so the param schema is explicit.
  *
- * **Firing lanes (GR15-honest):** deterministic `flow().tool(fn, args)` (today) ·
+ * **Firing lanes (honest):** deterministic `flow().tool(fn, args)` (today) ·
  * steered `new Agent({ tools:[fn], dynamic:true })` → `kx/recipes/react-auto` (today,
  * needs `KX_SERVE_AUTOGRANT=1`) · frozen agentic loop → `new Agent({ tools:[fn] })`
  * fires the bounded reason→tool→observe loop (the step grants its OWN resolved tools;
@@ -195,7 +195,7 @@ export function localToolsOf(
 }
 
 /** A deterministic dependency-free server name per defining module (so re-runs
- *  upsert the same connection — `connection_id_of(name)` is deterministic, SN-8). */
+ * upsert the same connection — `connection_id_of(name)` is deterministic). */
 export function serverNameFor(module: string): string {
   // FNV-1a 32-bit — stable + dependency-free (no cryptographic strength needed).
   let h = 0x811c9dc5;

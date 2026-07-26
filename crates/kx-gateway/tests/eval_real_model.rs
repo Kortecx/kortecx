@@ -1,6 +1,6 @@
 //! RC1 (D172) real-model eval witness (Tier-B, advisory): drive a LIVE `ReAct` chain on
 //! a real OSS model and score it through the `ScoreRun` RPC — the end-to-end proof that
-//! the per-run quality readout works over genuine model output (GR15 real-model
+//! the per-run quality readout works over genuine model output (real-model
 //! integrity).
 //!
 //! Model selection mirrors the rest of the serve e2e suite: a GGUF
@@ -185,7 +185,7 @@ async fn score_run_over_a_live_react_chain() {
     std::env::remove_var("KX_SERVE_AUTOGRANT");
 }
 
-/// RC2 grammar witness (Tier-B, observe-not-gate per GR16): FORCE a tool the model
+/// RC2 grammar witness (Tier-B, observe-not-gate): FORCE a tool the model
 /// cannot answer without (a kv lookup of an arbitrary key), then PRINT each
 /// committed turn's RAW output so the emitted tool-call FORMAT is visible, and
 /// OBSERVE whether a tool fired. The lazy GBNF triggers on the `{"tool_call"`
@@ -326,7 +326,7 @@ async fn grammar_forces_and_witnesses_a_tool_fire() {
     );
 }
 
-/// RC3 menu witness (Tier-B, observe-not-gate per GR16): the LEAD proof for
+/// RC3 menu witness (Tier-B, observe-not-gate): the LEAD proof for
 /// T-REACT-TOOL-MENU. Unlike the grammar witness above, the instruction describes
 /// only the DESIRED EFFECT — NOT the tool name, args, or call format. Pre-RC3 a real
 /// model could not fire a tool from such a goal (the live prompt showed NO tool

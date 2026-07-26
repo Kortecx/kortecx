@@ -86,7 +86,7 @@ describe("wsAllDelta", () => {
     expect(committed.moteId).toBe("33".repeat(32));
     expect(committed.resultRef).toBe("44".repeat(32));
     // The wire `nd_class` STRING tag is parsed back to its discriminant (the
-    // GR16-caught gap: the committed arm used to DROP it → a null/0 export).
+    // Regression-caught gap: the committed arm used to DROP it → a null/0 export).
     expect(committed.ndClass).toBe(1); // "pure" → 1
 
     const failed = wsAllDelta({

@@ -8,7 +8,7 @@
 //! critic or a shaper (those would have to be explicit workflow-author
 //! choices).
 //!
-//! See `docs/design/decisions.md` §D48 (private corpus) for the full
+//! See D48 for the full
 //! cloud forward-note: cloud impls that resolve per-role MoteDefs must
 //! commit the resolved MoteDef to the journal (same shape as
 //! `TopologyDecision` itself, per D37) so replay sees the same
@@ -45,7 +45,7 @@ pub trait ChildResolver: Send + Sync {
 /// non-empty, replaces the inherited prompt so a corrective child runs its own
 /// instruction; an empty `intent` is a no-op (byte-identical to the pre-intent
 /// resolver). `intent` only ever writes the prompt key — never an authority axis
-/// (warrant narrowing happens upstream via `intersect`, SN-8 unaffected).
+/// (warrant narrowing happens upstream via `intersect`, identity unaffected).
 ///
 /// **`is_topology_shaper = false` is structural** — children cannot be
 /// born as shapers via inheritance. Multi-level shaper hierarchies
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn nonempty_intent_overrides_only_the_prompt_key() {
         // A non-empty `intent` writes the prompt key and leaves every other
-        // inherited config entry untouched (SN-8: it never touches an authority
+        // inherited config entry untouched (it never touches an authority
         // axis — those are warrant/role-derived, not in config_subset here).
         let shaper = shaper_def(); // carries config["temperature"] = "0.0"
         let d = descriptor_with_intent(
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn t6_intent_touches_only_the_prompt_key_never_an_authority_axis() {
-        // SN-8: a per-child intent is model-proposed CONTENT — it must change
+        // a per-child intent is model-proposed CONTENT — it must change
         // ONLY the prompt the child runs, never an authority/identity axis.
         // Two children differing solely by `intent` are identical on every
         // authority-relevant MoteDef field (tool_contract, nd_class,

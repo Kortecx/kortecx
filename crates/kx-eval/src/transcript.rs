@@ -51,7 +51,7 @@ pub struct TurnRecord {
 
 /// The listwise-rerank outcome of a RAG run (RC4c-2c) — present iff the run reranked its
 /// retrieved candidates. Authored directly by a Tier-A fixture or folded from the committed
-/// `ReRankRound` fact (Tier-B, via the gateway's `ListReRankTurns`). SN-8: the permutation
+/// `ReRankRound` fact (Tier-B, via the gateway's `ListReRankTurns`). The permutation
 /// is the committed decision (new-rank → source index); no scores are carried.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RerankInfo {
@@ -66,7 +66,7 @@ pub struct RerankInfo {
 }
 
 /// A `(tool_id, tool_version)` identity used to compare an actual call against an
-/// expected one. Exact equality only (SN-8 posture — scoring never fuzzy-matches a
+/// expected one. Exact equality only (exact-equality posture — scoring never fuzzy-matches a
 /// tool identity).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ToolKey {
@@ -88,7 +88,7 @@ pub struct Transcript {
     /// (Tier-A) fixture authors it directly.
     #[serde(default)]
     pub final_answer: Option<String>,
-    /// The ordered retrieved RAG docs (committed content; scores excluded, SN-8). Empty
+    /// The ordered retrieved RAG docs (committed content; scores excluded). Empty
     /// for a non-RAG run.
     #[serde(default)]
     pub retrieved_docs: Vec<String>,

@@ -1,6 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! **P1.11 — 9-edge-case test classes per standing testing doctrine**
-//! (`04-testing-and-gates.md` §86+).
+//! **P1.11 — 9-edge-case test classes per the standing testing doctrine.**
 //!
 //! Class #2 (replay faithfulness — R49) lives in `cold_refold_topology.rs`
 //! with its own P1+P2+P3+P4 surface. THIS file covers classes 1, 3, 5, 6,
@@ -309,7 +308,7 @@ fn class7b_single_child_topology_decision() {
 #[test]
 fn class7c_topology_decision_with_large_children_n_eq_128() {
     // N=128 chosen as smallest power-of-2 in the doctrine's "large-N DAGs
-    // (e.g. N=100s)" band per 04-testing-and-gates.md §170. Exercises
+    // (e.g. N=100s)" band. Exercises
     // BLAKE3 across the canonical-bincode encoding of a non-trivially-
     // sized Vec.
     let shaper = shaper_def();

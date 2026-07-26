@@ -28,7 +28,7 @@ const VERDICTS: Record<string, { label: string; color: string }> = {
 /**
  * The advisory ranking ladder for a scored bundle: every registered manifest
  * best-first with its bp score, the bundle's content fingerprint, and the
- * lowering-gate DRY-RUN verdict. ALL display-only (SN-8) — a score can surface
+ * lowering-gate DRY-RUN verdict. ALL display-only — a score can surface
  * a tool, never grant one; the broker re-gates any real dispatch.
  */
 export function ScoreLadder({ score }: { score: BundleScore }) {

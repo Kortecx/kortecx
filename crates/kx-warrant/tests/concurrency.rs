@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Concurrency tests for `kx-warrant` (SN-4 v2 #7 — concurrency mandate; D30).
+//! Concurrency tests for `kx-warrant` (the structural review — concurrency mandate; D30).
 //!
 //! - Compile-time `Send + Sync` assertions over the full public-type set.
 //! - 4-thread thread-independence of `intersect` (Arc<>'d inputs, identical

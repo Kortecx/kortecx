@@ -13,7 +13,7 @@
 //!   pooling / dim / chunk params / tokenizer), so a stale index is detected rather
 //!   than silently mis-queried.
 //!
-//! **SN-8.** Fusion + rerank run INSIDE the ReadOnlyNondet retrieval boundary,
+//! **Identity.** Fusion + rerank run INSIDE the ReadOnlyNondet retrieval boundary,
 //! BEFORE the result commits. They consume ranks/vectors and produce an order; the
 //! committed fact is still the ordered content-ref SET (scores excluded). Every
 //! ordered boundary has an explicit `ascending content-ref` tiebreak, so the result

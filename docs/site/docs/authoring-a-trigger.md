@@ -162,7 +162,7 @@ kx triggers add --name standup --kind cron --app standup-digest \
 
 An App-target trigger runs under the **registrant's party** (D102.2) — the same identity
 that saved the App and registered its connections — so a webhook caller can start the run
-but never escalate beyond what the registrant could `RunApp` themselves (SN-8).
+but never escalate beyond what the registrant could `RunApp` themselves.
 
 ## POSTing a signed webhook
 

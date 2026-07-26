@@ -10,7 +10,7 @@
 pub enum OllamaError {
     /// The endpoint URL is not a valid loopback `http(s)` URL, or it is a
     /// non-loopback host and the operator did not opt in (`allow_remote`).
-    /// Construction-time refusal (SN-8): a mis-scoped client is never built.
+    /// Construction-time refusal: a mis-scoped client is never built.
     #[error("ollama endpoint refused: {0}")]
     Refused(String),
 

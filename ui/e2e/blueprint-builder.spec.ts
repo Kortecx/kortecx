@@ -92,7 +92,7 @@ test("builder: the step-config drawer clears the navbar in both themes (C5)", as
   await page.getByTestId("new-blueprint").click();
   await expect(page.getByTestId("builder-canvas")).toBeVisible({ timeout: 30_000 });
 
-  // BOTH THEMES (D142.1 / GR13): the fixed `--overlay` positioning is theme-independent,
+  // BOTH THEMES: the fixed `--overlay` positioning is theme-independent,
   // but prove the occlusion guard holds under each palette (the drawer paints over the navbar).
   // Toggle the theme with the drawer CLOSED — an open drawer's full-viewport scrim occludes
   // the navbar's own theme-toggle button (that occlusion is exactly what the fix creates).

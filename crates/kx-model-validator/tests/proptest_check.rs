@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for `check` and the `Recommender` (SN-4 v2 #6).
+//! Property tests for `check` and the `Recommender`.
 //!
 //! The validator's correctness contract from D29 is:
 //! - **Pure**: identical inputs yield identical outputs.
@@ -332,7 +332,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// Concurrency: pure-function determinism across threads (SN-4 v2 #7)
+// Concurrency: pure-function determinism across threads
 // ---------------------------------------------------------------------------
 
 /// Compile-time `Send + Sync` assertions for the public types. The crate is

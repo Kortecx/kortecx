@@ -68,7 +68,7 @@ class Result:
     def verdict(self) -> Optional[str]:
         """T-AGENT2: if this run's terminal is an LLM-judge (``kx/recipes/judge``),
         the decoded ``"valid"`` / ``"invalid: <reason>"`` summary; ``None`` otherwise.
-        Display-only (SN-8)."""
+        Display-only."""
         from .critic import decode_critic_verdict
 
         if self.payload is None:

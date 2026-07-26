@@ -35,7 +35,7 @@ pub enum CheckSpec {
     PiiLeak(PiiSpec),
     /// Opt-in **LLM-judge** gate (T-AGENT2): grade the producer output against a
     /// content-addressed rubric using the served model. A `ReadOnlyNondet` gate
-    /// — sampled once, committed, replayed (never re-queried). SN-8: the judge
+    /// — sampled once, committed, replayed (never re-queried). The judge
     /// returns a discrete Valid/Invalid decision, **never a similarity score**.
     LlmJudge(LlmJudgeSpec),
 }

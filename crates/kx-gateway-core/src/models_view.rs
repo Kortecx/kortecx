@@ -2,7 +2,7 @@
 //!
 //! Display/discovery ONLY: model *selection* stays a recipe ENUM free-param
 //! validated server-side at binding — nothing returned here authorizes
-//! anything (the toolscout advisory precedent, SN-8). Spoken in gateway-core's
+//! anything (the toolscout advisory precedent). Spoken in gateway-core's
 //! own wire vocabulary so no `kx-model-store` type crosses the seam; the host
 //! builds its catalog from the descriptors it actually provisioned.
 
@@ -46,7 +46,7 @@ pub struct ModelSummaryEntry {
     pub can_embed: bool,
     /// Model Control v2: the model's PROVENANCE — `"local"` (a startup GGUF),
     /// `"ollama"` (a daemon-discovered tag), `"pulled-ollama"` / `"pulled-url"` (a
-    /// runtime `kx models pull`). Display/audit ONLY (SN-8); empty on an old host.
+    /// runtime `kx models pull`). Display/audit ONLY; empty on an old host.
     /// Additive (proto tag 10).
     pub source: String,
     /// Model Control v2: `true` iff this model is the server's ACTIVE default (the

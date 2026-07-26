@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for `kx-context-assembler` (SN-4 v2 #6 — pinned per D33).
+//! Property tests for `kx-context-assembler` (the structural review — pinned per D33).
 //!
 //! Properties:
 //!
@@ -24,7 +24,7 @@
 //!    proves the negative invariant ("bytes is never the hash") across BOTH
 //!    code paths in `assemble`.
 //! 7. **Tool-path shape (H-2)**: tool items carry the menu text
-//!    (`"name: <grant_id>\n<description>"`, PR-1/BUG-32 name-steering) as `bytes`
+//! (`"name: <grant_id>\n<description>"`, PR-1 name-steering) as `bytes`
 //!    and `blake3(canonical_bincode(ToolDef))` as `source_ref`. The
 //!    `event.resolved_def_hash` MUST match the freshly-computed hash —
 //!    deviation would mean the registry handed out a wrong content-address.
@@ -527,7 +527,7 @@ proptest! {
             "exactly one tool item should be emitted"
         );
         let item = &ctx.items[0];
-        // PR-1/BUG-32 + RC3: the menu leads with the granted name, then the pinned
+        // PR-1 + RC3: the menu leads with the granted name, then the pinned
         // version, then the description (the version steers the exact `"version"`).
         let expected_menu = format!("name: {tool_name_seed}-only\nversion: 1\n{description}");
         prop_assert_eq!(

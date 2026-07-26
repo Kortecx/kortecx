@@ -1,5 +1,5 @@
 /**
- * NL workflow authoring — propose-then-confirm (D209.3 / SN-8).
+ * NL workflow authoring — propose-then-confirm.
  *
  * `ProposeWorkflow` turns a natural-language goal into a PROPOSED multi-step DAG: the
  * served model plans, the gateway decodes + compiles the plan through the vetted planner

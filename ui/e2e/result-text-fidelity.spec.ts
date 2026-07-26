@@ -5,7 +5,7 @@ import { type Gateway, SPA_ORIGIN, spawnGateway } from "./fixtures/serve";
 /**
  * D142.2 content-resolution: every run-output surface shows the RESOLVED result
  * TEXT as the headline (with the digest demoted to a copy chip), never a bare
- * hash. The model-free `echo` recipe is an HONEST passthrough (GR15) — it commits
+ * hash. The model-free `echo` recipe is an HONEST passthrough — it commits
  * its bound `topic` verbatim — so the resolved text is a stable, assertable string
  * across the table, DAG node, artifact list, and event feed — in BOTH themes.
  */

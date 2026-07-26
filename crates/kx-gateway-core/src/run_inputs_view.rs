@@ -32,15 +32,15 @@
 //!   `PutContent`/`SubmitFeedback` precedent), never trusted off the wire, and is
 //!   stored for audit only — there is NO read-time party filter in gateway-core
 //!   (single-tenant; cross-tenant enforcement is the `kx-cloud/gateway-auth`
-//!   SN-8 wall above, exactly as for `feedback.db`/`uploads.db`).
+//! Identity wall above, exactly as for `feedback.db`/`uploads.db`).
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without the sidecar degrades
 //!   forward-compatibly (old client / old binary).
 
 use crate::error::GatewayError;
 
 /// One run-inputs capture — the row the host durably records at `Invoke`. The
-/// `principal` is SERVER-resolved by the handler before this reaches the seam
-/// (SN-8); `handle`/`args` are echoed back verbatim so the caller can re-render
+/// `principal` is SERVER-resolved by the handler before this reaches the seam;
+/// `handle`/`args` are echoed back verbatim so the caller can re-render
 /// the recipe form and re-invoke.
 #[derive(Clone, Debug)]
 pub struct RunInputsRecord {

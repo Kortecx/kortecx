@@ -100,7 +100,7 @@ pub enum SignatureAxis {
 /// keeping `kx-mote` byte-unchanged and the canonical digest invariant. The
 /// promotion gate itself stays the exact, fail-closed
 /// `kx_projection::promotion` check; a `VerdictScope` is reuse bookkeeping, not
-/// a gate bypass (SN-8).
+/// a gate bypass.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 pub struct VerdictScope {
     /// The critic-bearing Mote whose `Valid` verdict the scope makes reusable.

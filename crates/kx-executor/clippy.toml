@@ -1,6 +1,6 @@
 # Per-crate clippy config — enforces kx-executor's NO `std::process::Command`
-# discipline (per `02-crate-specs.md` §`kx-executor` DoD; D31 spawn-protocol
-# rule). The executor MUST use platform-specific spawn primitives (bwrap
+# discipline (the D31 spawn-protocol rule). The executor MUST use
+# platform-specific spawn primitives (bwrap
 # execvp on Linux + posix_spawn / fork+sandbox_init+execvp on macOS) so the
 # sandbox load happens BEFORE the body's exec — `std::process::Command`
 # offers no hook for inter-fork-and-exec policy load, and on some macOS
@@ -12,7 +12,7 @@
 # uses `nix::unistd::execvp` + `libc::sandbox_init` directly.
 
 disallowed-methods = [
-    { path = "std::process::Command::new", reason = "kx-executor MUST NOT use std::process::Command — per D31 spawn protocol + 02-crate-specs.md §kx-executor DoD; the inter-fork-and-exec sandbox-load hook requires direct execvp / posix_spawn primitives. Use nix::unistd::execvp or libc::posix_spawn under a documented `unsafe { ... }` block with a `// SAFETY:` comment." },
+    { path = "std::process::Command::new", reason = "kx-executor MUST NOT use std::process::Command — per the D31 spawn protocol; the inter-fork-and-exec sandbox-load hook requires direct execvp / posix_spawn primitives. Use nix::unistd::execvp or libc::posix_spawn under a documented `unsafe { ... }` block with a `// SAFETY:` comment." },
 ]
 
 disallowed-types = [

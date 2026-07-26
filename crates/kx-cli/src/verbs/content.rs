@@ -2,7 +2,7 @@
 //!
 //! - `kx content put <file> [--media-type <mime>] [--filename <name>]` — Batch A
 //!   client upload: a CONTENT-STORE write, never a journal write; the printed
-//!   ref is SERVER-DERIVED blake3 (SN-8); the server caps the payload
+//! ref is SERVER-DERIVED blake3; the server caps the payload
 //!   fail-closed (`kx serve --content-max-bytes`).
 //! - `kx content get --ref <hex32> [--instance <hex16>] [--out <file>]` — fetch
 //!   a blob. With `--instance` the run scope (the run's committed result refs);

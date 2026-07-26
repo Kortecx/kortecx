@@ -28,7 +28,7 @@
  * two lists that can disagree.
  *
  * The envelope still carries NO authority: the server re-resolves every warrant at run, and a
- * derived tool grant is a WISH the runtime intersects again at fire (SN-8).
+ * derived tool grant is a WISH the runtime intersects again at fire.
  */
 
 import { type AppDerivation, app, defaultHandle, flow } from "@kortecx/sdk/web";
@@ -286,7 +286,7 @@ export function NewAppForm({
       // Tools are NOT written app-level at all: a step's `tool_contract` is a real grant on
       // that step, so `steering_config.tools.requested_grants` would only duplicate it onto
       // the entry step. Every one is still a wish — the server resolves
-      // `wish ∩ grants ∩ fireable` at run (SN-8).
+      // `wish ∩ grants ∩ fireable` at run.
       const named = (pick: (s: BuilderStep) => readonly string[]): string[] => [
         ...new Set((graph?.steps ?? []).flatMap((s) => pick(s))),
       ];

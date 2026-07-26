@@ -120,8 +120,8 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   },
   {
     // A read-only view over the models serving this gateway (`ListModels`) plus the
-    // client-local default-model pick (POC-5c). Listing a model never routes one
-    // (SN-8); FFI-free serves return an honest empty list.
+    // client-local default-model pick (POC-5c). Listing a model never routes one;
+    // FFI-free serves return an honest empty list.
     id: "models",
     label: "Models",
     path: "/models",

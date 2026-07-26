@@ -2,8 +2,8 @@
 //! atomic stage→commit path.
 //!
 //! **PR 9b-2** shipped the closed `CommitProtocolError` vocabulary
-//! (R-11 / R-12 / R-13 per `docs/design/validate-then-commit.md` §7 + D38
-//! §2b + D39 §a/§c/§d) plus the `CommitProtocol` trait scaffolding.
+//! (R-11 / R-12 / R-13, per D38 §2b + D39 §a/§c/§d) plus the
+//! `CommitProtocol` trait scaffolding.
 //!
 //! **PR 9b-3** shipped `StandardCommitProtocol<S, J, B>` — the
 //! per-`EffectPattern` impl for the `IdempotentByConstruction` path:

@@ -10,7 +10,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** The committed observation carries the ordered EXACT memory content-refs
+//! - **Identity.** The committed observation carries the ordered EXACT memory content-refs
 //!   (+ text for the model to read) — no similarity `score`, no `created_ms` in the
 //!   committed identity (both are display-only / off-hash). Mirrors `recall@1`.
 //! - **Read-only.** `IdempotencyClass::Readback` ⇒ the HITL gate auto-proceeds it; no
@@ -80,7 +80,7 @@ struct ConsolidateArgs {
     window_hours: Option<u32>,
 }
 
-/// One bundled memory — content hash + text. NO `score`, NO `created_ms` (SN-8: neither
+/// One bundled memory — content hash + text. NO `score`, NO `created_ms` (neither
 /// is in the committed observation identity).
 #[derive(Serialize)]
 struct Bundled {
@@ -175,7 +175,7 @@ impl Capability for ConsolidateCapability {
                     out.push(Bundled {
                         r#ref: ContentRef::from_bytes(e.memory_id).to_hex(),
                         text: String::from_utf8_lossy(&e.content).into_owned(),
-                        // e.score does not exist (SN-8); e.created_ms is deliberately
+                        // e.score does not exist; e.created_ms is deliberately
                         // NOT committed (display-only, off every hash).
                     });
                 }
@@ -433,7 +433,7 @@ mod tests {
         let s = String::from_utf8_lossy(&out);
         assert!(
             !s.contains("score"),
-            "no similarity score in the committed bundle (SN-8)"
+            "no similarity score in the committed bundle"
         );
         assert!(
             !s.contains("created_ms"),

@@ -47,7 +47,7 @@ pub struct MoteTelemetryEntry {
 
 /// One model's token-economy rollup row in a [`TelemetryView::summarize`]
 /// result — the EXACT, cross-page aggregate of every committed mote that ran
-/// `model_id` in scope. Token-only (no cost/$ — billing is CLOUD, D129/GR19).
+/// `model_id` in scope. Token-only (no cost/$ — billing is CLOUD, cloud-tier).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelTokenRollup {
     /// The model that ACTUALLY ran (never empty — non-model motes are excluded

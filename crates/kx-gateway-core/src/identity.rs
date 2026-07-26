@@ -6,7 +6,7 @@
 //! authenticates the caller (R2: a bearer token), derives the party, and inserts
 //! a [`CallerParty`] into the [`tonic::Request`] extensions; handlers that act on
 //! behalf of a party (the `Invoke` path, R2b) read it back. The client NEVER
-//! supplies it — identity is server-derived (SN-8 / D70).
+//! supplies it — identity is server-derived.
 
 /// A resolved caller party, as an opaque handle string.
 ///

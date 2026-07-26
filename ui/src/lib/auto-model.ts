@@ -50,7 +50,7 @@ export interface BoundModel {
  * a pick persists in localStorage under a GLOBAL key (`kortecx.ui.chat` — no endpoint,
  * unlike `chat-history`), so a pick made against one serve outlives it and reappears
  * against a serve that never had that model. Honoring it blindly sent a stale enum
- * (GR15) while the picker — which already falls back to "Auto · X" for an unserved
+ * while the picker — which already falls back to "Auto · X" for an unserved
  * value — promised a different model. Plain chat routes by `chatHandle` alone, so the
  * turn silently ran on whatever `models[0]` happened to be.
  *

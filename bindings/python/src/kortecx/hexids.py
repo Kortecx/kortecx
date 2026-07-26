@@ -1,7 +1,7 @@
 """Hex helpers for server-derived identifiers.
 
 The runtime computes every identifier (``MoteId``, ``instance_id``,
-``content_ref``, ``terminal_mote_id``) — the SDK **never** derives one (SN-8).
+``content_ref``, ``terminal_mote_id``) — the SDK **never** derives one.
 These helpers only *encode* server bytes to lowercase hex for display and
 *decode* a user-supplied hex string back to bytes (with strict length
 validation). There is deliberately no "compute an id" function in this module

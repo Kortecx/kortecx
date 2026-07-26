@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for `Projection::fold` (SN-4 v2 #6).
+//! Property tests for `Projection::fold`.
 //!
 //! The projection's correctness contract from `projection.md` is:
 //! > Two folds of the same log prefix produce bit-equivalent state.
@@ -325,7 +325,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// Concurrency: snapshot isolation under concurrent fold (SN-4 v2 #7)
+// Concurrency: snapshot isolation under concurrent fold
 // ---------------------------------------------------------------------------
 
 #[test]

@@ -3,7 +3,7 @@ manifest over operator-approved host files. A caller snapshots confined host
 files (under ``KX_SERVE_FS_ROOT``, default-OFF) INTO the content store and the
 agent loop edits them IN-CAS (the host is never written in Phase-A).
 
-Kept in its own module so ``types.py`` stays a thin aggregator (GR3). SN-8:
+Kept in its own module so ``types.py`` stays a thin aggregator.
 ``branch_ref`` is SERVER-DERIVED (blake3 over the manifest) — the client names a
 handle, never an identity. The manifest lives in an off-journal ``branches.db``
 sidecar (rebuildable-to-empty), scoped to the authoring party; a not-found /

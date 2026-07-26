@@ -75,7 +75,7 @@ impl TokenTailer for LiveTokenTailer {
         // terminal mote (the common TTFT case) isn't in the projection when the
         // client subscribes right after Invoke. The `mote_id` is the broker key
         // (a server-derived, unguessable 32-byte id); cross-tenant scoping in cloud
-        // is enforced by the SN-8 wall ABOVE gateway-core, exactly as for StreamEvents.
+        // is enforced by the identity wall ABOVE gateway-core, exactly as for StreamEvents.
         check_run_ownership(reader.as_ref(), instance_id).map_err(Status::from)?;
         let (snapshot, rx) = self.broker.subscribe(mote_id);
         let (tx, out_rx) = mpsc::channel::<Result<proto::TokenChunk, Status>>(SUBSCRIBER_QUEUE);

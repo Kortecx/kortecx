@@ -122,7 +122,7 @@ sidecar).
   the gather fires once all have committed.
 - **Crash-safe + replayable** — kill a swarm mid-run and recovery re-derives byte-identical
   agent identities; the projection digest is unchanged.
-- **Governed** — the server compiles and warrants every agent (SN-8); the client only proposes
+- **Governed** — the server compiles and warrants every agent; the client only proposes
   topology. Personas and swarm sugar change *what is proposed*, never authority.
 - **One lowering** — `swarm(...).to_chain()` / `.to_blueprint()` round-trips through the same
   `DagSpec` the string DSL and the visual builder produce; the Python, TypeScript, and CLI

@@ -4,7 +4,7 @@
 //!
 //! ALWAYS wired (the toolscout always-on precedent): an FFI-free serve answers
 //! with an honest EMPTY list — "no models on this serve" is discovery data, not
-//! an error. Display/discovery only (SN-8): model *selection* stays a recipe
+//! an error. Display/discovery only: model *selection* stays a recipe
 //! ENUM free-param validated server-side at binding; nothing here authorizes
 //! anything. The per-model `loaded` flag (POC-3) is recomputed per `list()` call
 //! from the live engine residency — display only, never an authority bit.
@@ -33,7 +33,7 @@ pub(crate) trait ModelResidency: Send + Sync {
 pub(crate) struct HostModelCatalog {
     /// Shared, append-only display entries. The same `Arc` is handed to the model
     /// puller so a pull's registration is visible here immediately (off-journal /
-    /// off-digest — the catalog is pure RAM display state, SN-8).
+    /// off-digest — the catalog is pure RAM display state).
     entries: Arc<RwLock<Vec<ModelSummaryEntry>>>,
     /// The live residency view, if this is an inference serve. `None` ⇒ FFI-free
     /// (`loaded` stays `false` for every entry — honest).

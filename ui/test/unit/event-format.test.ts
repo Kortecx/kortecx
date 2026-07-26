@@ -186,7 +186,7 @@ describe("feedToNdjson / exportFeedFilename (W1a-3)", () => {
       // NOT the numeric discriminant — the tri-surface parity contract.
       nd_class: "pure",
     });
-    // SN-8: never a payload/secret field — only hex join keys.
+    // never a payload/secret field — only hex join keys.
     expect(Object.keys(first)).not.toContain("content");
     const second = JSON.parse(lines[1] ?? "");
     expect(second.type).toBe("failed");

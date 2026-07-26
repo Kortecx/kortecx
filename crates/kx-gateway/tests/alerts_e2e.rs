@@ -1,6 +1,6 @@
 //! W1a-2 — the operator alerts inbox (`alerts.db` + `ListAlerts`), end-to-end
 //! over a real serve. Proves: a HEALTHY run produces NO alert (the "System is
-//! healthy" empty state is REAL, never a fabricated row — GR15); the RPC pages
+//! healthy" empty state is REAL, never a fabricated row); the RPC pages
 //! honestly (`has_more = false` on an empty inbox); and it sits behind the auth
 //! interceptor. The fold's terminal-`Failed` filter + the re-fold-stable identity
 //! (the HARD-gate determinism) are proven exhaustively in the `alerts` unit

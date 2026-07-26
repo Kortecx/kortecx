@@ -1,4 +1,4 @@
-//! Batch A end-to-end over a REAL bound tonic port — the GR8 proofs for the
+//! Batch A end-to-end over a REAL bound tonic port — the proofs for the
 //! FIRST client write path to the content store:
 //!
 //! - **no-journal-write**: a PutContent burst moves the journal head by ZERO
@@ -83,7 +83,7 @@ async fn put_content_round_trips_with_zero_journal_writes() {
     assert_eq!(
         put.content_ref,
         ContentRef::of(&payload).0.to_vec(),
-        "the ref is SERVER-derived blake3 (SN-8)"
+        "the ref is SERVER-derived blake3"
     );
     assert!(!put.deduplicated);
 

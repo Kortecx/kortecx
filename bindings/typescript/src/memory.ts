@@ -4,7 +4,7 @@
  * `ForgetMemory`.
  *
  * Cross-run, per-namespace memory: what an agent LEARNED in one run and can RECALL
- * in a later one. SN-8: a recall hit's `score` is DISPLAY-ONLY — never an identity
+ * in a later one. a recall hit's `score` is DISPLAY-ONLY — never an identity
  * input; the durable result is the ordered `memoryId` SET, matched by EXACT hash.
  * Every memory is scoped to the caller's own principal (server-derived).
  */
@@ -88,7 +88,7 @@ export class Memory {
 }
 
 /** One recall hit: the content-addressed ref (hex), the bytes, and the DISPLAY-ONLY
- *  similarity score (SN-8 — never an identity input). */
+ * similarity score (never an identity input). */
 export class MemoryHit {
   constructor(
     readonly memoryId: string,

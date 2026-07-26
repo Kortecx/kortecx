@@ -18,7 +18,7 @@ const MAX_HOPS: u32 = 2;
 /// A knowledge graph of extracted triples with a multi-hop neighbour walk. Used
 /// ONLY inside a ReadOnlyNondet retrieval Mote: the walk returns source
 /// [`ContentRef`]s (a similarity-like read), and only the ordered ref SET is
-/// committed downstream (SN-8) — traversal never touches a `MoteId`.
+/// committed downstream — traversal never touches a `MoteId`.
 pub trait KnowledgeGraph {
     /// Add a triple, indexing its subject + object (normalized) as incident nodes.
     fn insert_triple(&mut self, triple: Triple);

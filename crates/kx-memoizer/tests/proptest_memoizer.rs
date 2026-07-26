@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for `kx-memoizer` (SN-4 v2 #6 — pinned per D33 + `validate-then-commit.md` §10.5).
+//! Property tests for `kx-memoizer` (the structural review — pinned per D33 + `validate-then-commit.md` §10.5).
 //!
 //! Properties:
 //!

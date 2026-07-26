@@ -54,7 +54,7 @@
 //! snapshot invocation (later milestones) is always a FRESH registered run
 //! (`WorldMutating` work re-runs by default — D83), never a replayed result.
 //!
-//! ## The SN-8 wall (load-bearing)
+//! ## The identity wall (load-bearing)
 //!
 //! Like `kx_dataset::AnnotationStore`, the catalog is **off the trust path**: it
 //! never gates selection, eviction, or promotion. The promotion decision stays
@@ -182,7 +182,7 @@ pub use kx_tool_registry::{validate_args, InputSchema, ParamSpec, ParamType, Sch
 pub use discovery::{commit_selection, CatalogDiscovery, FuzzyDiscovery, SelectionFact};
 // One import surface for catalog callers building discovery: the content-address
 // type (in `SelectionFact`/`commit_selection`) and the similarity seam the fuzzy
-// surface wraps (`kx_dataset`, already a dependency; the SN-8-confined ANN seam).
+// surface wraps (`kx_dataset`, already a dependency; the identity-confined ANN seam).
 pub use discovery_index::{DiscoveryIndex, InMemoryDiscoveryIndex, MAX_DISCOVERY_RESULT};
 pub use kx_content::ContentRef;
 pub use kx_dataset::{Hit, InMemoryRetrievalIndex, RetrievalIndex};

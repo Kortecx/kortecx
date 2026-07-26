@@ -22,7 +22,7 @@ test("blueprint search (SearchRecipes): an intent surfaces ranked recipes", asyn
   await expect(page.getByTestId("blueprint-search-hit").first()).toBeVisible();
 
   // A clearly-unrelated query surfaces no matches (honest empty, not a fake).
-  // POC-5c CI-hardening (GR23): the prior probe "zzz-no-such-recipe-xyz" shared the
+  // POC-5c CI-hardening: the prior probe "zzz-no-such-recipe-xyz" shared the
   // token "recipe" with the recipe handles, so the DiscoveryIndex's cosine-ANN
   // occasionally ranked it just inside the relevance boundary and returned a stray
   // hit — flaking this exact-empty assertion (reproduced in CI on Linux). A query with

@@ -23,7 +23,7 @@
 //! ## A Gate verdict is an integer, never a float
 //! Each Gate scorer returns an integer **per-mille** score in `0..=1000`
 //! ([`ScoreValue::Gate`]). A pass/fail decision is therefore an exact integer
-//! comparison — no float on the decision path (SN-8; mirrors `kx-critic`'s no-float
+//! comparison — no float on the decision path (mirrors `kx-critic`'s no-float
 //! discipline). Only [`ScoreValue::Spike`] (absolute latency) carries an `f64`, and a
 //! Spike is *recorded*, never *gated*.
 //!
@@ -33,7 +33,7 @@
 //!   the canonical projection digest `7d22d4bd`, and the frozen trio never depends on
 //!   it. FFI-free (no `kx-llamacpp`/`kx-inference` edge ever).
 //! - **The gating baseline is a COMMITTED corpus** (`corpus/golden-v1/baseline.json`),
-//!   not the gitignored `docs/benchmarks/` (SN-2). RC1 commits it capturing the current
+//! not the gitignored `docs/benchmarks/`. RC1 commits it capturing the current
 //!   (`T-GEMMA-PAREN`) parse coverage as the "before"; RC2 raises it in-PR.
 //! - **The corpus is content-addressed** — every [`EvalReport`] records the
 //!   `suite_digest`, so a corpus change is visible and forces a deliberate re-baseline.

@@ -7,7 +7,7 @@
  * branch (PR-3/A2) — the fail-closed `rejectionReason` the model re-prompts over.
  * Kept in its own module (the runs.ts module-per-concern precedent).
  *
- * SN-8: every id is server-derived; the SDK only *encodes* the bytes to hex.
+ * every id is server-derived; the SDK only *encodes* the bytes to hex.
  */
 
 import type { ReactTurnSummary as PbReactTurnSummary } from "./gen/kortecx/v1/gateway_pb.js";
@@ -36,7 +36,7 @@ export class ReactTurn {
     readonly callIndex: number = 0,
     /** Governance observability: the chain's run-fixed warrant axes decoded from its
      *  anchor — the tool ids it may fire (`toolId@version`) and the secret refs it may
-     *  resolve (D110.3). NAMES/REFS ONLY, never a value (SN-8/D81). Repeated on every row
+     *  resolve (D110.3). NAMES/REFS ONLY, never a value. Repeated on every row
      *  of a chain (the warrant is run-fixed); empty when the warrant blob is absent. */
     readonly grantedTools: readonly string[] = [],
     readonly secretScopeNames: readonly string[] = [],

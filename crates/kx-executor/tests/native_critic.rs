@@ -2,7 +2,7 @@
 //!
 //! Proves the runtime can turn "a producer committed some bytes" into "the
 //! runtime verified them against a declared, replayable check" — the
-//! SN-8-compliant, model-decorrelated trust primitive (D60). A critic Mote
+//! Identity-compliant, model-decorrelated trust primitive (D60). A critic Mote
 //! reads its producer's committed output, evaluates a `CheckSpec` in-process,
 //! and commits a `CriticVerdict` as its own content-addressed `result_ref`.
 
@@ -165,7 +165,7 @@ fn critic_commits_valid_verdict_when_producer_output_conforms() {
 
     let verdict = committed_verdict(&journal, &store, &critic);
     assert!(verdict.is_valid(), "valid JSON must yield a Valid verdict");
-    // The committed ref IS the verdict's content address (SN-8 exact equality).
+    // The committed ref IS the verdict's content address (exact equality).
     assert_eq!(commit.result_ref.as_bytes(), &verdict.content_ref_bytes());
 }
 

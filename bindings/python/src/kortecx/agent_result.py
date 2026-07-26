@@ -4,7 +4,7 @@
 tool actions it took (each a durable ``ReactRound`` ``tool`` fact, server-derived). A
 thin, read-only projection over the steered ``kx/recipes/react`` chain — no new wire
 surface, no proto change (assembled client-side from ``ListReactTurns`` +
-``GetContent``). SN-8: every id + action is server-derived; the SDK only shapes them.
+``GetContent``). Every id + action is server-derived; the SDK only shapes them.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from .react import ReactTurn
 @dataclass(frozen=True)
 class AuditedAction:
     """One tool action the agent took — a settled ReAct ``tool`` turn. The
-    ``tool_id`` / ``tool_version`` are the GRANTED tool's (SN-8), never the model's
+    ``tool_id`` / ``tool_version`` are the GRANTED tool's, never the model's
     raw proposal. T-MULTI-ELEMENT-TOOLCALLS: when a turn fires N tools at once, each
     is a distinct action sharing ``turn``, ordered by ``call_index`` (0..N-1)."""
 
@@ -58,7 +58,7 @@ class AgentResult:
     def verdict(self) -> Optional[str]:
         """T-AGENT2: if this run's terminal is an LLM-judge (``kx/recipes/judge``),
         the decoded ``"valid"`` / ``"invalid: <reason>"`` summary; ``None`` for a
-        plain answer. Display-only (SN-8)."""
+        plain answer. Display-only."""
         if self.answer_bytes is None:
             return None
         return decode_critic_verdict(self.answer_bytes)

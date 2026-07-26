@@ -39,7 +39,7 @@ T3.3 milestone on the OSS UI critical path (the live-DAG viewer over the T3.2 sh
   500 Motes the DAG falls back to the table (the scale surface).
 - **Security:** the bearer token lives in **memory only** (never `localStorage` /
   the bundle). CORS is enforced server-side (deny-by-default). The console renders
-  enum labels + server-derived hex ids only — never arbitrary Mote content (SN-8;
+  enum labels + server-derived hex ids only — never arbitrary Mote content (
   no XSS surface).
 
 ## Prerequisites
@@ -106,7 +106,7 @@ npm run test:e2e       # Playwright (chromium) — builds + previews + drives a 
   COMMITTED in the DAG, and the `passthrough-dag` graph rendering all 5 nodes COMMITTED.
 
 The agentic-shaper-children path needs on-device inference (Metal) and is exercised
-**locally** only; CI uses the deterministic, no-model `echo` + `passthrough-dag` paths (SN-7).
+**locally** only; CI uses the deterministic, no-model `echo` + `passthrough-dag` paths.
 
 ## Scale note
 

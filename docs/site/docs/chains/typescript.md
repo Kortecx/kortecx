@@ -94,7 +94,7 @@ await client.submitWorkflow(req, { wait: true });
 ```
 
 The artifact is self-describing (explicit `kind`) and portable — `model_id` stays as
-authored (empty binds the serve's model at submit, SN-8). Export → import re-compiles to
+authored (empty binds the serve's model at submit). Export → import re-compiles to
 the IDENTICAL request as `.build()`. `export` / `fromBlueprintFile` are Node-only (file
 I/O); `toBlueprint` / `fromBlueprint` (in-memory) work everywhere. See
 [Blueprint builder → Portable blueprints](../blueprint-builder.md#portable-blueprints--export--import).
@@ -201,7 +201,7 @@ const plan = task.model("kx-serve:my-model", "Research the topic.", {}, {
 
 `tools` accepts an array of names (version `"1"`) or a `{ name: version }` record;
 the budget (`maxTurns` / `maxToolCalls`) defaults to 8 / 6 when omitted. The server
-vets every tagged tool and builds the per-step warrant (SN-8).
+vets every tagged tool and builds the per-step warrant.
 
 :::info Live
 The bounded-loop **execution** is live: a `model@tool` step (and the
@@ -233,7 +233,7 @@ const spec = chain("gen > sum", { tasks });   // two steps, edge 0→1
 Authoring asks only for what is essential — the runtime infers the rest.
 
 **Optional `modelId` + a client `defaultModel`.** Omit `modelId` and the server binds
-the served model (SN-8). Set a `defaultModel` on the client (or, on Node, the
+the served model. Set a `defaultModel` on the client (or, on Node, the
 `KX_DEFAULT_MODEL` env var) to fill it for every MODEL step that left it blank:
 
 ```ts
@@ -311,7 +311,7 @@ kx.close();
 
 Every `instanceId` and `MoteId` is **server-derived** — the SDK carries the
 server's bytes and never constructs an identity
-([SN-8](../security.md#identity-is-server-derived)).
+([identity is server-derived](../security.md#identity-is-server-derived)).
 
 ## See also
 

@@ -7,7 +7,7 @@
  * write nothing to the journal, so they are not in this inbox. Kept in its own
  * module (the telemetry.ts module-per-concern precedent).
  *
- * SN-8: `alertId`/`moteId` are server-derived; the SDK only *encodes* the bytes
+ * `alertId`/`moteId` are server-derived; the SDK only *encodes* the bytes
  * to hex. The triage LIFECYCLE (acknowledge/resolve), the alert-rule engine, and
  * notifications are a Cloud capability (D156/D129) — there is no mutate method.
  */

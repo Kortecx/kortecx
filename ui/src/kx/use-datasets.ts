@@ -53,7 +53,7 @@ export function useDatasetQuery(
 }
 
 /** A pre-read binary document — raw file bytes + advisory metadata (name/media type).
- *  `metadata` is forward-compat (accepted on the wire, not yet persisted; SN-8) — set
+ * `metadata` is forward-compat (accepted on the wire, not yet persisted) — set
  *  so a later artifact-preview decode can hint off the name/media type. */
 export interface FileDoc {
   readonly content: Uint8Array;

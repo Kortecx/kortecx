@@ -5,10 +5,10 @@
  * Register + DIAL an external MCP server (stdio command or HTTP URL, incl.
  * Py/TS-SDK-exposed gateways); list servers with their folded health + discovered
  * tool count; test reachability; re-discover; remove. The runtime is a SECURE
- * GATEWAY (D132/D159/GR19): the host is SSRF-vetted at admission AND at dial; a
+ * GATEWAY: the host is SSRF-vetted at admission AND at dial; a
  * credential is referenced by NAME only (never the secret, D81); ids are
- * server-derived (SN-8). OAuth/device-flow + a credential marketplace are CLOUD —
- * shown as an honest-disabled affordance (GR15 don't-fake-gaps).
+ * server-derived. OAuth/device-flow + a credential marketplace are CLOUD —
+ * shown as an honest-disabled affordance (don't-fake-gaps).
  *
  * Transport is chosen via CHIP buttons (never a controlled `<select>` — the UI-3
  * React-controlled-select e2e gotcha). Degrades to a not-wired state on a gateway

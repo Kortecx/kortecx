@@ -45,7 +45,7 @@
 //! until [`ToolRegistry::approve_registration`] is called. Approval enforces
 //! `def.required_capability ⊆ generating_lineage_warrant`. This closes the
 //! privilege-laundering path where a model could emit a tool with broader
-//! scope than the lineage that authored it (SN-8: model proposes, runtime
+//! scope than the lineage that authored it (model proposes, runtime
 //! enforces).
 //!
 //! # OSS impl vs cloud impl
@@ -55,12 +55,11 @@
 //! a future `kx-cloud-tool-registry-hosted` crate (per-tenant persistence,
 //! multi-host accretion, attestation) without trait change per D28.
 //!
-//! # Reading further
+//! # Design invariant
 //!
-//! - `docs/design/tool-registry.md` (private corpus) — the locked D32 spec.
-//! - `docs/design/decisions.md` D32 — interlocking with D24 (broker), D30
-//!   (warrant), D29 (validator).
-//! - `05-progress-tracker.md` SN-8 — *model proposes, runtime enforces*.
+//! *The model proposes; the runtime enforces.* The registry resolves a tool by
+//! EXACT `(name, version)`; a model's bare or version-less name must resolve to
+//! a unique granted tool, and ambiguity is refused fail-closed.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

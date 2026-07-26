@@ -1,4 +1,4 @@
-//! D110.4 / IMP-5 — `validate_args` is TOTAL + panic-free over arbitrary bytes
+//! D110.4 / — `validate_args` is TOTAL + panic-free over arbitrary bytes
 //! and never ACCEPTS a value that violates the declared typed schema (no float
 //! reaches an `Int` param, no over-long string, no smuggled key under
 //! `deny_unknown`). Mirrors the fail-closed decode proptests of `kx-planner`.
@@ -57,7 +57,7 @@ proptest! {
     }
 
     /// A required `Int` param NEVER accepts a NON-INTEGER JSON number (no float on
-    /// the action path, SN-8). Built as `<int>.5` so the JSON token always has a
+    /// the action path). Built as `<int>.5` so the JSON token always has a
     /// fractional part — an `i64` deserialize must reject it.
     #[test]
     fn prop_int_never_accepts_float(base in any::<i32>()) {
@@ -89,7 +89,7 @@ fn unknown_key_policy() {
     assert!(validate_args(&mk(false), br#"{"a":true,"x":1}"#).is_ok());
 }
 
-/// An enum value outside the allowed set is refused (exact match, no fuzzy, SN-8).
+/// An enum value outside the allowed set is refused (exact match, no fuzzy).
 #[test]
 fn enum_exact_match_only() {
     let schema = InputSchema {

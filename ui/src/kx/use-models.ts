@@ -1,5 +1,5 @@
 /**
- * Model discovery (`ListModels`, Batch A) — display-only (SN-8: listing a model
+ * Model discovery (`ListModels`, Batch A) — display-only (listing a model
  * never routes one; selection stays a recipe ENUM free-param the server
  * validates). An OLD gateway without the RPC degrades to `unsupported` (the
  * picker hides); an FFI-free gateway returns an honest empty list.

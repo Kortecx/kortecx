@@ -61,9 +61,9 @@ pub mod rag;
 pub mod react;
 mod react_reason;
 pub mod registration;
-/// The model-proposed tool-call authority gate (IMP-5) — extracted to the pure
+/// The model-proposed tool-call authority gate — extracted to the pure
 /// leaf `kx-toolcall` in PR-2d-1 (gateway + coordinator share the ONE gate;
-/// SN-8: a forked mirror would drift silently). Re-exported under the original
+/// a forked mirror would drift silently). Re-exported under the original
 /// path so every harness call site (`crate::toolcall::…`) is unchanged.
 pub use kx_toolcall as toolcall;
 pub mod topology_provider;
@@ -425,7 +425,7 @@ impl Harness {
     }
 
     /// PR-4 (M5) — drive a **bounded model-driven tool-call ReAct loop**: the model
-    /// proposes a tool, the runtime ENFORCES + fires it (SN-8), the committed result
+    /// proposes a tool, the runtime ENFORCES + fires it, the committed result
     /// is the OBSERVATION the next turn reads back, until a final answer or a budget
     /// is hit. Each acting turn writes two durable facts (model output + observation);
     /// a crash resumes by re-folding (committed turns served, the tail exactly-once),

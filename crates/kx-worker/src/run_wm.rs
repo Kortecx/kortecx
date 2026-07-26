@@ -276,7 +276,7 @@ mod tests {
             "empty grants (every legacy WM path) never require args"
         );
         // A granted tool under a DIFFERENT contract version is NOT the
-        // observation shape (exact-equality grants, SN-8).
+        // observation shape (exact-equality grants).
         let mut other = warrant(false);
         other.tool_grants.insert(ToolGrant {
             tool_id: ToolName("mcp-echo".into()),

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
-//! Live witness (GR15) — `#[ignore]` by default because it needs a REAL Discord bot
+//! Live witness — `#[ignore]` by default because it needs a REAL Discord bot
 //! token and network access, neither of which belong in CI.
 //!
 //! To run it, export a real credential and drop offline mode, then:
@@ -11,7 +11,7 @@
 //! ```
 //! The full agentic witness (a live Gemma ReAct loop firing `discord/read_channel`
 //! then `discord/send_message` on BOTH engines) is run at registration time via a
-//! `kx serve` end-to-end, per GR24 — this smoke test just proves the connector
+//! `kx serve` end-to-end, for the dual-engine gate — this smoke test just proves the connector
 //! reaches Discord.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]

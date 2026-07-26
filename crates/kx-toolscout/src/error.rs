@@ -12,7 +12,7 @@ pub enum ToolScoutError {
     EmptyBundle,
 
     /// A sequenced tool is not in the warrant's grant set. EXACT
-    /// `(name, version)` membership (SN-8) — a matching name with a different
+    /// `(name, version)` membership — a matching name with a different
     /// version is just as refused as an unknown tool.
     #[error("tool {name}@{version} is not granted by the warrant (exact-match refusal)", name = .name.0, version = .version.0)]
     UngrantedTool {

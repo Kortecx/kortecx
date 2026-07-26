@@ -1,4 +1,4 @@
-//! The NL→DAG workflow-proposer seam (D209.3 / SN-8 — propose-then-confirm).
+//! The NL→DAG workflow-proposer seam (D209.3 / — propose-then-confirm).
 //!
 //! `ProposeWorkflow` turns a natural-language goal into a PROPOSED multi-step DAG by
 //! running the served model ONCE and compiling the result through the vetted
@@ -20,8 +20,8 @@ use std::collections::BTreeMap;
 /// One proposed step, in DISPLAY shape. `role`/`intent`/`kind` are the model's plan
 /// (the minimal trust surface); `model_id` + `tool_contract` are the SERVER-resolved
 /// recipe axes, returned so the client can render the granted capabilities — the
-/// authoritative axes are re-derived server-side when the confirmed DAG is authored/run
-/// (SN-8), never trusted from this response.
+/// authoritative axes are re-derived server-side when the confirmed DAG is authored/run,
+/// never trusted from this response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProposedStep {
     /// The vetted role name this step plays.

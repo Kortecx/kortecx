@@ -163,7 +163,7 @@ pub fn fan_out_gather(
 /// **RAG (retrieval-augmented generation).** A corpus of `doc_logics` — one
 /// ingest/embed step per document (READ-ONLY-NONDET `generator`s: they read the
 /// world/model to embed + populate a [`kx_dataset::RetrievalIndex`], cached by
-/// ROND identity) → a single `retrieval` query step (ROND, the SN-8 boundary —
+/// ROND identity) → a single `retrieval` query step (ROND, the identity boundary —
 /// its committed fact is the ordered content refs, scores excluded) → a PURE
 /// `assemble` step that grounds an answer in the retrieved top-k content
 /// (consumed by exact hash). Static width (`doc_logics.len()`); `k` is the
@@ -204,7 +204,7 @@ pub fn rag_pipeline(
             capability.clone(),
         )));
     }
-    // The retrieval query step — ROND; the SN-8 boundary (similarity in, exact fact out).
+    // The retrieval query step — ROND; the identity boundary (similarity in, exact fact out).
     let query = wf.add_step(retrieval(
         query_logic,
         model_id.clone(),
@@ -284,7 +284,7 @@ pub fn rag_pipeline_hybrid(
         warrant.clone(),
         capability.clone(),
     ));
-    // The HYBRID retrieval query step — ROND; the SN-8 boundary. The retrieval-mode
+    // The HYBRID retrieval query step — ROND; the identity boundary. The retrieval-mode
     // marker makes its MoteId distinct from the dense `rag_pipeline`'s query step.
     let mut query_step = retrieval(
         query_logic,

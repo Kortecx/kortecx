@@ -54,7 +54,7 @@ async fn approval_inbox_is_empty_and_unknown_requests_no_op() {
 
     // Grant/Deny of an UNKNOWN (never-requested) 16-byte request id is an idempotent
     // no-op — `false`, never an error (a client can't mint authority over a request
-    // that does not exist; SN-8).
+    // that does not exist).
     let unknown = vec![0x11u8; 16];
     let granted = c
         .grant_approval(proto::GrantApprovalRequest {

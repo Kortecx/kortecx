@@ -24,7 +24,7 @@ from kortecx.types import Delta, MoteView, Projection, is_committed, is_pending,
 from kortecx.v1 import gateway_pb2 as g
 from kortecx.wait import WaitOutcome
 
-# --- hex (SN-8 safe: only encode/decode, never derive) ------------------------
+# --- hex (identity-safe: only encode/decode, never derive) ------------------------
 
 
 def test_hex_roundtrip_and_lengths():

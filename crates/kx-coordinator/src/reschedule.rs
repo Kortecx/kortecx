@@ -74,7 +74,7 @@ impl LeaseTracker {
     }
 
     /// Whether ANY worker currently holds an outstanding lease on `mote`. Used by
-    /// the PR-9a settle-pass dead-letter (BUG-27) to leave an in-flight observation
+    /// the PR-9a settle-pass dead-letter to leave an in-flight observation
     /// to its normal commit/fail lifecycle and dead-letter ONLY a wedged
     /// (materialized-but-never-leased) one — avoiding a race with a worker about to
     /// commit. O(1) via the reverse index.

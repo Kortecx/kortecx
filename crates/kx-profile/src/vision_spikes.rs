@@ -1,4 +1,4 @@
-//! Attach-mode vision spikes (Golden Rule 10 + GR24 dual-engine parity): time a real
+//! Attach-mode vision spikes (Golden Rule 10 + dual-engine parity): time a real
 //! image→text turn against a LIVE `kx serve` over gRPC, engine-agnostically. Mirrors
 //! [`crate::chat_spikes`] — a pure FFI-free gRPC client over the frozen
 //! `KxGatewayClient` stubs (no `kx-gateway` `serve-engine`/`inference` feature, no new

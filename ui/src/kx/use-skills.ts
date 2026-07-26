@@ -4,7 +4,7 @@
  * bit + the instructions preview), add (`AddSkill`), and remove (`RemoveSkill`).
  *
  * A skill is a DECLARATIVE `kortecx.skill/v1` bundle — instructions + a tool
- * grant-WISH set. Adding one grants NOTHING (SN-8): at `RunApp` the server
+ * grant-WISH set. Adding one grants NOTHING: at `RunApp` the server
  * intersects the wish against the caller's grants and the live broker
  * (`wish ∩ grants ∩ fireable`). Identity (`skillRef` / `instructionsRef`) is
  * server-derived. Degrades to a not-wired empty state on an old gateway

@@ -16,7 +16,7 @@
 //!   EMPTY**: dropping it loses product signal, never truth.
 //! - **Advisory only.** `instance_id`/`mote_id`/`content_ref`/`recipe_handle`/
 //!   `model_id` are display/join/audit fields; identity is the server-derived
-//!   `feedback_id` alone (SN-8). The caller `principal` is SERVER-resolved (the
+//! `feedback_id` alone. The caller `principal` is SERVER-resolved (the
 //!   `PutContent` precedent), never trusted off the wire.
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without the sidecar degrades
 //!   forward-compatibly.
@@ -25,7 +25,7 @@ use crate::error::GatewayError;
 
 /// One feedback write — the advisory row the host durably records. The
 /// `feedback_id` + `principal` are SERVER-derived by the handler before this
-/// reaches the seam (SN-8); the rest are advisory target/context fields.
+/// reaches the seam; the rest are advisory target/context fields.
 #[derive(Clone, Debug)]
 pub struct FeedbackRecord {
     /// SERVER-derived id (deterministic over `(message_id, principal)` so a

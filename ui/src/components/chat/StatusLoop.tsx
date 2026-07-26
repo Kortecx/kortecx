@@ -4,7 +4,7 @@
  * (`ReactProgress`). The audited per-turn action set now lives in Monitoring; the
  * chat shows only an HONEST current-phase word.
  *
- * GR15 honesty contract: this is NOT a cosmetic/random rotation. The phase WORD is
+ * honesty contract: this is NOT a cosmetic/random rotation. The phase WORD is
  * derived (purely) from real runtime facts — the chain's durable `ReactRound`
  * branches (`ListReactTurns`) for an agent turn, or the run projection for a plain
  * chat turn — so the word changes ONLY when a real decode → plan → tool-call →

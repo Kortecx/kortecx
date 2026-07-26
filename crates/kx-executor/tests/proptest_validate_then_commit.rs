@@ -1,5 +1,5 @@
 //! Property tests on the PR 9b-5 `StandardCommitProtocol`
-//! `ValidateThenCommit` path. SN-4 v2 mandate: ≥3 proptest properties ×
+//! `ValidateThenCommit` path. Structural-review mandate: ≥3 proptest properties ×
 //! 64 cases.
 //!
 //! Properties:

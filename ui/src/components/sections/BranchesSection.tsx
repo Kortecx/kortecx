@@ -8,7 +8,7 @@ import { NewBranchForm } from "../branches/NewBranchForm";
  * 1. **Your branches (govern/review)** — the durable inventory (`ListBranches`):
  *    every branch this party authored, its `{path → ref}` manifest, the
  *    server-derived `branchRef`, the CoW parent (if a fork), and a delete control
- *    (unbinds the handle; the CAS blobs stay). Caller-scoped (SN-8).
+ * (unbinds the handle; the CAS blobs stay). Caller-scoped.
  * 2. **Author** — snapshot a confined path set (`SnapshotInto`) or create/fork a
  *    branch (`CreateBranch`). Files are read server-side from `KX_SERVE_FS_ROOT`;
  *    the host is never written (Phase-A).
@@ -24,7 +24,7 @@ export function BranchesSection() {
         Snapshot operator-approved host files into content-addressed branches, then let the agent
         loop edit them in the content store. Copy-on-write and governed: a branch is a manifest of
         immutable refs, a sub-branch re-points only changed files, and the host filesystem is never
-        written in this phase (SN-8).
+        written in this phase.
       </p>
 
       <h2>Your branches</h2>

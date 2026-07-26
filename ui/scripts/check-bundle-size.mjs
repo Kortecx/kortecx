@@ -52,7 +52,7 @@
  *     that validate `?chain=`/`?anchor=`. Measured 673,979 B (origin/main) → 674,866 B
  *     (+887 B eager); bumped to the next KiB boundary.
  *
- * Exit 1 over budget. The printed table doubles as the GR10 evidence blob.
+ * Exit 1 over budget. The printed table doubles as the measurement evidence blob.
  */
 
 import { readFileSync, readdirSync, statSync } from "node:fs";

@@ -12,7 +12,7 @@
 //!
 //! ## Advisory only
 //! `rating`/`comment`/the target+context keys are advisory: identity is the
-//! server-derived `feedback_id` alone (SN-8). `INSERT OR REPLACE` keys on that
+//! server-derived `feedback_id` alone. `INSERT OR REPLACE` keys on that
 //! id, which the handler derives deterministically over `(message_id, principal)`
 //! — so a party re-rating the same answer OVERWRITES (the "changed my mind" UX).
 

@@ -7,7 +7,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx opt-in SCALE retrieval backend (DP3, T2.3) — a file-backed, in-process HNSW (approximate-nearest-neighbour) index implementing kx-dataset::RetrievalIndex via the pure-Rust hnsw_rs crate, for corpora too large for the default exact brute-force scan. Off the truth path (SN-8): similarity stays inside the retrieval Mote; only the ordered neighbour-ref SET is committed. The on-disk form is a REBUILDABLE CACHE of (ContentRef, vector) records — the HNSW graph is rebuilt on open, so a format break is recovered by replay (D40), never a migration. The exact InMemoryRetrievalIndex stays the reproducible DEFAULT; this is the opt-in scale path."
+description = "kortecx opt-in SCALE retrieval backend (DP3, T2.3) — a file-backed, in-process HNSW (approximate-nearest-neighbour) index implementing kx-dataset::RetrievalIndex via the pure-Rust hnsw_rs crate, for corpora too large for the default exact brute-force scan. Off the truth path: similarity stays inside the retrieval Mote; only the ordered neighbour-ref SET is committed. The on-disk form is a REBUILDABLE CACHE of (ContentRef, vector) records — the HNSW graph is rebuilt on open, so a format break is recovered by replay (D40), never a migration. The exact InMemoryRetrievalIndex stays the reproducible DEFAULT; this is the opt-in scale path."
 
 [lib]
 path = "src/lib.rs"

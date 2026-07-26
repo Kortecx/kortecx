@@ -4,11 +4,11 @@
  * so every topology is exhaustively unit-testable. Mirrors the Rust core's
  * pure/total/testable discipline (and the live-DAG `dag-graph.ts`).
  *
- * SN-8: the builder NEVER computes a MoteId or a warrant. `toRequest` assembles
+ * the builder NEVER computes a MoteId or a warrant. `toRequest` assembles
  * ONLY the topology + params the SERVER compiles + admits (via the SDK
  * `BlueprintBuilder`). A tampered client DAG changes only what is PROPOSED, never
  * the identity it is assigned. The palette is PURE / MODEL — no REACT/tool-grant
- * authoring (that would reopen the SubmitWorkflow admission boundary, §2.171).
+ * authoring (that would reopen the SubmitWorkflow admission boundary).
  */
 
 import type { ProposedWorkflowStep, StepInput } from "@kortecx/sdk/web";
@@ -17,7 +17,7 @@ import { BlueprintBuilder, PERSONAS, task } from "@kortecx/sdk/web";
 /** The authored step palette (EXEC is reserved server-side; the UI offers
  *  PURE / MODEL / TOOL). TOOL (PR-6b-2) fires a single REGISTERED tool: the SERVER
  *  resolves it in the live registry + builds the per-step warrant (client tool_grants
- *  stay refused — SN-8/§2.171), so adding it does NOT reopen the admission boundary. */
+ * stay refused — the identity rule), so adding it does NOT reopen the admission boundary. */
 export type BuilderStepKind = "pure" | "model" | "tool";
 
 /** One authored builder step. `params` is the JSON-OBJECT TEXT the user edits in
@@ -46,7 +46,7 @@ export interface BuilderStep {
    *  makes this a DETERMINISTIC-AGENTIC step — a bounded reason→tool→observe loop over
    *  the FIXED set (the set is part of the step's identity). Empty ⇒ a plain model step
    *  (byte-identical to before). The SERVER builds the union warrant + drives the loop
-   *  (SN-8: client tool_grants stay refused). */
+   * (client tool_grants stay refused). */
   readonly toolContract: Readonly<Record<string, string>>;
   /** APP ONLY: the catalog SKILL names bound to this step. This and the two below are the
    *  per-node capability BINDINGS — they name entries in the App envelope's `references`,
@@ -147,7 +147,7 @@ export function validateAcyclic(graph: BuilderGraph): AcyclicResult {
  *
  *  `allowEmptyModel` (POC-5d): when true, a MODEL step may leave `modelId` empty —
  *  it binds the SERVED model at run (the portable App convention; the server resolves
- *  it, SN-8). The blueprint builder (authoring a one-shot run here-and-now) keeps
+ * it). The blueprint builder (authoring a one-shot run here-and-now) keeps
  *  requiring an explicit model (default false); the App lineage editor passes true so
  *  a served-model App can be re-saved. */
 export function validationError(
@@ -286,7 +286,7 @@ function paramsRecord(s: BuilderStep): Record<string, string> {
     }
   }
   // The reasoning-mode is an opt-in declared free-param (default-unset ⇒ omitted,
-  // so the step's identity is byte-identical to a no-reasoning step — SN-8/digest).
+  // so the step's identity is byte-identical to a no-reasoning step — identity/digest).
   if (s.kind === "model" && s.reasoning !== "") {
     out.reasoning = s.reasoning;
   }
@@ -347,12 +347,12 @@ export function newStep(kind: BuilderStepKind, id: string): BuilderStep {
 // SAME DAG the SDK `flow().swarm/supervisor/consensus()` and the `kx swarm` CLI
 // author, so a UI-authored pattern is byte-equivalent to its SDK/CLI twin (modulo
 // the served-model binding — the one-shot builder pins an explicit model per node,
-// the SDK's App convention leaves it empty). SN-8 unchanged: the client still sends
+// the SDK's App convention leaves it empty). The identity rule unchanged: the client still sends
 // only topology + params; the server compiles the DAG + builds every warrant.
 
 /** A pattern the builder can insert. `consensusJudge` reduces via a MODEL judge that
  *  SELECTS the best candidate; `consensusMajority` reduces via a PURE sink the server
- *  folds to the exact-equality plurality (SN-8; ties → first-appearance). */
+ * folds to the exact-equality plurality (ties → first-appearance). */
 export type PatternKind = "swarm" | "supervisor" | "consensusJudge" | "consensusMajority";
 
 /** The `config_subset` key marking a PURE sink as an exact-equality consensus vote —
@@ -471,7 +471,7 @@ export type ProposedStepWithCapabilities = ProposedWorkflowStep & {
  * identity-bearing fold the persona chip applies (`StepConfigDrawer`), so an applied step is
  * byte-identical to one a user hand-authored with that persona. Edges map by proposed step
  * index (out-of-range / self edges dropped). Pure + total — the server still COMPILES +
- * warrants the confirmed DAG (SN-8); this only shapes what is proposed onto the canvas.
+ * warrants the confirmed DAG; this only shapes what is proposed onto the canvas.
  */
 export function proposalToBuilderGraph(
   steps: readonly ProposedStepWithCapabilities[],

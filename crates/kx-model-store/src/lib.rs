@@ -39,7 +39,7 @@
 //! it) without touching the weights. It is the loaded-model cache key, never a
 //! cryptographic commitment to the weights and never journaled.
 //!
-//! ## Off the trust path (SN-8)
+//! ## Off the trust path
 //!
 //! The store never gates selection, commitment, eviction, or the audit path, and
 //! carries no floats. The guarantee-path crates (`kx-scheduler` / `kx-executor` /

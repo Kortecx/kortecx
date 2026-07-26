@@ -9,7 +9,7 @@
  * fact, so a pending node renders "available after commit" with NO RPC. It
  * renders as a sibling OVERLAY of the ReactFlow canvas, so opening/closing —
  * and switching panes — never mutates the graph's nodes/edges/positions (the
- * no-thrash layout invariant holds). Pure read surface (D141.3, SN-8).
+ * no-thrash layout invariant holds). Pure read surface (D141.3).
  */
 
 import { m } from "framer-motion";

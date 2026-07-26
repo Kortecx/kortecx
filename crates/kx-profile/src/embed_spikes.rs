@@ -1,4 +1,4 @@
-//! Attach-mode embedding / RAG spikes (Golden Rule 10 + GR24 dual-engine parity):
+//! Attach-mode embedding / RAG spikes (Golden Rule 10 + dual-engine parity):
 //! time a real datasets **server-embed** round-trip against a LIVE `kx serve` over
 //! gRPC, engine-agnostically. Mirrors [`crate::chat_spikes`] — a pure FFI-free gRPC
 //! client over the frozen `KxGatewayClient` stubs (no `kx-gateway`

@@ -141,7 +141,7 @@ fn synthesize_dead_letter_reason(
 /// Governance observability: decode a chain's run-fixed warrant axes from its anchor
 /// `warrant_ref` — the sorted granted tool ids (`tool_id@version`) it may fire and the
 /// sorted secret refs it may resolve (D110.3; empty for `SecretScope::None`). NAMES/REFS
-/// ONLY, never a secret value (SN-8/D81). A pure read-only projection: absent `content`,
+/// ONLY, never a secret value. A pure read-only projection: absent `content`,
 /// an absent blob, or an undecodable warrant all yield empty vecs (display degrades,
 /// never errors; digest-neutral). Makes a dropped capability axis VISIBLE (the class
 /// behind `T-RUNAPP-SECRET-SCOPE-OBSERVATION`).
@@ -236,7 +236,7 @@ pub(crate) fn list_react_turns(
                 // One row per branch — EXCEPT a ToolBatch, which fans into N "tool"
                 // rows sharing this turn's coordinates (T-MULTI-ELEMENT-TOOLCALLS).
                 let step_salt_wire = step_salt.map(|s| s.to_vec()).unwrap_or_default();
-                // Governance axes (names/refs only, SN-8/D81) — decoded once per chain.
+                // Governance axes (names/refs only, Refs-not-values) — decoded once per chain.
                 let (granted_tools, secret_scope_names) = axes_memo
                     .entry(*warrant_ref.as_bytes())
                     .or_insert_with(|| warrant_axes(content, &warrant_ref))

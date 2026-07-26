@@ -2,7 +2,7 @@
 //! ("what this App needs vs. what you have").
 //!
 //! An App declares the tools / connections / model it wants; the runtime grants only
-//! the intersection with the caller's own authority at run time (SN-8). The manifest
+//! the intersection with the caller's own authority at run time. The manifest
 //! is the DERIVED preview of that intersection, computed by the host from the stored
 //! envelope + the SAME live policy folds `RunApp` uses — so it can never report a
 //! capability "in policy" that the run would drop. It is advisory: it gates nothing,

@@ -5,7 +5,7 @@
 //! newline-delimited JSON-RPC to a subprocess MCP server over its stdin/stdout —
 //! no network, no TLS. Credentials are injected into the child's environment
 //! out-of-band (D81); the response read is **bounded** by the caller's size cap
-//! (IMP-16) and **wall-clock-bounded** (a watchdog kills a hung server).
+//! And **wall-clock-bounded** (a watchdog kills a hung server).
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -125,7 +125,7 @@ pub(crate) fn scope_of_credentials<'a>(
 /// relative — e.g. a test harness's `target/release/...`) is honoured verbatim and
 /// never rewritten. This is a spawn-time hint only; the stored `program` keeps the
 /// author's intent, and preferring the `kx`-sibling over a bare `PATH` lookup also
-/// narrows the PATH-hijack surface for a bare name (GR8 security-positive).
+/// narrows the PATH-hijack surface for a bare name (security-positive).
 fn resolve_program(program: &OsString) -> OsString {
     resolve_program_with(program, std::env::current_exe().ok().as_deref())
 }

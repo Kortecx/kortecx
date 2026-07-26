@@ -185,7 +185,7 @@ jobs:
           fi
           cargo check -p kx-cli --features hnsw
           cargo check -p kx-cli --features inference,hnsw
-          # The gateway-only / external-coordinator config (SN-6): `kx-gateway`
+          # The gateway-only / external-coordinator config: `kx-gateway`
           # --no-default-features (embedded-worker OFF ⇒ kx-coordinator unlinked)
           # must stay buildable, so a feature-independent path never references a
           # feature-gated import. Mirrors `just features-guard` (local) — keeping
@@ -203,7 +203,7 @@ jobs:
       # the gate proved nothing about half the hosted surface. Both the lint and
       # the tests run here: `hosted_supervisor_e2e` / `hosted_app_live_serve` are
       # `#[cfg(feature = "hosted-apps")]` and would otherwise compile to ZERO
-      # tests and report `ok` (the L-113 false-green shape — read the witness,
+      # tests and report `ok` (the false-green shape — read the witness,
       # never the exit code). FFI-free, so it stays in this cheap job.
       - name: hosted-apps feature gate (clippy + tests)
         run: |
@@ -296,7 +296,7 @@ jobs:
   # golden-v1 corpus (scripted transcripts: task success / tool-call F1 /
   # groundedness / retrieval quality / loop efficiency) and fails CLOSED on any
   # regression vs the COMMITTED baseline or on corpus drift. FFI-free + flake-proof
-  # (no model / network / clock), so the GitHub gate matches `just ci` — GR23: no
+  # (no model / network / clock), so the GitHub gate matches `just ci` — no
   # local-vs-CI gap on the eval ratchet every later RC PR must hold.
   # ---------------------------------------------------------------------------
   eval:
@@ -484,7 +484,7 @@ jobs:
         run: just build-no-inference
 
   # ---------------------------------------------------------------------------
-  # build-serve-engine — the PR-A.1 dual-engine adoption gate (GR24).
+  # build-serve-engine — the PR-A.1 dual-engine adoption gate.
   #
   # Proves the prebuilt release feature set (`console,hnsw,serve-engine`) is
   # GENUINELY FFI-free: this job deliberately checks out WITHOUT submodules and
@@ -1029,12 +1029,12 @@ jobs:
           cargo test -p kx-gateway --features serve-engine,hnsw --lib -- --nocapture
 
   # ---------------------------------------------------------------------------
-  # real-model-e2e — the GR15 real-model behavioral gate. Serves the public
+  # real-model-e2e — the real-model behavioral gate. Serves the public
   # Qwen3-0.6B stand-in through the FULL serve path (invoke kx/recipes/chat →
   # worker → real in-process inference → commit → GetContent) and asserts the
-  # completion is CLEAN (no ChatML scaffolding leak — the §2.199 parse_special
+  # completion is CLEAN (no ChatML scaffolding leak — the parse_special
   # guard at the e2e level — no `kx demo result` placeholder) AND greedy decode is
-  # deterministic across independent gateways. Real inference on EVERY PR (GR15).
+  # deterministic across independent gateways. Real inference on EVERY PR.
   # Builds the llama.cpp FFI; the GGUF is SHA-pinned + cached so it downloads at
   # most once. A REQUIRED status-check context (Golden Rule 4) — promoted via branch
   # protection once green on `main` (the job `name:` below is that context string;
@@ -1086,7 +1086,7 @@ jobs:
         run: |
           echo "RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}= -Cmetadata=kortecx-v0" >> $GITHUB_ENV
 
-      - name: just real-model-e2e (fetch Qwen3-0.6B + run the GR15 gate)
+      - name: just real-model-e2e (fetch Qwen3-0.6B + run the real-model gate)
         run: just real-model-e2e
 
   # NOTE (PR-2): the IMAGE pipeline is intentionally NOT a CI job. A 2 B VLM
@@ -1105,7 +1105,7 @@ jobs:
   # 25k+ Mote journal in RELEASE and asserts the incremental children-index re-fold
   # stays ~linear (M2.1) AND that resume-from-FoldCheckpoint reproduces the full
   # fold exactly with cost bounded by live-state under churn (M2.2) AND that offline
-  # schema migration (migrate_to, IMP-2/M2.x-E) stays O(entries) so resume-after-
+  # schema migration (migrate_to, M2.x-E) stays O(entries) so resume-after-
   # upgrade is not an outage. A super-linear resume is an outage. Promoted to a
   # required status check via an explicitly-authorized branch-protection PATCH once
   # green on a couple of runs (Golden Rule 4). Needs the test suite green first.
@@ -1151,10 +1151,10 @@ jobs:
   # connector-conformance — the D167 Connector/Extension SDK gate (E0). Dials a
   # PINNED REAL third-party MCP server (the official filesystem server) through the
   # real gateway path and runs the Extension Acceptance Gate subset (items 3/5/7/10:
-  # out-of-process · warrant/SN-8 · secret-by-ref · on/off). `npm ci` restores the
+  # out-of-process · warrant · secret-by-ref · on/off). `npm ci` restores the
   # EXACT committed lockfile (the only network op — cached); the dial + every
   # assertion run OFFLINE over a stdio subprocess, so no network flakiness enters the
-  # gate (GR12). REQUIRED: promote to a branch-protection check once green.
+  # gate. REQUIRED: promote to a branch-protection check once green.
   # ---------------------------------------------------------------------------
   connector-conformance:
     name: connector-conformance (D167 — real external MCP through the gate)
@@ -1226,7 +1226,7 @@ jobs:
 
   # cargo-semver-checks: a breaking public-API change on a Cargo 0.x crate is a MINOR bump (0.1.x -> 0.2.0),
   # never a patch. #307 retyped kx-coordinator/kx-worker public signatures but bumped 0.1.1 -> 0.1.2 and
-  # every gate passed (the merge gate proves CI + review, not semver — L-077.a). This job fails when the
+  # every gate passed (the merge gate proves CI + review, not semver). This job fails when the
   # public API changed with no matching version bump. FFI-free: the llama.cpp crates are excluded (they
   # need the C++ toolchain + submodule). Git-rev baseline (origin/main) — no crates.io publish required.
   semver-checks:

@@ -7,7 +7,7 @@
 //! (`kx-gateway`) implements it over its durable `Arc<SqliteToolRegistry>`
 //! (`tools.db`) + the admission-time SSRF vetting of `server_host`.
 //!
-//! # Boundaries (load-bearing — SN-8 / GR8 / GR19)
+//! # Boundaries (load-bearing — load-bearing)
 //!
 //! - **Off the truth path.** `tools.db` is off-journal, off-digest: a server-
 //!   derived `tool_id` (`registration_token_of(def, prov)[..16]`), never a
@@ -19,14 +19,14 @@
 //!   `tool_id`, and client `tool_grants` stay refused at admission (BLOCKER #5).
 //! - **OSS = the registry + view + admission-time SSRF vetting.** DIALING the
 //!   external MCP server (the live remote tool round), credentialed Connections,
-//!   and parallel fan-out are the PR-6b / Cloud surface (D159/D132/GR19) — the
+//!   and parallel fan-out are the PR-6b / Cloud surface — the
 //!   vetted `server_host` is stored here, never dialed.
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without the registry wired
 //!   degrades forward-compatibly.
 
 /// One registered tool, projected into gateway-core's own wire vocabulary (the
 /// `DiscoverTools` inventory / governance row). `net_scope_summary` is a display
-/// string; authority never rides this seam (SN-8).
+/// string; authority never rides this seam.
 #[derive(Clone, Debug)]
 pub struct RegisteredToolEntry {
     /// 16-byte server-derived id (`registration_token_of(def, provenance)[..16]`).
@@ -54,7 +54,7 @@ pub struct RegisteredToolEntry {
 }
 
 /// One declared, typed tool parameter (the MCP `inputSchema` analogue — CLOSED
-/// set, no float, SN-8). `ty`: `"str"` | `"bytes"` | `"int"` | `"bool"` | `"enum"`.
+/// set, no float). `ty`: `"str"` | `"bytes"` | `"int"` | `"bool"` | `"enum"`.
 #[derive(Clone, Debug)]
 pub struct ToolParamWire {
     /// The argument key.
@@ -81,7 +81,7 @@ pub struct ToolSchemaWire {
 
 /// A `RegisterTool` request, in gateway-core vocabulary. The server derives
 /// identity + capability from these (the client never supplies a warrant /
-/// tool_id — SN-8).
+/// tool_id).
 #[derive(Clone, Debug)]
 pub struct ToolRegistration {
     /// Identity half.

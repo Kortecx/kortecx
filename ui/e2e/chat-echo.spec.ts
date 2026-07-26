@@ -17,7 +17,7 @@ test("a model-free serve shows the honest no-model degrade notice", async ({ pag
   await page.getByTestId("nav-chat").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 
-  // PR-B (GR15): on this model-free serve chat proactively shows the honest
+  // PR-B: on this model-free serve chat proactively shows the honest
   // "no model — connect one" notice (the default backing, not a silent echo).
   await expect(page.getByTestId("degrade-notice")).toBeVisible();
 });

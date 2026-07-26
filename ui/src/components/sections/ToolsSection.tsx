@@ -30,7 +30,7 @@ const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
  *
  * 1. **Tools** — the durable tool inventory (`DiscoverTools`) + register/deregister
  *    controls, the autonomous-access posture, and the advisory toolscout (manifests
- *    + a dry-run TaskBundle scorer). Registration grants NO authority (SN-8); every
+ * + a dry-run TaskBundle scorer). Registration grants NO authority; every
  *    score/verdict is display-only and never authorizes anything.
  * 2. **Connections** — dial external MCP servers (the live untrusted-egress surface).
  * 3. **Triggers** — bind an inbound event (webhook / cron / RPC) to a recipe handle.
@@ -38,7 +38,7 @@ const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
  *    Connection's / Trigger's `credential_ref` points at (the value is write-only, D81).
  *
  * Each surface degrades to an honest not-wired empty state on older gateways
- * (UNIMPLEMENTED — GR15 don't-fake-gaps).
+ * (UNIMPLEMENTED — don't-fake-gaps).
  */
 export function ToolsSection({
   tab = "tools",
@@ -54,7 +54,7 @@ export function ToolsSection({
           <h1>Integrations</h1>
           <p className="muted">
             Register, govern, and connect the tools, external servers, event triggers, and secrets
-            your agents use. Registration grants no authority (SN-8): a tool fires only under a
+            your agents use. Registration grants no authority: a tool fires only under a
             server-issued warrant, re-verified by the broker at every call.
           </p>
         </div>
@@ -151,7 +151,7 @@ function ToolsTabBody() {
 
       <h2>Discovery &amp; preview</h2>
       <p className="muted">
-        Advisory by construction (SN-8): ranking scores and dry-run verdicts are display-only — they
+        Advisory by construction: ranking scores and dry-run verdicts are display-only — they
         never authorize a tool.
       </p>
 

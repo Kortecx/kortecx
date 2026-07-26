@@ -160,10 +160,10 @@ kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.1.1"
 kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.1.1" }
 kx-model-validator   = { path = "crates/kx-model-validator",   version = "0.1.1" }
 kx-warrant           = { path = "crates/kx-warrant",           version = "0.1.1" }
-# The model-proposed tool-call AUTHORITY GATE (IMP-5, extracted PR-2d-1) — pure
+# The model-proposed tool-call AUTHORITY GATE (extracted PR-2d-1) — pure
 # leaf shared by the harness ReAct loop, the gateway pre-commit fence, and the
 # coordinator settle decode. Extracted (moved), never forked: a byte-mirror that
-# drifted would silently admit an ungranted tool (SN-8).
+# drifted would silently admit an ungranted tool.
 kx-toolcall          = { path = "crates/kx-toolcall",          version = "0.1.1" }
 kx-tool-registry     = { path = "crates/kx-tool-registry",     version = "0.1.1" }
 # RC2: the engine-agnostic grammar/constraint spec — renders a granted tool set
@@ -208,22 +208,22 @@ kx-chunk             = { path = "crates/kx-chunk",             version = "0.1.0"
 kx-dataset           = { path = "crates/kx-dataset",           version = "0.1.1" }
 # The opt-in SCALE retrieval backend (DP3, T2.3) — a file-backed in-process HNSW
 # index implementing kx-dataset::RetrievalIndex via the pure-Rust hnsw_rs crate.
-# Off the truth path (SN-8); the exact InMemory index stays the reproducible
+# Off the truth path; the exact InMemory index stays the reproducible
 # default. Consumed only behind an opt-in feature (kx-gateway's `hnsw`, T3.7).
 kx-dataset-hnsw      = { path = "crates/kx-dataset-hnsw",      version = "0.1.1" }
 # The opt-in SPARSE (keyword / BM25) retrieval backend (RC4a) — a hand-rolled,
 # FFI-free inverted index implementing kx-dataset::LexicalIndex; the keyword leg of
-# hybrid retrieval (RRF-fused with the dense index). Off the truth path (SN-8).
+# hybrid retrieval (RRF-fused with the dense index). Off the truth path.
 kx-dataset-bm25      = { path = "crates/kx-dataset-bm25",      version = "0.1.0" }
 # The opt-in GRAPH-RAG retrieval leg (graph-RAG PR-1) — a pure-Rust, in-memory
 # knowledge graph of (subject, predicate, object) triples with a deterministic
 # multi-hop neighbour walk; the third RRF fusion leg beside the dense + sparse
-# indices. Off the truth path (SN-8); default-off behind KX_FLAG_SERVE_GRAPH_RAG.
+# indices. Off the truth path; default-off behind KX_FLAG_SERVE_GRAPH_RAG.
 kx-dataset-graph     = { path = "crates/kx-dataset-graph",     version = "0.1.0" }
 # The durable agentic MEMORY subsystem (RC5a) — a cross-run, per-namespace store of
 # what an agent learned (memory.db) + a rebuildable similarity index over the
-# kx-dataset RetrievalIndex seam (semantic recall + episodic log). Off the truth path
-# (SN-8), journal-authoritative, NO journal schema bump. The recall@1 / remember@1
+# kx-dataset RetrievalIndex seam (semantic recall + episodic log). Off the truth path,
+# journal-authoritative, NO journal schema bump. The recall@1 / remember@1
 # capabilities (kx-gateway) are the live surface.
 kx-memory            = { path = "crates/kx-memory",            version = "0.1.0" }
 # Deterministic-critic vocabulary (P4.2) — CriticVerdict / CriticReason / CheckSpec.
@@ -239,7 +239,7 @@ kx-capture           = { path = "crates/kx-capture",           version = "0.1.1"
 # Runtime audit sink (R4, D127 step 2.1) — append-only, off-truth-path, best-effort/
 # non-fatal lifecycle trail (AuditSink trait + AuditEvent + JsonlAuditSink/InMemory).
 # Join keys only (no payload/secrets); timestamps live only on the JSONL wire and
-# never feed the digest; SN-8 integer/crypto-equality. The guarantee-path crates
+# never feed the digest; integer/crypto-equality. The guarantee-path crates
 # (frozen trio + journal/projection/memoizer) NEVER depend on it (a dep-wall test pins it).
 kx-audit             = { path = "crates/kx-audit",             version = "0.1.1" }
 # Submission-time refusal vocabulary + predicates (M1.3) — a dependency-light LEAF
@@ -258,7 +258,7 @@ kx-mcp               = { path = "crates/kx-mcp",               version = "0.1.1"
 # surface (dial-time vetting + per-server rate-limit + warrant-gated egress +
 # fail-closed + audit). A thin SYNC orchestrator over kx-mcp; never the frozen
 # trio, never the journal (a dep-wall test pins it). The runtime is a SECURE
-# GATEWAY (D132/GR19) — no arbitrary code runs in-runtime.
+# GATEWAY — no arbitrary code runs in-runtime.
 kx-mcp-gateway       = { path = "crates/kx-mcp-gateway",       version = "0.1.1" }
 # The planner (M6, D73) — lowers an untrusted model PROPOSAL into a registered
 # Mote DAG (decode fail-closed; select ROLES not permissions; compile is the
@@ -292,7 +292,7 @@ kx-skill             = { path = "crates/kx-skill",             version = "0.1.0"
 # ToolFingerprints + the integer-bp tolerance ladder + a manifest index over
 # kx-dataset::RetrievalIndex + TaskBundle→WorkflowDef lowering behind the
 # planner-style EXACT (name, version) tool_grants gate. ADVISORY-ONLY BY
-# CONSTRUCTION (SN-8): scores order and retrieve, never authorize — lowering
+# CONSTRUCTION: scores order and retrieve, never authorize — lowering
 # takes no score input; the broker exact-equality gate stays the sole authority.
 # Depends only on kx-bundle/kx-mote/kx-warrant/kx-workflow/kx-dataset/kx-content
 # — NEVER the journal, the gateway, or the frozen trio.
@@ -300,7 +300,7 @@ kx-toolscout         = { path = "crates/kx-toolscout",         version = "0.1.1"
 # Teams / fleets (M7, D112) — journaled membership facts + a fail-closed fold +
 # composed warrant resolution. Membership is one-level-up delegation
 # (intersect(team_warrant, member_role)); nested fleet-of-teams = a bounded multi-hop
-# narrow. A SEPARATE TRUTH (off-journal, off the trust path, SN-8). Depends ONLY on
+# narrow. A SEPARATE TRUTH (off-journal, off the trust path). Depends ONLY on
 # kx-catalog/kx-warrant; the journal + frozen trio NEVER depend on it (one-way edge).
 kx-fleet             = { path = "crates/kx-fleet",             version = "0.1.1" }
 # M8 (D120) gateway backend: read-fold (journal -> ProjectionView / GetContent /
@@ -327,7 +327,7 @@ kx-flags             = { path = "crates/kx-flags",             version = "0.1.0"
 # run's TRANSCRIPT (task success / tool-call correctness / RAG groundedness / loop
 # efficiency / latency) — the measure-first yardstick (`just eval >= baseline`).
 # Every scorer is a PURE total fn of a Transcript; the gating baseline is a COMMITTED
-# corpus, not the gitignored docs/benchmarks (SN-2). Off the journal + identity path
+# corpus, not the gitignored docs/benchmarks. Off the journal + identity path
 # + frozen trio (a measurement leaf, never a committed fact). Composes kx-profile's
 # Gate/Spike report + kx-toolcall's parser + kx-critic's deterministic checks.
 kx-eval              = { path = "crates/kx-eval",              version = "0.2.0" }

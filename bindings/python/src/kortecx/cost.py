@@ -2,9 +2,9 @@
 over the durable turn/tool counters at operator-set micro-USD rates, surfaced by
 ``GetRunCost``.
 
-This is a BUDGET GUARDRAIL readout, NOT Cloud per-expert billing (the D129/D156/GR19
+This is a BUDGET GUARDRAIL readout, NOT Cloud per-expert billing (the cloud-tier
 boundary holds — no token / price-per-expert data crosses the wire). Kept in its own
-module (module-per-concern, GR3).
+module (module-per-concern).
 """
 
 from __future__ import annotations

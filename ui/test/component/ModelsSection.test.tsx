@@ -99,7 +99,7 @@ describe("ModelsSection", () => {
     await waitFor(() => expect(screen.getByTestId("model-action-error")).toBeInTheDocument());
   });
 
-  it("shows the honest-disabled Cloud card + an honest-disabled Pull panel when downloads are off (D129/GR15)", async () => {
+  it("shows the honest-disabled Cloud card + an honest-disabled Pull panel when downloads are off", async () => {
     // Model Control v2: downloads OFF by default (deny-by-default) ⇒ the Pull panel
     // renders disabled WITH the reason, never a faked control.
     const mock = makeMockClient({ listModels: async () => MODELS });
@@ -183,7 +183,7 @@ describe("ModelsSection", () => {
       expect(screen.getByTestId("model-default-badge-qwen3-4b")).toBeInTheDocument(),
     );
     expect(screen.getByTestId("model-set-default-gemma-2b")).toBeInTheDocument();
-    // Persisted client-local (no backend, SN-8: still a recipe enum at bind).
+    // Persisted client-local (no backend, still a recipe enum at bind).
     expect(localStorage.getItem("kortecx.ui.default-model")).toBe("qwen3-4b");
 
     // Clicking the badge clears the default.

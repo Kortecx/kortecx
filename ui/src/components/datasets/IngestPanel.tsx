@@ -13,7 +13,7 @@ import { EmbedderNotice, isNoEmbedder } from "./EmbedderNotice";
  * + indexes each — so this needs a server embedder (the `inference` feature); without
  * one it returns FAILED_PRECONDITION and the panel shows the {@link EmbedderNotice}
  * (or use the SDK's FFI-free client-vector path). Re-ingesting identical content is a
- * no-op (content-addressed dedup); the server derives each doc's id (SN-8).
+ * no-op (content-addressed dedup); the server derives each doc's id.
  */
 export function IngestPanel() {
   const [name, setName] = useState("");

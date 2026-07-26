@@ -1,4 +1,4 @@
-//! The cross-surface byte-shape gate (GR12). `tests/golden/apps/corpus.json` pins
+//! The cross-surface byte-shape gate. `tests/golden/apps/corpus.json` pins
 //! the canonical serialization of representative envelopes; Rust, Python, and TS
 //! all assert idempotent canonicalization against these SAME committed strings, so
 //! any divergence in key order / separators / number format / escaping is caught.

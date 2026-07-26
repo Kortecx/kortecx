@@ -20,7 +20,7 @@
 //!   FFI-free (no `kx-llamacpp`) and writer-free (no journal / gateway / frozen
 //!   trio).
 //!
-//! ## Security (SN-8)
+//! ## Security
 //! The Ollama base URL is an **operator-configured** value (the host reads it from
 //! env and hands it to [`OllamaClient::new`]); it is NEVER model / client /
 //! Mote-controlled — no warrant or bound `model` arg can redirect the engine. The

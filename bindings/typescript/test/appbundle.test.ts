@@ -2,7 +2,7 @@
  * `kortecx.appbundle/v1` codec — cross-surface golden parity + structure tests, plus
  * a server-backed export → import → clone round-trip.
  *
- * The parity gate (GR12): every committed bundle in `tests/golden/apps/bundle_corpus.json`
+ * The parity gate: every committed bundle in `tests/golden/apps/bundle_corpus.json`
  * round-trips through THIS SDK's codec BYTE-IDENTICALLY (matches the Rust `kx-appbundle`
  * crate + the Python SDK). `contentRefs` mirrors the Rust envelope walk.
  */

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Conformance: the bundled Discord connector passes the Extension Acceptance Gate
-//! subset (out-of-process · warrant/SN-8 · secret-by-ref · on/off), driven OFFLINE
+//! subset (out-of-process · warrant · secret-by-ref · on/off), driven OFFLINE
 //! (`KX_DISCORD_FAKE`) so it needs no Discord credentials and no network.
 //!
 //! The connector is a `[[bin]]` of THIS crate, so `CARGO_BIN_EXE_kx-connector-discord`

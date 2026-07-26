@@ -5,7 +5,7 @@
 //! fails closed on corpus drift (a changed `suite_digest` must be re-baselined
 //! deliberately) and reports any Gate that fell below the committed baseline (minus a
 //! per-mille tolerance). The decision is pure integer arithmetic — no float on the gate
-//! path (SN-8). The report mirrors `kx-profile`'s Gate/Spike model (GR10) but is a
+//! path. The report mirrors `kx-profile`'s Gate/Spike model but is a
 //! standalone type so the harness stays a dependency-light leaf.
 
 use serde::{Deserialize, Serialize};
@@ -103,7 +103,7 @@ pub struct EvalReport {
     pub suite_digest: String,
     /// The commit the eval ran at (`git rev-parse HEAD`, or `"unknown"`).
     pub git_sha: String,
-    /// A short environment label (e.g. `"macos/aarch64 (8 cores)"`) — the GR10 "a number
+    /// A short environment label (e.g. `"macos/aarch64 (8 cores)"`) — the "a number
     /// with no environment label is not a record" discipline, kept lightweight.
     pub env_label: String,
     /// The aggregate Gate values (the regression-gated surface).

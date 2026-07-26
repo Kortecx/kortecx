@@ -5,9 +5,9 @@
 //! the broker (so it is fireable), govern (the connections sidecar), and enforce
 //! the live untrusted-egress surface (admission host vetting + per-server
 //! rate-limit; dial-time SSRF/rebind is already enforced inside the `kx-mcp`
-//! transports). The runtime is a SECURE GATEWAY (D132/GR19): no arbitrary code
+//! transports). The runtime is a SECURE GATEWAY: no arbitrary code
 //! runs in-runtime; the discovered tool's `tool_id` + the `connection_id` are
-//! server-derived (SN-8).
+//! server-derived.
 //!
 //! ## Firing scope (PR-6b-1 vs PR-6b-2)
 //!
@@ -16,7 +16,7 @@
 //! bind-time react-warrant derivation that makes the autonomous ReAct loop GRANT
 //! and auto-fire a dialed tool ships in PR-6b-2 (it shares the coordinator
 //! args-from-params machinery with the authored `tool()` node). A registered tool
-//! is fired ONLY through a warrant that grants it (SN-8) — never by mere presence.
+//! is fired ONLY through a warrant that grants it — never by mere presence.
 
 use std::sync::Arc;
 
@@ -143,7 +143,7 @@ impl McpGateway {
     /// failure is NOT fatal: the connection is stored with `Unreachable` health
     /// (the operator can fix the server and `test`/`discover` later) and the
     /// outcome reports `health = Unreachable`, `discovered = 0` — honest, never a
-    /// fabricated success (GR15).
+    /// fabricated success.
     ///
     /// # Errors
     /// [`GatewayError`] on an empty name, host rejection, an invalid spec, or a
@@ -291,7 +291,7 @@ impl McpGateway {
 
     /// Deregister a server: remove its connection record + deregister every tool
     /// it contributed (the `<name>/…` namespace). An orphaned broker capability is
-    /// inert (never granted ⇒ never fires, SN-8) and clears on the next restart.
+    /// inert (never granted ⇒ never fires) and clears on the next restart.
     ///
     /// # Errors
     /// [`GatewayError::Storage`] on a SQLite failure.
@@ -551,7 +551,7 @@ const MAX_SCHEMA_DEPTH: usize = 8;
 /// `string` (honouring `maxLength`, clamped ≤ 8192), `integer` (honouring
 /// `minimum`/`maximum`), `boolean`, and a pure-string `enum` (→ exact-match
 /// `Enum`). `number`/`array`/`object` and the `oneOf`/`anyOf`/`allOf` combinators
-/// are NOT mapped — there is **no float in `ParamType`** (SN-8), and a structured
+/// are NOT mapped — there is **no float in `ParamType`**, and a structured
 /// type has no typed gate — so those args pass through VERBATIM for the server to
 /// validate authoritatively (`deny_unknown = false`, never a fabricated gate).
 ///
@@ -602,7 +602,7 @@ fn json_schema_to_input_schema(schema_json: &[u8]) -> Option<InputSchema> {
 /// Map a single JSON-Schema property spec to a typed [`ParamType`], or `None` when
 /// it has no exact typed gate (number/array/object/combinator → verbatim pass-through).
 fn param_type_of(pspec: &serde_json::Value) -> Option<ParamType> {
-    // A pure-string `enum` → exact-match Enum (SN-8: exact equality, no fuzzy
+    // A pure-string `enum` → exact-match Enum (exact equality, no fuzzy
     // match). A mixed/numeric enum is left to the server (no partial allow-list).
     if let Some(values) = pspec.get("enum").and_then(|e| e.as_array()) {
         if !values.is_empty() && values.iter().all(serde_json::Value::is_string) {

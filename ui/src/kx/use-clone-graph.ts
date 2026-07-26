@@ -3,7 +3,7 @@
  * so the user can remix it. Reads the run's projection (topology) + each Mote's
  * `GetMoteDetail` (kind / model / prompt / params), maps it to the builder's
  * constrained PURE / MODEL palette, and returns a `BuilderGraph`. The submit is
- * always a NEW workflow (new identity by construction — SN-8); the original run is
+ * always a NEW workflow (new identity by construction); the original run is
  * untouched. A non-PURE/MODEL Mote (shaper / critic / react-turn) maps to a PURE
  * step (the Tier-1 palette can't express it — stated honestly, not faked).
  */

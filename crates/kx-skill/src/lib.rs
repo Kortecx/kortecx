@@ -7,7 +7,7 @@
 //! - **Declarative only** (D159/D174.4): instructions markdown + `(tool_id →
 //!   version)` wishes. NO code — the executable leg is always an out-of-process
 //!   MCP connector or a bundled broker capability.
-//! - **Never authority** (SN-8): a manifest cannot carry a warrant, grant,
+//! - **Never authority**: a manifest cannot carry a warrant, grant,
 //!   secret, or credential — [`DENY_KEYS`] are refused anywhere in the raw
 //!   tree, the shape is closed (`deny_unknown_fields`), and the server grants
 //!   only `wish ∩ caller grants ∩ fireable` at bind. A skill on its own grants

@@ -7,7 +7,7 @@
  * `answer` = a final answer; an Observation/tool RESULT is its own committed record
  * with no branch). The "ReAct turns" filter narrows to records that carry a branch.
  *
- * Read-only (OSS view, D157/GR19); rendering is from the content-addressed store
+ * Read-only (OSS view, cloud-tier); rendering is from the content-addressed store
  * ONLY (blob URLs, never a remote `src`, never innerHTML — zero SSRF surface).
  */
 

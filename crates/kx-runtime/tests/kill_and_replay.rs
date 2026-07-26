@@ -110,8 +110,8 @@ fn clean_reference_digest() -> String {
 /// Count `Committed` entries per Mote in the on-disk journal — assertion (b).
 ///
 /// The range end is `current_seq + 1`, NOT `u64::MAX`: SQLite binds `u64::MAX` to `-1`
-/// (i64), which silently returns **zero rows** (the bind quirk recorded in HANDOFF
-/// §2.55). Reading the real watermark makes every caller's count meaningful — without
+/// (i64), which silently returns **zero rows**. Reading the real watermark makes
+/// every caller's count meaningful — without
 /// this, `assert_exactly_once` would pass vacuously over an empty map.
 fn committed_counts(journal_path: &Path) -> BTreeMap<MoteId, usize> {
     let journal = SqliteJournal::open(journal_path).unwrap();

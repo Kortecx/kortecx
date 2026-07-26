@@ -1,6 +1,6 @@
 /**
  * Pure display formatting. The runtime's ids are 16B/32B lowercase hex strings
- * (server-derived, SN-8); we only ever shorten them for display, never compute one.
+ * (server-derived); we only ever shorten them for display, never compute one.
  */
 
 /** Shorten a long hex id to `head…tail` (returns the input unchanged if short). */
@@ -24,7 +24,7 @@ export function countSummary(done: number, total: number, noun: string): string 
 /**
  * Render a micro-USD spend as `$x.xxxx` — or the EMPTY string for a non-positive
  * amount. Returning `""` (never `"$0.0000"`) is the single structural guard behind
- * the GR15 "no fabricated dollar figure" rule: at a zero-baseline price book (or an
+ * the "no fabricated dollar figure" rule: at a zero-baseline price book (or an
  * unpriced run) callers render the honest "no priced spend" affordance instead of a
  * misleading $0. Local budget-guardrail display only — NOT Cloud per-expert billing.
  */

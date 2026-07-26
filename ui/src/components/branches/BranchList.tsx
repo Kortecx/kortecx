@@ -3,7 +3,7 @@
  * every branch this party authored, its `{path → ref}` manifest (each ref shown
  * via {@link DigestChip}), the server-derived `branchRef`, the CoW parent (if a
  * fork), and an operator delete control (unbinds the handle; the CAS blobs stay).
- * Caller-scoped (SN-8). Degrades to a not-wired empty state on an older gateway.
+ * Caller-scoped. Degrades to a not-wired empty state on an older gateway.
  */
 
 import { m } from "framer-motion";

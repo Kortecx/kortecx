@@ -2,7 +2,7 @@
 //!
 //! A hostile or runaway server interaction is bounded by a per-`server` token
 //! bucket: each dial (`register` / `discover` / `test`, and — in PR-6b-2 — each
-//! tool fire) must acquire a token. Integer math only (no floats — SN-8
+//! tool fire) must acquire a token. Integer math only (no floats — server-derived
 //! discipline); refill is wall-clock-based, which is sound because rate-limiting
 //! is OFF the digest/journal path (a pure egress guard, never an identity input).
 

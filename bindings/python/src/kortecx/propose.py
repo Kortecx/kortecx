@@ -1,7 +1,7 @@
 """NL workflow-proposal result types (the :meth:`propose_workflow` return shape).
 
 ``propose_workflow`` turns a natural-language goal into a PROPOSED multi-step DAG
-(propose-then-confirm, D209.3 / SN-8): the served model plans, the gateway decodes +
+(propose-then-confirm, D209.3): the served model plans, the gateway decodes +
 compiles the plan through the vetted planner, and returns it for the caller to preview
 and confirm. Validate-only — nothing runs until the caller authors the returned steps.
 """
@@ -18,7 +18,7 @@ from .v1 import gateway_pb2 as _g
 class ProposedWorkflowStep:
     """One step of an NL-proposed workflow (display shape). ``role``/``intent``/``kind``
     are the model's plan; ``model_id``/``tool_contract`` are the server-resolved recipe
-    axes (the authoritative axes are re-derived server-side at author/run — SN-8)."""
+    axes (the authoritative axes are re-derived server-side at author/run)."""
 
     role: str
     intent: str

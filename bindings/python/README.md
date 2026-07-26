@@ -108,9 +108,9 @@ few verb-namespaces that mirror the `kx` CLI:
 | **Server info** | `get_server_info` (non-secret resolved config + auth/TLS posture) |
 
 `AsyncKxClient` exposes the same surface with `await`. Every id you pass is one the
-runtime handed you back — identity is **server-derived** (SN-8); the SDK never mints one.
+runtime handed you back — identity is **server-derived**; the SDK never mints one.
 
-## Identity is server-derived (SN-8)
+## Identity is server-derived
 
 Every `MoteId` / `instance_id` / `content_ref` / `terminal_mote_id` is computed by
 the runtime. The SDK **never** constructs one — it only carries the server's bytes

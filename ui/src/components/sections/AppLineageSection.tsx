@@ -87,7 +87,7 @@ function LineageNode({ view }: { view: LineageStepView }) {
       {view.tools.length > 0 ? (
         <span className="lineage-node__tools" data-testid={`lineage-tools-${view.id}`}>
           {/* "requests", never "has": a tool_contract is a WISH the server intersects
-              against the caller's authority at run (SN-8). */}
+              against the caller's authority at run. */}
           <span className="lineage-node__toolslabel">requests</span>
           {view.tools.map((t) => (
             <span className="lineage-node__tool" key={t.id} title={`${t.id}@${t.version}`}>

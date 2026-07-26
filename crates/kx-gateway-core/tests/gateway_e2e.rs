@@ -1,6 +1,6 @@
 //! In-process `KxGateway` round-trips over a real tonic transport server. Three
 //! enterprise scenarios (operator renders a run DAG; end-user fetches a committed
-//! result; resumable event stream) plus the SubmitRun propose-proxy and the SN-8
+//! result; resumable event stream) plus the SubmitRun propose-proxy and the boundary
 //! "client never computes a MoteId" boundary.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
@@ -548,7 +548,7 @@ async fn invoke_forwards_react_seed_to_the_submitter() {
     );
 }
 
-// --- SN-8 — the client never computes a MoteId -----------------------------
+// --- Identity — the client never computes a MoteId -----------------------------
 
 #[test]
 fn submit_boundary_rederives_mote_id_discarding_wire_advisory() {
@@ -558,7 +558,7 @@ fn submit_boundary_rederives_mote_id_discarding_wire_advisory() {
     let mut wire: proto::Mote = mote.into();
     // Tamper with the advisory wire mote_id.
     wire.mote_id = vec![0xFF; 32];
-    // The boundary re-derives identity Rust-side (D53/SN-8): the tampered
+    // The boundary re-derives identity Rust-side: the tampered
     // advisory id is discarded; the re-derived id matches the genuine one.
     let rebuilt: kx_mote::Mote = wire.try_into().unwrap();
     assert_eq!(*rebuilt.id.as_bytes(), expected);
@@ -774,7 +774,7 @@ async fn invoke_dispatches_to_binder_then_proposes() {
     assert_eq!(
         resp.terminal_mote_id,
         sample_mote().id.as_bytes().to_vec(),
-        "the server-derived terminal Mote is returned (SN-8)"
+        "the server-derived terminal Mote is returned"
     );
 
     // Register-first, then one submit per bound Mote (the propose-proxy order).

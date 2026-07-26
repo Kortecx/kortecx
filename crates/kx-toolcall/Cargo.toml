@@ -6,7 +6,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx model-proposed tool-call AUTHORITY GATE (IMP-5/PR-2d-1) — the pure, fail-closed decode of untrusted model output into a warrant-granted ToolCall. SN-8: the only tools a proposal may name are those already in `warrant.tool_grants`, matched by EXACT (name, version) crypto-equality — never fuzzy. Extracted from kx-model-harness as a pure leaf so the live-serve gateway and coordinator share the ONE gate (a byte-mirror would drift silently and admit an ungranted tool); kx-model-harness re-exports it unchanged. Total + panic-free over arbitrary bytes; args carried VERBATIM via serde_json RawValue, size-capped (IMP-16), never executed."
+description = "kortecx model-proposed tool-call AUTHORITY GATE (PR-2d-1) — the pure, fail-closed decode of untrusted model output into a warrant-granted ToolCall. The only tools a proposal may name are those already in `warrant.tool_grants`, matched by EXACT (name, version) crypto-equality — never fuzzy. Extracted from kx-model-harness as a pure leaf so the live-serve gateway and coordinator share the ONE gate (a byte-mirror would drift silently and admit an ungranted tool); kx-model-harness re-exports it unchanged. Total + panic-free over arbitrary bytes; args carried VERBATIM via serde_json RawValue, size-capped, never executed."
 
 [lib]
 path = "src/lib.rs"

@@ -1,4 +1,4 @@
-//! The runtime's error type — honest variants only (SN-4 v2 #4, Golden Rule 1).
+//! The runtime's error type — honest variants only (the structural review, Golden Rule 1).
 
 use kx_executor::LifecycleError;
 

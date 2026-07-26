@@ -1,7 +1,7 @@
 //! PR-2d-1/PR-2d-2 — the LIVE ReAct chain inside the coordinator.
 //!
 //! Proves the runtime-side capability: a `react_seed` submit swaps in the RUN-SALTED
-//! turn-0 Mote (server-derived identity, SN-8) and anchors a durable `ReactRound`
+//! turn-0 Mote (server-derived identity) and anchors a durable `ReactRound`
 //! fact; the sole-writer coordinator settles each committed turn by decoding its RAW
 //! output through the ONE authority gate (`kx-toolcall`), freezes the branch as a
 //! durable fact, drives the TOOL ROUND (PR-2d-2: materialize the observation,
@@ -51,9 +51,9 @@ fn varied_tool_envelope(n: u32) -> Vec<u8> {
     format!(r#"{{"tool_call":{{"name":"mcp-echo","version":"1","args":{{"q":"x{n}"}}}}}}"#)
         .into_bytes()
 }
-/// PR-9a (the BUG-28 regression pin): Gemma-4's NATIVE tool-call shape
+/// PR-9a (the regression pin): Gemma-4's NATIVE tool-call shape
 /// (`<|tool_call>call:NAME{ARGS}<tool_call|>`) — `mcp_echo` (underscore) exercises
-/// the parser's separator-only `_`→`-` name normalization. BUG-28 was a real-model
+/// the parser's separator-only `_`→`-` name normalization. It was a real-model
 /// tool loop that NEVER fired because no e2e drove this shape through the settle's
 /// decode→Tool-freeze→observation-fire→commit path; this const lets the fire-commits
 /// test assert that invariant for BOTH the JSON envelope and the native shape.
@@ -132,7 +132,7 @@ fn seed_mote_with_image(instruction: &str, image: &ContentRef) -> Mote {
     )
 }
 
-/// PR-9d / BUG-35 context sibling: a SEED Mote carrying `instruction` PLUS an inline
+/// PR-9d context sibling: a SEED Mote carrying `instruction` PLUS an inline
 /// grounding-context bundle under `CONTEXT_ITEMS_KEY` — the RAG/context-in-react launch
 /// shape (the `bind` `inject_entry_config` precedent). The bundle BYTES (not a ref) ride
 /// the seed; `write_react_anchor` stages them into the content store and records the ref.
@@ -469,7 +469,7 @@ async fn react_seed_swaps_in_a_salted_turn0_and_anchors() {
     );
 }
 
-/// AGENTIC-VISION regression guard (BUG-35, caught by the live dual-engine Gemma pass).
+/// AGENTIC-VISION regression guard (caught by the live dual-engine Gemma pass).
 /// A react seed carrying an inline grounding image (`config_subset[IMAGE_REF_KEY]` — a
 /// react-vision launch) MUST record that image on the turn-0 anchor. The seed-swap
 /// DISCARDS the seed (the swapped turn 0 is rebuilt from the instruction alone), so the
@@ -504,7 +504,7 @@ async fn react_vision_seed_records_the_grounding_image_on_the_anchor() {
             assert_eq!(
                 *image_ref,
                 Some(image),
-                "BUG-35: the seed's grounding image MUST survive the seed-swap onto the \
+                "the seed's grounding image MUST survive the seed-swap onto the \
                  turn-0 anchor (else every successor turn re-derives None and the loop runs blind)"
             );
         }
@@ -512,7 +512,7 @@ async fn react_vision_seed_records_the_grounding_image_on_the_anchor() {
     }
 }
 
-/// AGENTIC-VISION regression guard (BUG-35 CONTEXT SIBLING — caught by the pre-merge audit).
+/// AGENTIC-VISION regression guard (CONTEXT SIBLING — caught by the pre-merge audit).
 /// The SAME seed-swap that dropped the image ALSO drops `CONTEXT_ITEMS_KEY` (PR-9d's
 /// RAG/context-in-react grounding bundle): `build_chain_turn` rebuilds turn-0 from the
 /// instruction alone, so a react seed launched WITH a context bundle must have that bundle
@@ -540,7 +540,7 @@ async fn react_seed_with_context_bundle_records_context_items_on_the_anchor() {
             assert_eq!(
                 *context_items_ref,
                 Some(store.put(&bundle).unwrap()),
-                "BUG-35 context sibling: the seed's grounding-context bundle MUST survive the \
+                "Context sibling: the seed's grounding-context bundle MUST survive the \
                  seed-swap onto the turn-0 anchor (else RAG-in-react runs blind)"
             );
         }
@@ -631,7 +631,7 @@ async fn answer_on_turn0_settles_the_chain() {
     let leased = common::lease_work(&svc, worker, MAC, 16).await;
     let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
 
-    // Even a perfectly-formed envelope is an ANSWER under empty grants (SN-8).
+    // Even a perfectly-formed envelope is an ANSWER under empty grants.
     commit_raw(&svc, &store, &turn0, &w, TOOL_ENVELOPE, worker).await;
 
     let facts = react_facts(&svc, &dir).await;
@@ -797,14 +797,14 @@ async fn observation_dispatch_preserves_the_chain_secret_scope() {
     );
 }
 
-/// PR-9a (the BUG-28 regression pin, model-free + deterministic): the SAME
+/// PR-9a (the regression pin, model-free + deterministic): the SAME
 /// fire-commits invariant as `tool_branch_advances_the_chain_with_trajectory`, but
 /// the turn-0 output is Gemma-4's NATIVE shape (`<|tool_call>call:mcp_echo{…}`).
 /// This drives the REAL coordinator settle — which calls `kx-toolcall` to decode
 /// the staged bytes — and asserts the native shape (a) freezes a `Tool` fact for
 /// `mcp-echo@1` (name separator-normalized), (b) the observation leases WITH the
 /// args decoded from the native shape, and (c) the observation commits ⇒ turn 1
-/// spawns. BUG-28 was exactly this path being silently dead: the loop only ever
+/// spawns. It was exactly this path being silently dead: the loop only ever
 /// asserted an ANSWER settling, never a tool FIRING through the native arm.
 #[tokio::test]
 async fn tool_branch_fires_and_commits_via_gemma_native_shape() {
@@ -847,7 +847,7 @@ async fn tool_branch_fires_and_commits_via_gemma_native_shape() {
     );
 
     // (c) the observation commits (the tool FIRED) ⇒ turn 1 spawns — the world
-    // mutating observation reaching Committed is the BUG-28 invariant.
+    // mutating observation reaching Committed is the invariant.
     commit_raw(&svc, &store, &obs, &w, br#"{"echoed":{"q":"x"}}"#, worker).await;
     let facts = react_facts(&svc, &dir).await;
     assert_eq!(
@@ -1149,7 +1149,7 @@ async fn identical_goal_dedups_to_one_chain() {
     assert_eq!(leased.len(), 1, "one chain only — the re-submit deduped");
 }
 
-/// The PR-9b-2b LIVE Gemma-4-12B shape that BUG-32 made fail-closed: the model
+/// The PR-9b-2b LIVE Gemma-4-12B shape that an unresolved namespaced name made fail-closed: the model
 /// proposed `mcp-echo:echo` (the `<id>:<remote>` join) with an EMPTY version against
 /// the `mcp-echo@1` grant. Before the fix the JSON-envelope arm's exact
 /// `(name, version)` membership refused it ⇒ `UngrantedTool` ⇒ the chain
@@ -1200,7 +1200,7 @@ async fn bug32_envelope_versionless_drift_fires_and_commits() {
     );
 }
 
-/// The headline BUG-32 shape (V2b): a dialed/local tool is granted NAMESPACED
+/// The headline shape (V2b): a dialed/local tool is granted NAMESPACED
 /// (`kxlocal-<hash>/echo`) but the model proposes the BARE LEAF (`echo`). The
 /// leaf must resolve to the namespaced grant (unambiguously) and the tool must
 /// fire + commit. Uses a registry + warrant whose ONLY echo tool is namespaced.
@@ -1288,7 +1288,7 @@ async fn bug32_native_bare_leaf_against_namespaced_grant_fires_and_commits() {
 
 /// PR-9a (the format-drift fail-closed invariant): an UNRECOGNIZED tool-shaped
 /// completion under a GRANTING warrant commits as an ANSWER and fires NOTHING —
-/// the SN-8 default. This is the durable invariant a format guard can hold: a
+/// the server-derived default. This is the durable invariant a format guard can hold: a
 /// future model's novel tool-call syntax that NO parser arm recognizes never
 /// mis-fires a tool; it degrades to an honest, committed answer (vs. the two
 /// RECOGNIZED shapes — the JSON envelope and the Gemma-native delimiter — which DO
@@ -1422,7 +1422,7 @@ async fn multi_element_tool_calls_fires_all_in_order() {
     );
 }
 
-/// PR-9a (BUG-27 Path 2, end-to-end): when the tool a frozen `Tool` branch
+/// PR-9a (path 2, end-to-end): when the tool a frozen `Tool` branch
 /// references is DEREGISTERED before its observation can lease, the chain
 /// DEAD-LETTERS (a loud terminal) instead of WEDGING forever — the pre-PR-9a
 /// behavior re-materialized an unleaseable observation on every settle pass with
@@ -1493,7 +1493,7 @@ async fn deregistering_a_tool_mid_chain_dead_letters_instead_of_wedging() {
                 ..
             }
         )),
-        "the chain DEAD-LETTERED instead of wedging (BUG-27)"
+        "the chain DEAD-LETTERED instead of wedging"
     );
     // Terminal: bounded, no runaway re-lease of the retired observation.
     assert!(
@@ -2105,7 +2105,7 @@ async fn ambiguous_dialed_collision_rejects_then_reprompts_with_full_ids() {
     let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
 
     // The live Gemma shape that triggers the bug: a committed bare `echo` (no server
-    // prefix) — addresses BOTH grants ⇒ ambiguous ⇒ fail-closed (SN-8), never fires.
+    // prefix) — addresses BOTH grants ⇒ ambiguous ⇒ fail-closed, never fires.
     commit_raw(
         &svc,
         &store,
@@ -2144,7 +2144,7 @@ async fn ambiguous_dialed_collision_rejects_then_reprompts_with_full_ids() {
     );
 }
 
-/// PR-3 (A2): an UNGRANTED tool proposal (SN-8: the model cannot conjure a tool
+/// PR-3 (A2): an UNGRANTED tool proposal (the model cannot conjure a tool
 /// the warrant withheld) freezes a `Rejected` round and re-prompts — the grant
 /// set is never widened, but the model gets a bounded chance to pick a granted
 /// tool or answer directly instead of the whole chain dying.
@@ -2175,7 +2175,7 @@ async fn ungranted_proposal_rejects_and_re_prompts() {
             JournalEntry::ReactRound { turn: 0, branch: ReactBranch::Rejected { reason }, .. }
                 if reason.contains("not granted")
         )),
-        "an ungranted name freezes a Rejected round (SN-8 — never a grant widening)"
+        "an ungranted name freezes a Rejected round (never a grant widening)"
     );
     assert!(
         facts.iter().any(|f| matches!(
@@ -2422,7 +2422,7 @@ async fn schema_invalid_args_reject_at_the_freeze_then_re_prompt() {
 /// PR-3 (A2) — the headline recovery: a bad-args proposal is REJECTED, the model
 /// reads the reason on the re-prompted turn and ANSWERS, and the chain settles
 /// with a real answer (no dead-letter). This is the live-tool-calling fix the
-/// §2.246 campaign filed (A1 necessary-but-not-sufficient → A2).
+/// Campaign filed (A1 necessary-but-not-sufficient → A2).
 #[tokio::test]
 async fn bad_args_reject_then_the_model_recovers_with_an_answer() {
     let dir = TempDir::new().unwrap();
@@ -2481,7 +2481,7 @@ async fn bad_args_reject_then_the_model_recovers_with_an_answer() {
 
 /// PR-3 (A2) — the loop bound: a model that emits a bad proposal EVERY turn is
 /// bounded by the durable tool-call budget (each Rejected round spends one), then
-/// dead-letters LOUDLY (BUG-27: terminal, never silent; GR15: never a fabricated
+/// dead-letters LOUDLY (terminal, never silent; never a fabricated
 /// answer). This is the invariant that keeps graceful recovery from becoming an
 /// infinite re-prompt wedge.
 #[tokio::test]
@@ -3061,7 +3061,7 @@ async fn agentic_launch_drives_loop_commits_and_advances_dag() {
 
 /// Budget-exhaust: a launch whose loop only ever tool-calls (never answers) within its
 /// declared budget fails CLOSED — the launch mote dead-letters (terminal `Failed`),
-/// never fabricating an answer (GR15) and never wedging its DAG consumer in `Scheduled`.
+/// never fabricating an answer and never wedging its DAG consumer in `Scheduled`.
 #[tokio::test]
 async fn agentic_launch_budget_exhaust_dead_letters() {
     let dir = TempDir::new().unwrap();

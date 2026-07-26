@@ -1,6 +1,6 @@
 /**
  * Advisory recipe discovery (`SearchRecipes`, PR-4 Batch D) — rank the gateway's
- * provisioned recipes against a free-text intent. SN-8/display-only: a hit
+ * provisioned recipes against a free-text intent. Display-only: a hit
  * SURFACES a recipe, never invokes one (`Invoke` stays the gate). An old gateway
  * (or a catalog with no ranker) degrades to `unsupported` — the search box hides,
  * no error UI.

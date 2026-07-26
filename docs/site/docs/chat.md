@@ -170,7 +170,7 @@ never invents citations or pretends to be grounded. The fallbacks are:
   embed the message with, so it degrades to plain chat. (Retrieval also needs the
   `hnsw` feature — see [Data Lab → Degraded states](./datasets.md#degraded-states).)
 
-### Scores are display-only (SN-8)
+### Scores are display-only
 
 Retrieval ranks hits by an approximate similarity **score**, but the score is
 **display-only** — it never reaches run identity. Only the **exact content refs**

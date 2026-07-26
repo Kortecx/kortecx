@@ -130,7 +130,7 @@ impl SqliteConnectionStore {
     }
 
     /// Insert or replace a connection (keyed by `name`). The `connection_id` is
-    /// re-derived server-side from the name (SN-8).
+    /// re-derived server-side from the name.
     ///
     /// # Errors
     /// [`GatewayError::Storage`] on a durable-write failure.

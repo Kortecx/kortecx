@@ -348,7 +348,7 @@ export function StepConfigDrawer({
               )}
               <span className="builder-field__hint">
                 Grant a FIXED tool set to run a bounded reason→tool→observe loop (the set is part of
-                the step's identity). The SERVER builds the union warrant + drives the loop (SN-8).
+                the step's identity). The SERVER builds the union warrant + drives the loop.
               </span>
             </div>
 
@@ -473,7 +473,7 @@ export function StepConfigDrawer({
             )}
             <span className="builder-field__hint">
               The SERVER resolves the tool in its live registry + builds the per-step warrant from
-              the tool's declared scope (you never supply a warrant — SN-8).
+              the tool's declared scope (you never supply a warrant).
             </span>
           </div>
         ) : null}

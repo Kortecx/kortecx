@@ -710,11 +710,11 @@ fn effective_members_equals_brute_force_oracle() {
     assert_eq!(got.len(), members.len() - removed.len());
 }
 
-// ---- The SN-8 wall ----------------------------------------------------------
+// ---- The identity wall ----------------------------------------------------------
 
 /// The structural wall: NO guarantee-path crate — and not even `kx-catalog` — may
 /// depend on `kx-fleet`, so the compiler can never wire fleet governance onto the
-/// identity / commit / selection path (SN-8 / D70). The dependency direction is
+/// identity / commit / selection path. The dependency direction is
 /// one-way (`kx-fleet → kx-catalog`). Read the manifests directly — a future
 /// `kx-fleet` edge into any of these is a compile-independent regression this catches.
 #[test]
@@ -735,7 +735,7 @@ fn guarantee_path_does_not_depend_on_fleet() {
             std::fs::read_to_string(&manifest).unwrap_or_else(|e| panic!("read {manifest}: {e}"));
         assert!(
             !toml.contains("kx-fleet"),
-            "{c} must NOT depend on kx-fleet (the SN-8 governance wall)"
+            "{c} must NOT depend on kx-fleet (the governance wall)"
         );
     }
 }

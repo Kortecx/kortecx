@@ -1,6 +1,6 @@
 //! [`RetrievalIndex`] — the vector / graph-RAG similarity seam.
 //!
-//! **SN-8 boundary (load-bearing).** Similarity search lives here, and it MUST
+//! **Identity boundary (load-bearing).** Similarity search lives here, and it MUST
 //! stay *inside* the ReadOnlyNondet retrieval boundary: a retrieval Mote queries
 //! an index as an input-gathering act, then commits its result as a
 //! content-addressed fact that everything downstream consumes by **exact** hash.
@@ -26,7 +26,7 @@ pub struct Hit {
 }
 
 /// A similarity index over embedding vectors, keyed by content ref. Used ONLY
-/// inside ReadOnlyNondet retrieval Motes (see the module note / SN-8).
+/// inside ReadOnlyNondet retrieval Motes (see the module note).
 pub trait RetrievalIndex {
     /// Add (or overwrite) the vector for `id`.
     fn insert(&mut self, id: ContentRef, vector: Vec<f32>);

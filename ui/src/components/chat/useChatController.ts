@@ -140,8 +140,8 @@ export function useChatController(config: ChatControllerConfig = {}): ChatContro
   const setDataset = (v: string | undefined) => setInteractiveDataset(v);
 
   const agentTurn = agentMode && agentAvailable;
-  // Always a SERVED id or undefined — never a stale enum (GR15). Undefined lets the
-  // gateway resolve the default itself (SN-8), which is the honest answer while the
+  // Always a SERVED id or undefined — never a stale enum. Undefined lets the
+  // gateway resolve the default itself, which is the honest answer while the
   // model list is still loading.
   const modelId = chosenModel?.modelId;
 

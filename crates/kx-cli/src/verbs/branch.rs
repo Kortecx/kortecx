@@ -3,7 +3,7 @@
 //! operator-approved host files). Tri-surface parity with the SDK + UI.
 //!
 //! A branch lives in an off-journal `branches.db` sidecar; the server derives
-//! `branch_ref` (SN-8) and scopes every branch to the authoring party. `snapshot`
+//! `branch_ref` and scopes every branch to the authoring party. `snapshot`
 //! reads confined host files (under `KX_SERVE_FS_ROOT`, default-OFF) INTO the
 //! content store and records the `{path -> ref}` manifest; the host is never
 //! written (Phase-A). `create --parent` forks a point-in-time CoW sub-branch.
@@ -303,7 +303,7 @@ pub async fn execute(args: BranchArgs) -> Result<(), CliError> {
 
             // (2) Invoke `react-edit` (a single model step) with the body attached
             //     as a context ref. The directive tells the model to emit ONLY the
-            //     edited body (GR15 — no silent transform; reasoning=off keeps the
+            // edited body (no silent transform; reasoning=off keeps the
             //     committed answer the file verbatim).
             let args_json = edit_args_json(&path, &instruction);
             let resp = client
@@ -333,7 +333,7 @@ pub async fn execute(args: BranchArgs) -> Result<(), CliError> {
                     outcome.state
                 ))
             })?;
-            // Fail CLOSED on an empty edit (GR15): a heavy-reasoning model can emit
+            // Fail CLOSED on an empty edit: a heavy-reasoning model can emit
             // only an unclosed `<think>` block that strips to nothing — never
             // advance the manifest to an empty file. The branch is left unchanged.
             if outcome.payload.as_deref().is_none_or(<[u8]>::is_empty) {
@@ -379,7 +379,7 @@ pub async fn execute(args: BranchArgs) -> Result<(), CliError> {
 }
 
 /// Build the `react-edit` args JSON: the model's `prompt` is a directive to emit
-/// ONLY the edited file body (GR15 — the committed answer is the new content
+/// ONLY the edited file body (the committed answer is the new content
 /// verbatim; reasoning=off, baked into the recipe, keeps it clean). The recipe is
 /// a single model step, so the only free param is `prompt`.
 fn edit_args_json(path: &str, instruction: &str) -> Vec<u8> {

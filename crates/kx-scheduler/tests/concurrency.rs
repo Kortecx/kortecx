@@ -1,4 +1,4 @@
-//! SN-4 v2 #6 — concurrency tests for `kx-scheduler`.
+//! The structural review — concurrency tests for `kx-scheduler`.
 //!
 //! Two concerns:
 //!
@@ -21,7 +21,7 @@ use kx_scheduler::{
 };
 
 // ---------------------------------------------------------------------------
-// Compile-time Send + Sync over the public surface (SN-4 v2 #6 part 1)
+// Compile-time Send + Sync over the public surface
 // ---------------------------------------------------------------------------
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -47,7 +47,7 @@ fn public_types_are_send_and_sync() {
 }
 
 // ---------------------------------------------------------------------------
-// 4-thread RoundRobinPlacement contention (SN-4 v2 #6 part 2)
+// 4-thread RoundRobinPlacement contention
 // ---------------------------------------------------------------------------
 
 #[test]

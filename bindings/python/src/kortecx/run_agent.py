@@ -1,10 +1,10 @@
 """The embeddable agent-runner — ``run_agent`` (PR-9c-1).
 
-The headline adoption entry (GR18/D149): give a goal (+ optional context + inputs),
+The headline adoption entry: give a goal (+ optional context + inputs),
 the runtime completes it AGENTICALLY — reasoning, calling permission-gated tools, and
 returning a reasoned answer PLUS the AUDITED set of actions it took. A thin wrapper
 over ``invoke("kx/recipes/react")`` — NEVER ``SubmitRun`` (BLOCKER #5); the warrant is
-always SERVER-DERIVED (SN-8), the client only parameterizes the published recipe.
+always SERVER-DERIVED, the client only parameterizes the published recipe.
 
 ``inputs`` fold into the goal prompt — the ``kx/recipes/react`` contract has no
 structured input slot today (instruction / max_turns / max_tool_calls only); a

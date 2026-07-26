@@ -1,6 +1,6 @@
 //! `kx signatures list | get --id <hex32> | register --manifest-file <path>` —
 //! the catalog task-signature RPCs over the gateway. The manifest is opaque
-//! encoded bytes (the CLI never decodes it); the server derives the id (SN-8).
+//! encoded bytes (the CLI never decodes it); the server derives the id.
 
 use std::path::PathBuf;
 

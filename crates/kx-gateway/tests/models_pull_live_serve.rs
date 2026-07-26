@@ -16,7 +16,7 @@
 //!    only the registration invariant is asserted (the phase is LOGGED).
 //!
 //! Gated `#[cfg(feature = "inference")]` + `#[ignore]`; runtime-skips without a model.
-//! Drive on **Gemma-4 locally** (GR15):
+//! Drive on **Gemma-4 locally**:
 //! `KX_SERVE_MODEL_GGUF=target/models/gemma-4-12b-it-q4_k_m.gguf \`
 //! `  cargo test -p kx-gateway --features inference --test models_pull_live_serve -- --ignored --nocapture`
 

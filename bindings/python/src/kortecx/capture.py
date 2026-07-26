@@ -5,7 +5,7 @@ The serve-path action exhaust: a committed Mote's join keys (``mote_id`` /
 ``instance_id`` / ``result_ref`` / ``nd_class`` / ``seq``), plus the ReAct
 ``turn``/``branch`` when the Mote is a ReAct turn. Join-key-only (the
 privacy-safe ActionsOnly scope) — no payload/reasoning. Kept in its own module
-(the runs.py / module-per-concern precedent). SN-8: ids are server-derived; the
+(the runs.py / module-per-concern precedent). Ids are server-derived; the
 SDK only hex-encodes the bytes.
 """
 

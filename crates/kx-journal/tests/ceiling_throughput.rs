@@ -1,13 +1,13 @@
 // Integration-test file: compiled as a separate crate from the host lib; tests
 // legitimately use `.unwrap()` for fixture construction.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! IMP-4 (D116) — single-writer journal throughput **measurement spike**.
+//! Single-writer journal throughput **measurement spike**.
 //!
 //! The single-writer journal is the runtime's exactly-once moat *and* its hard
 //! scale wall. This file measures the raw `Journal`-trait write ceiling so a real
-//! number can be published (HANDOFF §3.9 §A) instead of the standing "qualitatively
-//! true, quantitatively unproven" placeholder. It is a **non-gating** characterization
-//! (testing doctrine `04-testing-and-gates.md` §Load/throughput): every test is
+//! number can be published instead of the standing "qualitatively true,
+//! quantitatively unproven" placeholder. It is a **non-gating** characterization
+//! under the load/throughput testing doctrine: every test is
 //! `#[ignore]` (the green suite never runs it), prints commits/s, and asserts only a
 //! loose catastrophic-regression floor + a correctness count — never an absolute-time
 //! threshold (those flake across machines).

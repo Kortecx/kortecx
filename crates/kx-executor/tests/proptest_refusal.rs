@@ -1,5 +1,5 @@
 //! Property tests on the refusal predicate surface + the fact-zero pure
-//! helpers. SN-4 v2 mandate: ≥3 proptest properties × 64 cases.
+//! helpers. Structural-review mandate: ≥3 proptest properties × 64 cases.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 

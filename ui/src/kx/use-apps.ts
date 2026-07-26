@@ -4,7 +4,7 @@
  * `GetApp` → `submitWorkflow`).
  *
  * An App is a durable, reusable `kortecx.app/v1` envelope (a portable blueprint
- * wrapped with by-reference references + a 4-axis steering config). SN-8: `appRef`
+ * wrapped with by-reference references + a 4-axis steering config). `appRef`
  * is SERVER-derived; Apps are caller-scoped (a not-found / not-owned App is uniform
  * — no cross-party existence oracle). The envelope carries NO authority — `runApp`
  * re-compiles the blueprint and the server re-resolves every warrant from the
@@ -105,10 +105,10 @@ export function useRunApp() {
 
 /**
  * POC-5d: persist an edited App envelope (`SaveApp`) — the structure edit the
- * Lineage editor commits. SN-8: `appRef` is SERVER-derived; the envelope carries NO
+ * Lineage editor commits. `appRef` is SERVER-derived; the envelope carries NO
  * authority (the run re-resolves every warrant). A LOCKED App refuses the save at the
  * server with `FAILED_PRECONDITION` + `LOCKED_BRANCH` (the UI also pre-gates on
- * `summary.locked` so the Save control is never shown for a locked App — GR15). On
+ * `summary.locked` so the Save control is never shown for a locked App). On
  * success the App + branch caches are invalidated so the new version shows everywhere.
  */
 export function useSaveApp() {

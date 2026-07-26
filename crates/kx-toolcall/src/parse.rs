@@ -26,7 +26,7 @@ struct RawToolCall {
     args: Box<RawValue>,
 }
 
-/// The per-call args-size cap (IMP-16), derived from the warrant's output ceiling
+/// The per-call args-size cap, derived from the warrant's output ceiling
 /// (`max_output_tokens · 4` — the model produced the args, so the output budget
 /// bounds them). Saturating, mirroring `context::window_bytes_from_warrant`.
 #[must_use]
@@ -41,7 +41,7 @@ pub fn max_args_bytes(warrant: &WarrantSpec) -> usize {
 /// is armed the model settles by emitting `{"answer":"…"}` instead of free prose, so the
 /// display/commit layer unwraps it to the plain text a user expects.
 ///
-/// PRESENTATION ONLY (SN-8) — never an authority decision — and a byte-identical NO-OP for
+/// PRESENTATION ONLY — never an authority decision — and a byte-identical NO-OP for
 /// every non-union path (llama.cpp, non-tool turns, the canonical demo), so those commits
 /// stay unchanged (`Cow::Borrowed`). `deny_unknown_fields` means only an EXACT single-key
 /// `{"answer":<string>}` object unwraps; a stray field, a `tool_call`, prose, or non-JSON
@@ -76,7 +76,7 @@ pub fn extract_answer(bytes: &[u8]) -> Cow<'_, [u8]> {
 ///
 /// Leading-block + structural-wrapper ONLY — we NEVER scan for `{` mid-string
 /// (the fence is a defined ```` ``` ```` delimiter, not a `{` search), so the
-/// strict `starts_with('{')` gate below stays the injection boundary (SN-8).
+/// strict `starts_with('{')` gate below stays the injection boundary.
 /// Mirrors `kx_planner::decode`'s extractor — the two trust seams keep the SAME
 /// discipline. Total + panic-free; an unclosed reasoning tag yields `""`, which
 /// the caller treats as a normal (non-call) completion (fail-closed).
@@ -123,7 +123,7 @@ fn strip_code_fence(text: &str) -> &str {
 /// **FAIL-CLOSED.** Returns `None` unless the extracted text is a JSON array of
 /// EXACTLY `n` integers that is a permutation of `[0, n)` (length `n`, every element
 /// in range, no duplicates). The grammar (`kx_grammar::PermutationSpec`) narrows the
-/// SHAPE; this function is the AUTHORITY on validity (SN-8: the model proposes an
+/// SHAPE; this function is the AUTHORITY on validity (the model proposes an
 /// order, the runtime enforces exact validity — there is no similarity/closeness
 /// operator). On `None`, the caller keeps the upstream (RRF/MMR) order, so a rerank
 /// can never reorder into garbage.
@@ -132,7 +132,7 @@ fn strip_code_fence(text: &str) -> &str {
 /// (`<think>…</think>` / `<|channel>…<channel|>`) and a surrounding markdown code
 /// fence, then parses the LEADING JSON array and ignores any trailing bytes — a model
 /// may append an explanation after the permutation (`[2,0,1] because …`). Deserializing
-/// from position 0 keeps the SN-8 discipline (a JSON value boundary at the START, never
+/// from position 0 keeps the identity discipline (a JSON value boundary at the START, never
 /// a mid-string scan); trailing content is discarded, not searched. Total + panic-free.
 #[must_use]
 pub fn parse_permutation(text: &str, n: usize) -> Option<Vec<usize>> {
@@ -180,7 +180,7 @@ struct NativeCall<'a> {
 
 /// Extract a native call body from the text right AFTER the optional `call:`
 /// marker. NAME runs up to the FIRST `{` or `(` (whichever is EARLIER — a DEFINED
-/// boundary, never a mid-string scan, so the SN-8 injection boundary is unchanged:
+/// boundary, never a mid-string scan, so the injection boundary is unchanged:
 /// only bytes the model fenced inside `<|tool_call>…` are promoted). The args are:
 /// the brace-balanced `{…}` object (BORROWED, verbatim), OR the paren `(…)` body
 /// converted to a JSON object (OWNED — T-GEMMA-PAREN). Returns the name, the args,
@@ -235,7 +235,7 @@ fn extract_gemma_native(text: &str) -> Option<NativeCall<'_>> {
 /// there (the `{` follows the optional `call:`) and bails, so this returns the inner
 /// brace-balanced `{…}` object for the envelope decoder to recover. DEFINED-delimiter
 /// only (the marker is the boundary; [`balanced_object`] bounds the JSON) — never a
-/// mid-string `{` search, so the SN-8 injection boundary is unchanged. `None` unless the
+/// mid-string `{` search, so the injection boundary is unchanged. `None` unless the
 /// text opens with the Gemma marker AND the body is a leading brace-balanced object.
 /// Total + panic-free.
 fn gemma_marked_envelope(text: &str) -> Option<&str> {
@@ -254,9 +254,9 @@ fn gemma_marked_envelope(text: &str) -> Option<&str> {
 
 /// Resolve a decoded `{"tool_call":{name,version,args}}` envelope to a granted
 /// [`ToolCall`], or a LOUD [`DecodeError`]. Exact `(name, version)` crypto-equality
-/// FIRST (SN-8); only an empty version resolves the name to a UNIQUE grant (the menu-label
+/// FIRST; only an empty version resolves the name to a UNIQUE grant (the menu-label
 /// drift shape); a non-empty wrong version stays `UngrantedTool`. Args carried verbatim,
-/// size-capped (IMP-16). Shared by the bare-envelope path AND the Gemma-marked-envelope
+/// size-capped. Shared by the bare-envelope path AND the Gemma-marked-envelope
 /// recovery so the authority surface is identical. Total + panic-free.
 fn resolve_envelope_call(
     raw: RawToolCall,
@@ -434,7 +434,7 @@ fn parse_kw_value(v: &str) -> Option<serde_json::Value> {
     }
     // Accept any value `serde_json` can parse WHOLE (a trailing non-JSON tail makes
     // `from_str` fail ⇒ None), incl. nested objects/arrays. The produced map still
-    // flows through `resolve_granted_name` + typed `validate_args` (SN-8 unchanged).
+    // flows through `resolve_granted_name` + typed `validate_args` (the identity rule unchanged).
     serde_json::from_str(v).ok()
 }
 
@@ -444,7 +444,7 @@ fn parse_kw_value(v: &str) -> Option<serde_json::Value> {
 /// `key=value` kwargs where each value is ANY well-formed JSON value (a scalar OR a
 /// nested object/array — `key=val, cfg={"k":1}, tags=["a"]`). Fail-closed (`None`)
 /// on positional args, unquoted/duplicate forms — an ambiguous shape falls through to
-/// a normal completion rather than fabricating args. SN-8: the produced object still flows
+/// a normal completion rather than fabricating args. The produced object still flows
 /// through `resolve_granted_name` (exact grant) + the typed `validate_args`
 /// downstream, so the authority surface is unchanged. Total + panic-free.
 fn parse_paren_args(inner: &str) -> Option<String> {
@@ -498,7 +498,7 @@ const XML_TOOL_CLOSE: &str = "</tool_call>";
 /// `{"name":…, "arguments"|"parameters"|"args":…}` object after a marker. NEVER a
 /// mid-string `{` search (the marker is the boundary, and `balanced_object` bounds
 /// the object so a `</tool_call>` close tag / trailing prose can never leak in) —
-/// so the SN-8 injection boundary is unchanged. Total + panic-free.
+/// so the injection boundary is unchanged. Total + panic-free.
 fn marked_object<'a>(text: &'a str, open: &str) -> Option<&'a str> {
     let after = text.trim_start().strip_prefix(open)?;
     balanced_object(after.trim_start())
@@ -513,7 +513,7 @@ fn marked_object<'a>(text: &'a str, open: &str) -> Option<&'a str> {
 /// pre-serialized JSON STRING (unescaped to its inner JSON — some models emit
 /// `"arguments":"{…}"`). Requires a non-empty `name`.
 ///
-/// SN-8: this widens only ENVELOPE recognition — the `name` and the args bytes are
+/// this widens only ENVELOPE recognition — the `name` and the args bytes are
 /// preserved and still flow through `resolve_granted_name` (exact grant membership)
 /// and the downstream schema `validate_args`. Unknown sibling keys are ignored here
 /// (tolerant envelope), but a smuggled ARG key is still rejected by the typed schema
@@ -576,7 +576,7 @@ fn args_value_bytes(v: &RawValue) -> Option<Vec<u8>> {
 /// Separator-canonicalize a single name segment: `_`→`-` (matching how Gemma
 /// renders `fs-list` as `fs_list`), trimmed. This is the EXISTING gate
 /// normalization, factored out — NEVER a fuzzy/similarity/edit-distance remap
-/// (SN-8: no similarity on any identity path).
+/// (no similarity on any identity path).
 fn canon(s: &str) -> String {
     s.trim().replace('_', "-")
 }
@@ -599,7 +599,7 @@ fn model_name_core(raw_name: &str) -> String {
 /// dialed/local MCP tool is registered `<server>/<remote>`, and real models propose
 /// EITHER end — the short leaf `<remote>` (e.g. `echo`) OR the server prefix
 /// `<server>` (Gemma-4 emits the bare `mcp-echo` for `mcp-echo/echo`). EXACT segment
-/// equality ONLY — never a prefix/substring/fuzzy match (SN-8); cross-grant ambiguity
+/// equality ONLY — never a prefix/substring/fuzzy match; cross-grant ambiguity
 /// (two grants sharing the addressed segment) is fail-closed in [`resolve_granted_name`].
 fn id_matches(target: &str, tool_id: &str) -> bool {
     let full = canon(tool_id);
@@ -610,7 +610,7 @@ fn id_matches(target: &str, tool_id: &str) -> bool {
 }
 
 /// The outcome of resolving a model-emitted tool name against the grant set — the
-/// SN-8-safe three-way distinction the callers need: a UNIQUE grant, NO grant, or an
+/// identity-safe three-way distinction the callers need: a UNIQUE grant, NO grant, or an
 /// AMBIGUOUS alias addressing ≥2 grants. Splitting ambiguity out (it used to collapse
 /// into `None`) lets a COMMITTED arm raise [`DecodeError::Ambiguous`] with the
 /// candidate full-ids so the react loop can re-prompt with a disambiguation, while a
@@ -620,13 +620,13 @@ enum NameResolution {
     Unique(ToolGrant),
     /// The name core addresses no grant (canon-empty, or no `id_matches` hit).
     Unresolved,
-    /// The name core addresses ≥2 distinct grants — fail-closed (SN-8, no guessing).
+    /// The name core addresses ≥2 distinct grants — fail-closed (no guessing).
     /// Carries the addressed full-ids in deterministic `tool_grants` order.
     Ambiguous(Vec<ToolName>),
 }
 
 /// Resolve a model-emitted (often separator-variant, version-less, or
-/// namespace-stripped) tool name against the grant set, SN-8-safe. The match key is
+/// namespace-stripped) tool name against the grant set, identity-safe. The match key is
 /// the model's name core (its full id OR ANY `/`-segment, `canon`-normalized) via
 /// [`id_matches`]. EXACT membership only — never a prefix/substring/fuzzy match. A
 /// UNIQUE addressed grant ⇒ [`NameResolution::Unique`] (an element of
@@ -686,8 +686,8 @@ fn committed_grant(raw_name: &str, warrant: &WarrantSpec) -> Result<ToolGrant, D
 /// MARKED arms (a marker IS the model's commitment, so a bad name is a loud refusal),
 /// a markerless object carries no commitment signal — so a name that addresses NO
 /// grant is a normal completion (`Ok(None)`), NEVER a false-positive refusal. The
-/// authority surface is unchanged: `resolve_granted_name` (exact grant membership,
-/// SN-8) + the downstream schema; only ENVELOPE recognition widens.
+/// authority surface is unchanged: `resolve_granted_name` (exact grant
+/// membership) + the downstream schema; only ENVELOPE recognition widens.
 fn markerless_call(
     raw_name: &str,
     args_bytes: Vec<u8>,
@@ -764,7 +764,7 @@ fn resolve_marked_call(
 /// T-MULTI-ELEMENT-TOOLCALLS: scan ALL back-to-back Gemma-native
 /// `<|tool_call>call:NAME{ARGS}<tool_call|>` segments, in order. Each segment is
 /// promoted ONLY after its DEFINED open delimiter (never a mid-string `{` search —
-/// the SN-8 injection boundary is unchanged); `balanced_object` bounds each args
+/// the injection boundary is unchanged); `balanced_object` bounds each args
 /// object so a close delim / the next segment can never leak in. The optional
 /// `<tool_call|>` close between segments is consumed. Stops at the first byte that
 /// does not open with the delimiter. Total + panic-free; a single segment yields a
@@ -794,7 +794,7 @@ fn collect_gemma_calls(text: &str) -> Vec<NativeCall<'_>> {
 /// T-MULTI-ELEMENT-TOOLCALLS: scan ALL back-to-back marked objects under a DEFINED
 /// `open` delimiter (`<|python_tag|>` / `<tool_call>`), in order, consuming the
 /// optional `close` tag between segments. Each object is the brace-balanced `{ … }`
-/// following the marker (never a mid-string `{` search — SN-8 unchanged). Stops at
+/// following the marker (never a mid-string `{` search — the identity rule unchanged). Stops at
 /// the first byte that does not open with `open`. Total + panic-free; a single
 /// segment yields a 1-element vec (byte-identical to [`marked_object`]).
 fn collect_marked_objects<'a>(text: &'a str, open: &str, close: Option<&str>) -> Vec<&'a str> {
@@ -866,7 +866,7 @@ fn decode_markerless(
 /// (via [`parse_paren_args`]); otherwise it degrades to a normal completion (`Ok(None)`
 /// — never a false-positive refusal, matching [`markerless_call`]). The produced args
 /// still flow through `resolve_granted_name` (exact grant) + the typed `validate_args`
-/// downstream (SN-8 unchanged). Total + panic-free.
+/// downstream (the identity rule unchanged). Total + panic-free.
 fn decode_markerless_paren(
     trimmed: &str,
     warrant: &WarrantSpec,
@@ -916,8 +916,8 @@ fn decode_markerless_paren(
 ///
 /// [`DecodeError::Malformed`] when the output committed to a JSON object but the
 /// envelope is malformed/truncated/trailing-garbage; [`DecodeError::UngrantedTool`]
-/// when the proposal names a tool outside `warrant.tool_grants` (SN-8);
-/// [`DecodeError::Oversize`] when the args exceed `max_args_bytes` (IMP-16).
+/// when the proposal names a tool outside `warrant.tool_grants`;
+/// [`DecodeError::Oversize`] when the args exceed `max_args_bytes`.
 pub fn parse_tool_call(
     bytes: &[u8],
     warrant: &WarrantSpec,
@@ -936,14 +936,14 @@ pub fn parse_tool_call(
     };
     // Strip a leading reasoning block (Qwen3 `<think>` / Gemma-4 `<|channel>`) and
     // a surrounding ```` ```json ```` fence, then require the remainder to BEGIN
-    // with `{` — leading-block + structural-fence only; no mid-string scan (SN-8).
+    // with `{` — leading-block + structural-fence only; no mid-string scan.
     let trimmed = extract_json_envelope(text);
 
     // (1a) Gemma-4 NATIVE shape: `<|tool_call>call:NAME{ARGS}<tool_call|>`. A SECOND
     //      DEFINED delimiter set (not a `{` search) — recognized BEFORE the JSON
     //      gate. Version-less + separator-variant names (`fs_list`) are resolved
     //      against the grant set, and the result is gated by the SAME exact
-    //      `tool_grants` equality (SN-8). Anything not opening with this exact
+    // `tool_grants` equality. Anything not opening with this exact
     //      delimiter falls through to the JSON envelope path, byte-identical for
     //      every existing row (no current input begins with `<|tool_call>`).
     if let Some(native) = extract_gemma_native(trimmed) {
@@ -954,7 +954,7 @@ pub fn parse_tool_call(
     //       markers (`<|tool_call>call:{"tool_call":{…}}<tool_call|>`) rather than the
     //       bare `call:NAME{ARGS}`. The native arm above reads an EMPTY name there (the
     //       `{` follows the optional `call:`), so recover the inner envelope through the
-    //       SAME exact-grant resolution + args cap as a bare envelope — SN-8 unchanged (the
+    // SAME exact-grant resolution + args cap as a bare envelope — the identity rule unchanged (the
     //       DEFINED marker is the boundary, never a `{` search). A wrapped object that is
     //       NOT a `tool_call` envelope falls through to a normal completion. (Live
     //       RC4b witness: Gemma-4 emits this for the `retrieve` tool — T-GEMMA-ENVELOPE-IN-MARKER.)
@@ -971,7 +971,7 @@ pub fn parse_tool_call(
     //      — two MORE DEFINED-delimiter shapes (markers required; never a `{` search),
     //      each wrapping a `{"name":…, "arguments"|"parameters"|"args":…}` object.
     //      The name + args flow through the SAME grant resolution + exact
-    //      `tool_grants` equality (SN-8) as every other arm; the args bag tolerates
+    // `tool_grants` equality as every other arm; the args bag tolerates
     //      the model's alias + a pre-serialized-string value. A marker that does not
     //      wrap a NAMED object falls through (like a bare Gemma marker), byte-identical
     //      for every existing row (no current input begins with these markers).
@@ -1015,7 +1015,7 @@ pub fn parse_tool_call(
     };
 
     // (3) The model committed to a tool call. Enforce tool ∈ warrant.tool_grants via the
-    //     SHARED envelope resolver (exact (name, version) crypto-equality FIRST, SN-8;
+    // SHARED envelope resolver (exact (name, version) crypto-equality FIRST;
     //     empty-version name-resolve for the menu-label drift shape; args carried verbatim
     //     + size-capped) — the SAME path the Gemma-marked-envelope recovery uses.
     Ok(Some(resolve_envelope_call(raw, warrant, max_args_bytes)?))
@@ -1034,7 +1034,7 @@ pub fn parse_tool_call(
 /// (`<|tool_call>…<|tool_call>…`, `<|python_tag|>…`×N, `<tool_call>…</tool_call>`×N).
 ///
 /// Every call flows through the SAME grant resolution (exact `tool_grants`
-/// membership, SN-8) + per-call args cap as the single decoder; the genuinely-multi
+/// membership) + per-call args cap as the single decoder; the genuinely-multi
 /// shapes are ALL-OR-NOTHING (a markerless array degrades the WHOLE body to a normal
 /// completion if any element names no grant; a COMMITTED marked/native batch is a
 /// LOUD `Err` if any segment names an ungranted tool). Total + panic-free.
@@ -1066,7 +1066,7 @@ pub fn parse_tool_calls(
 /// batch — possibly empty for an all-or-nothing markerless degrade), `Ok(None)` when
 /// it is NOT a multi shape (let [`parse_tool_call`] handle it), or `Err` when a
 /// COMMITTED multi shape is malformed/ungranted/oversize. Total + panic-free; the
-/// SN-8 boundary is the SAME defined-delimiter / `starts_with('{')` discipline as the
+/// identity boundary is the SAME defined-delimiter / `starts_with('{')` discipline as the
 /// single path (no mid-string `{` search).
 fn try_decode_multi(
     bytes: &[u8],
@@ -1263,14 +1263,14 @@ mod tests {
 
     #[test]
     fn bundled_server_slash_remote_resolves_the_bare_remote_leaf() {
-        // BUG-33 (PR-2 deep-test campaign finding A1): the bundled echo is now granted
+        // PR-2 deep-test campaign finding A1: the bundled echo is now granted
         // as `mcp-echo/echo` (the <server>/<remote> convention every MCP tool uses — a
         // dialed/local tool registers `<server>/<remote>`). A capable model
         // (Gemma-4-12B) prompted to "use the echo tool" naturally proposes the bare
         // remote leaf `echo`; it MUST resolve to the grant via the leaf rule. Before
         // the fix the bundled tool was a flat `mcp-echo` (no `/`), so the bare `echo`
         // was refused `UngrantedTool` and the live ReAct chain dead-lettered with no
-        // answer. SN-8: the leaf is EXACT segment equality, never prefix/substring.
+        // answer. The leaf is EXACT segment equality, never prefix/substring.
         let w = warrant_granting(Some(("mcp-echo/echo", "1")));
 
         // (a) the bare remote leaf, version-less (JSON envelope) ⇒ resolves to the grant.
@@ -1314,7 +1314,7 @@ mod tests {
 
     #[test]
     fn shared_server_segment_is_ambiguous_fail_closed_but_distinct_leaves_resolve() {
-        // SN-8: when two grants SHARE the addressed segment (the `mcp-echo` server of
+        // when two grants SHARE the addressed segment (the `mcp-echo` server of
         // both `mcp-echo/echo` and `mcp-echo/reverse`), the bare `mcp-echo` is
         // AMBIGUOUS ⇒ fail-closed (no guessing). The DISTINCT leaves still resolve.
         let w = warrant_granting_many(&[("mcp-echo/echo", "1"), ("mcp-echo/reverse", "2")]);
@@ -1396,7 +1396,7 @@ mod tests {
             parse_tool_call(env, &w, 4096),
             Err(DecodeError::UngrantedTool { .. })
         ));
-        // Same name, wrong version ⇒ also ungranted (exact match, SN-8).
+        // Same name, wrong version ⇒ also ungranted (exact match).
         let env2 = br#"{"tool_call":{"name":"mcp-echo","version":"2","args":{}}}"#;
         assert!(matches!(
             parse_tool_call(env2, &w, 4096),
@@ -1437,7 +1437,7 @@ mod tests {
         assert_eq!(call.args_bytes, args_src.as_bytes().to_vec());
     }
 
-    // ---- BUG-28: Gemma-4 native `<|tool_call>call:NAME{ARGS}<tool_call|>` arm ----
+    // ---- Gemma-4 native `<|tool_call>call:NAME{ARGS}<tool_call|>` arm ----
 
     #[test]
     fn gemma_native_call_is_decoded_name_normalized_version_resolved() {
@@ -1457,7 +1457,7 @@ mod tests {
         // RC4b live-witness (T-GEMMA-ENVELOPE-IN-MARKER): Gemma-4 sometimes wraps the FULL
         // {"tool_call":{…}} envelope INSIDE its native markers (`call:` then a `{`, not a
         // bare name). The native NAME{ARGS} arm reads an EMPTY name; the envelope must be
-        // recovered through the same exact-grant resolution + args cap (SN-8).
+        // recovered through the same exact-grant resolution + args cap.
         let w = warrant_granting(Some(("retrieve", "1")));
         let env = br#"<|tool_call>call:{"tool_call":{"name":"retrieve","version":"1","args":{"dataset":"science","query":"plants energy sun"}}}<tool_call|>"#;
         let call = parse_tool_call(env, &w, 4096)
@@ -1482,7 +1482,7 @@ mod tests {
 
     #[test]
     fn gemma_marked_envelope_ungranted_is_refused_not_silent() {
-        // SN-8: a marked envelope naming an UNGRANTED tool is a LOUD refusal, never prose —
+        // a marked envelope naming an UNGRANTED tool is a LOUD refusal, never prose —
         // the recovery still flows through the exact-grant authority gate.
         let w = warrant_granting(Some(("retrieve", "1")));
         let env = br#"<|tool_call>call:{"tool_call":{"name":"rm-rf","version":"1","args":{}}}<tool_call|>"#;
@@ -1729,7 +1729,7 @@ mod tests {
         assert_eq!(parse_tool_call(env, &w, 4096), Ok(None));
     }
 
-    // ---- BUG-32: namespace-strip + version-drift resolution (lane-agnostic) ----
+    // ---- namespace-strip + version-drift resolution (lane-agnostic) ----
 
     /// Grant several tools at once (the namespaced dialed-tool case the single-grant
     /// `warrant_granting` cannot express).
@@ -1746,7 +1746,7 @@ mod tests {
 
     #[test]
     fn bug32_native_bare_leaf_resolves_namespaced_grant() {
-        // The headline BUG-32 shape: a dialed/local tool is granted NAMESPACED, the
+        // The headline shape: a dialed/local tool is granted NAMESPACED, the
         // model proposes the bare leaf. The leaf must resolve to the namespaced grant.
         let w = warrant_granting_many(&[("kxlocal-a1b2c3d4/multiply", "1")]);
         let env = br#"<|tool_call>call:multiply{"a":2,"b":3}<tool_call|>"#;
@@ -1786,7 +1786,7 @@ mod tests {
     #[test]
     fn bug32_ambiguous_leaf_is_fail_closed() {
         // Two distinct grants sharing the leaf `run` ⇒ the bare `run` is ambiguous ⇒
-        // refused (SN-8: never guess which tool the model meant). The COMMITTED arm now
+        // refused (never guess which tool the model meant). The COMMITTED arm now
         // raises the precise `Ambiguous` variant carrying the candidate full-ids (in
         // BTreeSet order) so the react loop can re-prompt with a disambiguation
         // (T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER) — still fail-closed, never fires.
@@ -1817,7 +1817,7 @@ mod tests {
     #[test]
     fn bug32_nonempty_wrong_version_still_refused() {
         // A NON-empty mismatching version is the model pinning a DIFFERENT tool —
-        // stays refused (no version-recovery for non-empty versions; SN-8). Pins the
+        // stays refused (no version-recovery for non-empty versions). Pins the
         // tightening that keeps `ungranted_tool_is_refused`'s @2 assertion valid.
         let w = warrant_granting(Some(("mcp-echo", "1")));
         let env = br#"{"tool_call":{"name":"mcp-echo","version":"2","args":{}}}"#;
@@ -1876,7 +1876,7 @@ mod tests {
     // ---- PR-9c-1: dynamic multi-format envelopes (accept-side; common open set) ----
     // Llama `<|python_tag|>{…}` · Qwen3/Hermes `<tool_call>{…}</tool_call>` · args
     // under args|arguments|parameters · args as a pre-serialized JSON string. All
-    // are ACCEPT-side, fail-closed, and flow through the SAME grant resolution (SN-8)
+    // are ACCEPT-side, fail-closed, and flow through the SAME grant resolution
     // as every other arm — the envelope-side complement to PR-3's args-side JSON5
     // repair. The markerless bare `{name,arguments}` object + multiple-calls-per-turn
     // are DEFERRED (pinned to Ok(None) below).
@@ -2036,7 +2036,7 @@ mod tests {
 
     #[test]
     fn bare_object_with_ungranted_name_is_normal_completion() {
-        // ADVERSARIAL (SN-8): a markerless object has NO commitment marker, so a name
+        // ADVERSARIAL: a markerless object has NO commitment marker, so a name
         // that addresses no grant is PROSE, never a refusal — Ok(None), not UngrantedTool.
         let w = warrant_granting(Some(("mcp-echo", "1")));
         let env = br#"{"name":"not-a-tool","arguments":{"q":"x"}}"#;
@@ -2066,7 +2066,7 @@ mod tests {
 
     #[test]
     fn bare_object_oversize_args_refused() {
-        // A markerless call's args are still size-capped (IMP-16) — a committed call.
+        // A markerless call's args are still size-capped — a committed call.
         let w = warrant_granting(Some(("mcp-echo", "1")));
         let big = "x".repeat(100);
         let env = format!(r#"{{"name":"mcp-echo","arguments":{{"q":"{big}"}}}}"#);
@@ -2166,7 +2166,7 @@ mod tests {
     #[test]
     fn parse_tool_calls_repeated_gemma_native_segments_fire_all() {
         // Repeated Gemma-native `<|tool_call>…<tool_call|>` segments back-to-back fire
-        // all N (the live-Gemma parallel-call shape). SN-8: each segment is promoted
+        // all N (the live-Gemma parallel-call shape). Each segment is promoted
         // ONLY after its defined open delimiter.
         let w = warrant_granting_many(&[("mcp-echo", "1"), ("fs-read", "1")]);
         let env = br#"<|tool_call>call:mcp_echo{"q":"x"}<tool_call|><|tool_call>call:fs_read{"p":"/a"}<tool_call|>"#;
@@ -2404,8 +2404,8 @@ mod tests {
 
     #[test]
     fn parse_permutation_tolerates_trailing_prose() {
-        // RC4c-2c (GR24 llama.cpp parity): a model may append an explanation AFTER the
-        // array. We parse the LEADING array and ignore the trailing bytes (SN-8: still a
+        // RC4c-2c (llama.cpp parity): a model may append an explanation AFTER the
+        // array. We parse the LEADING array and ignore the trailing bytes (still a
         // value boundary at position 0, no mid-string scan).
         assert_eq!(
             parse_permutation("[1,0] because passage 1 is most relevant", 2),

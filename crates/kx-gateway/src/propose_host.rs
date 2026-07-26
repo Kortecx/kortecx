@@ -5,7 +5,7 @@
 //! (`decode_plan` then `compile_plan`). It VALIDATES ONLY: it registers nothing, submits
 //! nothing, and writes no journal, so it is unaffected by the run-registration dedup and is
 //! digest-invariant. A model, decode, or compile failure is an honest
-//! [`WorkflowProposal::Rejected`], never a panic (D142). SN-8: the model names only a role,
+//! [`WorkflowProposal::Rejected`], never a panic (D142). The model names only a role,
 //! an intent, and edges; every capability axis comes from the vetted role catalog
 //! ([`build_authoring_role_catalog`]).
 
@@ -37,7 +37,7 @@ pub(crate) struct HostWorkflowProposer {
 
 impl HostWorkflowProposer {
     /// Wire the proposer for a served model. The role catalog is the curated authoring
-    /// palette resolved against `model_id` (pure model roles; SN-8 axes come from the
+    /// palette resolved against `model_id` (pure model roles; The axes come from the
     /// vetted recipes).
     pub(crate) fn new(
         backend: Arc<RoutingBackend>,

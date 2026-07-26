@@ -1,7 +1,7 @@
 """W1.A5 toolscout views — ADVISORY tool discovery + TaskBundle preview, as
 surfaced by ``ListToolManifests`` / ``ScoreTaskBundle``.
 
-Kept in its own module (the runs.py / module-per-concern precedent). SN-8: every
+Kept in its own module (the runs.py / module-per-concern precedent). Every
 score/verdict here is DISPLAY-ONLY — never a committed fact, never an
 authorization. The sole grant gate stays the exact ``(name, version)`` equality
 check in lowering + the broker; a score can surface a tool, never grant one. The
@@ -80,7 +80,7 @@ class ToolManifest:
 @dataclass(frozen=True)
 class ManifestScore:
     """One manifest's advisory rank against a bundle intent, in integer basis
-    points (SN-8: floats never cross the wire; a score never authorizes)."""
+    points (floats never cross the wire; a score never authorizes)."""
 
     tool_id: str
     tool_version: str
@@ -101,7 +101,7 @@ class ManifestScore:
 class BundleScore:
     """A ``ScoreTaskBundle`` outcome: every registered manifest ranked best-first
     + the lowering-gate DRY-RUN verdict (``"unavailable"`` | ``"would-lower"`` |
-    ``"refused"``; ``"unknown"`` absorbs any future value). DISPLAY-ONLY (SN-8)
+    ``"refused"``; ``"unknown"`` absorbs any future value). DISPLAY-ONLY
     — the broker re-gates any real dispatch."""
 
     bundle_fingerprint: str  # hex (32B blake3 TaskBundle content fingerprint)
@@ -168,7 +168,7 @@ class BundleSpec:
 #
 # DISTINCT from the advisory ToolManifest above: this is the durable registry
 # INVENTORY (what is registered, by whom, with what authority). Registration
-# grants NO authority — a tool fires only under a server-issued warrant (SN-8);
+# grants NO authority — a tool fires only under a server-issued warrant;
 # `tool_id` is server-derived (the client never names/forges it). DIALING a
 # registered external MCP server is a Cloud / PR-6b capability.
 
@@ -176,7 +176,7 @@ class BundleSpec:
 @dataclass(frozen=True)
 class RegisteredTool:
     """One durable-registry row (``DiscoverTools``). ``net_scope`` is a display
-    summary; authority never rides this wire (SN-8)."""
+    summary; authority never rides this wire."""
 
     tool_id: str  # 16-byte server-derived id, hex
     tool_name: str
@@ -265,7 +265,7 @@ class RegisterServerResult:
 @dataclass(frozen=True)
 class CallToolResult:
     """The outcome of an operator DIAGNOSTIC tool fire (``CallMcpTool``) — a model-free
-    "exercise this tool" check through the broker (SN-8 re-enforced; no journal fact).
+    "exercise this tool" check through the broker (authority re-enforced; no journal fact).
     ``ok`` is ``False`` with a non-empty ``error`` on a refusal/connector failure."""
 
     ok: bool
@@ -276,7 +276,7 @@ class CallToolResult:
 @dataclass(frozen=True)
 class ToolParam:
     """A declared, typed tool input parameter (the MCP inputSchema analogue —
-    CLOSED set, no float, SN-8). ``ty`` in ``str|bytes|int|bool|enum``."""
+    CLOSED set, no float). ``ty`` in ``str|bytes|int|bool|enum``."""
 
     name: str
     ty: str = "str"

@@ -94,7 +94,7 @@ describe("builder-graph", () => {
     expect(req.edges).toHaveLength(1);
     expect(req.edges?.[0]?.parent).toBe(0);
     expect(req.edges?.[0]?.child).toBe(1);
-    // SN-8: the request carries NO warrants / no MoteIds — only topology + params.
+    // the request carries NO warrants / no MoteIds — only topology + params.
     expect(Object.keys(req)).not.toContain("warrants");
   });
 

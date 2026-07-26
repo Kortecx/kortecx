@@ -324,7 +324,7 @@ fn schema_version_is_v16() {
     assert_eq!(JOURNAL_SCHEMA_VERSION, 16);
 }
 
-/// IMP-2 (M2.x-E): pin the migration floor. The schema-migration ladder
+/// (M2.x-E): pin the migration floor. The schema-migration ladder
 /// (`migrate_entry` / `ReplayJournal` / `migrate_to`) replays any on-disk version
 /// in `[MIN_SUPPORTED_SCHEMA_VERSION, JOURNAL_SCHEMA_VERSION]`; lowering the floor
 /// (supporting an older version) is an intentional, reviewable change that must

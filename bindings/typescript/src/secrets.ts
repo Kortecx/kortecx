@@ -5,7 +5,7 @@
  * any read. `ListSecretNames` surfaces NAMES + audit timestamps only. Kept in its
  * own module (the `alerts.ts`/`toolscout.ts` module-per-concern precedent).
  *
- * SN-8: `PutSecret`/`DeleteSecret` write host credential material and are gated
+ * `PutSecret`/`DeleteSecret` write host credential material and are gated
  * loopback-only + an authenticated party server-side; the SDK only *carries* the
  * value to the handler and *encodes* nothing sensitive on a read.
  */

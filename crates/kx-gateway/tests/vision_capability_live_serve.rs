@@ -1,5 +1,5 @@
 //! PR-B2 LIVE witness (`--ignored`): image→text vision on a served model, the
-//! DUAL-ENGINE parity proof (GR24). Drives whichever engine the serve provisioned a
+//! DUAL-ENGINE parity proof. Drives whichever engine the serve provisioned a
 //! vision recipe for — restart between engines and run once each:
 //!
 //! ```sh
@@ -18,7 +18,7 @@
 //! `kx/recipes/vision` exactly as the SDK/CLI do (form-gated `{prompt, image_ref,
 //! model}`), and asserts a
 //! NON-EMPTY committed answer (the non-flaky invariant). Whether the model says "red"
-//! is a SOFT signal (model quality is not what this gates — GR15 log-don't-assert), as
+//! is a SOFT signal (model quality is not what this gates — log-don't-assert), as
 //! is the OCR shape (the same dispatch with a text image + a "transcribe" prompt).
 //! Honest-skips when the serve provisioned NO vision model (no image-capable model is
 //! served) — that path is covered deterministically by the `kx-ollama` mock gate tests.

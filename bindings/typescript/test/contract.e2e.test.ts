@@ -3,7 +3,7 @@
  * `test_contract_e2e.py`). The headline proves **byte-parity**: the SDK's
  * `invoke(..., { wait: true })` and the reference `kx` CLI, hitting the same
  * gateway with the same recipe + args, produce identical server-derived ids and
- * result (SN-8 holds across both surfaces). The rest exercise the
+ * result (the identity rule holds across both surfaces). The rest exercise the
  * projection/content/events flow and the edge cases a mature agentic runtime must
  * handle — including the large-payload and concurrent-client cases.
  */
@@ -28,7 +28,7 @@ import {
   stopAllServers,
 } from "./fixtures/serve.js";
 
-// Content-derived (server-derived, SN-8) fields — identical across any server,
+// Content-derived (server-derived) fields — identical across any server,
 // language, or process. `instance_id` is per-journal-registration, so it agrees
 // only WITHIN one server (proven by the read-back test).
 const DETERMINISTIC = ["terminal_mote_id", "result_ref", "result_hex", "result_len", "state"];
@@ -121,7 +121,7 @@ describe("wait strategies + idempotency", () => {
     expect(a.terminalMoteId).not.toBe(b.terminalMoteId); // distinct Mote per input
   });
 
-  it("determinism across fresh servers (SN-8)", async () => {
+  it("determinism across fresh servers", async () => {
     const [s1, s2] = await Promise.all([devServer(), devServer()]);
     const a = new KxClient(s1.endpoint);
     const b = new KxClient(s2.endpoint);
@@ -745,7 +745,7 @@ describe("Batch C: global event tail + telemetry", () => {
 // --- Skills catalog (declarative kortecx.skill/v1 bundles) --------------
 
 describe("Skills catalog", () => {
-  it("add → list → show → remove round-trips with server-derived identity (SN-8)", async () => {
+  it("add → list → show → remove round-trips with server-derived identity", async () => {
     const s = await devServer();
     const kx = new KxClient(s.endpoint);
     const added = await kx.skills.add({

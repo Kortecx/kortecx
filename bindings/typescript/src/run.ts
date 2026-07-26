@@ -68,7 +68,7 @@ export class Result {
 
   /** T-AGENT2: if this run's terminal is an LLM-judge (`kx/recipes/judge`), the
    *  decoded `"valid"` / `"invalid: <reason>"` summary; `null` otherwise.
-   *  Display-only (SN-8). */
+   * Display-only. */
   get verdict(): string | null {
     return this.payload === null ? null : decodeCriticVerdict(this.payload);
   }

@@ -6,7 +6,7 @@
  * 2-byte little-endian `CRITIC_SCHEMA_VERSION` prefix followed by fixed-int bincode
  * of the verdict enum — so the SDK decodes the VALID/INVALID summary directly,
  * without a bincode dependency. Platform-neutral (no Node imports): re-exported by
- * both the node and web entries via `common`. Display-only (SN-8): the summary
+ * both the node and web entries via `common`. Display-only: the summary
  * never authorizes anything; the runtime's promotion gate reads the committed fact.
  */
 

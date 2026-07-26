@@ -371,7 +371,7 @@ mod tests {
 
 const CONNECTOR_CONFORMANCE_TEMPLATE: &str = r#"// SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 //! Conformance: the scaffolded connector passes the Extension Acceptance Gate
-//! subset (out-of-process · warrant/SN-8 · secret-by-ref · on/off), driven OFFLINE
+//! subset (out-of-process · warrant · secret-by-ref · on/off), driven OFFLINE
 //! (`KX___ENV___FAKE`) so it needs no credentials and no network.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]

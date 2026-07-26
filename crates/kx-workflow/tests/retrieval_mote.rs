@@ -1,4 +1,4 @@
-//! Graph-RAG as a `ReadOnlyNondet` retrieval Mote, and the SN-8 boundary: the
+//! Graph-RAG as a `ReadOnlyNondet` retrieval Mote, and the identity boundary: the
 //! committed retrieval fact is the neighbour SET (exact content refs), with
 //! similarity scores excluded — so similarity never reaches a `MoteId`.
 #![allow(clippy::unwrap_used)]
@@ -56,7 +56,7 @@ fn end_to_end_retrieval_produces_a_content_addressed_fact() {
 fn similarity_scores_do_not_leak_into_the_committed_fact() {
     // Two retrieval results with the SAME neighbour ids but DIFFERENT scores
     // must produce the SAME committed fact — proof that similarity (the float
-    // score) never reaches the content-addressed identity (SN-8).
+    // score) never reaches the content-addressed identity.
     let id1 = ContentRef::of(b"n1");
     let id2 = ContentRef::of(b"n2");
     let high = [

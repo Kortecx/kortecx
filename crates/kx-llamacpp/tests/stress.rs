@@ -6,7 +6,7 @@
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! Stress tests — load / decode / drop cycles in tight loops to surface
-//! resource leaks and Drop ordering bugs (SN-4 v2 #7 extension).
+//! resource leaks and Drop ordering bugs (the structural review extension).
 //!
 //! These tests don't assert specific memory numbers (that requires
 //! `dhat` / `valgrind` infrastructure deferred to P1.13). They DO

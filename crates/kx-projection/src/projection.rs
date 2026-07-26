@@ -106,7 +106,7 @@ impl Projection {
     /// are immediately registered via [`Projection::register_mote`].
     /// Replay-faithfulness (R49) — re-folding the same log produces
     /// bit-identical children — is the materializer's responsibility;
-    /// see `docs/design/decisions.md` §D49 (private corpus) and the
+    /// see D49 and the
     /// `tests/cold_refold_topology.rs` P1+P2+P3+P4 proof.
     #[must_use]
     pub fn with_materializer(materializer: Box<dyn TopologyMaterializer>) -> Self {
@@ -792,7 +792,7 @@ impl Projection {
     /// journaled seal (M2.2c) will store + verify recovery against. It is
     /// **distinct** from `kx-runtime`'s committed-facts *product* digest (the
     /// canonical run-identity `7d22d4bd…`): this one covers the *whole* state for
-    /// recovery integrity, never run identity. Exact-equality only (SN-8).
+    /// recovery integrity, never run identity. Exact-equality only.
     #[must_use]
     pub fn state_digest(&self) -> [u8; 32] {
         crate::checkpoint::state_content_digest(&self.state)
@@ -882,7 +882,7 @@ impl Projection {
     /// to learn WHY a step failed (corrected-context), and an operator reads for
     /// triage. Mirrors [`Projection::result_ref_of`] — a pure O(1) lookup. Returns
     /// ONLY the closed, low-entropy reason enum: never the failed Mote's result
-    /// bytes or warrant secrets (a safe action-selection input, SN-8 / D77).
+    /// bytes or warrant secrets (a safe action-selection input, safe by construction).
     #[must_use]
     pub fn failure_reason_of(&self, mote_id: &MoteId) -> Option<FailureReason> {
         self.state.motes.get(mote_id).and_then(|i| i.failure_reason)

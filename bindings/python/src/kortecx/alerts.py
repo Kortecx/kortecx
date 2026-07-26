@@ -6,7 +6,7 @@ worker-reported terminal failures) into a rebuildable-to-empty ``alerts.db``
 read-cache — display/triage-read ONLY, never truth, never identity, never a
 digest input. Serve-path admission refusals write nothing to the journal, so
 they are not in this inbox. Kept in its own module (the telemetry.py /
-module-per-concern precedent). SN-8: ``alert_id``/``mote_id`` are server-derived;
+module-per-concern precedent). ``alert_id``/``mote_id`` are server-derived;
 the SDK only hex-encodes the bytes.
 
 The triage LIFECYCLE (acknowledge/resolve), the alert-rule engine, and

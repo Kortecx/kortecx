@@ -3,7 +3,7 @@ name: real-model gate (Gemma-4)
 # READY-TO-ENABLE, INTENTIONALLY MANUAL (risk-burndown Batch C). The always-on CI real-model gate uses
 # Qwen3-0.6B — deterministic but documented as a FALSE GREEN (too weak to reliably emit a tool call), so
 # it proves plumbing, not capability. This workflow runs the SAME eval on **Gemma-4-12B** (the local
-# GR24/GR28 parity model), which is strong enough to exercise real agentic behavior — the honest capability
+# parity model), which is strong enough to exercise real agentic behavior — the honest capability
 # gate. It is `workflow_dispatch` only (never auto-runs on a PR) because Gemma-4-12B needs a capable
 # self-hosted runner (large RAM / GPU) + Actions minutes that the default `ubuntu-latest` runner does not
 # have. FLIP TO A REAL GATE: add a `pull_request` / `schedule` trigger once a capable runner is wired, and

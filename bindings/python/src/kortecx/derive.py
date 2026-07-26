@@ -10,7 +10,7 @@ What is new versus :meth:`propose_workflow`: a proposed step's ``tool_contract``
 come from the vetted role recipe, which is EMPTY for every authoring role — so no proposal
 ever carried a tool. Here the model may NAME tool ids, but only from a server-built menu of
 what this caller could already fire, and everything it names is intersected back against
-that menu host-side. Naming is not granting (SN-8): what survives is a WISH that ``RunApp``
+that menu host-side. Naming is not granting: what survives is a WISH that ``RunApp``
 intersects again at fire.
 """
 

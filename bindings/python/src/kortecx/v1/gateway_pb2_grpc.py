@@ -787,7 +787,7 @@ class KxGatewayServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def ProposeWorkflow(self, request, context):
-        """NL authoring additive (D209.3 / SN-8): propose a multi-step DAG from a
+        """NL authoring additive: propose a multi-step DAG from a
         natural-language goal (served model → vetted kx-planner compile). Validates
         only — never registers or runs; the client confirms via SubmitWorkflow/SaveApp.
         """
@@ -854,7 +854,7 @@ class KxGatewayServicer(object):
     def SubmitFeedback(self, request, context):
         """PR-4.1 additive (D120.6): user 👍/👎 feedback on an answer — a client-origin
         write into a rebuildable-to-empty feedback.db sidecar (advisory; off-journal,
-        off-digest, off-identity; SN-8 server-resolved principal). `ListFeedback` is
+        off-digest, off-identity; server-resolved principal). `ListFeedback` is
         the read-back / inspection surface. UNIMPLEMENTED when the seam yields None.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -892,9 +892,9 @@ class KxGatewayServicer(object):
         """PR-6a additive (D120.6): the declarative tools registry. RegisterTool /
         DeregisterTool write the durable off-journal tools.db (server-derived tool_id,
         SSRF-vetted server_host); DiscoverTools is the inventory/governance VIEW
-        (distinct from the advisory ListToolManifests). SN-8: registration grants NO
+        (distinct from the advisory ListToolManifests). Registration grants NO
         authority; client tool_grants stay refused. DIALING external MCP servers +
-        Connections + parallel fan-out are PR-6b/Cloud (D159/GR19).
+        Connections + parallel fan-out are PR-6b/Cloud.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -917,10 +917,10 @@ class KxGatewayServicer(object):
         remote MCP server (stdio + Streamable-HTTP) and registers its discovered
         tools into the SAME tools.db (each namespaced `<server>/<remote>`, fireable
         via the broker); List/Discover/Test/Deregister govern the connections. The
-        live untrusted-egress surface (GR8): admission + dial-time SSRF vetting,
+        live untrusted-egress surface: admission + dial-time SSRF vetting,
         per-server rate-limit, warrant-gated egress, secret-less CredentialRef.
-        SN-8: server-derived connection/tool ids; client tool_grants stay refused.
-        OAuth/device-flow + a hosted credential marketplace are CLOUD (D159/GR19).
+        Server-derived connection/tool ids; client tool_grants stay refused.
+        OAuth/device-flow + a hosted credential marketplace are CLOUD.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -952,7 +952,7 @@ class KxGatewayServicer(object):
 
     def CallMcpTool(self, request, context):
         """T-CONNECTOR-AUTOGRANT additive: an operator DIAGNOSTIC fire of one registered
-        tool through the broker (SN-8 re-enforced; no journal fact — see CallMcpToolRequest).
+        tool through the broker (authority re-enforced; no journal fact — see CallMcpToolRequest).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -988,7 +988,7 @@ class KxGatewayServicer(object):
         host webhook/cron listeners); TestTrigger dry-runs the binding without firing.
         Each event starts a fresh registered run via the existing Invoke path (no journal
         writer dep added; frozen trio untouched). UNIMPLEMENTED when no trigger admin is
-        wired. The hosted multi-tenant trigger gateway is CLOUD (D113/D170.b/GR19).
+        wired. The hosted multi-tenant trigger gateway is CLOUD.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1052,7 +1052,7 @@ class KxGatewayServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def PutContextBundle(self, request, context):
-        """PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
+        """PR-7 — context bundles (off-journal bundles.db sidecar; server-derived ref).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1077,7 +1077,7 @@ class KxGatewayServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def CreateBranch(self, request, context):
-        """D155 Phase-A — branched data (off-journal branches.db sidecar; SN-8
+        """D155 Phase-A — branched data (off-journal branches.db sidecar; server-derived
         server-derived ref). SnapshotInto reads operator-approved host files
         (confined under KX_SERVE_FS_ROOT, default-OFF) INTO the content store and
         records the {path -> ref} manifest; the agent loop edits IN-CAS (no host
@@ -1163,7 +1163,7 @@ class KxGatewayServicer(object):
         PullModel downloads a model (Ollama /api/pull or a huggingface.co /resolve/ GGUF
         URL) and REGISTERS it at runtime so it is immediately usable WITHOUT restart;
         it returns immediately (poll GetPullStatus). Deny-by-default: refused unless the
-        operator sets KX_SERVE_ALLOW_MODEL_PULL and the URL host is allowlisted (SN-8 —
+        operator sets KX_SERVE_ALLOW_MODEL_PULL and the URL host is allowlisted (
         a client requests, the operator authorizes). SetActiveModel switches the server's
         active default (an advisory hint; the server never silently re-routes chat).
         Authenticated caller required (UNAUTHENTICATED otherwise).
@@ -1187,7 +1187,7 @@ class KxGatewayServicer(object):
     def SaveApp(self, request, context):
         """POC-4 (Apps "App-authoring + envelope") — save / list / get a durable App
         envelope in the caller-scoped, off-journal apps.db catalog. SaveApp validates
-        + canonicalizes the kortecx.app/v1 envelope and derives app_ref (SN-8); the
+        + canonicalizes the kortecx.app/v1 envelope and derives app_ref; the
         envelope carries NO authority. Authenticated caller required (UNAUTHENTICATED
         otherwise); unimplemented when the apps.db sidecar is absent. NO cross-instance
         import entrypoint (deferred). Off-journal, off-digest.
@@ -1237,7 +1237,7 @@ class KxGatewayServicer(object):
         client-orchestrated GetApp -> SubmitWorkflow path). The server reads the validated
         envelope, lowers its blueprint through the canonical path, resolves connections
         against the caller's own registry, and narrows the run warrant's secret scope to
-        the App's declared secrets. Server-minted warrants (SN-8). Authenticated caller
+        the App's declared secrets. Server-minted warrants. Authenticated caller
         required; unimplemented when the app-run seam (apps.db + MCP gateway) is absent
         (clients then fall back to the legacy GetApp -> SubmitWorkflow path).
         """
@@ -1250,12 +1250,12 @@ class KxGatewayServicer(object):
         fixed skeleton into a fresh CoW-on-CAS branch (plan -> N writes -> N
         AdvanceBranch). Returns immediately (the orchestration runs in the
         background; observe via GetScaffoldStatus + GetBranch + StreamEvents).
-        Warrants are server-minted (SN-8). Unimplemented when no served model /
+        Warrants are server-minted. Unimplemented when no served model /
         branch store. Off-journal, off-digest.
         DeriveApp: one prompt -> a reviewable App design (steps + SHAPE + capabilities,
         or a hosted file plan). Validate-only; saves nothing. The model may NAME tool ids
         from a server-built ids-only menu of the caller's OWN ceiling and every id is
-        intersected back against it (SN-8: naming is not granting). `unimplemented` with
+        intersected back against it (naming is not granting). `unimplemented` with
         no served model.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -1326,7 +1326,7 @@ class KxGatewayServicer(object):
         """Additive (D120.6/D175) — the per-principal skill catalog (skills.db).
         AddSkill validates the manifest fail-closed (kortecx.skill/v1 closed shape +
         authority deny-keys) and stores the instructions body via the content-write
-        seam; skill_ref is server-derived over the canonical bytes (SN-8). A skill
+        seam; skill_ref is server-derived over the canonical bytes. A skill
         is a WISH bundle — attaching one grants nothing; the bind intersects its
         tool wishes against the caller's grants and the live broker. Authenticated
         caller required; UNIMPLEMENTED when the catalog seam is absent.

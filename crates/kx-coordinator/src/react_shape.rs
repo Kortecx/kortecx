@@ -14,7 +14,7 @@
 //! harness drives one journal per run, where the unsalted `‖ turn` material is
 //! collision-free — but live serve SHARES one journal across runs, where run B's
 //! unsalted turn 0 would dedup-collide with run A's (red-team BLOCKER #1). The
-//! salt is the server-assigned `instance_id` (SN-8: never client-controlled),
+//! salt is the server-assigned `instance_id` (never client-controlled),
 //! mirroring `kx_journal::run_root_id`.
 //!
 //! Pure + total + dependency-light: identity material is `blake3` via
@@ -237,7 +237,7 @@ pub(crate) fn react_tool_id_material(
 /// re-dispatch is exactly-once via the content-addressed stage + the run-scoped
 /// idempotency token), declares `(tool_id, tool_version)` in its `tool_contract`
 /// (the broker's `precheck` re-verifies it against `warrant.tool_grants` at
-/// dispatch — SN-8), carries ONE Data edge to its proposing turn (durable
+/// dispatch), carries ONE Data edge to its proposing turn (durable
 /// lineage; the ready-set releases it when the turn commits), and keeps its
 /// `config_subset` EMPTY — the PR-2d-2 args contract: the model-proposed args
 /// travel OUT-OF-BAND (`WorkItem.tool_args`, re-derived at lease time from the

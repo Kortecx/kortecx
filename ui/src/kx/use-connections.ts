@@ -4,9 +4,9 @@
  * (`RegisterMcpServer`), test reachability (`TestMcpServer`), re-discover
  * (`DiscoverServerTools`), and remove (`DeregisterMcpServer`).
  *
- * The runtime is a SECURE GATEWAY (D132/D159/GR19): registering a server DIALS it
+ * The runtime is a SECURE GATEWAY: registering a server DIALS it
  * (the live untrusted-egress surface — host SSRF-vetted at admission AND at dial).
- * Server ids are server-derived (SN-8); a credential is referenced by NAME only
+ * Server ids are server-derived; a credential is referenced by NAME only
  * (never the secret, D81). Degrades to a not-wired empty state on a gateway
  * without the MCP gateway feature (UNIMPLEMENTED).
  */
@@ -125,7 +125,7 @@ export interface CallMcpToolArgs {
 /**
  * Fire ONE registered tool live through the broker (`CallMcpTool`) — the operator
  * "exercise this tool" diagnostic. NOT a durable agentic effect (no journal fact);
- * SN-8 is re-enforced server-side. A connector / tool failure resolves to
+ * the authority gate is re-enforced server-side. A connector / tool failure resolves to
  * `{ ok: false, error }` (never a thrown rejection) so the panel surfaces it inline.
  */
 export function useCallMcpTool() {

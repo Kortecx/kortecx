@@ -99,7 +99,7 @@ pub struct ChildDescriptor {
     /// size-capped + strictly parsed at the planner decode boundary
     /// (`decode_loop_proposal` / `decode_replan_proposal`) before it ever
     /// becomes a descriptor; the resolver only ever writes it to the prompt
-    /// key, never to an authority axis (SN-8 narrowing-only is unaffected).
+    /// key, never to an authority axis (narrowing-only is unaffected).
     ///
     /// **Empty `intent` preserves the pre-intent behavior**: the resolver
     /// then inherits the shaper's `config_subset` (incl. its prompt) verbatim,

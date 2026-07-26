@@ -3,7 +3,7 @@
 //! - The planner carries a step's intent under its own `PLAN_PROMPT_KEY`; for a
 //!   model executor to USE it as the instruction, that key MUST equal the
 //!   harness's `prompt::PROMPT_KEY`. A drift guard pins the two constants equal
-//!   (cheap protection against the hand-mirrored-constant hazard, IMP-7).
+//! (cheap protection against the hand-mirrored-constant hazard).
 //! - The thesis dependency-ban (D73): `kx-planner`'s `[dependencies]` must name
 //!   none of `kx-scheduler` / `kx-projection` / `kx-executor` / `kx-inference`,
 //!   so the planner layer can never couple to the engine it sits above.

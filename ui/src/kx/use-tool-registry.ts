@@ -4,7 +4,7 @@
  *
  * DISTINCT from the advisory toolscout view (`use-toolscout.ts`): this is the
  * durable GOVERNANCE surface — what is registered, by whom, with what authority.
- * Registration grants NO authority (SN-8); the `toolId` is SERVER-derived. DIALING
+ * Registration grants NO authority; the `toolId` is SERVER-derived. DIALING
  * a registered external MCP server is a Cloud / PR-6b capability — registering a
  * host only records it (SSRF-vetted at admission). Degrades to a not-wired empty
  * state on a gateway without the registry (UNIMPLEMENTED).

@@ -1,7 +1,7 @@
 //! `kx mote show <instance-hex16> <mote-hex32>` — per-mote definition
 //! inspection over the gateway (`GetMoteDetail`, Batch B). Tri-surface parity
 //! with the console node inspector + the SDK `getMoteDetail` / `get_mote_detail`.
-//! DISPLAY-ONLY (SN-8): the capped def summary never authorizes anything; an
+//! DISPLAY-ONLY: the capped def summary never authorizes anything; an
 //! uncommitted or pre-Batch-B mote answers `def_found: false` honestly.
 
 use kx_proto::proto;

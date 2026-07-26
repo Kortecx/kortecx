@@ -11,7 +11,7 @@
 //! `MoteId` input, never a digest input — dropping the file cannot move the
 //! canonical projection digest.
 //!
-//! ## Server-derived id (SN-8)
+//! ## Server-derived id
 //! `bundle_ref = blake3("kx-bundle\0" ‖ handle ‖ items)[..16]` via
 //! [`kx_content::ContentRef::of`] (the `alerts.db` keyed-hash precedent). The
 //! client names a `handle`; the server derives the identity.
@@ -56,7 +56,7 @@ struct ItemRow {
     media: String,
 }
 
-/// `bundle_ref = blake3("kx-bundle\0" ‖ handle ‖ items)[..16]` (SN-8). Folds the
+/// `bundle_ref = blake3("kx-bundle\0" ‖ handle ‖ items)[..16]`. Folds the
 /// items in AUTHOR order (the manifest's identity reflects the exact sequence the
 /// caller bound). The bind-time `config_subset` injection canonicalises separately.
 fn bundle_ref_of(handle: &str, items: &[BundleItemRecord]) -> [u8; 16] {

@@ -7,7 +7,7 @@ import { DatasetsPanel } from "../datasets/DatasetsPanel";
 import { IngestPanel } from "../datasets/IngestPanel";
 import { QueryPanel } from "../datasets/QueryPanel";
 
-/** One honest-disabled "Cloud" capability card (GR15 don't-fake-gaps + D157/GR19:
+/** One honest-disabled "Cloud" capability card (don't-fake-gaps + cloud-tier:
  *  the OSS line ships view/author + deterministic engineering; the managed,
  *  agentic, and analytics halves are the Cloud offering). */
 function CloudCard({ label, detail }: { label: string; detail: string }) {
@@ -29,9 +29,9 @@ function CloudCard({ label, detail }: { label: string; detail: string }) {
  * form. Backed by the additive ListDatasets / QueryDataset / FuzzyDiscovery /
  * IngestDocuments RPCs over an in-process HNSW ANN index (`kx-dataset-hnsw`). Text
  * ingest/search need a server embedder (`kx serve --features inference`); the SDK's
- * FFI-free client-vector path needs none. Retrieval scores are DISPLAY-only (SN-8).
+ * FFI-free client-vector path needs none. Retrieval scores are DISPLAY-only.
  *
- * Honest Cloud boundary (D157/GR19): vector retrieval + deterministic synthesis run
+ * Honest Cloud boundary: vector retrieval + deterministic synthesis run
  * locally in OSS; LLM-driven synthesis, SQL/transform/visualize, an external
  * (bring-your-own Postgres) database, analytics/dashboards, and governance/lineage
  * are the managed Cloud offering — surfaced as honest-disabled cards, never fakes.

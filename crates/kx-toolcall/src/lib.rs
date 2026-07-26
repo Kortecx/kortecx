@@ -1,9 +1,9 @@
-//! IMP-5 — the fail-closed decode of a **model-proposed** tool call.
+//! — the fail-closed decode of a **model-proposed** tool call.
 //!
 //! M5.1 put a tool *menu* in front of the model; M5.2 lets the model *pick* one.
 //! Model output is untrusted: [`parse_tool_call`] decodes it into a validated
 //! [`ToolCall`] (or `None` for a normal completion) and is **total + panic-free**
-//! over arbitrary bytes. "Model proposes, runtime enforces" (SN-8): the only tools
+//! over arbitrary bytes. "Model proposes, runtime enforces": the only tools
 //! a proposal may name are those already in `warrant.tool_grants` — selection is
 //! exact (crypto-equality of the `(name, version)` grant), never fuzzy. The broker
 //! re-checks the grant at dispatch; this is the first, defense-in-depth gate.

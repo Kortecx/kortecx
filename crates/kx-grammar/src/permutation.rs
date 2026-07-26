@@ -13,7 +13,7 @@
 //!   digit/punctuation tokens — `T-RERANK-GBNF-CRASH`). The model emits a clean array
 //!   after its reasoning anyway, and the parser enforces validity.
 //!
-//! ## Boundaries (SN-8)
+//! ## Boundaries
 //! Neither path enforces distinctness/range in the model layer. The fail-closed
 //! `kx_toolcall::parse_permutation` is the AUTHORITY on validity: a non-permutation
 //! output is rejected and the caller keeps the upstream (RRF/MMR) order. The model

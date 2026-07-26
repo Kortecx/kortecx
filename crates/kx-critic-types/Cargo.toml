@@ -6,7 +6,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx deterministic-critic VOCABULARY (P4.2) — the pure, parser-free type surface a critic Mote commits: CriticVerdict (the content-addressed trust FACT, SN-8: exact crypto-equality only), CriticReason (closed failure vocabulary, integer-scaled evidence — no floats on the identity/commit path), and CheckSpec (the four declarative deterministic checks: schema / dedup / stat-bounds / PII-leakage). Held separate from the kx-critic evaluator so kx-mote can carry a CheckSpec in MoteDef without inheriting parser deps (regex/serde_json) — and dataset-free (a self-contained SchemaTag mirror) so it sits below kx-dataset without a dependency cycle."
+description = "kortecx deterministic-critic VOCABULARY (P4.2) — the pure, parser-free type surface a critic Mote commits: CriticVerdict (the content-addressed trust FACT, exact crypto-equality only), CriticReason (closed failure vocabulary, integer-scaled evidence — no floats on the identity/commit path), and CheckSpec (the four declarative deterministic checks: schema / dedup / stat-bounds / PII-leakage). Held separate from the kx-critic evaluator so kx-mote can carry a CheckSpec in MoteDef without inheriting parser deps (regex/serde_json) — and dataset-free (a self-contained SchemaTag mirror) so it sits below kx-dataset without a dependency cycle."
 
 [lib]
 path = "src/lib.rs"

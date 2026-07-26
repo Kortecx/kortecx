@@ -1,4 +1,4 @@
-//! SN-2 / Golden Rule 10 guard (mirrors the `dep_wall.rs` manifest-scan
+//! Golden Rule 10 guard (mirrors the `dep_wall.rs` manifest-scan
 //! pattern). The `just profile` HARNESS is public OSS, but the captured numbers
 //! are a private corpus trend record. Two independent proofs that no result
 //! file can leak into the *public* repo:
@@ -7,11 +7,11 @@
 //!
 //! Both are **OSS-only invariants**. In the PRIVATE corpus repo the benchmark
 //! results are LEGITIMATELY tracked (`docs/benchmarks/**` is `[private_only]`, the
-//! GR10 trend record) and its `.gitignore` is `[divergent]` — so both assertions are
+//! Trend record) and its `.gitignore` is `[divergent]` — so both assertions are
 //! *expected* to be false there. Like `kx-cli/tests/shared_boundary.rs`, the checks
 //! are gated on the corpus sentinel `00-vision-and-principles.md` (tracked ONLY in
 //! private) and skip in the private repo. Without this gate a `crates/**`-mirrored
-//! shared test is silently RED on private while green on OSS (L-029 class).
+//! shared test is silently RED on private while green on OSS (class).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
@@ -56,7 +56,7 @@ fn gitignore_covers_docs_benchmarks() {
 #[test]
 fn no_benchmark_result_is_tracked() {
     let root = repo_root();
-    // The private corpus repo IS where the results live (GR10) — skip the tripwire there.
+    // The private corpus repo IS where the results live — skip the tripwire there.
     if is_private_corpus_repo(&root) {
         return;
     }
@@ -76,6 +76,6 @@ fn no_benchmark_result_is_tracked() {
     let tracked = String::from_utf8_lossy(&output.stdout);
     assert!(
         tracked.trim().is_empty(),
-        "no benchmark result may be tracked in the OSS repo (SN-2); found:\n{tracked}"
+        "no benchmark result may be tracked in the OSS repo; found:\n{tracked}"
     );
 }

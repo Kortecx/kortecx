@@ -114,7 +114,7 @@ chunking lift quality regardless.
 
 ## Operator tuning (`KX_SERVE_RAG_*`)
 
-Retrieval is operator-configurable (never client-chosen — SN-8). All are additive and
+Retrieval is operator-configurable (never client-chosen). All are additive and
 default-preserving (unset ⇒ the documented default):
 
 | Env knob | Default | Effect |
@@ -133,7 +133,7 @@ Changing the embed model or the chunk config invalidates an existing server-embe
 corpus: a server-embed query then returns `FAILED_PRECONDITION` (re-ingest to rebuild)
 rather than silently mis-ranking. The client-vector path is unaffected.
 
-## Scores are display-only (SN-8)
+## Scores are display-only
 
 Every hit carries a similarity `score`, but it is **display-only** — a ranking aid,
 never an identity input. The durable retrieval result is the ordered **content-ref

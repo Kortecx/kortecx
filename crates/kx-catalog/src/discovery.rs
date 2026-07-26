@@ -9,17 +9,17 @@
 //!   `by_signature` (the registry's exact hash lookup).
 //! - **(b) FUZZY vector discovery** — [`FuzzyDiscovery`], a thin wrapper over a
 //!   `kx_dataset::RetrievalIndex` confined to `ReadOnlyNondet` semantics (the same
-//!   SN-8 boundary `kx_workflow::retrieval` documents). Embeddings are OPAQUE,
+//! Identity boundary `kx_workflow::retrieval` documents). Embeddings are OPAQUE,
 //!   caller-supplied vectors; the catalog never computes them.
 //!
-//! # The hard SN-8 boundary
+//! # The hard identity boundary
 //!
 //! The ONLY thing that becomes a committed selection is the chosen EXACT
 //! [`AssetRef`] — a [`SelectionFact`] has **no score field**, and
 //! [`commit_selection`] never reads a [`Hit`]'s score. Two index states returning
 //! the same neighbours produce a byte-identical `SelectionFact` regardless of the
 //! float scores, so similarity can never reach the identity / commit path. This is
-//! the narrowed SN-8 (D70) applied to the catalog, mirroring
+//! the narrowed (D70) applied to the catalog, mirroring
 //! `kx_workflow::encode_retrieval_fact`.
 
 use kx_content::ContentRef;
@@ -131,7 +131,7 @@ impl<I: RetrievalIndex> FuzzyDiscovery<I> {
 
 /// A committed catalog selection: the EXACT chosen asset ref(s), in canonical
 /// order. Scores are **structurally absent** — there is no score field, so
-/// similarity can never reach a committed output (SN-8 / D87 "fuzzy-in,
+/// similarity can never reach a committed output (fuzzy-in, exact-out "fuzzy-in,
 /// exact-out"). The content-addressed identity is a pure function of the ref set
 /// ONLY.
 #[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
@@ -177,7 +177,7 @@ impl SelectionFact {
 /// score-driven hit order.
 ///
 /// **This is the single chokepoint where fuzzy becomes exact** — `h.score` is
-/// never read, and [`SelectionFact`] has no score field, so the SN-8 boundary is
+/// never read, and [`SelectionFact`] has no score field, so the identity boundary is
 /// structural.
 pub fn commit_selection(
     hits: &[Hit],

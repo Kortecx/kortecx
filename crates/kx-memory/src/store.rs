@@ -66,7 +66,7 @@ pub trait MemoryStore: Send + Sync {
     /// either the newest-first (recency) or the most-similar-to-a-query (semantic)
     /// slice of `req.namespace`, optionally restricted by kind + `created_ms` window.
     /// The similarity score, if any, stays INSIDE this call (the returned
-    /// [`MemoryRecord`] carries no score — SN-8 by return type).
+    /// [`MemoryRecord`] carries no score — by return type).
     ///
     /// # Errors
     /// [`MemoryError::InvalidArgument`] for a bad namespace / non-finite query vector;

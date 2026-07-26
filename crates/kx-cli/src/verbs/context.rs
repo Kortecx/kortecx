@@ -4,7 +4,7 @@
 //! Tri-surface parity with the SDK + UI.
 //!
 //! The bundle manifest lives in an off-journal `bundles.db` sidecar; the server
-//! derives `bundle_ref` (SN-8) and scopes every bundle to the authoring party.
+//! derives `bundle_ref` and scopes every bundle to the authoring party.
 //! `--item <name>=<hex32>` attaches an existing content-store ref; `--file
 //! <name>=<path>` uploads the file first (`PutContent`) then attaches its
 //! server-derived ref.

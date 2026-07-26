@@ -3,7 +3,7 @@
 A single ``GetServerInfo`` projection of the running ``kx serve`` process: its
 served model, listen/bridge/console/metrics addresses, content + journal + catalog
 locations, the admission caps, the CORS allow-list, and the compiled-in feature
-flags. DISPLAY/SETTINGS-ONLY (SN-8): every field is server-derived; it NEVER
+flags. DISPLAY/SETTINGS-ONLY: every field is server-derived; it NEVER
 carries a secret (no token, no key material) and authorizes nothing.
 
 Kept in its own module so ``types.py`` stays a thin aggregator, mirroring the Rust
@@ -22,7 +22,7 @@ from .v1 import gateway_pb2 as _g
 class ServerInfo:
     """The connected gateway's effective configuration (``GetServerInfo``).
 
-    Server-derived display fields only (SN-8) — never a secret, never an identity
+    Server-derived display fields only — never a secret, never an identity
     or authorization input. An old gateway without the RPC raises
     ``KxUnimplemented``."""
 

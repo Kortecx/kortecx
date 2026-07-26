@@ -1,6 +1,6 @@
 //! Build script: compile the gRPC schema with `tonic-build`, using the pinned
 //! **vendored** `protoc` so neither CI nor local dev needs a system protobuf
-//! compiler (SN-7: ships linux-x86_64 + macos-aarch64). Generation is
+//! compiler (ships linux-x86_64 + macos-aarch64). Generation is
 //! deterministic — pinned protoc + fixed `.proto` produce byte-identical Rust
 //! across the two clean release builds of the byte-determinism gate (I1.c).
 

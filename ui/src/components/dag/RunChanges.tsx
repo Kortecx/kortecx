@@ -6,7 +6,7 @@
  * committed body via the lazy, sandboxed {@link CodeViewer} (text / JSON — never
  * `innerHTML`); a media payload (which carries no decoded text) falls back to a note
  * pointing at the Artifacts tab, which owns the blob-URL media viewer. Read-only /
- * display-only (SN-8), NO new RPC — reuses `GetProjection` (`resultRef`) + the shipped
+ * display-only, NO new RPC — reuses `GetProjection` (`resultRef`) + the shipped
  * {@link useContent}.
  */
 

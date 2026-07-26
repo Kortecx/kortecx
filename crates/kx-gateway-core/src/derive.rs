@@ -11,7 +11,7 @@
 //! the vetted role recipe, which is empty for every authoring role — so no proposal has ever
 //! carried a tool, and an App could only be plugged in after it existed. Here the model may
 //! NAME ids from a menu the host built out of the caller's OWN ceiling, and the host intersects
-//! what comes back against that same ceiling. Naming is not granting (SN-8): what survives is a
+//! what comes back against that same ceiling. Naming is not granting: what survives is a
 //! WISH, and `RunApp` intersects it again at fire. The model can only ask for what the caller
 //! could already have attached by hand.
 //!
@@ -48,7 +48,7 @@ pub struct DeriveInput {
 /// `role` / `intent` are the model's design; `kind` and `model_id` are SERVER-resolved from the
 /// vetted recipe; `tool_contract` is the model's request already INTERSECTED against the
 /// caller's ceiling. Everything here is re-derived server-side when the approved App is authored
-/// and run (SN-8) — this response is what the author reviews, never what the runtime trusts.
+/// and run — this response is what the author reviews, never what the runtime trusts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerivedStep {
     /// The vetted role name this step plays.

@@ -38,20 +38,20 @@ fn cap_description(description: &str) -> String {
 }
 
 /// PR-6a/PR-1: render the tool-menu text the model sees for a granted tool — the
-/// EXACT callable name (`grant_id`, PR-1/BUG-32 name-steering), then its description
+/// EXACT callable name (`grant_id`, PR-1 name-steering), then its description
 /// PLUS, when the tool declares a typed `inputSchema`, a deterministic
 /// one-line-per-parameter block (name · type · required/optional). This is the
 /// "suggest better tools/steps" lever: the model proposes well-formed calls with
 /// the granted name (a dialed/local tool is registered NAMESPACED `<server>/<remote>`
 /// — leading with `name:` steers the model to emit it verbatim) instead of guessing.
 /// The runtime still validates the proposed name+args fail-closed against the grant
-/// set and the SAME schema (SN-8 — advisory in, exact enforced). The `name:` line is
+/// set and the SAME schema (advisory in, exact enforced). The `name:` line is
 /// advisory prompt bytes only: it lands in `AssembledItem.bytes` (read by the model),
 /// never in `source_ref`/the journal/`MoteId`, so it moves no committed-fact digest.
 fn tool_menu_text(grant_id: &str, def: &ToolDef) -> String {
-    // Lead with the EXACT callable name AND the pinned version (PR-1/BUG-32 name-
+    // Lead with the EXACT callable name AND the pinned version (PR-1 name-
     // steering + RC3): the call envelope is `{"name":…,"version":…,"args":…}`, and the
-    // runtime matches the version EXACTLY (SN-8). Without the version in the menu a
+    // runtime matches the version EXACTLY. Without the version in the menu a
     // model guesses (e.g. emits `"1.0"` for a `"1"` grant) and the call is refused —
     // observed live on Ollama gemma3 (the llama.cpp grammar enumerates the pair, but
     // the Ollama honest-degrade path has only the prompt to go on).
@@ -83,10 +83,10 @@ fn tool_menu_text(grant_id: &str, def: &ToolDef) -> String {
     }
     // PR-3 (A3a): a deterministic, well-formed `Example:` call so the model emits
     // a syntactically-correct args bag with the RIGHT keys on the first try
-    // (the §2.246 finding: a capable model guessed `{"text":…}` for a `q` param).
+    // (a capable model guessed `{"text":…}` for a `q` param).
     // Required params only (the minimal valid call), declared order, type-keyed
     // placeholders. Advisory prompt bytes only (digest-neutral — see the fn doc);
-    // the runtime still validates the model's REAL proposal fail-closed (SN-8).
+    // the runtime still validates the model's REAL proposal fail-closed.
     text.push_str("\nExample: ");
     text.push_str(&example_call_json(schema));
     text
@@ -133,7 +133,7 @@ fn example_call_json(schema: &InputSchema) -> String {
 /// to a name, version and envelope shape only (fail-soft — it never panics a
 /// dispatch and never silently omits a granted tool). It renders ONLY `grants`
 /// (= `warrant.tool_grants`), so no UNGRANTED tool can ever leak. The output is
-/// advisory prompt bytes only (SN-8): the runtime still validates the model's
+/// advisory prompt bytes only: the runtime still validates the model's
 /// REAL proposal fail-closed (`kx_toolcall::parse_tool_call` + `validate_args`).
 /// Empty `grants` yields `""`, so the dispatch menu gate prepends nothing and the
 /// canonical no-tools demo stays byte-unchanged.
@@ -149,7 +149,7 @@ pub fn render_tool_menu(grants: &BTreeSet<ToolGrant>, registry: &dyn ToolRegistr
             out.push_str(&tool_menu_text(&grant.tool_id.0, &def));
         } else {
             // Fail-soft: the registry could not resolve a granted tool (a
-            // BUG-33-class id skew or a registry-open race). Emit the name,
+            // an id skew or a registry-open race). Emit the name,
             // version and the canonical envelope shape so the grant is never
             // silently dropped from the menu. Plain `push_str` (no `format!`)
             // keeps the clippy `format_push_string` lint clean.
@@ -183,7 +183,7 @@ pub fn rerank_output_cap(n: usize) -> u32 {
     // tokens, T-RERANK-GBNF-CRASH, so only `parse_permutation` enforces the shape)
     // can emit a short reasoning/`<|channel>` preamble before the array; too tight a
     // cap truncated the decode mid-preamble so the close tag never arrived and the
-    // strip yielded `""` → fail-closed to input order (the GR24 llama.cpp parity gap).
+    // strip yielded `""` → fail-closed to input order (the llama.cpp parity gap).
     // 512 covers a brief preamble + the array while staying bounded (a runaway decode
     // still can't burn the budget). Paired with the array-FIRST prompt + the
     // trailing-tolerant parser so the array is reached well within the cap.
@@ -196,7 +196,7 @@ pub fn rerank_output_cap(n: usize) -> u32 {
 /// permutation array of indices. The SHARED renderer for the harness rerank and the
 /// live serve rerank turn (byte-identical prompts ⇒ no harness↔serve drift). The
 /// runtime still enforces validity fail-closed via `kx_toolcall::parse_permutation`
-/// (SN-8: the model proposes an order; the parser is authority). Pure + FFI-free.
+/// (the model proposes an order; the parser is authority). Pure + FFI-free.
 #[must_use]
 pub fn render_rerank_prompt(query: &str, texts: &[String]) -> String {
     const SNIPPET_MAX: usize = 400;
@@ -346,7 +346,7 @@ pub fn assemble<S: ContentStore>(
         // The tool's description PLUS — PR-6a, the "richer formatting at P1.8"
         // hook — its typed input parameters, so the model proposes well-formed
         // tool calls (the runtime still validates args fail-closed against the
-        // same `inputSchema`, SN-8). A tool with NO schema is byte-unchanged (the
+        // same `inputSchema`). A tool with NO schema is byte-unchanged (the
         // description alone), so legacy menus are identical.
         let desc_bytes =
             Bytes::copy_from_slice(tool_menu_text(&grant.tool_id.0, &resolved.def).as_bytes());
@@ -422,7 +422,7 @@ mod tool_menu_tests {
 
     #[test]
     fn no_schema_is_name_then_description() {
-        // PR-1/BUG-32 name-steering: the menu leads with the EXACT granted name so a
+        // PR-1 name-steering: the menu leads with the EXACT granted name so a
         // model emits it verbatim, then the description.
         assert_eq!(
             tool_menu_text("fs-list", &def(None)),
@@ -460,7 +460,7 @@ mod tool_menu_tests {
     #[test]
     fn example_shows_a_required_string_param() {
         // The echo-shape: ONE required string param → the model sees the exact
-        // well-formed call (the §2.246 A3a fix).
+        // well-formed call (the A3a fix).
         let schema = InputSchema {
             params: vec![ParamSpec {
                 name: "text".into(),

@@ -102,7 +102,7 @@ impl ResourceCeiling {
 /// A quantitative cost ceiling, in micro-dollars (D115).
 ///
 /// `micro_usd` is the MAXIMUM spend permitted under this warrant. Integer
-/// fixed-point — **no float on the identity path** (SN-8). `0` = no spend
+/// fixed-point — **no float on the identity path**. `0` = no spend
 /// permitted (the fail-closed default); [`u64::MAX`] = effectively unlimited.
 /// Narrowed silently via `min()` like [`ResourceCeiling`] (a child can never
 /// raise the ceiling).

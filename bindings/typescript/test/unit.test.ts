@@ -38,7 +38,7 @@ import { type WaitOutcome, WaitState, pollReactResult } from "../src/wait.js";
 const fill = (v: number, n: number): Uint8Array => new Uint8Array(n).fill(v);
 const dec = (b: Uint8Array): string => new TextDecoder().decode(b);
 
-// --- hex (SN-8 safe: only encode/decode, never derive) -----------------------
+// --- hex (identity-safe: only encode/decode, never derive) -----------------------
 
 describe("hexids", () => {
   it("round-trips and validates lengths", () => {

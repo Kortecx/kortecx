@@ -1,5 +1,5 @@
 """The Blueprint builder — pure unit tests (no server). Maps the author-side DAG to
-the wire (kinds -> enum, hex -> bytes, str -> utf-8). SN-8: never computes identity."""
+the wire (kinds -> enum, hex -> bytes, str -> utf-8). Never computes identity."""
 
 from __future__ import annotations
 

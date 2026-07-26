@@ -4,7 +4,7 @@ The opt-in LLM-judge gate (``kx/recipes/judge``) commits a ``CriticVerdict`` as 
 terminal result. Its canonical wire encoding is a tiny, stable byte layout — a
 2-byte little-endian ``CRITIC_SCHEMA_VERSION`` prefix followed by fixed-int bincode
 of the verdict enum — so the SDK decodes the VALID/INVALID summary directly,
-without a bincode dependency. Display-only (SN-8): the summary never authorizes
+without a bincode dependency. Display-only: the summary never authorizes
 anything; the runtime's promotion gate reads the committed fact, not this string.
 """
 

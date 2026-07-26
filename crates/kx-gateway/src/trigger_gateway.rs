@@ -315,7 +315,7 @@ impl TriggerAdmin for HostTriggerAdmin {
             // Port the RunApp fireable-grant backstop (service.rs run_app): an App
             // blueprint is client-authored, so a tool grant the broker never registered
             // must fail closed HERE — never submitted as a warrant the recipe path would
-            // never produce (SN-8 / provisioning-drift guard).
+            // never produce (provisioning-drift guard).
             if let Some(fireable) = self.fireable.as_ref() {
                 let registered = fireable.registered_grants();
                 for (_, warrant) in &bound.motes {

@@ -1,4 +1,4 @@
-//! Attach-mode chat spikes (Golden Rule 10 + GR24 dual-engine parity): time a real
+//! Attach-mode chat spikes (Golden Rule 10 + dual-engine parity): time a real
 //! chat turn against a LIVE `kx serve` over gRPC, engine-agnostically. Unlike the
 //! other spikes (which host a fresh in-process echo gateway), this dials an EXTERNAL
 //! serve the operator launched — whichever inference engine it runs (the FFI-free

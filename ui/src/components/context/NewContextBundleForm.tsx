@@ -2,7 +2,7 @@
  * Author (upsert) a context bundle (`PutContextBundle`, PR-7). Items are content
  * refs already in the store: either uploaded here (file → `PutContent` → ref, the
  * chat-attach path) or named by an existing 64-hex ref (the `kx context add
- * --item` power path). The server derives `bundleRef` (SN-8) and folds the bundle
+ * --item` power path). The server derives `bundleRef` and folds the bundle
  * into the entry Mote at bind. Mirrors `RegisterToolForm` (GlowCard + chip/inline
  * controls, never a controlled `<select>`).
  */
@@ -117,7 +117,7 @@ export function NewContextBundleForm() {
       <h2>New context bundle</h2>
       <p className="muted">
         Group files or content refs under a handle, then attach it to a chat or chain. The server
-        derives the bundle ref (SN-8) and injects the items into the run's entry step — a different
+        derives the bundle ref and injects the items into the run's entry step — a different
         attached context is a different, independently-cached run.
       </p>
       <form onSubmit={onSubmit} className="register-tool-form">

@@ -1,4 +1,4 @@
-//! IMP-16 — a resource-exhausting MCP response is refused fail-closed (nothing is
+//! A resource-exhausting MCP response is refused fail-closed (nothing is
 //! staged), bounded by the capability's `max_response_bytes` cap.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]

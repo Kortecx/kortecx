@@ -83,7 +83,7 @@ async fn committed_run_is_observable_end_to_end() {
     // (1) SubmitRun a single PURE Mote.
     let mote = common::pure_mote(1, &[]);
     let warrant = common::pure_warrant();
-    // GR15: the PURE passthrough commits the Mote's REAL declared input — a
+    // the PURE passthrough commits the Mote's REAL declared input — a
     // parentless Mote with no bound free-param echoes its `InputDataId` as
     // lowercase hex (deterministic, content-addressed, never a placeholder).
     let expected: Vec<u8> = mote

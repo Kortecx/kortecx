@@ -1,6 +1,6 @@
 // Integration-test file: compiled as a separate crate from the host lib.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Schema-evolution replay corpus (IMP-2, carrier M2.x-E).
+//! Schema-evolution replay corpus (carrier M2.x-E).
 //!
 //! Proves the forward-migration story: a journal written under an older,
 //! still-supported schema version can be replayed read-only ([`ReplayJournal`])

@@ -7,7 +7,7 @@ import { buttonHover } from "../../app/motion";
  * Compose a TaskBundle: an ORDERED tool sequence picked via CHIP buttons (the
  * recipe-chip precedent — native buttons, never a controlled `<select>`) plus a
  * free-text intent. Selected chips show their 1-based sequence position. Scoring
- * is an advisory DRY-RUN (SN-8): nothing submits, nothing journals.
+ * is an advisory DRY-RUN: nothing submits, nothing journals.
  */
 export function BundleComposer({
   manifests,

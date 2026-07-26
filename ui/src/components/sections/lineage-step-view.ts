@@ -9,7 +9,7 @@
  * tool → ordinal), which is the difference between a diagram that shows topology and
  * one that shows the App.
  *
- * HONESTY (SN-8) — the rules this module will not break:
+ * HONESTY — the rules this module will not break:
  *  - A `tool_contract` is a WISH, not a grant. The server intersects it against the
  *    caller's authority ∩ fireable ∩ registry ∩ compat at run. Card language is
  *    "requests", never "has".

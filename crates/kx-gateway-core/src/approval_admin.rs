@@ -6,7 +6,7 @@
 //! translation/admission layer (the FE thesis test, D101.7 — it never writes the
 //! journal). A `None` seam ⇒ the RPCs return `unimplemented` (the trigger/secret
 //! forward-compatible-degrade precedent). Grant/Deny are OPERATOR decisions over a
-//! SERVER-derived `request_id` (SN-8) — they release/reject a STAGED action, never
+//! SERVER-derived `request_id` — they release/reject a STAGED action, never
 //! mint a client warrant.
 
 /// A pending HITL approval, flattened for the operator inbox (display-only; no

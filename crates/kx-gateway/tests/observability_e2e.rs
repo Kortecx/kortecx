@@ -187,7 +187,7 @@ async fn serve_audit_log_captures_the_lifecycle() {
     let log = std::fs::read_to_string(&audit_path).expect("the audit log was written");
     let mote_hex: String = mote_id.iter().map(|b| format!("{b:02x}")).collect();
     // The committed Mote appears as BOTH an admission (dispatched) and a durable
-    // commit, each carrying its server-derived hex id (SN-8 — echoed, not recomputed).
+    // commit, each carrying its server-derived hex id (echoed, not recomputed).
     assert!(
         log.contains("\"type\":\"mote_dispatched\""),
         "audit log has the admission line:\n{log}"

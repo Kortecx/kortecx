@@ -217,7 +217,7 @@ export {
   SnapshotResult,
 } from "./branch.js";
 export { ModelLifecycleResult, ModelSummary, PullStatus } from "./models.js";
-// POC-1: the resolved gateway configuration view (Settings; display-only, SN-8).
+// POC-1: the resolved gateway configuration view (Settings; display-only).
 export { ServerInfo } from "./serverinfo.js";
 
 // Batch B: per-mote definition inspection (display-only).

@@ -2,18 +2,18 @@
 
 This is the **single source of truth** for the chain string-DSL. The Python, TypeScript,
 and Rust (CLI) implementations MUST all parse + lower a chain expression to **byte-identical**
-`(steps, edges)`, pinned by `corpus.json` in this directory (the GR12 tri-surface parity gate).
+`(steps, edges)`, pinned by `corpus.json` in this directory (the tri-surface parity gate).
 
 A chain expression composes **task handles** into a DAG. Each handle resolves (via a caller
 `tasks` map) to a typed step (`pure` / `model` / `tool`; the palette grows per phase). The DSL
-operators describe topology only — the server still compiles + warrants every step (SN-8); a
+operators describe topology only — the server still compiles + warrants every step; a
 chain only changes what is PROPOSED.
 
 ### The `tool` step (PR-6b-2)
 
 A `tool` handle fires a single REGISTERED tool as a standalone node. It carries a
 `tool_contract = { tool_id: tool_version }` (the SERVER resolves the tool in its live registry and
-builds the per-step warrant — the client never supplies a warrant or grants, SN-8) and lowers its
+builds the per-step warrant — the client never supplies a warrant or grants) and lowers its
 authored arguments to ONE **canonical-JSON object** under the reserved config key
 `kx.tool.args` (`TOOL_ARGS_KEY`) in `params`. The canonical-JSON encoding is **keys sorted
 ascending, compact separators (`,`/`:`), no floats** (the server schema is integer/bytes/bool/enum-typed) —
@@ -34,7 +34,7 @@ is insignificant (`p @ echo` == `p@echo`).
   deduped** (`p@x@x` == `p@x`). The tags lower into the model step's `tool_contract`
   (`{ tag: "1" }`) — the SAME field the standalone `tool` step uses; the SERVER resolves each
   tagged tool in its live registry + builds the per-step warrant from the UNION of the declared
-  tools' scopes (the client never supplies a warrant or grants — SN-8).
+  tools' scopes (the client never supplies a warrant or grants).
 - The bounded-loop **budget** (`max_turns` / `max_tool_calls`) rides the task spec (NOT the `@`
   grammar) and lowers to canonical-JSON `u32` bytes under `params["max_turns"]` /
   `params["max_tool_calls"]`; absent ⇒ the coordinator default (8 turns / 6 tool calls); validated
@@ -111,7 +111,7 @@ identity-bearing `config_subset` at bind (a different attached context ⇒ a dif
   (repeatable). `blueprint run --file` accepts a top-level `"context_bundles": [...]`.
 - **Lowering rule**: `context_bundles` are emitted **verbatim in caller-supplied order — NOT
   sorted, NOT deduped at the DSL layer**. The server owns canonicalization (it folds the SORTED,
-  deduped ref-set into `config_subset` at bind, SN-8); the DSL only PROPOSES the handle list.
+  deduped ref-set into `config_subset` at bind); the DSL only PROPOSES the handle list.
 - **Default**: absent ⇒ `[]`. A chain that attaches no context lowers byte-identically to
   pre-PR-7 (the empty repeated field serializes away), so the canonical reference run is unmoved.
 
@@ -164,7 +164,7 @@ populated (version `"1"` for `@`-tags) and, if a budget was set, `params["max_tu
 `params["max_tool_calls"]` = the decimal strings. `agentic_dedup` pins the order-preserving tag
 dedup; `agentic_non_model` pins the non-model rejection.
 
-A `model` task MAY omit `model_id` (it lowers to `""` — the SERVER binds the served model, SN-8;
+A `model` task MAY omit `model_id` (it lowers to `""` — the SERVER binds the served model;
 `model_id_optional` pins this) and MAY carry a `params["reasoning"]` value (`full` / `minimal` /
 `off` / `strip`, the opt-in reasoning mode the server reads from `config_subset`; `model_reasoning`
 pins it). The SDK `model()` factories expose `model_id` as optional and `reasoning=` as a typed

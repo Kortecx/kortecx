@@ -2,7 +2,7 @@
  * Snapshot host files into a branch (`SnapshotInto`, D155) — or create/fork an
  * empty branch (`CreateBranch`). Paths are read SERVER-side from the operator's
  * confined `KX_SERVE_FS_ROOT` (the host is never written); the server derives
- * `branchRef` (SN-8). Mirrors `NewContextBundleForm` (GlowCard + chip/inline
+ * `branchRef`. Mirrors `NewContextBundleForm` (GlowCard + chip/inline
  * controls, never a controlled `<select>`). `--parent` forks a point-in-time CoW
  * sub-branch.
  */

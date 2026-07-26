@@ -4,7 +4,7 @@
 //!
 //! A world-mutating tool call on a chain that requires approval is held
 //! staged-not-committed until an operator GRANTS it (it then fires exactly once) or
-//! DENIES it (the chain dead-letters fail-closed). SN-8: grant/deny are operator
+//! DENIES it (the chain dead-letters fail-closed). Grant/deny are operator
 //! decisions over a SERVER-derived `request_id` (the bytes shown by `list`); they
 //! never mint a client warrant.
 

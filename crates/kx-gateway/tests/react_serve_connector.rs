@@ -4,7 +4,7 @@
 //! auto-granted under `react-auto`, and FIRED by a LIVE model — the chain settles a
 //! terminal Answer.
 //!
-//! Four witnesses (the user's GR24 real-tool matrix):
+//! Four witnesses (the user's real-tool matrix):
 //!   (a) a UNIQUE-named dialed tool (`reverse`) — HARD-asserts the tool fired (the
 //!       core proof the dialed-connector turn-0 dead-letter is fixed);
 //!   (b) a REAL third-party MCP (`@modelcontextprotocol/server-filesystem`) — fires a
@@ -16,8 +16,8 @@
 //!
 //! Whether a `tool` round fires is model-nondeterministic for the collision case
 //! (LOGGED), but the unique-tool + filesystem + stateful witnesses STEER an unambiguous
-//! full/leaf id and assert the fire (GR15 real-or-fail). Validate on BOTH engines with
-//! Gemma-4 (GR24): llama.cpp (`KX_SERVE_MODEL_GGUF`) and Ollama (`KX_SERVE_OLLAMA`).
+//! full/leaf id and assert the fire (real-or-fail). Validate on BOTH engines with
+//! Gemma-4: llama.cpp (`KX_SERVE_MODEL_GGUF`) and Ollama (`KX_SERVE_OLLAMA`).
 //!
 //! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a GGUF
 //! (`KX_SERVE_MODEL_GGUF` / `just fetch-gemma-model`), without the bundled `kx-mcp-echo`
@@ -108,7 +108,7 @@ async fn drive(
     session_mode: &str,
     instruction: &str,
 ) -> Option<Trajectory> {
-    // GR24 dual-engine: `KX_SERVE_OLLAMA=1` serves the Ollama daemon's Gemma model
+    // Dual-engine: `KX_SERVE_OLLAMA=1` serves the Ollama daemon's Gemma model
     // (engine 2); otherwise serve the llama.cpp GGUF (engine 1). The fix under test
     // is engine-agnostic (parser / coordinator / view / broker), so BOTH engines
     // exercise the SAME dialed-connector firing + ambiguity + Fix C paths.
@@ -261,7 +261,7 @@ async fn drive(
 /// unambiguous name, so a runtime-dialed connector CAN fire end-to-end (the core fix:
 /// before the fix this dead-lettered turn-0). The dialed-tool FIRING path is gated
 /// DETERMINISTICALLY by `call_mcp_tool::call_mcp_tool_fires_a_dialed_connector_tool`;
-/// whether a LIVE model fires vs answers directly is model+engine behavior (GR16: live
+/// whether a LIVE model fires vs answers directly is model+engine behavior (live
 /// tests OBSERVE, never hard-gate model wording — e.g. llama.cpp Gemma-4 fires
 /// `refconn/reverse`, while Ollama gemma3:12b often computes the reverse and answers
 /// directly). So the witness asserts the ROBUST invariants (bounded + every dead-letter
@@ -296,7 +296,7 @@ async fn external_unique_tool_is_callable_by_a_live_model() {
         t.dead_letter_reasons
     );
     // OBSERVE the fire (proven deterministically + on llama.cpp): on a fire, it is the
-    // dialed `refconn/reverse` — never a different/hallucinated tool (SN-8).
+    // dialed `refconn/reverse` — never a different/hallucinated tool.
     if t.fired {
         assert!(
             t.fired_tool_ids.iter().any(|id| id == "refconn/reverse"),
@@ -378,7 +378,7 @@ async fn ambiguous_collision_recovers_and_never_wedges_silently() {
         return;
     };
     // The ROBUST (non-flaky) invariants — the T-CONNECTOR + Fix C guarantees that hold
-    // regardless of model wording/environment (GR16/PR-9d: live tests gate INTEGRATION,
+    // regardless of model wording/environment (Live-test policy: live tests gate INTEGRATION,
     // not model wording; the disambiguation CORRECTNESS is gated deterministically by
     // `kx-coordinator` `ambiguous_dialed_collision_rejects_then_reprompts_with_full_ids`):
     //   1. BOUNDED — the chain reaches a terminal / spends its budget (the original bug

@@ -22,7 +22,7 @@ use crate::error::InvokeError;
 /// `resolve_effective_warrant_for(Use)` or a
 /// `GovernedFleet::resolve_member_warrant(Use)`. kx-invoke resolves `Use`
 /// authority through this seam and **never trusts a caller-supplied warrant**
-/// (the no-privilege-escalation property, SN-8). `None` ⇒ not authorized.
+/// (the no-privilege-escalation property). `None` ⇒ not authorized.
 pub trait UseWarrantResolver {
     /// The party's effective `Use` warrant on `asset`, or `None` if unauthorized.
     fn resolve_use(&self, party: &PartyId, asset: &AssetRef) -> Option<WarrantSpec>;
@@ -79,7 +79,7 @@ where
 {
     let asset = AssetRef::Path(handle.clone());
 
-    // (1) Use authority — authoritative; never a caller-supplied warrant (SN-8).
+    // (1) Use authority — authoritative; never a caller-supplied warrant.
     //     Fires FIRST so an unauthorized caller cannot probe recipe existence.
     let effective = use_resolver
         .resolve_use(party, &asset)

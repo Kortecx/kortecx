@@ -26,7 +26,7 @@
 //! workflow a *reproducible program* — pin the seed + model + inference params
 //! and a synthetic corpus regenerates bit-for-bit (D50). Identity is always
 //! derived, never hand-assigned, and matched by exact cryptographic equality
-//! (SN-8) — never similarity.
+//! — never similarity.
 //!
 //! # Shape
 //!

@@ -175,7 +175,7 @@ def test_recipe_info_from_proto_carries_advisory_metadata():
 
 
 def test_scored_recipe_from_proto_maps_score_and_recipe():
-    # SN-8: score_bp is an integer (basis points), never a float.
+    # score_bp is an integer (basis points), never a float.
     sr = g.ScoredRecipe(
         recipe=g.RecipeSummary(handle="kx/recipes/chat", description="Chat"),
         score_bp=7000,

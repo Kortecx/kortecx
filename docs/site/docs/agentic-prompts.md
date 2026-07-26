@@ -35,7 +35,7 @@ The model then proposes a call as:
 …and [grammar-constrained decoding](./tools.md#grammar-constrained-tool-calls)
 guarantees the proposal is well-formed, while the warrant grant-check and
 `inputSchema` validation remain the **only** authority (a model can never call a
-tool it was not granted — SN-8).
+tool it was not granted).
 
 ## Serve-level controls
 

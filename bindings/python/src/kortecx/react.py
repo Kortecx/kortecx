@@ -5,7 +5,7 @@ each turn's run-salted Mote id, its settled branch (``pending`` | ``answer`` |
 ``tool`` | ``rejected`` | ``dead_lettered``), and — for a ``tool`` branch — the
 fired tool's ``id@version``, or — for a ``rejected`` branch (PR-3/A2) — the
 fail-closed ``rejection_reason`` the model re-prompts over. Kept in its own module
-(the runs.py / module-per-concern precedent). SN-8: every id is server-derived;
+(the runs.py / module-per-concern precedent). Every id is server-derived;
 the SDK only hex-encodes the bytes.
 """
 
@@ -43,7 +43,7 @@ class ReactTurn:
     call_index: int = 0
     # Governance observability: the chain's run-fixed warrant axes decoded from its
     # anchor — the tool ids it may fire (``tool_id@version``) and the secret refs it may
-    # resolve (D110.3). NAMES/REFS ONLY, never a value (SN-8/D81). Repeated on every row
+    # resolve (D110.3). NAMES/REFS ONLY, never a value. Repeated on every row
     # of a chain (the warrant is run-fixed); empty when the warrant blob is absent.
     granted_tools: tuple[str, ...] = ()
     secret_scope_names: tuple[str, ...] = ()

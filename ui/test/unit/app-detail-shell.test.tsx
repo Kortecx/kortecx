@@ -1,7 +1,7 @@
 /**
  * POC-5d: the single-App IDE shell — the full-screen tabbed workspace. Asserts the
  * 3 tabs render, a LOCKED App disables every write affordance with an honest notice
- * (GR15 absence guard), and an unlocked file exposes both direct + agentic edit.
+ * (absence guard), and an unlocked file exposes both direct + agentic edit.
  * Sub-sections (Lineage / Chat / Run drawer) are stubbed so this test isolates the
  * shell + the Files pane.
  */
@@ -221,7 +221,7 @@ describe("App IDE shell (POC-5d)", () => {
     expect(screen.getByTestId("app-file-save")).toBeInTheDocument();
   });
 
-  it("LOCKED: shows the lock control + an honest notice, NO write affordances (GR15)", () => {
+  it("LOCKED: shows the lock control + an honest notice, NO write affordances", () => {
     LOCKED = true;
     render(<AppDetailSection handle="apps/local/echo" path="README.md" />);
     // The lock toggle reports locked (its Unlock affordance is the control); the name

@@ -55,7 +55,7 @@ fn jaro(a: &[char], b: &[char]) -> f64 {
 /// Jaro-Winkler similarity in `[0, 1]`: Jaro boosted by up to 4 chars of
 /// common prefix (the standard `p = 0.1` scaling).
 ///
-/// **ADVISORY ONLY (SN-8).** A similarity score orders discovery candidates;
+/// **ADVISORY ONLY.** A similarity score orders discovery candidates;
 /// it must NEVER be an authorization input — the exact-equality
 /// `tool_grants` gate in [`lower_to_workflow_def`](crate::lower_to_workflow_def)
 /// is the sole authority path.

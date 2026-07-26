@@ -336,7 +336,7 @@ pub fn render_global_delta(delta: &proto::GlobalEventDelta, json: bool) -> Strin
 /// (the `kx/recipes/judge` terminal, or any critic mote's result) to a readable
 /// `"valid"` / `"invalid: <reason>"` summary. Returns `None` for any payload that
 /// is not a well-formed verdict (a model answer, a tool observation, …), so the
-/// caller falls back to the raw UTF-8/hex display. Display-only (SN-8): the
+/// caller falls back to the raw UTF-8/hex display. Display-only: the
 /// summary never authorizes anything.
 #[must_use]
 pub fn critic_verdict_summary(payload: &[u8]) -> Option<String> {
@@ -534,7 +534,7 @@ pub fn render_content_json(content_ref: &[u8], payload: &[u8]) -> String {
     .to_string()
 }
 
-/// Render `content put` — the server-derived ref + dedup flag (Batch A). SN-8:
+/// Render `content put` — the server-derived ref + dedup flag (Batch A).
 /// the ref printed here came from the SERVER (blake3 over the payload), never a
 /// client computation.
 #[must_use]
@@ -556,7 +556,7 @@ pub fn render_put_content(resp: &proto::PutContentResponse, json: bool) -> Strin
     }
 }
 
-/// Render `models list` — DISPLAY-ONLY discovery (SN-8: listing a model never
+/// Render `models list` — DISPLAY-ONLY discovery (listing a model never
 /// routes one; selection stays a recipe ENUM free-param).
 #[must_use]
 pub fn render_models(resp: &proto::ListModelsResponse, json: bool) -> String {
@@ -794,7 +794,7 @@ fn doc_snippet(content: &[u8]) -> String {
     }
 }
 
-/// Render `datasets query` hits. The `score` is DISPLAY-ONLY (SN-8) — a ranking
+/// Render `datasets query` hits. The `score` is DISPLAY-ONLY — a ranking
 /// aid, never an identity input; the durable result is the ordered content-ref SET.
 #[must_use]
 pub fn render_dataset_hits(resp: &proto::QueryDatasetResponse, json: bool) -> String {
@@ -1056,7 +1056,7 @@ pub fn render_consolidate_preview(
     }
 }
 
-/// Render `memory recall` hits. The `score` is DISPLAY-ONLY (SN-8) — a ranking aid,
+/// Render `memory recall` hits. The `score` is DISPLAY-ONLY — a ranking aid,
 /// never an identity input; the durable result is the ordered content-ref SET.
 #[must_use]
 pub fn render_memory_hits(resp: &proto::RecallMemoryResponse, json: bool) -> String {
@@ -1167,7 +1167,7 @@ pub fn lower_verdict_name(verdict: i32) -> &'static str {
     }
 }
 
-/// Render `tools list` — the registered manifests. ADVISORY discovery (SN-8):
+/// Render `tools list` — the registered manifests. ADVISORY discovery:
 /// listing a tool never grants it.
 #[must_use]
 pub fn render_tools_list(resp: &proto::ListToolManifestsResponse, json: bool) -> String {
@@ -1208,7 +1208,7 @@ pub fn render_tools_list(resp: &proto::ListToolManifestsResponse, json: bool) ->
 
 /// Render `tools discover` — the durable registry INVENTORY (PR-6a). Distinct
 /// from `tools list` (advisory ranking): this is "what is registered, by whom,
-/// with what authority". Registration grants no authority (SN-8).
+/// with what authority". Registration grants no authority.
 #[must_use]
 pub fn render_tools_discover(resp: &proto::DiscoverToolsResponse, json: bool) -> String {
     if json {
@@ -1780,7 +1780,7 @@ pub fn render_app_delete(handle: &str, resp: &proto::DeleteAppResponse, json: bo
     out
 }
 
-/// Render `skills add` — the server-derived identity (SN-8).
+/// Render `skills add` — the server-derived identity.
 #[must_use]
 pub fn render_add_skill(resp: &proto::AddSkillResponse, json: bool) -> String {
     if json {
@@ -2361,7 +2361,7 @@ pub fn render_delete_branch(resp: &proto::DeleteBranchResponse, json: bool) -> S
 }
 
 /// Render `tools score` — the advisory rank ladder + the lowering dry-run
-/// verdict. Every number is DISPLAY-ONLY (SN-8): a score can surface a tool,
+/// verdict. Every number is DISPLAY-ONLY: a score can surface a tool,
 /// never grant one.
 #[must_use]
 pub fn render_tools_score(resp: &proto::ScoreTaskBundleResponse, json: bool) -> String {
@@ -3106,7 +3106,7 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
 /// Render `rerank list` (RC4c-2 observability): newest-first LLM-rerank turns.
 /// `--json` field names mirror the SDK snake_case shape; byte ids are hex. The
 /// `permutation` (the reordered SOURCE indices, NEW-rank order) is present only
-/// for a `reranked` outcome (SN-8: an exact permutation, never a score).
+/// for a `reranked` outcome (an exact permutation, never a score).
 #[must_use]
 pub fn render_rerank_turns(resp: &proto::ListReRankTurnsResponse, json: bool) -> String {
     if json {
@@ -3244,7 +3244,7 @@ pub fn trigger_auth_name(auth: i32) -> &'static str {
     }
 }
 
-/// Render `secrets set` — whether the secret was stored. SN-8/D110: the VALUE is
+/// Render `secrets set` — whether the secret was stored. Write-only: the VALUE is
 /// write-only — it never round-trips back in any response.
 #[must_use]
 pub fn render_put_secret(resp: &proto::PutSecretResponse, json: bool) -> String {
@@ -3296,7 +3296,7 @@ pub fn render_delete_secret(resp: &proto::DeleteSecretResponse, json: bool) -> S
     }
 }
 
-/// Render `triggers add` — the server-derived trigger id (SN-8).
+/// Render `triggers add` — the server-derived trigger id.
 #[must_use]
 pub fn render_register_trigger(resp: &proto::RegisterTriggerResponse, json: bool) -> String {
     if json {
@@ -4085,7 +4085,7 @@ mod tests {
     #[test]
     fn alerts_json_carries_every_snake_case_field() {
         // Locks the tri-surface parity contract: the CLI `--json` shape MUST carry
-        // every field the Py/TS SDKs expose (GR16 — a dropped `reason_code` was the
+        // every field the Py/TS SDKs expose (a dropped `reason_code` was the
         // exact drift this guards). If a proto field is added, extend this set.
         let resp = proto::ListAlertsResponse {
             alerts: vec![proto::AlertSummary {

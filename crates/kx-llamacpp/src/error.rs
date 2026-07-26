@@ -43,7 +43,7 @@ pub enum LlamaError {
 
     /// `llama_encode` returned a non-zero status (encoder-decoder models only).
     ///
-    /// **Reachability (SN-4 #4):** the test fixture (`stories260K.gguf`) is a
+    /// **Reachability:** the test fixture (`stories260K.gguf`) is a
     /// decoder-only model so `Context::encode` cannot be exercised at the
     /// wrapper layer today. This variant is asserted to be reachable in the
     /// `kx-inference` integration tests at P1.8 once an encoder-decoder model
@@ -54,7 +54,7 @@ pub enum LlamaError {
     /// Sampler chain construction failed (e.g. `llama_sampler_chain_init`
     /// returned NULL).
     ///
-    /// **Reachability (SN-4 #4):** llama.cpp's `llama_sampler_chain_init` is
+    /// **Reachability:** llama.cpp's `llama_sampler_chain_init` is
     /// documented to fail only under host-OOM, which cannot be reliably
     /// induced in a test. The variant is kept for API completeness; if it
     /// ever fires in production it indicates the runtime is in an
@@ -64,7 +64,7 @@ pub enum LlamaError {
 
     /// A constructor for a particular sampler returned NULL.
     ///
-    /// **Reachability (SN-4 #4):** like [`Self::SamplerChainFailed`], NULL
+    /// **Reachability:** like [`Self::SamplerChainFailed`], NULL
     /// from `llama_sampler_init_*` only occurs under host-OOM **except** for
     /// the grammar samplers, where NULL ALSO signals a GBNF parse failure
     /// (`llama_sampler_init_grammar{,_lazy_patterns}` returns NULL when

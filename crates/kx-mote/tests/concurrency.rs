@@ -5,8 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Cross-thread `Send` + `Sync` assertions for kx-mote's public types
-//! (SN-4 v2 #7).
+//! Cross-thread `Send` + `Sync` assertions for kx-mote's public types.
 //!
 //! Every type in this crate is pure data (no FFI, no interior mutability, no
 //! locks). The compile-time assertions below pin that the Send + Sync claims

@@ -1,5 +1,5 @@
-//! IMP-5 / IMP-16 — the fail-closed inbound decoder is TOTAL over arbitrary +
-//! truncated bytes (never panics) and always size-capped. SN-4: ≥64 cases.
+//! The fail-closed inbound decoder is TOTAL over arbitrary +
+//! truncated bytes (never panics) and always size-capped. ≥64 cases.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 

@@ -1,4 +1,4 @@
-//! The fail-closed inbound decoder (IMP-5 / IMP-16).
+//! The fail-closed inbound decoder.
 //!
 //! [`decode_tool_result`] is the single point where untrusted MCP server bytes
 //! cross into the runtime. It is **total** (never panics on arbitrary or truncated
@@ -12,7 +12,7 @@ use serde_json::value::RawValue;
 
 use crate::errors::DecodeError;
 
-/// Default per-call response-size cap (IMP-16) when a warrant supplies no positive
+/// Default per-call response-size cap when a warrant supplies no positive
 /// ceiling: 1 MiB. The capability prefers a warrant-derived cap; this is the floor.
 pub const MAX_TOOL_RESULT_BYTES_DEFAULT: usize = 1 << 20;
 

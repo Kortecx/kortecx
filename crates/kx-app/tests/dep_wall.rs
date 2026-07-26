@@ -1,4 +1,4 @@
-//! The leaf wall (Rule 1 / SN-8). `kx-app` is a pure authoring TYPE crate — the
+//! The leaf wall (Rule 1). `kx-app` is a pure authoring TYPE crate — the
 //! envelope shape only. It must NEVER link the journal-writer / runtime / gateway
 //! / frozen-trio components, so a Mote/journal/digest change can never reach it and
 //! it can never reach them. The whole point of the opaque-`serde_json::Value`

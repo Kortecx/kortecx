@@ -1,4 +1,4 @@
-//! The GR15 real-model behavioral gate (`real-model-e2e`): `kx serve --features
+//! The real-model behavioral gate (`real-model-e2e`): `kx serve --features
 //! inference` runs a REAL in-process model dispatch through the embedded worker.
 //!
 //! `Invoke` the server-provisioned `kx/recipes/chat` model recipe by handle+args
@@ -6,9 +6,9 @@
 //! ChatML-wraps the prompt, runs greedy inference through the in-process
 //! `LlamaInferenceBackend`, publishes the completion into the shared store →
 //! the coordinator commits it → the client awaits its `terminal_mote_id` and
-//! fetches the completion via `GetContent`. The assertions are ROBUST (GR15): the
+//! fetches the completion via `GetContent`. The assertions are ROBUST: the
 //! completion is non-empty valid `UTF-8`, CLEAN (no `ChatML` scaffolding leak — the
-//! §2.199 `parse_special` guard at the e2e level — and no `kx demo result`
+//! `parse_special` guard at the e2e level — and no `kx demo result`
 //! placeholder), and greedy decode is DETERMINISTIC across two independent
 //! gateways (same prompt ⇒ byte-identical committed `result_ref`).
 //!
@@ -142,7 +142,7 @@ async fn invoke_model_recipe_runs_real_inference_to_committed() {
         !blob.payload.is_empty(),
         "the model produced a non-empty completion"
     );
-    // GR15 + the §2.199 fix at the e2e level: a REAL model completion is CLEAN —
+    // The fix at the e2e level: a REAL model completion is CLEAN —
     // valid UTF-8, no ChatML scaffolding leak (the `parse_special` stop-token fix
     // ⇒ the model stops at `<|im_end|>` instead of re-emitting the turn structure),
     // and never the retired `kx demo result` placeholder.
@@ -164,7 +164,7 @@ async fn invoke_model_recipe_runs_real_inference_to_committed() {
     running.shutdown().await.unwrap();
 }
 
-/// GR15 real-model determinism gate: greedy decode is DETERMINISTIC end-to-end —
+/// Real-model determinism gate: greedy decode is DETERMINISTIC end-to-end —
 /// the SAME prompt served on two INDEPENDENT gateways (fresh journals/stores)
 /// commits a BYTE-IDENTICAL `result_ref` (same content address). Complements the
 /// `kx-llamacpp` unit-level determinism suite by proving it through the full serve

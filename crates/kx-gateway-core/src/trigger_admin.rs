@@ -9,7 +9,7 @@
 //! the frozen trio is untouched). The host webhook/cron LISTENERS call [`TriggerAdmin::submit`]
 //! directly too — one event→run path, shared by the gRPC handler and the listeners.
 //!
-//! # Boundaries (SN-8 / D102.2 / D113)
+//! # Boundaries
 //! - **Server-derived id + owner.** `trigger_id` is derived from the name; the run binds
 //!   under the REGISTRANT's party (the trigger cannot escalate beyond what its registrant
 //!   could Invoke).

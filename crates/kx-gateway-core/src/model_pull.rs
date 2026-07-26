@@ -1,7 +1,7 @@
 //! Model Control v2 — the model-acquisition seam behind `PullModel` /
 //! `GetPullStatus`.
 //!
-//! A pull is HOST INFRASTRUCTURE, not a client Mote (SN-8): it mutates operator/host
+//! A pull is HOST INFRASTRUCTURE, not a client Mote: it mutates operator/host
 //! state (the filesystem, the served set, network egress) — axes a client warrant
 //! never asserts. The host impl owns the runtime (a background download task + an
 //! advisory in-memory tracker) + the deny-by-default opt-in/allowlist/SHA gate; this
@@ -42,7 +42,7 @@ pub struct PullProgress {
 /// The download source the host puller acts on (already discriminated from the proto
 /// `oneof`). The SHA on the URL variant is REQUIRED (validated at the RPC boundary).
 pub enum PullSource {
-    /// Pull from the Ollama registry via `/api/pull` (the quick/easy GR24 path).
+    /// Pull from the Ollama registry via `/api/pull` (the quick/easy path).
     OllamaTag(String),
     /// Download a GGUF from a `huggingface.co` `/resolve/` URL; `sha256` is the
     /// REQUIRED hex digest the download is verified against before registration.

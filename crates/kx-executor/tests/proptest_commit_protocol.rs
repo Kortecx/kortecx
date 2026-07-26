@@ -2,7 +2,7 @@
 //! (1) the closed `CommitProtocolError` vocabulary is total over the
 //! `arb_commit_protocol_error` strategy (canonical-classifier-cannot-drift
 //! coverage check); (2) `mote_id()` is pure (same input → same output);
-//! (3) `is_recovery_refusal()` is true iff variant is R-13. SN-4 v2
+//! (3) `is_recovery_refusal()` is true iff variant is R-13. The structural review
 //! mandate: ≥3 proptest properties × 64 cases.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]

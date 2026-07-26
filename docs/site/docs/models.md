@@ -71,7 +71,7 @@ kx models use kx-serve:qwen2.5-3b-instruct-q4_k_m   # make it the active default
 kx models use --clear                               # back to the primary
 ```
 
-The active default is **advisory** (SN-8): it never re-routes `kx/recipes/chat`. A chat
+The active default is **advisory**: it never re-routes `kx/recipes/chat`. A chat
 turn still picks its model by the per-model recipe handle the server validates at
 binding — `use` just sets the default that the **New Chat** model picker resolves to
 (precedence: an explicit pick → the server active → a per-browser default → the first
@@ -99,7 +99,7 @@ its own `kx/recipes/m-<id>` chat recipe, and appears in `kx models list` (tagged
 
 - **Operator opt-in.** A pull is refused unless `KX_SERVE_ALLOW_MODEL_PULL` is set — the
   authenticated caller *requests* a pull, the operator's env flag *authorizes* the
-  egress (host infrastructure, never a client warrant axis, SN-8).
+  egress (host infrastructure, never a client warrant axis).
 - **Host allowlist + SSRF guard.** A direct URL must be `https` to an allowlisted host
   (HuggingFace by default; extend with `KX_SERVE_MODEL_PULL_HOSTS`), a `/resolve/` GGUF
   link, with no embedded credentials; internal / loopback / metadata addresses and
@@ -113,7 +113,7 @@ The same controls are `pull_model` / `get_pull_status` (Python), `pullModel` /
 `getPullStatus` (TypeScript), and the **Pull a model** panel in the console (an
 honest-disabled card with the reason when downloads are off).
 
-## Listing never routes a model (SN-8)
+## Listing never routes a model
 
 Listing a model **grants nothing**. Selecting a model to run is always a
 server-validated recipe parameter, never an action taken from this view. The

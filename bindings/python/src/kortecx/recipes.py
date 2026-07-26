@@ -111,7 +111,7 @@ class RecipeInfo:
 @dataclass(frozen=True)
 class ScoredRecipe:
     """One ranked ``SearchRecipes`` hit (PR-4 Batch D): the matched recipe plus
-    its advisory rank in integer basis points (0..=10000). SN-8: ``score_bp`` is
+    its advisory rank in integer basis points (0..=10000). ``score_bp`` is
     DISPLAY-ONLY — a search SURFACES a recipe, never invokes one (``Invoke``
     stays the authorization gate)."""
 

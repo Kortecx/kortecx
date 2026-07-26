@@ -6,7 +6,7 @@
  * (the privacy-safe ActionsOnly scope) — no payload/reasoning. Kept in its own
  * module (the runs.ts module-per-concern precedent).
  *
- * SN-8: ids are server-derived; the SDK only *encodes* the bytes to hex.
+ * ids are server-derived; the SDK only *encodes* the bytes to hex.
  */
 
 import type { CaptureRecordSummary as PbCaptureRecordSummary } from "./gen/kortecx/v1/gateway_pb.js";

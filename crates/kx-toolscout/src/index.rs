@@ -1,5 +1,5 @@
 //! [`ToolManifestIndex`] — manifests + (optional) embedding vectors behind the
-//! SN-8-confined [`RetrievalIndex`] seam.
+//! Identity-confined [`RetrievalIndex`] seam.
 //!
 //! The index RANKS; it never grants. Its output is `(ContentRef, score-bp)`
 //! pairs for a picker/preview surface — the score type never crosses into

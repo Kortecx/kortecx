@@ -6,7 +6,7 @@
 //! - **F** — step capture: `Full` retains reasoning/thinking; `ActionsOnly`
 //!   strips them at the boundary, keeping only the action join key.
 //! - **H** — graph-RAG: the committed retrieval fact is the ordered refs only;
-//!   the same neighbours with different float scores ⇒ identical fact (SN-8).
+//! the same neighbours with different float scores ⇒ identical fact.
 //! - **I** — no float on identity: the integer `temperature_bps` participates in
 //!   `MoteId`; similarity scores never do (H).
 
@@ -157,7 +157,7 @@ fn retrieval_fact_excludes_scores() {
     assert_eq!(
         retrieval_result_ref(&high),
         retrieval_result_ref(&low),
-        "the retrieval result_ref is over ids only — scores never reach identity (SN-8)"
+        "the retrieval result_ref is over ids only — scores never reach identity"
     );
 
     // A different neighbour set DOES change the fact (the ids are what matter).

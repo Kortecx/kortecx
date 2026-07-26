@@ -1,6 +1,6 @@
 //! PR-2b — LIVE shaper-child materialization + dispatch routing (T1.1, the core gap).
 //!
-//! The §2.149 gap: the live coordinator folds a committed shaper but its children — which
+//! The live coordinator folds a committed shaper but its children — which
 //! a client never submitted — never enter the dispatch admission set (`Dispatch.defs`), so
 //! `lease_ready` skips them and they never reach a worker. This file proves the splice:
 //! a committed shaper's children become leasable, with IDENTITIES that match the canonical
@@ -84,7 +84,7 @@ fn warrant() -> WarrantSpec {
 }
 
 /// A role registry that grants every proposed role the shaper's warrant (the harness
-/// `InheritShaperWarrantRoles` model — `intersect` is an identity narrow, SN-8-safe).
+/// `InheritShaperWarrantRoles` model — `intersect` is an identity narrow, identity-safe).
 fn role_registry(spec: &WarrantSpec) -> Arc<dyn RoleRegistry> {
     let reg = InMemoryRoleRegistry::new();
     let role = Role {

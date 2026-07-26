@@ -207,7 +207,7 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Vec<kx_projection::RunResolvedVersions>>,
     },
     // D114: the operator control plane over pending world-mutating approvals. Grant/
-    // Deny are OPERATOR decisions over a SERVER-derived request_id (SN-8) — they
+    // Deny are OPERATOR decisions over a SERVER-derived request_id — they
     // release/reject a STAGED action, never mint a client warrant.
     ListPendingApprovals {
         reply: oneshot::Sender<Vec<PendingApprovalView>>,
@@ -234,7 +234,7 @@ pub(crate) enum Command {
 
 /// A pending HITL approval, flattened for the operator inbox (D114). Display-only —
 /// it carries NO authority; the grant/deny decision is keyed by the server-derived
-/// `request_id`, never by any client-supplied identity (SN-8).
+/// `request_id`, never by any client-supplied identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingApprovalView {
     /// The server-derived handshake handle (grant/deny key).
@@ -276,7 +276,7 @@ impl CoreHandle {
         nonce: Arc<dyn RunNonceSource>,
         tool_registry: Arc<dyn ToolRegistry>,
         // PR-2b: the role registry the topology materializer narrows child warrants
-        // against (SN-8). `Some` enables live shaper-child materialization (the agentic
+        // against. `Some` enables live shaper-child materialization (the agentic
         // loop in serve); `None` keeps the pre-PR-2b behavior byte-identical (no shaper
         // fan-out — `kx run`, non-inference serve). Held `Send + Sync` (Arc) for the move
         // into the owner thread; materialization itself runs on that one thread.
@@ -538,7 +538,7 @@ impl CoreHandle {
     }
 
     /// D114: GRANT a pending approval (an operator decision over a server-derived
-    /// `request_id`, SN-8). Returns `true` iff a decision was recorded — `false` for
+    /// `request_id`). Returns `true` iff a decision was recorded — `false` for
     /// an unknown or already-resolved request (idempotent).
     pub(crate) async fn grant_approval(
         &self,
@@ -835,7 +835,7 @@ fn lease_ready(
                     match resolve_authored_tool_args(mote, tool_registry) {
                         ArgResolution::Resolved(args) => Some(args),
                         // PR-9a: the primary fault (schema mismatch) is refused at
-                        // AUTHORING (BUG-27 Path 1); a Permanent here is the rare
+                        // AUTHORING (path 1); a Permanent here is the rare
                         // deregister-after-authoring residual — skip defensively (a
                         // standalone node has no settle pass; the follow-up ticket
                         // closes it with a coordinator-self dead-letter). Transient
@@ -887,7 +887,7 @@ fn is_react_observation(mote: &Mote, projection: &Projection) -> bool {
     projection.is_react_turn_mote(&mote.parents[0].parent_id)
 }
 
-/// PR-9a (BUG-27): the outcome of re-deriving a tool-firing Mote's args on the
+/// PR-9a: the outcome of re-deriving a tool-firing Mote's args on the
 /// sole-writer thread. The pre-PR-9a resolvers returned `Option`, collapsing
 /// EVERY fault to `None` — an infinite fail-safe lease skip even for a fault that
 /// can never resolve (a silent wedge: a `tool()` run / ReAct chain stuck "in
@@ -951,7 +951,7 @@ impl ArgResolution {
 /// decodes to a granted call, a tool/version/schema disagreement, or the granted
 /// tool was DEREGISTERED since the `Tool` branch froze) is
 /// [`Permanent`](ArgResolution::Permanent) — the settle pass dead-letters the chain
-/// instead of skipping forever (BUG-27).
+/// instead of skipping forever.
 #[allow(clippy::too_many_lines)] // T-MULTI-ELEMENT-TOOLCALLS: + the call_index recovery branch
 fn resolve_tool_args(
     mote: &Mote,
@@ -1053,7 +1053,7 @@ fn resolve_tool_args(
         };
     }
     // Validated + present at branch-freeze; absent now ⇒ DEREGISTERED (or moved to
-    // PendingHumanReview) — a permanent registry mutation, the BUG-27 wedge cause.
+    // PendingHumanReview) — a permanent registry mutation, the wedge cause.
     let Some(def) = tool_registry.lookup(&call.name, &call.version) else {
         return ArgResolution::Permanent {
             reason: format!(
@@ -1157,7 +1157,7 @@ fn is_agentic_launch(mote: &Mote) -> bool {
 /// DETERMINISTIC and therefore [`Permanent`](ArgResolution::Permanent) — there is
 /// no transient cause. The primary fault (args that do not match the tool's
 /// `inputSchema`) is refused at AUTHORING (the gateway's `tool_step_def`) so a
-/// wedge can never be authored into existence (BUG-27); a `Permanent` here is the
+/// wedge can never be authored into existence; a `Permanent` here is the
 /// rare DEREGISTER-after-authoring residual (the tool was removed between admit
 /// and lease) — the lease arm skips it (a standalone authored node has no settle
 /// pass to dead-letter it; closing that residual is a flagged follow-up).
@@ -2144,7 +2144,7 @@ fn run_cost_counts(projection: &Projection, instance_id: &[u8; INSTANCE_ID_LEN])
 /// D114: record an operator's GRANT/DENY decision for a pending handshake. Only a
 /// STILL-PENDING (`Requested`) request can be decided — a re-grant/deny of a resolved
 /// or unknown `request_id` is a no-op (`false`), so the operator action is idempotent.
-/// The decision is a durable, server-attributed (SN-8) journal fact the gated react
+/// The decision is a durable, server-attributed journal fact the gated react
 /// chain reads on its next settle pass (Granted ⇒ the action fires exactly once;
 /// Denied ⇒ the chain dead-letters). Returns `true` iff a decision was recorded.
 fn decide_approval<J: Journal>(
@@ -2251,7 +2251,7 @@ fn register_run<J: Journal>(
     let entry = JournalEntry::RunRegistered {
         instance_id,
         recipe_fingerprint,
-        // Audit-only; never hashed, never on the identity/scheduling path (SN-8).
+        // Audit-only; never hashed, never on the identity/scheduling path.
         ts: clock.now_ms(),
         seq: 0,
     };
@@ -2303,7 +2303,7 @@ fn submit_and_capture<J: Journal>(
     // PR-2d-1 — the react SEED-SWAP. The client's seed Mote is validated above
     // (strictly stricter) but never admitted: the coordinator builds the
     // RUN-SALTED turn-0 Mote from the seed's instruction + model route (the salt
-    // is the server-assigned `instance_id`, unknowable client-side — SN-8: the
+    // is the server-assigned `instance_id`, unknowable client-side — the
     // admitted identity is server-derived) and substitutes it before the
     // verbatim scheduler path below. LOUD refusals (the flag is explicit intent,
     // unlike replan's silent non-anchor): a promptless seed cannot reason; a
@@ -2313,7 +2313,7 @@ fn submit_and_capture<J: Journal>(
     // D114: the run's HITL approval posture (parsed from the seed alongside the caps).
     let mut react_require_approval = false;
     let mut react_chain_salt: Option<[u8; 32]> = None;
-    // BUG-35 (+ PR-9d context sibling): the ORIGINAL seed's ANCHOR-BOUND config (the
+    // Context sibling: the ORIGINAL seed's ANCHOR-BOUND config (the
     // grounding image + grounding-context bundle), captured BEFORE the swap discards the
     // seed (the swapped turn-0 carries only the clean instruction). Both keys are dropped
     // by `build_chain_turn` and re-derived by every successor turn from the anchor, so both
@@ -2333,7 +2333,7 @@ fn submit_and_capture<J: Journal>(
         let (instruction, caps, require_approval) = react_seed_params(&mote)?;
         react_caps = Some(caps);
         react_require_approval = require_approval;
-        // BUG-35 (+ context sibling): capture the seed's anchor-bound config HERE (`mote`
+        // Context sibling: capture the seed's anchor-bound config HERE (`mote`
         // is still the original seed) so the anchor records it — `build_chain_turn` below
         // rebuilds turn-0 from the instruction ONLY, dropping the image AND context bundle.
         react_anchor_cfg = seed_anchor_cfg(&mote);
@@ -2366,7 +2366,7 @@ fn submit_and_capture<J: Journal>(
     // so a re-submitted-but-already-committed shaper (recovery: the in-memory dispatch.defs
     // + materialized children are gone on restart, but the journal still has the committed
     // shaper fact) can re-materialize its children below.
-    // BUG-35 (+ context sibling): carry the original seed's anchor-bound config (image +
+    // Context sibling: carry the original seed's anchor-bound config (image +
     // context bundle) onto the anchor-clone so `write_react_anchor` records both on the
     // turn-0 ReactRound. Every turn (incl. turn 0 — the DISPATCHED swapped mote has neither
     // inline) then re-derives them EDGE-FREE from the anchor via the carried `ContextSink`
@@ -2476,7 +2476,7 @@ fn submit_and_capture<J: Journal>(
 /// Materialize a COMMITTED topology shaper's children into BOTH the projection (so they
 /// enter `ready_set`) and the dispatch admission set (`Dispatch.defs`, so `lease_ready`
 /// can hand them to a worker) — the splice that closes the "materialized children never
-/// reach dispatch" gap (§2.149). Derives each child's full `(Mote, WarrantSpec)` from the
+/// reach dispatch" gap. Derives each child's full `(Mote, WarrantSpec)` from the
 /// committed `TopologyDecision` fact via [`crate::materialize::derive_shaper_children`],
 /// so the dispatch entry's `MoteId` equals the one a `DefaultTopologyMaterializer` would
 /// register (one source of truth). Runs on the live commit-fold (`flush_commits`) AND on a
@@ -2960,10 +2960,10 @@ fn react_seed_params(seed: &Mote) -> Result<(String, (u32, u32), bool), Coordina
 /// are dropped by the seed-swap (`build_chain_turn` rebuilds turn 0 from the instruction
 /// alone) yet are re-derived by every successor turn from the turn-0 anchor — so both MUST
 /// ride the anchor clone. Enumerated in ONE place so a future anchor-bound key cannot be
-/// silently half-carried again (the BUG-35 class).
+/// silently half-carried again (this class).
 const REACT_ANCHOR_BOUND_KEYS: [&str; 2] = [IMAGE_REF_KEY, CONTEXT_ITEMS_KEY];
 
-/// BUG-35 (+ PR-9d context sibling): the ORIGINAL seed's anchor-bound config (image +
+/// Context sibling: the ORIGINAL seed's anchor-bound config (image +
 /// context bundle), captured from the seed BEFORE the seed-swap discards it (the swapped
 /// turn 0 is rebuilt from the instruction alone). Empty for a plain text-only react seed.
 fn seed_anchor_cfg(seed: &Mote) -> Vec<(ConfigKey, kx_mote::ConfigVal)> {
@@ -2976,7 +2976,7 @@ fn seed_anchor_cfg(seed: &Mote) -> Vec<(ConfigKey, kx_mote::ConfigVal)> {
         .collect()
 }
 
-/// BUG-35 (+ context sibling): build the turn-0 anchor clone for a react seed — the
+/// Context sibling: build the turn-0 anchor clone for a react seed — the
 /// DISPATCHED swapped mote PLUS the ORIGINAL seed's anchor-bound config (image + context
 /// bundle) re-injected. The seed-swap rebuilds turn 0 from the instruction alone (dropping
 /// both inline keys), so the coordinator captures them BEFORE the swap and re-attaches them
@@ -3757,7 +3757,7 @@ fn drive_react_chain<J: Journal>(
 /// next turn self-corrects under the budget (PR-3/A2). `[]` ⇒ `Answer`; one valid
 /// call ⇒ `Tool` (byte-identical to PR-2d-2); N≥2 valid calls ⇒ `ToolBatch` (fire all
 /// N), bounded by [`kx_journal::MAX_TOOL_BATCH_CALLS`] (a batch over the cap is a LOUD
-/// `Rejected`, never a silent truncation — BUG-27).
+/// `Rejected`, never a silent truncation).
 fn settle_calls_to_branch(
     calls: &[kx_toolcall::ToolCall],
     tool_registry: &dyn ToolRegistry,
@@ -3842,7 +3842,7 @@ fn tool_needs_approval(class: Option<IdempotencyClass>) -> bool {
 }
 
 /// Wall-clock millis since the Unix epoch for an approval fact's AUDIT timestamps
-/// (off-DAG — never hashed, never an identity input; SN-8). A pre-epoch/overflow
+/// (off-DAG — never hashed, never an identity input). A pre-epoch/overflow
 /// reading collapses to `0` (panic-free), exactly like [`crate::clock::SystemClock`].
 fn approval_now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -4009,7 +4009,7 @@ fn progress_tool_batch<J: Journal>(
     // price the chain's committed turns/tool-calls (this batch already folded into
     // `rounds`) and dead-letter BEFORE the batch's observations dispatch when the
     // estimate exceeds the ceiling. A pure fold over committed facts (D115.2); the
-    // broker precheck is the SN-8 backstop for non-react WM dispatch.
+    // broker precheck is the authority backstop for non-react WM dispatch.
     let ceiling = warrant.cost_ceiling.micro_usd;
     if ceiling > 0 {
         let projected = react_projected_spend_micro_usd(rounds, turn, 0);
@@ -4101,7 +4101,7 @@ fn progress_tool_batch<J: Journal>(
             return ReactChainStatus::Active;
         }
         // Pending / Scheduled / never-materialized ⇒ (re-)materialize idempotently.
-        // PR-9a (BUG-27): an observation whose args can never resolve (the granted
+        // PR-9a: an observation whose args can never resolve (the granted
         // tool was DEREGISTERED / re-schema'd since the branch froze) would otherwise
         // re-materialize forever — re-derive on the sole writer and dead-letter on a
         // PERMANENT fault. `resolve_tool_args` self-recovers THIS observation's
@@ -4116,7 +4116,7 @@ fn progress_tool_batch<J: Journal>(
                     observation = ?obs.id,
                     tool = %tool_id,
                     %reason,
-                    "react observation can never resolve its args — dead-lettering the chain (BUG-27)"
+                    "react observation can never resolve its args — dead-lettering the chain"
                 );
                 append_react_branch(
                     journal,
@@ -4346,8 +4346,8 @@ fn advance_react_chain<J: Journal>(
         // function of frozen facts — it fires identically on every later pass,
         // so the chain is permanently done: skip it (the cache classification).
         // The model spent its whole budget without ever producing an answer →
-        // freeze the LOUD terminal `DeadLettered` (BUG-27: terminal, never silent;
-        // never a fabricated answer, GR15). Two no-answer tails dead-letter:
+        // freeze the LOUD terminal `DeadLettered` (terminal, never silent;
+        // never a fabricated answer). Two no-answer tails dead-letter:
         //   - a REJECTED tail (PR-3/A2): every proposal was refused; logs the reason.
         //   - a TOOL tail (W2, this PR): the model kept calling tools and never
         //     settled. Previously this QUIESCED with no terminal — so a run-level
@@ -4481,7 +4481,7 @@ fn advance_react_chain<J: Journal>(
 /// the answer turn's `result_ref` + the launch's DECLARED DAG parents (advancing the
 /// frozen DAG so its consumers become ready); any other terminal shape (a
 /// budget-exhausted `Tool` tail, a `DeadLettered` branch) ⇒ fail-closed dead-letter
-/// (the step fails honestly — never fabricate an answer, GR15).
+/// (the step fails honestly — never fabricate an answer).
 ///
 /// **Drain-driven + idempotent** (RISK 4): the launch's def (declared parents /
 /// `mote_def_hash` / warrant) lives only in the in-memory `dispatch.defs`, lost on a
@@ -4536,7 +4536,7 @@ fn finalize_agentic_launch<J: Journal>(
     // llama.cpp / non-union answers (`Cow::Borrowed` ⇒ the SAME `result_ref` commits, so
     // those launches stay byte-invariant + recovery-stable). Only a union answer re-`put`s
     // a clean fact — deterministic over the committed turn bytes ⇒ the same ref on a cold
-    // re-fold. Presentation only (SN-8); the launch idempotency key stays the launch MoteId
+    // re-fold. Presentation only; the launch idempotency key stays the launch MoteId
     // (`commit_agentic_launch`), never the ref, so recovery identity is unaffected.
     let served_ref = match kx_toolcall::extract_answer(raw.as_ref()) {
         std::borrow::Cow::Borrowed(_) => result_ref,
@@ -4604,7 +4604,7 @@ fn commit_agentic_launch<J: Journal>(
 
 /// PR-9b-2b: fail-closed dead-letter an agentic launch whose bounded loop exhausted
 /// its budget (or dead-lettered) without a terminal answer — the step FAILS honestly
-/// rather than fabricate one (GR15). A terminal coordinator-reported
+/// rather than fabricate one. A terminal coordinator-reported
 /// `FailureReason::DeadLettered` (classified terminal by `is_pre_commit_crash` ⇒
 /// `terminal_failure_observed` ⇒ `state_of == Failed`, never re-dispatched). The
 /// launch leaves the ready-set; its DAG consumers stay `Pending` exactly as for ANY
@@ -5245,7 +5245,7 @@ fn maybe_gate_on_rerank<J: Journal>(
         decode_warrant(bytes.as_ref()).ok()?
     };
     // base_results_ref = the committed retrieve observation itself (the passages the
-    // model reorders — no scores, SN-8); the worker + settle read it back.
+    // model reorders — no scores); the worker + settle read it back.
     let rerank_mote = crate::react_shape::build_rerank_turn(
         &ModelId(anchor.model_id.clone()),
         &anchor.instance_id,

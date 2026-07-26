@@ -6,7 +6,7 @@
 //! The two legs are fused (rank-based, see [`crate::fusion`]) into one hybrid
 //! result, which catches exact-term matches a weak decoder-LLM embedding misses.
 //!
-//! **SN-8 boundary (load-bearing).** Like dense retrieval, a lexical index is used
+//! **Identity boundary (load-bearing).** Like dense retrieval, a lexical index is used
 //! ONLY inside a ReadOnlyNondet retrieval Mote: the BM25 score is a display/ranking
 //! aid that is fused and then discarded — only the ordered content-ref SET is
 //! committed, matched downstream by exact hash. A score never reaches a `MoteId`.
@@ -20,7 +20,7 @@ use kx_content::ContentRef;
 use crate::index::Hit;
 
 /// A lexical (keyword / BM25) similarity index, keyed by content ref. Used ONLY
-/// inside ReadOnlyNondet retrieval Motes (see the module note / SN-8).
+/// inside ReadOnlyNondet retrieval Motes (see the module note).
 ///
 /// `insert` is idempotent by ref (content-addressed: a known ref already carries
 /// this exact text). `query` tokenizes `query` with the index's own tokenizer and

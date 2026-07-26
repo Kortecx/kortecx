@@ -443,7 +443,7 @@ fn append_one(
         // *bound* `kind = ?2` parameter cannot be proven to imply `kind IN (1,2,4)`
         // at plan time, so without the explicit `AND kind IN (1, 2, 4)` below SQLite
         // falls back to a FULL TABLE SCAN, making every append O(n) and the journal
-        // O(n²) over its life (IMP-4 / D116 — measured + EXPLAIN-confirmed). The added
+        // O(n²) over its life (D116 — measured + EXPLAIN-confirmed). The added
         // predicate is always TRUE here (the enclosing guard restricts `kind` to
         // exactly {1, 2, 4}), so it changes nothing semantically — it only lets the
         // planner use the index, restoring O(log n) per append.
@@ -564,7 +564,7 @@ fn read_schema_version(conn: &Connection) -> Result<u16, JournalError> {
 }
 
 // ===========================================================================
-// Schema migration — read-only replay + offline rewrite (IMP-2, M2.x-E)
+// Schema migration — read-only replay + offline rewrite (M2.x-E)
 // ===========================================================================
 
 /// A **read-only**, schema-version-aware view over a journal file, used to replay
