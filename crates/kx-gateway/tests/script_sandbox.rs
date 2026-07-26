@@ -38,6 +38,7 @@ use kx_mote::{
     EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, NdClass,
     PromptTemplateHash, ToolName, ToolVersion, MOTE_DEF_SCHEMA_VERSION,
 };
+use kx_gateway_core::ScriptAdmin;
 use kx_tool_registry::{SqliteToolRegistry, ToolRegistry};
 use kx_warrant::{
     FsMode, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling, SecretScope,
@@ -64,22 +65,38 @@ fn shim_or_skip(store: &LocalFsContentStore) -> Option<ContentRef> {
 struct Harness {
     _dir: tempfile::TempDir,
     store: LocalFsContentStore,
-    registry: SqliteToolRegistry,
-    broker: LocalCapabilityBroker<LocalFsContentStore>,
+    registry: std::sync::Arc<SqliteToolRegistry>,
+    broker: std::sync::Arc<LocalCapabilityBroker<LocalFsContentStore>>,
 }
 
 impl Harness {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let store = LocalFsContentStore::open(dir.path().join("content")).unwrap();
-        let registry = SqliteToolRegistry::open(dir.path().join("tools.db")).unwrap();
-        let broker = LocalCapabilityBroker::new(store.clone());
+        let registry =
+            std::sync::Arc::new(SqliteToolRegistry::open(dir.path().join("tools.db")).unwrap());
+        let broker = std::sync::Arc::new(LocalCapabilityBroker::new(store.clone()));
         Self {
             _dir: dir,
             store,
             registry,
             broker,
         }
+    }
+
+    /// The admin seam over the same live objects — the read path an operator and
+    /// the restart-rehydration both use.
+    fn admin(
+        &self,
+        shim: Option<kx_content::ContentRef>,
+    ) -> kx_gateway::scripts::HostScriptRegistry<LocalFsContentStore> {
+        kx_gateway::scripts::HostScriptRegistry::new(
+            self.registry.clone(),
+            self.store.clone(),
+            self.broker.clone(),
+            shim,
+            kx_gateway::default_executor_class(),
+        )
     }
 }
 
@@ -363,16 +380,20 @@ fn an_unknown_interpreter_is_refused_at_admission() {
     assert_eq!(Interpreter::parse("node"), Some(Interpreter::Node));
 }
 
-/// The registry row names the exact source bytes, so a changed script is a
+/// The registry pins the exact thing that will run, so a changed script is a
 /// different registration rather than a silent substitution behind one name.
+///
+/// Asserted through the PUBLIC read path, because that is what an operator sees
+/// and what the restart-rehydration walks — a check that reached into storage
+/// directly could pass while the surface everyone actually uses was broken.
 #[test]
-fn the_registry_row_names_the_exact_source() {
+fn the_registry_pins_the_exact_source_and_reads_it_back() {
     let h = Harness::new();
     let Some(shim) = shim_or_skip(&h.store) else {
         return;
     };
     let d = decl("script/pinned", "printf 'v1'");
-    let script_ref = register_script(
+    register_script(
         &d,
         Some(shim),
         &h.store,
@@ -382,11 +403,120 @@ fn the_registry_row_names_the_exact_source() {
     )
     .expect("registration");
 
-    let def = h.registry.lookup(&d.name, &d.version).expect("row");
+    let admin = h.admin(Some(shim));
+    let (row, source) = admin
+        .get(&d.name.0, &d.version.0)
+        .expect("read")
+        .expect("the registered script should be readable");
+    assert_eq!(source, d.source, "the row must read back the exact source");
+    assert_eq!(row.interpreter, "sh");
     assert_eq!(
-        def.kind,
-        kx_tool_registry::ToolKind::LocalScript { script_ref },
-        "the row should carry the source's content ref"
+        row.source_ref_hex,
+        kx_content::ContentRef::of(&d.source).to_hex(),
+        "the row must name the source's content ref"
     );
-    assert_eq!(h.store.get(&script_ref).unwrap().as_ref(), d.source.as_slice());
+    // A tool that is not a script must not be readable through this surface, or a
+    // caller could believe it had read a source that does not exist.
+    assert!(
+        admin.get("echo", "1").expect("read").is_none(),
+        "a non-script tool must not be reported as a script"
+    );
+}
+
+/// ★ A script survives a restart. The registry is durable and the broker is not,
+/// so without rehydration a restarted serve resolves the tool and then fails at
+/// dispatch — a row that reads as live and is not.
+///
+/// The pair is the assertion: a FRESH broker cannot fire the script, and the same
+/// broker after rehydration can. Either half alone proves nothing.
+#[test]
+fn a_registered_script_is_fireable_again_after_a_restart() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    let d = decl("script/durable", "read -r line; printf 'restored:%s' \"$line\"");
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("registration");
+
+    // A restart: the durable registry and store survive; the broker does not.
+    let restarted = Harness {
+        _dir: h._dir,
+        store: h.store.clone(),
+        registry: h.registry.clone(),
+        broker: std::sync::Arc::new(LocalCapabilityBroker::new(h.store.clone())),
+    };
+    let mote = calling_mote(&d.name, &d.version);
+    let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
+
+    let before = restarted
+        .broker
+        .dispatch(&mote, &warrant, &d.name, request("x", FsScope::empty()));
+    assert!(
+        before.is_err(),
+        "a fresh broker should not already know the script — this test would be \
+         vacuous if it did"
+    );
+
+    restarted.admin(Some(shim)).rehydrate();
+
+    let handle = restarted
+        .broker
+        .dispatch(&mote, &warrant, &d.name, request("x", FsScope::empty()))
+        .expect("the script should fire again after rehydration");
+    let staged = restarted.store.get(&handle.staged_ref).expect("staged");
+    assert_eq!(String::from_utf8_lossy(&staged).trim_end(), "restored:x");
+}
+
+
+/// ★ The benchmark's oracle must be RIGHT, or the family measures the model
+/// against a wrong expectation and a correct model scores zero.
+///
+/// These are the exact inputs and answers the `script` family's tasks assert, run
+/// through the real sandbox rather than reasoned about.
+#[test]
+fn the_bundled_benchmark_script_computes_what_the_suite_expects() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    let (name, version) = kx_gateway::scripts::bench_script_tool();
+    kx_gateway::scripts::register_bench_script(
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("the bundled benchmark script should register");
+
+    let mote = calling_mote(&name, &version);
+    let warrant = granting_warrant(&name, &version, BTreeMap::new());
+    for (input, expected) in [
+        ("the quick brown fox jumps", "WORDS=5"),
+        ("alpha beta gamma", "WORDS=3"),
+    ] {
+        let handle = h
+            .broker
+            .dispatch(
+                &mote,
+                &warrant,
+                &name,
+                request(input, FsScope::empty()),
+            )
+            .expect("dispatch");
+        let staged = h.store.get(&handle.staged_ref).expect("staged");
+        assert_eq!(
+            String::from_utf8_lossy(&staged).trim_end(),
+            expected,
+            "the suite's script-family answer for {input:?} must be what the script computes"
+        );
+    }
 }

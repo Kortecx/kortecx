@@ -174,19 +174,21 @@ mod tests {
     #[test]
     fn bench_v1_covers_the_rc_substrate_families() {
         let c = load_bench_v1().expect("bench-v1 suite parses");
-        // The RC's coverage contract (the `gate-c` criterion): every task belongs to one
-        // of the four substrate families the live runner knows how to drive, and all four
-        // are present. A task tagged with an unknown family would be silently driven down
-        // the default react path and score a meaningless number.
+        // The coverage contract: every task belongs to one of the substrate families the
+        // live runner knows how to drive, and all of them are present. A task tagged with
+        // an unknown family would be silently driven down the default react path and score
+        // a meaningless number.
         let families: std::collections::BTreeSet<&str> =
             c.suite.tasks.iter().map(|t| t.family.as_str()).collect();
         assert_eq!(
             families,
-            ["react", "reach", "swarm", "tool"].into_iter().collect(),
-            "bench-v1 covers exactly the four substrate families the runner drives"
+            ["react", "reach", "script", "swarm", "tool"]
+                .into_iter()
+                .collect(),
+            "bench-v1 covers exactly the substrate families the runner drives"
         );
         // Each family carries at least one task — an empty family is coverage on paper.
-        for f in ["tool", "react", "reach", "swarm"] {
+        for f in ["tool", "react", "reach", "swarm", "script"] {
             assert!(
                 c.suite.tasks.iter().any(|t| t.family == f),
                 "family {f} has at least one task"
@@ -195,10 +197,11 @@ mod tests {
         // A tool-required task must name the tools it expects; a contract/negative task
         // must name NONE (that emptiness IS its assertion — see `tool-contract-refusal`).
         for t in &c.suite.tasks {
-            if t.family == "tool" {
+            if t.family == "tool" || t.family == "script" {
                 assert!(
                     !t.expect.expected_tools.is_empty(),
-                    "tool-family task {} expects at least one tool call",
+                    "{}-family task {} expects at least one tool call",
+                    t.family,
                     t.id
                 );
             }

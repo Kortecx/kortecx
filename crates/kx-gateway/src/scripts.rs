@@ -1122,3 +1122,64 @@ fn admission_status(err: &ScriptAdmissionError) -> ScriptAdminError {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// the bundled benchmark script
+// ---------------------------------------------------------------------------
+
+/// The bundled ORACLE script the live benchmark's `script` family drives.
+///
+/// Deliberately a computation the model cannot shortcut by reasoning: it counts
+/// the words in whatever arrives on stdin. A model that answers from its own
+/// head produces a plausible number; only a model that actually FIRED the script
+/// produces the one the script computed. That is what makes the family measure
+/// script execution rather than arithmetic.
+///
+/// Registered only alongside the other bundled oracle tools, on the same
+/// auto-grant condition, so a serve that does not opt in is unchanged.
+pub const BENCH_SCRIPT_SOURCE: &str = "read -r line\nset -- $line\nprintf 'WORDS=%s' \"$#\"\n";
+
+/// The bundled benchmark script's identity. The `<group>/<leaf>` shape mirrors
+/// the bundled MCP tools, so a model emitting the bare leaf still resolves.
+#[must_use]
+pub fn bench_script_tool() -> (ToolName, ToolVersion) {
+    (
+        ToolName("script/word-count".into()),
+        ToolVersion("1".into()),
+    )
+}
+
+/// Register the bundled benchmark script. Fail-soft: a serve that cannot sandbox
+/// simply does not get it, exactly like a missing bundled binary.
+pub fn register_bench_script<S: ContentStore + Send + Sync>(
+    shim_ref: Option<ContentRef>,
+    store: &LocalFsContentStore,
+    registry: &SqliteToolRegistry,
+    broker: &LocalCapabilityBroker<S>,
+    exec_class: ExecutorClass,
+) -> Option<(ToolName, ToolVersion)> {
+    let (name, version) = bench_script_tool();
+    let decl = ScriptDecl {
+        name: name.clone(),
+        version: version.clone(),
+        interpreter: Interpreter::Sh,
+        source: BENCH_SCRIPT_SOURCE.as_bytes().to_vec(),
+        description: "Count the words in the given text. Args: {\"input\": <text>}. \
+                      Returns WORDS=<n>. Runs sandboxed; no files, no network."
+            .into(),
+        author: "bundled".into(),
+        argv: Vec::new(),
+        env: Vec::new(),
+        wish: ScriptWish::default(),
+    };
+    match register_script(&decl, shim_ref, store, registry, broker, exec_class) {
+        Ok(_) => {
+            tracing::info!(tool = %name.0, "bundled benchmark script registered");
+            Some((name, version))
+        }
+        Err(error) => {
+            tracing::info!(%error, "bundled benchmark script not registered");
+            None
+        }
+    }
+}

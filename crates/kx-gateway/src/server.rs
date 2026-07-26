@@ -788,6 +788,26 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     };
     #[cfg(not(feature = "serve-engine"))]
     let react_oracle_tools: Vec<(kx_mote::ToolName, kx_mote::ToolVersion)> = Vec::new();
+    // The bundled benchmark SCRIPT, on the same auto-grant condition as the oracle
+    // tools above: it is what the live benchmark's script family fires, so it must
+    // be grantable for that family to measure anything. Fail-soft — a serve that
+    // cannot sandbox simply does not get it.
+    #[cfg(feature = "serve-engine")]
+    let react_oracle_tools = {
+        let mut tools = react_oracle_tools;
+        if autogrant {
+            if let Some(script) = crate::scripts::register_bench_script(
+                script_shim_ref,
+                &content,
+                &tool_registry,
+                &local_broker,
+                default_executor_class(),
+            ) {
+                tools.push(script);
+            }
+        }
+        tools
+    };
     let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
     // Parallel-local-exec: the bounded embedded-worker POOL. Resolve the size
     // from `--workers` / `KX_WORKERS` / `KX_SERVE_WORKER_POOL` (default 1 = the
