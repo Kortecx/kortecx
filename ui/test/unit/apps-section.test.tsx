@@ -1,7 +1,7 @@
 /**
  * POC-4/POC-5a Apps section — the catalog plus the agentic "New App" entry. Apps
  * render as cards with Run · Open · Inspect; an honest empty state when none.
- * POC-5a flips the GR15 stance: a "New App" button NOW exists and toggles the
+ * POC-5a flips the don't-fake-gaps stance: a "New App" button NOW exists and toggles the
  * inline NewAppForm (the agentic scaffold). The catalog itself stays read-only.
  */
 

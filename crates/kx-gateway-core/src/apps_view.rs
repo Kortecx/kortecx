@@ -14,7 +14,7 @@
 //!   registry ids; it is NOT journal-derivable. Never journaled, never a `MoteId`
 //!   input, never a digest input — dropping the file cannot move the canonical
 //!   projection digest.
-//! - **Carries NO authority (SN-8 / BLOCKER #5).** The envelope holds references +
+//! - **Carries NO authority.** The envelope holds references +
 //!   an authorship claim only — `app run` re-compiles the blueprint and the server
 //!   re-resolves every warrant from the caller's OWN grants. The host validates
 //!   that the envelope carries no warrant/grant/secret/credential/`instance_id`.
@@ -49,7 +49,7 @@ pub const APP_DIGEST_DOMAIN: &[u8] = b"kortecx.app-digest/v1\0";
 /// Unlike `app_ref` (the host folds in the save handle + truncates to 16B for local catalog
 /// dedup), `app_digest` is IDENTICAL for byte-identical envelopes no matter which handle or
 /// principal they are stored under — a stable, portable identity for the App itself.
-/// Exact-equality only (SN-8); never a similarity key.
+/// Exact-equality only; never a similarity key.
 ///
 /// Stability: a pure function of the canonical envelope bytes — any field intentionally
 /// excluded from identity must be stripped before hashing; today the envelope carries no
@@ -278,7 +278,7 @@ mod tests {
     proptest! {
         /// `app_digest_of` is a PURE, deterministic function of its input bytes, and
         /// equals the exact `blake3(APP_DIGEST_DOMAIN ‖ bytes)` contract for ANY input
-        /// (SN-4 v2 #5 — property test over the arbitrary byte space, not hand-picked cases).
+        /// (the structural review — property test over the arbitrary byte space, not hand-picked cases).
         #[test]
         fn app_digest_of_is_pure_and_matches_the_contract(bytes in prop::collection::vec(any::<u8>(), 0..512)) {
             prop_assert_eq!(app_digest_of(&bytes), app_digest_of(&bytes));
@@ -307,7 +307,7 @@ mod tests {
     }
 
     proptest! {
-        /// TOTALITY (SN-4 v2 #5): the scoped name is host-valid for ANY declared ref —
+        /// TOTALITY: the scoped name is host-valid for ANY declared ref —
         /// unicode, separators, absurd length, empty. A caller never pre-sanitizes.
         #[test]
         fn scoped_name_is_always_host_valid(

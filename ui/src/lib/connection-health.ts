@@ -2,7 +2,7 @@
  * Pure mapping of a folded MCP-connection health tag to an existing status-dot
  * modifier + an a11y label. Extracted so the Integrations Connections panel and the
  * Monitoring overview render the SAME dot for the SAME health (one source of truth,
- * no divergent color/label). Health is server-derived (SN-8); the classes are the
+ * no divergent color/label). Health is server-derived; the classes are the
  * existing token-driven `.status-dot--*` palette (no hardcoded colour).
  */
 

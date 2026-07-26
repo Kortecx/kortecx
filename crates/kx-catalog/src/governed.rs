@@ -10,7 +10,7 @@
 //! WITHOUT coupling their impls (Rule 1): neither references the other's concrete
 //! type — the facade holds both and gates one against the other.
 //!
-//! ## What gates what (D84 / SN-8)
+//! ## What gates what
 //!
 //! The ONLY thing that gates a publish is the live `Register` grant fold. A
 //! version's provenance/lineage is ADVISORY and NEVER gates a publish or any

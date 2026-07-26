@@ -290,7 +290,7 @@ Interfaces may still change before 1.0 — pin a commit if you build on it.
   (serve/cli/sdk/ui/docs)
 - **`FuzzyDiscovery` — advisory fuzzy-in / exact-out retrieval (Slice-B).** A new
   additive RPC over a dataset's vector index that returns only content-addressed refs
-  + a display-only basis-point score (SN-8 — never an identity input); resolve bytes by
+  + a display-only basis-point score (never an identity input); resolve bytes by
   the exact ref. Exposed in the Python/TypeScript SDKs and an advisory "Discover" mode
   in the Data Lab. (serve/sdk/ui)
 
@@ -508,7 +508,7 @@ work — the entries below were developed under `[Unreleased]` and ship in 0.1.0
   `ProvidedCapabilities` and asserts the validator returns `TypeOk` (Apache-2.0, Text,
   native tool-calling). The strict tool-call (`kx-model-harness`) and plan
   (`kx-planner`) decoders now tolerate a leading Qwen3 `<think>…</think>` reasoning
-  block (leading-block-only — the fail-closed strict parse and SN-8 exact-grant
+  block (leading-block-only — the fail-closed strict parse and exact-grant
   matching are unchanged). `just fetch-agent-model` fetches a public Qwen3 stand-in.
 - **Live model dispatch in `kx serve` (AL1, opt-in)** (`crates/kx-gateway`,
   `crates/kx-cli`). Built `--features inference`, the embedded worker runs **real

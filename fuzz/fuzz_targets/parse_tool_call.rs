@@ -1,6 +1,6 @@
 #![no_main]
 //! Fuzz `kx_toolcall::parse_tool_call` / `parse_tool_calls` — the single non-forkable tool-call
-//! authority gate. It decodes UNTRUSTED model output into a warrant-granted call (SN-8: the model
+//! authority gate. It decodes UNTRUSTED model output into a warrant-granted call (the model
 //! cannot authorize a tool the runtime withheld) and documents itself as "Total + panic-free over
 //! arbitrary `bytes`" (crates/kx-toolcall/src/parse.rs:913). A panic / OOM / hang is a finding.
 //!

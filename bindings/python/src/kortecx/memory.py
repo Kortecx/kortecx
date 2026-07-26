@@ -3,7 +3,7 @@ receipt, as surfaced by ``StoreMemory`` / ``ListMemories`` / ``RecallMemory`` /
 ``ForgetMemory``.
 
 Cross-run, per-namespace memory: what an agent LEARNED in one run and can RECALL in a
-later one. SN-8: a recall hit's ``score`` is DISPLAY-ONLY — never an identity input;
+later one. a recall hit's ``score`` is DISPLAY-ONLY — never an identity input;
 the durable result is the ordered ``memory_id`` SET, matched by EXACT hash. Every
 memory is scoped to the caller's own principal (server-derived) — a client never
 reaches another principal's memories.
@@ -69,7 +69,7 @@ class Memory:
 @dataclass(frozen=True)
 class MemoryHit:
     """One recall hit: the content-addressed ref (hex), the bytes, and the
-    DISPLAY-ONLY similarity score (SN-8 — never an identity input)."""
+    DISPLAY-ONLY similarity score (never an identity input)."""
 
     memory_id: str  # hex
     content: bytes

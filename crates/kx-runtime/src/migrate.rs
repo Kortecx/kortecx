@@ -1,4 +1,4 @@
-//! Verified offline schema migration (IMP-2, M2.x-E).
+//! Verified offline schema migration (M2.x-E).
 //!
 //! [`kx_journal::migrate_to`] performs the byte-level rewrite of an older journal
 //! into a fresh current-version one. This module adds the **trust-but-verify**

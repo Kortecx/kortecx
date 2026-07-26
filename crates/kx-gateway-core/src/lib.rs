@@ -22,7 +22,7 @@
 //!   `GetContent` returns a committed result by ref; `StreamEvents` is a
 //!   resumable [`EventFrame`](kx_proto::proto::EventFrame) cursor. Every
 //!   `MoteSnapshot` is **server-derived from the fold** — the client never
-//!   computes a `MoteId` (SN-8 / D70).
+//!   computes a `MoteId`.
 //! - **Propose-proxy** — `SubmitRun` registers a run and submits its Motes
 //!   through the [`RunSubmitter`] seam to the coordinator (the sole journal
 //!   writer, D40). It returns only after the journaled `instance_id` (never acks
@@ -67,7 +67,7 @@ mod mcp_gateway_admin;
 // RC5a: the durable multi-tier MEMORY seam (StoreMemory/ListMemories/RecallMemory/
 // ForgetMemory). Pure vocabulary trait; the host impl is `kx-memory`-backed +
 // embedder. Off the journal/digest — memory.db is a rebuildable sidecar (no schema
-// bump). SN-8: recall commits only the ordered ref set; the score is display-only.
+// bump). Recall commits only the ordered ref set; the score is display-only.
 mod memory;
 // MM-3 (D110): the LOCAL secret-store admin seam (PutSecret/ListSecretNames/
 // DeleteSecret). Pure vocabulary trait; the host impl is keychain-backed. The

@@ -8,7 +8,7 @@
 //!    pack form (name==dir, bounded, non-empty).
 //! 2. **`canonical_roundtrip`** — the stored-form manifest canonicalizes
 //!    byte-idempotently (the identity `skill_ref` is derived over these bytes).
-//! 3. **`no_authority_keys`** — the authority deny-key walk holds (SN-8: a
+//! 3. **`no_authority_keys`** — the authority deny-key walk holds (a
 //!    skill wishes, the server grants; `warrant`/`grant`/`secret`/`credential`/
 //!    `executable` keys are refused anywhere in the manifest tree).
 //! 4. **`wish_grammar`** — every wished tool id parses (`name` or

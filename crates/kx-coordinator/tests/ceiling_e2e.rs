@@ -1,7 +1,7 @@
 // Integration-test file: compiled as a separate crate from the host lib; tests
 // legitimately use `.unwrap()` for fixture construction.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! IMP-4 (D116) — single-writer **realistic end-to-end** commit ceiling (number iii).
+//! Single-writer **realistic end-to-end** commit ceiling (number iii).
 //!
 //! `kx-journal/tests/ceiling_throughput.rs` measures the raw `Journal` write floor/ceiling
 //! in isolation. This file measures the number the roadmap actually cares about: the

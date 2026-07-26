@@ -89,7 +89,7 @@ pub(crate) struct HostAppDeriver {
 
 impl HostAppDeriver {
     /// Wire the deriver for a served model. The role catalog is the same curated authoring
-    /// palette the proposer resolves against (SN-8 axes come from the vetted recipes).
+    /// palette the proposer resolves against (The axes come from the vetted recipes).
     pub(crate) fn new(
         backend: Arc<RoutingBackend>,
         model_id: ModelId,

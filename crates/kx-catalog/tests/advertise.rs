@@ -137,7 +137,7 @@ fn granted_use_party_gets_a_descriptor_that_validates() {
     // The descriptor's schema is the M8 contract — it round-trips through validate_args.
     assert!(validate_args(&ad.input_schema, br#"{"limit": 50}"#).is_ok());
     assert!(validate_args(&ad.input_schema, br#"{"limit": 999}"#).is_err()); // out of [1,100]
-    assert!(validate_args(&ad.input_schema, br#"{"limit": 1.5}"#).is_err()); // no float (SN-8)
+    assert!(validate_args(&ad.input_schema, br#"{"limit": 1.5}"#).is_err()); // no float
     assert!(validate_args(&ad.input_schema, br#"{"bogus": 1}"#).is_err()); // deny_unknown + missing
 }
 
@@ -272,7 +272,7 @@ fn advertise_emits_no_run_and_appends_no_fact() {
 
 /// M7.3 (PR-B) exit gate: the new `kx-catalog → kx-tool-registry` edge must NOT
 /// create a cycle — kx-tool-registry and the crates it depends on must stay off
-/// kx-catalog, so the SN-8 wall and the dependency direction hold (complements
+/// kx-catalog, so the identity wall and the dependency direction hold (complements
 /// `guarantee_path_does_not_depend_on_catalog` in `security_governance.rs`).
 #[test]
 fn advertisement_edge_introduces_no_cycle() {

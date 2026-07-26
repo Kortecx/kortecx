@@ -1,6 +1,6 @@
 //! PR-4 (M5) — **the tool-call ReAct loop.** The model drives a bounded, durable,
 //! crash-resumable Reason→Act→Observe→repeat loop: it proposes a tool, the runtime
-//! ENFORCES + fires it (SN-8), the committed result becomes an OBSERVATION the next
+//! ENFORCES + fires it, the committed result becomes an OBSERVATION the next
 //! turn reads back, until the model gives a final answer or a budget is hit.
 //!
 //! ## The two-fact split (the load-bearing shape)
@@ -44,7 +44,7 @@
 //!
 //! Tool results re-enter the prompt, so an observation is UNTRUSTED. It can NEVER
 //! escalate: the warrant is FIXED for the whole run, and `parse_tool_call` enforces
-//! the proposed tool ∈ `warrant.tool_grants` by exact crypto-equality (SN-8) — an
+//! the proposed tool ∈ `warrant.tool_grants` by exact crypto-equality — an
 //! injected "call a tool you were not granted" decodes to `UngrantedTool` → the
 //! turn dead-letters, no effect fires. The observation renders as `parent.<hex>`
 //! content, never an authority turn.
@@ -261,8 +261,8 @@ where
         // coordinator. COMMIT the rejected turn (so the next turn sees the bad
         // proposal in its trajectory), count it as a spent tool-call, and re-prompt
         // with the durable reason. The loud `DeadLettered` fires ONLY at budget
-        // exhaustion on a refused tail (BUG-27 preserved; never a fabricated answer,
-        // GR15). A COMMITTED turn that re-decodes to `Err` is a previously-rejected
+        // exhaustion on a refused tail (preserved; never a fabricated answer).
+        // A COMMITTED turn that re-decodes to `Err` is a previously-rejected
         // turn on REPLAY: the SAME path re-derives its in-memory state (trajectory,
         // count, re-prompt) from the served fact WITHOUT re-committing or
         // mis-classifying it as an answer (the deterministic re-fold law —

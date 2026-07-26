@@ -26,7 +26,7 @@ pub enum DecodeError {
         /// A short structural diagnostic (never the raw payload).
         diagnostic: String,
     },
-    /// The model named a tool that is not in `warrant.tool_grants` (SN-8: the model
+    /// The model named a tool that is not in `warrant.tool_grants` (the model
     /// cannot authorize an action the runtime did not grant).
     UngrantedTool {
         /// The proposed (ungranted) tool name.
@@ -36,7 +36,7 @@ pub enum DecodeError {
     },
     /// The model named a tool by a NON-UNIQUE alias — a bare leaf (`echo`) or a
     /// `/`-segment (`mcp-echo`) shared by two granted `<server>/<remote>` tools (e.g.
-    /// the bundled `mcp-echo/echo` and a dialed `refconn/echo`). Fail-closed (SN-8:
+    /// the bundled `mcp-echo/echo` and a dialed `refconn/echo`). Fail-closed (
     /// the runtime NEVER guesses which grant the model meant); the `candidates` carry
     /// the addressed full-ids so the react loop can re-prompt with an unambiguous
     /// disambiguation (T-CONNECTOR-AUTOGRANT-LIVE-DEADLETTER). A COMMITTED arm
@@ -49,7 +49,7 @@ pub enum DecodeError {
         /// `tool_grants` (`BTreeSet`) order.
         candidates: Vec<ToolName>,
     },
-    /// The proposed arguments exceed the per-call size cap (IMP-16).
+    /// The proposed arguments exceed the per-call size cap.
     Oversize {
         /// Observed args size in bytes.
         got: usize,

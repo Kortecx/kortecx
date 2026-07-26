@@ -58,11 +58,11 @@
 //! Two semantically-identical warrants produce byte-identical refs;
 //! identity-bearing. See [`warrant_ref_of`].
 //!
-//! # Reading further
+//! # Design invariant
 //!
-//! - `docs/design/warrant.md` (private corpus) — the locked spec for D30.
-//! - `docs/design/decisions.md` D30, D32, D33, D35, D36 — interlocking decisions.
-//! - `05-progress-tracker.md` SN-8 — *model proposes, runtime enforces*.
+//! *The model proposes; the runtime enforces.* A warrant is server-minted from
+//! the caller's own grants — never accepted from a client, and never widened by
+//! anything a model emits.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

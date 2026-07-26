@@ -18,7 +18,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** The committed observation carries the ordered EXACT chunk content-refs
+//! - **Identity.** The committed observation carries the ordered EXACT chunk content-refs
 //!   (+ text for the model to read) — the similarity `score` is DROPPED here, never
 //!   committed, never an identity input. (Mirrors `kx-model-harness::rag::query_corpus`.)
 //! - **Read-only.** `IdempotencyClass::Readback` ⇒ the HITL gate auto-proceeds it; no
@@ -27,7 +27,7 @@
 //! - **Flat builtin id.** `retrieve@1` is a `ToolKind::Builtin` (like `fs-list@1`):
 //!   the model proposes the FULL name `retrieve`, which `kx_toolcall::resolve_granted_name`
 //!   matches by EXACT equality (`id_matches`). The `<server>/<remote>` convention is
-//!   ONLY for MCP tools where the model emits the bare remote leaf (the BUG-33 guard);
+//!   ONLY for MCP tools where the model emits the bare remote leaf (the guard);
 //!   a builtin needs no `/` and using one would be semantically wrong (no MCP server).
 //! - **Fail-SOFT, never dead-letter.** A missing/unavailable/stale dataset (every
 //!   recoverable [`DatasetError`]) returns an EMPTY-passage observation the model reads
@@ -93,7 +93,7 @@ struct RetrieveArgs {
 }
 
 /// One retrieved passage — content hash + text + chunk provenance. NO `score`
-/// (SN-8: the committed observation is the ordered EXACT-ref set only).
+/// (the committed observation is the ordered EXACT-ref set only).
 #[derive(Serialize)]
 struct Passage {
     /// Hex of the retrieved CHUNK's content ref (the citation key).
@@ -172,7 +172,7 @@ impl Capability for RetrieveCapability {
                         text: String::from_utf8_lossy(&h.content).into_owned(),
                         parent_ref: ContentRef::from_bytes(h.parent_ref).to_hex(),
                         chunk_index: h.chunk_index,
-                        // h.score is intentionally DROPPED here (SN-8).
+                        // h.score is intentionally DROPPED here.
                     });
                 }
                 let note = if passages.is_empty() {
@@ -391,10 +391,10 @@ mod tests {
             ContentRef::from_bytes([101; 32]).to_hex()
         );
         assert_eq!(passages[0]["chunk_index"], 0);
-        // ...and NEVER the score (SN-8: the committed fact is the ref set, scores out).
+        // ...and NEVER the score (the committed fact is the ref set, scores out).
         assert!(
             !String::from_utf8_lossy(&out).contains("score"),
-            "the committed observation must not carry a similarity score (SN-8)"
+            "the committed observation must not carry a similarity score"
         );
         assert!(passages[0].get("score").is_none());
     }

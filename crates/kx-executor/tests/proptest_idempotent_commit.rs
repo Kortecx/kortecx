@@ -1,5 +1,5 @@
 //! Property tests on the PR 9b-3 `StandardCommitProtocol`
-//! `IdempotentByConstruction` path. SN-4 v2 mandate: ≥3 proptest
+//! `IdempotentByConstruction` path. Structural-review mandate: ≥3 proptest
 //! properties × 64 cases.
 //!
 //! Properties:

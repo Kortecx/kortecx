@@ -17,7 +17,7 @@
 //!
 //! The controlled escape hatch for "two inputs that mean the same thing but aren't
 //! bit-identical" — the situation a lesser system answers with fuzzy matching. The
-//! fix is NOT fuzzy matching: per SN-8 and D33 the runtime serves cache hits only on
+//! fix is NOT fuzzy matching: by design the runtime serves cache hits only on
 //! EXACT cryptographic `MoteId` equality, with no similarity operator on the identity
 //! path. Instead [`normalize_deterministic`] canonicalizes inputs **before** they feed
 //! `MoteId` derivation, so equivalent inputs (`"ls   -la"` vs `"ls -la"`) become

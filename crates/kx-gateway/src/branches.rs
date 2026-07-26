@@ -11,7 +11,7 @@
 //! addressed). Never journaled, never a `MoteId` input, never a digest input —
 //! dropping the file cannot move the canonical projection digest (D160).
 //!
-//! ## Server-derived id (SN-8)
+//! ## Server-derived id
 //! `branch_ref = blake3("kx-branch\0" ‖ handle ‖ parent ‖ items)[..16]` via
 //! [`kx_content::ContentRef::of`]. The client names a `handle`; the server
 //! derives the identity from the path-sorted resolved item set.
@@ -65,7 +65,7 @@ struct ItemRow {
     ref_hex: String,
 }
 
-/// `branch_ref = blake3("kx-branch\0" ‖ handle ‖ parent ‖ items)[..16]` (SN-8).
+/// `branch_ref = blake3("kx-branch\0" ‖ handle ‖ parent ‖ items)[..16]`.
 /// `items` MUST be path-sorted (the resolved manifest's canonical order) so the
 /// id is content-addressed — identical resolved content ⇒ identical ref.
 fn branch_ref_of(handle: &str, parent: &str, items: &[BranchItemRecord]) -> [u8; 16] {

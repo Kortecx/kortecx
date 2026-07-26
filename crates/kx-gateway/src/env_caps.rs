@@ -10,7 +10,7 @@
 //! deterministic within a run (the F-7 assemble window) reads the SAME value every
 //! call — determinism (R49) holds, while staying trivially testable (no global cache).
 //!
-//! SN-8 / D35: a token knob NEVER widens a warrant beyond what the model executor
+//! A token knob never widens a warrant: a token knob NEVER widens a warrant beyond what the model executor
 //! accepts — these size the SEED-time recipe warrant (the ceiling), which the
 //! executor's `inference_params_from_mote` still clamps; the env only moves the
 //! seeded ceiling, it cannot bypass downstream enforcement.
@@ -130,7 +130,7 @@ pub(crate) fn edit_max_output_tokens() -> u32 {
 /// Larger default than the react-edit ceiling — a scaffolded page is a full file body and
 /// a reasoning model's stripped `<think>` block eats into the budget. Additive +
 /// default-preserving (unset ⇒ [`DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS`]); seeded only on a
-/// model-served build, so the model-free canonical digest is unaffected (SN-8: the
+/// model-served build, so the model-free canonical digest is unaffected (the
 /// executor's `inference_params_from_mote` still clamps — this only moves the seed ceiling).
 pub(crate) fn scaffold_max_output_tokens() -> u32 {
     parse_cap_u32(
@@ -145,7 +145,7 @@ pub(crate) fn scaffold_max_output_tokens() -> u32 {
 /// The PLANNER output-token budget (`KX_SERVE_PLANNER_MAX_OUTPUT_TOKENS`) — shared by the
 /// `ProposeWorkflow` and `DeriveApp` model turns, so raising it can never make the two
 /// authoring paths disagree about how much plan a model is allowed to write. Additive +
-/// default-preserving; the seeded ceiling only, which the executor still clamps (SN-8).
+/// default-preserving; the seeded ceiling only, which the executor still clamps.
 #[cfg(feature = "serve-engine")]
 pub(crate) fn planner_max_output_tokens() -> u32 {
     parse_cap_u32(
@@ -346,7 +346,7 @@ pub(crate) fn memory_decay_min_access() -> usize {
 /// The operator RAG config (RC4a `KX_SERVE_RAG_*` knobs): retrieval mode, chunk
 /// size/overlap, the per-doc chunk cap, RRF k, MMR lambda + on/off, and stopwords.
 /// Each is additive + default-preserving (unset ⇒ [`RagConfig::default`]); all are
-/// OPERATOR config, never client-chosen (SN-8).
+/// OPERATOR config, never client-chosen.
 #[cfg(feature = "hnsw")]
 pub(crate) fn rag_config() -> crate::datasets::RagConfig {
     use kx_gateway_core::RetrievalMode;

@@ -2,11 +2,11 @@
 //! over the [`kx_mcp_gateway::McpGateway`] + the [`BrokerCapabilitySink`] that
 //! registers a dialed tool's firing capability on the serve broker.
 //!
-//! The runtime is a SECURE GATEWAY to external MCP servers (D132/D159/GR19): it
+//! The runtime is a SECURE GATEWAY to external MCP servers: it
 //! DIALS the server (`initialize` -> `tools/list`), registers the discovered
 //! tools into the SAME durable `tools.db`, and governs the connection in an
 //! off-journal `connections.db` sidecar — never an executor of arbitrary code.
-//! The live untrusted-egress surface (GR8) is enforced by `kx-mcp-gateway`:
+//! The live untrusted-egress surface is enforced by `kx-mcp-gateway`:
 //! admission host vetting + dial-time SSRF/rebind vetting + per-server
 //! rate-limit + warrant-gated egress + secret-less `CredentialRef` (D81).
 
@@ -46,7 +46,7 @@ pub(crate) fn wire_mcp_gateway<S: ContentStore + Send + Sync + 'static>(
 ) -> Result<Arc<dyn McpGatewayAdmin>, GatewayError> {
     let store = SqliteConnectionStore::open(catalog_dir.join("connections.db"))?;
     // The SAME broker backs both the dialed-tool capability sink AND the operator
-    // diagnostic live-fire (`CallMcpTool`) — one fire path, SN-8 re-enforced there.
+    // diagnostic live-fire (`CallMcpTool`) — one fire path, authority re-enforced there.
     let sink: Arc<dyn CapabilitySink> = Arc::new(BrokerCapabilitySink::new(broker.clone()));
     let allowlist = crate::tools::tool_host_allowlist();
     // MM-3: resolve a connection's `credential_ref` NAME from the OS keychain
@@ -218,7 +218,7 @@ impl<S: ContentStore + Send + Sync + 'static> McpGatewayAdmin for HostMcpGateway
     ) -> Result<CallToolOutcome, McpAdminError> {
         let tool_id = ToolName(format!("{server_name}/{remote_name}"));
         // Resolve the REGISTERED def — its version, declared scopes, and typed schema
-        // are the source of truth (the client supplies none of them; SN-8).
+        // are the source of truth (the client supplies none of them).
         let def = self
             .registry
             .defs()
@@ -252,7 +252,7 @@ impl<S: ContentStore + Send + Sync + 'static> McpGatewayAdmin for HostMcpGateway
         let cap = def.required_capability.clone();
         let mote = diagnostic_fire_mote(&tool_id, &def.tool_version);
         // The single-grant warrant is built from the tool's OWN declared scopes — the
-        // broker re-verifies tool ∈ grants + request scopes ⊆ warrant (SN-8 at the gate).
+        // broker re-verifies tool ∈ grants + request scopes ⊆ warrant (re-verified at the gate).
         let warrant =
             diagnostic_fire_warrant(&tool_id, &def.tool_version, &cap, secret_scope.clone());
         let request = EffectRequest {
@@ -305,8 +305,8 @@ fn diagnostic_fire_mote(tool_id: &ToolName, version: &ToolVersion) -> Mote {
 }
 
 /// A single-grant warrant carrying EXACTLY the fired tool + the tool's OWN declared
-/// net/fs/secret scopes — the broker re-verifies the request scopes are a subset
-/// (SN-8). The client never supplies grants; this is server-built from the registry.
+/// net/fs/secret scopes — the broker re-verifies the request scopes are a subset.
+/// The client never supplies grants; this is server-built from the registry.
 fn diagnostic_fire_warrant(
     tool_id: &ToolName,
     version: &ToolVersion,

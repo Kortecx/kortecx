@@ -3,7 +3,7 @@ import { deriveCrumbs } from "../../src/components/shell/breadcrumb-model";
 
 describe("deriveCrumbs", () => {
   it("maps each nav section path to a single current crumb with its display label", () => {
-    // The spec-IA display renames (§2.186 / D141) over the frozen handles.
+    // The spec-IA display renames over the frozen handles.
     expect(deriveCrumbs("/chat")).toEqual([{ label: "New Chat" }]);
     expect(deriveCrumbs("/workflows")).toEqual([{ label: "Workflows" }]);
     // The display rename (D136): the frozen `recipes` path shows "Blueprints".

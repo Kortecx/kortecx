@@ -4,7 +4,7 @@
 //!   - a backend that does NOT implement embeddings gets the default
 //!     `Err(Unsupported)` (so the seam degrades gracefully);
 //!   - a backend that DOES implement it returns an `EmbeddingOutput` and
-//!     enforces the warrant route (the SN-8 / D35 authorize-before-work rule);
+//!     enforces the warrant route (the A token knob never widens a warrant authorize-before-work rule);
 //!   - the real `LlamaInferenceBackend` wires `dispatch_embedding` through the
 //!     warrant gate → resolver → owner-thread cache, reaching the load-failure /
 //!     not-found / denied paths without a real model.

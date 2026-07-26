@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
-//! Live witness (GR15) — `#[ignore]` by default because it needs a REAL Gmail OAuth
+//! Live witness — `#[ignore]` by default because it needs a REAL Gmail OAuth
 //! credential and network access, neither of which belong in CI.
 //!
 //! To run it, export a real credential and drop offline mode, then:
@@ -10,7 +10,7 @@
 //! ```
 //! The full agentic witness (a live Gemma ReAct loop firing `gmail/search` then
 //! `gmail/draft` on BOTH engines) is run at registration time via a `kx serve`
-//! end-to-end, per GR24 — this smoke test just proves the connector reaches Gmail.
+//! end-to-end, for the dual-engine gate — this smoke test just proves the connector reaches Gmail.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 

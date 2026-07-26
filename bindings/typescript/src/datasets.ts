@@ -4,7 +4,7 @@
  * (T3.7). Kept in its own module so `types.ts` stays a thin aggregator, mirroring
  * the Rust core's module-per-concern discipline.
  *
- * SN-8: a hit's `score` is DISPLAY-ONLY — never an identity input. The retrieval
+ * a hit's `score` is DISPLAY-ONLY — never an identity input. The retrieval
  * result a downstream consumer trusts is the ordered `contentRef` SET, matched by
  * EXACT hash. Embedding is pluggable: pass a client-computed `embedding` (the
  * FFI-free path, e.g. via HuggingFace transformers in your app) or omit it to let a
@@ -77,7 +77,7 @@ export class DatasetSummary {
 }
 
 /** One retrieval hit: the content-addressed ref (hex) of the CHUNK, the chunk
- *  bytes, and the DISPLAY-ONLY similarity score (SN-8 — never an identity input).
+ *  bytes, and the DISPLAY-ONLY similarity score (never an identity input).
  *  RC4a adds chunk provenance (`parentRef` / `chunkIndex` / `chunkCount`). */
 export class DatasetHit {
   constructor(
@@ -143,7 +143,7 @@ export class IngestResult {
  *
  * `docId` and `metadata` are RESERVED (forward-compat): accepted on the wire but
  * NOT YET persisted or returned. The durable id is always the server-derived
- * content hash (SN-8), so `docId` is advisory; per-doc `metadata` is a planned add.
+ * content hash, so `docId` is advisory; per-doc `metadata` is a planned add.
  */
 export interface IngestDoc {
   readonly content: Uint8Array;

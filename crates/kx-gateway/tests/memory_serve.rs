@@ -9,7 +9,7 @@
 //!     are probabilistic, so the chain is driven and its answer logged (the hard
 //!     assertion is only that it answers).
 //!
-//! Drive on BOTH engines (GR24; #[ignore], runtime-skips without a served model):
+//! Drive on BOTH engines (#[ignore], runtime-skips without a served model):
 //! ```text
 //!   # llama.cpp (Gemma-4 GGUF):
 //!   KX_SERVE_MODEL_GGUF=.../gemma-4-12b-it-q4_k_m.gguf KX_SERVE_MEMORY=1 \
@@ -83,10 +83,10 @@ fn configure_serve_with_memory() -> bool {
     }
 }
 
-/// THE HARD WITNESS (GR24 parity): a live store→recall round-trip over the embedder.
+/// THE HARD WITNESS (dual-engine parity): a live store→recall round-trip over the embedder.
 /// The stored fact must come back as the top recall hit — proving the embed → index →
 /// recall path works end-to-end on WHICHEVER engine served (deterministic, no model
-/// tool proposal). M12 (GR10): the store + recall wall-clock (private trend, SN-2).
+/// tool proposal). M12: the store + recall wall-clock (private trend).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real embedding inference; needs a served Gemma model; opt in with --ignored"]
 async fn store_then_recall_returns_the_fact_on_both_engines() {
@@ -150,7 +150,7 @@ async fn store_then_recall_returns_the_fact_on_both_engines() {
         engine(),
         hits.hits.len()
     );
-    // M12 (GR10) — copy into the private `docs/benchmarks/` trend (SN-2).
+    // M12 — copy into the private `docs/benchmarks/` trend.
     eprintln!(
         "M12 memory | engine={} | store_ms={store_ms:.1} | recall_ms={recall_ms:.1}",
         engine()
@@ -174,7 +174,7 @@ async fn store_then_recall_returns_the_fact_on_both_engines() {
 
     running.shutdown().await.unwrap();
 
-    // GR24 FUNCTIONAL parity: the store→recall→list path works live on BOTH engines — the
+    // FUNCTIONAL parity: the store→recall→list path works live on BOTH engines — the
     // stored fact is RECALLABLE by a semantic query (present among the hits). Semantic
     // RANK quality is embedder-dependent (a decoder-as-embedder, e.g. llama.cpp's served
     // Gemma-4 with no dedicated embed model, ranks weakly — the T-RAG-EMBED-QUALITY class;

@@ -32,7 +32,7 @@
 //!
 //! The CLI holds no journal handle and adds no write path (the coordinator is
 //! the sole writer, D40). It never computes a `MoteId` / `instance_id` — those
-//! are server-derived (SN-8); the CLI only echoes server bytes as hex and sends
+//! are server-derived; the CLI only echoes server bytes as hex and sends
 //! a credential (a bearer token), never a claimed identity.
 
 pub mod cli;

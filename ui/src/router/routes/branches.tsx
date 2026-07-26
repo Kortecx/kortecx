@@ -8,7 +8,7 @@ import { rootRoute } from "./__root";
 /**
  * Branches — content-addressed `{path → ref}` manifests over operator-approved
  * host files (D155). The section view (govern + author) loads lazily; it degrades
- * to a not-wired empty state on a gateway without the branch store (GR15).
+ * to a not-wired empty state on a gateway without the branch store.
  */
 const BranchesSection = lazy(() =>
   import("../../components/sections/BranchesSection").then((m) => ({

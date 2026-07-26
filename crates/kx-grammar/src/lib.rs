@@ -26,7 +26,7 @@
 //! raw still decodes as [`GrammarSpec::ToolEnvelope`] (the variants have disjoint
 //! required keys — `tools` vs `n`).
 //!
-//! ## Boundaries (SN-8 / D108.2)
+//! ## Boundaries
 //! - **Accept-side only.** The grammar can only NARROW what the model emits. It
 //!   is NOT the authority gate — `kx_toolcall::parse_tool_call` still resolves
 //!   the name against `warrant.tool_grants` by exact equality and `validate_args`

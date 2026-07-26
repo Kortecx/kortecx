@@ -6,7 +6,7 @@
 //! answer-only `format` applied, gemma3 is FORCED to emit a parseable `{"answer":…}`
 //! envelope (it settles) even for a prompt that would otherwise elicit a tool call —
 //! whereas the sibling UNION `format` on the SAME prompt fires the tool. That contrast
-//! is the answer-force capability's GR28 live witness on the Ollama engine. (llama.cpp
+//! is the answer-force capability's live witness on the Ollama engine. (llama.cpp
 //! needs no witness: its GBNF renderer ignores `answer_only` and already completes the
 //! loop — proven by `kx-grammar`'s `gbnf_ignores_answer_only`.)
 //!

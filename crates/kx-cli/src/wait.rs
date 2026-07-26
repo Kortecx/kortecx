@@ -263,7 +263,7 @@ pub async fn await_react_result(
             .await?;
             // gemma3 connector-tool-fire: under the Ollama non-strict UNION `format` the
             // settled answer turn commits `{"answer":"…"}`; unwrap it to the plain text a
-            // user expects. Byte-identical NO-OP for prose / llama.cpp answers (SN-8).
+            // user expects. Byte-identical NO-OP for prose / llama.cpp answers.
             if let Some(payload) = outcome.payload.take() {
                 outcome.payload = Some(kx_toolcall::extract_answer(&payload).into_owned());
             }

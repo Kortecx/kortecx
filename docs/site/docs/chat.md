@@ -170,7 +170,7 @@ never invents citations or pretends to be grounded. The fallbacks are:
   embed the message with, so it degrades to plain chat. (Retrieval also needs the
   `hnsw` feature — see [Data Lab → Degraded states](./datasets.md#degraded-states).)
 
-### Scores are display-only (SN-8)
+### Scores are display-only
 
 Retrieval ranks hits by an approximate similarity **score**, but the score is
 **display-only** — it never reaches run identity. Only the **exact content refs**
@@ -178,7 +178,7 @@ of the retrieved documents are folded into the prompt, and they are matched
 downstream by exact hash. So the grounded turn stays deterministic and
 replayable: the same ingested corpus yields the same folded refs, and the
 build-order-sensitive ANN ranking never routes a `MoteId`. See
-[Data Lab → Scores are display-only](./datasets.md#scores-are-display-only-sn-8)
+[Data Lab → Scores are display-only](./datasets.md#scores-are-display-only)
 and [Security → model proposes, runtime
 enforces](./security.md#model-proposes-runtime-enforces).
 

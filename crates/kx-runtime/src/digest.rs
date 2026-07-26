@@ -6,8 +6,8 @@
 //! emitted in `MoteId` order. Two projections with byte-identical committed
 //! results produce the same digest regardless of the order entries were
 //! folded or the process / machine that folded them. This is exactly the
-//! `01-build-sequence.md` §1.13 assertion-(a)/(c) surface ("compared via
-//! content hashes across the projection").
+//! assertion-(a)/(c) surface ("compared via content hashes across the
+//! projection").
 
 use kx_journal::Journal;
 use kx_projection::{MoteState, Projection};

@@ -526,7 +526,7 @@ pub fn react_turn(
 /// is collision-free there — but live serve SHARES one journal across runs,
 /// where an unsalted turn 0 of run B would dedup-collide with run A's
 /// (red-team BLOCKER #1). The salt is the run's registered `instance_id`
-/// (server-assigned, unknowable client-side — SN-8), mirroring
+/// (server-assigned, unknowable client-side), mirroring
 /// `kx_journal::run_root_id`'s `blake3("kx-run-root" ‖ instance_id)`.
 ///
 /// An EMPTY salt is byte-identical to the pre-PR-2d-1 builder (same material,

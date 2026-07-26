@@ -6,7 +6,7 @@
 //! keyutils) so a local agent can authenticate real services without exporting
 //! credentials into the process environment.
 //!
-//! ## Security posture (D81/D110, SN-8)
+//! ## Security posture (D81/D110)
 //! - Secrets are resolved **by NAME** ([`kx_warrant::SecretRef`]); the value is read
 //!   transiently at transport setup, injected into a header / child env, and dropped.
 //!   It is NEVER journaled, in a `MoteId`/`StepRecord`, or the model's context. The

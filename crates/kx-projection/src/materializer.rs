@@ -9,9 +9,7 @@
 //! a [`crate::ChildResolver`], and a [`kx_warrant::RoleRegistry`]). Tests
 //! may pass a lighter-weight stub.
 //!
-//! See `docs/design/decisions.md` §D30 + §D48 + §D49 +
-//! `docs/design/topology.md` §13 KG-1 (private corpus) for the
-//! load-bearing properties this seam must preserve: R49
+//! The load-bearing properties this seam must preserve: R49
 //! reconstructibility, no-position-metadata, transitivity (P3),
 //! re-run distinctness, AND per-role warrant narrowing.
 

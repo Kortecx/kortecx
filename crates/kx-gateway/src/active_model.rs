@@ -1,6 +1,6 @@
 //! Model Control v2 — the host active-default-model control ([`ActiveModelControl`]).
 //!
-//! An OFF-JOURNAL advisory hint (SN-8): it authorizes nothing and the server never
+//! An OFF-JOURNAL advisory hint: it authorizes nothing and the server never
 //! re-routes `kx/recipes/chat`. It exists so the default a client chats with is
 //! switchable from CLI/SDK. Validated against the LIVE served catalog (the same shared
 //! entries handle the model catalog + puller hold), so a runtime-pulled model is a

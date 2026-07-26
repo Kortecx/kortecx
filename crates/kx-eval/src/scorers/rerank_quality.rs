@@ -8,7 +8,7 @@
 //! reordered correctly. Without it the `T-RERANK-WORKER-ROUTE` fail-closed class
 //! re-breaks silently (it passed every unit test + 22 CI jobs precisely because it fails
 //! closed). Tasks that declare no `rerank_best_index` are N/A and excluded from the
-//! aggregate. Deterministic, LLM-free, integer per-mille (SN-8).
+//! aggregate. Deterministic, LLM-free, integer per-mille.
 
 use crate::scorers::{ScoreOutput, PER_MILLE};
 

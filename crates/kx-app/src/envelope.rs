@@ -809,7 +809,7 @@ impl AppEnvelope {
     ///   `branch_handle` (the project file tree) — so it can never be scheduled (D213);
     /// - every content/instructions/cas ref is 64-char lowercase hex;
     /// - connection descriptors carry NO URL userinfo and credential refs are bare names;
-    /// - no floats anywhere (SN-8 — identity bytes are integer-only).
+    /// - no floats anywhere (identity bytes are integer-only).
     ///
     /// # Errors
     /// Returns [`AppError::Schema`] on a schema-tag mismatch, or [`AppError::Invalid`]
@@ -917,7 +917,7 @@ impl AppEnvelope {
         // Tool rails: every wished/displayed tool id is well-formed and its version is
         // an integer — across `references.tools`, each skill's wish set, and the
         // steering-config grant wish. Left unvalidated, a hand-authored envelope could
-        // carry a malformed id or DISPLAY a tool it never legitimately requests (SN-8).
+        // carry a malformed id or DISPLAY a tool it never legitimately requests.
         for t in &self.references.tools {
             check_tool_id("references.tools.tool_id", &t.tool_id)?;
             check_integer("references.tools.tool_version", &t.tool_version)?;
@@ -1063,7 +1063,7 @@ fn check_descriptor_no_userinfo(descriptor: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Walk a JSON value and reject any non-integer number (SN-8 — no floats on identity).
+/// Walk a JSON value and reject any non-integer number (no floats on identity).
 fn reject_floats(v: &Value) -> Result<(), AppError> {
     match v {
         Value::Number(n) => {
@@ -1518,8 +1518,7 @@ mod tests {
 
     proptest! {
         /// `content_refs(true)` is sorted, deduplicated, and set-equal to the union of
-        /// every content ref placed across the rail — over the arbitrary ref space
-        /// (SN-4 v2 #5).
+        /// every content ref placed across the rail — over the arbitrary ref space.
         #[test]
         fn content_refs_is_sorted_deduped_and_complete(
             seeds in prop::collection::vec(any::<u8>(), 0..40)

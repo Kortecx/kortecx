@@ -12,7 +12,7 @@ import type { RecipeForm } from "@kortecx/sdk/web";
 /** The on-disk export version (bump on a shape change). */
 const EXPORT_VERSION = 1;
 
-/** Advisory catalog metadata for a blueprint (display/discovery only, SN-8). */
+/** Advisory catalog metadata for a blueprint (display/discovery only). */
 export interface BlueprintMeta {
   readonly handle: string;
   readonly description?: string;

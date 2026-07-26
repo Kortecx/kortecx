@@ -435,7 +435,7 @@ where
             sink.publish(projection.snapshot());
         }
         // R4: record the dispatch off the truth path (echoes the picked Mote's id +
-        // nd_class + which dispatch path was taken; no recomputation, SN-8).
+        // nd_class + which dispatch path was taken; no recomputation).
         if let Some(a) = audit_sink {
             a.record(AuditEvent::MoteDispatched {
                 mote_id: action.mote_id(),
@@ -1001,7 +1001,7 @@ fn as_u32(n: usize) -> u32 {
 /// emitted `MoteCommitted` set is exactly the digest's committed set, and it covers
 /// Motes committed by recovery before the loop ran). Non-terminal Motes
 /// (`Pending`/`Scheduled`) emit nothing. Echoes already-derived projection state —
-/// it NEVER recomputes a `MoteId` (SN-8) and NEVER reads payload bytes.
+/// it NEVER recomputes a `MoteId` and NEVER reads payload bytes.
 fn audit_terminal_states(
     runnable: &[WorkflowMote],
     projection: &Projection,

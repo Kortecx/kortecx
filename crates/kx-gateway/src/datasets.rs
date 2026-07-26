@@ -12,7 +12,7 @@
 //! (`<catalog_dir>/datasets/datasets.db`, WAL + `synchronous = FULL`), the same
 //! durable-side-store posture as the membership ledger (`members.db`). Each
 //! document row is `(dataset, ref, content, vector)`: `ref = ContentRef::of(content)`
-//! (server-derived, content-addressed — SN-8), `vector` the canonical little-endian
+//! (server-derived, content-addressed), `vector` the canonical little-endian
 //! f32 form. The HNSW graph ([`HnswRetrievalIndex`]) is a DERIVED in-memory
 //! accelerator, rebuilt from the rows on open (so a graph-format break is recovered
 //! by rebuild, never a migration — D40). The dataset NAME is a SQLite key, never a
@@ -25,7 +25,7 @@
 //! `EmbeddingBackend`). This decoupling is the seam an external embedder (e.g.
 //! HuggingFace transformers in the Py/TS SDK) plugs into with no runtime change.
 //!
-//! # SN-8
+//! # Identity
 //!
 //! The similarity score is DISPLAY-ONLY: the retrieval result the seam returns is
 //! the ordered content-ref SET; a downstream consumer matches by EXACT hash. The
@@ -61,7 +61,7 @@ use rusqlite::{params, Connection};
 use crate::error::GatewayError;
 
 /// Operator-config retrieval tuning (all from `KX_SERVE_RAG_*` env — never client-
-/// chosen, SN-8). Threaded into [`HostDatasetView`] at open. RC4a.
+/// chosen). Threaded into [`HostDatasetView`] at open. RC4a.
 #[derive(Clone, Copy, Debug)]
 pub struct RagConfig {
     /// Max chunk size in Unicode chars (server-embed ingest).
@@ -1244,7 +1244,7 @@ impl DatasetView for HostDatasetView {
 impl FuzzyDiscoveryView for HostDatasetView {
     /// Advisory fuzzy-in / exact-out discovery: the SAME search as
     /// [`DatasetView::query`], but the result is the ordered content-ref SET +
-    /// a DISPLAY-ONLY basis-point score (SN-8) — no content bytes on the wire.
+    /// a DISPLAY-ONLY basis-point score — no content bytes on the wire.
     /// The caller joins back to bytes with an EXACT `GetContent` on the ref.
     fn discover(
         &self,
@@ -1376,7 +1376,7 @@ mod tests {
     use proptest::prelude::*;
 
     proptest! {
-        /// THE CONTRACT (SN-4 v2 #5): a scoped App-corpus name is ALWAYS accepted by the
+        /// THE CONTRACT: a scoped App-corpus name is ALWAYS accepted by the
         /// real host validator — for any declared ref (unicode, `/`, dot-runs, absurd
         /// length, empty) and any embed-scope tag. `app_run` derives these names without
         /// pre-sanitizing, so a gap here would surface as a fail-SOFT ungrounded run
@@ -1805,7 +1805,7 @@ mod tests {
         )
         .unwrap();
         // Closest to axis 1 ⇒ "bravo" is the top hit; the result carries the EXACT
-        // content-ref + a display-only bp score (no content bytes — SN-8 exact-out).
+        // content-ref + a display-only bp score (no content bytes — exact-out).
         let hits = view
             .discover("corpus", Some(&axis_vec(1)), "", 3, RetrievalMode::Default)
             .unwrap();

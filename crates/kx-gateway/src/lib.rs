@@ -40,8 +40,8 @@
 //! (`--auth-token <token>=<party>` / `--auth-token-file <path>`) which install a
 //! [`auth::TokenResolver`]. The [`auth::PrincipalResolver`] seam is the fill point
 //! — mTLS / OIDC are later impls of the same trait (OIDC stays cloud, D94/D101.1).
-//! Identity is **server-derived** from transport metadata, never client-asserted
-//! (SN-8): the client supplies a credential, not a claimed identity.
+//! Identity is **server-derived** from transport metadata, never client-asserted:
+//! the client supplies a credential, not a claimed identity.
 //!
 //! ## The no-write discipline (D120.5)
 //!
@@ -146,7 +146,7 @@ mod mcp_tool;
 // RC4b (agentic RAG): the bundled read-only `retrieve@1` capability + typed ToolDef
 // + serve-broker registration — makes a dataset a first-class tool the live ReAct
 // loop (`kx/recipes/react-rag`) calls autonomously. Needs the serve broker
-// (`serve-engine`) AND the dataset view (`hnsw`); off-digest, SN-8 (scores dropped).
+// (`serve-engine`) AND the dataset view (`hnsw`); off-digest, scores dropped.
 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
 mod retrieve_tool;
 // RC5a (durable memory): the serve-side HostMemoryView (memory.db + embedder) behind
@@ -157,14 +157,14 @@ mod memory;
 // RC5a: the bundled recall@1 (read) + remember@1 (write) capabilities + typed ToolDefs
 // + serve-broker registration — the durable-memory tools the live ReAct loop
 // (`kx/recipes/react-memory`) calls autonomously. Needs the serve broker
-// (`serve-engine`) AND the memory view (`hnsw`); off-digest, SN-8 (scores dropped).
+// (`serve-engine`) AND the memory view (`hnsw`); off-digest, scores dropped.
 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
 mod recall_tool;
 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
 mod remember_tool;
 // RC5b: the bundled consolidate@1 (read) capability — bundles recent episodic memories
 // so the model can distill them into ONE durable semantic fact via remember@1 (a normal
-// react turn; no journal fact). Same gate as recall/remember; off-digest, SN-8.
+// react turn; no journal fact). Same gate as recall/remember; off-digest.
 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
 mod consolidate_tool;
 // PR-6b-1 (D159): the EXTERNAL MCP gateway host wiring — the McpGatewayAdmin impl
@@ -190,7 +190,7 @@ mod model_exec;
 mod routing_backend;
 // The curated system-prompt / role library (the NL→DAG planner contract + the authoring
 // role palette) and the served-model proposer that drives `ProposeWorkflow`. Both ride
-// `serve-engine` (they need the routing backend + kx-planner). Presentation only / SN-8.
+// `serve-engine` (they need the routing backend + kx-planner). Presentation only /.
 #[cfg(feature = "serve-engine")]
 mod prompt_library;
 #[cfg(feature = "serve-engine")]
@@ -199,7 +199,7 @@ mod propose_host;
 // (the ids-only capability menu, the fail-closed decoder, the ceiling intersection);
 // `derive_host` runs the served model and compiles the result through the SAME vetted
 // `compile_plan` gate `propose_host` uses. Both ride `serve-engine` for the same reason the
-// proposer does (the routing backend + kx-planner). Validate-only / SN-8.
+// proposer does (the routing backend + kx-planner). Validate-only /.
 #[cfg(feature = "serve-engine")]
 mod derive_host;
 #[cfg(feature = "serve-engine")]

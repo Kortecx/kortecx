@@ -67,11 +67,11 @@
 //! Set `window_bytes = usize::MAX` to disable the overflow check (the assembler
 //! returns whatever fits).
 //!
-//! # Reading further
+//! # Design invariant
 //!
-//! - `docs/design/context-assembly.md` (private corpus) — the locked D33 spec.
-//! - `docs/design/decisions.md` D33 — interlocking with D29, D30, D32.
-//! - `05-progress-tracker.md` SN-8 — *model proposes, runtime enforces*.
+//! *The model proposes; the runtime enforces.* Assembly order and truncation
+//! are decided by the declared spec, never by the model at inference time — so
+//! the same inputs always assemble to the same bytes.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

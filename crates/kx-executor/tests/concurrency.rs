@@ -1,5 +1,5 @@
 //! Compile-time `Send + Sync` over the kx-executor public surface +
-//! 4-thread thread-independence under `Arc<>`. SN-4 v2 mandate.
+//! 4-thread thread-independence under `Arc<>`. Structural-review mandate.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
@@ -28,7 +28,7 @@ fn assert_send_sync<T: Send + Sync>() {}
 #[test]
 fn public_types_are_send_sync() {
     // Trait objects — the load-bearing seam (callers hold Arc<dyn ...> per
-    // 02-crate-specs.md's MoteExecutor / ResourceManager surfaces).
+    // the MoteExecutor / ResourceManager surfaces).
     assert_send_sync::<Arc<dyn MoteExecutor>>();
     assert_send_sync::<Arc<dyn ResourceManager>>();
 

@@ -57,7 +57,7 @@ impl McpCapability {
     /// per-call wall-clock budget defaults to the transport's own fallback; use
     /// [`with_max_response_bytes`](Self::with_max_response_bytes) /
     /// [`with_wall_clock_ms`](Self::with_wall_clock_ms) to bound them from the
-    /// warrant (IMP-16).
+    /// warrant.
     #[must_use]
     pub fn new(
         name: ToolName,
@@ -77,7 +77,7 @@ impl McpCapability {
         }
     }
 
-    /// Bound the response size (IMP-16). A response larger than this is refused as
+    /// Bound the response size. A response larger than this is refused as
     /// `InvalidResponse` and nothing is staged. A `0` argument is treated as the
     /// default cap (never "unbounded").
     #[must_use]
@@ -152,7 +152,7 @@ impl Capability for McpCapability {
             request.idempotency_key.as_ref(),
         )?;
 
-        // Fail-closed inbound decode (IMP-5 / IMP-16). Returns the result object's
+        // Fail-closed inbound decode. Returns the result object's
         // verbatim bytes on success; any malformed / oversize / error response is a
         // typed failure, never silently accepted.
         let result = decode_tool_result(&response, self.max_response_bytes)?;

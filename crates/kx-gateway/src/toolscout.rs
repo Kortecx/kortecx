@@ -4,7 +4,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **Advisory-never-authorizes (SN-8).** The index ranks for a picker; the
+//! - **Advisory-never-authorizes.** The index ranks for a picker; the
 //!   verdict is a dry-run of the REAL fail-closed
 //!   [`kx_toolscout::lower_to_workflow_def`] gate against the SERVER react
 //!   warrant — the lowered `WorkflowDef` is DISCARDED (nothing submits,
@@ -214,7 +214,7 @@ impl ToolScoutView for HostToolScout {
                 })
             })
             .collect();
-        // The dry-run verdict: the REAL gate, output DISCARDED (SN-8 — a
+        // The dry-run verdict: the REAL gate, output DISCARDED (a
         // preview can say "would lower"; only the normal admission/broker path
         // ever executes anything).
         let verdict = match &self.verdict {

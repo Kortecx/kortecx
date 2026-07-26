@@ -3,7 +3,7 @@
 //! uploads scope on `GetContent`, `GetContentBatch` (order, caps, uniform
 //! empties, truncation), and `ListModels` (display-only discovery).
 //!
-//! The load-bearing assertions: the ref is SERVER-DERIVED (SN-8), the size cap
+//! The load-bearing assertions: the ref is SERVER-DERIVED, the size cap
 //! fails closed BEFORE the store is touched, and every unauthorized / missing /
 //! malformed read is UNIFORM (no existence oracle, D120.1).
 
@@ -141,7 +141,7 @@ async fn put_content_returns_server_derived_ref_and_records_audit_row() {
         .unwrap()
         .into_inner();
 
-    // SN-8: the ref is server-derived blake3 of the payload.
+    // the ref is server-derived blake3 of the payload.
     let expected = ContentRef::of(b"hello uploads");
     assert_eq!(resp.content_ref, expected.0.to_vec());
     assert_eq!(resp.size, 13);
@@ -619,7 +619,7 @@ async fn load_offload_degrade_without_seam_and_require_auth() {
     assert_eq!(err.code(), Code::Unimplemented);
 
     // Seam wired but NO CallerParty (no auth interceptor) ⇒ unauthenticated
-    // (a mutating control needs a resolved identity, SN-8).
+    // (a mutating control needs a resolved identity).
     let lifecycle = Arc::new(FixedLifecycle::new(&["qwen"], &[]));
     let service =
         GatewayService::new(reader, no_submitter(), content).with_model_lifecycle(lifecycle);

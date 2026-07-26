@@ -1,7 +1,7 @@
 """UI-2 run-summary view — one registered run instance enumerated by ``ListRuns``.
 
 Kept in its own module so ``types.py`` stays a thin aggregator, mirroring the Rust
-core's module-per-concern discipline. SN-8: every id is server-derived; the SDK
+core's module-per-concern discipline. Every id is server-derived; the SDK
 only hex-encodes the bytes. ``registered_unix_ms`` is an audit-only wall-clock
 (off every hash) — a legitimate "started at", never identity.
 """
@@ -51,7 +51,7 @@ class RunInputs:
 
     ``args`` is decoded from the opaque JSON object bytes the run was submitted
     with; ``handle`` is what :meth:`KxClient.get_recipe_form` needs to re-render
-    the form (a durable run otherwise carries only the fingerprint). SN-8 /
+    the form (a durable run otherwise carries only the fingerprint). Server-derived —
     off-digest: the args never become committed facts. A run with nothing captured
     raises ``KxNotFound``; an old gateway raises ``KxUnimplemented``.
     """

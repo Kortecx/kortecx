@@ -1,4 +1,4 @@
-name: Private-content leak check (SN-2)
+name: Private-content leak check
 
 # The fork-only PUBLIC leak net (risk-burndown Risk-5). A fork contributor cannot run the private
 # pre-push leak-scan, so a fork PR could add a private path / name / roadmap code that is unrecoverable
@@ -72,7 +72,7 @@ jobs:
           echo "=== Files changed in this PR ==="; echo "$CHANGED" | sed 's/^/  /'; echo "==============================="
           HITS=$(echo "$CHANGED" | grep -E "$REGEX" || true)
           if [ -n "$HITS" ]; then
-            echo ""; echo "❌ SN-2 LEAK: private-only path(s) in this PR:"; echo "$HITS" | sed 's/^/    /'
+            echo ""; echo "❌ LEAK: private-only path(s) in this PR:"; echo "$HITS" | sed 's/^/    /'
             echo ""; echo "These files must live ONLY in the private repo. Remove them from this branch."
             exit 1
           fi
@@ -105,23 +105,110 @@ jobs:
           while IFS= read -r term; do
             [ -z "$term" ] && continue
             if echo "$DIFF_ADDS" | grep -F "$term" > /dev/null; then
-              echo "❌ SN-2 LEAK: added line(s) reference private architecture term: '$term'"
+              echo "❌ LEAK: added line(s) reference private architecture term: '$term'"
               echo "$DIFF_ADDS" | grep -F "$term" | head -5 | sed 's/^/    /'
               FAIL=1
             fi
           done <<< "$SENTINEL_TERMS"
           # Roadmap-code / release-plan patterns (RC-SW*/RC-UP*/Wave-N) — private planning codes.
           if echo "$DIFF_ADDS" | grep -E 'RC-(SW|UP)[0-9]|Wave-[0-9]' > /dev/null; then
-            echo "❌ SN-2 LEAK: added line(s) reference a private roadmap code (RC-SW*/RC-UP*/Wave-N):"
+            echo "❌ LEAK: added line(s) reference a private roadmap code (RC-SW*/RC-UP*/Wave-N):"
             echo "$DIFF_ADDS" | grep -E 'RC-(SW|UP)[0-9]|Wave-[0-9]' | head -5 | sed 's/^/    /'
             FAIL=1
           fi
+
+          # ---- Internal tracking identifiers -------------------------------------------
+          # Prefixed ids from the maintainers' internal tracking system. They name decision
+          # MACHINERY, never code, so an OSS reader gets nothing from them — write what the
+          # id MEANT instead. Deliberately NOT gated (measured as ordinary tokens that would
+          # make this job cry wolf): a bare PR-N, M-N, P-N, R-N, W-Na or F-N. "R-1".."R-15"
+          # in particular are live refusal codes on the wire.
+          #
+          # NOTE: this file writes PATTERNS, never example ids — an illustrative id here
+          # would be a leak in the very file that gates them.
+          ID_RE='(^|[^A-Za-z0-9])(SN-[0-9]+|GR[0-9]+|IMP-[0-9]+|BUG-[0-9]+|L-[0-9]{3,})([^A-Za-z0-9]|$)|§2\.[0-9]+'
+
+          # Four required status-check CONTEXTS on main carry an id in their job name.
+          # Renaming one means the context never reports and no PR can ever merge, so they
+          # are pinned until branch protection can be updated in lockstep. Match the whole
+          # line, not the bare id.
+          ALLOW_RE='^\+\s*name: (byte-determinism|scale-smoke|proto-breaking|semver-checks) '
+
+          SCANNABLE=$(echo "$DIFF_ADDS" | grep -vE "$ALLOW_RE" || true)
+
+          if echo "$SCANNABLE" | grep -E "$ID_RE" > /dev/null; then
+            echo "❌ LEAK: added line(s) carry an internal tracking id:"
+            echo "$SCANNABLE" | grep -E "$ID_RE" | head -5 | sed 's/^/    /'
+            FAIL=1
+          fi
+
+          # Decision ids are the same class but far more numerous, and they are gated
+          # WITHOUT a retroactive sweep. That makes the test "is this id NEW TO THE REPO",
+          # not "is it on an added line": the ids already here are grandfathered wherever
+          # they appear, and only one that exists nowhere in main fails. This also keeps a
+          # live wire value (a refusal code carried in gRPC metadata and asserted across
+          # Rust and both SDKs) passing, since it is already in main.
+          #
+          # An added-line test would be unusable, and provably so: rewording a comment
+          # re-adds every id it contains as a fresh line, so a PR that DELETES ids still
+          # fails. Measured on the sweep that introduced this gate — 220 removed, 86
+          # added, zero genuinely new — an added-line test failed it. A gate that rejects
+          # the change improving the very thing it guards is a gate people switch off.
+          #
+          # Extract TOKENS, not lines: one line can carry both a grandfathered id and a
+          # fresh one, and a line-level filter would let the pair through.
+          git fetch --quiet origin main
+          DECISION_HITS=""
+          for tok in $(echo "$SCANNABLE" \
+                | grep -oE '(^|[^A-Za-z0-9])D[0-9]{2,3}(\.[0-9]+)*([^A-Za-z0-9]|$)' \
+                | grep -oE 'D[0-9]{2,3}(\.[0-9]+)*' | sort -u); do
+            if ! git grep -qE "(^|[^A-Za-z0-9])${tok}([^A-Za-z0-9]|\$)" origin/main -- . 2>/dev/null; then
+              DECISION_HITS="${DECISION_HITS}${tok} "
+            fi
+          done
+          if [ -n "$DECISION_HITS" ]; then
+            echo "❌ LEAK: added line(s) introduce a decision id that does not exist in main:"
+            echo "$DECISION_HITS" | tr ' ' '\n' | grep -v '^$' | head -5 | sed 's/^/    /'
+            FAIL=1
+          fi
+
           if [ "$FAIL" -eq 1 ]; then
-            echo ""; echo "Private-architecture names / roadmap codes must not appear in OSS. Sanitize the diff"
-            echo "(vendor-agnostic language; keep strategy in the private brain)."
+            echo ""; echo "Private-architecture names, roadmap codes and internal tracking ids must not appear"
+            echo "in OSS. Sanitize the diff: say what the identifier MEANT, in vendor-agnostic language."
+            echo "A reader of this repo gets more from the sentence than from the code."
             exit 1
           fi
           echo "✅ Content-based sentinel scan clean."
+
+      - name: Private corpus-path content scan
+        run: |
+          set -euo pipefail
+          # The path scan above rejects a private DOCUMENT added to this repo. This one
+          # rejects a REFERENCE to one in prose — "see <private doc> for the full spec" is
+          # worse than an opaque id: it names the private repo's document structure, and an
+          # OSS reader cannot open it anyway.
+          #
+          # Excluded: the two ignore-files and the two tests that need the literal paths to
+          # do their job (they ARE the exclusion mechanism, and the guard that proves it
+          # holds / probes repo identity by sentinel).
+          CORPUS_RE='0[0-7]-(vision-and-principles|build-sequence|crate-specs|ffi-and-inference|testing-and-gates|progress-tracker|language-and-sdk-strategy|engineering-discipline)\.md|docs/(design|suggestions|analysis|plans|code-docs|training-corpus)/|docs/(HANDOFF|HISTORY)\.md'
+          ADDS=$(git diff origin/main...HEAD --unified=0 \
+            -- ':(exclude).github/workflows/leak-check.yml' \
+               ':(exclude).github/pull_request_template.md' \
+               ':(exclude).gitignore' \
+               ':(exclude).dockerignore' \
+               ':(exclude)crates/kx-cli/tests/shared_boundary.rs' \
+               ':(exclude)crates/kx-profile/tests/gitignore_guard.rs' \
+            | grep -E '^\+' | grep -v -E '^\+\+\+' || true)
+          if echo "$ADDS" | grep -E "$CORPUS_RE" > /dev/null; then
+            echo "❌ LEAK: added line(s) cite a private corpus document:"
+            echo "$ADDS" | grep -E "$CORPUS_RE" | head -5 | sed 's/^/    /'
+            echo ""
+            echo "Drop the pointer and keep the sentence — state the property itself, not where"
+            echo "it is written down."
+            exit 1
+          fi
+          echo "✅ Private corpus-path content scan clean."
 
       - name: PR-notes (description + commit messages) leak scan
         if: github.event_name == 'pull_request'
@@ -139,22 +226,34 @@ jobs:
           FAIL=0
           for term in 'kx-cloud-' 'Kortecx/kortecx-core' 'private-main'; do
             if printf '%s' "$NOTES" | grep -F "$term" > /dev/null; then
-              echo "❌ SN-2 LEAK: PR notes (description / commit messages) reference private term: '$term'"
+              echo "❌ LEAK: PR notes (description / commit messages) reference private term: '$term'"
               FAIL=1
             fi
           done
           if printf '%s' "$NOTES" | grep -E 'RC-(SW|UP)[0-9]|Wave-[0-9]' > /dev/null; then
-            echo "❌ SN-2 LEAK: PR notes reference a private roadmap code (RC-SW*/RC-UP*/Wave-N)."
+            echo "❌ LEAK: PR notes reference a private roadmap code (RC-SW*/RC-UP*/Wave-N)."
+            FAIL=1
+          fi
+          # Same internal-tracking-id families as the content scan. The code-diff scans
+          # never see the PR body or the commit messages, and both are public.
+          if printf '%s' "$NOTES" \
+            | grep -E '(^|[^A-Za-z0-9])(SN-[0-9]+|GR[0-9]+|IMP-[0-9]+|BUG-[0-9]+|L-[0-9]{3,})([^A-Za-z0-9]|$)|§2\.[0-9]+' > /dev/null; then
+            echo "❌ LEAK: PR notes carry an internal tracking id."
+            FAIL=1
+          fi
+          if printf '%s' "$NOTES" | grep -E '0[0-7]-(vision-and-principles|build-sequence|crate-specs|progress-tracker|testing-and-gates|engineering-discipline)\.md|docs/(design|suggestions|analysis|plans)/' > /dev/null; then
+            echo "❌ LEAK: PR notes cite a private corpus document."
             FAIL=1
           fi
           if [ "$FAIL" -eq 1 ]; then
             echo ""
             echo "PR descriptions + commit messages are PUBLIC — keep them OSS-only (no cloud/private"
-            echo "repo names or roadmap codes). Sanitize the PR body (and the squash-merge message)."
+            echo "repo names, roadmap codes, or internal tracking ids). Sanitize the PR body (and the"
+            echo "squash-merge message)."
             exit 1
           fi
           echo "✅ PR-notes leak scan clean."
 
-      - name: Final SN-2 summary
+      - name: Final leak-net summary
         run: |
-          echo "✅ SN-2 (fork-only public leak net) PASS — no private paths, names, roadmap codes, or PR-note leaks."
+          echo "✅ Fork-only public leak net PASS — no private paths, names, roadmap codes, tracking ids, or PR-note leaks."

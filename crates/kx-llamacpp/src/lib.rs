@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-// SN-4 v2: tighten the lint surface. `pedantic` catches subtle issues
+// the structural review: tighten the lint surface. `pedantic` catches subtle issues
 // (needless clones, manual let-else, by-value when &-ref would do).
 // The allowed lints below are noise for an FFI-heavy crate where C/Rust
 // integer width juggling and panic-doc bloat would be a treadmill.
@@ -42,7 +42,7 @@
 
 //! # kx-llamacpp — safe wrapper over llama.cpp's C API
 //!
-//! Per `03-ffi-and-inference.md` §1, **all unsafe is contained in this crate**
+//! By the FFI boundary rule, **all unsafe is contained in this crate**
 //! (and the [`kx_llamacpp_sys`] crate it sits atop). Public surface is
 //! `unsafe`-free: callers see RAII Rust types, idiomatic `Result` returns, and
 //! lifetimes that enforce llama.cpp's ownership rules.
@@ -328,7 +328,7 @@ mod tests {
             .with_check_tensors(false);
     }
 
-    /// SN-4 reachability: `Sampler::accept` is a no-op for stateless samplers
+    /// Reachability: `Sampler::accept` is a no-op for stateless samplers
     /// (greedy / dist) but must not crash. Wrapper-level proof that the FFI
     /// call links and is safe to invoke unconditionally.
     #[test]
@@ -340,7 +340,7 @@ mod tests {
         sampler.accept(Token(0));
     }
 
-    /// SN-4 reachability: `Sampler::reset` is meaningful for stateful samplers
+    /// Reachability: `Sampler::reset` is meaningful for stateful samplers
     /// (penalties, mirostat) but valid for stateless chains too. Proves the
     /// FFI call links.
     #[test]

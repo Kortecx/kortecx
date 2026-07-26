@@ -3,7 +3,7 @@
  * / tool / action) for the read-only run review — one `GetMoteDetail` per node via
  * `useQueries`, keyed by the SAME `moteDetail` cache key + value shape the inspector
  * uses, so a click never refetches. Commit-gated (a def hash only exists on a
- * Committed fact) + content-addressed ⇒ cached forever. Display only (SN-8).
+ * Committed fact) + content-addressed ⇒ cached forever. Display only.
  */
 
 import { useQueries } from "@tanstack/react-query";

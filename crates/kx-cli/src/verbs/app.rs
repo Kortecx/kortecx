@@ -5,10 +5,10 @@
 //! config, and per-step replay intent). Tri-surface parity with the SDK + UI.
 //!
 //! The catalog lives in an off-journal `apps.db` sidecar; the server derives
-//! `app_ref` (SN-8) and scopes every App to the authoring party. The envelope
+//! `app_ref` and scopes every App to the authoring party. The envelope
 //! carries NO authority — `kx app run` re-compiles the blueprint through the same
 //! `to_request` path as `kx blueprint run`, and the server re-resolves EVERY
-//! warrant from the caller's own grants (SN-8 / BLOCKER #5). Import/clone are LOCAL
+//! warrant from the caller's own grants. Import/clone are LOCAL
 //! and client-orchestrated (PutContent the closure, then SaveApp under the importer's
 //! OWN principal with a `source_digest` lineage stamp) — connections/secrets never
 //! travel; the importer re-registers them by name (fail-closed at run until then).
@@ -1066,7 +1066,7 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                         )));
                     }
                     // Compile the blueprint through the ONE canonical path; the server
-                    // re-resolves every warrant from the caller's grants (SN-8). A hosted
+                    // re-resolves every warrant from the caller's grants. A hosted
                     // (experience) app has no blueprint and is not runnable this way.
                     let blueprint = env.blueprint.ok_or_else(|| {
                         CliError::Usage(format!(
@@ -1210,7 +1210,7 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
         AppSub::EditFile { handle, path, from } => {
             let payload = std::fs::read(&from)
                 .map_err(|e| CliError::Usage(format!("cannot read {}: {e}", from.display())))?;
-            // PutContent the new body (server-derived ref, SN-8), then AdvanceBranch the
+            // PutContent the new body (server-derived ref), then AdvanceBranch the
             // manifest path to it. A locked App refuses AdvanceBranch (LOCKED_BRANCH).
             let put = client
                 .put_content(resolved.request(proto::PutContentRequest {

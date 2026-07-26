@@ -1,4 +1,4 @@
-"""Batch B per-mote definition view — ``GetMoteDetail``. DISPLAY-ONLY (SN-8):
+"""Batch B per-mote definition view — ``GetMoteDetail``. DISPLAY-ONLY:
 the capped definition summary the coordinator persisted at admission, resolved
 by ``mote_def_hash``; nothing here authorizes anything. A mote that has not
 committed (or was admitted by a pre-Batch-B binary) answers

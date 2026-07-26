@@ -16,7 +16,7 @@
  *
  * Not-wired (a gateway without the trigger registry) renders NOTHING: on the App page a
  * missing registry is an absent capability, not an error to shout about, and offering a
- * Schedule button that cannot fire is exactly the GR15 dishonesty the rest of this page
+ * Schedule button that cannot fire is exactly the dishonesty the rest of this page
  * avoids.
  */
 

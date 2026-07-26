@@ -3,7 +3,7 @@
  * review view: every bundle this party authored, its items (each a content-store
  * ref shown via {@link DigestChip}), the server-derived `bundleRef`, and an
  * operator delete control (unbinds the handle; the CAS blobs stay). Caller-scoped
- * (SN-8 — no cross-party listing). Degrades to a not-wired empty state on an older
+ * (no cross-party listing). Degrades to a not-wired empty state on an older
  * gateway (UNIMPLEMENTED).
  */
 

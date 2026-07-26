@@ -7,7 +7,7 @@
  * indices) the runtime enforced. Kept in its own module (the react.ts / replan.ts
  * module-per-concern precedent).
  *
- * SN-8: every id is server-derived; the SDK only *encodes* the bytes to hex, and
+ * every id is server-derived; the SDK only *encodes* the bytes to hex, and
  * the permutation is an exact reordering the runtime enforced, never a score.
  */
 

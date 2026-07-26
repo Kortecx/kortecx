@@ -5,7 +5,7 @@
 //! service handle; no journal-writer dep). Grant/Deny dispatch coordinator commands
 //! that append the durable decision fact; the gated react chain reads it on its next
 //! settle pass. The operator id is a fixed OSS single-node stand-in (multi-tenant
-//! principal attribution is deferred to Cloud, SN-8).
+//! principal attribution is deferred to Cloud).
 
 use kx_coordinator::CoordinatorService;
 use kx_gateway_core::{ApprovalAdmin, ApprovalAdminError, PendingApprovalRow, RunCostRow};

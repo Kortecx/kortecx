@@ -38,7 +38,7 @@ describe("formatMicroUsd", () => {
     expect(formatMicroUsd(1500)).toBe("$0.0015");
     expect(formatMicroUsd(1_000_000)).toBe("$1.0000");
   });
-  it("returns the EMPTY string for zero / negative (GR15: never a fabricated $0.0000)", () => {
+  it("returns the EMPTY string for zero / negative (never a fabricated $0.0000)", () => {
     expect(formatMicroUsd(0)).toBe("");
     expect(formatMicroUsd(-5)).toBe("");
   });

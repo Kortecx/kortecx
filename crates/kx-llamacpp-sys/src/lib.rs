@@ -1,4 +1,4 @@
-// Per `03-ffi-and-inference.md` §1, this is the **single unsafe boundary** of the
+// By the FFI boundary rule, this is the **single unsafe boundary** of the
 // runtime. `#![forbid(unsafe_code)]` is intentionally OMITTED here.
 
 #![allow(missing_docs)]

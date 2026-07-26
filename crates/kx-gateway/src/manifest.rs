@@ -3,7 +3,7 @@
 //!
 //! The `app-manifest-plan` recipe's committed answer is a strict-JSON manifest —
 //! UNTRUSTED model output. [`decode_manifest`] turns it into a validated file list
-//! with the exact fail-closed discipline of [`kx_planner::decode_plan`] (IMP-5):
+//! with the exact fail-closed discipline of [`kx_planner::decode_plan`]:
 //! size-check BEFORE parse, strip a leading reasoning block / code fence, decode
 //! into fixed flat structs (`deny_unknown_fields`, never a dynamic `serde_json::Value`
 //! — so no float/NaN/unbounded-recursion path), then enforce the envelope invariants

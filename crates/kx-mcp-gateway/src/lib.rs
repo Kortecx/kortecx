@@ -16,7 +16,7 @@
 //! the call path is live), and GOVERNS them via an off-journal, rebuildable
 //! `connections.db` sidecar.
 //!
-//! ## Security posture (the live untrusted-egress surface, GR8)
+//! ## Security posture (the live untrusted-egress surface)
 //!
 //! - **Two-gate egress:** admission host vetting (deny-by-default; the same
 //!   `kx_mcp::egress::classify_ip` policy) + dial-time SSRF/DNS-rebind vetting
@@ -24,10 +24,10 @@
 //! - **Per-server rate-limit:** an integer token bucket per server name.
 //! - **Warrant-gated egress:** each registered tool's `net_scope` is egress to
 //!   ONLY its server's host; the broker's `precheck` enforces a fired tool's
-//!   `net_scope ⊆ warrant.net_scope` (SN-8 — the model fires only granted tools).
+//!   `net_scope ⊆ warrant.net_scope` (the model fires only granted tools).
 //! - **Secret-less credentials (D81):** a connection stores the credential ref
 //!   NAME only; the secret is read transiently at dial and never journaled.
-//! - **Server-derived ids (SN-8):** `connection_id` + the discovered tool ids are
+//! - **Server-derived ids:** `connection_id` + the discovered tool ids are
 //!   derived server-side; the client never forges them.
 //!
 //! Off the digest/journal path: `connections.db` is rebuildable-to-empty and is

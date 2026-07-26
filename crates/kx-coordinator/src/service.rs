@@ -164,7 +164,7 @@ impl CoordinatorService {
     /// Build a coordinator that runs the LIVE model-driven agentic loop (PR-2b/T1.1): a
     /// committed topology shaper's children are materialized into the projection + dispatch
     /// admission set so they actually reach a worker. `shaper_roles` is the role registry
-    /// the materializer narrows each child's warrant against (SN-8 — the model proposes a
+    /// the materializer narrows each child's warrant against (the model proposes a
     /// role name, the registry maps it to a vetted warrant, `intersect` narrows). Requires
     /// `store` (the shared content plane the committed `TopologyDecision` lives in). Used by
     /// the gateway under `--features inference`; every other constructor passes no role
@@ -324,7 +324,7 @@ impl CoordinatorService {
     }
 
     /// D114: GRANT a pending approval (an operator decision over a server-derived
-    /// `request_id`, SN-8 — releases a STAGED world-mutating action to fire exactly
+    /// `request_id`, Releases a STAGED world-mutating action to fire exactly
     /// once). `Ok(false)` for an unknown/already-resolved request (idempotent).
     pub async fn grant_approval(
         &self,

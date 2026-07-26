@@ -30,7 +30,7 @@ pub const MAX_PROMPT_BYTES: usize = 65536;
 /// The display step-kind vocabulary (closed; first match wins). A STRING, not
 /// a proto enum — display classification may grow finer without a wire bump
 /// (the `ModelSummary.modalities` precedent), and nothing may branch authority
-/// on it (SN-8).
+/// on it.
 pub(crate) fn step_kind(def: &MoteDef) -> &'static str {
     if def.is_topology_shaper {
         return "shaper";

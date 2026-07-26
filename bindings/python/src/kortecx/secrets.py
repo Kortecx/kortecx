@@ -2,7 +2,7 @@
 holds for connector credentials + trigger auth, surfaced by ``PutSecret`` /
 ``ListSecretNames`` / ``DeleteSecret``.
 
-Kept in its own module (the feedback.py / module-per-concern precedent, GR3). The
+Kept in its own module (the feedback.py / module-per-concern precedent). The
 secret VALUE never crosses back over the wire (D81): ``ListSecretNames`` returns
 only NAMES + audit timestamps. A connector ``credential_ref`` / a trigger
 ``auth_secret_ref`` NAMES one of these rows; the value resolves server-side at

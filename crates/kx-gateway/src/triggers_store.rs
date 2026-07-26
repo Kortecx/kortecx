@@ -18,7 +18,7 @@
 //! re-fire). A FUTURE schema bump that must preserve registered triggers has to add
 //! a forward-migration here (v1 has no prior version to migrate from).
 //!
-//! SN-8: `trigger_id` is server-derived (`blake3("kx-trigger\0" ‖ name)[..16]`), so
+//! `trigger_id` is server-derived (`blake3("kx-trigger\0" ‖ name)[..16]`), so
 //! re-registering the same name is idempotent; the client never forges it. The auth
 //! secret is referenced by NAME only (the value lives in the keychain, never here).
 
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS triggers (
     auth_secret_ref    TEXT NOT NULL,      -- SecretRef NAME ('' ⇒ none); never the value
     schedule_spec      TEXT NOT NULL,      -- cron: interval seconds OR a 5-field crontab expr; '' otherwise
     timezone           TEXT NOT NULL DEFAULT 'UTC', -- IANA zone for a 5-field cron expr ('' ⇒ UTC)
-    owner_party        TEXT NOT NULL,      -- the registrant party the run fires under (D102.2, SN-8)
+    owner_party TEXT NOT NULL, -- the registrant party the run fires under (D102.2)
     require_approval   INTEGER NOT NULL DEFAULT 0,  -- per-trigger HITL: withhold irreversible actions (D114)
     enabled            INTEGER NOT NULL,
     next_fire_unix_ms  INTEGER NOT NULL,   -- cron watermark (0 ⇒ n/a)

@@ -13,7 +13,7 @@
 //! plan, not from model determinism** — a planner step re-samples on re-run by
 //! design.
 //!
-//! # What the model may name (IMP-5 / D70 / D75 — minimal trust surface)
+//! # What the model may name (D70 / D75 — minimal trust surface)
 //!
 //! The model output is the new untrusted input. The strict plan envelope carries
 //! **only** what a model may legitimately choose — role *names*, per-step *intent*

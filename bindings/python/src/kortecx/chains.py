@@ -3,11 +3,11 @@ string expression, then lower to a ``SubmitWorkflowRequest`` via the existing
 :class:`~kortecx.blueprints.BlueprintBuilder`.
 
 This is the Python surface of the cross-surface chain contract pinned by
-``tests/golden/chains/SPEC.md`` + ``corpus.json`` (the GR12 tri-surface parity
+``tests/golden/chains/SPEC.md`` + ``corpus.json`` (the tri-surface parity
 gate). The grammar, precedence, lowering, and error classes match the TypeScript
 and Rust (CLI) implementations byte-for-byte.
 
-SN-8: a chain describes TOPOLOGY only. It never computes a MoteId or a warrant —
+A chain describes TOPOLOGY only. It never computes a MoteId or a warrant —
 it assembles the steps + edges the SERVER compiles + admits (the
 :class:`~kortecx.blueprints.BlueprintBuilder` contract). A tampered chain only
 changes what is PROPOSED, never what identity it gets.
@@ -204,7 +204,7 @@ def model(
     """A MODEL step. ``prompt`` is the instruction; ``params`` are extra step params.
 
     Batch A: ``model_id`` is OPTIONAL — omit it (or pass ``""``) and the SERVER binds
-    the served model (SN-8); set a client ``default_model`` to fill it client-side, or
+    the served model; set a client ``default_model`` to fill it client-side, or
     name a specific served model. ``reasoning`` (``"full"`` / ``"minimal"`` / ``"off"``
     / ``"strip"``) sets the opt-in reasoning mode — absent ⇒ the model's own behavior
     (and a byte-identical MoteId). Use ``reasoning=`` as the typed knob rather than a
@@ -247,7 +247,7 @@ def model(
 def _canonical_args_json(args: Dict[str, object]) -> str:
     """Serialize a flat tool-call arg map to the canonical-JSON string the three
     SDK surfaces lower byte-identically (sorted keys, compact separators). No
-    floats (SN-8 — the server schema is integer/bytes/bool/enum-typed)."""
+    floats (the server schema is integer/bytes/bool/enum-typed)."""
     return json.dumps(args, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
@@ -255,7 +255,7 @@ def tool(tool_id: str, tool_version: str, **args: object) -> Task:
     """A TOOL step (PR-6b-2): fire a single REGISTERED tool as a standalone node.
 
     ``tool_id`` + ``tool_version`` name the tool the SERVER resolves in its live
-    registry (SN-8 — the client never supplies the warrant); ``args`` are the
+    registry (the client never supplies the warrant); ``args`` are the
     tool-call arguments, lowered to ONE canonical-JSON object under
     :data:`~kortecx.blueprints.TOOL_ARGS_KEY` in the step's params. The coordinator
     re-derives + validates those args against the tool's typed schema fail-closed.
@@ -290,7 +290,7 @@ class Chain:
         self._root = root
         self._seed = seed
         # PR-7b: chain-level context-bundle handles (verbatim caller order — the
-        # SERVER canonicalizes the sorted ref-set into each entry Mote at bind, SN-8).
+        # SERVER canonicalizes the sorted ref-set into each entry Mote at bind).
         self._context: List[str] = list(context_bundles or [])
 
     @classmethod
@@ -429,7 +429,7 @@ class Chain:
         ``kx.tool.args``; an agentic MODEL step's budget under ``max_turns`` /
         ``max_tool_calls``) — :meth:`from_blueprint` / the server import them WITHOUT
         re-folding (fold-idempotent). ``model_id`` is left as authored (empty ⇒ the
-        server binds the served model, SN-8 — so the artifact is portable across
+        server binds the served model, so the artifact is portable across
         serves). Empty fields are omitted for a clean artifact; each ``kind`` is
         explicit (self-describing)."""
         nodes, edges = self._lower()

@@ -1,7 +1,7 @@
 /**
  * Register a declarative EXTERNAL MCP tool into the durable registry (`RegisterTool`,
  * PR-6a). The server SSRF-vets `serverHost`, derives the `toolId` + capability, and
- * stores it (the client never names/forges identity — SN-8). Registration grants NO
+ * stores it (the client never names/forges identity). Registration grants NO
  * authority and does NOT dial the host (dialing is a Cloud / PR-6b capability). An
  * internal / link-local / metadata host is refused (`permission_denied`).
  *

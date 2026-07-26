@@ -1,4 +1,4 @@
-//! The dependency wall (Rule 1 / SN-8 / the D167 extension gate item 3). `kx-ollama`
+//! The dependency wall (Rule 1 / the D167 extension gate item 3). `kx-ollama`
 //! is an FFI-FREE backend: it implements the `InferenceBackend` seam over HTTP and
 //! must NEVER link the llama.cpp FFI (`kx-llamacpp`) nor the journal-writer / gateway
 //! / cluster components.

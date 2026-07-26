@@ -6,7 +6,7 @@
 //! so a host an operator REMOVED from the allowlist stayed fully dialable across restart —
 //! an allowlist tightening was not retroactive. These tests persist a connection whose host
 //! was allowed at registration, then exercise the two re-dial paths under a TIGHTENED
-//! allowlist and assert the host is refused (`HostRejected`) before any dial. SN-8: a redial
+//! allowlist and assert the host is refused (`HostRejected`) before any dial. a redial
 //! is a fresh admission, not an inherited grant.
 //!
 //! Fully hermetic: with the fix the vet fires before `probe`, so no test here touches the
@@ -75,7 +75,7 @@ fn discover_of_a_host_removed_from_the_allowlist_is_refused() {
         matches!(err, GatewayError::HostRejected(_)),
         "a redial of a host removed from the allowlist must be refused before dial, got {err:?}"
     );
-    // Refused before `probe`: nothing registered (SN-8: no live capability ⇒ unfireable),
+    // Refused before `probe`: nothing registered (no live capability ⇒ unfireable),
     // and the folded health is Unreachable.
     assert_eq!(
         *sink.0.lock().unwrap(),

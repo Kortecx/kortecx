@@ -4,7 +4,7 @@ by ``SubmitFeedback`` and read back by ``ListFeedback``.
 Client-origin product signal the gateway records into a rebuildable-to-empty
 ``feedback.db`` sidecar — AUDIT/DISPLAY ONLY, never truth, never identity, never
 a digest input. Kept in its own module (the telemetry.py / module-per-concern
-precedent). SN-8: the caller principal + the ``feedback_id`` are server-derived;
+precedent). The caller principal + the ``feedback_id`` are server-derived;
 the SDK only hex-encodes the bytes + maps the rating enum.
 """
 

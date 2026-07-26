@@ -11,7 +11,7 @@ A **connector** is an external [MCP](https://modelcontextprotocol.io) tool serve
 separate process the runtime dials over **stdio** (a subprocess) or **Streamable-HTTP**.
 It is how you extend a `kx serve` runtime with new tools: the runtime stays a *secure
 gateway* (it never runs your code in-process), discovers your tools, and lets the
-agentic loop fire them **only under a warrant that grants them** (SN-8 — the model
+agentic loop fire them **only under a warrant that grants them** (the model
 proposes, the runtime enforces).
 
 The authoring surface is curated + semver-pinned in the
@@ -80,7 +80,7 @@ await kx.connections.discover("fs");
 await kx.connections.fire("fs", "list_directory", '{"path":"/data"}');
 ```
 
-Every discovered tool is namespaced `<server>/<remote>` (server-derived, SN-8), so tools
+Every discovered tool is namespaced `<server>/<remote>` (server-derived), so tools
 from different connectors never collide.
 
 ## Exercise a tool before the agent does
@@ -89,7 +89,7 @@ from different connectors never collide.
 ONE registered tool live through the same broker the agentic loop uses, and shows the real
 result — a model-free "does this connector actually work" check. It validates your args
 against the tool's declared `inputSchema` and enforces the same warrant gate (a single grant
-built from the tool's own scopes; the client never supplies grants — SN-8). It is a
+built from the tool's own scopes; the client never supplies grants). It is a
 **diagnostic, not a recorded run**: like `test` / `discover`, it leaves no journal fact and
 is not replayable. Durable, audited tool-firing happens inside an agentic run.
 
@@ -146,7 +146,7 @@ kx.connections.add("gh", endpoint="npx", args=["-y", "@some/github-mcp"],
                    credential_ref="GITHUB_TOKEN")
 ```
 
-## The warrant gate (SN-8)
+## The warrant gate
 
 A registered tool fires **only** through a warrant that grants its `(name, version)` and
 whose scopes cover the tool's `required_capability`. An HTTP connector's tools are egress
@@ -167,7 +167,7 @@ just test-connector                                    # the bundled reference c
 | Gate item | What it asserts |
 |-----------|-----------------|
 | 3 — out-of-process | every discovered tool registers as `ToolKind::Mcp` (external), never `Builtin` |
-| 5 — warrant / SN-8 | a no-grant warrant + a wrong-tool grant are both refused; a correct grant passes the gate |
+| 5 — warrant | a no-grant warrant + a wrong-tool grant are both refused; a correct grant passes the gate |
 | 7 — secret-by-ref  | an out-of-band credential reaches no sink (payload / handle / staged result / MoteId) |
 | 10 — on / off      | the tool is fail-closed when the connector is absent; registering adds exactly its tools |
 

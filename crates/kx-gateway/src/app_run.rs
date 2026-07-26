@@ -14,7 +14,7 @@
 //!    folding entry `args` into the first model step's prompt (the server-side analogue
 //!    of the SDK `_inject_app_args`);
 //! 4. author SERVER-SIDE (every warrant resolved from the party's grants, never a
-//!    client warrant — SN-8 / BLOCKER #5), reusing the live [`HostWorkflowAuthor`];
+//!    client warrant — server-minted), reusing the live [`HostWorkflowAuthor`];
 //! 5. set the tool-firing warrants' `SecretScope::AllowList` to the App's
 //!    `guards.secret_scope` (bounded by the referenced connections' credentials) so the
 //!    broker precheck lets a credentialed connector (Gmail/Discord) be dialed inside the
@@ -265,7 +265,7 @@ impl HostAppAuthor {
         }
         // Grant retrieve@1 (agentic_step_warrant mints the grant from the folded contract ∩
         // registry). `or_insert` ⇒ an author pin wins. Then steer that step to USE retrieve
-        // on ITS dataset(s) — steer-only DATA, never a grant (SN-8; the same class as
+        // on ITS dataset(s) — steer-only DATA, never a grant (the same class as
         // `inject_app_args` / `fold_react_rag_dataset`).
         let granted: BTreeMap<String, String> = [("retrieve".to_string(), "1".to_string())]
             .into_iter()
@@ -445,7 +445,7 @@ impl HostAppAuthor {
 }
 
 /// T-RUNAPP-CONTEXT-RAIL: steer the ENTRY root model step to USE `retrieve` on the
-/// named dataset(s) — steer-only DATA, never a grant (SN-8; the same class as
+/// named dataset(s) — steer-only DATA, never a grant (the same class as
 /// [`inject_app_args`]). A NO-OP when there is no root model step (mirror
 /// [`fold_skill_tools`]). Deterministic (declaration order) ⇒ recovery-stable. Pure.
 fn steer_dataset_prompt(dag: &mut DagSpec, dataset_names: &[String]) {
@@ -456,7 +456,7 @@ fn steer_dataset_prompt(dag: &mut DagSpec, dataset_names: &[String]) {
 }
 
 /// [`steer_dataset_prompt`] aimed at ONE named step — the site a per-node grounding
-/// binding steers. Same steer-only DATA, never a grant (SN-8); deterministic in the
+/// binding steers. Same steer-only DATA, never a grant; deterministic in the
 /// resolved declaration order ⇒ recovery-stable. Pure.
 fn steer_step_dataset_prompt(dag: &mut DagSpec, idx: usize, dataset_names: &[String]) {
     if dataset_names.is_empty() {
@@ -909,7 +909,7 @@ fn is_model_step(s: &StepSpec) -> bool {
 /// model step's prompt as a canonical, sorted "Inputs" block — the server-side analogue
 /// of the SDK `_inject_app_args`. A NO-OP when `args` is empty OR the blueprint has no
 /// model step ⇒ byte-identical to a no-args lowering. Sorted keys ⇒ deterministic
-/// (recovery-stable; the args are steer-only DATA — they never grant, SN-8).
+/// (recovery-stable; the args are steer-only DATA — they never grant).
 fn inject_app_args(dag: &mut DagSpec, args: &[u8]) -> Result<(), AppRunError> {
     if args.is_empty() {
         return Ok(());
@@ -963,7 +963,7 @@ fn skill_wish_union(skills: &[SkillRef]) -> BTreeMap<String, String> {
 /// wish union (envelope order) UNIONed with `steering_config.tools.requested_grants`.
 /// Skills merge first (deterministic); a cross-source version conflict is FAIL-SOFT
 /// first-occurrence-wins + a warning (a wish is NEVER authority — the server still
-/// intersects it against caller-Use ∩ fireable ∩ registry ∩ compat, SN-8). A pure
+/// intersects it against caller-Use ∩ fireable ∩ registry ∩ compat). A pure
 /// function (Rule 5.2 — unit-testable).
 fn combined_tool_wish(
     skills: &[SkillRef],
@@ -1042,7 +1042,7 @@ pub(crate) fn principal_tool_ceiling(
 /// Apply `reach` to the declared tool wish. `Explicit` keeps the declared wish
 /// verbatim (the byte-identical default). `InheritPrincipal` REPLACES it with the
 /// caller's tool `ceiling` — a REPLACE, never a UNION with the declared set (a union
-/// would let an App reach a tool outside the ceiling; the forbidden SN-8 widen).
+/// would let an App reach a tool outside the ceiling; the forbidden widen).
 /// Because the wish is either the declared set or the ceiling, and the downstream
 /// [`skill_union_grants`] fold only ever removes, the materialized contract is
 /// always `⊆ wish` and `⊆ ceiling` (monotonic narrowing). A pure function
@@ -1469,7 +1469,7 @@ impl HostAppAuthor {
         //      model_route` is a WISH intersected with the served catalog: if this serve
         //      offers it, pin it onto every model step that did not already name a model
         //      (an explicit per-step id wins); if it does NOT, REFUSE the run at submit —
-        //      never silently run on a different model (SN-8: the user names the model, no
+        //      never silently run on a different model (the user names the model, no
         //      auto-select, never degrade-to-primary). Empty route ⇒ no injection ⇒
         //      byte-identical to the pre-PR-3 path (the digest no-op).
         let route = &env.steering_config.model.model_route;
@@ -1520,7 +1520,7 @@ impl HostAppAuthor {
             }
         }
         // `Reach::InheritPrincipal` REPLACES the declared wish with the caller's whole
-        // tool ceiling (never a UNION — a union would widen past the ceiling, SN-8).
+        // tool ceiling (never a UNION — a union would widen past the ceiling).
         // The fold below re-applies the SAME `allowlist ∩ fireable ∩ registry`, so the
         // materialized set is `ceiling ∩ compat ⊆ ceiling` (monotonic narrowing).
         // Default (`Explicit`) leaves the declared wish untouched — byte-identical, and
@@ -1552,7 +1552,7 @@ impl HostAppAuthor {
         let per_step_wish: Vec<BTreeMap<String, String>> =
             bound_skills.iter().map(|s| skill_wish_union(s)).collect();
         if !wish.is_empty() || per_step_wish.iter().any(|w| !w.is_empty()) {
-            // Use-gate + conditional narrowing (SN-8; see party_tool_authority). Resolved
+            // Use-gate + conditional narrowing (see party_tool_authority). Resolved
             // ONCE and shared by every fold: the caller's authority does not vary by step,
             // only the wish does.
             let allowlist = party_tool_authority(&self.lib, party).map_err(map_binder_err)?;
@@ -2640,7 +2640,7 @@ mod tests {
     fn effective_tool_wish_never_unions_past_the_ceiling() {
         // Exhaustive over a 4-tool universe (all 16×16 declared/ceiling subset pairs):
         // Explicit keeps the declared wish; InheritPrincipal yields EXACTLY the ceiling
-        // and NEVER a declared tool outside it (a union would). This is the SN-8
+        // and NEVER a declared tool outside it (a union would). This is the boundary
         // monotonic-narrowing / no-widen invariant on the wish selection; the downstream
         // `skill_union_grants` fold then only narrows further (⊆ wish). A complete proof
         // for the space (an exhaustive enumeration, not random sampling).
@@ -2781,7 +2781,7 @@ mod tests {
     #[tokio::test]
     async fn author_app_unserved_model_route_refuses_at_submit() {
         // An App naming a model this serve does not offer REFUSES loudly at submit —
-        // it never silently authors on the primary (SN-8: no auto-select / degrade).
+        // it never silently authors on the primary (no auto-select / degrade).
         let dir = tempfile::tempdir().unwrap();
         let (host, _content, _) = rig(dir.path(), &[("echo-tool", "1")]);
         let mut env = AppEnvelope::new(
@@ -4060,7 +4060,7 @@ mod tests {
     }
 
     /// steering_config.tools.requested_grants folds a REAL grant onto the entry step
-    /// even with NO skills (the tools-steering axis, server-intersected — SN-8).
+    /// even with NO skills (the tools-steering axis, server-intersected).
     #[tokio::test]
     async fn author_app_with_steering_tools_folds_grants_without_skills() {
         let dir = tempfile::tempdir().unwrap();
@@ -4187,7 +4187,7 @@ mod tests {
     }
 
     /// Fold the RAG rail over a one-model-step DAG and hand back the steered prompt.
-    /// The authored `MoteDef` carries only a `prompt_template_hash` (SN-8 — identity, not
+    /// The authored `MoteDef` carries only a `prompt_template_hash` (identity, not
     /// text), so the resolved dataset NAME is only observable at the `DagSpec` level.
     async fn fold_and_steer(
         host: &HostAppAuthor,
@@ -4410,7 +4410,7 @@ mod tests {
     /// it — a handful of huge blobs sails far under 4096 refs — so this check is the only thing
     /// between a hand-rolled envelope and hours of embedding inside one run.
     ///
-    /// It was UNTESTED until §2.395 while its ref sibling (above) and its UTF-8 sibling (below)
+    /// It was UNTESTED until while its ref sibling (above) and its UTF-8 sibling (below)
     /// both had tests. That is the dangerous shape: all three fail-soft to the declared name, so
     /// from the outside the three outcomes are indistinguishable — if this ceiling silently
     /// became a no-op, not one other test would fail.
@@ -4421,7 +4421,7 @@ mod tests {
         // also inflates the input, so the test dies ALLOCATING instead of failing its assertion
         // — red either way, proving nothing. (The first cut of this test did exactly that:
         // mutating the ceiling to `u64::MAX` panicked in `raw_vec`, not at the assert. Caught by
-        // mutation-testing the test itself — §2.395.)
+        // mutation-testing the test itself —.)
         //
         // Pinning makes it a TWO-WAY detector:
         //   • the ceiling VALUE moves      ⇒ the assert_eq below fires (a deliberate change must

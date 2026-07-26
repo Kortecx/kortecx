@@ -15,7 +15,7 @@
 //!      `[private_only].paths`, or `[divergent].paths`. The include-side twin of
 //!      (a): an UNCLASSIFIED path is invisible to `just port` (never carried) AND
 //!      to `just cmp-shared` (never compared), so it silently escapes the mirror
-//!      in EITHER direction. Runs in BOTH repos. L-029 (`shared-paths-include-under-inclusion`).
+//!      in EITHER direction. Runs in BOTH repos.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
@@ -183,14 +183,14 @@ fn oss_repo_tracks_no_private_paths() {
     let hits: Vec<&str> = tracked.lines().filter(|l| !l.trim().is_empty()).collect();
     assert!(
         hits.is_empty(),
-        "SN-2 LEAK: the OSS repo tracks private-only path(s):\n  {}",
+        "PRIVATE-PATH LEAK: the OSS repo tracks private-only path(s):\n  {}",
         hits.join("\n  ")
     );
 }
 
 /// (d) EVERY tracked file must be classified by shared-paths.toml. An unclassified
 /// path is never carried by `just port` and never compared by `just cmp-shared`, so
-/// it silently drifts the mirror in either direction (L-029). Reuses git's own glob
+/// it silently drifts the mirror in either direction. Reuses git's own glob
 /// engine — the union of the three classes' `:(glob)` pathspecs must cover every
 /// tracked file. Runs in BOTH repos; skipped only when git is unavailable.
 #[test]
@@ -236,7 +236,7 @@ fn every_tracked_file_is_classified() {
         .collect();
     assert!(
         unclassified.is_empty(),
-        "L-029 UNDER-INCLUSION: shared-paths.toml classifies neither [shared] / \
+        "UNDER-INCLUSION: shared-paths.toml classifies neither [shared] / \
          [private_only] / [divergent] for {} tracked path(s) — each silently escapes \
          the mirror (never ported, never cmp-shared'd):\n  {}",
         unclassified.len(),

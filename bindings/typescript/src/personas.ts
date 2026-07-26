@@ -14,7 +14,7 @@
  * anywhere an Agent does. Personas are identity-bearing (the text folds into the
  * agent step's prompt), not presentation-only — the same persona + task always
  * re-derives the same MoteId. Pure client-side sugar; the SERVER compiles + warrants
- * every step (SN-8). The strings are byte-identical to the Python SDK.
+ * every step. The strings are byte-identical to the Python SDK.
  */
 
 import { Agent, type AgentOptions } from "./agent.js";

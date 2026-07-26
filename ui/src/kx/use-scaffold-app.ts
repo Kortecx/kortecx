@@ -3,9 +3,9 @@
  * (`ScaffoldApp`) and POLL its live status (`GetScaffoldStatus`).
  *
  * The scaffold writes a FIXED skeleton project tree into the App's CoW branch
- * (the host is never written; SN-8: the branch is caller-scoped, the App handle
+ * (the host is never written; the branch is caller-scoped, the App handle
  * IS the project branch handle). `scaffoldApp` returns immediately; the status
- * query drives the honest per-file progress UI (GR15 — real `filesDone` /
+ * query drives the honest per-file progress UI (real `filesDone` /
  * `filesPending`, never a timer). Polling stops the moment the server reports
  * `done` / `failed`; on `done` we invalidate the Apps + branch caches so the new
  * tree appears.

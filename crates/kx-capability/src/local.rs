@@ -30,7 +30,7 @@ use crate::request::{BrokerHandle, EffectRequest};
 /// payloads share the same `staged_ref` (content-addressing dedupes for
 /// free — this is the D17 atomicity contract reused).
 ///
-/// # Architectural review (SN-4 v2 #9) — recorded inline.
+/// # Architectural review — recorded inline.
 ///
 /// 1. The broker has no `kx-journal` or `kx-projection` dependency
 ///    (verify with `cargo tree`). The recovery-state-independence
@@ -58,7 +58,7 @@ use crate::request::{BrokerHandle, EffectRequest};
 ///    before staging. External effects thus never run under the registry
 ///    lock, so a stream of in-flight effects cannot delay
 ///    `register_capability`. This composes with the workspace's
-///    concurrency-test discipline (SN-4 v2 #6) which the integration
+///    concurrency-test discipline which the integration
 ///    tests exercise.
 pub struct LocalCapabilityBroker<S: ContentStore + Send + Sync> {
     pub(crate) store: S,
@@ -274,7 +274,7 @@ impl<S: ContentStore + Send + Sync> CapabilityBroker for LocalCapabilityBroker<S
         // Resolve the capability handle UNDER the read lock, then RELEASE the
         // guard before `invoke` — the external effect (network I/O) must never
         // run under the registry lock, or a stream of in-flight effects would
-        // delay `register_capability` (SN-4 lock hygiene; see the type doc §4).
+        // delay `register_capability` (lock hygiene; see the type doc §4).
         let cap = {
             let guard = self.capabilities.read().expect("RwLock poisoned");
             Self::precheck(&guard, mote, warrant, capability, &request)?

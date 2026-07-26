@@ -161,7 +161,7 @@ await client.submitWorkflow(req, { wait: true });
 ```
 
 The artifact is **self-describing** (each step's `kind` is explicit) and **portable**:
-`model_id` is left as authored — empty binds the **serve's** model at submit (SN-8), so
+`model_id` is left as authored — empty binds the **serve's** model at submit, so
 the same blueprint runs against whatever model a target serve hosts unless you pin a
 specific `model_id`. Export → import re-compiles to a **byte-identical**
 `SubmitWorkflowRequest` (and, on a fixed model, the identical committed result). The CLI

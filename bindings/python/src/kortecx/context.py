@@ -2,7 +2,7 @@
 attaches to a run (``invoke(..., context=[handle])``) so a model reasons over it.
 
 Kept in its own module so ``types.py`` stays a thin aggregator (the Rust core's
-module-per-concern discipline, GR3). SN-8: ``bundle_ref`` is SERVER-DERIVED
+module-per-concern discipline). ``bundle_ref`` is SERVER-DERIVED
 (blake3 over the manifest) — the client names a handle, never an identity. The
 manifest lives in an off-journal ``bundles.db`` sidecar (rebuildable-to-empty),
 scoped to the authoring party; a not-found / not-owned bundle is UNIFORM (no

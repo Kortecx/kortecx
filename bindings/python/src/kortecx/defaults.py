@@ -53,7 +53,7 @@ def resolve_endpoint(explicit: Optional[str] = None) -> str:
 
 def resolve_default_model(explicit: str = "") -> str:
     """The default model id: explicit → ``KX_DEFAULT_MODEL`` → config → ``""`` (the
-    server binds the served model, SN-8)."""
+    server binds the served model)."""
     cfg = _load_config()
     return explicit or os.environ.get("KX_DEFAULT_MODEL") or cfg.get("default_model") or ""
 

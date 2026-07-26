@@ -14,7 +14,7 @@ use thiserror::Error;
 /// never panics) — see [`crate::decode_tool_result`].
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DecodeError {
-    /// The response exceeded the per-call size cap (IMP-16 — resource-exhaustion
+    /// The response exceeded the per-call size cap (resource-exhaustion
     /// guard). Carries the observed and maximum byte counts.
     #[error("MCP response too large: {got} bytes > cap {max}")]
     Oversize {

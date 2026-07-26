@@ -5,7 +5,7 @@
  * grounding snippet + its content-address chip (the citation). Renders NOTHING when
  * the turn is unsettled, ungrounded, or degraded (empty dataset → no folded refs) —
  * a plain answer never grows a faked citation (don't-fake-gaps). No score is shown
- * (SN-8 — the wire carries none; we never fabricate one).
+ * (the wire carries none; we never fabricate one).
  */
 
 import { useGroundingSources } from "../../kx/use-grounding-sources";

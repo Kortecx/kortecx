@@ -118,13 +118,13 @@ fn model_pull_allowed() -> bool {
 /// `tests/common::{pure_mote, pure_warrant}` so the two never drift. The
 /// `recipe_fingerprint` is a fixed discovery-only sentinel (`SubmitRun` takes it
 /// as-is; it is NEVER identity — the coordinator re-derives every `MoteId`
-/// Rust-side, SN-8). The advisory `mote_id` inside the Mote is likewise re-derived.
+/// Rust-side). The advisory `mote_id` inside the Mote is likewise re-derived.
 #[cfg(feature = "embedded-worker")]
 #[must_use]
 pub fn pure_run_request() -> kx_proto::proto::SubmitRunRequest {
     use kx_proto::proto::{SubmitMoteSpec, SubmitRunRequest};
     SubmitRunRequest {
-        // Fixed discovery/dedup sentinel — not identity (SN-8). Matches the e2e fixture.
+        // Fixed discovery/dedup sentinel — not identity. Matches the e2e fixture.
         recipe_fingerprint: vec![0x5a; 32],
         motes: vec![SubmitMoteSpec {
             mote: Some(pure_run_mote(1).into()),
@@ -616,7 +616,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let real_body_ref: Option<kx_content::ContentRef> = None;
     // The embedded worker's executor routes a real-body Mote to the platform sandbox
     // (bwrap on Linux / sandbox-exec on macOS) and a bodyless PURE Mote (`echo` /
-    // `passthrough-dag`) to the HONEST passthrough fallback (GR15 — it commits the
+    // `passthrough-dag`) to the HONEST passthrough fallback (it commits the
     // Mote's real input, never a fabricated placeholder). Fail-closed: a sandbox that
     // cannot run errors (worker backs off); never host-exec.
     let executor: Arc<dyn MoteExecutor> = Arc::new(crate::real_exec::RouterExecutor::new(
@@ -1473,7 +1473,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      ranked by a startup-built index. The verdict dry-runs the REAL
     //      lowering gate against the SERVER react warrant when the react
     //      runtime is live; otherwise it degrades to UNAVAILABLE. Read-only,
-    //      display-only — never an authorization (SN-8).
+    //      display-only — never an authorization.
     // PR-6a: the advisory toolscout manifests come from the SAME durable registry
     // the serve path resolves + DiscoverTools reads (built-ins + the bundled echo
     // when its capability resolved). One source for the discovery surfaces.
@@ -1676,7 +1676,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     } else {
         None
     };
-    // NL authoring (D209.3 / SN-8): the served-model NL→DAG proposer for `ProposeWorkflow`.
+    // NL authoring: the served-model NL→DAG proposer for `ProposeWorkflow`.
     // Wired only when a model is served (it needs the routing backend + a resolved model);
     // otherwise the RPC is `unimplemented` and the console hides the affordance. Validate-only
     // (render → decode → compile), no journal write ⇒ digest-invariant.
@@ -2502,7 +2502,7 @@ async fn connect_submitter_with_retry(
 /// — the authoring/invoke backstop's LIVE truth source. Wraps the serve broker so
 /// a runtime-DIALED external MCP tool's `(tool_id, tool_version)` becomes
 /// authorable the moment its firing capability registers (never a startup
-/// snapshot). Read-only; never authorizes (SN-8) — the broker's 6-gate precheck
+/// snapshot). Read-only; never authorizes — the broker's 6-gate precheck
 /// re-verifies at dispatch.
 ///
 /// Gated to `embedded-worker`: the field references `LocalCapabilityBroker` /
@@ -2601,7 +2601,7 @@ fn open_signature_catalog(dir: &Path) -> Result<Arc<dyn SignatureCatalog>, Gatew
 /// the ref. The correct producer for the PURE path: content-addressed (the
 /// committed ref == the stored object ⇒ the coordinator's D55 phantom-ref guard
 /// passes), deterministic (a pure function of the Mote's identity-bearing fields
-/// ⇒ idempotent re-lease + recovery re-fold), and HONEST (GR15): the committed
+/// ⇒ idempotent re-lease + recovery re-fold), and HONEST: the committed
 /// bytes are the real input, NEVER a fabricated "demo result" placeholder — so
 /// `Invoke kx/recipes/echo {topic:"hello"}` commits exactly `hello`. Built from
 /// the public `TestMoteExecutor::new` — kx-executor source is untouched (the
@@ -2620,7 +2620,7 @@ fn passthrough_executor(store: Arc<LocalFsContentStore>) -> Arc<dyn MoteExecutor
     }))
 }
 
-/// The honest passthrough bytes a PURE Mote commits (GR15). The decoded,
+/// The honest passthrough bytes a PURE Mote commits. The decoded,
 /// non-empty `config_subset` free-param values (the `BTreeMap` iterates sorted by
 /// key ⇒ deterministic order; each value JSON-string-or-UTF-8 decoded, mirroring
 /// the model arm's `prompt_from_config`) joined by newlines — a true echo of the

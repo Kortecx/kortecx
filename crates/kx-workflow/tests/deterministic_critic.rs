@@ -76,7 +76,7 @@ fn deterministic_critic_recipe_is_reproducible() {
 #[test]
 fn changing_the_check_changes_the_critic_identity() {
     // The declared check is part of the critic's MoteId — a different check is a
-    // different Mote (reproducible-by-construction; SN-8 identity discrimination).
+    // different Mote (reproducible-by-construction; identity discrimination).
     let model = ModelId("local".into());
     let cap = ToolName("demo".into());
     let warrant = permissive_warrant(model.clone());

@@ -3,7 +3,7 @@
  * the Mote's ADMITTED definition over the real `GetMoteDetail`, and the Inputs
  * pane joins each inbound edge to its parent's RESOLVED result text (the
  * "edge resolved text" GetContentBatch join). Pane switches must never
- * relayout the graph (the §2.184 no-thrash invariant extends to the panes).
+ * relayout the graph (the no-thrash invariant extends to the panes).
  */
 
 import { expect, test } from "@playwright/test";

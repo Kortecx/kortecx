@@ -20,7 +20,7 @@
 //! so this crate sits *below* `kx-dataset` (which itself depends on `kx-mote`)
 //! with no dependency cycle.
 //!
-//! ## SN-8 — model proposes, runtime enforces
+//! ## Model proposes, runtime enforces
 //!
 //! A [`CriticVerdict`] is a **content-addressed fact**: produced by exact
 //! deterministic evaluation and compared downstream by **byte-equality only**

@@ -8,7 +8,7 @@
 //! (`kx-gateway`) implements it over its `McpGateway` (which dials external MCP
 //! servers + registers their tools into the SAME durable `tools.db`).
 //!
-//! # Boundaries (SN-8 / GR8 / GR19)
+//! # Boundaries
 //!
 //! - **The live untrusted-egress surface.** Registering a server DIALS it
 //!   (`initialize` -> `tools/list`); the host enforces admission + dial-time
@@ -19,7 +19,7 @@
 //!   secret value never crosses this seam, the wire, or the journal (D81).
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without the MCP gateway wired
 //!   degrades forward-compatibly. OAuth/device-flow + a credential marketplace
-//!   are CLOUD (D159/GR19).
+//!   are CLOUD.
 
 use crate::tool_registry_admin::RegisteredToolEntry;
 
@@ -157,7 +157,7 @@ pub trait McpGatewayAdmin: Send + Sync {
     /// through the broker and return its response payload. This is the model-free
     /// "exercise this tool" affordance (the UI live-fire panel / `kx connections
     /// fire`). It is NOT a durable agentic effect — no journal fact, no replay, like
-    /// [`Self::test_server`] / [`Self::discover_server`] — and SN-8 is re-enforced
+    /// [`Self::test_server`] / [`Self::discover_server`] — and the authority gate is re-enforced
     /// server-side: the tool must be registered, `args_json` is validated against the
     /// tool's `inputSchema`, and a single-grant warrant is synthesized from the tool's
     /// own declared scopes (the client never supplies grants). Default ⇒ unsupported.

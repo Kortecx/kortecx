@@ -24,7 +24,7 @@
 //!   evidence is integer-scaled — so the canonical verdict bytes are stable.)
 //! - *Bounded* — O(input) work and O(input) peak memory.
 //!
-//! ## SN-8
+//! ## Identity
 //!
 //! A verdict is a content-addressed FACT. The runtime commits
 //! `verdict.encode()` to the content store and the projection compares verdicts

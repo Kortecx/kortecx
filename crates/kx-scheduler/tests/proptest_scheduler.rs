@@ -1,4 +1,4 @@
-//! SN-4 v2 #5 — property tests covering the DAG-ordering invariant
+//! The structural review — property tests covering the DAG-ordering invariant
 //! across arbitrary linear chains and small diamond shapes.
 //!
 //! **The load-bearing property**: every dispatched Mote had all its

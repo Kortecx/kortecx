@@ -25,7 +25,7 @@ exactly the exposure you want.
 
 ## Model proposes, runtime enforces
 
-This is the load-bearing security boundary (internally, **SN-8**).
+This is the load-bearing security boundary.
 
 A model — or any client — may **propose** a topology, a tool call, or an action.
 But only the **runtime** decides whether it happens, and it decides by **exact

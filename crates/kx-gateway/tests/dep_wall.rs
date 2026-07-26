@@ -67,7 +67,7 @@ fn cargo_tree_normal_edges_exclude_the_ffi() {
     }
 }
 
-/// PR-A.1 (GR24 dual-engine parity): the FFI-FREE serve loop (`serve-engine,hnsw`)
+/// PR-A.1 (dual-engine parity): the FFI-FREE serve loop (`serve-engine,hnsw`)
 /// must stay llama.cpp-free — serve-engine pulls the Ollama backend (`kx-ollama`)
 /// plus the planner/critic/MCP, never `kx-llamacpp`/`kx-model-harness` (those ride
 /// the opt-in `inference`). The deterministic in-test complement to the

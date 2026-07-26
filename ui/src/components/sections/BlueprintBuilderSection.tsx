@@ -2,7 +2,7 @@
  * The visual Blueprint builder (D141.3/.4/.5/.6) — author a Tier-1 DAG (a vetted
  * PURE / MODEL palette) on an interactive reactflow canvas, configure each step in
  * a Monaco drawer, then SUBMIT it through `SubmitWorkflow`. The client sends ONLY
- * topology + params; the SERVER compiles the DAG + builds every warrant (SN-8).
+ * topology + params; the SERVER compiles the DAG + builds every warrant.
  *
  * Rich-graph counterpart of the read-only run viewer: nodes are draggable +
  * connectable. An edge carries an optional instruction-file (D141.5) folded into
@@ -268,7 +268,7 @@ function BuilderInner({
 
   // NL authoring (D209.3): apply a proposed multi-step plan (from `proposeWorkflow`) to the
   // canvas as editable model nodes. The server re-COMPILES + warrants the confirmed DAG at
-  // save/submit (SN-8); this only shapes what is proposed.
+  // save/submit; this only shapes what is proposed.
   const applyProposal = useCallback(
     (steps: readonly ProposedWorkflowStep[], edges: readonly ProposedWorkflowEdge[]) =>
       applyInsert(proposalToBuilderGraph(steps, edges, idc.current)),
@@ -752,7 +752,7 @@ function SaveAsAppDialog({
           <h2 className="dialog-card__title">Save as new App</h2>
           <p className="muted">
             Save this structure as a durable, reusable App. The server compiles the blueprint and
-            re-resolves every warrant at run (SN-8); grant tools + connections on the App page.
+            re-resolves every warrant at run; grant tools + connections on the App page.
           </p>
           <label className="dialog-card__label" htmlFor="save-as-name">
             App name

@@ -151,7 +151,7 @@ impl ModelResolver for ModelRegistry {
 ///
 /// Re-registration is refused ([`ModelStoreError::DuplicateModel`]) so identity
 /// can never silently change under a live cache, exactly as [`ModelRegistry`].
-/// Off the trust path (SN-8): the store gates nothing; this only widens *which
+/// Off the trust path: the store gates nothing; this only widens *which
 /// models exist*, never *what is authorized*.
 #[derive(Debug, Default)]
 pub struct MutableRegistry {

@@ -13,7 +13,7 @@
 //! input — dropping the file cannot move the canonical projection digest.
 //!
 //! ## Advisory metadata only
-//! `media_type`/`filename` are display/audit fields (SN-8: identity is the
+//! `media_type`/`filename` are display/audit fields (identity is the
 //! server-derived blake3 ref alone). `INSERT OR REPLACE` keeps a re-upload
 //! idempotent — the latest advisory metadata wins.
 

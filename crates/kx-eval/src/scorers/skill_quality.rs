@@ -9,7 +9,7 @@
 //! skill whose run never touched a tool means the instructions/menu never
 //! reached the model — the `T-RERANK-WORKER-ROUTE` lesson applied to skills),
 //! AND it must have answered. Tasks that declare no `skill_wish_tools` are N/A.
-//! Deterministic, LLM-free, integer per-mille (SN-8).
+//! Deterministic, LLM-free, integer per-mille.
 
 use crate::scorers::{ScoreOutput, PER_MILLE};
 use crate::transcript::Branch;

@@ -2,7 +2,7 @@
 //! the coordinator persists admitted defs into (`persist_def` — the canonical
 //! encode's blake3 IS `mote_def_hash`, so the hash doubles as the address).
 //!
-//! Read-only + display-only (SN-8). A small FIFO-bounded decode cache keyed by
+//! Read-only + display-only. A small FIFO-bounded decode cache keyed by
 //! the def hash makes the per-drawer-open unary cheap: content-addressed defs
 //! are immutable, so a cached entry can never go stale (no invalidation), and
 //! hash-keying dedupes across motes/instances sharing one definition.

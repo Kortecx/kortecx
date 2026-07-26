@@ -5,7 +5,7 @@
 //! POC-5b lock: a locked App refuses a further agentic in-CAS edit.
 //!
 //! Gated `#[cfg(feature = "inference")]` AND `#[ignore]`; runtime-skips without a
-//! GGUF. **Drive on Gemma-4 locally** (the deep-test model, GR15 — never Qwen3 for a
+//! GGUF. **Drive on Gemma-4 locally** (the deep-test model, — never Qwen3 for a
 //! real scaffold; a small model authors degenerate file bodies):
 //! `KX_SERVE_MODEL_GGUF=target/models/gemma-4-12b-it-q4_k_m.gguf \`
 //! `  cargo test -p kx-gateway --features inference,hnsw --test app_scaffold_live_serve -- --ignored --nocapture`
@@ -185,7 +185,7 @@ async fn scaffold_writes_the_skeleton_then_lock_refuses_edit() {
         assert!(body.found, "{f} body resolves");
         assert!(
             !body.payload.iter().all(u8::is_ascii_whitespace),
-            "{f} has a non-empty model-authored body (GR15 fail-closed never advances empties)"
+            "{f} has a non-empty model-authored body (fail-closed never advances empties)"
         );
         eprintln!("  ✓ {f} ({} bytes)", body.payload.len());
     }

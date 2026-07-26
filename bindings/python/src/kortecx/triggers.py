@@ -2,7 +2,7 @@
 an inbound event to a published recipe, surfaced by ``RegisterTrigger`` /
 ``ListTriggers`` / ``DeregisterTrigger`` / ``SubmitTrigger`` / ``TestTrigger``.
 
-Kept in its own module (the feedback.py / module-per-concern precedent, GR3). The
+Kept in its own module (the feedback.py / module-per-concern precedent). The
 ``trigger_id`` + the bound ``instance_id`` are server-derived (the SDK only
 hex-encodes the bytes); the kind / auth enums map to/from stable lowercase strings
 (the ``rating_to_proto`` precedent — an unknown string is rejected fail-closed

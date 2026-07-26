@@ -15,8 +15,7 @@
 //!    `RoleRegistry` and calling [`crate::intersect`] in its
 //!    `try_materialize` path instead of the verbatim ref-copy.
 //!
-//! See `docs/design/topology.md` §13 KG-1 + `docs/design/decisions.md`
-//! §D30 / §D48 (private corpus) for the load-bearing properties.
+//! See D30 / D48 for the load-bearing properties.
 
 use std::collections::BTreeMap;
 use std::sync::RwLock;

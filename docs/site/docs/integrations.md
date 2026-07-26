@@ -11,7 +11,7 @@ An **integration** is an external provider (Slack, Notion, Gmail, Discord, …) 
 runtime can act on — read a channel, post a message, search a workspace — through the
 **external MCP gateway**. kortecx ships a set of **bundled connectors** so the common
 providers work out of the box, and the whole flow stays governed: the credential is
-referenced by **name** (never inlined, D81/SN-8), an App declares exactly which tools it
+referenced by **name** (never inlined), an App declares exactly which tools it
 may fire, and every irreversible action can be **held for an operator's approval** (D114).
 
 This page walks the full chain end to end:
@@ -88,7 +88,7 @@ app = (
           )
       )
       .with_slack()                       # declares the kx-connector-slack connection
-      .secrets(["KX_SLACK_CREDENTIAL"])   # scopes the run to this credential (SN-8)
+      .secrets(["KX_SLACK_CREDENTIAL"])   # scopes the run to this credential
 )
 app.run()                                 # → RunApp (connection + secret_scope resolved)
 ```
@@ -178,4 +178,4 @@ approve — is **durable and replayable**: every fired action is journaled and a
 Everything here runs on a **single-node** `kx serve` with **local** OSS models. The bundled
 connectors, the local approvals inbox, and the local scheduler are OSS. A hosted trigger
 gateway at scale, a multi-tenant credential marketplace, and cross-app orchestration are
-**Cloud** (D129 / GR19).
+**Cloud**.

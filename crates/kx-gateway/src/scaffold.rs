@@ -21,7 +21,7 @@
 //! single Pure greedy model step, the `react-edit` pattern) through the EXISTING
 //! binder + submitter (the coordinator stays the sole journal writer — the frozen
 //! loop is untouched), awaits the committed body by polling the read-only projection
-//! ([`try_committed_body`]), fails closed on an empty body (GR15), and
+//! ([`try_committed_body`]), fails closed on an empty body, and
 //! `AdvanceBranch`-es the manifest.
 //!
 //! POC-6 live streaming: every write step is a normal model mote whose decode
@@ -978,8 +978,8 @@ impl HostScaffolder {
     }
 
     /// Author one project file: bind + submit the scaffold-write recipe, surface the
-    /// live token-stream ids, await the terminal body. The warrant is SERVER-minted
-    /// (SN-8); the prompt is DATA only. `path`/`role` come from either the fixed
+    /// live token-stream ids, await the terminal body. The warrant is SERVER-minted;
+    /// the prompt is DATA only. `path`/`role` come from either the fixed
     /// skeleton, the hosted template, or a dynamically-planned manifest file.
     #[allow(clippy::too_many_arguments)]
     async fn write_one(

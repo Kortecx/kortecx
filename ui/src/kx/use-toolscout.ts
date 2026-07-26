@@ -2,7 +2,7 @@
  * The toolscout viewers: the gateway's advisory tool manifests (`ListToolManifests`)
  * and the TaskBundle dry-run scorer (`ScoreTaskBundle`). Both tolerate a gateway
  * that has not wired the toolscout view (UNIMPLEMENTED → the query errors; the
- * Tools view degrades to a not-wired empty state). SN-8: every score/verdict is
+ * Tools view degrades to a not-wired empty state). Every score/verdict is
  * ADVISORY/DISPLAY-ONLY — a score can surface a tool, never grant one.
  */
 

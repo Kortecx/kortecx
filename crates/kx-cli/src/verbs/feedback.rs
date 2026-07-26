@@ -3,7 +3,7 @@
 //! parity with the UI + SDK. ADVISORY/DISPLAY-ONLY product signal: the rows live
 //! in a rebuildable-to-empty `feedback.db` sidecar — never truth, never identity,
 //! never a digest input. The caller principal + the `feedback_id` are server-
-//! derived (SN-8); re-rating the same answer OVERWRITES. A gateway without the
+//! derived; re-rating the same answer OVERWRITES. A gateway without the
 //! sidecar answers `Unimplemented` (rendered honestly).
 
 use kx_proto::proto;

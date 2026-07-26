@@ -8,7 +8,7 @@
 //! a user has ever previewed had zero tools, and the only way to plug an App in was to create it
 //! and attach afterwards.
 //!
-//! **Why letting the model name a tool is not a widening (SN-8).** The menu is computed
+//! **Why letting the model name a tool is not a widening.** The menu is computed
 //! HOST-side from `app_run::principal_tool_ceiling` (the caller's party authority ∩ the
 //! broker-fireable set ∩ the durable registry) — the same ceiling `GetAppManifest` reports
 //! against and `RunApp` intersects at fire. Every id the model returns is intersected back

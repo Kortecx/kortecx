@@ -30,7 +30,7 @@ async fn invoke_wait_returns_committed_result() {
     .await;
     let v = json_ok(&out);
     assert_eq!(v["state"], "COMMITTED");
-    // GR15: `echo` is a TRUE echo — it commits its bound `topic` verbatim as
+    // `echo` is a TRUE echo — it commits its bound `topic` verbatim as
     // text, never a fabricated placeholder. result_utf8 carries the topic.
     let expected = b"incidents".to_vec();
     assert_eq!(v["result_len"].as_u64().unwrap() as usize, expected.len());
@@ -72,7 +72,7 @@ async fn invoke_wait_out_writes_raw_bytes() {
         "payload not inlined under --out"
     );
     let written = std::fs::read(&out_path).unwrap();
-    // GR15: echo commits its bound `topic` verbatim (no fabricated placeholder).
+    // echo commits its bound `topic` verbatim (no fabricated placeholder).
     assert_eq!(written, b"save-me");
 
     running.shutdown().await.unwrap();

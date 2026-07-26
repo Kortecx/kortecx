@@ -40,7 +40,7 @@ use crate::workflow::WorkflowMote;
 /// what the engine already holds at the shaper-dispatch point: the shaper `Mote`,
 /// its `WarrantSpec`, and the current committed-state [`Snapshot`].
 ///
-/// SN-8: the provider **proposes** (the model output is untrusted — the concrete
+/// the provider **proposes** (the model output is untrusted — the concrete
 /// impl decodes it fail-closed and lowers role names through *vetted recipes*);
 /// the **runtime decides** authority — each materialized child's warrant is
 /// `intersect(shaper.warrant, role)` (narrowing-only) downstream. A fail-closed
@@ -76,7 +76,7 @@ pub trait TopologyProvider: Send + Sync {
     /// the `demo-worker` role; a model-driven decision proposes arbitrary roles,
     /// so the provider supplies a materializer whose role registry resolves every
     /// role its [`decide`](Self::decide) can emit (still `intersect(shaper.warrant,
-    /// role)`-narrowing — SN-8). The runtime calls this once, at projection build,
+    /// role)`-narrowing). The runtime calls this once, at projection build,
     /// in place of `build_materializer` whenever a provider is present; the
     /// returned materializer MUST read the SAME content store the run commits to
     /// (so the committed decision + warrant bytes resolve).

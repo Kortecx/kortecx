@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for the `ContentStore` contract (SN-4 v2 #6).
+//! Property tests for the `ContentStore` contract.
 //!
 //! The store's job is to be a content-addressed, idempotent, atomic-per-object
 //! key-value layer. The properties asserted here pin that contract over the
@@ -158,7 +158,7 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// SN-4 v2 #7 — concurrency: prove the existing claim that both stores are
+// the structural review — concurrency: prove the existing claim that both stores are
 // `Send + Sync` and idempotent under concurrent puts.
 // ---------------------------------------------------------------------------
 

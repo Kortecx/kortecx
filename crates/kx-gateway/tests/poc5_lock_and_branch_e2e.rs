@@ -1,5 +1,5 @@
 //! POC-5 end-to-end over a REAL bound tonic port (MODEL-FREE — the deterministic
-//! half of the seam, GR16 #5). Drives the new POC-5a/5b RPCs through the live
+//! half of the seam, cross-component seam). Drives the new POC-5a/5b RPCs through the live
 //! gateway + the `branches.db` / `locks.db` host stores:
 //!
 //! - **GetBranchContent** caller-scoped read: Alice reads her branch file body;

@@ -1,6 +1,6 @@
 //! `kx tools list | score` — the advisory toolscout RPCs over the gateway
 //! (`ListToolManifests` + `ScoreTaskBundle`). Tri-surface parity with the UI +
-//! SDK (W1.A5). Everything here is ADVISORY/DISPLAY-ONLY (SN-8): the scores
+//! SDK (W1.A5). Everything here is ADVISORY/DISPLAY-ONLY: the scores
 //! rank a picker and the verdict is a server-side dry-run of the real lowering
 //! gate — neither ever authorizes a tool. The CLI never sends a warrant; the
 //! exact `(name, version)` grant gate stays the broker's.
@@ -26,7 +26,7 @@ pub enum ToolsSub {
     },
     /// Register a declarative EXTERNAL MCP tool (PR-6a). The server SSRF-vets the
     /// host, derives identity + capability, and durably stores it. The tool is
-    /// DIALED in PR-6b/Cloud — registration alone grants no authority (SN-8).
+    /// DIALED in PR-6b/Cloud — registration alone grants no authority.
     Register(RegisterSpec),
     /// Deregister an operator-registered tool by exact `(name, version)`.
     /// Built-ins are refused.

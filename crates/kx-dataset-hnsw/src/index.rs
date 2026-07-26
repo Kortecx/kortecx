@@ -41,7 +41,7 @@ impl Default for HnswParams {
 /// A file-backed, in-process approximate-nearest-neighbour index over embedding
 /// vectors, implementing the shared `RetrievalIndex` seam via `hnsw_rs`.
 ///
-/// **SN-8.** Like every `RetrievalIndex`, this is used ONLY inside the
+/// **Identity.** Like every `RetrievalIndex`, this is used ONLY inside the
 /// ReadOnlyNondet retrieval Mote: similarity stays inside, and only the ordered
 /// neighbour-ref SET is committed (matched downstream by exact hash). The
 /// approximate, build-order-sensitive nature of HNSW is therefore safe — a score

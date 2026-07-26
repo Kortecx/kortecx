@@ -3,7 +3,7 @@
  * ANSWER that follows — the presentation-side mirror of the server's
  * `strip_reasoning_preamble` (kx-planner/decode.rs). The reasoning is ALREADY
  * durably committed in the turn's result bytes (raw-commit) + the `ReactRound`
- * facts; this is PURELY a display split (SN-8 — it cannot gate capture).
+ * facts; this is PURELY a display split (it cannot gate capture).
  *
  * Leading-block ONLY (never a mid-string scan). An UNCLOSED `<think>` fails OPEN
  * to the whole text as the answer (never hide content from the user — the inverse

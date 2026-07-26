@@ -4,7 +4,7 @@
  *
  * It is a UI convenience ONLY: the New Chat composer pre-selects it when the user
  * has not explicitly picked a model, but the model still only ever rides as a
- * server-validated recipe ENUM free-param (SN-8) — choosing a default grants nothing
+ * server-validated recipe ENUM free-param — choosing a default grants nothing
  * and routes nothing on its own. Per-browser (not shared across clients); a
  * server-side runtime default is a later POC-GATE / Cloud concern.
  */

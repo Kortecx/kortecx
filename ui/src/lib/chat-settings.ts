@@ -42,7 +42,7 @@ export const MODEL_CHAT_HANDLE = "kx/recipes/chat";
 
 /**
  * Reconcile the (globally-)persisted chat handle against THIS serve's LIVE recipe
- * list (GR15 + D142.3 don't-fake-gaps). The model chat recipe backs chat WHENEVER
+ * list (don't-fake-gaps). The model chat recipe backs chat WHENEVER
  * it is provisioned: a stale model-free `echo` handle — persisted from an earlier
  * no-model session, and now an HONEST passthrough — must never silently echo the
  * user's prompt back instead of answering it. A deliberate, available NON-echo
@@ -82,8 +82,8 @@ export function resolveChatBacking(
 }
 
 /**
- * Whether to PROACTIVELY surface the "no model — connect one" guidance (GR15
- * §2.208): true only on a no-model serve (`ListModels` resolved to an empty list,
+ * Whether to PROACTIVELY surface the "no model — connect one" guidance:
+ * true only on a no-model serve (`ListModels` resolved to an empty list,
  * not loading, the RPC supported) AND when the backing is NOT a deliberate `echo`
  * choice. A chosen `echo` is honored verbatim (resolveChatBacking's contract) — it
  * is an explicit model-free round-trip, not a gap to flag. Pure (no React) so the

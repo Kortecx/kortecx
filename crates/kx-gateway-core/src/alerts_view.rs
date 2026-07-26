@@ -23,7 +23,7 @@
 //!   this inbox.
 //! - **OSS = the read-only VIEW.** The triage LIFECYCLE (acknowledge / resolve),
 //!   the alert-rule engine, and outbound notifications are a CLOUD capability
-//!   (D156 / D129) — this seam carries no mutate method (GR19).
+//!   (D156 / D129) — this seam carries no mutate method.
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without the sidecar degrades
 //!   forward-compatibly.
 
@@ -31,7 +31,7 @@
 /// committed terminal `Failed` journal fact.
 #[derive(Clone, Debug)]
 pub struct AlertEntry {
-    /// SERVER-derived, re-fold-stable id (blake3 over `(mote_id, seq)`; SN-8 —
+    /// SERVER-derived, re-fold-stable id (blake3 over `(mote_id, seq)`; server-derived —
     /// the client can neither name nor forge it, no existence oracle).
     pub alert_id: [u8; 16],
     /// The failed Mote's identity (the deep-link target).

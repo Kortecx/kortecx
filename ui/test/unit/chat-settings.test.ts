@@ -76,7 +76,7 @@ describe("chat settings persistence", () => {
   });
 });
 
-describe("resolveChatBacking — the live-recipe reconciliation (GR15)", () => {
+describe("resolveChatBacking — the live-recipe reconciliation", () => {
   const withModel = [MODEL_CHAT_HANDLE, ECHO_PRESET.handle, "kx/recipes/react"];
   const modelFree = [ECHO_PRESET.handle];
 
@@ -163,7 +163,7 @@ describe("resolveChatBacking — the live-recipe reconciliation (GR15)", () => {
   });
 });
 
-describe("shouldPromptNoModel — the proactive no-model honest-empty (GR15 §2.208)", () => {
+describe("shouldPromptNoModel — the proactive no-model honest-empty ()", () => {
   const base = {
     modelCount: 0,
     loading: false,

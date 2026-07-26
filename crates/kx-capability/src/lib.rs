@@ -56,11 +56,11 @@
 //! means "proceed". The probe is a deterministic check (D20
 //! chain-terminator rule); **never a model call**.
 //!
-//! # Reading further
+//! # Design invariant
 //!
-//! - `docs/design/capability-broker.md` (private corpus) — the locked D24 spec.
-//! - `docs/design/decisions.md` D24, D38 — interlocking decisions.
-//! - `05-progress-tracker.md` SN-8 — *model proposes, runtime enforces*.
+//! *The model proposes; the runtime enforces.* The broker is the enforcement
+//! point: it re-verifies every axis of a warrant at fire time, and nothing a
+//! model emits can widen what a warrant already granted.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

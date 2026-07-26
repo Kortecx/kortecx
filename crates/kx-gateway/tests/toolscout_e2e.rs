@@ -157,7 +157,7 @@ async fn score_task_bundle_ranks_deterministically_and_stays_advisory() {
     };
     assert_eq!(pairs(&first.ranked), pairs(&second.ranked));
 
-    // GR10 spike (never a gate): the per-call RPC latency over a warm channel —
+    // Latency spike (never a gate): the per-call RPC latency over a warm channel —
     // run with `--nocapture` to read it; persisted to the private benchmarks
     // baseline per the profiling rule.
     let mut samples = Vec::with_capacity(50);
@@ -168,7 +168,7 @@ async fn score_task_bundle_ranks_deterministically_and_stays_advisory() {
     }
     samples.sort();
     eprintln!(
-        "GR10 ScoreTaskBundle (3 manifests, 1-tool spec, debug build): p50 {:?} · p99 {:?}",
+        "ScoreTaskBundle (3 manifests, 1-tool spec, debug build): p50 {:?} · p99 {:?}",
         samples[24], samples[49]
     );
 

@@ -5,7 +5,7 @@
  * run (`useRunApp` → `GetApp` → `SubmitWorkflow`, the args folded into the entry
  * model step's prompt server-side-equivalently). On submit it routes to the live run
  * (`/workflows/$instanceId`). An App with no input fields runs directly with one
- * click (no form). SN-8: the server re-resolves every warrant from the caller's
+ * click (no form). The server re-resolves every warrant from the caller's
  * grants — args steer, never grant.
  */
 

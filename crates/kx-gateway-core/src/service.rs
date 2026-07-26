@@ -22,7 +22,7 @@ use crate::reader::{ContentReader, JournalReader};
 use crate::submit::{RunSubmitter, SubmitterError};
 use crate::{events, view};
 
-/// The id a `RegisterSignature` server-derived from the manifest bytes (SN-8:
+/// The id a `RegisterSignature` server-derived from the manifest bytes (
 /// the client never supplies the id; the host derives it from the decoded entry).
 #[derive(Clone, Copy, Debug)]
 pub struct RegisteredSignature {
@@ -178,7 +178,7 @@ pub struct RecipeMetadataEntry {
 }
 
 /// One recipe's advisory rank against a search intent (PR-4 Batch D). `score_bp`
-/// is integer basis points (0..=10000) — DISPLAY-ONLY (the SN-8
+/// is integer basis points (0..=10000) — DISPLAY-ONLY (the boundary
 /// no-persisted-confidence rule; never a float, never an authorization).
 #[derive(Clone, Debug)]
 pub struct ScoredRecipeEntry {
@@ -340,7 +340,7 @@ pub enum BinderError {
 /// The recipe-binding seam (the `Invoke` path). The host implements it with
 /// `kx_invoke::bind_snapshot` over its provisioned ledgers + the per-handle
 /// free-param contract, resolving the caller's Use authority from the
-/// authoritative grant ledger (never a caller-supplied warrant — SN-8). It does
+/// authoritative grant ledger (never a caller-supplied warrant). It does
 /// NO journal write (that is the [`RunSubmitter`]'s job). A `None` seam on the
 /// service ⇒ `Invoke` returns `unimplemented`.
 #[tonic::async_trait]
@@ -374,7 +374,7 @@ pub enum AuthorStepKind {
     Exec,
     /// Fires a single REGISTERED tool as a standalone DAG node (PR-6b-2). The host
     /// looks the tool up in the live tool registry, builds its warrant SERVER-SIDE
-    /// from the tool's declared `required_capability` (SN-8 — never a client
+    /// from the tool's declared `required_capability` (never a client
     /// warrant), and carries the authored args (canonical-JSON) into the step's
     /// `config_subset[TOOL_ARGS_KEY]`. The client supplies only the
     /// `(tool_id, tool_version)` + args; the warrant + identity are server-derived.
@@ -452,7 +452,7 @@ pub trait WorkflowAuthor: Send + Sync {
 ///
 /// `None` on the service ⇒ the backstop falls back to the static
 /// `GatewayService::registered_tools` set (the PR-2d-2 behaviour — bundled
-/// tools only). The VIEW never authorizes (SN-8): it is a belt-and-braces
+/// tools only). The VIEW never authorizes: it is a belt-and-braces
 /// fail-closed gate that refuses authoring a warrant granting a tool the broker
 /// cannot fire; the broker's own 6-gate `precheck` re-verifies at dispatch.
 pub trait RegisteredToolsView: Send + Sync {
@@ -757,21 +757,21 @@ pub struct GatewayService {
     /// facts). `None` ⇒ `ListAlerts` returns `unimplemented`. Read-only,
     /// off-truth-path, rebuildable. The triage LIFECYCLE (acknowledge/resolve),
     /// the rule engine, and notifications are a CLOUD capability (D156/D129) — so
-    /// this seam carries NO mutate method (GR19).
+    /// this seam carries NO mutate method.
     alerts: Option<Arc<dyn crate::alerts_view::AlertView>>,
     /// The optional declarative-tools registry admin seam (PR-6a — the host
     /// injects an `Arc<SqliteToolRegistry>` wrapper over the durable `tools.db`).
     /// `None` ⇒ `RegisterTool`/`DeregisterTool`/`DiscoverTools` return
     /// `unimplemented`. Off-journal, off-digest, off-identity. DIALING the
     /// external MCP server + Connections + parallel fan-out are PR-6b/Cloud
-    /// (D159/GR19) — this seam stores a vetted `server_host`, never dials it.
+    /// — this seam stores a vetted `server_host`, never dials it.
     tool_admin: Option<Arc<dyn crate::tool_registry_admin::ToolRegistryAdmin>>,
     /// The optional EXTERNAL MCP gateway admin seam (PR-6b-1 — the host injects an
     /// `McpGateway` wrapper that DIALS external MCP servers + registers their
     /// tools into the same `tools.db`). `None` ⇒ `RegisterMcpServer`/
     /// `ListMcpServers`/`DiscoverServerTools`/`TestMcpServer`/`DeregisterMcpServer`
-    /// return `unimplemented`. The live untrusted-egress surface (GR8). OAuth/
-    /// device-flow + a credential marketplace are CLOUD (D159/GR19).
+    /// return `unimplemented`. The live untrusted-egress surface. OAuth/
+    /// device-flow + a credential marketplace are CLOUD.
     mcp_admin: Option<Arc<dyn crate::mcp_gateway_admin::McpGatewayAdmin>>,
     /// The optional LOCAL secret-store admin seam (MM-3 — the host injects a
     /// keychain-backed impl). `None` ⇒ `PutSecret`/`ListSecretNames`/`DeleteSecret`
@@ -818,10 +818,10 @@ pub struct GatewayService {
     skills: Option<Arc<dyn crate::skills_view::SkillCatalog>>,
     /// G2: the optional App-RUN seam (the host injects an `apps.db` + connection-store
     /// backed resolver). `None` ⇒ `RunApp` returns `unimplemented` and clients fall
-    /// back to the legacy `GetApp` → `SubmitWorkflow` path. Server-minted warrants
-    /// (SN-8); connection/secret resolution is caller-scoped, off-journal, off-digest.
+    /// back to the legacy `GetApp` → `SubmitWorkflow` path. Server-minted warrants;
+    /// connection/secret resolution is caller-scoped, off-journal, off-digest.
     app_runner: Option<Arc<dyn crate::apps_run::AppAuthor>>,
-    /// The optional NL→DAG workflow-proposer seam (D209.3 / SN-8 — the host injects a
+    /// The optional NL→DAG workflow-proposer seam (D209.3 / — the host injects a
     /// served-model + vetted-role-catalog backed proposer). `None` ⇒ `ProposeWorkflow`
     /// returns `unimplemented` (no served model). Validate-only: runs the model once and
     /// compiles the plan, never registers/runs it — no journal write, digest-invariant.
@@ -855,13 +855,13 @@ pub struct GatewayService {
     /// Model Control v2: the optional model-acquisition orchestrator seam behind
     /// `PullModel` / `GetPullStatus` (download + runtime-register a model). `None` ⇒
     /// both RPCs return `unimplemented`. The host impl owns the deny-by-default
-    /// opt-in/allowlist/SHA gate; HOST INFRASTRUCTURE, not a client Mote (SN-8).
+    /// opt-in/allowlist/SHA gate; HOST INFRASTRUCTURE, not a client Mote.
     /// Off-journal, off-digest.
     model_puller: Option<Arc<dyn crate::model_pull::ModelPuller>>,
     /// Model Control v2: the optional active-default-model CONTROL seam behind
     /// `SetActiveModel` (+ projected on `ModelSummary.active` /
     /// `GetServerInfo.active_model_id`). `None` ⇒ `SetActiveModel` is `unimplemented`
-    /// and `active` is always false. An off-journal advisory hint (SN-8).
+    /// and `active` is always false. An off-journal advisory hint.
     active_model: Option<Arc<dyn crate::active_model::ActiveModelControl>>,
 }
 
@@ -1003,7 +1003,7 @@ impl GatewayService {
     /// authoring/invoke backstop checks against — the wired [`RegisteredToolsView`]
     /// when present (so a runtime-DIALED external MCP tool is visible the moment it
     /// registers), else the static `registered_tools` snapshot (the PR-2d-2
-    /// behaviour). Never authorizes (SN-8); a fail-closed drift backstop.
+    /// behaviour). Never authorizes; a fail-closed drift backstop.
     fn fireable_grants(&self) -> std::collections::BTreeSet<(String, String)> {
         match &self.registered_tools_view {
             Some(view) => view.registered_grants(),
@@ -1147,7 +1147,7 @@ impl GatewayService {
     /// Wire the advisory toolscout seam (W1.A5 — the host's registry-backed
     /// manifest index). Enables `ListToolManifests` / `ScoreTaskBundle`.
     /// Read-only, display-only — never a journal write, a digest change, or an
-    /// authorization (the SN-8 advisory boundary).
+    /// authorization (the advisory boundary).
     #[must_use]
     pub fn with_toolscout_view(
         mut self,
@@ -1187,7 +1187,7 @@ impl GatewayService {
 
     /// Wire the model-discovery seam (Batch A — the host's provisioned model
     /// catalog). Enables `ListModels`. Display/discovery only: model selection
-    /// stays a recipe ENUM free-param validated server-side (SN-8).
+    /// stays a recipe ENUM free-param validated server-side.
     #[must_use]
     pub fn with_model_catalog_view(
         mut self,
@@ -1212,7 +1212,7 @@ impl GatewayService {
     /// Model Control v2: wire the model-acquisition orchestrator seam (download +
     /// runtime-register a model). Enables `PullModel`/`GetPullStatus`; without it they
     /// return `unimplemented`. The host impl owns the deny-by-default opt-in/allowlist/
-    /// SHA gate — HOST INFRASTRUCTURE, not a client Mote (SN-8). Off-journal.
+    /// SHA gate — HOST INFRASTRUCTURE, not a client Mote. Off-journal.
     #[must_use]
     pub fn with_model_puller(mut self, puller: Arc<dyn crate::model_pull::ModelPuller>) -> Self {
         self.model_puller = Some(puller);
@@ -1242,7 +1242,7 @@ impl GatewayService {
     }
 
     /// Wire the def-resolution seam (Batch B — the host's content-store-backed
-    /// def reader). Enables `GetMoteDetail`. Display only (SN-8).
+    /// def reader). Enables `GetMoteDetail`. Display only.
     #[must_use]
     pub fn with_mote_def_view(
         mut self,
@@ -1281,7 +1281,7 @@ impl GatewayService {
     /// folded from the journal's terminal `Failed` facts). Enables `ListAlerts`.
     /// Read-only, off-truth-path, rebuildable. The triage LIFECYCLE
     /// (acknowledge/resolve), the rule engine, and notifications are a CLOUD
-    /// capability (D156/D129) — not exposed by this OSS seam (GR19).
+    /// capability (D156/D129) — not exposed by this OSS seam.
     #[must_use]
     pub fn with_alerts_view(mut self, alerts: Arc<dyn crate::alerts_view::AlertView>) -> Self {
         self.alerts = Some(alerts);
@@ -1292,7 +1292,7 @@ impl GatewayService {
     /// `tools.db` + admission-time SSRF vetting). Enables `RegisterTool` /
     /// `DeregisterTool` / `DiscoverTools`. Off-journal, off-digest. DIALING the
     /// external MCP server + Connections + parallel fan-out are PR-6b/Cloud
-    /// (D159/GR19) — not exposed by this OSS seam.
+    /// — not exposed by this OSS seam.
     #[must_use]
     pub fn with_tool_admin(
         mut self,
@@ -1397,7 +1397,7 @@ impl GatewayService {
     /// path. The host impl (`kx-gateway`) reads the validated envelope, lowers its
     /// blueprint, resolves `references.connections` against the caller's own registry,
     /// and narrows the run warrant's secret scope to the App's declared secrets;
-    /// warrants are server-minted (SN-8).
+    /// warrants are server-minted.
     #[must_use]
     pub fn with_app_runner(mut self, runner: Arc<dyn crate::apps_run::AppAuthor>) -> Self {
         self.app_runner = Some(runner);
@@ -1506,7 +1506,7 @@ fn submit_status(err: SubmitterError) -> Status {
 /// Returns that step's id iff EXACTLY ONE agentic step is present; otherwise EMPTY (no
 /// agentic step, or more than one — ambiguous, so the client falls back to
 /// instance_id-only scoping, exactly as it does against an old server). Server-derived
-/// from the bound motes, never client-supplied (SN-8).
+/// from the bound motes, never client-supplied.
 fn agentic_chain_salt(motes: &[(kx_mote::Mote, kx_warrant::WarrantSpec)]) -> Vec<u8> {
     let mut agentic = motes.iter().filter(|(_, w)| !w.tool_grants.is_empty());
     match (agentic.next(), agentic.next()) {
@@ -1686,7 +1686,7 @@ fn approval_admin_status(err: crate::ApprovalAdminError) -> Status {
     }
 }
 
-/// D114: validate a 16-byte approval `request_id` argument (SN-8 — the server-derived
+/// D114: validate a 16-byte approval `request_id` argument (the server-derived
 /// handshake handle; a client never computes it, only echoes the bytes it was shown).
 #[allow(clippy::result_large_err)] // a `Status` Err mirrors the handler convention.
 fn approval_request_id_arg(raw: &[u8]) -> Result<[u8; 16], Status> {
@@ -1771,7 +1771,7 @@ fn valid_bundle_handle(h: &str) -> bool {
 }
 
 /// Extract the SERVER-RESOLVED caller principal from the auth interceptor
-/// extension (SN-8 — never wire-trusted). Shared by the caller-scoped sidecar
+/// extension (never wire-trusted). Shared by the caller-scoped sidecar
 /// RPCs (D155 branches).
 // `tonic::Status` exists only at the handler; boxing it would churn every caller.
 #[allow(clippy::result_large_err)]
@@ -2090,7 +2090,7 @@ impl KxGateway for GatewayService {
         let binder = self.binder.as_ref().ok_or_else(|| {
             Status::unimplemented("Invoke: no recipe binder wired (host provisioned no recipes)")
         })?;
-        // SERVER-DERIVED identity (SN-8): the party the auth interceptor resolved
+        // SERVER-DERIVED identity: the party the auth interceptor resolved
         // and stashed. Absent ⇒ no caller was resolved ⇒ deny. The wire request
         // carries no party field, so a caller cannot assert who it is.
         let party = request
@@ -2183,7 +2183,7 @@ impl KxGateway for GatewayService {
         // The coordinator salts the run-level chain by this SAME id at the seed-swap
         // (`chain_salt = seed.id`), so the value the client gets back scopes
         // ListReactTurns / the answer poll to THIS invocation's chain on serve's
-        // shared journal — they agree by construction (SN-8: server-derived). Empty
+        // shared journal — they agree by construction (server-derived). Empty
         // for a non-react Invoke.
         let react_chain_salt: Vec<u8> = if react_seed {
             bound
@@ -2204,7 +2204,7 @@ impl KxGateway for GatewayService {
         Ok(Response::new(proto::InvokeResponse {
             instance_id: instance_id.to_vec(),
             recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
-            // SERVER-DERIVED (from bind → compile, never client-supplied — SN-8).
+            // SERVER-DERIVED (from bind → compile, never client-supplied).
             terminal_mote_id: bound.terminal_mote_id.as_bytes().to_vec(),
             react_chain_salt,
         }))
@@ -2217,7 +2217,7 @@ impl KxGateway for GatewayService {
         let author = self.author.as_ref().ok_or_else(|| {
             Status::unimplemented("SubmitWorkflow: no workflow author wired on this gateway")
         })?;
-        // SERVER-DERIVED identity (SN-8): the party the auth interceptor resolved.
+        // SERVER-DERIVED identity: the party the auth interceptor resolved.
         // The wire carries no party field, so a caller cannot assert who it is.
         let party = request
             .extensions()
@@ -2296,7 +2296,7 @@ impl KxGateway for GatewayService {
         &self,
         request: Request<proto::ProposeWorkflowRequest>,
     ) -> Result<Response<proto::ProposeWorkflowResponse>, Status> {
-        // NL authoring (D209.3 / SN-8): run the served model ONCE → decode → compile the
+        // NL authoring: run the served model ONCE → decode → compile the
         // proposed DAG through the vetted kx-planner path (VALIDATE ONLY — no register, no
         // journal). `None` seam ⇒ no served model here (clients hide the NL affordance).
         let proposer = self.proposer.clone().ok_or_else(|| {
@@ -2443,7 +2443,7 @@ impl KxGateway for GatewayService {
                  (falls back to GetApp -> SubmitWorkflow)",
             )
         })?;
-        // SERVER-DERIVED identity (SN-8): the party the auth interceptor resolved.
+        // SERVER-DERIVED identity: the party the auth interceptor resolved.
         let party = request
             .extensions()
             .get::<CallerParty>()
@@ -2471,7 +2471,7 @@ impl KxGateway for GatewayService {
         // The host reads the validated stored envelope, lowers its blueprint through
         // the canonical `kx-blueprint` path, resolves `references.connections` against
         // the caller's OWN registry, and sets the run warrant's secret scope from the
-        // App's declared `guards.secret_scope`. Server-minted warrants (SN-8): the
+        // App's declared `guards.secret_scope`. Server-minted warrants: the
         // envelope carries NO authority.
         let bound = runner
             // Per-run HITL: honor the request's opt-in approval posture. true ⇒ the entry
@@ -2599,7 +2599,7 @@ impl KxGateway for GatewayService {
                 "PutContent: no content writer / uploads ledger wired on this gateway",
             ));
         };
-        // SERVER-DERIVED identity (SN-8): the party the auth interceptor stashed.
+        // SERVER-DERIVED identity: the party the auth interceptor stashed.
         let principal = request
             .extensions()
             .get::<CallerParty>()
@@ -2675,7 +2675,7 @@ impl KxGateway for GatewayService {
         &self,
         _request: Request<proto::ListModelsRequest>,
     ) -> Result<Response<proto::ListModelsResponse>, Status> {
-        // Display/discovery ONLY (SN-8): selection stays a recipe ENUM
+        // Display/discovery ONLY: selection stays a recipe ENUM
         // free-param. An EMPTY catalog is the honest FFI-free answer; only a
         // gateway with no seam at all degrades to `unimplemented`.
         let models = self
@@ -2683,7 +2683,7 @@ impl KxGateway for GatewayService {
             .as_ref()
             .ok_or_else(|| Status::unimplemented("ListModels: no model catalog wired"))?;
         // Model Control v2: recompute `active` live from the active-model selection
-        // (the `loaded`-from-residency precedent) — an advisory display bit, SN-8.
+        // (the `loaded`-from-residency precedent) — an advisory display bit.
         let active_id = self.active_model.as_ref().and_then(|a| a.get());
         let models = models
             .list()?
@@ -2714,7 +2714,7 @@ impl KxGateway for GatewayService {
         &self,
         request: Request<proto::GetServerInfoRequest>,
     ) -> Result<Response<proto::GetServerInfoResponse>, Status> {
-        // SERVER-DERIVED identity (SN-8): config facts go ONLY to an authenticated
+        // SERVER-DERIVED identity: config facts go ONLY to an authenticated
         // caller (the interceptor-resolved party). The wire carries no party field,
         // so a caller cannot assert who it is; an unresolved caller is refused.
         let _party = request
@@ -2768,7 +2768,7 @@ impl KxGateway for GatewayService {
         &self,
         request: Request<proto::LoadModelRequest>,
     ) -> Result<Response<proto::LoadModelResponse>, Status> {
-        // SERVER-DERIVED identity (SN-8): a mutating control op needs an
+        // SERVER-DERIVED identity: a mutating control op needs an
         // authenticated caller (the interceptor-resolved party); the wire carries
         // no party field. Off-journal, off-digest — pure RAM residency.
         let _party = request
@@ -2815,7 +2815,7 @@ impl KxGateway for GatewayService {
         &self,
         request: Request<proto::PullModelRequest>,
     ) -> Result<Response<proto::PullModelResponse>, Status> {
-        // SERVER-DERIVED identity (SN-8): an authenticated caller may REQUEST a pull;
+        // SERVER-DERIVED identity: an authenticated caller may REQUEST a pull;
         // the operator's env opt-in (enforced in the host puller) AUTHORIZES the
         // egress. The wire carries no party field.
         let _party = request
@@ -2939,7 +2939,7 @@ impl KxGateway for GatewayService {
         let apps = self.apps.as_ref().ok_or_else(|| {
             Status::unimplemented("SaveApp: no App catalog wired (apps.db absent)")
         })?;
-        // SERVER-DERIVED identity (SN-8): apps are scoped to the auth-resolved party.
+        // SERVER-DERIVED identity: apps are scoped to the auth-resolved party.
         let principal = caller_principal(&request)?;
         let req = request.into_inner();
         if !valid_bundle_handle(&req.handle) {
@@ -2961,7 +2961,7 @@ impl KxGateway for GatewayService {
         // lock is keyed by the App's own handle. A real lock-store error fails closed;
         // an absent lock seam degrades open (additive feature). This is an off-journal
         // availability gate (the digest is unaffected); the run path still re-resolves
-        // every warrant from the caller's grants (SN-8).
+        // every warrant from the caller's grants.
         if let Some(locks) = self.locks.as_ref() {
             if locks.is_locked(&principal, &req.handle)? {
                 return Err(with_refusal_code(
@@ -3211,7 +3211,7 @@ impl KxGateway for GatewayService {
         let skills = self.skills.as_ref().ok_or_else(|| {
             Status::unimplemented("AddSkill: no skill catalog wired (skills.db absent)")
         })?;
-        // SERVER-DERIVED identity (SN-8): skills are scoped to the auth-resolved party.
+        // SERVER-DERIVED identity: skills are scoped to the auth-resolved party.
         let principal = caller_principal(&request)?;
         let req = request.into_inner();
         if req.manifest_json.is_empty() {
@@ -3230,7 +3230,7 @@ impl KxGateway for GatewayService {
             ));
         }
         // PACK form: a body rides the request — store it via the ONE content-write
-        // seam (SN-8: the ref is server-derived; no uploads-ledger coupling — a
+        // seam (the ref is server-derived; no uploads-ledger coupling — a
         // server-authored skill body is not a client upload). STORED form: an empty
         // body means the manifest must already name instructions_ref (host-enforced).
         let instructions = if req.instructions_body.is_empty() {
@@ -3346,7 +3346,7 @@ impl KxGateway for GatewayService {
         &self,
         request: Request<proto::GetMoteDetailRequest>,
     ) -> Result<Response<proto::MoteDetail>, Status> {
-        // Display ONLY (SN-8): the def is read back for inspection — nothing
+        // Display ONLY: the def is read back for inspection — nothing
         // here authorizes anything. Only a gateway with no seam at all
         // degrades to `unimplemented` (the ListModels pattern).
         let defs = self.mote_defs.as_ref().ok_or_else(|| {
@@ -3467,7 +3467,7 @@ impl KxGateway for GatewayService {
         let catalog = self.catalog.as_ref().ok_or_else(|| {
             Status::unimplemented("RegisterSignature: no signature catalog wired")
         })?;
-        // The host server-derives the id from the decoded manifest (SN-8) and the
+        // The host server-derives the id from the decoded manifest and the
         // registry enforces idempotency + immutability.
         let registered = catalog
             .register(&request.into_inner().manifest)
@@ -3503,7 +3503,7 @@ impl KxGateway for GatewayService {
         // its recipe form and re-invoke. A serve without the sidecar wired degrades
         // forward-compatibly to `unimplemented`; a run with nothing captured (pre-
         // PR-D, or a rebuilt-to-empty sidecar) is an honest `not_found`. No
-        // read-time party filter (single-tenant; the kx-cloud SN-8 wall is above).
+        // read-time party filter (single-tenant; the kx-cloud identity wall is above).
         let store = self.run_inputs.as_ref().ok_or_else(|| {
             Status::unimplemented("GetRunInputs: no run-inputs store wired (run_inputs.db absent)")
         })?;
@@ -3707,7 +3707,7 @@ impl KxGateway for GatewayService {
         let store = self.feedback.as_ref().ok_or_else(|| {
             Status::unimplemented("SubmitFeedback: no feedback store wired (feedback.db absent)")
         })?;
-        // SERVER-DERIVED identity (SN-8): the party the auth interceptor stashed —
+        // SERVER-DERIVED identity: the party the auth interceptor stashed —
         // never the wire request.
         let principal = request
             .extensions()
@@ -3742,7 +3742,7 @@ impl KxGateway for GatewayService {
         // SERVER-derived, DETERMINISTIC id over (message_id, principal): a
         // re-rating of the SAME answer by the SAME party maps to the SAME id, so
         // the host's `INSERT OR REPLACE` overwrites (the "changed my mind" UX).
-        // SN-8: the client can neither name nor forge it.
+        // the client can neither name nor forge it.
         let mut keyed = Vec::with_capacity(16 + req.message_id.len() + 1 + principal.len());
         keyed.extend_from_slice(b"kx-feedback-id\0");
         keyed.extend_from_slice(req.message_id.as_bytes());
@@ -3860,8 +3860,8 @@ impl KxGateway for GatewayService {
     ) -> Result<Response<proto::RegisterToolResponse>, Status> {
         // PR-6a: a durable write into the off-journal tools.db. The host derives
         // identity + capability server-side (HumanAuthored; net_scope = egress to
-        // the SSRF-vetted server_host) — the client supplies NO warrant / tool_id
-        // (SN-8). A serve without the registry wired degrades to `unimplemented`.
+        // the SSRF-vetted server_host) — the client supplies NO warrant / tool_id.
+        // A serve without the registry wired degrades to `unimplemented`.
         // DIALING server_host (the live remote tool round) is PR-6b/Cloud.
         let admin = self.tool_admin.as_ref().ok_or_else(|| {
             Status::unimplemented("RegisterTool: no tool registry wired (tools.db absent)")
@@ -3966,7 +3966,7 @@ impl KxGateway for GatewayService {
     ) -> Result<Response<proto::RegisterMcpServerResponse>, Status> {
         // PR-6b-1: the live untrusted-egress surface. The host vets the host,
         // DIALS the server (initialize -> tools/list), and registers its tools
-        // into the same tools.db (each namespaced `<server>/<remote>`). SN-8: the
+        // into the same tools.db (each namespaced `<server>/<remote>`). The
         // client supplies NO warrant / tool_id; ids are server-derived.
         let admin = self.mcp_admin.as_ref().ok_or_else(|| {
             Status::unimplemented("RegisterMcpServer: no MCP gateway wired (connections.db absent)")
@@ -4231,7 +4231,7 @@ impl KxGateway for GatewayService {
 
     // ── D113 (trigger seam): event ingress. Each inbound event starts a fresh run
     // via the SAME Invoke propose-proxy the host trigger admin owns (coordinator stays
-    // the sole journal writer; frozen trio untouched). SN-8: server-derived id + owner.
+    // the sole journal writer; frozen trio untouched). Server-derived id + owner.
     async fn register_trigger(
         &self,
         request: Request<proto::RegisterTriggerRequest>,
@@ -4499,7 +4499,7 @@ impl KxGateway for GatewayService {
                 "PutContextBundle: no context-bundle store wired (bundles.db absent)",
             )
         })?;
-        // SERVER-DERIVED identity (SN-8): bundles are scoped to the auth-resolved party.
+        // SERVER-DERIVED identity: bundles are scoped to the auth-resolved party.
         let principal = request
             .extensions()
             .get::<CallerParty>()
@@ -4941,7 +4941,7 @@ impl KxGateway for GatewayService {
         };
         Ok(Response::new(proto::ScaffoldAppResponse {
             // Multi-run by design — correlate by `branch_handle` (poll GetScaffoldStatus
-            // + GetBranch). Left empty rather than asserting a single run id (GR15).
+            // + GetBranch). Left empty rather than asserting a single run id.
             instance_id: Vec::new(),
             branch_handle,
             resumed,
@@ -5066,7 +5066,7 @@ impl KxGateway for GatewayService {
         // empty, or duplicate-bearing spec (`invalid_argument` on violation).
         let spec = crate::toolscout_view::validate_bundle_spec(&request.into_inner())
             .map_err(Status::invalid_argument)?;
-        // ADVISORY end to end (SN-8): the view ranks + dry-runs the real
+        // ADVISORY end to end: the view ranks + dry-runs the real
         // lowering gate; no journal write, no digest change, no authorization.
         let score = view.score_bundle(&spec);
         Ok(Response::new(crate::toolscout_view::bundle_score_to_proto(

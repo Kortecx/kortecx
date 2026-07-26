@@ -1,6 +1,6 @@
 //! `kx-llamacpp-sys/build.rs` — builds llama.cpp and generates Rust bindings.
 //!
-//! Per `03-ffi-and-inference.md` §1 + D28:
+//! Per the FFI boundary rule + D28:
 //! - llama.cpp is the OSS in-process inference backend.
 //! - CUDA is disabled (GPU-batched serving is cloud-side per D28).
 //! - llama.cpp's native platform defaults handle Metal on Apple Silicon, CPU elsewhere.

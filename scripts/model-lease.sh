@@ -47,7 +47,7 @@
 #   bash scripts/model-lease.sh with --label <s> -- <cmd...>   # acquire, run, ALWAYS release
 #
 # Exit: 0 = held / released / free · 1 = BUSY (another session holds it) · 2 = usage error
-# Portable bash (Linux + macOS, SN-7). Advisory: it guards the convention, not the kernel.
+# Portable bash (Linux + macOS). Advisory: it guards the convention, not the kernel.
 set -uo pipefail
 
 LEASE_ROOT="${KX_LEASE_DIR:-$HOME/.kortecx/leases}"

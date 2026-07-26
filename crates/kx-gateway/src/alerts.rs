@@ -29,7 +29,7 @@
 //! ## OSS = the read-only VIEW
 //! There is no acknowledge/resolve mutation here — the triage lifecycle, the
 //! alert-rule engine, and outbound notifications are a CLOUD capability
-//! (D156 / D129; GR19).
+//! (D156 / D129).
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -97,7 +97,7 @@ fn severity_for(reason: FailureReason) -> &'static str {
     }
 }
 
-/// The server-derived, re-fold-stable alert id (SN-8: the client can neither name
+/// The server-derived, re-fold-stable alert id (the client can neither name
 /// nor forge it). Deterministic over `(mote_id, seq)` so a re-fold of the same
 /// `Failed` fact maps to the same id.
 fn alert_id_for(mote_id: &[u8; 32], seq: u64) -> [u8; 16] {
@@ -643,7 +643,7 @@ mod tests {
         );
     }
 
-    /// GR10 spike (release, `--ignored`): per-entry fold cost + a list read over a
+    /// Latency spike (release, `--ignored`): per-entry fold cost + a list read over a
     /// large inbox. `cargo test -p kx-gateway --release fold_spike -- --ignored --nocapture`.
     #[test]
     #[ignore = "perf spike — run explicitly with --release --ignored --nocapture"]

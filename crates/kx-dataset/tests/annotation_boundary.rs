@@ -5,7 +5,7 @@
 //! `kx-dataset` nor import the annotation projection. The real wall is the
 //! dependency graph (the compiler enforces it every build); this test is a tripwire
 //! that fails loudly the instant the wall erodes — e.g. someone adds a `kx-dataset`
-//! dependency to move curation "closer" to the executor (which is itself the SN-8
+//! dependency to move curation "closer" to the executor (which is itself the boundary
 //! violation).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -49,7 +49,7 @@ fn guarantee_path_crates_do_not_depend_on_kx_dataset() {
             !toml.contains("kx-dataset"),
             "{guard}/Cargo.toml depends on kx-dataset. The annotation projection is an \
              off-truth-path advisory layer; the guarantee path MUST NOT reach it. \
-             Moving curation 'closer' to the executor is itself the SN-8 violation."
+             Moving curation 'closer' to the executor is itself the violation."
         );
     }
 }
@@ -71,7 +71,7 @@ fn guarantee_path_crates_do_not_reference_the_dataset_or_annotation_layer() {
             assert!(
                 !body.contains("kx_dataset") && !body.contains("AnnotationStore"),
                 "{} references the dataset / annotation layer — forbidden on the \
-                 guarantee path (SN-8 wall: a usefulness score must never reach a gate)",
+                 guarantee path (identity wall: a usefulness score must never reach a gate)",
                 f.display()
             );
         }

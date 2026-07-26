@@ -15,7 +15,7 @@
 //!   (the `apps.db`/D160 posture): a skill references a content-store blob +
 //!   registry ids; it is NOT journal-derivable. Never journaled, never a
 //!   `MoteId` input, never a digest input.
-//! - **Carries NO authority (SN-8).** The manifest holds instructions + a WISH
+//! - **Carries NO authority.** The manifest holds instructions + a WISH
 //!   set only — the host refuses authority deny-keys fail-closed, and the bind
 //!   grants only `wish ∩ caller grants ∩ fireable`. A skill on its own grants
 //!   nothing (the conformance harness pins it).
@@ -45,7 +45,7 @@ pub const MAX_SKILL_INSTRUCTIONS_BODY_BYTES: usize = 256 << 10; // 256 KiB
 pub const SKILL_PREVIEW_CAP_BYTES: usize = 4 << 10; // 4 KiB
 
 /// The stored instructions the `AddSkill` handler minted via the content-write
-/// seam (SN-8: the ref is server-derived; the preview is display-only).
+/// seam (the ref is server-derived; the preview is display-only).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AddedInstructions {
     /// The 32-byte content-store ref of the stored body.

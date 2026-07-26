@@ -26,7 +26,7 @@
 //! `kx-executor` re-exports this crate's surface for back-compat, so its own
 //! lifecycle / commit-protocol modules and tests see the same names.
 //!
-//! ## SN-8 — model proposes, runtime enforces
+//! ## Model proposes, runtime enforces
 //!
 //! Every predicate is a **pure, total** function of its inputs — same Mote, same
 //! resolution ⇒ same refusal (no clock / host / RNG / float). A refusal is a

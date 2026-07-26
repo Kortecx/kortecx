@@ -4,12 +4,12 @@
 //! `DiscoverServerTools` / `CallMcpTool`). Tri-surface parity with the UI + SDK.
 //!
 //! `fire` is the operator DIAGNOSTIC — exercise ONE registered tool live through the
-//! broker (SN-8 re-enforced server-side; no journal fact). The agentic loop fires the
+//! broker (authority re-enforced server-side; no journal fact). The agentic loop fires the
 //! same tools durably; `fire` is the "does this connector actually work" check.
 //!
-//! The runtime is a SECURE GATEWAY (D132/D159/GR19): registering a server DIALS
+//! The runtime is a SECURE GATEWAY: registering a server DIALS
 //! it (the live untrusted-egress surface — admission + dial-time SSRF vetting +
-//! per-server rate-limit). SN-8: the server derives the connection/tool ids; the
+//! per-server rate-limit). The server derives the connection/tool ids; the
 //! CLI never sends a warrant, and a credential is referenced by NAME only (D81).
 
 use kx_proto::proto;

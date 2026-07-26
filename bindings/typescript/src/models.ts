@@ -1,6 +1,6 @@
 /**
  * The Batch A model-discovery view — one `ListModels` entry. Display/discovery
- * ONLY (SN-8): model *selection* stays a recipe ENUM free-param validated
+ * ONLY: model *selection* stays a recipe ENUM free-param validated
  * server-side at binding; nothing here authorizes a model route. An FFI-free
  * gateway answers with an EMPTY list (honest, not an error).
  */

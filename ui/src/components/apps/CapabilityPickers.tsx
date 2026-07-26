@@ -14,7 +14,7 @@
  * business (envelope + `SaveApp` on the detail page; local state + `.useTool()` /
  * `.skill()` / `.withConnection()` / `.steer({ reach })` on the create form).
  *
- * Attaching grants NOTHING (SN-8): every entry is a WISH the server re-intersects at
+ * Attaching grants NOTHING: every entry is a WISH the server re-intersects at
  * `RunApp` against the caller's grants and the live broker. Chips, never a controlled
  * `<select>` (the UI-3 e2e gotcha). Each catalog hook's `notWired` degradation is a
  * sentence, never an empty picker — an empty picker reads as "you have no tools"

@@ -108,7 +108,7 @@ fn answer_arm() -> Value {
 /// whole-response `format` honestly degrades — `T-OLLAMA-GRAMMAR-FORMAT`), a rerank
 /// turn's ENTIRE output is the permutation, so a strict whole-response schema is
 /// exactly right here. `uniqueItems`/range are advisory — the fail-closed
-/// `kx_toolcall::parse_permutation` is the authority on permutation validity (SN-8).
+/// `kx_toolcall::parse_permutation` is the authority on permutation validity.
 pub(crate) fn render_permutation(n: u32) -> Value {
     let max = n.saturating_sub(1);
     json!({

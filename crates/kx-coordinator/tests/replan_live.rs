@@ -256,7 +256,7 @@ async fn child_failure_drives_a_live_replan_round() {
     assert!(prompt.starts_with(BASE_PROMPT), "preserves the base prompt");
     assert!(
         prompt.contains("dead-lettered"),
-        "renders the low-entropy failure token (SN-8: no result bytes): {prompt}"
+        "renders the low-entropy failure token (no result bytes): {prompt}"
     );
 }
 

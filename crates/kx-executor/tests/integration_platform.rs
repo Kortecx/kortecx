@@ -1,4 +1,4 @@
-//! Platform-conditional `default_executor()` test (SN-7 — cross-platform).
+//! Platform-conditional `default_executor()` test (cross-platform).
 //! Asserts the factory picks the right backend per `target_os`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]

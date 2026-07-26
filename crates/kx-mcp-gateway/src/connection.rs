@@ -4,7 +4,7 @@
 //! spec (stdio command, or an HTTP endpoint), an OPTIONAL secret-less credential
 //! reference (the env-var / vault key NAME, never the secret — D81), and a
 //! folded health status. Its `connection_id` is SERVER-DERIVED from the operator
-//! name (SN-8: the client never forges it) and is NEVER a `MoteId` / journal /
+//! name (the client never forges it) and is NEVER a `MoteId` / journal /
 //! digest input — connections live in an off-journal, rebuildable sidecar.
 
 use kx_warrant::{Host, NetScope};
@@ -178,8 +178,8 @@ impl Connection {
     }
 }
 
-/// Derive a server's stable 16-byte id from its operator name (server-derived,
-/// SN-8). Deterministic ⇒ a sidecar rebuild re-materializes the same id set.
+/// Derive a server's stable 16-byte id from its operator name (server-derived).
+/// Deterministic ⇒ a sidecar rebuild re-materializes the same id set.
 #[must_use]
 pub fn connection_id_of(name: &str) -> [u8; 16] {
     let mut hasher = blake3::Hasher::new();

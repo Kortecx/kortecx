@@ -4,7 +4,7 @@
 The execution exhaust the HOST records as motes actually run: wall-clock, model
 usage, the fired tool. Lives in a rebuildable-to-empty ``telemetry.db`` sidecar
 — audit/display ONLY, never truth, never identity, never a digest input. Kept
-in its own module (the runs.py / module-per-concern precedent). SN-8: ids are
+in its own module (the runs.py / module-per-concern precedent). Ids are
 server-derived; the SDK only hex-encodes the bytes.
 """
 

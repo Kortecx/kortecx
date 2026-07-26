@@ -16,7 +16,7 @@
 // IDENTITY INVARIANT (load-bearing, same as coordinator.proto). Every MoteId /
 // content ref / instance_id is computed Rust-side by the runtime. ProjectionView
 // and MoteSnapshot are SERVER-DERIVED from the journal fold — the client NEVER
-// computes a MoteId (SN-8 / D70). Protobuf carries field VALUES only.
+// computes a MoteId. Protobuf carries field VALUES only.
 //
 // Every enum carries an explicit *_UNSPECIFIED = 0 sentinel; domain
 // discriminants are +1-shifted; the Rust TryFrom boundary REJECTS UNSPECIFIED.
@@ -72,7 +72,7 @@ export const SubmitRunRequestSchema: GenMessage<SubmitRunRequest> = /*@__PURE__*
  * `react_seed` (PR-2d-1, additive, default-false): mark this Mote as the SEED of
  * a live ReAct chain. The coordinator swaps in a RUN-SALTED turn-0 Mote built
  * from the seed's prompt + warrant + model route (the salt is the server-assigned
- * `instance_id`, unknowable client-side — SN-8: no client-controlled identity)
+ * `instance_id`, unknowable client-side — no client-controlled identity)
  * and anchors a durable `ReactRound` fact. A wire/admission flag ONLY — it never
  * enters `MoteId`/any digest; old clients send `false` and behave byte-
  * identically (the `accept_at_least_once` precedent).
@@ -135,7 +135,7 @@ export type RunHandle = Message<"kortecx.v1.RunHandle"> & {
    * the coordinator uses verbatim as the chain's `step_salt` (state.rs: `step_salt =
    * *launch_id.as_bytes()`). EMPTY (0 bytes) when there is no agentic step, or more than
    * one (ambiguous — the client falls back to instance_id-only scoping, like an old
-   * server). Never client-supplied (SN-8).
+   * server). Never client-supplied.
    *
    * 32B — the agentic-step chain key; EMPTY if none / ambiguous
    *
@@ -146,7 +146,7 @@ export type RunHandle = Message<"kortecx.v1.RunHandle"> & {
   /**
    * (additive, mirrors InvokeResponse.terminal_mote_id): the bound recipe's TERMINAL
    * (sink) Mote — the one whose committed result is the run's output. Server-derived from
-   * the binder (SN-8); never client-supplied.
+   * the binder; never client-supplied.
    *
    * WHY THIS EXISTS SEPARATELY FROM `react_chain_salt`. Both identify a Mote in THIS
    * submission, but they answer different questions and must not be conflated. The salt is
@@ -243,7 +243,7 @@ export type InvokeResponse = Message<"kortecx.v1.InvokeResponse"> & {
   /**
    * PR-R1 (additive): the per-invocation ReAct chain key for a react Invoke. A live
    * `kx serve` shares ONE journal/instance_id across every Invoke, so the chain key
-   * (= the bound react seed Mote's id, server-derived from the bound args — SN-8)
+   * (= the bound react seed Mote's id, server-derived from the bound args)
    * scopes ListReactTurns/the answer poll to THIS invocation's chain. Empty (0 bytes)
    * for a non-react Invoke. An old client ignores it; a new client reads "" from an
    * old server (D120.6) and falls back to instance_id-only scoping.
@@ -902,7 +902,7 @@ export const ListRunsResponseSchema: GenMessage<ListRunsResponse> = /*@__PURE__*
  * The Invoke args submitted with a run are captured into an OFF-JOURNAL,
  * OFF-DIGEST sidecar (the feedback.db/uploads.db posture: rebuildable-to-EMPTY,
  * principal server-resolved audit-only, NO read-time party filter — the
- * kx-cloud SN-8 wall enforces tenancy above). GetRunInputs reads them back so a
+ * kx-cloud identity wall enforces tenancy above). GetRunInputs reads them back so a
  * run recovered from ListRuns (no client-side localStorage) can pre-fill its
  * recipe form and be re-invoked with edits. The args never become committed
  * facts ⇒ the canonical projection digest is invariant by construction.
@@ -1153,7 +1153,7 @@ export const GetRecipeFormResponseSchema: GenMessage<GetRecipeFormResponse> = /*
  * ---------------------------------------------------------------------------
  * PR-4 Batch D — SearchRecipes: ADVISORY recipe discovery over the kx-catalog
  * DiscoveryIndex (fuzzy-in/exact-out) + AdvisoryMetadataStore. Additive RPC
- * (D120.6). SN-8: score_bp is DISPLAY-ONLY (integer basis points, never a float,
+ * (D120.6). Score_bp is DISPLAY-ONLY (integer basis points, never a float,
  * never a committed fact, never an authorization) — a search can SURFACE a
  * recipe, never invoke one. Invoke stays the sole authorization gate. An old
  * gateway without the seam returns UNIMPLEMENTED.
@@ -1193,7 +1193,7 @@ export const SearchRecipesRequestSchema: GenMessage<SearchRecipesRequest> = /*@_
 
 /**
  * One recipe's advisory rank against the intent, in integer basis points (floats
- * never cross this wire — the SN-8 no-persisted-confidence rule): exact handle =
+ * never cross this wire — the no-persisted-confidence rule): exact handle =
  * 10000 > path-prefix > tag-match > fuzzy; absent string rungs alone decide.
  *
  * @generated from message kortecx.v1.ScoredRecipe
@@ -1689,7 +1689,7 @@ export type IngestDocument = Message<"kortecx.v1.IngestDocument"> & {
 
   /**
    * RESERVED (forward-compat): accepted on the wire but NOT YET persisted or
-   * returned. The durable id is ALWAYS the server-derived content hash (SN-8), so a
+   * returned. The durable id is ALWAYS the server-derived content hash, so a
    * client `doc_id` is advisory only; per-document metadata is a planned CLOUD add.
    *
    * @generated from field: optional string doc_id = 3;
@@ -1844,7 +1844,7 @@ export type DatasetHit = Message<"kortecx.v1.DatasetHit"> & {
   content: Uint8Array;
 
   /**
-   * SN-8: DISPLAY-ONLY similarity; NEVER an identity input
+   * DISPLAY-ONLY similarity; NEVER an identity input
    *
    * @generated from field: float score = 3;
    */
@@ -1906,7 +1906,7 @@ export const QueryDatasetResponseSchema: GenMessage<QueryDatasetResponse> = /*@_
  * ONLY content-addressed refs + a DISPLAY-ONLY integer basis-point score — the
  * caller joins back to bytes with an EXACT GetContent on the ref. The "fuzzy in,
  * exact out" contract: the approximate similarity ranking surfaces candidates,
- * but identity is always the exact content hash (SN-8 — the score never enters a
+ * but identity is always the exact content hash (the score never enters a
  * committed fact / a MoteId / an identity decision; it is off-digest, advisory).
  * Same scope + degrade as the dataset RPCs: operator-global (per-party isolation
  * is CLOUD, D129); a None FuzzyDiscoveryView seam ⇒ UNIMPLEMENTED; an unknown
@@ -1970,7 +1970,7 @@ export type FuzzyHit = Message<"kortecx.v1.FuzzyHit"> & {
   contentRef: Uint8Array;
 
   /**
-   * 0..=10000 DISPLAY-ONLY basis points; NEVER an identity input (SN-8)
+   * 0..=10000 DISPLAY-ONLY basis points; NEVER an identity input
    *
    * @generated from field: uint32 score_bp = 2;
    */
@@ -2276,7 +2276,7 @@ export type ReactTurnSummary = Message<"kortecx.v1.ReactTurnSummary"> & {
    * Governance observability (additive): the chain's run-fixed warrant axes, decoded
    * from the anchor `ReactRound.warrant_ref` — the tool ids the chain may fire and the
    * secret refs it may resolve (D110.3). NAMES/REFS ONLY — never a secret value
-   * (SN-8/D81), the same discipline as ListSecretNames. Every row of a chain repeats
+   * (Refs-not-values), the same discipline as ListSecretNames. Every row of a chain repeats
    * its chain-level grants (the warrant is run-fixed); EMPTY when the warrant blob is
    * absent. Makes a dropped capability axis VISIBLE instead of silent (the class behind
    * T-RUNAPP-SECRET-SCOPE-OBSERVATION). Additive (D120.6): an old client ignores them; a
@@ -2403,7 +2403,7 @@ export type ReRankTurnSummary = Message<"kortecx.v1.ReRankTurnSummary"> & {
 
   /**
    * The reordered SOURCE indices (a permutation of 0..candidate_count) — the Vec
-   * index is the NEW rank. Set iff outcome == "reranked"; empty otherwise. SN-8:
+   * index is the NEW rank. Set iff outcome == "reranked"; empty otherwise.
    * an exact permutation the runtime enforced, never a similarity score.
    *
    * @generated from field: repeated uint32 permutation = 7;
@@ -2724,7 +2724,7 @@ export type MemoryHit = Message<"kortecx.v1.MemoryHit"> & {
   content: Uint8Array;
 
   /**
-   * SN-8: DISPLAY-ONLY similarity; NEVER an identity input
+   * DISPLAY-ONLY similarity; NEVER an identity input
    *
    * @generated from field: float score = 3;
    */
@@ -3412,7 +3412,7 @@ export const ScoreTaskBundleRequestSchema: GenMessage<ScoreTaskBundleRequest> = 
 
 /**
  * One manifest's advisory rank against the bundle intent, in integer basis
- * points (floats never cross this wire — the SN-8 no-persisted-confidence
+ * points (floats never cross this wire — the no-persisted-confidence
  * rule): exact keyword/phrase = 10000 > Jaro-Winkler fuzz ≤ 9000 > embedding
  * cosine ≤ 8000 (absent without a server embedder — string rungs alone decide).
  *
@@ -3521,7 +3521,7 @@ export type WorkflowStep = Message<"kortecx.v1.WorkflowStep"> & {
   bodySignatureId: Uint8Array;
 
   /**
-   * TOOL: the single {tool_id: version} the step fires. MODEL (PR-9b/D161.1): a non-empty contract = the deterministic-agentic grant SET (`model@tool` in the chains DSL); authored cross-surface in PR-9b-1, the bounded reason→tool→observe LOOP executes in PR-9b-2 (until then the server fails closed). AUTHORITY still comes only from server vetting (client tool_grants stay refused — SN-8).
+   * TOOL: the single {tool_id: version} the step fires. MODEL (PR-9b/D161.1): a non-empty contract = the deterministic-agentic grant SET (`model@tool` in the chains DSL); authored cross-surface in PR-9b-1, the bounded reason→tool→observe LOOP executes in PR-9b-2 (until then the server fails closed). AUTHORITY still comes only from server vetting (client tool_grants stay refused).
    *
    * @generated from field: map<string, string> tool_contract = 5;
    */
@@ -3633,7 +3633,7 @@ export const SubmitWorkflowRequestSchema: GenMessage<SubmitWorkflowRequest> = /*
 
 /**
  * ---------------------------------------------------------------------------
- * NL workflow authoring — propose-then-confirm (D209.3 / SN-8). ProposeWorkflow
+ * NL workflow authoring — propose-then-confirm. ProposeWorkflow
  * runs the SERVED model ONCE to turn a natural-language goal into a PROPOSED
  * multi-step DAG, then decodes + compiles it through the vetted kx-planner path:
  * the model names ONLY role + intent + edges (the minimal trust surface); every
@@ -3674,7 +3674,7 @@ export const ProposeWorkflowRequestSchema: GenMessage<ProposeWorkflowRequest> = 
  * One proposed step. role/intent/kind are the model's plan (minimal trust
  * surface); model_id + tool_contract are the SERVER-resolved recipe axes,
  * returned for DISPLAY only so the client can render the granted capabilities —
- * the authoritative axes are re-derived server-side at author/run (SN-8).
+ * the authoritative axes are re-derived server-side at author/run.
  *
  * @generated from message kortecx.v1.ProposedStep
  */
@@ -3856,7 +3856,7 @@ export const PutContentRequestSchema: GenMessage<PutContentRequest> = /*@__PURE_
  */
 export type PutContentResponse = Message<"kortecx.v1.PutContentResponse"> & {
   /**
-   * 32B — SERVER-DERIVED blake3 of payload (SN-8)
+   * 32B — SERVER-DERIVED blake3 of payload
    *
    * @generated from field: bytes content_ref = 1;
    */
@@ -4080,7 +4080,7 @@ export type ModelSummary = Message<"kortecx.v1.ModelSummary"> & {
   /**
    *   "ollama" (daemon-discovered) | "pulled-ollama" |
    *   "pulled-url" (runtime `kx models pull`). Display/audit
-   *   only (SN-8); empty on an old host (additive)
+   *   only; empty on an old host (additive)
    *
    * Model Control v2: true iff this is the server's ACTIVE
    *
@@ -4242,7 +4242,7 @@ export const OffloadModelResponseSchema: GenMessage<OffloadModelResponse> = /*@_
 /**
  * Model Control v2 (model acquisition): download a model and REGISTER it at runtime
  * so it is immediately usable WITHOUT restarting `kx serve`. HOST INFRASTRUCTURE, not
- * a client Mote (SN-8): a download mutates operator/host state (filesystem, served
+ * a client Mote: a download mutates operator/host state (filesystem, served
  * set, network egress) — axes a client warrant never asserts. TWO-KEY GATE: an
  * authenticated caller REQUESTS the pull; the operator's env opt-in
  * (KX_SERVE_ALLOW_MODEL_PULL) AUTHORIZES the egress. Off-journal / off-digest.
@@ -4444,7 +4444,7 @@ export const GetPullStatusResponse_PhaseSchema: GenEnum<GetPullStatusResponse_Ph
  * off-journal advisory hint a client uses to pick the per-model chat handle, so the
  * default is switchable from CLI/SDK (a client-local default cannot be). The server
  * NEVER silently re-routes kx/recipes/chat; routing stays the recipe-handle / ENUM
- * free-param (SN-8). The model_id MUST be in the served catalog (fail-closed).
+ * free-param. The model_id MUST be in the served catalog (fail-closed).
  *
  * @generated from message kortecx.v1.SetActiveModelRequest
  */
@@ -4488,9 +4488,9 @@ export const SetActiveModelResponseSchema: GenMessage<SetActiveModelResponse> = 
  * skill/memory artifact rail, a 4-axis steering config, and per-step replay
  * intent. The envelope carries NO authority (no warrant/grant/secret/credential/
  * instance_id): `app run` re-compiles the blueprint and the server re-resolves
- * every warrant from the caller's OWN grants (SN-8). Persisted in an off-journal,
+ * every warrant from the caller's OWN grants. Persisted in an off-journal,
  * rebuildable-to-EMPTY `apps.db` sidecar scoped to the authoring party; the server
- * derives `app_ref` from the canonical envelope (SN-8). Import/clone are LOCAL +
+ * derives `app_ref` from the canonical envelope. Import/clone are LOCAL +
  * client-orchestrated (PutContent the App's content closure, then SaveApp under the
  * importer's OWN principal with `source_digest` recording local lineage) — there is
  * no dedicated server import RPC. All three RPCs are off-journal / off-digest.
@@ -4621,7 +4621,7 @@ export const SaveAppRequestSchema: GenMessage<SaveAppRequest> = /*@__PURE__*/
  */
 export type SaveAppResponse = Message<"kortecx.v1.SaveAppResponse"> & {
   /**
-   * 16B server-derived (SN-8)
+   * 16B server-derived
    *
    * @generated from field: bytes app_ref = 1;
    */
@@ -4899,7 +4899,7 @@ export const GetAppManifestResponseSchema: GenMessage<GetAppManifestResponse> = 
  * (bounded by the declared connections) so a credentialed connector (e.g. Gmail) can
  * actually be dialed inside the agentic loop. The envelope carries NO authority (it is
  * server-owned + validated; the client cannot forge references or run arbitrary steps
- * under the App's credentials — SN-8). Returns the same RunHandle as SubmitWorkflow.
+ * under the App's credentials). Returns the same RunHandle as SubmitWorkflow.
  * Off-journal / off-digest for connection/secret resolution; the resolved warrant is
  * deterministic (recovery replays it byte-identically). `args` (optional) merge into
  * the blueprint's entry params (server-side, the same shape the CLI injected). A
@@ -4947,7 +4947,7 @@ export const RunAppRequestSchema: GenMessage<RunAppRequest> = /*@__PURE__*/
  * off-digest. ScaffoldApp drives a server-side async orchestration (plan step
  * -> N fixed-skeleton write steps -> N AdvanceBranch) into a fresh CoW-on-CAS
  * branch, reusing the proven single-step react-edit pattern; the frozen
- * coordinator loop is UNTOUCHED. Warrants are SERVER-minted (SN-8/BLOCKER#5):
+ * coordinator loop is UNTOUCHED. Warrants are SERVER-minted:
  * the `instruction` is DATA only. The lock gates the single AdvanceBranch write
  * chokepoint (a locked App refuses further agentic in-CAS edits).
  * ---------------------------------------------------------------------------
@@ -5159,7 +5159,7 @@ export const GetScaffoldStatusResponse_PhaseSchema: GenEnum<GetScaffoldStatusRes
  * SERVER computed from this caller's own ceiling (party authority INTERSECT
  * broker-fireable INTERSECT registry — the same ceiling GetAppManifest reports
  * against), and everything it names is intersected back against that ceiling
- * host-side. Naming is not granting (SN-8): what survives is a WISH that RunApp
+ * host-side. Naming is not granting: what survives is a WISH that RunApp
  * intersects AGAIN at fire. The model can only ask for what the caller could
  * already have attached by hand; it can never grant, and never reach past the
  * ceiling.
@@ -5230,7 +5230,7 @@ export const DeriveAppRequestSchema: GenMessage<DeriveAppRequest> = /*@__PURE__*
  * One designed step. role/intent are the model's design; kind/model_id are the
  * SERVER-resolved recipe axes; tool_contract is what SURVIVED the intersection —
  * the ceiling's version, never the model's. Display only: every axis is re-derived
- * server-side when the approved App is authored and run (SN-8).
+ * server-side when the approved App is authored and run.
  *
  * @generated from message kortecx.v1.DerivedAppStep
  */
@@ -5895,7 +5895,7 @@ export const AddSkillRequestSchema: GenMessage<AddSkillRequest> = /*@__PURE__*/
  */
 export type AddSkillResponse = Message<"kortecx.v1.AddSkillResponse"> & {
   /**
-   * 16B server-derived (SN-8)
+   * 16B server-derived
    *
    * @generated from field: bytes skill_ref = 1;
    */
@@ -6574,7 +6574,7 @@ export const ListMoteTelemetryResponseSchema: GenMessage<ListMoteTelemetryRespon
  * whole `telemetry.db` sidecar server-side (`SUM ... GROUP BY model_id`) so
  * CLI/SDK/UI render ONE truth (no per-surface drift). Same boundary as
  * `ListMoteTelemetry`: off-journal, off-digest, rebuildable-to-EMPTY,
- * AUDIT/DISPLAY ONLY. No cost/$ field — billing is CLOUD (D129/D156/GR19). A
+ * AUDIT/DISPLAY ONLY. No cost/$ field — billing is CLOUD. A
  * serve without the sidecar answers `unimplemented` (forward-compat degrade).
  *
  * @generated from message kortecx.v1.ListTelemetrySummaryRequest
@@ -6741,7 +6741,7 @@ export const SubmitFeedbackRequestSchema: GenMessage<SubmitFeedbackRequest> = /*
  */
 export type SubmitFeedbackResponse = Message<"kortecx.v1.SubmitFeedbackResponse"> & {
   /**
-   * 16B SERVER-derived id (deterministic over (message_id, principal); SN-8)
+   * 16B SERVER-derived id (deterministic over (message_id, principal))
    *
    * @generated from field: bytes feedback_id = 1;
    */
@@ -7011,7 +7011,7 @@ export const ListAlertsRequestSchema: GenMessage<ListAlertsRequest> = /*@__PURE_
  */
 export type AlertSummary = Message<"kortecx.v1.AlertSummary"> & {
   /**
-   * 16B SERVER-derived, re-fold-stable id (blake3 over (mote_id, seq); SN-8 — no existence oracle)
+   * 16B SERVER-derived, re-fold-stable id (blake3 over (mote_id, seq); no existence oracle)
    *
    * @generated from field: bytes alert_id = 1;
    */
@@ -7100,7 +7100,7 @@ export const ListAlertsResponseSchema: GenMessage<ListAlertsResponse> = /*@__PUR
 
 /**
  * A tool parameter's declared type + bound (the MCP inputSchema analogue;
- * CLOSED set, NO float — SN-8). `ty`: "str"|"bytes"|"int"|"bool"|"enum".
+ * CLOSED set, NO float). `ty`: "str"|"bytes"|"int"|"bool"|"enum".
  *
  * @generated from message kortecx.v1.ToolParamSpec
  */
@@ -7243,7 +7243,7 @@ export const RegisterToolRequestSchema: GenMessage<RegisterToolRequest> = /*@__P
  */
 export type RegisterToolResponse = Message<"kortecx.v1.RegisterToolResponse"> & {
   /**
-   * 16B SERVER-DERIVED id (SN-8)
+   * 16B SERVER-DERIVED id
    *
    * @generated from field: bytes tool_id = 1;
    */
@@ -7342,7 +7342,7 @@ export const DiscoverToolsRequestSchema: GenMessage<DiscoverToolsRequest> = /*@_
 
 /**
  * One registered tool's durable INVENTORY row (governance view). net_scope /
- * fs_scope are DISPLAY summaries; authority never rides this wire (SN-8).
+ * fs_scope are DISPLAY summaries; authority never rides this wire.
  *
  * @generated from message kortecx.v1.RegisteredTool
  */
@@ -7453,7 +7453,7 @@ export const DiscoverToolsResponseSchema: GenMessage<DiscoverToolsResponse> = /*
  * (a local stdio command or a remote HTTP endpoint); the runtime DIALS it
  * (initialize -> tools/list), discovers its tools into the SAME durable registry
  * (each id namespaced `<server_name>/<remote>`), and governs the connection in an
- * off-journal connections.db sidecar. SN-8: connection_id + tool ids are
+ * off-journal connections.db sidecar. Connection_id + tool ids are
  * server-derived; the credential is referenced by NAME only (never the secret).
  *
  * @generated from message kortecx.v1.RegisterMcpServerRequest
@@ -7521,7 +7521,7 @@ export const RegisterMcpServerRequestSchema: GenMessage<RegisterMcpServerRequest
  */
 export type RegisterMcpServerResponse = Message<"kortecx.v1.RegisterMcpServerResponse"> & {
   /**
-   * 16B server-derived (SN-8)
+   * 16B server-derived
    *
    * @generated from field: bytes connection_id = 1;
    */
@@ -7794,7 +7794,7 @@ export const DeregisterMcpServerResponseSchema: GenMessage<DeregisterMcpServerRe
  * T-CONNECTOR-AUTOGRANT: an OPERATOR DIAGNOSTIC fire of ONE registered tool on a
  * dialed connector — the deterministic, model-free "exercise this tool" affordance
  * behind the UI Connections live-fire panel / `kx connections fire`. It routes
- * through the SAME broker the agentic loop uses, so SN-8 is re-enforced (the tool
+ * through the SAME broker the agentic loop uses, so the authority gate is re-enforced (the tool
  * must be registered + a single-grant warrant is synthesized server-side). NOT a
  * durable agentic effect: no journal fact, no replay — like `TestMcpServer`/
  * `DiscoverServerTools`, it is a live operator action, not a recorded run.
@@ -7935,7 +7935,7 @@ export const PutContextBundleRequestSchema: GenMessage<PutContextBundleRequest> 
  */
 export type PutContextBundleResponse = Message<"kortecx.v1.PutContextBundleResponse"> & {
   /**
-   * 16B SERVER-DERIVED manifest hash (SN-8)
+   * 16B SERVER-DERIVED manifest hash
    *
    * @generated from field: bytes bundle_ref = 1;
    */
@@ -7991,7 +7991,7 @@ export const ListContextBundlesRequestSchema: GenMessage<ListContextBundlesReque
 
 /**
  * One bundle's manifest (governance / display view). content_refs are DISPLAY;
- * authority never rides this wire (SN-8).
+ * authority never rides this wire.
  *
  * @generated from message kortecx.v1.ContextBundle
  */
@@ -8171,7 +8171,7 @@ export const BranchItemSchema: GenMessage<BranchItem> = /*@__PURE__*/
  */
 export type Branch = Message<"kortecx.v1.Branch"> & {
   /**
-   * 16B SERVER-DERIVED manifest hash (SN-8; display + dedup)
+   * 16B SERVER-DERIVED manifest hash (display + dedup)
    *
    * @generated from field: bytes branch_ref = 1;
    */
@@ -8629,7 +8629,7 @@ export const GetBranchContentResponseSchema: GenMessage<GetBranchContentResponse
 
 /**
  * POC-1 (Settings "Workspace"): GetServerInfo request (no fields — the caller is
- * server-resolved; SN-8) + a NON-SECRET response projection of GatewayConfig +
+ * server-resolved) + a NON-SECRET response projection of GatewayConfig +
  * the resolved serve model + the build's feature flags. Additive, read-only.
  *
  * @generated from message kortecx.v1.GetServerInfoRequest
@@ -8862,7 +8862,7 @@ export const GetServerInfoResponseSchema: GenMessage<GetServerInfoResponse> = /*
  * is NEVER journaled, in a MoteId/StepRecord, the model's context, or any RPC
  * RESPONSE. `value` appears ONLY as a PutSecret request argument (write-only).
  * PutSecret/DeleteSecret are gated loopback-only + an authenticated party (host
- * credential material); ListSecretNames returns NAMES + timestamps only. SN-8: the
+ * credential material); ListSecretNames returns NAMES + timestamps only. The
  * broker secret_scope precheck remains the sole resolve-authorization gate.
  * ===========================================================================
  *
@@ -9390,7 +9390,7 @@ export const TestTriggerResponseSchema: GenMessage<TestTriggerResponse> = /*@__P
 /**
  * ===========================================================================
  * D114 — HITL pre-action approval gate. The OPERATOR control plane over pending
- * world-mutating action approvals. request_id is SERVER-DERIVED 16B (SN-8); Grant/
+ * world-mutating action approvals. Request_id is SERVER-DERIVED 16B; Grant/
  * Deny RELEASE/REJECT a STAGED action (it fires exactly once, or the chain dead-
  * letters) — never mint a client warrant. Off-DAG fold view; UNIMPLEMENTED on a
  * serve without the approval substrate.
@@ -9577,7 +9577,7 @@ export const DenyApprovalResponseSchema: GenMessage<DenyApprovalResponse> = /*@_
  * ===========================================================================
  * M11 — DISPLAY-ONLY deterministic LOCAL spend estimate over the durable turn/tool
  * counters at operator-set micro_usd rates. A BUDGET GUARDRAIL readout, NOT Cloud
- * per-expert billing — the D129/D156/GR19 boundary holds (no token / price-per-
+ * per-expert billing — the cloud-tier boundary holds (no token / price-per-
  * expert data crosses this wire). UNIMPLEMENTED on a serve without the counters.
  * ===========================================================================
  *
@@ -9935,7 +9935,7 @@ export const RecipeParamTypeSchema: GenEnum<RecipeParamType> = /*@__PURE__*/
  * the server-configured default (operator-authoritative), NOT an error (unlike the
  * identity enums). HYBRID silently falls back to dense when there is no query_text
  * (the FFI-free client-vector path has no text to BM25-match). The hybrid weights
- * (RRF k, MMR lambda) are operator-config only — never a client float (SN-8).
+ * (RRF k, MMR lambda) are operator-config only — never a client float.
  *
  * @generated from enum kortecx.v1.RetrievalMode
  */
@@ -9972,8 +9972,8 @@ export const RetrievalModeSchema: GenEnum<RetrievalMode> = /*@__PURE__*/
  * ---------------------------------------------------------------------------
  * RC5a: durable multi-tier MEMORY — semantic recall + episodic store.
  *
- * A cross-run, per-namespace store of what an agent LEARNED. Off the truth path
- * (SN-8): a recall returns only the ordered memory-ref SET; the similarity `score`
+ * A cross-run, per-namespace store of what an agent LEARNED. Off the truth path:
+ * a recall returns only the ordered memory-ref SET; the similarity `score`
  * is DISPLAY-ONLY, never an identity input. The store (memory.db) is a rebuildable
  * projection — NO journal schema bump (the retrieve@1 precedent). `namespace` is the
  * caller's ISOLATION scope; a "" request namespace ⇒ the server-derived caller
@@ -10091,7 +10091,7 @@ export enum WorkflowStepKind {
   EXEC = 3,
 
   /**
-   * PR-6a: a single registered tool step. The client sends kind + tool_contract={name:version}; the SERVER builds the per-step warrant narrowed against the party grant (client tool_grants stay structurally refused — BLOCKER #5/SN-8). The tool MUST resolve in the durable registry or the step is refused.
+   * PR-6a: a single registered tool step. The client sends kind + tool_contract={name:version}; the SERVER builds the per-step warrant narrowed against the party grant (client tool_grants stay structurally refused — BLOCKER #5). The tool MUST resolve in the durable registry or the step is refused.
    *
    * @generated from enum value: WORKFLOW_STEP_KIND_TOOL = 4;
    */
@@ -10250,10 +10250,10 @@ export const FeedbackRatingSchema: GenEnum<FeedbackRating> = /*@__PURE__*/
  * FRESH registered run via the existing Invoke path (the coordinator stays the
  * sole journal writer; the frozen trio is untouched). The trigger is the run's
  * origin (an off-journal triggers.db record). Idempotency-key dedup makes a
- * replayed event a no-op. SN-8: trigger_id is server-derived; the run binds under
+ * replayed event a no-op. Trigger_id is server-derived; the run binds under
  * the REGISTRANT's party (D102.2); the auth secret is referenced by NAME only.
  * The minimal-local trigger (single-user webhook/cron); the hosted multi-tenant
- * trigger gateway at scale is CLOUD (D113/D170.b/GR19).
+ * trigger gateway at scale is CLOUD.
  * ===========================================================================
  *
  * @generated from enum kortecx.v1.TriggerKind
@@ -10643,7 +10643,7 @@ export const KxGateway: GenService<{
     output: typeof RunHandleSchema;
   },
   /**
-   * NL authoring additive (D209.3 / SN-8): propose a multi-step DAG from a
+   * NL authoring additive: propose a multi-step DAG from a
    * natural-language goal (served model → vetted kx-planner compile). Validates
    * only — never registers or runs; the client confirms via SubmitWorkflow/SaveApp.
    *
@@ -10732,7 +10732,7 @@ export const KxGateway: GenService<{
   /**
    * PR-4.1 additive (D120.6): user 👍/👎 feedback on an answer — a client-origin
    * write into a rebuildable-to-empty feedback.db sidecar (advisory; off-journal,
-   * off-digest, off-identity; SN-8 server-resolved principal). `ListFeedback` is
+   * off-digest, off-identity; server-resolved principal). `ListFeedback` is
    * the read-back / inspection surface. UNIMPLEMENTED when the seam yields None.
    *
    * @generated from rpc kortecx.v1.KxGateway.SubmitFeedback
@@ -10781,9 +10781,9 @@ export const KxGateway: GenService<{
    * PR-6a additive (D120.6): the declarative tools registry. RegisterTool /
    * DeregisterTool write the durable off-journal tools.db (server-derived tool_id,
    * SSRF-vetted server_host); DiscoverTools is the inventory/governance VIEW
-   * (distinct from the advisory ListToolManifests). SN-8: registration grants NO
+   * (distinct from the advisory ListToolManifests). Registration grants NO
    * authority; client tool_grants stay refused. DIALING external MCP servers +
-   * Connections + parallel fan-out are PR-6b/Cloud (D159/GR19).
+   * Connections + parallel fan-out are PR-6b/Cloud.
    *
    * @generated from rpc kortecx.v1.KxGateway.RegisterTool
    */
@@ -10813,10 +10813,10 @@ export const KxGateway: GenService<{
    * remote MCP server (stdio + Streamable-HTTP) and registers its discovered
    * tools into the SAME tools.db (each namespaced `<server>/<remote>`, fireable
    * via the broker); List/Discover/Test/Deregister govern the connections. The
-   * live untrusted-egress surface (GR8): admission + dial-time SSRF vetting,
+   * live untrusted-egress surface: admission + dial-time SSRF vetting,
    * per-server rate-limit, warrant-gated egress, secret-less CredentialRef.
-   * SN-8: server-derived connection/tool ids; client tool_grants stay refused.
-   * OAuth/device-flow + a hosted credential marketplace are CLOUD (D159/GR19).
+   * Server-derived connection/tool ids; client tool_grants stay refused.
+   * OAuth/device-flow + a hosted credential marketplace are CLOUD.
    *
    * @generated from rpc kortecx.v1.KxGateway.RegisterMcpServer
    */
@@ -10859,7 +10859,7 @@ export const KxGateway: GenService<{
   },
   /**
    * T-CONNECTOR-AUTOGRANT additive: an operator DIAGNOSTIC fire of one registered
-   * tool through the broker (SN-8 re-enforced; no journal fact — see CallMcpToolRequest).
+   * tool through the broker (authority re-enforced; no journal fact — see CallMcpToolRequest).
    *
    * @generated from rpc kortecx.v1.KxGateway.CallMcpTool
    */
@@ -10905,7 +10905,7 @@ export const KxGateway: GenService<{
    * host webhook/cron listeners); TestTrigger dry-runs the binding without firing.
    * Each event starts a fresh registered run via the existing Invoke path (no journal
    * writer dep added; frozen trio untouched). UNIMPLEMENTED when no trigger admin is
-   * wired. The hosted multi-tenant trigger gateway is CLOUD (D113/D170.b/GR19).
+   * wired. The hosted multi-tenant trigger gateway is CLOUD.
    *
    * @generated from rpc kortecx.v1.KxGateway.RegisterTrigger
    */
@@ -10993,7 +10993,7 @@ export const KxGateway: GenService<{
     output: typeof RunScoreSchema;
   },
   /**
-   * PR-7 — context bundles (off-journal bundles.db sidecar; SN-8 server-derived ref).
+   * PR-7 — context bundles (off-journal bundles.db sidecar; server-derived ref).
    *
    * @generated from rpc kortecx.v1.KxGateway.PutContextBundle
    */
@@ -11027,7 +11027,7 @@ export const KxGateway: GenService<{
     output: typeof DeleteContextBundleResponseSchema;
   },
   /**
-   * D155 Phase-A — branched data (off-journal branches.db sidecar; SN-8
+   * D155 Phase-A — branched data (off-journal branches.db sidecar; server-derived
    * server-derived ref). SnapshotInto reads operator-approved host files
    * (confined under KX_SERVE_FS_ROOT, default-OFF) INTO the content store and
    * records the {path -> ref} manifest; the agent loop edits IN-CAS (no host
@@ -11138,7 +11138,7 @@ export const KxGateway: GenService<{
    * PullModel downloads a model (Ollama /api/pull or a huggingface.co /resolve/ GGUF
    * URL) and REGISTERS it at runtime so it is immediately usable WITHOUT restart;
    * it returns immediately (poll GetPullStatus). Deny-by-default: refused unless the
-   * operator sets KX_SERVE_ALLOW_MODEL_PULL and the URL host is allowlisted (SN-8 —
+   * operator sets KX_SERVE_ALLOW_MODEL_PULL and the URL host is allowlisted (
    * a client requests, the operator authorizes). SetActiveModel switches the server's
    * active default (an advisory hint; the server never silently re-routes chat).
    * Authenticated caller required (UNAUTHENTICATED otherwise).
@@ -11169,7 +11169,7 @@ export const KxGateway: GenService<{
   /**
    * POC-4 (Apps "App-authoring + envelope") — save / list / get a durable App
    * envelope in the caller-scoped, off-journal apps.db catalog. SaveApp validates
-   * + canonicalizes the kortecx.app/v1 envelope and derives app_ref (SN-8); the
+   * + canonicalizes the kortecx.app/v1 envelope and derives app_ref; the
    * envelope carries NO authority. Authenticated caller required (UNAUTHENTICATED
    * otherwise); unimplemented when the apps.db sidecar is absent. NO cross-instance
    * import entrypoint (deferred). Off-journal, off-digest.
@@ -11232,7 +11232,7 @@ export const KxGateway: GenService<{
    * client-orchestrated GetApp -> SubmitWorkflow path). The server reads the validated
    * envelope, lowers its blueprint through the canonical path, resolves connections
    * against the caller's own registry, and narrows the run warrant's secret scope to
-   * the App's declared secrets. Server-minted warrants (SN-8). Authenticated caller
+   * the App's declared secrets. Server-minted warrants. Authenticated caller
    * required; unimplemented when the app-run seam (apps.db + MCP gateway) is absent
    * (clients then fall back to the legacy GetApp -> SubmitWorkflow path).
    *
@@ -11248,12 +11248,12 @@ export const KxGateway: GenService<{
    * fixed skeleton into a fresh CoW-on-CAS branch (plan -> N writes -> N
    * AdvanceBranch). Returns immediately (the orchestration runs in the
    * background; observe via GetScaffoldStatus + GetBranch + StreamEvents).
-   * Warrants are server-minted (SN-8). Unimplemented when no served model /
+   * Warrants are server-minted. Unimplemented when no served model /
    * branch store. Off-journal, off-digest.
    * DeriveApp: one prompt -> a reviewable App design (steps + SHAPE + capabilities,
    * or a hosted file plan). Validate-only; saves nothing. The model may NAME tool ids
    * from a server-built ids-only menu of the caller's OWN ceiling and every id is
-   * intersected back against it (SN-8: naming is not granting). `unimplemented` with
+   * intersected back against it (naming is not granting). `unimplemented` with
    * no served model.
    *
    * @generated from rpc kortecx.v1.KxGateway.DeriveApp
@@ -11345,7 +11345,7 @@ export const KxGateway: GenService<{
    * Additive (D120.6/D175) — the per-principal skill catalog (skills.db).
    * AddSkill validates the manifest fail-closed (kortecx.skill/v1 closed shape +
    * authority deny-keys) and stores the instructions body via the content-write
-   * seam; skill_ref is server-derived over the canonical bytes (SN-8). A skill
+   * seam; skill_ref is server-derived over the canonical bytes. A skill
    * is a WISH bundle — attaching one grants nothing; the bind intersects its
    * tool wishes against the caller's grants and the live broker. Authenticated
    * caller required; UNIMPLEMENTED when the catalog seam is absent.

@@ -7,7 +7,7 @@
  *     its BRANCHES (the widest fan-in is the primary gather when several exist);
  *   - because content is content-addressed and a majority/pass-through reduce emits
  *     one branch's exact bytes, a branch WON iff its `resultRef` equals the gather's
- *     — so the majority winner + agreement count are RPC-free (no scores, SN-8);
+ *     — so the majority winner + agreement count are RPC-free (no scores);
  *   - the label stays HONEST: `consensus` only when ≥2 branches agreed on the
  *     emitted output; otherwise the neutral `parallel` (topology alone can't prove
  *     supervisor/swarm INTENT, so we never claim it).

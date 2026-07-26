@@ -162,7 +162,7 @@ base64             = { workspace = true }
 # durable tools.db, and governs them via an off-journal connections.db sidecar.
 # FFI-free (kx-mcp/ureq/rusqlite only — the dep-wall subtree check pins it).
 # Behind the `mcp-gateway` feature (ON by default); the live untrusted-egress
-# surface is the registry + dial-time SSRF + per-server rate-limit (GR8).
+# surface is the registry + dial-time SSRF + per-server rate-limit.
 kx-mcp-gateway     = { workspace = true, optional = true }
 # PR-2d-2: the typed ToolDef/inputSchema vocabulary for the bundled tool's
 # registry entry (shared with the coordinator so the settle's validate-at-freeze
@@ -196,13 +196,13 @@ kx-chunk           = { workspace = true }
 kx-dataset-bm25    = { workspace = true, optional = true }
 # Graph-RAG PR-1: the GRAPH leg of retrieval — a pure-Rust, in-memory knowledge graph
 # with a multi-hop neighbour walk, fused (RRF) beside the dense + sparse legs. OPTIONAL
-# behind `hnsw` (the retrieval module). Off the truth path (SN-8); default-off flag.
+# behind `hnsw` (the retrieval module). Off the truth path; default-off flag.
 kx-dataset-graph   = { workspace = true, optional = true }
 # W1.A5: the advisory MCP-intelligence surface — TaskBundle (kx-bundle) +
 # manifest ranking / the fail-closed lowering dry-run (kx-toolscout). Both
 # pure-Rust, FFI-free, ALWAYS-ON (the manifests/score RPCs answer on every
 # build; the verdict degrades to UNAVAILABLE without a react runtime).
-# SN-8: both crates are advisory by construction — neither is reachable from
+# both crates are advisory by construction — neither is reachable from
 # the broker/admission authority path.
 kx-bundle          = { workspace = true }
 kx-toolscout       = { workspace = true }
@@ -338,7 +338,7 @@ default = ["embedded-worker", "mcp-gateway"]
 # or the FFI-link gate. Requires the embedded broker (to register a dialed tool's
 # firing capability). The autonomous ReAct loop's auto-grant of dialed tools ships
 # in PR-6b-2; here a dialed tool is registered + directly fireable through a
-# granting warrant (SN-8). OAuth/device-flow + a credential marketplace = CLOUD.
+# granting warrant. OAuth/device-flow + a credential marketplace = CLOUD.
 mcp-gateway = ["dep:kx-mcp", "dep:kx-mcp-gateway", "embedded-worker"]
 # The in-process coordinator + local worker (single-system OSS, D129). On by default so
 # the binary is genuinely reachable end-to-end (SubmitRun -> Committed). A future library

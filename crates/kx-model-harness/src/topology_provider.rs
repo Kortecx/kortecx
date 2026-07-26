@@ -12,7 +12,7 @@
 //!    decodes the completion **fail-closed** via [`kx_planner::decode_loop_proposal`],
 //!    enforces the per-decision child budget, and lowers it through *vetted
 //!    recipes* ([`kx_planner::lower_loop_to_topology_decision`]) into a
-//!    `TopologyDecision` (SN-8: the model proposes role *names*; identity axes +
+//!    `TopologyDecision` (the model proposes role *names*; identity axes +
 //!    warrant narrowing are the runtime's).
 //! 2. The decision's canonical bytes are staged as the shaper's effect (a
 //!    [`kx_runtime::broker::DemoBroker`] response), so the shaper's committed
@@ -69,7 +69,7 @@ use crate::{context, prompt, ModelExecutor};
 
 /// A [`RoleRegistry`] that grants EVERY proposed role the shaper's own warrant, so
 /// the materializer's `intersect(shaper.warrant, role.spec)` narrowing is a no-op:
-/// children inherit the shaper's authority — never wider (SN-8 narrowing-only).
+/// children inherit the shaper's authority — never wider (narrowing-only).
 /// The role ALLOWLIST is the [`RoleRecipeResolver`] (an unregistered role fails
 /// closed at `lower_loop_to_topology_decision` before the materializer is ever
 /// consulted); per-role *restriction* (tighter child warrants) arrives with the
@@ -230,7 +230,7 @@ impl<B: InferenceBackend, S: ContentStore> ModelTopologyProvider<B, S> {
     /// 3-way `{"replan": …}` envelope FAIL-CLOSED ([`decode_replan_proposal`]), and
     /// either lower a corrective fan-out through vetted recipes
     /// ([`ReplanOutcome::Topology`]) or surface an escalation
-    /// ([`ReplanOutcome::FlagHuman`]). SN-8: a permission-adapt proposes a role; the
+    /// ([`ReplanOutcome::FlagHuman`]). a permission-adapt proposes a role; the
     /// runtime narrows authority downstream (`intersect`), never widens.
     ///
     /// # Errors
@@ -307,7 +307,7 @@ where
 
         // (5) Lower through VETTED recipes — role identity axes (logic_ref /
         //     nd_class / effect_pattern) come from the recipe, never model output
-        //     (SN-8 / IMP-5 / D70). An unregistered role fails closed.
+        //     (server-derived). An unregistered role fails closed.
         lower_loop_to_topology_decision(&proposal, &*self.recipes)
             .map_err(|e| TopologyProviderError(format!("lower: {e}")))
     }
@@ -854,7 +854,7 @@ fn failure_reason_token(reason: Option<kx_journal::FailureReason>) -> &'static s
 /// `failures` is pre-sorted and each reason renders via the STABLE
 /// [`failure_reason_token`], so a cold re-fold reconstructs the SAME prompt ⇒ the
 /// SAME re-plan shaper identity, R49). The reasons are the low-entropy
-/// [`kx_journal::FailureReason`] enum only (never result bytes / secrets — SN-8).
+/// [`kx_journal::FailureReason`] enum only (never result bytes / secrets).
 fn corrected_prompt(
     base: &str,
     failures: &[(MoteId, Option<kx_journal::FailureReason>)],

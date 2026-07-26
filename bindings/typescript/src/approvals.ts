@@ -2,8 +2,8 @@
  * The HITL pre-action approval views (D114) — the operator control plane over pending
  * world-mutating action approvals (`ListPendingApprovals` / `GrantApproval` /
  * `DenyApproval`). Grant/deny are OPERATOR decisions over a server-derived
- * `requestId` — they release/reject a STAGED action, never mint a client warrant
- * (SN-8). Kept in its own module (the `triggers.ts`/`secrets.ts` module-per-concern
+ * `requestId` — they release/reject a STAGED action, never mint a client warrant.
+ * Kept in its own module (the `triggers.ts`/`secrets.ts` module-per-concern
  * precedent).
  */
 

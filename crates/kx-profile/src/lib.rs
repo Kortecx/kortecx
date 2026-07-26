@@ -4,7 +4,7 @@
 //! library + bin that hosts an in-process gateway, measures warm-up +
 //! submit→Committed latency, and captures an **environment-labelled, schema-1
 //! JSON** [`Report`]. The captured numbers are a corpus trend record that lives
-//! ONLY in the private repo (`docs/benchmarks/`, gitignored on OSS — SN-2); the
+//! ONLY in the private repo (`docs/benchmarks/`, gitignored on OSS); the
 //! harness here is the reusable, public measurement tool.
 //!
 //! Design constraints (Golden Rule 10 + the workspace invariants):

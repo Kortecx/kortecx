@@ -1,5 +1,5 @@
 /**
- * NL workflow authoring — the propose-then-confirm panel (D209.3 / SN-8). The author
+ * NL workflow authoring — the propose-then-confirm panel. The author
  * describes a goal; the served model proposes a multi-step DAG (`proposeWorkflow`), which is
  * previewed here and, on confirm, applied to the builder canvas. VALIDATE-ONLY server-side:
  * nothing runs until the applied steps are saved / submitted. An honest rejection (no served

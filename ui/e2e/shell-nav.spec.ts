@@ -80,7 +80,7 @@ test("the sidebar is a FLAT list — no groups, no Cloud/Coming, demoted routes 
   await expect(page.getByTestId("recipes-section")).toBeVisible({ timeout: 15_000 });
 });
 
-test("every flat section renders under BOTH themes (D142 / GR13)", async ({ page }) => {
+test("every flat section renders under BOTH themes", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 

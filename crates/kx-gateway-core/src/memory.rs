@@ -9,7 +9,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** [`MemoryHitEntry::score`] is DISPLAY-ONLY — it never enters a
+//! - **Identity.** [`MemoryHitEntry::score`] is DISPLAY-ONLY — it never enters a
 //!   committed fact or a `MoteId`; only the ordered memory-ref SET is the durable
 //!   recall result. A `None` seam ⇒ the four RPCs return `unimplemented` (old-gateway
 //!   / memory-disabled forward-compat degrade).
@@ -200,7 +200,7 @@ pub struct MemoryStatsEntry {
     pub newest_ms: i64,
 }
 
-/// One recall hit. `score` is DISPLAY-ONLY (SN-8).
+/// One recall hit. `score` is DISPLAY-ONLY.
 #[derive(Clone, Debug)]
 pub struct MemoryHitEntry {
     /// The 32-byte content-addressed id of the recalled memory (the citation key).
@@ -280,7 +280,7 @@ pub trait MemoryView: Send + Sync {
     /// Gather a set of (live) memories for the model to consolidate — the newest
     /// (`query_text == None`) or most-similar-to-a-query (`Some`, host-embedded) slice
     /// of `namespace`, optionally restricted by kind + a `created_ms` window. The
-    /// returned entries carry NO score (SN-8 by return type).
+    /// returned entries carry NO score (by return type).
     ///
     /// # Errors
     /// [`MemoryError`] on a bad namespace / missing embedder / dim mismatch / stale

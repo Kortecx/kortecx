@@ -7,7 +7,7 @@
 //! (illegal-states-unrepresentable, Rule 5.2; the dep-wall test is the second
 //! proof).
 //!
-//! SN-8 holds: the returned ref is **server-derived** (`ContentRef::of` over the
+//! The identity rule holds: the returned ref is **server-derived** (`ContentRef::of` over the
 //! payload bytes inside the store) — the client never names an identity. Size
 //! caps + auth live above this seam (the service handler caps fail-closed
 //! BEFORE touching the store; the host's interceptor authenticates).

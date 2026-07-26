@@ -9,8 +9,8 @@
 //!
 //! Verifies the workspace's tracing setup is wired correctly by initializing a
 //! `tracing-subscriber` and emitting one structured line. The presence of this
-//! line in CI's output satisfies the P1.1 exit gate per `01-build-sequence.md` §1.1
-//! ("`tracing` emits a structured line").
+//! line in CI's output satisfies the P1.1 exit gate ("`tracing` emits a
+//! structured line").
 //!
 //! P1.2 will replace this with the real Mote unit tests.
 

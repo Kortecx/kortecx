@@ -3,7 +3,7 @@
 //! TOPOLOGY (the SAME shape the SDK `swarm()`/`supervisor()`/`consensus()` methods
 //! author) and delegates to [`crate::verbs::chain::execute`] — so a swarm only changes
 //! *how* the `(steps, edges)` are authored; the server still compiles + warrants every
-//! step (SN-8). Client-side composition only, byte-identical to the equivalent
+//! step. Client-side composition only, byte-identical to the equivalent
 //! `kx chain` expression.
 //!
 //! ```text
@@ -226,7 +226,7 @@ fn lower_to_chain(args: &SwarmArgs) -> (String, Vec<(String, String)>) {
                     "sink".into(),
                     model_task(args.gather.as_deref().unwrap_or(DEFAULT_CONSENSUS_JUDGE)),
                 )),
-                // The exact-equality plurality PURE sink the server reduces (SN-8).
+                // The exact-equality plurality PURE sink the server reduces.
                 Vote::Majority => tasks.push((
                     "sink".into(),
                     serde_json::json!({

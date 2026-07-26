@@ -25,7 +25,7 @@ function snippet(text: string, max = 120): string {
 }
 
 /** The not-wired guidance shown when the gateway has memory disabled (UNIMPLEMENTED)
- *  or lacks an embedder (FAILED_PRECONDITION). Honest, don't-fake-gaps (GR15). */
+ *  or lacks an embedder (FAILED_PRECONDITION). Honest, don't-fake-gaps. */
 function NotWired() {
   return (
     <p className="notice notice--warn" data-testid="memories-not-wired">
@@ -345,8 +345,8 @@ function MemoriesListPanel() {
  * by meaning, and browse the per-principal episodic log. Backed by the additive
  * StoreMemory / RecallMemory / ListMemories / ForgetMemory RPCs over a rebuildable
  * `memory.db` sidecar. Text store/recall need a server embedder (`inference`) + memory
- * enabled (`KX_SERVE_MEMORY=1`); every recall score is DISPLAY-only (SN-8). A gateway
- * without memory degrades to an honest not-wired state (GR15).
+ * enabled (`KX_SERVE_MEMORY=1`); every recall score is DISPLAY-only. A gateway
+ * without memory degrades to an honest not-wired state.
  */
 export function MemoriesSection() {
   return (

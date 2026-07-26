@@ -10,7 +10,7 @@
 //! restores the SAME `skill_ref` (content-addressed). Never journaled, never a
 //! `MoteId` input, never a digest input.
 //!
-//! ## Server-derived id (SN-8)
+//! ## Server-derived id
 //! `skill_ref = blake3("kx-skill\0" ‖ name ‖ 0 ‖ canonical(manifest))[..16]` via
 //! [`kx_content::ContentRef::of`] (the `app_ref_of` precedent). The host
 //! RE-CANONICALIZES the received bytes via `kx-skill` so client byte-ordering
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS skills (
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 ";
 
-/// `skill_ref = blake3("kx-skill\0" ‖ name ‖ 0 ‖ canonical_manifest)[..16]` (SN-8).
+/// `skill_ref = blake3("kx-skill\0" ‖ name ‖ 0 ‖ canonical_manifest)[..16]`.
 fn skill_ref_of(name: &str, canonical: &[u8]) -> [u8; 16] {
     let mut keyed = Vec::with_capacity(16 + name.len() + canonical.len());
     keyed.extend_from_slice(b"kx-skill\0");

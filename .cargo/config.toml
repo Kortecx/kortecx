@@ -1,7 +1,7 @@
 # Workspace-wide build configuration.
 #
-# I1 — Reproducible-build discipline (per `docs/suggestions/02-improvement-areas.md` I1
-# and the P1.1 plan): these flags are the within-machine byte-determinism baseline.
+# Reproducible-build discipline: these flags are the within-machine
+# byte-determinism baseline.
 # Cross-machine path-stripping (--remap-path-prefix) is applied in CI via RUSTFLAGS so
 # the absolute path normalization happens at the workspace boundary.
 

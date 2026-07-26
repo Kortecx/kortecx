@@ -1,7 +1,7 @@
 """POC-1 ``ServerInfo`` view + ``chat`` arg-construction — pure unit tests (no server).
 
 ``ServerInfo.from_proto`` projects the ``GetServerInfoResponse`` fields (display/
-settings-only, never a secret — SN-8). ``KxClient.chat`` is a thin convenience over
+settings-only, never a secret). ``KxClient.chat`` is a thin convenience over
 ``invoke(wait=True)``: it picks the plain ``kx/recipes/chat`` recipe — or the AUTO-RAG
 ``kx/recipes/chat-rag`` when a ``dataset`` is given — and returns the answer text. The
 tests stub the client's ``invoke`` to assert the handle + args + decoded answer
@@ -66,7 +66,7 @@ def test_server_info_from_proto_projects_every_field():
 
 def test_server_info_defaults_are_honest_empties():
     # A minimal FFI-free / no-bridge gateway answers with empties + false flags
-    # (honest, never fabricated) — never a secret either way (SN-8).
+    # (honest, never fabricated) — never a secret either way.
     info = ServerInfo.from_proto(g.GetServerInfoResponse())
     assert info.model_id == ""
     assert info.ws_addr == "" and info.console_addr == "" and info.metrics_addr == ""

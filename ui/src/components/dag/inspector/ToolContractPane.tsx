@@ -1,7 +1,7 @@
 /**
  * The inspector's Tool-contract pane (PR-2): the closed set of tools this
  * Mote may call (each at its pinned version — exact (id,version) equality is
- * the broker's gate, SN-8: this display never authorizes), plus the def-level
+ * the broker's gate, this display never authorizes), plus the def-level
  * identity facts (logic ref, nd-class, effect pattern, shaper/critic flags).
  */
 

@@ -17,7 +17,7 @@ function stripeFor(kind: string): string {
 /**
  * The registered tool manifests as a staggered tile grid. Each tile is a native
  * button that toggles its tool into the bundle sequence (the same action as the
- * composer's chip). Everything shown is ADVISORY (SN-8) — listing a manifest
+ * composer's chip). Everything shown is ADVISORY — listing a manifest
  * leaks no authority; the broker never reads it.
  */
 export function ManifestGrid({

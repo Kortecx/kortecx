@@ -15,7 +15,7 @@
 //! NOT the gateway sidecar's drop-and-rebuild. `tools.db` is **authoritative for
 //! its own rows** (an operator's registrations are durable facts, not a
 //! re-derivable cache), so a future schema bump must be a deliberate operator
-//! migration, never a silent loss of registrations (GR8 fwd/back-compat).
+//! migration, never a silent loss of registrations (fwd/back-compat).
 
 use std::path::Path;
 

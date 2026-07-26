@@ -1,7 +1,7 @@
 /**
  * The cost-spend guardrail readout (M11) — a run's DISPLAY-ONLY local spend estimate
  * over the durable turn/tool counters at operator-set micro-USD rates (`GetRunCost`).
- * A BUDGET GUARDRAIL readout, NOT Cloud per-expert billing (the D129/D156/GR19
+ * A BUDGET GUARDRAIL readout, NOT Cloud per-expert billing (the cloud-tier
  * boundary holds). Kept in its own module (module-per-concern).
  */
 

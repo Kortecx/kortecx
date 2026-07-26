@@ -1,7 +1,7 @@
 /**
  * The Skills panel — the govern surface over the per-principal skill
  * catalog. A skill is a DECLARATIVE `kortecx.skill/v1` bundle: instructions +
- * a tool grant-WISH set. Adding one grants NOTHING (SN-8): at run the server
+ * a tool grant-WISH set. Adding one grants NOTHING: at run the server
  * intersects the wish against the caller's grants and the live broker
  * (`wish ∩ grants ∩ fireable`) — the wish chips here show the ADVISORY
  * `registered` bit (could THIS serve currently fire it), never authority.

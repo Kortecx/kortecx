@@ -7,7 +7,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** Used ONLY inside the ReadOnlyNondet retrieval Mote. Similarity
+//! - **Identity.** Used ONLY inside the ReadOnlyNondet retrieval Mote. Similarity
 //!   stays inside; only the ordered neighbour-ref SET is committed, matched
 //!   downstream by exact hash. The approximate, build-order-sensitive nature of
 //!   HNSW never reaches a `MoteId` — so ANN non-determinism is safe here.

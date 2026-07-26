@@ -53,7 +53,7 @@ fn cargo_tree_normal_edges_exclude_the_ffi() {
     }
 }
 
-/// PR-A.1 (GR24 dual-engine parity): the prebuilt release feature set
+/// PR-A.1 (dual-engine parity): the prebuilt release feature set
 /// (`console,hnsw,serve-engine`) must stay FFI-free — serve-engine adds the
 /// FFI-FREE Ollama backend (`kx-ollama`), never the llama.cpp FFI (that rides the
 /// opt-in `inference`). The deterministic in-test complement to the

@@ -319,7 +319,7 @@ mod tests {
 
     proptest! {
         /// build → parse → build is byte-identical over arbitrary envelopes + blobs;
-        /// parse recovers the exact bytes (SN-4 v2 #5, over the arbitrary input space).
+        /// parse recovers the exact bytes (the structural review, over the arbitrary input space).
         #[test]
         fn round_trips_byte_identically(
             app_digest in hex_ref(),

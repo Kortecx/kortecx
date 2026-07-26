@@ -536,7 +536,7 @@ export const WarrantSpecSchema: GenMessage<WarrantSpec> = /*@__PURE__*/
 /**
  * kx_warrant::SecretScope (D110.3): None (no secret resolution) or an exact
  * allowlist of secret NAMES/refs. Values NEVER cross this (or any) wire — refs
- * only (SN-8/D81), the same ref-not-value discipline as NetScope's hosts.
+ * only, the same ref-not-value discipline as NetScope's hosts.
  *
  * @generated from message kortecx.v1.SecretScope
  */

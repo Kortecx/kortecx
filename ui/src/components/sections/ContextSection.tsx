@@ -12,11 +12,11 @@ const TABS: ReadonlyArray<{ id: ContextTab; label: string }> = [
 
 /**
  * Context — the data & storage umbrella (POC-5c / D168). Two URL-addressable tabs
- * over TWO SEPARATE stores (no backend merge — honest, GR15):
+ * over TWO SEPARATE stores (no backend merge — honest):
  *
  * 1. **Bundles** — named, content-addressed instruction/file bundles a caller attaches
  *    to a run (PR-7, `bundles.db`): the durable inventory (`ListContextBundles`) + an
- *    author form (`PutContextBundle`). Caller-scoped (SN-8). The default tab.
+ *    author form (`PutContextBundle`). Caller-scoped. The default tab.
  * 2. **Datasets** — the RAG corpora / Data Lab (`datasets.db`): the existing
  *    {@link DatasetsSection} verbatim (ingest, semantic search, agent outputs).
  *
@@ -38,7 +38,7 @@ export function ContextSection({
           <p className="muted">
             The runtime's data &amp; storage: reusable instruction/file bundles you attach to chats
             and chains, and the RAG corpora your agents retrieve from. Two distinct stores under one
-            roof — bundles bind to a run's entry step (SN-8), datasets ground a retrieval turn.
+            roof — bundles bind to a run's entry step, datasets ground a retrieval turn.
           </p>
         </div>
       </div>

@@ -6,7 +6,7 @@
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! Property tests for `intersect`, `narrow`, `check_tool_requirement`, and
-//! `warrant_ref_of` (SN-4 v2 #6 — pinned per D30).
+//! `warrant_ref_of` (the structural review — pinned per D30).
 //!
 //! Properties:
 //!

@@ -9,7 +9,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** [`DatasetHitEntry::score`] is DISPLAY-ONLY — it never enters a
+//! - **Identity.** [`DatasetHitEntry::score`] is DISPLAY-ONLY — it never enters a
 //!   committed fact or a `MoteId`; only the ordered content-ref SET is the
 //!   durable retrieval result. A `None` seam ⇒ the three RPCs return
 //!   `unimplemented` (old-gateway forward-compat degrade).
@@ -96,7 +96,7 @@ pub struct IngestOutcome {
     pub dim: u32,
 }
 
-/// One retrieval hit. `score` is DISPLAY-ONLY (SN-8).
+/// One retrieval hit. `score` is DISPLAY-ONLY.
 #[derive(Clone, Debug)]
 pub struct DatasetHitEntry {
     /// The 32-byte content-addressed id of the retrieved CHUNK (RC4a).

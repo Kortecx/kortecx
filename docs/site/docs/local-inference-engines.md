@@ -23,7 +23,7 @@ no build, no C++ toolchain. llama.cpp is the opt-in `--features inference` build
 Whichever engine serves a model is shown everywhere: `kx models list` prints an
 engine badge (`[text · ollama]`), the SDKs expose `ModelSummary.engine`, and the
 **Models** view shows an engine badge per card. The engine is a display/audit field
-only — it never authorizes a route (SN-8), and it is **never journaled**, so the
+only — it never authorizes a route, and it is **never journaled**, so the
 canonical projection digest is unaffected by which engine answered.
 
 ## Which engine? (positioning)
@@ -108,7 +108,7 @@ context length) — the same kind of number the llama.cpp path reads from the GG
 It is best-effort: if the daemon doesn't report one, `ctx=0` is shown rather than a
 fabricated value.
 
-### Configuration (operator-only, SN-8)
+### Configuration (operator-only)
 
 The Ollama endpoint is **operator config** — never model-, client-, or
 Mote-controlled. No warrant or recipe parameter can redirect the engine.
@@ -149,7 +149,7 @@ embed model the FFI-free **client-vector** path still works: supply vectors your
 By default the embedder is the **primary chat model** — a generative **decoder**,
 which produces weak sentence embeddings (paraphrase mis-rank). For real retrieval
 quality, set `KX_SERVE_EMBED_MODEL` to a **dedicated embedding model** (operator
-config, SN-8 — never client-chosen). The runtime flags a decoder-as-embedder honestly
+config, never client-chosen). The runtime flags a decoder-as-embedder honestly
 (`kx info` / `kx models list` / the Data Lab notice), but never blocks.
 
 | Env var | Default | Meaning |
@@ -248,7 +248,7 @@ operator-gated (deny-by-default), configured by:
 
 Ollama pulls go through the daemon's `/api/pull` (the registry digest verifies them); a
 direct GGUF URL is `https`, allowlisted, `/resolve/`-shaped, and SHA-256-verified before
-registration (SN-8).
+registration.
 
 ## System requirements & performance
 

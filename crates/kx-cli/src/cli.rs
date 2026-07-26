@@ -436,7 +436,7 @@ fn inject_listen_default(mut rest: Vec<String>) -> Vec<String> {
 /// `$KX_DATA_DIR` → else `$HOME/.kortecx` → else `./.kortecx`. STABLE across
 /// restarts (no random suffix) so a re-served runtime keeps its journal,
 /// telemetry, capture, and content. No `dirs` crate (Linux CI + Apple-Silicon
-/// targets only — SN-7).
+/// targets only).
 fn resolve_base_data_dir() -> std::path::PathBuf {
     use std::path::PathBuf;
     if let Some(v) = std::env::var_os(KX_DATA_DIR_ENV).filter(|v| !v.is_empty()) {
@@ -490,7 +490,7 @@ fn inject_data_dir_defaults(mut rest: Vec<String>) -> Result<Vec<String>, CliErr
 }
 
 /// Fail closed: `kx serve` must pick an explicit auth posture — we NEVER inject
-/// one. Silently defaulting to a no-auth server is a security regression (GR8),
+/// one. Silently defaulting to a no-auth server is a security regression,
 /// so a bare `kx serve` with neither the dev loopback flag nor a token source
 /// errors (exit 2) with the exact remediation. The gateway is likewise
 /// deny-by-default; this surfaces the requirement earlier as a clean config
@@ -548,15 +548,15 @@ kx chat --message <text> [--dataset <name>] [--k N] [--tools <id@ver,…>] [--ma
         [--max-tool-calls N] [--timeout-secs N] [--json] [client flags]
   POC-1 chat over the served model. Plain by default; with --dataset it runs AUTO-RAG —
   the server embeds the message, retrieves the dataset's top-k documents (--k, default 4),
-  and folds the EXACT retrieved refs into the prompt (edge-free, replayable, SN-8 exact-out).
+  and folds the EXACT retrieved refs into the prompt (edge-free, replayable, exact-out).
   HONEST grounding: the turn is grounded ONLY when the named dataset exists and is non-empty;
   otherwise it answers plainly with a notice (grounding is never faked). A bare positional is
-  taken as the message (`kx chat \"hello\"`). A thin Invoke wrapper (server-warranted, SN-8);
+  taken as the message (`kx chat \"hello\"`). A thin Invoke wrapper (server-warranted);
   ingest a corpus first with `kx datasets ingest <name> ...`.
   --tools <id@ver,…> attaches tools, making the turn a BOUNDED agentic (ReAct) turn: the
   model may reason → call ONLY the named tools → observe, up to --max-turns (default 8) /
   --max-tool-calls (default 20). The server builds the scoped warrant from the named tools
-  and re-verifies each at every fire (SN-8) — never a blanket auto-grant. --tools does not
+  and re-verifies each at every fire — never a blanket auto-grant. --tools does not
   yet compose with --image/--dataset (run them separately)."
             .into(),
         "agent" => "\
@@ -565,7 +565,7 @@ kx agent run --goal <text> [--image <path>] [--context <handle>]... [--context-r
   AGENTICALLY — reasoning, calling permission-gated tools in a bounded loop, and
   returning a reasoned answer PLUS the AUDITED action set (the tools it fired).
   A thin wrapper over Invoke of `kx/recipes/react` — NEVER SubmitRun (BLOCKER #5);
-  the warrant is always server-derived (SN-8). --context attaches published context
+  the warrant is always server-derived. --context attaches published context
   bundles; --input k=v folds into the goal prompt (the react contract has no
   structured input slot yet). --json prints {answer, actions, run_handle, instance_id};
   exit 0 = answered, 1 = the run failed, 3 = timed out (resume with `kx react list`)."
@@ -583,7 +583,7 @@ kx blueprint run    --file <dag.json> [--wait] [--timeout-secs N] [--out <file>]
 kx blueprint import --file <dag.json> [--json]
   run    Author a Tier-1 DAG (a vetted palette of PURE / MODEL / TOOL steps + DATA/CONTROL
          edges) and run it via SubmitWorkflow. The server COMPILES the DAG, derives all
-         identity, and builds every warrant from the party's grants (SN-8) — the client
+         identity, and builds every warrant from the party's grants — the client
          sends only the topology + params. Viewable in the console (Runs, Monitoring).
   import Validate + summarize a portable blueprint JSON OFFLINE (no gateway) — the
          counterpart of `chain run --emit-blueprint`. Compiles the DAG client-side (kinds /
@@ -617,13 +617,13 @@ kx swarm \"<agent prompt>\"... [--pattern swarm|supervisor|consensus] [--planner
               [--vote judge|majority] [--goal <g>] [--seed N] [--wait] [--dry-run] [client flags]
   Run a multi-agent orchestration pattern WITHOUT hand-writing the chain DSL — the same
   topology the SDK swarm()/supervisor()/consensus() methods author (client composition;
-  the server compiles + warrants every step, SN-8). Each bare positional is an agent prompt.
+  the server compiles + warrants every step). Each bare positional is an agent prompt.
     swarm       (default)      [a0 & a1 & ...] > gather   — N parallel agents -> a synthesizer.
     supervisor  --planner <p>  p > [a0 & a1 & ...] > gather — a lead plans, workers execute,
                                the lead integrates. --gather steers the integration.
     consensus   --vote judge   [a0 & a1 & ...] > judge    — a judge SELECTS the best-of-N.
     consensus   --vote majority [a0 & a1 & ...] > reduce  — the server reduces to the
-                               EXACT-equality plurality (best for constrained outputs; SN-8).
+                               EXACT-equality plurality (best for constrained outputs).
   --gather steers the synthesizer/judge; --goal is appended to each participant's prompt.
   --dry-run lowers + validates without submitting (needs no gateway)."
             .into(),
@@ -651,7 +651,7 @@ kx mote show <instance-hex16> <mote-hex32> [client flags]
   def hash to its admitted definition — step kind, model, prompt, params
   (capped), tool contract, nd-class, effect pattern. An uncommitted mote (or
   one admitted by a pre-Batch-B binary) answers def_found: false honestly.
-  SN-8: nothing shown here authorizes anything."
+  Nothing shown here authorizes anything."
             .into(),
         "content" => "\
 kx content get --ref <hex32> [--instance <hex16>] [--out <file>] [client flags]
@@ -692,7 +692,7 @@ kx feedback submit --rating up|down --message-id <id> [--instance <hex16>] [--mo
 [--content-ref <hex32>] [--comment <s>] [--handle <s>] [--model <s>] [client flags]
 kx feedback list [--instance <hex16>] [--limit N] [--before-rowid N] [client flags]
   Record + read back 👍/👎 feedback on an answer (PR-4.1). The caller principal +
-  the feedback_id are server-derived (SN-8); re-rating the SAME answer overwrites.
+  the feedback_id are server-derived; re-rating the SAME answer overwrites.
   --message-id is the stable per-answer key (required on submit). list is
   newest-first; --limit caps the page (server clamps 1..=500, default 200);
   --before-rowid pages older rows. Lives in a rebuildable-to-empty feedback.db
@@ -722,7 +722,7 @@ kx rerank list [--instance <hex16>] [--limit N] [client flags]
   live RAG chain commits when it reorders retrieved candidates with a model —
   each turn's run-salted rerank Mote id, the resolved model, the frozen outcome
   (pending | reranked | failed_closed), the candidate count, and (for a reranked
-  outcome) the exact permutation the runtime enforced (SN-8: a permutation, never
+  outcome) the exact permutation the runtime enforced (a permutation, never
   a similarity score). Newest-first; --instance scopes to one run (a serve's
   journal is shared)."
             .into(),
@@ -748,7 +748,7 @@ kx tools register --name <n> --version <v> --server-host <host[:port]> [--descri
                   [--param <name>[:<ty>]]... [client flags]
 kx tools deregister --name <n> --version <v> [client flags]
   Advisory discovery + the durable tools registry (W1.A5 + PR-6a). `list`/`score`
-  are ADVISORY (SN-8) — they rank manifests + dry-run the lowering gate, never
+  are ADVISORY — they rank manifests + dry-run the lowering gate, never
   authorize a tool. `discover` shows the durable registry INVENTORY (registered
   tools + their authority/provenance). `register`/`deregister` write the durable
   off-journal tools.db: `register` declares an EXTERNAL MCP tool (the host is
@@ -773,8 +773,8 @@ kx connections discover --name <n> [client flags]
   `--stateful` shorthand) is the firing posture (PR-6b-3): `stateless` fires each
   call as a single-shot session; `stateful` reuses one live session for servers
   that require it. `test` checks reachability; `discover` re-dials + re-registers;
-  `remove` deregisters the server + its tools. Server ids are server-derived
-  (SN-8). OAuth/device-flow + a credential marketplace are Cloud."
+  `remove` deregisters the server + its tools. Server ids are server-derived.
+  OAuth/device-flow + a credential marketplace are Cloud."
             .into(),
         "skills" => "\
 kx skills add (--dir <pack-dir> | --manifest <file> [--instructions <md>]) [client flags]
@@ -786,7 +786,7 @@ kx skills remove --name <n> [client flags]
   grants NOTHING (at `kx app run` the server intersects the wish against your
   grants and the live broker: wish ∩ grants ∩ fireable). `add --dir` loads a
   pack (skill.json + instructions.md; the body is stored content-addressed and
-  the server derives instructions_ref + skill_ref — SN-8); `add --manifest`
+  the server derives instructions_ref + skill_ref); `add --manifest`
   sends a manifest file (with `--instructions` for the body, or a stored-form
   manifest already naming a 64-hex instructions_ref). `show` prints the wish
   set with an ADVISORY `registered` bit (can this serve currently fire it?) +
@@ -813,7 +813,7 @@ kx recipe search <intent> [--keyword <k>]... [--limit N] [client flags]
   Recipe catalog + advisory discovery (PR-4 Batch D). `list` shows the gateway's
   provisioned, invocable recipe handles with their advisory metadata (description,
   tags, version); `search` ranks them against an intent (integer basis points:
-  10000 = exact handle; lower = name/tag/description match). ADVISORY ONLY (SN-8):
+  10000 = exact handle; lower = name/tag/description match). ADVISORY ONLY:
   scores NEVER authorize a recipe — `kx invoke` stays the gate. No warrant is sent."
             .into(),
         "models" => "\
@@ -830,7 +830,7 @@ kx models use <id> | use --clear [client flags]
   allowlisted). The CLI polls the background pull to a terminal Done/Failed.
   use (Model Control v2): set the server's active default model to <id>, or --clear
   to fall back to the primary.
-  SN-8: listing a model never routes one — selection stays a recipe ENUM free-param
+  Listing a model never routes one — selection stays a recipe ENUM free-param
   validated server-side; load/offload/use manage RAM residency + the default, never authority."
             .into(),
         "app" => "\
@@ -845,14 +845,14 @@ kx app delete <handle> [--yes]   (removes the catalog row, its triggers, its loc
   rule/skill/memory rail, a 4-axis steering config, and per-step replay intent). `new`
   authors an envelope OFFLINE from a blueprint file (no gateway); `save` validates +
   canonicalizes it and persists it in the caller-scoped, off-journal apps.db catalog
-  (the server derives app_ref, SN-8); `list`/`get` browse it; `run` compiles the
+  (the server derives app_ref); `list`/`get` browse it; `run` compiles the
   envelope's blueprint and submits it exactly-once. `export` writes the pretty envelope
   (--output) or a portable kortecx.appbundle/v1 archive (--bundle: the envelope + its
   content closure; --with-data also includes RAG payloads). `import` reconciles a bundle
   fail-closed under YOUR OWN principal (PutContent the closure, then SaveApp with a
   source_digest lineage stamp; connections/secrets never travel — re-register by name,
   fail-closed at run until then); `clone` makes a local frozen copy. The envelope carries
-  NO authority — `run`/`import` re-resolve every warrant from the caller's own grants (SN-8).
+  NO authority — `run`/`import` re-resolve every warrant from the caller's own grants.
   `derive` is the CLI's derive→review→approve: one prompt → a designed blueprint whose NODES
   carry the tools/skills/integrations/grounding each step uses (needs a served model).
   --output writes that blueprint; `kx app new <name> --from-blueprint <it>` resolves the
@@ -881,7 +881,7 @@ kx datasets query <name> --text <query> [--k N] [client flags]
   corpora. `ingest` adds documents (created on first ingest); the CLI uses the
   SERVER-EMBED path, so it needs `kx serve --features inference` with a model
   (else FAILED_PRECONDITION) — the client-vector (FFI-free) path is an SDK surface.
-  `query` returns top-k hits; each `score` is DISPLAY-ONLY (SN-8), a ranking aid
+  `query` returns top-k hits; each `score` is DISPLAY-ONLY, a ranking aid
   never an identity input. The store is APPEND-ONLY + content-dedup (no delete).
   A pre-T3.7 / `hnsw`-less gateway answers Unimplemented (run `kx serve --features hnsw`)."
             .into(),
@@ -897,7 +897,7 @@ kx memory consolidate [--query <q>] [--k N] [--window-hours H] [--dry-run|--appl
   Durable agentic MEMORY (RC5a): remember facts and recall them across runs. `add`
   content-addresses + embeds the fact (server-embed, needs `inference,hnsw` + a
   model + KX_SERVE_MEMORY=1); `recall` returns the top-k most-similar memories (each
-  `score` is DISPLAY-ONLY, SN-8); `list` is the episodic log; `forget` erases by id.
+  `score` is DISPLAY-ONLY); `list` is the episodic log; `forget` erases by id.
   Every memory is scoped to the caller's own principal. A gateway without memory
   enabled answers Unimplemented."
             .into(),
@@ -907,7 +907,7 @@ kx secrets list [client flags]
 kx secrets rm --name <NAME> [client flags]
   Manage the LOCAL OS-keychain secret store (MM-3/D110). A secret is host credential
   material referenced elsewhere by NAME only — a connection's --credential-ref or a
-  trigger's --secret-ref. WRITE-ONLY values (SN-8/D110): `set` sends the value once and
+  trigger's --secret-ref. WRITE-ONLY values: `set` sends the value once and
   it is NEVER returned by any RPC; `list` yields the NAMES + timestamps only. `set`/`rm`
   are gated loopback-only + an authenticated party server-side; an unconfigured store
   answers Unimplemented (run a serve with a secret store wired)."
@@ -927,7 +927,7 @@ kx triggers rm   --name <N> [client flags]
   evaluated in --timezone; --require-approval pauses irreversible actions for HITL; --secret-ref
   names the HMAC/bearer secret by NAME only, never the value). `test` dry-runs the binding (handle
   resolves, payload binds) WITHOUT firing; `fire` is the inbound grpc event verb
-  (--idempotency-key dedups a replayed event to a no-op). SN-8: trigger_id is
+  (--idempotency-key dedups a replayed event to a no-op). Trigger_id is
   server-derived; the run binds under the REGISTRANT's party."
             .into(),
         "alerts" => "\
@@ -950,7 +950,7 @@ kx approvals deny  <REQUEST_ID> [--reason <s>] [client flags]
   operator GRANTS it (it then fires exactly once) or DENIES it (the chain dead-letters
   fail-closed). `list` shows the withheld actions (the server-derived <REQUEST_ID> hex,
   tool@version, intent); grant/deny take that id positionally (or --request-id) plus an
-  optional --reason. SN-8: grant/deny are operator decisions over the server-derived
+  optional --reason. Grant/deny are operator decisions over the server-derived
   request_id — they never mint a client warrant."
             .into(),
         "cost" => "\
@@ -971,7 +971,7 @@ kx context describe <handle> --description <text> [client flags]
 kx context remove <handle> [client flags]
   Author + govern PR-7 context bundles — named, content-addressed collections a caller
   attaches to a run via `kx invoke --context <handle>`. The manifest lives in an
-  off-journal bundles.db sidecar; the server derives bundle_ref (SN-8) and scopes every
+  off-journal bundles.db sidecar; the server derives bundle_ref and scopes every
   bundle to the authoring party. `add` upserts (--item attaches an existing content ref;
   --file uploads then attaches). Because the store is IMMUTABLE, `edit` is a client
   compose (Get -> PutContent new bytes -> re-upsert with that item re-pointed);
@@ -989,7 +989,7 @@ kx branch advance <handle> --path <subpath> --ref <hex32> [client flags]
 kx branch remove <handle> [client flags]
   Author + govern D155 branches — named, content-addressed {path -> ref} manifests over
   operator-approved host files. A branch lives in an off-journal branches.db sidecar; the
-  server derives branch_ref (SN-8) and scopes every branch to the authoring party.
+  server derives branch_ref and scopes every branch to the authoring party.
   `snapshot` reads confined host files (under KX_SERVE_FS_ROOT, default-OFF) INTO the
   content store and records the manifest — the host is never written (Phase-A); `create
   --parent` forks a point-in-time CoW sub-branch. `edit` (Phase-3) agentically rewrites

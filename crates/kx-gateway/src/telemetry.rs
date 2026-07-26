@@ -869,13 +869,13 @@ mod tests {
         );
     }
 
-    /// GR10 M8b — the per-event hot-path cost of the telemetry sink (two clock
+    /// the per-event hot-path cost of the telemetry sink (two clock
     /// reads happen in the executor wrapper; this measures the `try_send` +
     /// construction, including the drop-on-full path once the queue caps —
     /// exactly the overloaded-worker shape). Run in release via `just
     /// scale-smoke`'s suite or directly with `--ignored`.
     #[test]
-    #[ignore = "GR10 measurement — meaningful in release only"]
+    #[ignore = "latency measurement — meaningful in release only"]
     fn m8b_sink_per_event_cost() {
         let dir = tempfile::TempDir::new().unwrap();
         let ledger = TelemetryLedger::open(dir.path()).unwrap();
@@ -887,7 +887,7 @@ mod tests {
             sink.send(exec_event((i % 256) as u8, 1));
         }
         let per_event = t.elapsed() / n;
-        println!("GR10 M8b telemetry sink per-event {per_event:?}");
+        println!("Telemetry-sink telemetry sink per-event {per_event:?}");
         assert!(
             per_event < std::time::Duration::from_micros(5),
             "the hot-path sink stays sub-5µs per event"
@@ -896,7 +896,7 @@ mod tests {
 
     #[test]
     fn pagination_envelope_walks_1500_rows_without_dup_or_miss() {
-        // The GR12 scale envelope for the read path: ≥1k rows paged by
+        // The scale envelope for the read path: ≥1k rows paged by
         // before_seq cursors stay strictly descending, no dup, no miss.
         let dir = tempfile::TempDir::new().unwrap();
         let ledger = TelemetryLedger::open(dir.path()).unwrap();
@@ -1088,12 +1088,12 @@ mod tests {
         assert_eq!(s.total_output_tokens, 0);
     }
 
-    /// GR10 (W1a-3) — the per-call cost of the `summarize` GROUP BY over a
+    /// the per-call cost of the `summarize` GROUP BY over a
     /// populated sidecar. The summary is a single table scan + group; this pins
     /// it as flat and fast even at thousands of rows (the cross-page rollup is
     /// the whole point — never a per-row client drag). Release-only.
     #[test]
-    #[ignore = "GR10 measurement — meaningful in release only"]
+    #[ignore = "latency measurement — meaningful in release only"]
     fn summary_query_spike() {
         let dir = tempfile::TempDir::new().unwrap();
         let ledger = TelemetryLedger::open(dir.path()).unwrap();
@@ -1138,7 +1138,7 @@ mod tests {
             last = ledger.summarize(None).unwrap().total_output_tokens;
         }
         let per_call = t.elapsed() / runs;
-        println!("GR10 W1a-3 summarize({total} rows) per-call {per_call:?} (sum={last})");
+        println!(" summarize({total} rows) per-call {per_call:?} (sum={last})");
         assert!(
             per_call < std::time::Duration::from_millis(20),
             "the GROUP BY rollup stays well under 20ms at 5k rows"

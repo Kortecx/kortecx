@@ -1,4 +1,4 @@
-//! The leaf wall (Rule 1 / SN-8). `kx-skill` is a pure format TYPE crate — the
+//! The leaf wall (Rule 1). `kx-skill` is a pure format TYPE crate — the
 //! skill manifest shape only. It must NEVER link the journal-writer / runtime /
 //! gateway / frozen-trio components, so a Mote/journal/digest change can never
 //! reach it and it can never reach them. A skill is declarative by construction;

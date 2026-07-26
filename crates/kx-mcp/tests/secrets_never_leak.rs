@@ -1,4 +1,4 @@
-//! D81 / IMP-15 — a credential supplied out-of-band reaches NONE of the runtime
+//! A credential supplied out-of-band reaches NONE of the runtime
 //! sinks: the `EffectRequest.payload`, the `BrokerHandle` provenance, the staged
 //! result bytes (the journal/content store), or the `MoteId`. The credential
 //! reference itself also never prints the secret value.

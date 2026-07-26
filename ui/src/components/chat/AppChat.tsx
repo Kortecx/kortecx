@@ -7,7 +7,7 @@
  *
  * The App's project context (`contextRefs`) attaches to EVERY turn so the chat is
  * grounded on the App without the user re-attaching it. Authority is unchanged:
- * the server re-resolves every warrant at run (SN-8).
+ * the server re-resolves every warrant at run.
  */
 
 import { MODEL_CHAT_HANDLE } from "../../lib/chat-settings";

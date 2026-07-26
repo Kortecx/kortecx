@@ -91,7 +91,7 @@ pub struct MemoryRecord {
 }
 
 /// One recall result — a content-addressed memory + its similarity score.
-/// `score` is DISPLAY-ONLY (SN-8): it never enters a committed fact or a `MoteId`.
+/// `score` is DISPLAY-ONLY: it never enters a committed fact or a `MoteId`.
 #[derive(Clone, Debug)]
 pub struct MemoryHit {
     /// The recalled memory's content-addressed id (the citation key).

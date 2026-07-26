@@ -6,7 +6,7 @@
 //!   `kx_warrant::intersect(parent, role)` — the **only** warrant path in the
 //!   crate, narrowing-only, so the planner can never escalate privilege (D75).
 //!   The heavy `MoteDef` axes come from the vetted [`RoleRecipe`], never the
-//!   model (IMP-5 / D70). The planner never hand-derives identity or hand-builds
+//!   model. The planner never hand-derives identity or hand-builds
 //!   edges — `compile` derives `MoteId`s and enforces acyclicity /
 //!   critic-precedence / deterministic order.
 //! - [`lower_loop_to_topology_decision`]: an agentic loop is NOT a DAG back-edge;
@@ -66,9 +66,9 @@ fn resolve_step(
         .recipe(role_id)
         .ok_or_else(|| PlanError::UnknownRecipe(role_id.clone()))?;
 
-    // IMP-5: refuse a recipe that names a tool the role's (intersected) warrant
+    // refuse a recipe that names a tool the role's (intersected) warrant
     // does not grant — a step that could never legally call it. Exact
-    // (name, version) membership (SN-8), never fuzzy.
+    // (name, version) membership, never fuzzy.
     for (name, version) in &recipe.tool_contract {
         let granted = warrant
             .tool_grants
@@ -240,7 +240,7 @@ pub struct LoopProposal {
 /// (corrected-context / permission-adapt, lowered identically through vetted
 /// recipes); `FlagHuman` carries the escalation reason (flag-a-human). The runtime
 /// treats `Topology` exactly as a normal proposal (`intersect` narrows authority,
-/// so a permission-adapt can never widen — SN-8) and treats `FlagHuman` as a clean
+/// so a permission-adapt can never widen) and treats `FlagHuman` as a clean
 /// terminal stop (the failed step stays a durable dead-lettered fact; the active
 /// HITL handshake is a later PR / cloud).
 #[derive(Debug, Clone, PartialEq, Eq)]

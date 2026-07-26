@@ -6,11 +6,11 @@
 //! echo demo, and writes a schema-1 JSON [`Report`] to `target/profile/`
 //! (gitignored). `just profile` runs this + re-runs the existing scale/ceiling
 //! spikes; the captured JSON is then copied into the PRIVATE
-//! `docs/benchmarks/` trend record (never committed to OSS — SN-2).
+//! `docs/benchmarks/` trend record (never committed to OSS).
 //!
 //! Usage:
 //! - In-process spikes (default): `kx-profile [--iterations N] [--out PATH]` (`N = 8`).
-//! - Attach mode (GR24 dual-engine baseline): `kx-profile --serve <addr> <chat|embed>
+//! - Attach mode (Dual-engine baseline): `kx-profile --serve <addr> <chat|embed>
 //!   [--iterations N] [--prompt "..."] [--model <id>] [--token <t> | --token-file <p>]`
 //!   — `chat` times a real chat; `embed` times a datasets server-embed ingest+query —
 //!   against an EXTERNAL `kx serve` (whichever engine it runs).
@@ -58,7 +58,7 @@ async fn run() -> Result<(), ProfileError> {
     );
 
     // Attach mode (`--serve <addr>`): profile a real chat against an EXTERNAL
-    // `kx serve` (whichever engine it runs — Ollama or llama.cpp), the GR10/GR24
+    // `kx serve` (whichever engine it runs — Ollama or llama.cpp), the dual-engine
     // dual-engine baseline. Otherwise run the in-process FFI-free spikes.
     let metrics = if let Some(endpoint) = args.serve.clone() {
         match args.mode {
@@ -186,7 +186,7 @@ async fn inproc_metrics(iterations: usize) -> Result<Vec<Metric>, ProfileError> 
     Ok(metrics)
 }
 
-/// Profile a real chat against an EXTERNAL `kx serve` at `endpoint` (GR10 + GR24
+/// Profile a real chat against an EXTERNAL `kx serve` at `endpoint` (dual-engine
 /// dual-engine baseline). Each metric id is prefixed with the engine that answered
 /// (`chat__kx-ollama__…` / `chat__kx-llamacpp__…`) so an Ollama capture and a
 /// llama.cpp capture never collide in the private trend record.
@@ -244,7 +244,7 @@ async fn attach_chat_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric>,
 }
 
 /// Profile a real vision (image→text) turn against an EXTERNAL `kx serve` at `endpoint`
-/// (GR10 + GR24 dual-engine baseline). Each metric id is prefixed with the engine that
+/// (dual-engine dual-engine baseline). Each metric id is prefixed with the engine that
 /// answered (`vision__kx-ollama__…` / `vision__kx-llamacpp__…`) so an Ollama capture and
 /// a llama.cpp capture never collide in the private trend record.
 async fn attach_vision_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric>, ProfileError> {
@@ -285,7 +285,7 @@ async fn attach_vision_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric
 }
 
 /// Profile real datasets server-embed (ingest + query) against an EXTERNAL `kx serve`
-/// at `endpoint` (GR10 + GR24 dual-engine baseline). Each metric id is prefixed with
+/// at `endpoint` (dual-engine dual-engine baseline). Each metric id is prefixed with
 /// the engine that embeds (`embed__kx-ollama__…` / `embed__kx-llamacpp__…`) so an
 /// Ollama capture and a llama.cpp capture never collide in the trend record.
 async fn attach_embed_metrics(endpoint: &str, args: &Args) -> Result<Vec<Metric>, ProfileError> {

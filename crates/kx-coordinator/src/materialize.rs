@@ -9,7 +9,7 @@
 //! `TopologyDecision` fact, reusing the SAME public kx-projection primitives the
 //! projection's `DefaultTopologyMaterializer` uses — [`InheritFromShaperResolver`] for the
 //! child `MoteDef` (D48, incl. the per-child `intent`), `Mote::new`'s `derive_mote_id` for
-//! identity (D49), and [`intersect`] for the per-child warrant (SN-8 narrowing-only). So
+//! identity (D49), and [`intersect`] for the per-child warrant (narrowing-only). So
 //! the dispatch entry's `MoteId` provably equals the one the materializer registers (one
 //! source of truth — asserted in tests). Pure + total over the inputs; the only I/O is one
 //! content-store fetch + bincode decode of the committed decision. It runs identically on
@@ -68,7 +68,7 @@ pub(crate) fn derive_shaper_children(
     let resolver = InheritFromShaperResolver;
     let mut children = Vec::with_capacity(decision.children.len());
     for (index, descriptor) in decision.children.iter().enumerate() {
-        // SN-8: the model names a ROLE; the registry maps it to a vetted warrant and
+        // the model names a ROLE; the registry maps it to a vetted warrant and
         // `intersect` narrows (never widens). An unknown role is a fail-closed error.
         let role = role_registry
             .resolve(&descriptor.role_id)

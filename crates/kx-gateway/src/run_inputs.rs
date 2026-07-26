@@ -16,7 +16,7 @@
 //! `kx serve` shares one journal, so all invokes share one `instance_id`
 //! (one-run-per-journal). `INSERT OR REPLACE` keeps capture idempotent — the
 //! latest invoke's args win per run, which is the sensible pre-fill default.
-//! `principal` is a server-resolved audit field (SN-8), never a read filter.
+//! `principal` is a server-resolved audit field, never a read filter.
 
 use std::path::Path;
 use std::sync::Mutex;

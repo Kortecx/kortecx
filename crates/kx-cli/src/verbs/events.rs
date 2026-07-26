@@ -35,7 +35,7 @@ pub enum EventsTarget {
 
 /// A global event-delta kind, for the `--kind` triage filter (W1a-3). The five
 /// kinds the global tail carries; the filter is purely CLIENT-SIDE (applied
-/// after the snapshot/follow drain — the server stream is unchanged, SN-8).
+/// after the snapshot/follow drain — the server stream is unchanged).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum GlobalKind {
     /// A Mote committed a durable effect.

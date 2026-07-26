@@ -3,7 +3,7 @@
  * pre-action approvals: list the withheld world-mutating actions
  * (`ListPendingApprovals`), and GRANT / DENY an operator decision over a
  * server-derived `requestId` (`GrantApproval` / `DenyApproval`). Grant/deny release
- * or reject a STAGED action; they never mint a client warrant (SN-8). The backend
+ * or reject a STAGED action; they never mint a client warrant. The backend
  * (autonomy-safety-gates #267 — journal `KIND_APPROVAL`, the coordinator pause/
  * grant/resume gate, all four RPCs) is fully wired + E2E-tested; this is the UI leg
  * that lets a NON-CLI operator govern an autonomous, trigger-firing App.

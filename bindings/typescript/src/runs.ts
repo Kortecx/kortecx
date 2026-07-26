@@ -3,7 +3,7 @@
  * (hex ids + the registered seq/wall-clock). Kept in its own module so `types.ts`
  * stays a thin aggregator, mirroring the Rust core's module-per-concern discipline.
  *
- * SN-8: every id is server-derived; the SDK only *encodes* the bytes to hex. The
+ * every id is server-derived; the SDK only *encodes* the bytes to hex. The
  * `registeredUnixMs` is an audit-only wall-clock (off every hash) — a legitimate
  * "started at" for the UI, never identity.
  */
@@ -57,7 +57,7 @@ export interface RunPage {
  * `getRecipeForm` needs to re-render the form (a durable run otherwise carries
  * only the fingerprint).
  *
- * SN-8 / off-digest: the args never become committed facts. A run with nothing
+ * Off-digest: the args never become committed facts. A run with nothing
  * captured surfaces as `NotFound`; an old gateway as an `Unimplemented` rpc error.
  */
 export class RunInputs {

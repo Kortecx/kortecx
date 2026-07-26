@@ -132,7 +132,7 @@ export class RecipeInfo {
 }
 
 /** One ranked `SearchRecipes` hit (PR-4 Batch D): the matched recipe plus its
- *  advisory rank in integer basis points (0..=10000). SN-8: `scoreBp` is
+ *  advisory rank in integer basis points (0..=10000). `scoreBp` is
  *  DISPLAY-ONLY — a search SURFACES a recipe, never invokes one (`Invoke` stays
  *  the authorization gate). */
 export class ScoredRecipe {

@@ -12,7 +12,7 @@
 //!   — top-k semantic search. `--mode` (RC4a) selects dense-only vs hybrid (BM25 +
 //!   dense, RRF-fused); `--rerank` (RC4c) overrides the operator's MMR diversity-rerank
 //!   default per query; both omitted ⇒ the server's configured default. Each hit's `score`
-//!   is DISPLAY-ONLY (SN-8) — a ranking aid, never an identity input; the durable
+//!   is DISPLAY-ONLY — a ranking aid, never an identity input; the durable
 //!   result is the ordered content-ref SET. A chunked corpus shows each hit's passage
 //!   position within its parent document.
 //!

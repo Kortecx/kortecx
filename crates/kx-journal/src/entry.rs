@@ -198,7 +198,7 @@ use smallvec::SmallVec;
 /// `schema_version` is not exactly the current version (the loud-refusal contract
 /// is unchanged: an OLD binary refuses a newer journal rather than misreading it).
 ///
-/// **Migration (IMP-2, M2.x-E).** As of the schema-migration work, an older
+/// **Migration (M2.x-E).** As of the schema-migration work, an older
 /// still-supported version is no longer a dead end: [`crate::migrate_entry`] /
 /// [`crate::ReplayJournal`] up-convert old entries to the current shape for
 /// replay/recovery, and [`crate::migrate_to`] rewrites an old journal into a fresh
@@ -424,7 +424,7 @@ pub const MAX_APPROVAL_TEXT_LEN: usize = 512;
 /// handshake gating `awaiting_mote_id` in run `instance_id`. Domain-separated
 /// (`"kx-approval-req"`); the first 16 bytes of the blake3 digest. Pure +
 /// total, so the coordinator re-derives the SAME id on every pass and across a
-/// cold recovery (no randomness on the identity path — SN-8).
+/// cold recovery (no randomness on the identity path).
 #[must_use]
 pub fn approval_request_id(
     instance_id: &[u8; INSTANCE_ID_LEN],
@@ -510,7 +510,7 @@ pub enum ReactBranch {
     /// the next turn's context so the model self-corrects (fixes its args, picks
     /// a granted tool, or answers directly). A `Rejected` round counts as one
     /// tool-call AND one turn against the budget, so the loop is bounded; the
-    /// chain dead-letters loudly only once the budget is exhausted (BUG-27's
+    /// chain dead-letters loudly only once the budget is exhausted (the
     /// "loud, never silent" terminal is preserved). The `reason` is a pure,
     /// deterministic function of the frozen turn output + the tool schema, so
     /// recovery/replay re-derive identical bytes.
@@ -532,7 +532,7 @@ pub enum ReactBranch {
     /// back-compat); only a genuinely-multi output produces `ToolBatch`. Each
     /// call counts against `max_tool_calls`; the batch fires in full (bounded by
     /// [`MAX_TOOL_BATCH_CALLS`]) then dead-letters loudly if the cumulative
-    /// budget is exhausted (BUG-27 "loud, never silent"). The calls are a pure,
+    /// budget is exhausted ("loud, never silent"). The calls are a pure,
     /// deterministic function of the frozen turn output, so recovery/replay
     /// re-derive identical bytes + identical observation ids.
     ToolBatch {
@@ -577,7 +577,7 @@ impl ReactBranch {
 /// [`Self::as_u8`] tag (the `serde` derives serve the checkpoint DTO only). The
 /// outcome is FROZEN at append so recovery/replay re-read the decision, never a
 /// re-sampled tail — the model proposes the ordering, the runtime enforced it via
-/// `parse_permutation` before recording it (SN-8: an exact permutation, never a
+/// `parse_permutation` before recording it (an exact permutation, never a
 /// similarity score).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReRankOutcome {
@@ -729,7 +729,7 @@ pub enum ApprovalState {
         created_unix_ms: u64,
     },
     /// An operator GRANTED the request — the staged action may now fire (exactly
-    /// once, via the StageThenCommit fence). Server-attributed (SN-8): the model
+    /// once, via the StageThenCommit fence). Server-attributed: the model
     /// never mints this; it is an operator decision over a server-derived
     /// `request_id`.
     Granted {
@@ -742,7 +742,7 @@ pub enum ApprovalState {
         decided_unix_ms: u64,
     },
     /// An operator DENIED the request — the staged action never fires; the chain
-    /// dead-letters loudly (terminal). Server-attributed (SN-8).
+    /// dead-letters loudly (terminal). Server-attributed.
     Denied {
         /// The denying operator's configured id.
         approver_id: u64,
@@ -1533,7 +1533,7 @@ pub enum JournalEntry {
         instance_id: [u8; INSTANCE_ID_LEN],
         /// `ContentRef` of the ENCODED ordered pre-rerank candidate refs (the hits
         /// the model reorders) — the after-recovery source for rebuilding the rerank
-        /// Mote's input. SN-8: ordered content refs only, no scores.
+        /// Mote's input. Ordered content refs only, no scores.
         base_results_ref: ContentRef,
         /// `ContentRef` of the query text the rerank ranks against — rebuilds the
         /// rank prompt after recovery.

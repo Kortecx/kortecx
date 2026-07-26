@@ -2,7 +2,7 @@
 //! [`AnnotationStore`] — an advisory, mutable, rebuildable curation projection
 //! keyed by [`ContentRef`].
 //!
-//! # The wall (SN-8, load-bearing)
+//! # The wall (load-bearing)
 //!
 //! This projection is **off the truth path**. It is NEVER journaled, NEVER on the
 //! identity / commit / memoization path, and it NEVER gates runtime execution. Its
@@ -17,9 +17,9 @@
 //! that wall — the wall is the dependency direction.
 //!
 //! **The temptation to move this layer "closer" to the executor for convenience is
-//! itself the SN-8 violation.** A usefulness score is a similarity-flavoured signal;
+//! itself the violation.** A usefulness score is a similarity-flavoured signal;
 //! the moment it gates selection, eviction, or promotion it has crossed onto the
-//! trust path that SN-8 reserves for exact cryptographic equality.
+//! trust path that the trust path reserves for exact cryptographic equality.
 //!
 //! # No floats
 //!

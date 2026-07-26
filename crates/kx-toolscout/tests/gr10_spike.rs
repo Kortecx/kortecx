@@ -1,4 +1,4 @@
-//! GR10 — the measure-and-persist spike (run on demand, numbers → the PRIVATE
+//! The measure-and-persist spike (run on demand, numbers → the PRIVATE
 //! `docs/benchmarks/` corpus):
 //!
 //! ```sh
@@ -36,7 +36,7 @@ impl Embedder for HashEmbedder {
 }
 
 #[test]
-#[ignore = "GR10 spike — run with --ignored --nocapture and persist the numbers"]
+#[ignore = "Latency spike — run with --ignored --nocapture and persist the numbers"]
 fn rank_1k_fingerprints_and_lower_a_10_step_bundle() {
     let embed = HashEmbedder;
 
@@ -113,7 +113,7 @@ fn rank_1k_fingerprints_and_lower_a_10_step_bundle() {
     let b: Vec<_> = two.motes.iter().map(|m| m.mote.id).collect();
     assert_eq!(a, b, "spike doubles as a determinism oracle");
 
-    println!("GR10 kx-toolscout spike (1k manifests, 3 langs × 8 kw):");
+    println!("kx-toolscout spike (1k manifests, 3 langs × 8 kw):");
     println!(
         "  rank k=10, string rungs only : {rank_string_only:?} (top {})",
         without.len()

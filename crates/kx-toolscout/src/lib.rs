@@ -1,7 +1,7 @@
 //! W1.A5 — advisory tool discovery + [`TaskBundle`](kx_bundle::TaskBundle)
 //! lowering (the MCP-intelligence core).
 //!
-//! **SN-8 boundary (load-bearing — the [`kx_dataset::RetrievalIndex`] note
+//! **Identity boundary (load-bearing — the [`kx_dataset::RetrievalIndex`] note
 //! restated).** Everything in this crate that scores, ranks, or fuzzily
 //! matches is ADVISORY: it orders candidates for a picker/preview surface and
 //! nothing else. No score is ever an input to authority — [`lower_to_workflow_def`]

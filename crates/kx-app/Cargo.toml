@@ -6,7 +6,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx App envelope (kortecx.app/v1) — a thin, leaf TYPE crate for the durable, reusable App: a portable blueprint (opaque JSON) wrapped with by-reference context/tool/connection/dataset references, a minimal prompt/rule/skill/memory artifact rail, a 4-axis steering config, and per-step replay intent. Carries NO authority (no warrant, grant, secret, credential, or instance_id — server re-resolves every axis at bind). Canonical JSON (sorted keys, no floats, SN-8). Pure leaf: serde/serde_json/thiserror only; never the journal, the gateway service, or the frozen trio."
+description = "kortecx App envelope (kortecx.app/v1) — a thin, leaf TYPE crate for the durable, reusable App: a portable blueprint (opaque JSON) wrapped with by-reference context/tool/connection/dataset references, a minimal prompt/rule/skill/memory artifact rail, a 4-axis steering config, and per-step replay intent. Carries NO authority (no warrant, grant, secret, credential, or instance_id — server re-resolves every axis at bind). Canonical JSON (sorted keys, no floats). Pure leaf: serde/serde_json/thiserror only; never the journal, the gateway service, or the frozen trio."
 
 [lib]
 path = "src/lib.rs"

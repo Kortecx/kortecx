@@ -1,5 +1,5 @@
 //! Skill-catalog RPCs over a real tonic transport: `AddSkill` (the
-//! content-write seam mints the instructions ref — SN-8), `ListSkills` (paging),
+//! content-write seam mints the instructions ref), `ListSkills` (paging),
 //! `GetSkillForm` (the ADVISORY `registered` wish bit + preview), `RemoveSkill`,
 //! and the honest degrades (`unimplemented` without the seam / without the
 //! content-write seam when a body rides the request).
@@ -208,7 +208,7 @@ async fn add_with_a_body_mints_the_ref_via_the_content_write_seam() {
     assert_eq!(resp.skill_ref.len(), 16);
     assert_eq!(resp.instructions_ref.len(), 64);
     assert!(!resp.deduplicated);
-    // SN-8: the ref is server-derived over the exact body bytes.
+    // the ref is server-derived over the exact body bytes.
     let expected = kx_content::ContentRef::of(b"# Triage\nSearch first.");
     assert_eq!(resp.instructions_ref, hex(&expected.0));
     assert!(r.store.contains(&expected));

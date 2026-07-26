@@ -5,7 +5,7 @@
  *
  * No React: the component renders + collects strings, this module owns the
  * type/validation/coercion. The gateway re-validates server-side (fail-closed),
- * so this is an ergonomic first line, never the authority (SN-8).
+ * so this is an ergonomic first line, never the authority.
  */
 
 import type { RecipeForm, RecipeFormField } from "@kortecx/sdk/web";

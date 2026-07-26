@@ -2,12 +2,12 @@
 //! [`OllamaClient`].
 //!
 //! It enforces the SAME warrant gates as the in-process llama backend, in the SAME
-//! order (SN-8 / D35): the model-route authorization, the `max_output_tokens`
+//! order: the model-route authorization, the `max_output_tokens`
 //! ceiling, then the served-set membership — all BEFORE any HTTP egress. The
 //! inherent `warm`/`evict`/`resident` mirror the llama backend's lifecycle surface
 //! so the host can drive both engines through one trait.
 //!
-//! **Grammar (RC2) — honest-degrade (GR24).** Constrained tool-call decoding is
+//! **Grammar (RC2) — honest-degrade.** Constrained tool-call decoding is
 //! genuinely engine-specific: llama.cpp has a LAZY/triggered grammar sampler
 //! (prose flows free until the model commits to a tool call); Ollama's
 //! structured-output `format` constrains the WHOLE response and has no lazy mode,
@@ -51,12 +51,12 @@ pub struct OllamaBackend {
     models: RwLock<BTreeSet<String>>,
     /// Per-tag declared context window from `/api/show` (populated best-effort at
     /// discovery; `0` when the daemon doesn't report one). Display/discovery only
-    /// (SN-8) — it never authorizes a route, and it is never journaled.
+    /// — it never authorizes a route, and it is never journaled.
     context_len: RwLock<BTreeMap<String, u32>>,
     /// PR-B2: the tags that declare vision (`/api/show` capability / `projector_info`),
     /// populated best-effort at discovery. Membership is the vision-modality gate the
     /// Multimodal arm checks BEFORE any egress (honest-degrade a non-vision tag).
-    /// Display/discovery only (SN-8) — never journaled.
+    /// Display/discovery only — never journaled.
     vision: RwLock<BTreeSet<String>>,
     /// PR-B2: the content store the Multimodal arm fetches an image `content_ref`'s
     /// bytes from (bound by the host via [`Self::with_content_store`] when any served
@@ -242,7 +242,7 @@ impl OllamaBackend {
     }
 
     /// The declared context window for `model_id` (fetched from `/api/show` at
-    /// discovery), or `0` when unknown. Display/discovery only (SN-8) — for parity
+    /// discovery), or `0` when unknown. Display/discovery only — for parity
     /// with the llama backend's GGUF `n_ctx`, surfaced in `kx models list`.
     #[must_use]
     pub fn context_len(&self, model_id: &ModelId) -> u32 {
@@ -482,8 +482,8 @@ impl InferenceBackend for OllamaBackend {
 }
 
 impl EmbeddingBackend for OllamaBackend {
-    /// Embed `text` for `model_id`, authorizing the model route BEFORE any egress
-    /// (SN-8 / D35). `pooling` is ignored — the daemon applies the model's own
+    /// Embed `text` for `model_id`, authorizing the model route BEFORE any egress.
+    /// `pooling` is ignored — the daemon applies the model's own
     /// pooling — but the seam is exercised so wiring it for the RAG path (PR-B) is
     /// additive.
     ///

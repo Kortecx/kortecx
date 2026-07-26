@@ -491,7 +491,7 @@ impl InferenceBackend for LlamaInferenceBackend {
 
 impl EmbeddingBackend for LlamaInferenceBackend {
     /// Embed `text` for `model_id` under `pooling` (DP1). Authorizes the model
-    /// route BEFORE touching the model (SN-8 / D35), resolves the descriptor,
+    /// route BEFORE touching the model, resolves the descriptor,
     /// and runs the embed on the shared model-cache owner thread (reusing an
     /// already-loaded model). There is no `max_output_tokens` axis to narrow
     /// (an embedding emits no tokens), so the only quantitative ceiling is the

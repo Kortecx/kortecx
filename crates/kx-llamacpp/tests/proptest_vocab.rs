@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for the vocab path (SN-4 v2 #6).
+//! Property tests for the vocab path.
 //!
 //! Adversarial inputs: random ASCII strings, varying lengths, including
 //! whitespace and punctuation. The properties asserted hold for any input

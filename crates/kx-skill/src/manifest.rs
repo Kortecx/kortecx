@@ -15,7 +15,7 @@ pub const MAX_SKILL_MANIFEST_BYTES: usize = 64 << 10;
 pub const MAX_SKILL_INSTRUCTIONS_BYTES: usize = 256 << 10;
 
 /// Object keys that may never appear anywhere in a skill manifest (authority /
-/// executable smuggling — SN-8: the artifact wishes, the server grants). The
+/// executable smuggling — the artifact wishes, the server grants). The
 /// check is substring-on-lowercased-key, so `toolGrants`, `client_secret`,
 /// `awsCredentials`, … are all refused.
 pub const DENY_KEYS: &[&str] = &["warrant", "grant", "secret", "credential", "executable"];
@@ -265,7 +265,7 @@ fn check_integer(field: &str, v: &str) -> Result<(), SkillError> {
     Ok(())
 }
 
-/// Walk a JSON value and reject any non-integer number (SN-8 — no floats on identity).
+/// Walk a JSON value and reject any non-integer number (no floats on identity).
 fn reject_floats(v: &Value) -> Result<(), SkillError> {
     match v {
         Value::Number(n) => {

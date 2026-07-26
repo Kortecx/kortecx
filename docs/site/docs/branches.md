@@ -26,7 +26,7 @@ extend that to *your* files.
 > **The branch store is off the truth path.** Manifests live in an off-journal
 > `branches.db` sidecar — never journaled, never a `MoteId`/digest input. Dropping
 > the file loses the index (re-snapshot to restore); it cannot move the canonical
-> projection digest. The `branch_ref` is **server-derived** (SN-8): you name a
+> projection digest. The `branch_ref` is **server-derived**: you name a
 > handle, the server derives the identity, and a branch is visible only to the
 > party that authored it (no cross-party existence oracle).
 
@@ -151,4 +151,4 @@ Phase A is **read + snapshot + in-CAS edit** only. Writing a branch's edited fil
 **back to the host filesystem** is a separate, governed capability (operator-granted
 write scope + an explicit human-approval gate + full audit), sequenced after the
 gateway's security hardening. The model *proposes*; the human and the runtime
-*authorize* (SN-8).
+*authorize*.

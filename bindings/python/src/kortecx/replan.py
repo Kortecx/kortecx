@@ -3,7 +3,7 @@
 The durable, queryable history of a run's model-driven re-plan loop in ``kx serve``
 (PR-2c-2): each round's shaper Mote id, the resolved model, the failed steps that
 triggered it, and whether the model escalated to a human (the run quiesces). Kept
-in its own module (the runs.py / module-per-concern precedent). SN-8: ids are
+in its own module (the runs.py / module-per-concern precedent). Ids are
 server-derived; the SDK only hex-encodes the bytes.
 """
 

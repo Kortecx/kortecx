@@ -4,9 +4,9 @@
 //! `kx/recipes/chat-rag` (AUTO-RAG grounding over a dataset). When `--dataset` names
 //! an existing, non-empty dataset the server embeds the message, retrieves the
 //! dataset's top-`k` documents, and folds the EXACT refs into the prompt (edge-free,
-//! replayable, SN-8). The verb prints an HONEST grounding indicator: grounding is
+//! replayable). The verb prints an HONEST grounding indicator: grounding is
 //! reported ONLY when the dataset is present + non-empty — otherwise it answers
-//! plainly (grounding is never faked). Always Invoke (server-warranted, SN-8); never
+//! plainly (grounding is never faked). Always Invoke (server-warranted); never
 //! SubmitRun.
 
 use std::path::PathBuf;
@@ -56,7 +56,7 @@ pub struct ChatArgs {
     /// Attach tools (`--tools <id@ver,…>`) ⇒ the turn is a BOUNDED ReAct turn with
     /// EXPLICIT per-turn grants (only these tools). Empty ⇒ a plain chat. Parsed as
     /// `(tool_id, tool_version)` pairs (order-preserving); the server builds the scoped
-    /// warrant from the contract (SN-8), never the `KX_SERVE_AUTOGRANT` blanket.
+    /// warrant from the contract, never the `KX_SERVE_AUTOGRANT` blanket.
     pub tools: Vec<(String, String)>,
     /// The ReAct loop turn budget (`--max-turns`, default 8).
     pub max_turns: u32,
@@ -197,7 +197,7 @@ pub async fn execute(args: ChatArgs) -> Result<(), CliError> {
         // RC4b: `--image` + `--dataset` binds `kx/recipes/vision-rag` (the VLM answers about
         // the image WHILE grounded on the dataset's retrieved text). HONEST-degrade ladder:
         // vision-rag → plain vision (image only) → plain chat — never silently drop the image
-        // or fake grounding (GR15).
+        // or fake grounding.
         let rag = args.dataset.as_deref().map(|d| (d, args.k));
         if let Some(plan) = plan_vision(&mut client, &resolved, &path, &args.message, rag).await? {
             plan
@@ -260,7 +260,7 @@ pub async fn execute(args: ChatArgs) -> Result<(), CliError> {
 /// Build the `SubmitWorkflowRequest` for a `--tools` chat turn: ONE MODEL step whose
 /// `tool_contract` names ONLY the attached tools, plus the bounded ReAct budget. The
 /// server builds the scoped warrant FROM the contract and re-verifies each grant against
-/// its live registry (SN-8) — never a client warrant, never the autogrant blanket. Split
+/// its live registry — never a client warrant, never the autogrant blanket. Split
 /// out so the lowering (the tool_contract + budget reaching the wire) is unit-testable
 /// without a gateway.
 fn build_agentic_request(args: &ChatArgs) -> Result<proto::SubmitWorkflowRequest, CliError> {
@@ -419,7 +419,7 @@ async fn plan_vision(
     }
     if let Some((dataset, k)) = rag {
         // dataset/k are NOT declared slots — the server strips them and folds the
-        // retrieved text into the prompt (the chat-rag grounding path; SN-8 exact refs).
+        // retrieved text into the prompt (the chat-rag grounding path; exact refs).
         obj.insert("dataset".to_string(), serde_json::json!(dataset));
         obj.insert("k".to_string(), serde_json::json!(k));
         eprintln!("· image + dataset '{dataset}' — grounding the vision answer on retrieved text");
@@ -561,10 +561,10 @@ mod tests {
 
     #[test]
     fn tools_lower_to_a_single_agentic_model_step() {
-        // SN-4 integration plumbing: the attached tools + budget reach the WorkflowStep the
+        // integration plumbing: the attached tools + budget reach the WorkflowStep the
         // gateway compiles — a MODEL step with EXACTLY the named tool_contract + the react
         // max_turns/max_tool_calls params. The server builds the scoped warrant from this
-        // contract (SN-8); the CLI never sends a warrant.
+        // contract; the CLI never sends a warrant.
         let a = parse_v(&[
             "Use echo to say hi",
             "--tools",

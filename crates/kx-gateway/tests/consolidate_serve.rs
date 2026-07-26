@@ -14,7 +14,7 @@
 //!     answers (soft-logged). The deterministic kx-eval `consolidation_quality` golden is
 //!     the quality regression guard.
 //!
-//! Drive on BOTH engines (GR24; #[ignore], runtime-skips without a served model):
+//! Drive on BOTH engines (#[ignore], runtime-skips without a served model):
 //! ```text
 //!   # llama.cpp (Gemma-4 GGUF):
 //!   KX_SERVE_MODEL_GGUF=.../gemma-4-12b-it-q4_k_m.gguf KX_SERVE_MEMORY=1 \
@@ -125,7 +125,7 @@ async fn semantic_count(c: &mut KxGatewayClient<Channel>) -> usize {
     .count()
 }
 
-/// THE HARD WITNESS (GR24 parity): the RC5b decay/stats/restore RPCs respond live on
+/// THE HARD WITNESS (dual-engine parity): the RC5b decay/stats/restore RPCs respond live on
 /// whichever engine served. Deterministic, model-free — a store → stats → dry-run decay
 /// → restore round-trip. (Eviction/restore LOGIC is unit-tested with an injected clock;
 /// a live store stamps `created_ms = now`, so nothing is old enough to actually evict.)
@@ -202,11 +202,11 @@ async fn decay_stats_restore_rpcs_respond_on_both_engines() {
     running.shutdown().await.unwrap();
 }
 
-/// SOFT WITNESS + M13 (GR10): drive the react-memory CONSOLIDATION chain and poll for a
+/// SOFT WITNESS + M13: drive the react-memory CONSOLIDATION chain and poll for a
 /// new semantic memory (the distilled summary). The distillation is model-probabilistic,
 /// so a missing semantic write is soft-logged (the deterministic kx-eval
 /// `consolidation_quality` golden is the quality guard); the hard assertion is the chain
-/// invokes + settles. M13 = the consolidation-round wall-clock (private trend, SN-2).
+/// invokes + settles. M13 = the consolidation-round wall-clock (private trend).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real LLM inference; needs a served Gemma model; opt in with --ignored"]
 async fn consolidate_chain_distills_a_semantic_memory() {
@@ -267,7 +267,7 @@ async fn consolidate_chain_distills_a_semantic_memory() {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     let round_ms = t.elapsed().as_secs_f64() * 1000.0;
-    // Diagnostic (GR20): dump what the model actually proposed each turn — did it call
+    // Diagnostic: dump what the model actually proposed each turn — did it call
     // consolidate → remember, or answer without the tools?
     if let Ok(turns) = c
         .list_react_turns(proto::ListReactTurnsRequest {
@@ -296,7 +296,7 @@ async fn consolidate_chain_distills_a_semantic_memory() {
         "✓ consolidation chain ({}): wrote_semantic={wrote_semantic} (before={before})",
         engine()
     );
-    // M13 (GR10) — copy into the private `docs/benchmarks/` trend (SN-2).
+    // M13 — copy into the private `docs/benchmarks/` trend.
     eprintln!(
         "M13 consolidation | engine={} | round_ms={round_ms:.1}",
         engine()

@@ -25,7 +25,7 @@ pub const CRITIC_SCHEMA_VERSION: u16 = 1;
 /// A critic's committed verdict — the value a critic Mote's `result_ref` payload
 /// decodes to.
 ///
-/// **SN-8:** produced by EXACT deterministic evaluation; compared downstream by
+/// **Identity:** produced by EXACT deterministic evaluation; compared downstream by
 /// byte-equality only (the projection's promotion gate reads `Valid` vs
 /// `Invalid`, never a score). Two runs over identical producer output produce a
 /// byte-identical verdict and therefore an identical content ref — the journal
@@ -235,7 +235,7 @@ impl CriticVerdict {
     ///
     /// The executor commits the encoded verdict to the content store; this is
     /// the 32-byte ref both the executor and the projection compute, so they
-    /// agree byte-for-byte (SN-8 exact equality).
+    /// agree byte-for-byte (exact equality).
     #[must_use]
     pub fn content_ref_bytes(&self) -> [u8; 32] {
         *blake3::hash(&self.encode()).as_bytes()

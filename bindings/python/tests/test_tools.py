@@ -241,7 +241,7 @@ def test_resolve_noop_without_local_tools() -> None:
 
 
 def test_agent_frozen_with_tools_fires_via_resolved_contract() -> None:
-    # BUG-32 fix: the frozen `Agent(tools=[fn])` one-liner now RESOLVES the local
+    # Fix: the frozen `Agent(tools=[fn])` one-liner now RESOLVES the local
     # tool onto its model step (no pre-flight raise) and runs it via run_chain —
     # NOT through the dynamic react-auto invoke path.
     add = _add_tool()

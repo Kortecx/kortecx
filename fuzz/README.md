@@ -8,10 +8,10 @@ input** are the highest-value review + fuzz surface. This is a [`cargo-fuzz`](ht
 
 | target | function | untrusted input |
 |---|---|---|
-| `decode_plan` | `kx_planner::decode_plan` | a model's PROPOSED plan bytes (the SN-8 fence) |
+| `decode_plan` | `kx_planner::decode_plan` | a model's PROPOSED plan bytes (the authority fence) |
 | `decode_entry` | `kx_journal::decode_entry` | a journal-entry record (the synchronization substrate) |
 | `fold_checkpoint` | `kx_projection::FoldCheckpoint::from_bytes` | a projection checkpoint a recovering runtime folds |
-| `parse_tool_call` | `kx_toolcall::parse_tool_call` / `parse_tool_calls` | untrusted model tool-call output, warrant-gated (SN-8) |
+| `parse_tool_call` | `kx_toolcall::parse_tool_call` / `parse_tool_calls` | untrusted model tool-call output, warrant-gated |
 
 Each function is documented **total + panic-free over arbitrary bytes** with DoS caps; the fuzzer asserts
 that — a panic / OOM / hang is a finding.

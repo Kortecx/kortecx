@@ -15,7 +15,7 @@ test("approvals bell: no false badge, drawer honest empty state, both themes", a
   await connectConsole(page, gw, { wsEndpoint: gw.wsEndpoint });
 
   // A healthy run that COMMITS but stages no world-mutating action ⇒ never a pending
-  // approval (GR15: the bell counts only real withheld actions, never a fabricated one).
+  // approval (the bell counts only real withheld actions, never a fabricated one).
   await runRecipe(page, { handle: "kx/recipes/echo", fields: { topic: "ok" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
 
@@ -41,7 +41,7 @@ test("approvals bell: no false badge, drawer honest empty state, both themes", a
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("approvals-drawer")).toHaveCount(0);
 
-  // BOTH THEMES (D142.1/GR13): the drawer renders under the dark palette too.
+  // BOTH THEMES: the drawer renders under the dark palette too.
   await page.getByTestId("theme-toggle").click();
   await page.getByTestId("approvals-bell").click();
   await expect(page.getByTestId("approvals-drawer")).toBeVisible();

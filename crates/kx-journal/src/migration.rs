@@ -1,4 +1,4 @@
-//! Schema migration — the forward-migration story (IMP-2, M2.x-E).
+//! Schema migration — the forward-migration story (M2.x-E).
 //!
 //! A durability product that cannot be upgraded is not durable. Every prior
 //! `JOURNAL_SCHEMA_VERSION` bump shipped a *loud refusal* of the previous version

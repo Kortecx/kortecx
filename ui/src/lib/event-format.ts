@@ -49,7 +49,7 @@ export function eventVisual(kind: string): EventVisual {
  * closed enum in `kx-journal/src/entry.rs` (variants 0-8, in declaration order).
  * An unknown discriminant maps to "UNKNOWN REASON" rather than crashing (the proto
  * is additive-only); a `null`/absent reason returns `null` so a failed row that
- * carried no reason shows NO fabricated label (GR15 — never invent a cause).
+ * carried no reason shows NO fabricated label (never invent a cause).
  */
 const FAILURE_REASON: Readonly<Record<number, string>> = {
   0: "TIMED OUT",
@@ -161,7 +161,7 @@ export function matchesFeedFilter(d: EventLike, filter: FeedFilter, recipeName?:
 
 /** Serialize the (filtered) feed to NDJSON — one server-derived object per line,
  *  matching the CLI `kx events --all --json` shape per kind (snake_case `type` +
- *  hex join keys ONLY; never payloads/secrets — SN-8). The result text is NOT
+ *  hex join keys ONLY; never payloads/secrets). The result text is NOT
  *  exported here (it is content-addressed; the hash is the join key). */
 export function feedToNdjson(deltas: readonly EventLike[]): string {
   return deltas.map((d) => JSON.stringify(deltaToWire(d))).join("\n");

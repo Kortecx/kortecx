@@ -3,14 +3,14 @@
 //!
 //! Today it houses the **NL→DAG planner contract** ([`PLANNER_SYSTEM`]) and the curated
 //! **authoring-role palette** ([`AUTHORING_ROLES`]) the `ProposeWorkflow` path drives (a
-//! goal → a proposed multi-agent DAG, propose-then-confirm, D209.3 / SN-8). The role
+//! goal → a proposed multi-agent DAG, propose-then-confirm, D209.3). The role
 //! names are aligned to the SDK persona library (`@kortecx/sdk` `PERSONAS`) so the console
 //! maps a proposed step's `role` → its persona framing at author time (the identity-bearing
 //! role instruction folds into the step prompt on the CLIENT, exactly as a hand-authored
 //! persona does — this module supplies the PLANNER contract + the palette, never a
 //! per-step identity axis, so it stays off-MoteId / off-digest).
 //!
-//! These prompts are **presentation only** (SN-8): fed to `render_chat`, never journaled,
+//! These prompts are **presentation only**: fed to `render_chat`, never journaled,
 //! never an identity input. The library is the single source the planner reads; enriching
 //! it steers the model without touching `7d22d4bd` or replay.
 //!
@@ -25,7 +25,7 @@
 /// EXACTLY one strict `{"plan":{…}}` envelope — the minimal trust surface `kx-planner`
 /// decodes: a step names ONLY a `role` (from the provided palette) + a free-form `intent`;
 /// edges are `{parent,child}` indices. The runtime supplies every capability axis from the
-/// vetted role recipe (SN-8), so the model must NEVER name a model, a tool, or a permission.
+/// vetted role recipe, so the model must NEVER name a model, a tool, or a permission.
 /// The exact envelope shape round-trips through [`kx_planner::decode_plan`] (pinned by the
 /// `planner_example_decodes_and_uses_palette_roles` test).
 pub(crate) const PLANNER_SYSTEM: &str = "You are a precise workflow planner. Turn the user's \
@@ -59,7 +59,7 @@ add a step only when it does distinct work.";
 /// 2. **The model may NAME a capability.** Steps carry a `tools` list drawn from a menu the
 ///    SERVER computed from the caller's own ceiling. Naming is not granting: every id is
 ///    intersected back against that ceiling host-side, so this widens what can be ASKED FOR
-///    and nothing else (SN-8). The role palette still supplies every other capability axis.
+///    and nothing else. The role palette still supplies every other capability axis.
 pub(crate) const DERIVE_SYSTEM: &str = "You are designing a Kortecx APP: a durable, reusable \
 automation that a schedule, a trigger, or another workflow runs. Turn the user's request into \
 the SMALLEST workflow of collaborating agent roles that fully achieves it.\n\

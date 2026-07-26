@@ -26,7 +26,7 @@ use crate::strings::{ConfigKey, ConfigVal, GraphPosition, ModelId, ToolName, Too
 /// via the same canonical bincode used for every other field — and it is
 /// **integer-only by construction** (`kx_critic_types` enforces no float on the
 /// identity path), so folding it preserves the no-float canonical-hash
-/// precondition (SN-8). Prior bumps: **4** at D50 (`inference_params` — decoding
+/// precondition. Prior bumps: **4** at D50 (`inference_params` — decoding
 /// parameters `temperature_bps`/`top_p_bps`/`top_k`/`seed`/`stop_tokens`/
 /// `grammar`/`max_output_tokens`); **3** at the P0.6 addition of
 /// `is_topology_shaper`; **2** at the P0.8 addition of `effect_pattern` and
@@ -110,7 +110,7 @@ pub struct MoteDef {
     /// `CriticVerdict` as this Mote's `result_ref`. Carried in the identity so
     /// the declared check is part of the critic's `MoteId` (changing the check
     /// changes the Mote — reproducible by construction). The spec is
-    /// integer-only (no float on the identity path; SN-8). A native-check Mote
+    /// integer-only (no float on the identity path). A native-check Mote
     /// MUST be `Pure` with `critic_for = Some(_)` and `!is_topology_shaper`
     /// (executor refusal R-15). `None` for every non-critic Mote.
     pub critic_check: Option<CheckSpec>,

@@ -52,7 +52,7 @@ async fn invoke_projection_content_events_flow() {
     ]))
     .await;
     assert!(content.status.success(), "content failed");
-    // GR15: echo commits its bound `topic` verbatim — the content path returns it.
+    // echo commits its bound `topic` verbatim — the content path returns it.
     assert_eq!(
         content.stdout, b"incidents",
         "content returns the exact committed bytes (the echoed topic)"
@@ -166,7 +166,7 @@ async fn content_out_writes_committed_bytes_to_file() {
     ]))
     .await;
     assert!(out.status.success(), "stderr: {}", stdout(&out));
-    // GR15: echo commits its bound `topic` verbatim.
+    // echo commits its bound `topic` verbatim.
     assert_eq!(
         std::fs::read(&out_path).unwrap(),
         b"to-disk",

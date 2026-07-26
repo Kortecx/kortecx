@@ -54,7 +54,7 @@ export function warnIfPlaintext(endpoint: string, token: string | undefined): vo
  * A Connect interceptor that adds `Authorization: Bearer <token>` to every unary
  * and streaming call (the equivalent of the Python SDK's per-call metadata). The
  * caller's party is SERVER-DERIVED from the token — the client never asserts an
- * identity (SN-8).
+ * identity.
  */
 export function bearerInterceptor(token: string | undefined): Interceptor {
   return (next) => async (req) => {

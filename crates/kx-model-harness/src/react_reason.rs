@@ -11,8 +11,8 @@
 //! crates already depend on), so the natural shared home is `kx-toolcall` — but
 //! `bounded_reason` needs `kx_journal::MAX_REJECTED_REASON_LEN`, and `kx-toolcall`
 //! must NOT take a `kx-journal` dependency (it is the dependency-light authority
-//! leaf, GR3). Consolidating all three into one crate is a follow-up refactor (its
-//! own PR, GR1). For now the twin is guarded against drift by
+//! leaf). Consolidating all three into one crate is a follow-up refactor (its
+//! own PR). For now the twin is guarded against drift by
 //! `reprompt_text_matches_the_coordinator` (a byte-equality unit test pinning the
 //! exact strings) so the cross-impl re-prompted-turn `MoteId` stays identical (R49):
 //! a re-prompted turn's identity rides its instruction (`PROMPT_KEY`), so if the

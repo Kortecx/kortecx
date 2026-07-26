@@ -7,7 +7,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx Ollama inference backend — an out-of-process, FFI-FREE InferenceBackend over the Ollama REST API (ureq). Implements the same kx-inference seam as the in-process llama.cpp backend WITHOUT a C++ toolchain, so a toolchain-free install can serve local models by talking to a running Ollama daemon (loopback by default; non-loopback is operator opt-in, SN-8). Carries NO journal / gateway / frozen-trio dependency (the dep_wall pins it FFI-free)."
+description = "kortecx Ollama inference backend — an out-of-process, FFI-FREE InferenceBackend over the Ollama REST API (ureq). Implements the same kx-inference seam as the in-process llama.cpp backend WITHOUT a C++ toolchain, so a toolchain-free install can serve local models by talking to a running Ollama daemon (loopback by default; non-loopback is operator opt-in). Carries NO journal / gateway / frozen-trio dependency (the dep_wall pins it FFI-free)."
 
 [lib]
 path = "src/lib.rs"
@@ -24,7 +24,7 @@ kx-inference = { workspace = true }
 # kx-inference edge; `tests/dep_wall.rs` keeps the whole crate FFI-free.
 kx-content   = { workspace = true }
 # `ModelId` (the dispatch route identity) + `WarrantSpec` (the model-route /
-# ceiling the backend enforces, SN-8 / D35). Both FFI-free leaves.
+# ceiling the backend enforces, A token knob never widens a warrant). Both FFI-free leaves.
 kx-mote      = { workspace = true }
 kx-warrant   = { workspace = true }
 # RC4c: parse the off-digest grammar carrier (`GrammarSpec`) so a listwise-rerank

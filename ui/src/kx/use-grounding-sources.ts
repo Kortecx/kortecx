@@ -5,8 +5,8 @@
  * SHIPPED RPCs (`GetMoteDetail` → `GetContentBatch`). No new RPC: these are the
  * precise refs that grounded THIS answer (a different set ⇒ a different `MoteId`),
  * so the citations cannot drift from the reply. Commit-gated (`enabled`) so nothing
- * fires before the turn settles; content-addressed ⇒ cached forever. Display-only
- * (SN-8): no score is exposed (the wire carries none), and nothing authorizes.
+ * fires before the turn settles; content-addressed ⇒ cached forever. Display-only:
+ * no score is exposed (the wire carries none), and nothing authorizes.
  *
  * Honest-degrade: an ungrounded turn (empty/unknown dataset) has no such key ⇒ no
  * sources; an old gateway (`GetMoteDetail` UNIMPLEMENTED) soft-errors ⇒ no sources.
@@ -67,7 +67,7 @@ export function useGroundingSources(
   const items = itemsQ.data?.items ?? [];
   const refs = items.map((it) => it.ref);
   // One batch round trip resolves every grounded ref → its preview snippet; the
-  // content store denies a ref not committed by this run (run-scoped, SN-8).
+  // content store denies a ref not committed by this run (run-scoped).
   const { byRef, isLoading } = useResultMap(instanceId ?? "none", refs);
 
   const sources: GroundedSource[] = items.map((it) => {

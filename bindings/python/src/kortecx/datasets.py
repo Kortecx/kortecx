@@ -3,7 +3,7 @@ an ingest outcome, as surfaced by ``ListDatasets`` / ``QueryDataset`` /
 ``IngestDocuments``.
 
 Kept in its own module so ``types.py`` stays a thin aggregator, mirroring the Rust
-core's module-per-concern discipline. SN-8: a hit's ``score`` is DISPLAY-ONLY —
+core's module-per-concern discipline. A hit's ``score`` is DISPLAY-ONLY —
 never an identity input; the retrieval result a downstream consumer trusts is the
 ordered ``content_ref`` SET, matched by EXACT hash. Embedding is pluggable: pass a
 client-computed ``embedding`` (the FFI-free path, e.g. via HuggingFace
@@ -66,7 +66,7 @@ class DatasetSummary:
 @dataclass(frozen=True)
 class DatasetHit:
     """One retrieval hit: the content-addressed ref (hex) of the CHUNK, the chunk
-    bytes, and the DISPLAY-ONLY similarity score (SN-8 — never an identity input).
+    bytes, and the DISPLAY-ONLY similarity score (never an identity input).
     RC4a adds chunk provenance (``parent_ref`` / ``chunk_index`` / ``chunk_count``)."""
 
     content_ref: str  # hex (the retrieved chunk)
@@ -96,7 +96,7 @@ class DatasetHit:
 @dataclass(frozen=True)
 class FuzzyHit:
     """Slice-B advisory fuzzy-in / exact-out discovery hit (``FuzzyDiscovery``):
-    the content-addressed ref (hex) + a DISPLAY-ONLY basis-point score (SN-8 —
+    the content-addressed ref (hex) + a DISPLAY-ONLY basis-point score (
     never an identity input). Join back to bytes with an EXACT ``get_content`` on
     the ref ("fuzzy in, exact out"). RC4a adds chunk provenance."""
 
@@ -147,7 +147,7 @@ class IngestDocument:
 
     ``doc_id`` and ``metadata`` are RESERVED (forward-compat): accepted on the wire
     but NOT YET persisted or returned. The durable id is always the server-derived
-    content hash (SN-8), so ``doc_id`` is advisory; per-doc metadata is a planned add."""
+    content hash, so ``doc_id`` is advisory; per-doc metadata is a planned add."""
 
     content: bytes
     embedding: Optional[Sequence[float]] = None

@@ -110,8 +110,8 @@ namespaces that mirror the `kx` CLI (`kx.memory`, `kx.secrets`, `kx.triggers`,
 | **Skills** (`kx.skills`) | `add` / `list` / `show` / `remove` |
 | **Server info** | `getServerInfo` (non-secret resolved config + auth/TLS posture) |
 
-Every id you pass is one the runtime handed you back — identity is **server-derived**
-(SN-8); the SDK never mints one.
+Every id you pass is one the runtime handed you back — identity is **server-derived**;
+the SDK never mints one.
 
 ### Parity with the Python SDK
 
@@ -149,7 +149,7 @@ try {
 
 ## Auth & TLS
 
-Pass a bearer token; the caller's party is **server-derived** from it (SN-8 — the
+Pass a bearer token; the caller's party is **server-derived** from it (the
 client never asserts an identity or computes an id):
 
 ```ts

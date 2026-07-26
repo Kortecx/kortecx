@@ -8,7 +8,7 @@
 //! This mirrors how `synthesis_pipeline` (structure) is separate from
 //! `ModelExecutor`/`ModelBroker` (execution).
 //!
-//! # SN-8 boundary
+//! # identity boundary
 //!
 //! [`query_corpus`] returns the committed-fact ref ([`kx_workflow::retrieval_result_ref`]
 //! — the ORDERED content refs, **scores excluded**) AND the raw [`Hit`]s (scores
@@ -145,7 +145,7 @@ pub fn ingest_corpus(
 
 /// Embed a query and retrieve the top-`k` nearest documents from the index.
 ///
-/// Returns the SN-8-safe committed-fact ref ([`retrieval_result_ref`] — the
+/// Returns the identity-safe committed-fact ref ([`retrieval_result_ref`] — the
 /// ordered content refs, **scores excluded**) AND the raw [`Hit`]s (scores
 /// included, for DISPLAY / ranking only — never on a commit path). For a fixed
 /// index state + query + pooling the `fact_ref` is stable (the exact `InMemory`
@@ -209,7 +209,7 @@ const HYBRID_POOL_MAX: usize = 256;
 /// `HostDatasetView::query` hybrid path so an authored RAG workflow gets the same
 /// retrieval quality.
 ///
-/// Returns the SN-8-safe committed-fact ref ([`retrieval_result_ref`] — the ordered
+/// Returns the identity-safe committed-fact ref ([`retrieval_result_ref`] — the ordered
 /// content refs, **scores excluded**) AND the fused [`Hit`]s (scores for DISPLAY /
 /// the optional LLM rerank only — never on a commit path).
 ///
@@ -246,7 +246,7 @@ pub fn query_corpus_hybrid(
 ///
 /// **FAIL-CLOSED.** Any non-permutation output, a carrier/dispatch error, or
 /// mismatched inputs keeps the INPUT (RRF/MMR) order — a rerank can never reorder
-/// into garbage (SN-8: the model proposes an order, the fail-closed
+/// into garbage (the model proposes an order, the fail-closed
 /// [`parse_permutation`] enforces exact validity).
 ///
 /// `rerank_hits` is a one-shot, NON-memoized, NON-Mote dispatch (the embedding-class
@@ -281,7 +281,7 @@ pub fn rerank_hits(
     let params = InferenceParams {
         grammar: Some(Grammar::new(carrier)),
         temperature_bps: 0, // greedy — the permutation is a decision, not creative output
-        // Clamp to the warrant's output ceiling (GR16 class — swept from the serve
+        // Clamp to the warrant's output ceiling (Regression class — swept from the serve
         // rerank turn): an unclamped `rerank_output_cap` above the ceiling is refused
         // as a scope violation → fail-closed to upstream order.
         max_output_tokens: rerank_output_cap(n).min(warrant.model_route.max_output_tokens),
@@ -306,7 +306,7 @@ pub fn rerank_hits(
 // a FAIL-CLOSED JSON parse — the llama.cpp GBNF sampler crashes on constraints even
 // simpler than a JSON array (see the `T-RERANK-GBNF-CRASH` note above), so extraction
 // uses NO grammar and leans entirely on the parser. The committed retrieval fact is
-// still the ordered ref SET (scores/graph excluded, SN-8); the graph only WIDENS the
+// still the ordered ref SET (scores/graph excluded); the graph only WIDENS the
 // candidate pool a query fuses.
 
 /// The per-extraction output ceiling (tokens), clamped to the warrant's ceiling.
@@ -501,7 +501,7 @@ pub fn ingest_corpus_graph(
 /// source refs, and RRF-fuse dense + sparse + graph via [`rrf_fuse_multi`]. An empty
 /// seed set / empty graph leaves the fusion byte-identical to [`query_corpus_hybrid`].
 ///
-/// Returns the SN-8-safe committed-fact ref (ordered refs, **scores excluded**) AND
+/// Returns the identity-safe committed-fact ref (ordered refs, **scores excluded**) AND
 /// the fused [`Hit`]s (scores for DISPLAY only).
 ///
 /// # Errors

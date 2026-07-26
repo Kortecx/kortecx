@@ -21,7 +21,7 @@ Two lanes (D161), one object — the API name mirrors the distinction:
 - ``dynamic=True`` → the **steered** ``kx/recipes/react`` recipe, where the model picks
   tools turn by turn. Works today.
 
-SN-8: an Agent describes intent only — the server compiles + warrants every step.
+An Agent describes intent only — the server compiles + warrants every step.
 """
 
 from __future__ import annotations
@@ -130,7 +130,7 @@ class Agent:
             # (`kx/recipes/react-vision`, form-gated) so the served VLM reasons over the
             # image on every turn. The bounded-loop budget mirrors the dynamic lane;
             # local custom tools + an image is a future combo (react-vision grants the
-            # bundled tool set). Fail-closed when no vision model is served (GR15).
+            # bundled tool set). Fail-closed when no vision model is served.
             args = {
                 "instruction": self._prompt(task),
                 "max_turns": self.max_turns if self.max_turns is not None else 8,
@@ -167,8 +167,8 @@ class Agent:
         # resolves any local `@kx.tool` functions to their namespaced `<server>/<name>`
         # and writes them into the step's tool_contract; the served model fires them in
         # a bounded reason→tool→observe loop (a model's bare/leaf name resolves to the
-        # grant — the BUG-32 fix). No `KX_SERVE_AUTOGRANT` needed: the step grants its
-        # OWN exact tools (SN-8 — the server still compiles + warrants every step).
+        # grant — the fix). No `KX_SERVE_AUTOGRANT` needed: the step grants its
+        # OWN exact tools (the server still compiles + warrants every step).
         return self.as_flow(task).run(wait=wait, timeout=timeout, client=kx)
 
     def stream(self, task: str, *, client: "Optional[KxClient]" = None) -> "Run":

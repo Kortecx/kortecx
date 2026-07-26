@@ -18,7 +18,7 @@ into the agent step's ``config_subset[PROMPT_KEY]`` (like any prompt), so two ag
 that differ only by persona are genuinely distinct, replayable Motes — the same
 persona + task always re-derives the same ``MoteId``. This is purely client-side
 authoring sugar (a curated ``{name: instructions}`` table); the SERVER still compiles
-+ warrants every step (SN-8), and the canonical projection digest is unaffected (the
++ warrants every step, and the canonical projection digest is unaffected (the
 demo uses no persona — a persona only ever changes NEW motes).
 
 The library is intentionally small + provider-neutral; pass your own string to

@@ -15,7 +15,7 @@ method appends to the SAME ``_Seq`` / ``_Par`` node graph the ``>>`` / ``&`` / `
 operators build, so a :class:`Flow` lowers **byte-identically** to the equivalent
 chain (the golden-corpus tri-surface contract holds by construction — a Flow is sugar,
 never a new wire shape). Defaults are filled in (served model, budget 8/20, wait) so the
-common case is one line; every knob stays optional. SN-8: a Flow describes TOPOLOGY
+common case is one line; every knob stays optional. a Flow describes TOPOLOGY
 only — the server compiles + warrants every step.
 """
 
@@ -91,7 +91,7 @@ _DEFAULT_CONSENSUS_JUDGE = (
 )
 #: The ``config_subset`` key (mirrors ``kx_mote::CONSENSUS_VOTE_KEY``) marking a PURE sink
 #: as an exact-equality consensus vote — the server reduces its parents to the plurality
-#: winner (SN-8: exact byte-equality, ties → first-appearance). Only ``"majority"`` today.
+#: winner (exact byte-equality, ties → first-appearance). Only ``"majority"`` today.
 _CONSENSUS_VOTE_KEY = "kx.consensus.vote"
 
 #: The default reviewer prompt for :meth:`Flow.review_loop` — each pass reviews the
@@ -205,7 +205,7 @@ class Flow:
         apps=None,
     ) -> "Flow":
         """Append an agent (MODEL) step. ``model`` defaults to the served model (the
-        client's ``default_model`` fills a blank one at submit, SN-8); pass ``tools``
+        client's ``default_model`` fills a blank one at submit); pass ``tools``
         to make it a deterministic-agentic step — a bounded reason→tool→observe loop
         over the granted SET (PR-9b; the execution lane is LIVE as of PR-9b-2).
 
@@ -256,7 +256,7 @@ class Flow:
         self, tool_id: "Union[str, object]", tool_version: str = "1", **args: object
     ) -> "Flow":
         """Append a standalone TOOL step — fire ONE tool (PR-6b-2). The server
-        resolves it in its live registry + builds the warrant (SN-8).
+        resolves it in its live registry + builds the warrant.
 
         ``tool_id`` is either a registered tool's name OR a ``@kx.tool``-decorated
         LOCAL function (V2b) — the SDK registers the function as a stdio MCP server
@@ -286,7 +286,7 @@ class Flow:
 
     def context(self, *handles: str) -> "Flow":
         """Attach context-bundle handles to the run (PR-7, chain-level grounding the
-        server injects into every entry Mote at bind, SN-8). Appends in order."""
+        server injects into every entry Mote at bind). Appends in order."""
         self._context.extend(handles)
         return self
 
@@ -391,7 +391,7 @@ class Flow:
         a Task/Flow for a custom sink, or ``synthesize=False`` for a PURE deterministic
         fold. Pure client-side composition (parallel MODEL leaves → one sink) — no new
         step kind, byte-identical to the equivalent ``[a & b] > g`` chain; the SERVER
-        drives + warrants each agent (SN-8)."""
+        drives + warrants each agent."""
         if not agents:
             raise ChainError("swarm() needs at least one agent")
         leaves = [_participant_to_node(a, goal) for a in agents]
@@ -469,7 +469,7 @@ class Flow:
         (default = a MODEL integrator; steer with ``gather="<prompt>"``, a Task/Flow for a
         custom sink, or ``synthesize=False`` for a PURE fold). Pure client-side composition
         (no new step kind), byte-identical to the equivalent ``p > [a & b] > g`` chain; the
-        SERVER drives + warrants each agent (SN-8).
+        SERVER drives + warrants each agent.
 
         This supervisor is **static-hierarchical** — a fixed team, authored up front.
         ``rounds`` and ``pool`` are reserved for the runtime **topology shaper** (a planner
@@ -524,12 +524,12 @@ class Flow:
           steers the selection, or pass a Task/Flow for a custom judge.
         - ``vote="majority"``: the server reduces to the **exact-equality plurality** — the
           most-frequent voter output by EXACT byte-equality, ties broken by first-appearance
-          (SN-8: exact equality only, never a similarity score). Best for CONSTRAINED outputs
+          (exact equality only, never a similarity score). Best for CONSTRAINED outputs
           (a label / structured JSON / a tool decision) — free-form prose rarely ties, so
           ``judge`` is the usual mode there.
 
         Pure client-side composition (no new step kind); the SERVER drives + warrants each
-        voter and computes the reduce (SN-8)."""
+        voter and computes the reduce."""
         if not voters:
             raise ChainError("consensus() needs at least one voter")
         if vote not in ("judge", "majority"):

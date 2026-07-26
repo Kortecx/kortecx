@@ -8,7 +8,7 @@
 //! clock skew.
 //!
 //! The value is **liveness only — never hashed, never on the journal / Mote-identity
-//! path** (SN-8). It is behind a trait so tests inject a deterministic clock and
+//! path**. It is behind a trait so tests inject a deterministic clock and
 //! advance time without real sleeps.
 //!
 //! [`HeartbeatRequest.timestamp_ms`]: kx_proto::proto::HeartbeatRequest
@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// A wall-clock source in milliseconds since the Unix epoch.
 ///
 /// Used only to time worker liveness; the value never enters a hash, a journal
-/// entry, or any deterministic decision (SN-8). `Debug` is required so the
+/// entry, or any deterministic decision. `Debug` is required so the
 /// registry that owns a `dyn Clock` stays `Debug`.
 pub trait Clock: Send + Sync + std::fmt::Debug {
     /// Milliseconds since the Unix epoch. Liveness only; never hashed.

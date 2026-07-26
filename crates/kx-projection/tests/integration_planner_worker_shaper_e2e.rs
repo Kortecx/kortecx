@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! **PR 11 — Real-life E2E scenario** (required per the standing testing
-//! doctrine, `04-testing-and-gates.md` §86+).
+//! **PR 11 — Real-life E2E scenario** (required by the standing testing
+//! doctrine).
 //!
 //! Models the Seam-A-end-to-end shape: a "planner" shaper Mote
 //! (READ-ONLY-NONDET; produces a `TopologyDecision`) commits a topology

@@ -3,7 +3,7 @@
  * review — the human-legible "what did this step do" over the runtime's
  * `WorkflowStepKind` (PURE/MODEL/EXEC/TOOL) + the step's tool contract. Pure +
  * total (a bad/absent kind falls to `unknown`), so it is unit-tested directly and
- * carries no authority (SN-8 — display only).
+ * carries no authority (display only).
  */
 
 /** The high-level step type shown as a node badge on the review DAG. */

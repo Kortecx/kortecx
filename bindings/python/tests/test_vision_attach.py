@@ -93,7 +93,7 @@ def test_dataset_and_image_binds_vision_rag() -> None:
 
 def test_dataset_and_image_honest_degrades_when_vision_rag_absent() -> None:
     # No vision-rag recipe (no image-capable model / non-hnsw serve) ⇒ a clear KxUsage,
-    # never a silent drop of the image or the dataset (GR15).
+    # never a silent drop of the image or the dataset.
     c = _VisionFake(None)
     with pytest.raises(KxUsage):
         c.chat("hi", image=b"\x01", dataset="docs")

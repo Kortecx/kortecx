@@ -6,7 +6,7 @@
  * (the real `filesDone` / `filesPending` lists + `phase` + the live-writing ids)
  * onto per-path row states — the file set is the SERVER's truth, never a fixed list.
  *
- * HONEST (GR15 / D142.3): the row state is driven ONLY by the server-reported
+ * HONEST: the row state is driven ONLY by the server-reported
  * facts — never a timer, never a fabricated "done". A file is `done` iff the
  * server lists it in `filesDone`; `writing` iff it is the server's `writingPath`
  * (POC-6) — or, for an older server, the first not-done pending path while

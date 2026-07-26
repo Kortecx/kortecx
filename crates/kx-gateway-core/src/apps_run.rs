@@ -15,7 +15,7 @@
 //! be resolved at dial time.
 //!
 //! The envelope is server-owned + validated, so the client cannot forge references or
-//! run arbitrary steps under an App's credentials (SN-8). gateway-core owns the RPC +
+//! run arbitrary steps under an App's credentials. Gateway-core owns the RPC +
 //! the fireable-grant admission + the register/submit tail via the returned
 //! [`BoundRecipe`]; the envelope parse (`kx-app`) + connection/secret resolution live
 //! in the host (no envelope type crosses this seam — the dependency wall), mirroring
@@ -59,7 +59,7 @@ pub enum AppRunError {
     /// model this serve does not offer (empty intersection with the served catalog).
     /// Carries the requested route so the gateway can surface which model is missing.
     /// Fail-closed REFUSE at submit — the runtime never silently substitutes a model
-    /// the App did not name (SN-8: the user names the model; no auto-select).
+    /// the App did not name (the user names the model; no auto-select).
     UnservedModelRoute(String),
     /// An internal failure (storage / lowering).
     Internal(String),

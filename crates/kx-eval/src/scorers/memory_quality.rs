@@ -10,7 +10,7 @@
 //! passes every unit test (they use stubs) precisely because it fails closed — the
 //! `T-RERANK-WORKER-ROUTE` lesson applied to memory. Tasks that declare no
 //! `memory_must_recall` are N/A and excluded from the aggregate. Deterministic,
-//! LLM-free, integer per-mille (SN-8).
+//! LLM-free, integer per-mille.
 
 use crate::scorers::{ScoreOutput, PER_MILLE};
 

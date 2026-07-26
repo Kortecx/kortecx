@@ -9,7 +9,7 @@
 //! floats exist only transiently inside this function (`floor` projection),
 //! so the value is deterministic across runs and SAFE to persist if a caller
 //! ever needs to (integer-scaled, the `kx-catalog` advisory-metadata
-//! discipline). SN-8: this number ORDERS a picker; it never authorizes.
+//! discipline). This number ORDERS a picker; it never authorizes.
 
 use kx_bundle::TaskBundle;
 
@@ -75,11 +75,11 @@ fn manifest_keywords<'a>(bundle: &TaskBundle, fp: &'a ToolFingerprint) -> Vec<&'
 }
 
 /// Score `fp` against the bundle's intent. See the module note for the ladder
-/// and the SN-8 contract. `embedding_cosine` is the rung-3 input the caller
+/// and the identity contract. `embedding_cosine` is the rung-3 input the caller
 /// resolves — typically [`ToolManifestIndex::rank`](crate::ToolManifestIndex)
 /// querying the retrieval index; `None` is the neutral fallback.
 ///
-/// **ADVISORY ONLY (SN-8).** This number orders a discovery/picker surface and
+/// **ADVISORY ONLY.** This number orders a discovery/picker surface and
 /// nothing else — it must NEVER gate what runs or what is granted. The sole
 /// authorization gate is [`lower_to_workflow_def`](crate::lower_to_workflow_def)'s
 /// exact `(name, version)` `tool_grants` check (re-enforced by the broker at

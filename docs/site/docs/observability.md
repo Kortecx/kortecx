@@ -146,7 +146,7 @@ kx cost <instance-hex16> --json   # instance_id · turns · tool_calls · estima
 The same estimate is available from the SDK — `client.cost.get_run_cost(instance_id)`
 (Python) and `client.cost.getRunCost(instanceId)` (TypeScript).
 
-The readout is **honest** at every state (GR15): a **zero-baseline** price book (rates
+The readout is **honest** at every state: a **zero-baseline** price book (rates
 unset) shows the counts with **no fabricated dollar figure**; a run over its ceiling is
 flagged; a serve without the cost admin degrades to a not-wired note. Per-token /
 per-expert **billing** — priced input tokens, invoices, credits — is a

@@ -254,7 +254,7 @@ impl GrantView for HostGrantView {
 /// (`provision::seed_recipe`).
 ///
 /// The members are the REAL configured parties (the `--auth-token` parties plus the
-/// `local-dev` dev principal) — never a fabricated/demo identity (GR15). With no
+/// `local-dev` dev principal) — never a fabricated/demo identity. With no
 /// auth tokens (`--dev-allow-local` only) the team is the single-member dev
 /// workspace (`local-dev`).
 ///

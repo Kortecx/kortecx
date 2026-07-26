@@ -4,7 +4,7 @@
  *
  * By convention the App's project branch handle IS the App's own handle
  * (one-App-one-branch), so every read keys on the App handle. The branch is
- * caller-scoped (SN-8): a not-found / not-owned branch resolves to `null` (no
+ * caller-scoped: a not-found / not-owned branch resolves to `null` (no
  * existence oracle). File bodies are content-addressed, so the content query
  * caches forever per (endpoint, handle, ref) — enable it only for the selected
  * file so a wide tree never N+1-fetches every body.
@@ -82,10 +82,10 @@ export interface SaveFileVars {
 
 /**
  * POC-5d: directly save a file's edited body IN-CAS — `PutContent` (the typed bytes,
- * server-derived ref, SN-8) → `AdvanceBranch` (re-point the manifest path). The host
+ * server-derived ref) → `AdvanceBranch` (re-point the manifest path). The host
  * is NEVER written. A LOCKED App is refused at the AdvanceBranch chokepoint
  * (`FAILED_PRECONDITION` + `LOCKED_BRANCH`); the UI also disables the editor when
- * locked (GR15). On success the branch manifest is invalidated so the new ref/body is
+ * locked. On success the branch manifest is invalidated so the new ref/body is
  * re-pulled (re-base the editor draft — never an optimistic clobber).
  */
 export function useSaveFile() {

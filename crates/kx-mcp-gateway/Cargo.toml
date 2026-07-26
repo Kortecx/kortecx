@@ -6,7 +6,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx external MCP gateway (PR-6b-1, D159): a thin SYNC multi-server orchestrator over kx-mcp. Dials N external MCP servers (stdio + Streamable-HTTP) via kx-mcp's session seam, discovers their tools into the durable kx-tool-registry, governs them via an off-journal connections.db sidecar, and enforces the live untrusted-egress surface (dial-time SSRF/rebind vetting, per-server token-bucket rate-limit, warrant-gated egress, fail-closed decode, audit). The runtime is a SECURE GATEWAY (D132/GR19): no arbitrary code runs in-runtime; client tool_grants are refused (SN-8); connection_id is server-derived and NEVER a MoteId/journal/digest input."
+description = "kortecx external MCP gateway (PR-6b-1, D159): a thin SYNC multi-server orchestrator over kx-mcp. Dials N external MCP servers (stdio + Streamable-HTTP) via kx-mcp's session seam, discovers their tools into the durable kx-tool-registry, governs them via an off-journal connections.db sidecar, and enforces the live untrusted-egress surface (dial-time SSRF/rebind vetting, per-server token-bucket rate-limit, warrant-gated egress, fail-closed decode, audit). The runtime is a SECURE GATEWAY: no arbitrary code runs in-runtime; client tool_grants are refused; connection_id is server-derived and NEVER a MoteId/journal/digest input."
 
 [lib]
 path = "src/lib.rs"
@@ -30,7 +30,7 @@ kx-warrant       = { workspace = true }
 kx-content       = { workspace = true }
 serde            = { workspace = true }
 # Parse the remote tool's JSON `inputSchema` (a JSON Schema) into the typed
-# registry InputSchema — values are never decoded to floats (SN-8 discipline).
+# registry InputSchema — values are never decoded to floats (identity discipline).
 serde_json       = { workspace = true }
 # connection_id derivation (server-derived, off-digest).
 blake3           = { workspace = true }

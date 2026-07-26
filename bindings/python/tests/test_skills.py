@@ -1,6 +1,6 @@
 """Skills catalog — the `kx.skills.*` namespace over a real `kx serve`.
 
-Pins: server-derived identity (SN-8: `skill_ref`/`instructions_ref` come back
+Pins: server-derived identity (`skill_ref`/`instructions_ref` come back
 from the server, dedup is byte-exact), the ADVISORY `registered` wish bit,
 uniform not-found, and the fail-closed authority deny-keys.
 """

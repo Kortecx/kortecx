@@ -1,5 +1,5 @@
 //! [`PlanError`] — the closed vocabulary for every way a plan is refused, from
-//! fail-closed decode (IMP-5) through role resolution (D75) to the structural
+//! fail-closed decode through role resolution (D75) to the structural
 //! gate ([`kx_workflow::compile`]). Derives `PartialEq + Eq` (every embedded
 //! error does too) so property tests can assert the exact refusal.
 
@@ -12,7 +12,7 @@ use thiserror::Error;
 /// — the plan is rejected whole, fail-closed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum PlanError {
-    // ----- decode (IMP-5): the untrusted-bytes surface -----
+    // ----- decode: the untrusted-bytes surface -----
     /// The plan bytes exceed the per-plan cap (checked BEFORE parsing, so a
     /// hostile model cannot force a large allocation).
     #[error("plan bytes {got} exceed the cap {max}")]
@@ -80,7 +80,7 @@ pub enum PlanError {
     #[error("role {0:?} is used as a deterministic critic but its recipe declares no check")]
     MissingCheck(RoleId),
     /// The role's recipe declares a tool the role's warrant does not grant — a
-    /// step could never legally call it, so the plan is refused (IMP-5: refuse
+    /// step could never legally call it, so the plan is refused (refuse
     /// ungrantable tools up front).
     #[error("role {role:?} recipe requires tool {tool} which the role warrant does not grant")]
     UngrantableTool {

@@ -32,7 +32,7 @@ export interface ReactTurnVM {
    *  single call + every non-tool branch. */
   readonly callIndex: number;
   /** Governance observability: the chain's run-fixed warrant axes (names/refs only,
-   *  SN-8/D81) — the tools it may fire and the secret refs it may resolve. Repeated on
+   *  Refs-not-values) — the tools it may fire and the secret refs it may resolve. Repeated on
    *  every row of a chain; empty when the warrant blob is absent. */
   readonly grantedTools: readonly string[];
   readonly secretScopeNames: readonly string[];

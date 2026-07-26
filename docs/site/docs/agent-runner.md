@@ -17,7 +17,7 @@ critic / ReAct turns) runs **inside `kx serve`** and is crash-safe end to end.
 The fastest way to put the loop to work: give a **goal**, get back a reasoned
 **answer** plus the **audited set of actions** the agent took. `run_agent` is a thin,
 permission-gated wrapper over the live ReAct recipe — the runtime **derives the
-warrant** (you never author one, SN-8) and runs the bounded reason → tool → observe
+warrant** (you never author one) and runs the bounded reason → tool → observe
 loop, then returns the committed answer with the tools it fired. It never uses
 `SubmitRun` (admission is identical to `kx invoke`).
 
@@ -79,7 +79,7 @@ kx agent run --goal "Use the echo tool to repeat 'pong'." --max-tool-calls 20 --
 Attach an **explicit tool set** to a single chat turn and it becomes a bounded agentic
 turn — the model may reason, call **only the tools you named**, observe, and answer. The
 server builds the per-turn warrant **from the tools you passed** and re-verifies each at
-every fire (SN-8); it is never a blanket auto-grant, and a tool you did not name cannot
+every fire; it is never a blanket auto-grant, and a tool you did not name cannot
 fire. It is the one-liner entry to the same loop `flow().agent(prompt, tools=[…])` authors
 as a chain step — the granted set is fixed and part of the turn's identity.
 
@@ -340,7 +340,7 @@ a JSON object or a pre-serialized JSON string. A reasoning preamble
 (`<think>…</think>` / Gemma `<|channel>…`) or a Markdown code fence around the call
 is stripped first. Anything the runtime doesn't recognize as a call is treated as a
 normal answer (it never mis-fires a tool). This is **acceptance** only — the tool
-name still resolves to an exact grant (SN-8); a model can never widen its own
+name still resolves to an exact grant; a model can never widen its own
 authority by how it phrases a call. The two **markerless** shapes carry no commitment
 marker, so they fire only when the name resolves to a granted tool *and* an explicit
 arguments bag is present — otherwise the output is a normal answer, never a
@@ -395,7 +395,7 @@ run's DAG and the mote inspector); the judge node carries the verdict.
 
 **How it stays honest and reproducible:**
 
-- **Server-derived authority (SN-8).** The judge runs under a server-built warrant
+- **Server-derived authority.** The judge runs under a server-built warrant
   — it dispatches the model but **cannot escalate authority** (no tools, no network
   unless explicitly granted). The model *proposes* a verdict; the runtime *parses*
   it to a discrete decision. There is **no similarity score** — only `VALID` /

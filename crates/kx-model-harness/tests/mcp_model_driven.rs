@@ -338,7 +338,7 @@ fn oversize_proposal_fires_no_effect() {
     let dir = tempfile::tempdir().unwrap();
 
     // The warrant grants 64 max_output_tokens ⇒ max_args_bytes = 256. Propose args
-    // well beyond that — the IMP-16 cap refuses fail-closed; no effect commits.
+    // well beyond that — the size cap refuses fail-closed; no effect commits.
     let big = "x".repeat(400);
     let env =
         format!(r#"{{"tool_call":{{"name":"mcp-echo","version":"1","args":{{"q":"{big}"}}}}}}"#)

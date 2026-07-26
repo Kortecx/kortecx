@@ -16,7 +16,7 @@
 //!   loses only the manifest index. Never journaled, never a `MoteId` input,
 //!   never a digest input — dropping the file cannot move the canonical
 //!   projection digest (the `bundles.db` / D160 precedent).
-//! - **Server-derived id (SN-8).** `branch_ref = blake3("kx-branch\0" ‖ handle ‖
+//! - **Server-derived id.** `branch_ref = blake3("kx-branch\0" ‖ handle ‖
 //!   parent ‖ canonical(items))[..16]`; the client names a handle, never an id.
 //! - **Caller-scoped.** Every method takes the SERVER-RESOLVED `principal`; a
 //!   branch is visible only to the party that authored it (uniform not-found for
@@ -49,7 +49,7 @@ pub struct BranchItemRecord {
 /// A branch's resolved manifest (the governance / display view + the edit source).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BranchManifest {
-    /// 16-byte SERVER-DERIVED manifest hash (SN-8; display + dedup signal).
+    /// 16-byte SERVER-DERIVED manifest hash (display + dedup signal).
     pub branch_ref: [u8; 16],
     /// The canonical `namespace/collection/name` handle (the upsert key).
     pub handle: String,

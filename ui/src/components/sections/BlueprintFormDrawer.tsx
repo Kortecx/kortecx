@@ -14,7 +14,7 @@ import { RecipeForm } from "../recipes/RecipeForm";
  * (`/recipes?handle=&args=`) auto-opens it PREFILLED. Reuses the `.node-drawer`
  * skeleton + Escape convention (BlueprintViewer / NodeDetailDrawer). The form
  * itself (`RecipeForm`, testid `recipe-form` + `data-recipe`) is unchanged —
- * the gateway re-validates every arg server-side (SN-8).
+ * the gateway re-validates every arg server-side.
  */
 export function BlueprintFormDrawer({
   handle,

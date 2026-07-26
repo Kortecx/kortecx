@@ -4,10 +4,10 @@
 //! Mirrors the two proven shapes: the per-tool step is the `react_tool_loop`
 //! act step (`kx_workflow::generator` + a singleton `tool_contract` —
 //! READ-ONLY-NONDET, `StageThenCommit`), and the refusal + seed discipline is
-//! `kx-planner`'s (IMP-5 exact `(name, version)` membership BEFORE any step is
+//! `kx-planner`'s exact `(name, version)` membership BEFORE any step is
 //! built; the seed derives from the committed bundle bytes, never a clock).
 //! Scores are structurally absent here — the function signature admits none
-//! (advisory-never-authorizes, SN-8).
+//! (advisory-never-authorizes).
 
 use std::collections::BTreeMap;
 

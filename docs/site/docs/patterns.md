@@ -120,7 +120,7 @@ kx swarm "Argue for" "Argue against" "Weigh both" \
 ```
 
 :::info Exact equality, never similarity
-The majority reducer decides by **exact byte-equality** — never a similarity score (SN-8). That is
+The majority reducer decides by **exact byte-equality** — never a similarity score. That is
 what makes it a durable, replayable fact: the same voters always fold to the same winner.
 :::
 
@@ -184,7 +184,7 @@ then fill in per node and run. The pattern is just a scaffold of the nodes you a
   wire shape.
 - **Crash-safe + replayable** — kill an orchestration mid-run and recovery re-derives
   byte-identical agent identities; the projection digest is unchanged.
-- **Governed** — the server compiles and warrants every agent (SN-8); the client only proposes
+- **Governed** — the server compiles and warrants every agent; the client only proposes
   topology. The majority reducer decides by exact byte-equality, never similarity.
 - **One lowering** — the Python, TypeScript, CLI, and visual-builder surfaces lower each pattern
   to the same `DagSpec` (the golden tri-surface contract). See [Swarms & personas](./swarms.md)

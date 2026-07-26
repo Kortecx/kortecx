@@ -1,6 +1,6 @@
 // Integration-test file: compiled as a separate crate from the host lib.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for `kx-capability` (SN-4 v2 #5).
+//! Property tests for `kx-capability`.
 //!
 //! Properties asserted (each 64 cases, the workspace default):
 //!

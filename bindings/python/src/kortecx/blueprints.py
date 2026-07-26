@@ -1,7 +1,7 @@
 """The Blueprint builder — author a Tier-1 DAG (a vetted palette of PURE / MODEL
 steps + DATA/CONTROL edges) for ``SubmitWorkflow``.
 
-Kept in its own module (the runs.py / module-per-concern precedent). SN-8: the
+Kept in its own module (the runs.py / module-per-concern precedent). The
 builder NEVER computes a MoteId or a warrant — it only assembles the topology +
 params the SERVER compiles + admits. The server assigns each step's logic_ref from
 its kind and builds every warrant from the party's grants; a tampered client DAG
@@ -110,7 +110,7 @@ class BlueprintBuilder:
 
     def context_bundles(self, handles: Sequence[str]) -> "BlueprintBuilder":
         """PR-7: attach context-bundle handles to the run (verbatim order — the
-        SERVER canonicalizes + injects into every entry Mote at bind, SN-8). An
+        SERVER canonicalizes + injects into every entry Mote at bind). An
         empty list ⇒ a request byte-identical to pre-PR-7."""
         self._context_bundles = list(handles)
         return self

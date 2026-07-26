@@ -4,7 +4,7 @@
  * `Committed` fact, so the query is enabled only once `MoteVM.moteDefHash` is
  * non-empty — a pending node renders "available after commit" with NO RPC.
  * Content-addressed (the hash IS the blob's address) ⇒ the query never goes
- * stale. Display only (SN-8): nothing here authorizes anything.
+ * stale. Display only: nothing here authorizes anything.
  */
 
 import type { MoteDetail } from "@kortecx/sdk/web";

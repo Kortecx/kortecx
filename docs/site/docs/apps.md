@@ -21,7 +21,7 @@ It is a `kortecx.app/v1` **envelope** that *wraps* the existing portable
 
 An App carries **no authority**. There is no warrant, grant, secret, credential, or
 `instance_id` in the envelope — when you run an App the server re-compiles its
-blueprint and re-resolves *every* warrant from your own grants (SN-8). Saving and
+blueprint and re-resolves *every* warrant from your own grants. Saving and
 running an App can never widen what you are allowed to do.
 
 The catalog is **caller-scoped** and lives in an off-journal `apps.db` sidecar; the
@@ -249,7 +249,7 @@ await client.runApp("apps/local/gmail-agent", { wait: true });
 ```
 
 At run time **`RunApp`** reads the *validated stored envelope* server-side (the client
-cannot forge references — SN-8), resolves each `references.connections` entry against
+cannot forge references), resolves each `references.connections` entry against
 **your own** registered connection by name, and sets the run warrant's
 `SecretScope::AllowList` to the App's `guards.secret_scope`. That is what lets the agent
 dial a *credentialed* connector (e.g. Gmail): the broker precheck requires the tool's
@@ -316,7 +316,7 @@ await app("analyst")
 await client.runApp("apps/local/analyst", { wait: true });
 ```
 
-At run **`RunApp`** resolves the rail off the *validated stored envelope* (SN-8): the
+At run **`RunApp`** resolves the rail off the *validated stored envelope*: the
 context/rule/prompt/memory artifacts merge into the entry step's identity-bearing context,
 and each declared dataset folds a `retrieve@1` grant onto the entry step — a grant the
 operator authorizes by having ingested the dataset (not a caller escalation: `retrieve`

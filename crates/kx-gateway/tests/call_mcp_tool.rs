@@ -5,7 +5,7 @@
 //! end-to-end through the broker — the same broker the agentic loop uses — so it
 //! proves the connector + broker wiring independently of model nondeterminism.
 //!
-//! SN-8 is re-enforced server-side: a single-grant warrant is synthesized from the
+//! The authority gate is re-enforced server-side: a single-grant warrant is synthesized from the
 //! tool's OWN registered scopes, and the args are validated against its inputSchema.
 //! NOT a durable agentic effect (no journal fact) — an operator diagnostic, like
 //! `TestMcpServer` / `DiscoverServerTools`.
@@ -112,7 +112,7 @@ async fn call_mcp_tool_fires_a_dialed_connector_tool() {
         resp.result_json
     );
 
-    // SN-8 / fail-closed: an unregistered tool is a structured error, never a fire.
+    // Fail-closed: an unregistered tool is a structured error, never a fire.
     let missing = c
         .call_mcp_tool(proto::CallMcpToolRequest {
             server_name: "refconn".to_string(),

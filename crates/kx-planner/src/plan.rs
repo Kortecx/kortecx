@@ -1,5 +1,5 @@
 //! The typed plan structures the model proposes — deliberately the **minimal
-//! trust surface** (IMP-5 / D70 / D75): a step names a *role* and an *intent*,
+//! trust surface**: a step names a *role* and an *intent*,
 //! an edge names two step *indices*. Nothing here participates in Mote identity
 //! or capability — the heavy `MoteDef` axes come from a vetted [`crate::RoleRecipe`]
 //! (keyed by the role name), never from this model-authored data.
@@ -62,7 +62,7 @@ pub(crate) struct ReplanEnvelope {
 /// (a non-empty corrective fan-out — corrected-context / permission-adapt) or
 /// `flag_human` (escalate) is present; both-or-neither is refused. `next_steps`
 /// reuses [`PlanStep`] verbatim, so a corrective round lowers through the SAME
-/// vetted-recipe path as an initial round (SN-8). `flag_human` carries an opaque,
+/// vetted-recipe path as an initial round. `flag_human` carries an opaque,
 /// bounded human-readable reason (never parsed for enforcement; surfaced to the
 /// operator). No score channel anywhere → D77 holds for free.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]

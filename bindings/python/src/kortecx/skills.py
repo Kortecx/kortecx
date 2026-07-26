@@ -2,12 +2,12 @@
 
 A skill is instructions + a tool grant-WISH set; adding one grants NOTHING. At
 ``run_app`` the server intersects the wish against the caller's grants and the
-live broker (``wish ∩ grants ∩ fireable``). SN-8: ``skill_ref`` and
+live broker (``wish ∩ grants ∩ fireable``). ``skill_ref`` and
 ``instructions_ref`` are SERVER-DERIVED — the client sends bytes, never an
 identity. The catalog is an off-journal ``skills.db`` sidecar
 (rebuildable-to-empty), caller-scoped, with UNIFORM not-found.
 
-Kept in its own module (the Rust core's module-per-concern discipline, GR3).
+Kept in its own module (the Rust core's module-per-concern discipline).
 """
 
 from __future__ import annotations

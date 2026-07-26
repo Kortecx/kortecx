@@ -1,7 +1,7 @@
 //! Model Control v2 — the active-default-model seam behind `SetActiveModel` +
 //! `GetServerInfo.active_model_id` + `ModelSummary.active`.
 //!
-//! The active model is an OFF-JOURNAL advisory HINT (SN-8): it authorizes nothing and
+//! The active model is an OFF-JOURNAL advisory HINT: it authorizes nothing and
 //! the server NEVER silently re-routes `kx/recipes/chat`. It exists so the default a
 //! client chats with is switchable from CLI/SDK (a client-local default cannot be
 //! read by another surface). A chat turn still picks its model by the per-model chat

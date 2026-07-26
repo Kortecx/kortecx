@@ -1,7 +1,7 @@
 //! POC-4 App-catalog end-to-end over a REAL bound tonic port. Drives the three
 //! additive RPCs (`SaveApp` / `ListApps` / `GetApp`) through the live gateway +
 //! the `apps.db` host store, proving BOTH halves of the seam deterministically
-//! (GR16 #5 — never rely on the live model to cover a cross-component seam):
+//! (cross-component seam — never rely on the live model to cover a cross-component seam):
 //!
 //! - **save → list → get round trip**: the canonical envelope is stored, surfaced
 //!   in the catalog summary, and read back byte-identically; `app_ref` is
@@ -10,7 +10,7 @@
 //!   App (uniform not-found / empty list — no cross-party oracle); Bob saving the
 //!   same handle makes BOB's OWN row, never mutates Alice's.
 //! - **bad envelope ⇒ `InvalidArgument`**: a non-envelope payload is refused at the
-//!   boundary (the host validates — the envelope carries no authority, SN-8).
+//!   boundary (the host validates — the envelope carries no authority).
 
 #![cfg(feature = "embedded-worker")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
@@ -249,7 +249,7 @@ fn hex32(bytes: &[u8]) -> String {
 /// author an App that references a content blob → build a `kortecx.appbundle/v1`
 /// (envelope + closure) → import it under a DIFFERENT principal (PutContent the
 /// closure, SaveApp with a `source_digest` stamp). Proves the round-trip lands the
-/// SAME `app_digest` (SN-4 determinism), the server re-derives identical refs
+/// SAME `app_digest` (determinism), the server re-derives identical refs
 /// (content-addressed dedup), and the lineage is recorded — all with NO model.
 #[tokio::test]
 async fn bundle_export_import_round_trips_to_same_app_digest() {

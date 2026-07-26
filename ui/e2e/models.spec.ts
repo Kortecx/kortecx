@@ -20,7 +20,7 @@ test("Models: honest-empty + disabled-Cloud on a model-less serve (both themes)"
   await expect(page.getByTestId("models-section")).toBeVisible();
 
   // The FFI-free test serve answers ListModels with an EMPTY list → an honest empty
-  // state, never a fabricated row or a spinner that never resolves (GR15).
+  // state, never a fabricated row or a spinner that never resolves.
   await expect(page.getByText(/no models on this serve/i)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId("model-card")).toHaveCount(0);
 
@@ -34,7 +34,7 @@ test("Models: honest-empty + disabled-Cloud on a model-less serve (both themes)"
   await expect(pullDisabled).toHaveAttribute("aria-disabled", "true");
   await expect(pullDisabled).toContainText("KX_SERVE_ALLOW_MODEL_PULL");
 
-  // BOTH THEMES (D142.1 / GR13): the section renders under the dark palette.
+  // BOTH THEMES: the section renders under the dark palette.
   await page.getByTestId("theme-toggle").click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.getByTestId("models-section")).toBeVisible();

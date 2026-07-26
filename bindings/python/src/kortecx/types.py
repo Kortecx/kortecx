@@ -87,7 +87,7 @@ class ParentEdge:
 
     Surfaces the run's topology that the gateway already serves — the upstream
     Mote a child depends on, the edge kind, and (for CONTROL edges) whether it is
-    non-cascading. Display-only projection facts (SN-8): a parent edge is
+    non-cascading. Display-only projection facts: a parent edge is
     server-derived, never a client-supplied identity input.
     """
 

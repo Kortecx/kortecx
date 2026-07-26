@@ -4,7 +4,7 @@
 //! SAME arguments turn after turn instead of using the result it already has. This
 //! is an *efficiency* problem, never an authority one — so the helpers here are
 //! pure comparisons, kept in the shared gate crate so the live coordinator settle
-//! and the harness `ReAct` loop render the refusal BYTE-IDENTICAL (the §2.274 twin
+//! and the harness `ReAct` loop render the refusal BYTE-IDENTICAL (the twin
 //! discipline): the reason flows into the re-prompted turn's `MoteId`, so a cold
 //! re-fold during recovery must reproduce the exact same string.
 
@@ -46,7 +46,7 @@ pub fn is_duplicate_reason(reason: &str) -> bool {
 /// truly identical re-proposal matches, so a legitimate retry with refined or
 /// different arguments always fires. This is purely an efficiency guard; the
 /// warrant grant-check + `inputSchema` validation remain the independent authority
-/// gate (SN-8).
+/// gate.
 #[must_use]
 pub fn is_duplicate_call(call: &ToolCall, prior: &[ToolCall]) -> bool {
     prior.iter().any(|p| {

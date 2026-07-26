@@ -23,7 +23,7 @@
 //!   basis, P4.1e).
 //! - [`RetrievalIndex`] + [`InMemoryRetrievalIndex`] — the vector / graph-RAG
 //!   similarity seam. **Used ONLY inside ReadOnlyNondet retrieval Motes** — the
-//!   runtime matches by exact cryptographic equality (SN-8); similarity never
+//!   runtime matches by exact cryptographic equality; similarity never
 //!   touches the identity / commit / memoization path.
 //! - [`AnnotationStore`] + [`Annotation`] — an advisory, mutable, rebuildable
 //!   curation projection keyed by content ref (usefulness / yes-no / reviewer /

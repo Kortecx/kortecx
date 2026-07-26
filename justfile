@@ -111,7 +111,7 @@ test-connector *endpoint:
 # (the official filesystem server) and run the gate. `npm ci` restores the EXACT
 # committed lockfile (the only network op — cached in CI); the dial + every
 # assertion then run OFFLINE over a stdio subprocess, so no network flakiness
-# enters the gate (GR12). Run as a required CI check + part of `ci`.
+# enters the gate. Run as a required CI check + part of `ci`.
 test-connector-real:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -125,7 +125,7 @@ test-connector-real:
     cargo run -q -p kx-extension-sdk --example conformance -- "$BIN" "$ROOT"
 
 # The LIVE agentic tool-calling drive over a freshly-registered connector. Locally
-# validate on BOTH engines (Ollama + llama.cpp) with Gemma-4 (GR24); in CI it rides
+# validate on BOTH engines (Ollama + llama.cpp) with Gemma-4; in CI it rides
 # the real-model-e2e job (Qwen3-0.6B). #[ignore]'d; needs a GGUF.
 test-connector-live: fetch-gemma-model
     cargo test -p kx-gateway --features inference react_serve_connector -- --ignored --nocapture
@@ -361,7 +361,7 @@ fetch-2nd-model:
     echo " ✓ saved: $DEST (sha256 $got)"
     echo "   Serve BOTH (primary Gemma + this): KX_SERVE_MODEL_GGUF=<abs gemma> KX_SERVE_MODELS=<abs $DEST> just review-serve-gemma"
 
-# The ONE-COMMAND inference serve (§2.194 guardrail): fetch the stand-in model
+# The ONE-COMMAND inference serve ( guardrail): fetch the stand-in model
 # if absent (idempotent, checksum-verified), then start `kx serve` with it +
 # the embedded console at :8888. Model paths are DETERMINISTIC
 # (target/models/ via the fetch recipes, or the KX_AGENT_MODEL_* overrides) —
@@ -376,7 +376,7 @@ serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch
     LABEL="${KX_LEASE_LABEL:-$(basename "$PWD")}"
     # Rule 44: serialize on the ONE GPU / Ollama (:11434) / default serve ports (:50151/:50152/:8888).
     # --wait BLOCKS until a peer session's live serve/proof releases, so we never bind under another
-    # session (closes L-104: a proof that silently runs against another session's build).
+    # session (a proof that silently runs against another session's build).
     bash scripts/model-lease.sh acquire --label "$LABEL" --purpose "serve-inference" --wait
     trap 'bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true' EXIT
     mkdir -p "$(dirname "{{journal}}")" "{{content}}"
@@ -385,7 +385,7 @@ serve-inference journal="target/serve/kx.db" content="target/serve/blobs": fetch
     cargo run --release -p kx-cli --features inference,hnsw,console,hosted-apps --bin kx -- \
         serve --journal "{{journal}}" --content "{{content}}" --dev-allow-local
 
-# THE PR-REVIEW serve (§2.208 + §2.194 + GR15 guardrail). Guarantees a reviewer
+# THE PR-REVIEW serve ( + + honesty guardrail). Guarantees a reviewer
 # sees a FRESH console + REAL (non-echo) chat — closing the three reviewer failure
 # modes (STALE BINARY · STALE UI EMBED · NO MODEL → echo). Rebuilds ui/dist
 # (console-dist) → builds kx with inference+console → frees the console port (kills
@@ -404,7 +404,7 @@ review-serve journal="target/serve/kx.db" content="target/serve/blobs": fetch-ag
     LABEL="${KX_LEASE_LABEL:-$(basename "$PWD")}"
     # Rule 44: serialize on the ONE GPU / Ollama (:11434) / default serve ports. --wait BLOCKS until a
     # peer session's live proof releases, so the lsof-kill below can't murder a concurrent serve and we
-    # never bind :8888 under another session (closes L-104: a proof that silently runs against its build).
+    # never bind :8888 under another session (a proof that silently runs against its build).
     bash scripts/model-lease.sh acquire --label "$LABEL" --purpose "review-serve" --wait
     SERVE_PID=""
     trap 'kill ${SERVE_PID:-} 2>/dev/null || true; bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true' EXIT
@@ -456,7 +456,7 @@ review-serve-gemma journal="target/serve/kx.db" content="target/serve/blobs": fe
     LABEL="${KX_LEASE_LABEL:-$(basename "$PWD")}"
     # Rule 44: serialize on the ONE GPU / Ollama (:11434) / default serve ports. --wait BLOCKS until a
     # peer session's live proof releases, so the lsof-kill below can't murder a concurrent serve and we
-    # never bind :8888 under another session (closes L-104: a proof that silently runs against its build).
+    # never bind :8888 under another session (a proof that silently runs against its build).
     bash scripts/model-lease.sh acquire --label "$LABEL" --purpose "review-serve-gemma" --wait
     SERVE_PID=""
     trap 'kill ${SERVE_PID:-} 2>/dev/null || true; bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true' EXIT
@@ -517,7 +517,7 @@ console-build: console-dist
 # Hermetic proof of the local model back-pressure lease (scripts/model-lease.sh, Rule 44): two
 # callers cannot both hold it, --wait serializes (queues then proceeds after release), a non-holder
 # cannot steal it, and a crashed holder's lease drains on its own via TTL (no manual reap). This is
-# the dogfood of the collision the lease exists to stop (L-104: a proof that silently runs against
+# the dogfood of the collision the lease exists to stop (a proof that silently runs against
 # another session's build). PURE filesystem mutex — no GPU / model / network — so it runs on any CI
 # runner (it rides the verify-quickstart job below). Mirrors the mktemp+trap+hard-assert shape of
 # verify-quickstart. Isolated under a throwaway KX_LEASE_DIR so it never touches a real dev lease.
@@ -693,7 +693,7 @@ build-no-inference:
     cargo build -p kx-inference --no-default-features
     echo " ✓ build-no-inference: PASS"
 
-# PR-A.1 / GR24 (dual-engine parity): prove the prebuilt release feature set
+# PR-A.1 / (dual-engine parity): prove the prebuilt release feature set
 # (`console,hnsw,serve-engine`) serves local models via Ollama with NO C++
 # toolchain. Asserts the EXACT shipped graph pulls no llama.cpp FFI, then compiles
 # the FFI-relevant serve loop (`serve-engine,hnsw`). `console` is skipped in the
@@ -721,7 +721,7 @@ build-serve-engine:
     echo " ✓ no kx-llamacpp in the kx-gateway serve-engine,hnsw closure"
     cargo build -p kx-cli --features serve-engine,hnsw
     cargo build -p kx-gateway --features serve-engine,hnsw
-    # RC3 (GR23 CI-hardening): the standard `clippy`/`test` stages run with DEFAULT
+    # RC3 (CI-hardening): the standard `clippy`/`test` stages run with DEFAULT
     # features, which EXCLUDE `serve-engine` — so the live `kx serve` model loop
     # (`model_exec`: dispatch, grammar-constrained tool-calling, the RC3 tool menu +
     # curated agentic prompt) was previously only `cargo build`-checked, never
@@ -750,7 +750,7 @@ features-guard:
     cargo check -p kx-cli --features hnsw
     cargo check -p kx-cli --features inference,hnsw
     echo " ✓ features-guard: hnsw + inference,hnsw both build"
-    # W1a (SN-6): the gateway-only / external-coordinator config (default feature
+    # W1a: the gateway-only / external-coordinator config (default feature
     # `embedded-worker` OFF) reserved by the `start_impl` stub must stay BUILDABLE,
     # so a feature-independent struct field never references a feature-gated import
     # (the W1a-1 audit-sink cfg-leak class). CI builds only the default features.
@@ -792,7 +792,7 @@ check-reproducible:
     # own value (using $GITHUB_WORKSPACE) is preserved when already set.
     : "${RUSTFLAGS:=--remap-path-prefix={{justfile_directory()}}= -Cmetadata=kortecx-v0}"
     export RUSTFLAGS
-    # GUARDRAIL (§2.194 deterministic-homes): `cargo clean` wipes ALL of
+    # GUARDRAIL ( deterministic-homes): `cargo clean` wipes ALL of
     # target/ — including target/models/, the checksum-verified model cache the
     # fetch recipes maintain (a 2+ GB re-download per `just ci` otherwise).
     # Stash the cache across the two clean builds; restore even on failure.
@@ -831,7 +831,7 @@ check-reproducible:
 smoke-test-with-model:
     cargo test -p kx-llamacpp --features model-smoke-test -- --nocapture
 
-# GR15 real-model behavioral gate (`real-model-e2e`) — fetch the public Qwen3-0.6B
+# real-model behavioral gate (`real-model-e2e`) — fetch the public Qwen3-0.6B
 # stand-in, then serve `kx/recipes/chat` through the full path (invoke → worker →
 # real inference → commit → GetContent) and assert the completion is CLEAN (no
 # ChatML scaffolding leak, no `kx demo result` placeholder) AND greedy decode is
@@ -854,14 +854,14 @@ real-model-e2e: fetch-agent-model
     # typically answers without dialing (the observation-commit oracle passes vacuously);
     # the DETERMINISTIC proof of the fix is `kx-proto` (wire round-trip) +
     # `kx-coordinator::observation_dispatch_preserves_the_chain_secret_scope`, always run
-    # by `cargo test`. Locally, drive on BOTH engines with Gemma-4 (GR24) — llama.cpp fires
+    # by `cargo test`. Locally, drive on BOTH engines with Gemma-4 — llama.cpp fires
     # `gmail/search` → observation commits → answer.
     cargo build -p kx-connector-gmail
     KX_GMAIL_FAKE=1 cargo test -p kx-gateway --features inference --test app_live_serve runapp_gmail_connection_and_secret_scope_live -- --ignored --nocapture --test-threads=1
 
 # RC1 (D172) — the real-model eval witness, LOCAL Gemma deep-test (Tier-B, ADVISORY).
 # Drives a live ReAct chain on a real OSS model and scores it through ScoreRun (the
-# per-run quality readout proven over genuine model output, GR15/GR24). The flake-proof
+# per-run quality readout proven over genuine model output, dual-engine). The flake-proof
 # regression GATE is the deterministic `just eval`; these numbers are advisory Spikes.
 #   KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-real   # local Gemma (Ollama)
 #   just fetch-agent-model && just eval-real                              # GGUF stand-in
@@ -907,11 +907,11 @@ eval-bench:
 # tool on a capable model. The DETERMINISTIC, CI-runnable regression guard for this
 # lives model-free in `crates/kx-coordinator/tests/react_live.rs` — it pins the
 # fire-commits invariant (a `world_mutating` observation COMMITS) for BOTH the JSON
-# envelope AND the Gemma-native `<|tool_call>` shape, closing the BUG-28 gap (no e2e
+# envelope AND the Gemma-native `<|tool_call>` shape, closing the gap (no e2e
 # ever asserted a tool FIRES, only that an answer settled). This recipe is the
 # real-model witness on top: it serves `kx/recipes/react-auto` (`KX_SERVE_AUTOGRANT`)
 # with the bundled `mcp-echo`, so the live loop has a tool to call. Set
-# `KX_SERVE_MODEL_GGUF=<gemma.gguf>` to exercise the Gemma-native format (the BUG-28
+# `KX_SERVE_MODEL_GGUF=<gemma.gguf>` to exercise the Gemma-native format (the
 # scenario); the default Qwen3 stand-in fires via the JSON envelope. The full
 # cross-surface `world_mutating`-fire assertion is the deep-test campaign's "ReAct
 # tool-calling" matrix row.
@@ -949,9 +949,9 @@ smoke-test-multimodal:
 # children-index re-fold stays ~linear, (M2.2) resume-from-`FoldCheckpoint`
 # reproduces the full fold exactly + its cost is bounded by live-state size under
 # churn (not by journal length), (M2.2b) the SAME bound holds end-to-end over a real
-# disk-backed SQLite journal + an on-disk checkpoint sidecar, and (M2.x-E / IMP-2)
+# disk-backed SQLite journal + an on-disk checkpoint sidecar, and (M2.x-E /)
 # offline schema migration (`migrate_to`) stays O(entries) so resume-after-upgrade
-# is not an outage, and (IMP-4 / D116) the cold-recovery projection fold stays
+# is not an outage, and the cold-recovery projection fold stays
 # O(entries) at 10^5 — the read side of the single-writer ceiling (cold resume folds
 # the whole log; a super-linear fold turns a large-log resume into an outage). The
 # fold cases live in `kx-projection`; the migration case in `kx-journal` (both
@@ -979,7 +979,7 @@ scale-smoke:
     cargo test -p kx-dataset --release --test scale -- --ignored --nocapture --test-threads=1
     cargo test -p kx-gateway --release --test global_tail_stress -- --ignored --nocapture --test-threads=1
 
-# IMP-4 (D116) single-writer scale-readiness measurement spike — publish the
+# (D116) single-writer scale-readiness measurement spike — publish the
 # single-writer journal commit ceiling + the projection-fold curve so a real number
 # replaces the "qualitatively true, quantitatively unproven" placeholder (HANDOFF
 # §3.9 §A). NON-GATING (not part of `just ci`): every test is `#[ignore]`, prints
@@ -999,7 +999,7 @@ bench-ceiling:
 # so a single invocation prints the full single-node picture. The `kx-profile`
 # JSON lands in `target/profile/` (gitignored); COPY it into the PRIVATE
 # `docs/benchmarks/YYYY-MM-DD-<topic>.json` trend record (never committed to OSS
-# — SN-2). Absolute latencies are platform-sensitive (macOS fsync ≠ Linux) — the
+# — ). Absolute latencies are platform-sensitive (macOS fsync ≠ Linux) — the
 # report's `env` block labels every number. `--release` is REQUIRED for honest
 # numbers. M1 warm-up (start→SERVING) + M2 submit→Committed come from kx-profile;
 # M3 fold curve + M4 commit ceiling + M5 catalog discovery come from the spikes;

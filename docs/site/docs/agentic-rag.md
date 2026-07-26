@@ -149,7 +149,7 @@ Two reranking layers improve precision after the BM25 + dense fusion:
   JSON `format`; llama.cpp relies on the model + parser — see
   [engine notes](./local-inference-engines.md)). It is **fail-closed**: any non-permutation output
   keeps the deterministic order, so a rerank can never reorder into garbage (the model proposes, the
-  runtime enforces — SN-8). It completes the RAG quartet **rewrite → retrieve (hybrid) → rerank →
+  runtime enforces). It completes the RAG quartet **rewrite → retrieve (hybrid) → rerank →
   assemble**. As of RC4c-2b it runs **live in `kx serve`** as a **durable, replayable coordinator
   rerank-turn** — enabled with `KX_SERVE_RAG_LLM_RERANK=1`, applied to both the agentic `retrieve`
   loop (react-rag) and the grounded `chat-rag`/`vision-rag` answer, and recorded as an auditable

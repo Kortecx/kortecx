@@ -1,6 +1,6 @@
 //! Model Control v2 — the host model-acquisition orchestrator ([`ModelPuller`]).
 //!
-//! HOST INFRASTRUCTURE, not a client Mote (SN-8): a pull mutates operator/host state
+//! HOST INFRASTRUCTURE, not a client Mote: a pull mutates operator/host state
 //! (the filesystem, the served set, network egress). DENY-BY-DEFAULT: every pull is
 //! refused unless the operator sets `KX_SERVE_ALLOW_MODEL_PULL`, and a direct-URL pull
 //! must target an allowlisted host (HuggingFace by default) over `https` and verify a
@@ -34,7 +34,7 @@ const DEFAULT_PULL_HOSTS: &[&str] = &[
 ];
 
 /// Whether operator-enabled model downloads are ON (`KX_SERVE_ALLOW_MODEL_PULL`). OFF
-/// by default (deny-by-default; the operator's explicit opt-in authorizes egress, SN-8).
+/// by default (deny-by-default; the operator's explicit opt-in authorizes egress).
 pub(crate) fn pull_enabled() -> bool {
     matches!(
         std::env::var("KX_SERVE_ALLOW_MODEL_PULL").ok().as_deref(),

@@ -2,7 +2,7 @@
  * Submit 👍/👎 feedback on an answer (`SubmitFeedback`, PR-4.1) — a client-origin
  * write into the gateway's rebuildable-to-empty `feedback.db` sidecar (advisory
  * product signal; never truth/identity). The caller principal + the feedback id
- * are server-derived (SN-8). A gateway without the seam throws `KxUnimplemented`,
+ * are server-derived. A gateway without the seam throws `KxUnimplemented`,
  * which the UI degrades by hiding the control (don't-fake-gaps).
  */
 

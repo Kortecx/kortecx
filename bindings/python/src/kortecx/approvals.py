@@ -2,11 +2,10 @@
 world-mutating action approvals, surfaced by ``ListPendingApprovals`` /
 ``GrantApproval`` / ``DenyApproval``.
 
-Kept in its own module (the feedback.py / module-per-concern precedent, GR3). The
+Kept in its own module (the feedback.py / module-per-concern precedent). The
 ``request_id`` / ``instance_id`` / ``mote_id`` are server-derived (the SDK only
 hex-encodes the bytes); grant/deny are OPERATOR decisions over the server-derived
-``request_id`` — they release/reject a STAGED action, never mint a client warrant
-(SN-8).
+``request_id`` — they release/reject a STAGED action, never mint a client warrant.
 """
 
 from __future__ import annotations

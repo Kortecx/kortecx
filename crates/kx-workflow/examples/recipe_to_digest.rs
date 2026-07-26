@@ -136,7 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ca.motes[0].mote.id, cb.motes[0].mote.id,
         "a different rendered prompt is a different Mote — fresh call, not recipe reuse"
     );
-    println!("   → distinct prompts ⇒ distinct Mote identity (SN-8: derived, exact, never fuzzy)");
+    println!(" → distinct prompts ⇒ distinct Mote identity (derived, exact, never fuzzy)");
 
     Ok(())
 }

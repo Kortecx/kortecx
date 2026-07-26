@@ -106,7 +106,7 @@ export function composeCapabilityPrompt(
  * "propose steps" produce a plan that actually uses what the App was given.
  *
  * They are named as WISHES, not as grants, because that is what they are: the server
- * still resolves wish ∩ grants ∩ fireable at run (SN-8). Credential VALUES never appear
+ * still resolves wish ∩ grants ∩ fireable at run. Credential VALUES never appear
  * here — only the connector descriptor — for the same reason attachment content does not.
  */
 export function composeProposeGoal(input: {

@@ -16,7 +16,7 @@
  * (opens the unified agentic-modify {@link AppChatEditDrawer}), Run (opens
  * {@link AppRunDrawer}), Download, and the Lock toggle.
  *
- * GR15 / D142 honesty: a LOCKED App disables every WRITE affordance (direct save +
+ * Honesty: a LOCKED App disables every WRITE affordance (direct save +
  * agentic edit + structure save) with a clear notice — the runtime refuses the write
  * at the AdvanceBranch / SaveApp chokepoints (LOCKED_BRANCH), so the UI never offers
  * a control that can't fire. Every state (loading / empty-project / not-found /
@@ -407,7 +407,7 @@ export function AppDetailSection({
 type Mode = "view" | "direct" | "agentic";
 
 /** The right pane: view a file, edit it directly (Monaco → save), or edit it
- *  agentically through the review/diff gate. Lock-gated (GR15). */
+ *  agentically through the review/diff gate. Lock-gated. */
 function FilePane({
   handle,
   path,

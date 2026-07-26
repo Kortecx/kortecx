@@ -9,7 +9,7 @@
 //!
 //! - **Item 3 — out-of-process.** Every discovered tool registers as
 //!   [`ToolKind::Mcp`] (an external process), never `Builtin`.
-//! - **Item 5 — warrant / SN-8.** A tool fires ONLY under a warrant that grants it:
+//! - **Item 5 — warrant.** A tool fires ONLY under a warrant that grants it:
 //!   a no-grant warrant is refused, an insufficient grant (a different tool) is
 //!   refused, and (for a credentialed connector) a warrant lacking the secret scope
 //!   is refused. A correctly-granted warrant succeeds.
@@ -22,7 +22,7 @@
 //!
 //! The harness is **panic-free**: every step folds into a [`CheckResult`]; a failure
 //! is reported, never thrown. A dialed connector that is merely *unreachable* is
-//! reported distinctly from a *failed* gate check (honest degradation, GR15).
+//! reported distinctly from a *failed* gate check (honest degradation).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;

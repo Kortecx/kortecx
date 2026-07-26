@@ -26,7 +26,7 @@
 //! descriptor must carry no URL userinfo. The serializer is structurally
 //! incapable of emitting authority — `tests/secret_leak.rs` pins it.
 //!
-//! ## Canonical bytes (SN-8)
+//! ## Canonical bytes
 //! The hashable / on-the-wire form is canonical JSON: keys sorted (via
 //! [`serde_json::Value`]'s `BTreeMap` map, with `preserve_order` OFF — pinned
 //! by a unit test), compact separators, integers only (no floats). The pretty

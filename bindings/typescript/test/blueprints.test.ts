@@ -1,6 +1,6 @@
 /** The Blueprint builder — pure, no server. Maps the author-side DAG to the wire
  *  (kinds → enum, hex → bytes, strings → utf-8). The builder never computes a
- *  MoteId/warrant (SN-8); the server compiles + admits. */
+ *  MoteId/warrant; the server compiles + admits. */
 
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";

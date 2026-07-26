@@ -2,9 +2,9 @@
  * POC-4 App-catalog views — a durable, reusable App (a `kortecx.app/v1` envelope:
  * a portable blueprint wrapped with by-reference references, a 4-axis steering
  * config, and per-step replay intent). Kept in its own module so `types.ts` stays
- * a thin aggregator (the Rust core's module-per-concern discipline, GR3).
+ * a thin aggregator (the Rust core's module-per-concern discipline).
  *
- * SN-8: `appRef` is SERVER-DERIVED (blake3 over the canonical envelope) — the
+ * `appRef` is SERVER-DERIVED (blake3 over the canonical envelope) — the
  * client names a handle, never an identity. The catalog lives in an off-journal
  * `apps.db` sidecar (rebuildable-to-empty), scoped to the authoring party; a
  * not-found / not-owned App is UNIFORM (no cross-party existence oracle). The
@@ -362,7 +362,7 @@ export interface AppCapability {
 
 /** A stored App's READ-ONLY capability manifest ("what this App needs vs. what you
  * have"): the requested tools/connections/model diffed against your live policy. It
- * gates nothing — the runtime enforces the same intersection at run (SN-8). */
+ * gates nothing — the runtime enforces the same intersection at run. */
 export class AppManifest {
   constructor(
     /** The App inherits your whole tool ceiling (reach=inherit_principal). */

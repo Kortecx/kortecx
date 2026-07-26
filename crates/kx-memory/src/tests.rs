@@ -54,7 +54,7 @@ fn store_then_recall_orders_by_similarity_and_drops_no_score_into_identity() {
     let hits = s.recall(NS, &[0.9, 0.1, 0.0], 3, "fp-a").unwrap();
     assert_eq!(hits.len(), 3);
     assert_eq!(hits[0].content, b"apple is a fruit");
-    // The memory_id IS the content ref (SN-8: the citation key is content-addressed,
+    // The memory_id IS the content ref (the citation key is content-addressed,
     // the score is display-only and never an identity input).
     assert_eq!(hits[0].memory_id, memory_id(b"apple is a fruit"));
     assert!(hits[0].score >= hits[1].score);
@@ -550,15 +550,15 @@ fn stats_counts_live_and_tombstoned() {
     assert_eq!(st.total, 2);
 }
 
-// ---- RC5b: salience-write hot-path measurement (GR10, measure-first) ---------
+// ---- RC5b: salience-write hot-path measurement (measure-first) ---------
 //
 // Ignored profiling probe: prove the recall salience write (RC5b) is NOT a material
 // recall regression. Run with:
 //   cargo test -p kx-memory --release -- --ignored --nocapture recall_salience
 // Emits the pure index-query cost vs the full recall (query + salience upsert) so the
-// delta is auditable; the numbers land in the private `docs/benchmarks/` trend (SN-2).
+// delta is auditable; the numbers land in the private `docs/benchmarks/` trend.
 #[test]
-#[ignore = "profiling probe (GR10) — run explicitly with --ignored --nocapture"]
+#[ignore = "profiling probe — run explicitly with --ignored --nocapture"]
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_wrap)]
 fn recall_salience_write_delta_is_immaterial() {
     use std::time::Instant;

@@ -1,6 +1,6 @@
 // Integration-test file: compiled as a separate crate from the host lib.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for schema migration (IMP-2, M2.x-E).
+//! Property tests for schema migration (M2.x-E).
 //!
 //! Two families:
 //!

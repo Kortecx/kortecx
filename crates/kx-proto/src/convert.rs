@@ -271,7 +271,7 @@ impl From<MoteDef> for proto::MoteDef {
 
 /// Encode a [`CheckSpec`] to canonical bincode bytes for the wire. Byte-identical
 /// to the embedding used in `kx_mote::MoteDef::hash`, so a round-tripped critic
-/// Mote re-derives the same `MoteId` (SN-8). Infallible: `CheckSpec` is
+/// Mote re-derives the same `MoteId`. Infallible: `CheckSpec` is
 /// integer-only with no non-encodable types.
 // SAFETY (expect): CheckSpec is integer-only with no non-encodable types, so
 // canonical bincode encoding is infallible — mirrors the documented-infallible

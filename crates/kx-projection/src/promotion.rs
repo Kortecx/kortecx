@@ -8,7 +8,7 @@
 //! State) plus a content-addressed lookup (the same shape as the topology
 //! materializer, which already composes a [`ContentStore`] beside the fold).
 //!
-//! **SN-8.** The gate decides on **exact crypto-equality** of the committed
+//! **Identity.** The gate decides on **exact crypto-equality** of the committed
 //! verdict (`CriticVerdict::is_valid` over the decoded fact), never a score or
 //! similarity. The verdict's evidence is integer-only; no float reaches this
 //! decision. The verdict bytes are themselves content-addressed, so a tampered

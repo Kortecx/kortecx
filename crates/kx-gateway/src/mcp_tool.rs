@@ -26,13 +26,13 @@ use kx_warrant::{FsScope, NetScope, ResourceCeiling, ToolRequirement};
 /// The bundled tool's identity — `mcp-echo/echo@1`. The id follows the
 /// `<server>/<remote>` convention every other MCP tool uses (a dialed/local tool
 /// registers `<server>/<remote>`, e.g. `kxlocal-a1b2c3d4/multiply` or a dialed
-/// `pr2echo/echo`), so the BUG-32 name-resolution leaf rule
+/// `pr2echo/echo`), so the name-resolution leaf rule
 /// (`kx_toolcall::resolve_granted_name`) resolves the short remote leaf `echo`
 /// the model naturally emits. BEFORE this fix the bundled tool was a flat
 /// `mcp-echo` (server+remote conflated into one hyphenated token with no `/`),
 /// so a capable model that proposed the bare `echo` was refused `UngrantedTool`
 /// and the live ReAct chain dead-lettered with no answer (PR-2 deep-test campaign
-/// finding A1 / BUG-33). The remote method name passed to the MCP server stays
+/// finding A1). The remote method name passed to the MCP server stays
 /// `echo` (see [`register_echo_capability`]), so firing is unchanged.
 #[must_use]
 pub(crate) fn echo_tool() -> (ToolName, ToolVersion) {
@@ -43,7 +43,7 @@ pub(crate) fn echo_tool() -> (ToolName, ToolVersion) {
 /// and a typed one-param schema (`text: Str`, required, unknown keys refused) —
 /// so `validate_args` genuinely gates every proposed call. PR-3 (A3b): the param
 /// is `text` (not `q`) so a capable model told to "use the echo tool" emits the
-/// INTUITIVE key on the first try (the §2.246 finding: it guessed `{"text":…}`
+/// INTUITIVE key on the first try (it guessed `{"text":…}`
 /// for a `q` param and the chain dead-lettered). The MCP remote method stays
 /// `echo` and the echo binary round-trips any args key, so this is semantically
 /// free at the world boundary.
@@ -407,7 +407,7 @@ pub(crate) fn ollama_answer_force_enabled() -> bool {
 /// `"1"` / `"true"` ⇒ `true`) — byte-mirrors [`grammar_constrained_enabled`]; set
 /// `"0"` / `"false"` / `"off"` to skip menu derivation for every dispatch (the
 /// reliable global opt-out ⇒ byte-identical to pre-RC3). The menu is advisory
-/// prompt bytes only (SN-8) and is derived OFF the MoteId, so the toggle changes
+/// prompt bytes only and is derived OFF the MoteId, so the toggle changes
 /// only the live prompt, never a committed fact or the digest.
 pub(crate) fn tool_menu_enabled() -> bool {
     match std::env::var_os("KX_SERVE_REACT_TOOL_MENU") {
@@ -423,7 +423,7 @@ pub(crate) fn tool_menu_enabled() -> bool {
 /// RC3: the operator's optional per-DEPLOYMENT override of the curated agentic
 /// system prompt (`KX_SERVE_REACT_SYSTEM` — e.g. a domain persona). `Some(text)`
 /// iff set to a non-empty (trimmed) value; else `None` ⇒ the built-in `REACT_SYSTEM`.
-/// Presentation only (SN-8), off the MoteId / off-digest — a different persona never
+/// Presentation only, off the MoteId / off-digest — a different persona never
 /// changes a Mote's identity or any committed fact. Per-RUN (per-invocation) system
 /// prompts are a ticketed follow-up (`T-REACT-SYSTEM-PROMPT-PER-RUN`): they need the
 /// recipe `SlotBinding::Optional` model + a durable `ReactRound` carry across the
@@ -480,7 +480,7 @@ fn echo_binary_path() -> Option<PathBuf> {
 
 /// The bundled integer-arithmetic tool's identity — `mcp-calc/calc@1`. The
 /// `<server>/<remote>` shape (last segment = the MCP remote method) lets a model
-/// emit the bare leaf `calc` and still resolve (BUG-33 guard).
+/// emit the bare leaf `calc` and still resolve (regression guard).
 #[must_use]
 pub(crate) fn calc_tool() -> (ToolName, ToolVersion) {
     (ToolName("mcp-calc/calc".into()), ToolVersion("1".into()))
@@ -625,7 +625,7 @@ pub(crate) fn register_oracle_capabilities<S: ContentStore + Send + Sync>(
 mod tests {
     use super::*;
 
-    /// BUG-33 (PR-2 deep-test campaign finding A1) regression guard: the bundled
+    /// PR-2 deep-test campaign finding A1 — regression guard: the bundled
     /// echo MUST be granted as `<server>/<remote>` (a `/`-bearing id) whose last
     /// segment equals the MCP remote method name — so `kx_toolcall`'s leaf rule
     /// resolves the bare remote name (`echo`) a capable model naturally emits. A
@@ -652,7 +652,7 @@ mod tests {
 
     /// RC2 (S6): the calc + kv oracle ids are `<server>/<remote>` (so the model's
     /// bare leaf resolves) and their leaf equals the MCP remote method, mirroring
-    /// the echo BUG-33 guard.
+    /// the echo guard.
     #[test]
     fn oracle_tool_ids_are_server_slash_remote() {
         for (name, def) in [

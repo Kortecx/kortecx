@@ -2,9 +2,9 @@
  * PR-7 context-bundle views — a named, content-addressed collection a caller
  * attaches to a run (`invoke(handle, args, { context: [handle] })`) so a model
  * reasons over it. Kept in its own module so `types.ts` stays a thin aggregator
- * (the Rust core's module-per-concern discipline, GR3).
+ * (the Rust core's module-per-concern discipline).
  *
- * SN-8: `bundleRef` is SERVER-DERIVED (blake3 over the manifest) — the client
+ * `bundleRef` is SERVER-DERIVED (blake3 over the manifest) — the client
  * names a handle, never an identity. The manifest lives in an off-journal
  * `bundles.db` sidecar (rebuildable-to-empty), scoped to the authoring party; a
  * not-found / not-owned bundle is UNIFORM (no cross-party existence oracle).

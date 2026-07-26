@@ -1,7 +1,6 @@
 //! One named integration test per refusal predicate (R-1, R-2, R-3, R-4,
 //! R-5, R-6, R-7, R-8, R-8b, R-9 + ValidatorTypeError + AttemptedWiden) per
-//! the PR 9a DoD in `02-crate-specs.md` §`kx-executor` + the build-sequence
-//! exit gate for Step 1.9a.
+//! the PR 9a definition of done, plus the exit gate for Step 1.9a.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 

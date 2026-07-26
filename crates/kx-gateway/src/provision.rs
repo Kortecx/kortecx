@@ -46,7 +46,7 @@ use crate::error::GatewayError;
 ///
 /// It translates between the gateway's WIRE vocabulary (opaque `manifest` bytes +
 /// a 32-byte id) and the catalog's [`SignatureEntry`] via the catalog's canonical
-/// codec, and **server-derives** the id from the decoded entry (SN-8: the client
+/// codec, and **server-derives** the id from the decoded entry (the client
 /// never supplies an id). Registration inherits the registry's idempotent +
 /// immutable contract.
 pub struct HostSignatureCatalog<R> {
@@ -126,7 +126,7 @@ pub const DEMO_RECIPE_HANDLE: &str = "kx/recipes/echo";
 
 /// The wire handle of the T3.3 deterministic MULTI-NODE recipe: a PURE fan-out →
 /// gather DAG (root → N children → gather) whose every node commits an HONEST
-/// passthrough of its declared input (GR15), so a single `Invoke` yields a real
+/// passthrough of its declared input, so a single `Invoke` yields a real
 /// multi-node projection with DATA parent edges — the live-DAG viewer's
 /// end-to-end fixture. Always provisioned. Takes no free-params. Shared with the
 /// e2e test (no drift).
@@ -160,7 +160,7 @@ const MODEL_LOGIC_REF: [u8; 32] = [0x3c; 32];
 /// carrying a `dataset` arg GROUNDS the turn: the binder embeds the `prompt`,
 /// retrieves the dataset's top-k nearest documents, and folds the EXACT retrieved
 /// content refs into the entry Mote's identity-bearing `config_subset[CONTEXT_ITEMS_KEY]`
-/// (the PR-7/D155 `context_refs` rail — edge-free, replayable, SN-8 exact-out; the
+/// (the PR-7/D155 `context_refs` rail — edge-free, replayable, exact-out; the
 /// ANN non-determinism is resolved ONCE at bind and frozen into the MoteId). A
 /// SEPARATE recipe BY DESIGN (the vision/react-fs precedent) so canonical
 /// `kx/recipes/chat` + the projection digest stay byte-unchanged. Seeded whenever a
@@ -169,7 +169,7 @@ const MODEL_LOGIC_REF: [u8; 32] = [0x3c; 32];
 /// chat answer (honest — grounding is never faked).
 pub const CHAT_RAG_RECIPE_HANDLE: &str = "kx/recipes/chat-rag";
 
-/// A DISTINCT placeholder `logic_ref` for the chat-rag step (the BUG-25 class — a
+/// A DISTINCT placeholder `logic_ref` for the chat-rag step (this class — a
 /// shared logic ref collides with `kx/recipes/chat` at seed; the storing executor
 /// ignores `logic_ref`, routing by `prompt` + `model_id`). `0x58` is the next free
 /// sentinel after the judge refs (`0x56`/`0x57`).
@@ -208,13 +208,13 @@ const REACT_LOGIC_REF: [u8; 32] = [0x4e; 32];
 /// warrant map to the SAME manifest id but DIFFERENT body bytes — a body-ledger
 /// immutability conflict at seed. `react` (echo grant) + `react-fs` (fs-list grant)
 /// previously shared [`REACT_LOGIC_REF`], so a serve with BOTH the bundled echo bin
-/// AND `KX_SERVE_FS_ROOT` panicked at startup (BUG-25: the bodies differ only by
+/// AND `KX_SERVE_FS_ROOT` panicked at startup (the bodies differ only by
 /// warrant). A distinct sentinel gives `react-fs` its own manifest id; the seed is
 /// SWAPPED at submit, so the ref never reaches an admitted identity.
 const REACT_FS_LOGIC_REF: [u8; 32] = [0x54; 32];
 
 /// PR-6b-4: a DISTINCT placeholder `logic_ref` for the react-auto seed step (the
-/// same BUG-25 class as [`REACT_FS_LOGIC_REF`] — react-auto's placeholder grant is
+/// same class as [`REACT_FS_LOGIC_REF`] — react-auto's placeholder grant is
 /// empty, which would collide with `kx/recipes/react`). The binder overrides the
 /// bound warrant with the live union; like [`REACT_LOGIC_REF`] the seed is SWAPPED
 /// at submit, so the ref never reaches an admitted identity.
@@ -227,7 +227,7 @@ const REACT_AUTO_LOGIC_REF: [u8; 32] = [0x53; 32];
 /// canonical `kx/recipes/react` + the projection digest stay byte-unchanged. Seeded only
 /// when a fit serve model resolved AND `KX_SERVE_FS_ROOT` is set (the fs-list capability
 /// registered). Reuses the react free-param contract (instruction / max_turns /
-/// max_tool_calls); carries its OWN `REACT_FS_LOGIC_REF` (BUG-25 — a shared logic ref
+/// max_tool_calls); carries its OWN `REACT_FS_LOGIC_REF` (a shared logic ref
 /// collides with `kx/recipes/react` at seed) — the warrant + handle + logic ref differ.
 pub const REACT_FS_RECIPE_HANDLE: &str = "kx/recipes/react-fs";
 
@@ -243,10 +243,10 @@ pub const REACT_FS_RECIPE_HANDLE: &str = "kx/recipes/react-fs";
 /// canonical recipes + the projection digest stay byte-unchanged. Seeded only when
 /// a fit serve model resolved (works model-only — the edit source arrives via the
 /// context item, not the host). Reuses the react free-param contract; carries its
-/// OWN logic ref (BUG-25 — a shared logic ref collides at seed).
+/// OWN logic ref (a shared logic ref collides at seed).
 pub const REACT_EDIT_RECIPE_HANDLE: &str = "kx/recipes/react-edit";
 
-/// A DISTINCT placeholder `logic_ref` for the `react-edit` seed step (the BUG-25
+/// A DISTINCT placeholder `logic_ref` for the `react-edit` seed step (the shared-logic-ref
 /// class — a shared logic ref collides with the other react recipe bodies at seed;
 /// the seed is SWAPPED at submit, so the ref never reaches an admitted identity).
 /// `0x55` is the next free sentinel after react-fs (`0x54`).
@@ -262,20 +262,20 @@ const REACT_EDIT_LOGIC_REF: [u8; 32] = [0x55; 32];
 /// text-only runs), so the canonical recipes + the projection digest stay byte-unchanged.
 /// Seeded only when a fit serve model resolved that is IMAGE-capable AND the bundled tool
 /// is registered. The SDK's prefix detector (`startswith("kx/recipes/react")`) already
-/// settles it as a react CHAIN; carries its OWN logic ref (BUG-25).
+/// settles it as a react CHAIN; carries its OWN logic ref.
 pub const REACT_VISION_RECIPE_HANDLE: &str = "kx/recipes/react-vision";
 
-/// A DISTINCT placeholder `logic_ref` for the `react-vision` seed step (the BUG-25
+/// A DISTINCT placeholder `logic_ref` for the `react-vision` seed step (the shared-logic-ref
 /// class). `0x57` is the next free sentinel after judge-producer (`0x56`).
 const REACT_VISION_LOGIC_REF: [u8; 32] = [0x57; 32];
 
 /// POC-5a: a DISTINCT placeholder `logic_ref` for the `app-scaffold-write` seed step
-/// (the BUG-25 class — own ref so the scaffold recipe's fingerprint never collides
+/// (this class — own ref so the scaffold recipe's fingerprint never collides
 /// with `react-edit`). `0x59` is the next free sentinel after chat-rag (`0x58`).
 const APP_SCAFFOLD_WRITE_LOGIC_REF: [u8; 32] = [0x59; 32];
 
 /// POC-6: a DISTINCT placeholder `logic_ref` for the `app-manifest-plan` seed step
-/// (the BUG-25 class — own ref so the manifest planner's fingerprint never collides
+/// (this class — own ref so the manifest planner's fingerprint never collides
 /// with `app-scaffold-write`, whose body it otherwise mirrors). `0x5d` is the next
 /// free sentinel after react-memory (`0x5c`).
 const APP_MANIFEST_PLAN_LOGIC_REF: [u8; 32] = [0x5d; 32];
@@ -293,7 +293,7 @@ const APP_MANIFEST_PLAN_LOGIC_REF: [u8; 32] = [0x5d; 32];
 /// (`startswith("kx/recipes/react")`) settles it as a react CHAIN.
 pub const REACT_RAG_RECIPE_HANDLE: &str = "kx/recipes/react-rag";
 
-/// A DISTINCT placeholder `logic_ref` for the `react-rag` seed step (the BUG-25 class —
+/// A DISTINCT placeholder `logic_ref` for the `react-rag` seed step (this class —
 /// react-rag's body differs from `kx/recipes/react` ONLY by its server-built warrant
 /// [echo grant → retrieve grant], so a shared logic ref maps both to the same manifest
 /// id with different bytes and panics at seed). `0x5a` is the next free sentinel after
@@ -318,7 +318,7 @@ const REACT_RAG_DATASET_KEY: &str = "dataset";
 /// datasets are available (`retrieve_tool = Some`).
 pub const VISION_RAG_RECIPE_HANDLE: &str = "kx/recipes/vision-rag";
 
-/// A DISTINCT placeholder `logic_ref` for the `vision-rag` seed step (the BUG-25 class).
+/// A DISTINCT placeholder `logic_ref` for the `vision-rag` seed step (this class).
 /// `0x5b` is the next free sentinel after react-rag (`0x5a`).
 const VISION_RAG_LOGIC_REF: [u8; 32] = [0x5b; 32];
 
@@ -334,7 +334,7 @@ const VISION_RAG_LOGIC_REF: [u8; 32] = [0x5b; 32];
 /// settles it as a react CHAIN.
 pub const REACT_MEMORY_RECIPE_HANDLE: &str = "kx/recipes/react-memory";
 
-/// A DISTINCT placeholder `logic_ref` for the `react-memory` seed step (the BUG-25
+/// A DISTINCT placeholder `logic_ref` for the `react-memory` seed step (the shared-logic-ref
 /// class — react-memory's body differs from `kx/recipes/react` ONLY by its server-built
 /// warrant [echo grant → remember+recall grant], so a shared ref maps both to the same
 /// manifest id with different bytes and panics at seed). `0x5c` is the next free
@@ -351,7 +351,7 @@ const REACT_MEMORY_LOGIC_REF: [u8; 32] = [0x5c; 32];
 /// (default-OFF without a served model, so the digest is unaffected).
 pub const JUDGE_RECIPE_HANDLE: &str = "kx/recipes/judge";
 
-/// Distinct `logic_ref` sentinels for the judge recipe's two steps (BUG-25 — a
+/// Distinct `logic_ref` sentinels for the judge recipe's two steps (a
 /// shared ref collides at seed). `0x56`/`0x57` are the next free after react-edit
 /// (`0x55`); the storing executor ignores `logic_ref`, so these give the producer
 /// and judge steps distinct identities.
@@ -361,7 +361,7 @@ const JUDGE_CRITIC_LOGIC_REF: [u8; 32] = [0x57; 32];
 /// The default grading rubric the judge evaluates the producer's answer against
 /// (delivered via the judge step's `config_subset[JUDGE_RUBRIC_KEY]`). Advisory
 /// prompt bytes only — never an authority/identity input beyond the judge Mote's
-/// own `MoteId` (SN-8).
+/// own `MoteId`.
 const JUDGE_DEFAULT_RUBRIC: &str =
     "The answer must directly and correctly address the user's prompt, be free of \
 hedging or refusals, and contain no obvious factual error.";
@@ -377,7 +377,7 @@ const REACT_MAX_TOOL_CALLS_SCHEMA_REF: [u8; 32] = [0x51; 32];
 /// step like `kx/recipes/chat` PLUS a REQUIRED `image_ref` slot (the 64-hex
 /// `PutContent` ref of an uploaded image, fetched by the multimodal backend)
 /// and a REQUIRED `model` ENUM slot (allowed = the served model id — model
-/// selection is a server-validated free-param, never a client warrant, SN-8).
+/// selection is a server-validated free-param, never a client warrant).
 /// A separate recipe BY DESIGN: every variable slot is required at binding
 /// (`SlotMissing` otherwise), so extending `kx/recipes/chat` would break every
 /// existing `{prompt}` caller. Provisioned only when the serve model registered
@@ -399,7 +399,7 @@ const VISION_MODEL_SCHEMA_REF: [u8; 32] = [0x54; 32];
 /// what actually routes).
 const VISION_MODEL_KEY: &str = "model";
 
-/// The vision recipe's image-payload ceiling (BUG-26). The multimodal dispatch
+/// The vision recipe's image-payload ceiling. The multimodal dispatch
 /// (`kx-inference` `llama.rs`) gates each fetched image's byte length against the
 /// warrant's `resource_ceiling.mem_bytes`; the text-only [`model_warrant`] leaves
 /// that `0` (no image payload), so the vision recipe MUST raise it or EVERY
@@ -419,11 +419,11 @@ pub(crate) use kx_mote::IMAGE_REF_KEY;
 /// The blueprint-authoring asset (`SubmitWorkflow` / the Blueprint builder). Each
 /// party is granted `Use` on it at provision time, so [`HostWorkflowAuthor`]
 /// resolves the party's effective authority from the SAME grant ledger as Invoke —
-/// the ceiling each authored step's warrant is intersected against (SN-8). It owns
+/// the ceiling each authored step's warrant is intersected against. It owns
 /// no body/version (authoring submits one-off DAGs; nothing is published here).
 const BLUEPRINT_AUTHOR_HANDLE: &str = "kx/blueprints/author";
 
-/// Tier-1 authoring caps (GR8 DoS bound — the new client-authored-topology surface).
+/// Tier-1 authoring caps (DoS bound — the new client-authored-topology surface).
 const MAX_BLUEPRINT_STEPS: usize = 64;
 /// See [`MAX_BLUEPRINT_STEPS`].
 const MAX_BLUEPRINT_EDGES: usize = 256;
@@ -658,7 +658,7 @@ impl DemoLibrary {
         let mut recipes: Vec<(AssetPath, RecipeMeta)> = Vec::new();
 
         // (echo) the PURE echo recipe — the honest passthrough executor commits
-        // its bound `topic` free-param verbatim (GR15); the logic_ref is a stable
+        // its bound `topic` free-param verbatim; the logic_ref is a stable
         // body identity the executor does not interpret.
         let echo_warrant = demo_warrant(exec_class);
         let echo_handle = demo_handle()?;
@@ -725,7 +725,7 @@ impl DemoLibrary {
         // seed-fixed), so a distinct model needs a distinct recipe. The handle is
         // exposed per-model via `ListModels.chat_handle`. A different model warrant ⇒
         // a distinct recipe body (the model_id is in the body), so sharing
-        // `MODEL_LOGIC_REF` does NOT collide (the BUG-25 class is same-model-only).
+        // `MODEL_LOGIC_REF` does NOT collide (this class is same-model-only).
         for model_id in secondary_models {
             let per_w = model_warrant(exec_class, model_id);
             let per_h = per_model_chat_handle(model_id)?;
@@ -808,8 +808,8 @@ impl DemoLibrary {
         // step as `chat` (PROMPT_KEY slot, `model_warrant`), but a bind carrying a
         // `dataset` arg embeds the prompt → retrieves the dataset's top-k docs →
         // folds the EXACT refs into the entry Mote's CONTEXT_ITEMS (the PR-7/D155
-        // context-refs rail — edge-free, replayable, SN-8). A SEPARATE recipe with
-        // its OWN logic ref (BUG-25) so `kx/recipes/chat` + the digest stay
+        // context-refs rail — edge-free, replayable). A SEPARATE recipe with
+        // its OWN logic ref so `kx/recipes/chat` + the digest stay
         // byte-unchanged. Seeded whenever a model is served (the bind degrades to a
         // plain chat answer when there is no dataset/embedder/index — grounding is
         // never faked).
@@ -845,7 +845,7 @@ impl DemoLibrary {
         // selection is a server-validated free-param, never a client warrant).
         // Seeded only when the serve model registered IMAGE-capable.
         if let Some(model_id) = serve_model.filter(|_| vision) {
-            // BUG-26: the multimodal dispatch caps each image against `mem_bytes`,
+            // the multimodal dispatch caps each image against `mem_bytes`,
             // which the text-only `model_warrant` leaves 0 — raise it to the vision
             // image ceiling or every `image_ref` fails `scope violation on
             // image_bytes`. Set BEFORE any use so the owner-root, the recipe body's
@@ -919,8 +919,8 @@ impl DemoLibrary {
         // only when a fit serve model resolved that is IMAGE-capable (`vision`) AND the
         // bundled tool is registered (the react + vision conditions combined). The warrant
         // raises `mem_bytes` to the vision image ceiling (else every image fails `scope
-        // violation on image_bytes`, the BUG-26 class). Carries its OWN logic ref
-        // (BUG-25) so the canonical react recipe + the projection digest stay byte-unchanged.
+        // violation on image_bytes`, this class). Carries its OWN logic ref
+        // so the canonical react recipe + the projection digest stay byte-unchanged.
         if let (Some(model_id), Some(tool)) = (serve_model.filter(|_| vision), react_tool) {
             let mut react_vision_w = react_warrant(exec_class, model_id, tool);
             react_vision_w.resource_ceiling.mem_bytes = VISION_MAX_IMAGE_BYTES;
@@ -958,7 +958,7 @@ impl DemoLibrary {
         // read root (`KX_SERVE_FS_ROOT`) — the first recipe that produces REAL
         // agent data (a directory listing committed as the Observation result_ref).
         // Seeded only when a model is served AND fs-list is available; reuses the
-        // react free-param contract but carries its OWN logic ref (BUG-25 — a shared
+        // react free-param contract but carries its OWN logic ref (a shared
         // logic ref collides with `kx/recipes/react` at seed when both are present),
         // so the canonical `kx/recipes/react` + the digest stay byte-unchanged.
         if let (Some(model_id), Some((fs_tools, fs_root))) = (serve_model, fs_list) {
@@ -998,7 +998,7 @@ impl DemoLibrary {
         // `ReadOnlyNondet` query-rewrite (no separate Mote). Seeded only when a model is
         // served AND the retrieve capability is registered (the `hnsw` build passes
         // `retrieve_tool = Some`). Reuses the react free-param contract but carries its OWN
-        // logic ref (BUG-25 — react-rag's body differs from `kx/recipes/react` ONLY by its
+        // logic ref (react-rag's body differs from `kx/recipes/react` ONLY by its
         // warrant [echo grant → retrieve grant], so a shared ref panics at seed). The bind
         // folds a `dataset` selector into the instruction (advisory). `react_warrant`
         // already leaves `fs_scope` empty / `net_scope` None — exactly retrieve@1's
@@ -1038,7 +1038,7 @@ impl DemoLibrary {
         // `MemoryView`), so the served model AUTONOMOUSLY records what it learns and recalls
         // it in later runs. Seeded only when a model is served AND the memory capabilities
         // are registered (the `hnsw`+serve+`KX_SERVE_MEMORY` build passes `memory_tools =
-        // Some`). Reuses the react free-param contract; OWN logic ref (BUG-25). `react_memory_
+        // Some`). Reuses the react free-param contract; OWN logic ref. `react_memory_
         // warrant` leaves fs_scope empty / net_scope None — exactly the tools' declared
         // requirement — so the broker precheck passes with no fs root.
         if let (Some(model_id), Some(mem_tools)) = (serve_model, memory_tools) {
@@ -1077,9 +1077,9 @@ impl DemoLibrary {
         // CONTEXT_ITEMS, so the served VLM answers grounded on BOTH the image AND the
         // retrieved text in ONE generation (`dispatch_model` already composes context-items
         // + image_ref). Seeded only when an IMAGE-capable model is served AND datasets are
-        // available (`retrieve_tool = Some` signals the hnsw build). OWN logic ref (BUG-25);
+        // available (`retrieve_tool = Some` signals the hnsw build). OWN logic ref;
         // NOT a react chain (a single PURE step — it settles on its terminal mote). The
-        // warrant raises `mem_bytes` to the vision image ceiling (the BUG-26 class).
+        // warrant raises `mem_bytes` to the vision image ceiling (this class).
         if let (Some(model_id), Some(_)) = (serve_model.filter(|_| vision), retrieve_tool) {
             let mut vision_rag_w = model_warrant(exec_class, model_id);
             vision_rag_w.resource_ceiling.mem_bytes = VISION_MAX_IMAGE_BYTES;
@@ -1182,7 +1182,7 @@ impl DemoLibrary {
         // (app-scaffold-write) POC-5a: the single Pure greedy write step the server-
         // side scaffold orchestrator drives per FIXED-skeleton file (the react-edit
         // pattern: a `prompt` directive + sibling `context_refs`, `reasoning=strip`,
-        // the terminal answer IS the file body). OWN logic ref (BUG-25); the same
+        // the terminal answer IS the file body). OWN logic ref; the same
         // server-minted Pure/no-tools warrant + env-knob token caps as react-edit.
         // Seeded only when a model is served (default-OFF ⇒ digest unchanged).
         if let Some(model_id) = serve_model {
@@ -1211,7 +1211,7 @@ impl DemoLibrary {
         // orchestrator drives ONCE per creation to plan a use-case-specific project
         // file set. Byte-identical body to app-scaffold-write (a `prompt` directive,
         // `reasoning=strip`, the terminal answer IS the committed bytes) EXCEPT its
-        // OWN logic ref (BUG-25); the committed answer is a strict-JSON manifest the
+        // OWN logic ref; the committed answer is a strict-JSON manifest the
         // host decodes fail-closed (`kx_gateway_core::decode_manifest`). Seeded only
         // when a model is served (default-OFF ⇒ digest unchanged).
         if let Some(model_id) = serve_model {
@@ -1243,7 +1243,7 @@ impl DemoLibrary {
         // the projection digest are byte-unchanged). The judge warrant is the
         // text-model warrant (model_route bounds the judge's output tokens; the
         // executor's `inference_params_from_mote` refuses a widening, D35). OWN logic
-        // refs (BUG-25). The verdict commits ReadOnlyNondet ⇒ an opt-in run gets its
+        // refs. The verdict commits ReadOnlyNondet ⇒ an opt-in run gets its
         // OWN honest digest; the canonical demo never invokes it (digest-SCOPE).
         if let Some(model_id) = serve_model {
             let judge_w = model_warrant(exec_class, model_id);
@@ -1569,7 +1569,7 @@ fn param_type_field(name: &str, ty: &ParamType) -> RecipeFormFieldEntry {
 fn recipe_advisory(handle: &str) -> (&'static str, &'static [&'static str]) {
     match handle {
         DEMO_RECIPE_HANDLE => (
-            "Echo — a true passthrough of the bound `topic` (model-free, GR15-honest).",
+            "Echo — a true passthrough of the bound `topic` (model-free, honest).",
             &["passthrough", "pure", "text", "echo"],
         ),
         PASSTHROUGH_DAG_HANDLE => (
@@ -1647,7 +1647,7 @@ const RECIPE_SCORE_NEUTRAL: u32 = 1;
 /// Pure, deterministic recipe ranker (PR-4 Batch D). Tokenizes `intent` (+
 /// `keywords`) and scores each handle by the best query-token match against the
 /// handle / name / tags / description, in INTEGER basis points (≤ 10000 — never
-/// a float, the SN-8 no-persisted-confidence rule). An empty query lists every
+/// a float, the no-persisted-confidence rule). An empty query lists every
 /// recipe at a neutral score; a non-empty query keeps only positive matches.
 /// Best-first with a deterministic handle tiebreak; capped at `limit`.
 fn rank_recipes(
@@ -1830,7 +1830,7 @@ pub struct HostRecipeBinder {
 /// POC-1: the two seams a grounded chat-rag bind reads — the dataset view (embed +
 /// ANN top-k) and the run content store (stage each retrieved blob so the folded
 /// 64-hex ref RESOLVES at assemble-time; `put` is content-addressed, so the staged
-/// ref EQUALS the dataset hit's `content_ref` — SN-8 exact-out preserved).
+/// ref EQUALS the dataset hit's `content_ref` — exact-out preserved).
 struct DatasetGrounding {
     datasets: std::sync::Arc<dyn DatasetView>,
     content: std::sync::Arc<dyn ContentWriter>,
@@ -1947,7 +1947,7 @@ impl HostRecipeBinder {
     ///   grounding seam is wired, and retrieval succeeds — the original context refs
     ///   PLUS the exact 64-hex refs of the dataset's top-`k` documents (each staged
     ///   into the run content store so the fold resolves; `put` is content-addressed,
-    ///   so the staged ref equals the dataset hit's `content_ref` — SN-8 exact-out).
+    ///   so the staged ref equals the dataset hit's `content_ref` — exact-out).
     ///
     /// HONEST DEGRADE: no dataset arg, no grounding seam (the non-`hnsw` build), an
     /// empty prompt, or any retrieval failure (unknown dataset / no embedder / empty
@@ -2069,7 +2069,7 @@ impl HostRecipeBinder {
             _ => return Ok((Cow::Owned(stripped), Cow::Borrowed(context_refs))),
         };
         // Stage each retrieved blob in the run content store (so the folded 64-hex
-        // ref RESOLVES at assemble) + append its EXACT ref (SN-8: only refs, never
+        // ref RESOLVES at assemble) + append its EXACT ref (only refs, never
         // the similarity score, reach the entry Mote's identity).
         let mut refs: Vec<String> = context_refs.to_vec();
         for hit in &hits {
@@ -2194,7 +2194,7 @@ impl RecipeBinder for HostRecipeBinder {
         // already gated the party's Use authorization + bound the free-params, so a
         // party without a Use grant on react-auto never reaches here. The union flows
         // durably to every turn/observation via the chain's `anchor.warrant_ref`; the
-        // broker precheck + coordinator D66 re-verify every axis at each fire (SN-8).
+        // broker precheck + coordinator D66 re-verify every axis at each fire.
         let is_react_auto = parse_handle(REACT_AUTO_RECIPE_HANDLE).is_some_and(|p| p == asset_path);
         let motes = match (is_react_auto, self.react_auto_union(&meta.owner_root)) {
             (true, Some(union)) => bound
@@ -2217,7 +2217,7 @@ impl RecipeBinder for HostRecipeBinder {
             // AGENTIC-VISION: react-vision is the SAME live ReAct chain (react warrant +
             // an image_ref) ⇒ it MUST set react_seed too, else the loop never runs as a
             // chain AND the empty react_chain_salt makes the client retrieve the wrong
-            // chain on serve's shared journal (BUG-34, caught by the live dual-engine pass).
+            // chain on serve's shared journal (caught by the live dual-engine pass).
             // (D155 Phase-3 `react-edit` is a SINGLE model step, NOT a react chain
             // — it is deliberately absent here; it settles on its terminal mote.)
             react_seed: [
@@ -2228,10 +2228,10 @@ impl RecipeBinder for HostRecipeBinder {
                 // RC4b: react-rag is a live ReAct chain (the retrieve@1 loop) ⇒ it MUST
                 // seed the run-salted chain too, else the loop never runs as a chain AND
                 // the empty react_chain_salt makes the client retrieve the wrong chain on
-                // serve's shared journal (BUG-34, the react-vision lesson).
+                // serve's shared journal (the react-vision lesson).
                 REACT_RAG_RECIPE_HANDLE,
                 // RC5a: react-memory is the SAME live ReAct chain (remember/recall grant)
-                // ⇒ it MUST seed the run-salted chain too (BUG-34, the react-rag lesson).
+                // ⇒ it MUST seed the run-salted chain too (the react-rag lesson).
                 REACT_MEMORY_RECIPE_HANDLE,
             ]
             .iter()
@@ -2300,7 +2300,7 @@ fn resolve_context_items(
 
 /// Decode a 64-char hex string into a 32-byte content ref (`None` on any
 /// non-hex / wrong-length input). Lives in `provision` (always compiled) — NOT
-/// behind the `inference`-gated `model_exec` (the BUG-30 cfg-leak class: a binder
+/// behind the `inference`-gated `model_exec` (the cfg-leak class: a binder
 /// helper must resolve `context_refs` on the no-inference CI binary too).
 pub(crate) fn decode_hex32(s: &str) -> Option<[u8; 32]> {
     let b = s.as_bytes();
@@ -2317,7 +2317,7 @@ pub(crate) fn decode_hex32(s: &str) -> Option<[u8; 32]> {
 }
 
 /// Resolves a party's effective `Use` warrant from the authoritative grant ledger
-/// (never a caller-supplied warrant — SN-8). `None` ⇒ unauthorized.
+/// (never a caller-supplied warrant). `None` ⇒ unauthorized.
 struct HostUseResolver<'a> {
     grants: &'a SqliteGrantLedger,
     owner_root: WarrantSpec,
@@ -2336,7 +2336,7 @@ impl UseWarrantResolver for HostUseResolver<'_> {
 /// (PURE / MODEL palette) server-side, assigns each step's `logic_ref` from its
 /// kind (the client never supplies executable bytes), and resolves + INTERSECTS
 /// every warrant from the party's grant on `kx/blueprints/author` (never a
-/// client warrant — SN-8). Shares the library `Arc` with the binder/catalog.
+/// client warrant). Shares the library `Arc` with the binder/catalog.
 pub struct HostWorkflowAuthor {
     lib: std::sync::Arc<DemoLibrary>,
     /// PR-6b-2: the LIVE tool registry (the SAME `Arc` the coordinator + broker
@@ -2458,7 +2458,7 @@ impl HostWorkflowAuthor {
                 // GENERATOR StepDef (ReadOnlyNondet + StageThenCommit) + the SERVER-built
                 // UNION warrant over the AUTHOR-DECLARED tool set (`agentic_step_warrant`,
                 // resolved fail-closed). The non-empty `tool_grants` make `author()` admit
-                // the warrant DIRECTLY (SN-8: client `tool_grants` are NEVER accepted —
+                // the warrant DIRECTLY (client `tool_grants` are NEVER accepted —
                 // BLOCKER-#5). The coordinator PARKS the launch at lease, drives its
                 // bounded reason→tool→observe loop on a private `step_salt`-keyed chain,
                 // and COMMITS the launch mote with the loop's final answer to advance the
@@ -2481,7 +2481,7 @@ impl HostWorkflowAuthor {
                     // A DETERMINISTIC-AGENTIC step: build the GENERATOR StepDef + the
                     // server-built union warrant over the AUTHOR-DECLARED set (resolved
                     // fail-closed). The non-empty `tool_grants` make `author()` admit it
-                    // DIRECTLY (SN-8: client `tool_grants` NEVER accepted — BLOCKER-#5);
+                    // DIRECTLY (client `tool_grants` NEVER accepted — BLOCKER-#5);
                     // the coordinator parks + drives the bounded loop + commits the launch.
                     let tools = self.tools.as_ref().ok_or_else(|| {
                         BinderError::InvalidArgs(
@@ -2518,7 +2518,7 @@ impl HostWorkflowAuthor {
             }
             // TOOL (PR-6b-2): fire a single REGISTERED tool as a standalone node
             // (extracted helper — the host resolves the tool in the LIVE registry +
-            // builds its warrant SERVER-SIDE from the declared scope, SN-8).
+            // builds its warrant SERVER-SIDE from the declared scope).
             AuthorStepKind::Tool => self.tool_step_def(index, s, base)?,
         };
         // Free params land in config_subset (identity-bearing); MODEL also binds the
@@ -2584,13 +2584,13 @@ impl HostWorkflowAuthor {
         let tool_name = ToolName(name.clone());
         let tool_version = ToolVersion(version.clone());
         // Resolve the registered tool — `lookup` returns `None` for an absent OR
-        // `PendingHumanReview` registration (fail-closed, GR15).
+        // `PendingHumanReview` registration (fail-closed).
         let tdef = tools.lookup(&tool_name, &tool_version).ok_or_else(|| {
             BinderError::InvalidArgs(format!(
                 "TOOL step references unregistered tool {name}@{version}"
             ))
         })?;
-        // PR-9a (BUG-27 Path 1): validate the authored args against the tool's
+        // PR-9a (path 1): validate the authored args against the tool's
         // typed `inputSchema` AT AUTHORING and refuse with a clear invalid_argument
         // BEFORE any Mote is created. The args are a DETERMINISTIC part of the
         // step's identity-bearing `config_subset`, so a schema mismatch is a
@@ -2756,7 +2756,7 @@ impl HostWorkflowAuthor {
                 .map_err(|err| BinderError::InvalidArgs(format!("edge: {err}")))?;
         }
 
-        // Resolve the party's effective Use authority on the authoring asset (SN-8:
+        // Resolve the party's effective Use authority on the authoring asset (
         // server-derived from the grant ledger, never a client warrant).
         let party_id = PartyId::new(party);
         let handle = blueprint_author_handle().map_err(|e| BinderError::Internal(e.to_string()))?;
@@ -2822,7 +2822,7 @@ impl HostWorkflowAuthor {
             // (whose syscall profile differs, and which never grants the tool). The
             // per-party gate is "can author at all" (`effective` resolved above); the
             // `registered_tools` backstop + the broker precheck + the coordinator's
-            // D66 resolution re-verify every axis server-side at fire (SN-8). Every
+            // D66 resolution re-verify every axis server-side at fire. Every
             // PURE/MODEL mote (empty `tool_grants`) narrows against the party
             // authority exactly as before (byte-identical when no tool() steps).
             let mut warrant = if cm.warrant.tool_grants.is_empty() {
@@ -3218,7 +3218,7 @@ fn react_vision_handle() -> Result<AssetPath, GatewayError> {
 
 /// The ReAct ceilings the recipe-form schema + the react-param validation bound
 /// against. `kx_coordinator` is linked ONLY under `embedded-worker` (the live serve
-/// loop); the gateway-only / external-coordinator config (SN-6, the `features-guard`
+/// loop); the gateway-only / external-coordinator config (the `features-guard`
 /// gate) compiles `provision.rs` WITHOUT it, so this module mirrors the ceilings as
 /// pinned constants in that config and re-exports the canonical ones otherwise. The
 /// values are PINNED to `kx_coordinator::react_shape` (the `embedded-worker` build
@@ -3373,7 +3373,7 @@ fn model_warrant(exec_class: ExecutorClass, model_id: &ModelId) -> WarrantSpec {
 /// bundled deterministic stdio tool (`mcp-echo@1` — `net_scope: None`, so the
 /// SSRF/egress surface is N/A); ReadOnlyNondet classes (a turn is a sampling
 /// model Mote; the observation's WM dispatch authority is the grant itself, and
-/// the broker's 6-gate `precheck` re-verifies every axis at fire time, SN-8).
+/// the broker's 6-gate `precheck` re-verifies every axis at fire time).
 /// `executor_class` MUST equal the embedded worker's so the chain leases; the
 /// model route's `max_output_tokens` is both the turn decode budget and the
 /// `max_args_bytes` cap (×4) the tool-call gate enforces. `pub(crate)` since
@@ -3422,7 +3422,7 @@ pub(crate) fn react_warrant(
 /// read `root` (ReadOnly). The grant's fs_scope MUST equal the tool's declared
 /// `fs_scope_required` so the broker's `precheck` subset gate passes and the
 /// capability receives the root via `request.fs_scope`. `net_scope: None` (fs-list
-/// has no egress). Tool authority NEVER enters via a client warrant (BLOCKER #5/SN-8).
+/// has no egress). Tool authority NEVER enters via a client warrant.
 pub(crate) fn react_fs_warrant(
     exec_class: ExecutorClass,
     model_id: &ModelId,
@@ -3470,7 +3470,7 @@ pub(crate) fn react_fs_warrant(
 /// grants BOTH durable-memory tools (`remember@1` + `recall@1`) with NO fs mount /
 /// NO egress — both reach the store via the in-process `MemoryView` (`fs_scope` empty,
 /// `net_scope` None, exactly their declared requirement, so the broker precheck passes
-/// with no root). Tool authority NEVER enters via a client warrant (BLOCKER #5/SN-8).
+/// with no root). Tool authority NEVER enters via a client warrant.
 pub(crate) fn react_memory_warrant(
     exec_class: ExecutorClass,
     model_id: &ModelId,
@@ -3523,7 +3523,7 @@ pub(crate) fn react_memory_warrant(
 /// precheck. Admitted DIRECTLY (not intersected against the party blueprint grant):
 /// the tool's scope is SERVER-vetted (the registry), so the per-party gate is "can
 /// author at all" (`effective` resolved); the broker precheck + coordinator D66
-/// re-verify every axis at fire (SN-8).
+/// re-verify every axis at fire.
 fn tool_step_warrant(
     base: &WarrantSpec,
     name: &ToolName,
@@ -3749,11 +3749,11 @@ fn judge_body(warrant: &WarrantSpec) -> Result<WorkflowDef, GatewayError> {
 
 /// The model-executor config key for the opt-in reasoning mode (mirrors
 /// `kx-gateway::model_exec::REASONING_KEY`, hard-coded here because `model_exec`
-/// is `inference`-gated while `provision` is always compiled — the BUG-30
+/// is `inference`-gated while `provision` is always compiled — the
 /// cfg-leak class). react-edit uses `"strip"`: the model reasons naturally (so it
 /// produces real content — `/no_think` makes some models emit an EMPTY
 /// completion) but the leading `<think>` block is stripped at commit, so the
-/// committed edit body is the file verbatim (GR15).
+/// committed edit body is the file verbatim.
 const REASONING_CONFIG_KEY: &str = "reasoning";
 const REASONING_STRIP: &str = "strip";
 
@@ -3791,7 +3791,7 @@ fn react_edit_body(warrant: &WarrantSpec) -> WorkflowDef {
 
 /// POC-5a: the `app-scaffold-write` body — byte-for-byte the `react-edit` single
 /// Pure greedy step (a `prompt` slot the binder fills, `reasoning=strip`), but with
-/// its OWN `APP_SCAFFOLD_WRITE_LOGIC_REF` (BUG-25 — a distinct fingerprint from
+/// its OWN `APP_SCAFFOLD_WRITE_LOGIC_REF` (a distinct fingerprint from
 /// react-edit). The scaffold orchestrator binds it per skeleton file: the committed
 /// terminal answer IS the file body, which it content-addresses + `AdvanceBranch`-es.
 fn app_scaffold_write_body(warrant: &WarrantSpec) -> WorkflowDef {
@@ -3824,7 +3824,7 @@ fn app_scaffold_write_body(warrant: &WarrantSpec) -> WorkflowDef {
 
 /// POC-6: the `app-manifest-plan` recipe body — byte-for-byte the
 /// [`app_scaffold_write_body`] single Pure greedy step (a `prompt` slot the binder
-/// fills, `reasoning=strip`), but with its OWN `APP_MANIFEST_PLAN_LOGIC_REF` (BUG-25 —
+/// fills, `reasoning=strip`), but with its OWN `APP_MANIFEST_PLAN_LOGIC_REF` (
 /// a distinct fingerprint). The scaffold orchestrator binds it once per creation: the
 /// committed terminal answer is a strict-JSON project manifest the host decodes
 /// fail-closed (`kx_gateway_core::decode_manifest`). Same 512-cap fix — the mote MUST
@@ -3864,7 +3864,7 @@ const AUTOGRANT_MAX_TOOLS: usize = 16;
 /// host-read tools do not run sandboxed body-exec). The auto-grant union FILTERS
 /// to this profile so the union warrant's single `syscall_profile_ref` satisfies
 /// the registry resolver's per-tool EQUALITY gate (`check_tool_requirement`) for
-/// every granted tool (cf. BUG-24). A future sandboxed tool with a different
+/// every granted tool (for contrast). A future sandboxed tool with a different
 /// profile is simply excluded from auto-grant (still fireable via `tool()`).
 const EMPTY_SYSCALL_PROFILE: [u8; 32] = [0u8; 32];
 
@@ -3919,7 +3919,7 @@ fn fs_scope_union(a: &FsScope, b: &FsScope) -> Option<FsScope> {
 /// ALL of them (not just one bundled seed tool). `defs` is the live broker-fireable
 /// `(id, version) → ToolDef` set; the union is rebuilt at BIND (a dialed tool
 /// registers at runtime, after seed). Filters to [`EMPTY_SYSCALL_PROFILE`] (so the
-/// per-tool syscall EQUALITY gate passes — BUG-24) AND to fs-union-compatible tools;
+/// per-tool syscall EQUALITY gate passes) AND to fs-union-compatible tools;
 /// caps at [`AUTOGRANT_MAX_TOOLS`] by a deterministic `(id, version)` sort + prefix.
 /// `tool_grants` = that set; `net_scope` / `fs_scope` = the UNION of their declared
 /// `required_capability` scopes (so the broker `precheck` `request ⊆ warrant` passes
@@ -3930,7 +3930,7 @@ fn fs_scope_union(a: &FsScope, b: &FsScope) -> Option<FsScope> {
 /// PR-6b-2 `author()` precedent): the tool scopes are SERVER-vetted (SSRF-vetted at
 /// dial, the registry the source of truth) and the operator opt-in (`KX_SERVE_AUTOGRANT`)
 /// is the OSS ceiling; the broker precheck + coordinator D66 re-verify every axis at
-/// each fire (SN-8). Client `tool_grants` are NEVER accepted.
+/// each fire. Client `tool_grants` are NEVER accepted.
 pub(crate) fn tool_union_warrant(
     base: &WarrantSpec,
     defs: &std::collections::BTreeMap<(ToolName, ToolVersion), ToolDef>,
@@ -3977,7 +3977,7 @@ pub(crate) fn tool_union_warrant(
 }
 
 /// A party's per-tool Use AUTHORITY for the skill-wish intersection,
-/// resolved from the authoritative grant ledger (never a client warrant — SN-8).
+/// resolved from the authoritative grant ledger (never a client warrant).
 ///
 /// Semantics (D175 + the user-approved "Use-gate + conditional narrowing"):
 /// - No Use grant on the authoring asset ⇒ `NotAuthorized` — nothing binds at all
@@ -3985,7 +3985,7 @@ pub(crate) fn tool_union_warrant(
 ///   computes for an unauthorized party).
 /// - The effective role carries EXPLICIT `tool_grants` ⇒ `Some(allowlist)` — the
 ///   wish is STRICTLY intersected against it (a restricted role genuinely
-///   constrains; SN-8 narrowing).
+///   constrains; Narrowing).
 /// - The effective role's tool set is EMPTY (today's universal seed —
 ///   `blueprint_base` grants no tools to anyone) ⇒ `None` = "no per-tool
 ///   narrowing expressed"; the wish is bounded by registration + broker
@@ -4026,7 +4026,7 @@ pub(crate) fn party_tool_authority(
 /// `tool_contract` (the author-declared entries always win and are never
 /// evicted).
 ///
-/// FAIL-SOFT by design (a wish is a wish, never authority — GR8 honest degrade;
+/// FAIL-SOFT by design (a wish is a wish, never authority — honest degrade;
 /// a portable skill pack must never brick an App): an unfulfillable wish tool is
 /// DROPPED with a warning, and the run proceeds. Contrast the author-DECLARED
 /// contract, which stays fail-closed in [`agentic_step_warrant`]. The compat
@@ -4097,7 +4097,7 @@ pub(crate) fn skill_union_grants(
         if cap.syscall_profile_ref != ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE) {
             tracing::warn!(
                 tool = %name, version = %version,
-                "skill wish dropped: sandboxed syscall profile cannot share the union warrant (BUG-24)"
+                "skill wish dropped: sandboxed syscall profile cannot share the union warrant"
             );
             continue;
         }
@@ -4119,15 +4119,15 @@ pub(crate) fn skill_union_grants(
 /// MODEL step carrying an AUTHOR-DECLARED `@tool` set. Mirrors [`tool_union_warrant`]
 /// (the react-auto auto-grant) but over the DECLARED contract resolved FAIL-CLOSED:
 /// every declared `(tool, version)` MUST be registered, carry the empty syscall
-/// profile (BUG-24 — a sandboxed-body tool cannot share the union warrant), and have
+/// profile (a sandboxed-body tool cannot share the union warrant), and have
 /// an fs scope that unions (LUB-or-refuse); ANY miss REFUSES the whole step at
-/// authoring rather than silently drop a grant (GR15). `tool_grants` = the full
+/// authoring rather than silently drop a grant. `tool_grants` = the full
 /// declared set; `net_scope` / `fs_scope` = the LUB of their declared requirements;
 /// `syscall_profile_ref` = the empty sentinel (so the resolver's per-tool EQUALITY
 /// gate passes for every granted tool); `model_route` / `resource_ceiling` /
 /// `executor_class` from `base` (the served blueprint base) so the chain leases on
 /// the served worker. ReadOnlyNondet — a generator. Admitted DIRECTLY by `author()`
-/// (non-empty `tool_grants`, SN-8: client warrants NEVER accepted — BLOCKER-#5); the
+/// (non-empty `tool_grants`, client warrants NEVER accepted — BLOCKER-#5); the
 /// broker precheck + the coordinator's D66 re-verify every axis at each fire.
 fn agentic_step_warrant(
     base: &WarrantSpec,
@@ -4154,7 +4154,7 @@ fn agentic_step_warrant(
         if cap.syscall_profile_ref != ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE) {
             return Err(BinderError::InvalidArgs(format!(
                 "tool {name}@{version} requires a sandboxed syscall profile and cannot be \
-                 granted to a deterministic-agentic step (BUG-24)"
+                 granted to a deterministic-agentic step"
             )));
         }
         let Some(merged_fs) = fs_scope_union(&fs_scope, &cap.fs_scope_required) else {
@@ -4990,7 +4990,7 @@ mod tests {
             .get(&ConfigKey(TOOL_ARGS_KEY.to_string()))
             .expect("authored args land in config_subset");
         assert_eq!(args.0, br#"{"q":"hi"}"#.to_vec());
-        // The SERVER-built warrant GRANTS the tool (so the broker can fire it; SN-8).
+        // The SERVER-built warrant GRANTS the tool (so the broker can fire it).
         assert!(warrant
             .tool_grants
             .iter()
@@ -5016,7 +5016,7 @@ mod tests {
     }
 
     /// A `tool()` step naming an UNREGISTERED tool is refused at authoring (the
-    /// fail-closed GR15 gate — the registry lookup misses).
+    /// fail-closed gate — the registry lookup misses).
     #[tokio::test]
     async fn tool_step_unregistered_tool_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -5037,7 +5037,7 @@ mod tests {
         ));
     }
 
-    /// PR-9a (BUG-27 Path 1): a `tool()` step whose authored args violate the
+    /// PR-9a (path 1): a `tool()` step whose authored args violate the
     /// tool's typed `inputSchema` is refused AT AUTHORING with `InvalidArgs` naming
     /// the tool@version — BEFORE any Mote is created. Without this gate the
     /// malformed step was admitted and then SKIPPED forever at the coordinator
@@ -5390,7 +5390,7 @@ mod tests {
     /// A canned [`DatasetView`] for the chat-rag grounding tests: a normal dataset
     /// returns up to-`k` deterministic hits keyed by NAME (so two datasets differ);
     /// "missing" returns `NotFound`; "empty" returns no hits. The hit SCORES are
-    /// non-zero on purpose — to PROVE the score never reaches the bound identity (SN-8).
+    /// non-zero on purpose — to PROVE the score never reaches the bound identity.
     struct FakeDatasets;
 
     impl DatasetView for FakeDatasets {
@@ -5484,7 +5484,7 @@ mod tests {
             store.contains(&ContentRef::of(b"corpus-doc-0")),
             "a retrieved document is staged in the run content store"
         );
-        // (4) SN-8: the folded items are EXACTLY the hit refs; `ContextItemRef` has
+        // (4) the folded items are EXACTLY the hit refs; `ContextItemRef` has
         //     no score field, so the similarity score cannot reach the identity.
         let entry = &grounded.motes.first().expect("an entry mote").0;
         let encoded = entry
@@ -5672,7 +5672,7 @@ mod tests {
         let hits: Vec<&str> = by_tag.iter().map(|r| r.handle.as_str()).collect();
         assert!(hits.contains(&DEMO_RECIPE_HANDLE));
         assert!(hits.contains(&PASSTHROUGH_DAG_HANDLE));
-        // score_bp is always display-bounded (SN-8: never a float, ≤ 10000).
+        // score_bp is always display-bounded (never a float, ≤ 10000).
         assert!(by_tag.iter().all(|r| r.score_bp <= 10_000));
     }
 
@@ -5923,14 +5923,14 @@ mod tests {
         assert_eq!(image.max_len, Some(64), "a 32-byte ref as 64 hex chars");
     }
 
-    /// AGENTIC-VISION regression guard (BUG-34, caught by the live dual-engine Gemma pass).
+    /// AGENTIC-VISION regression guard (caught by the live dual-engine Gemma pass).
     /// Binding `react-vision` MUST set `react_seed = true` — it is a live ReAct chain (the
     /// same machinery as plain `react`, just with an attached image). The bug: react-vision
     /// was MISSING from the binder's `react_seed` handle list, so it bound with
     /// `react_seed = false` ⇒ the coordinator never seed-swapped it ⇒ the empty
     /// `react_chain_salt` made the CLI retrieve the WRONG (prior) chain on serve's SHARED
     /// journal (a different goal's answer came back). The guard also pins that the bound
-    /// seed carries the image inline under `IMAGE_REF_KEY` (the coordinator's BUG-35 input).
+    /// seed carries the image inline under `IMAGE_REF_KEY` (the coordinator's anchor-bound input).
     #[tokio::test]
     async fn react_vision_binds_with_react_seed_true_and_carries_the_image() {
         let echo = (ToolName("mcp-echo".into()), ToolVersion("1".into()));
@@ -5965,7 +5965,7 @@ mod tests {
             .expect("react-vision binds for a granted party");
         assert!(
             vision.react_seed,
-            "BUG-34: react-vision is a live ReAct chain — it MUST seed (else empty \
+            "react-vision is a live ReAct chain — it MUST seed (else empty \
              chain_salt → wrong-chain retrieval on serve's shared journal)"
         );
         assert!(
@@ -6045,7 +6045,7 @@ mod tests {
 
     #[test]
     fn react_variants_coexist_without_a_body_id_collision() {
-        // BUG-25 regression: react (echo), react-fs (fs-list), and react-auto all
+        // Regression: react (echo), react-fs (fs-list), and react-auto all
         // seed live ReAct chains whose recipe bodies differ ONLY by their
         // server-built warrant. The body manifest id is `hash(seed ‖ mote_ids)` and
         // EXCLUDES the warrant, so a shared logic ref makes the second seed a
@@ -6206,7 +6206,7 @@ mod tests {
     #[test]
     fn app_scaffold_write_recipe_seeded_with_distinct_fingerprint() {
         // POC-5a: the scaffold-write recipe seeds alongside react-edit (a served
-        // model is present), with its OWN logic ref ⇒ a DISTINCT fingerprint (BUG-25),
+        // model is present), with its OWN logic ref ⇒ a DISTINCT fingerprint,
         // and the single-step `prompt` contract the scaffold orchestrator binds.
         let model = ModelId("kx-serve:m".to_string());
         let dir = tempfile::tempdir().unwrap();
@@ -6322,7 +6322,7 @@ mod tests {
     fn app_manifest_plan_recipe_seeded_with_distinct_fingerprint() {
         // POC-6: the manifest-plan recipe seeds alongside app-scaffold-write (a served
         // model is present), with its OWN logic ref ⇒ a DISTINCT fingerprint from BOTH
-        // scaffold-write and react-edit (BUG-25), and the single-step `prompt` contract
+        // scaffold-write and react-edit, and the single-step `prompt` contract
         // the scaffold orchestrator binds.
         let model = ModelId("kx-serve:m".to_string());
         let dir = tempfile::tempdir().unwrap();
@@ -6569,7 +6569,7 @@ mod tests {
         assert!(!lib2
             .recipe_handles()
             .contains(&VISION_RAG_RECIPE_HANDLE.to_string()));
-        // distinct logic ref (BUG-25).
+        // distinct logic ref.
         assert_ne!(VISION_RAG_LOGIC_REF, REACT_RAG_LOGIC_REF);
         assert_ne!(VISION_RAG_LOGIC_REF, VISION_LOGIC_REF);
     }
@@ -6587,7 +6587,7 @@ mod tests {
         assert_eq!(g.tool_version.0, "1");
         assert!(w.fs_scope.mounts.is_empty(), "retrieve has no fs scope");
         assert_eq!(w.net_scope, NetScope::None, "retrieve has no egress");
-        // Distinct logic ref (BUG-25) — never collides with the echo react body.
+        // Distinct logic ref — never collides with the echo react body.
         assert_ne!(REACT_RAG_LOGIC_REF, REACT_LOGIC_REF);
         assert_ne!(REACT_RAG_LOGIC_REF, REACT_FS_LOGIC_REF);
     }
@@ -6977,7 +6977,7 @@ mod tests {
             FsScope { mounts: m }
         };
         let reg = registry_of(&[
-            ("sandboxed", "1", [7u8; 32], FsScope::empty()), // non-empty syscall profile (BUG-24)
+            ("sandboxed", "1", [7u8; 32], FsScope::empty()), // non-empty syscall profile
             ("declared-rw", "1", [0u8; 32], rw("/data")),
             ("incompat", "1", [0u8; 32], exec_only("/data")), // incomparable with ReadWrite at /data
             ("fine", "1", [0u8; 32], ro("/docs")),
@@ -7000,13 +7000,13 @@ mod tests {
         assert_eq!(
             granted.keys().collect::<Vec<_>>(),
             ["fine"],
-            "sandboxed (BUG-24) and fs-incomparable wishes drop; the compatible one folds"
+            "sandboxed and fs-incomparable wishes drop; the compatible one folds"
         );
     }
 
     #[test]
     fn skill_union_grants_respects_a_restricted_role_allowlist() {
-        // SN-8 narrowing: a caller whose effective role carries EXPLICIT tool
+        // Narrowing: a caller whose effective role carries EXPLICIT tool
         // grants is STRICTLY intersected — the wish outside it drops even though
         // the serve could fire it.
         let reg = registry_of(&[

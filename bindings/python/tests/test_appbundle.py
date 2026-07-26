@@ -1,6 +1,6 @@
 """``kortecx.appbundle/v1`` codec — cross-surface golden parity + structure tests.
 
-The parity gate (GR12): every committed bundle in ``tests/golden/apps/bundle_corpus.json``
+The parity gate: every committed bundle in ``tests/golden/apps/bundle_corpus.json``
 round-trips through this SDK's codec BYTE-IDENTICALLY (matches the Rust ``kx-appbundle``
 crate + the TS SDK). ``content_refs`` mirrors the Rust envelope walk.
 """
@@ -107,7 +107,7 @@ def test_export_import_clone_round_trip(dev_server) -> None:
         assert bundle.blob_count() == 1
 
         # IMPORT (force, over the same handle): the app_digest round-trips identically
-        # (SN-4 determinism) and the source lineage is stamped.
+        # (determinism) and the source lineage is stamped.
         client.import_app(wire, force=True)
         reimported = client.get_app(handle)
         assert reimported is not None

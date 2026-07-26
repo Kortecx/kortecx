@@ -5,7 +5,7 @@
  * product signal, never truth, never identity, never a digest input. Kept in its
  * own module (the telemetry.ts module-per-concern precedent).
  *
- * SN-8: the caller principal + the `feedbackId` are server-derived; the SDK only
+ * the caller principal + the `feedbackId` are server-derived; the SDK only
  * *encodes* the bytes to hex and maps the rating enum.
  */
 

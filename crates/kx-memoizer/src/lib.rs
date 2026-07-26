@@ -18,7 +18,7 @@
 //! [`lookup`] answers one question as a **pure, total, deterministic** function of a
 //! candidate [`Mote`] and a read-only [`Snapshot`]: *"is this exact `MoteId` already
 //! committed and safe to serve as a cache hit?"* Matching is **EXACT cryptographic
-//! equality only**, never similarity (SN-8) — two Motes match iff their derived
+//! equality only**, never similarity — two Motes match iff their derived
 //! `MoteId`s are bit-identical. [`kx_mote::derive_mote_id`] is the single identity
 //! truth; canonicalize fuzzy-similar inputs with the normalizer (P1.7.10) *before*
 //! fingerprinting.

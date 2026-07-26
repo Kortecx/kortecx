@@ -1,4 +1,4 @@
-// Integration-test: schema-migration identity preservation (IMP-2, M2.x-E).
+// Integration-test: schema-migration identity preservation (M2.x-E).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 //! The headline durability guarantee: migrating a journal from an older schema
 //! version preserves the run's PRODUCT IDENTITY — the committed-facts digest is

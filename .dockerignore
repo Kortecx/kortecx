@@ -1,7 +1,7 @@
 # Build-context hygiene for the kortecx images.
 #
 # Keep the context small (faster `docker build`) and — load-bearing — keep the
-# PRIVATE cloud code and internal corpus OUT of any image layer (the SN-2 OSS↔cloud
+# PRIVATE cloud code and internal corpus OUT of any image layer (the OSS↔cloud
 # boundary). The FFI-free `Dockerfile` builds only `kx-cli`, so the llama.cpp
 # submodule is excluded too; `Dockerfile.inference` fetches a pinned llama.cpp
 # inside its own builder stage (no context dependency).
@@ -20,7 +20,7 @@ target/
 .gitignore
 .github/
 
-# ---- PRIVATE / internal — must NEVER land in an OSS image layer (SN-2) ----
+# ---- PRIVATE / internal — must NEVER land in an OSS image layer ----
 kx-cloud/
 docs/plans/
 docs/design/

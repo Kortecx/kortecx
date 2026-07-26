@@ -260,7 +260,7 @@ pub enum ScaffoldStep {
     Ready {
         /// The committed body's 32-byte content ref.
         result_ref: [u8; 32],
-        /// The committed body bytes (the host checks emptiness, GR15).
+        /// The committed body bytes (the host checks emptiness).
         body: Vec<u8>,
     },
     /// The step reached a non-committed terminal (Failed/Repudiated/Inconsistent).
@@ -839,7 +839,7 @@ pub fn distill_module_api(path: &str, body: &[u8]) -> Option<String> {
 /// a hosted file from importing a symbol a sibling never exported or passing props a component
 /// never declared; injected as prompt text (hosted lane only), tiny enough to carry all of them.
 ///
-/// GR15: the committed answer IS the file body verbatim (reasoning is stripped by the
+/// the committed answer IS the file body verbatim (reasoning is stripped by the
 /// recipe), so the directive asks for ONLY the body — no commentary, no fences.
 #[must_use]
 pub fn authoring_prompt(
@@ -956,7 +956,7 @@ fn codified_shape_directive(path: &str) -> &'static str {
     }
 }
 
-/// `true` iff `body` is empty or whitespace-only (the GR15 fail-closed guard — a
+/// `true` iff `body` is empty or whitespace-only (the fail-closed guard — a
 /// stripped reasoning block that produced no body must never advance the manifest).
 #[must_use]
 pub fn body_is_empty(body: &[u8]) -> bool {

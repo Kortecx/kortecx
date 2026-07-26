@@ -17,7 +17,7 @@ and in `feature-ledger.toml`.
 Authoring conventions follow the Connector/Extension SDK (D167 E0): build on the
 `kx-extension-sdk` template (`crates/kx-extension-sdk/src/bin/reference_connector.rs`)
 and gate with its `run_conformance` harness (Extension Acceptance Gate items
-3/5/7/10: out-of-process · warrant/SN-8 · secret-by-ref · on/off).
+3/5/7/10: out-of-process · warrant · secret-by-ref · on/off).
 
 ## Connectors
 
@@ -50,7 +50,7 @@ kx connections fire --name gmail --tool search --args '{"query":"is:unread"}'
 
 Offline/CI mode: set `KX_GMAIL_FAKE=1` for deterministic canned responses (no
 network, no credential) — used by the unit tests and the conformance gate. A live
-GR15/GR24 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real credential).
+Live witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real credential).
 
 ### `kx-connector-discord`
 
@@ -78,7 +78,7 @@ kx connections fire --name discord --tool send_message \
 
 Offline/CI mode: set `KX_DISCORD_FAKE=1` for deterministic canned responses (no
 network, no credential) — used by the unit tests and the conformance gate. A live
-GR15/GR24 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real bot token +
+Live witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real bot token +
 `KX_DISCORD_TEST_GUILD_ID`).
 
 ### `kx-connector-slack`
@@ -105,7 +105,7 @@ kx connections fire --name slack --tool post_message \
 
 Offline/CI mode: set `KX_SLACK_FAKE=1` for deterministic canned responses (no
 network, no credential) — used by the unit tests and the conformance gate. A live
-GR15 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real bot token in
+Live witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real bot token in
 `KX_SLACK_CREDENTIAL`).
 
 ### `kx-connector-notion`
@@ -133,7 +133,7 @@ kx connections fire --name notion --tool append_block \
 
 Offline/CI mode: set `KX_NOTION_FAKE=1` for deterministic canned responses (no
 network, no credential) — used by the unit tests and the conformance gate. A live
-GR15 witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real integration token
+Live witness is `tests/live_smoke.rs` (`#[ignore]`; needs a real integration token
 in `KX_NOTION_CREDENTIAL` + `KX_NOTION_TEST_PAGE_ID`).
 
 ### App-pointer run — build an App that USES the connection (G1 + G2, landed)
@@ -188,7 +188,7 @@ invariant, frozen trio untouched). **G3 (cross-instance import) is the remaining
 ### G2 — App-pointer → run resolution ✅
 - A server-side **`RunApp(handle, args)`** RPC + a host `AppAuthor` seam
   (`crates/kx-gateway/src/app_run.rs`): the gateway reads the validated stored envelope
-  (server-owned — no client-forged references, SN-8), lowers its blueprint through the
+  (server-owned — no client-forged references), lowers its blueprint through the
   shared FFI-free `kx-blueprint` crate (byte-identical to the client path), resolves
   `references.connections` against the caller's own registry (missing → a clear
   `failed_precondition("missing integration: <name>")`), and sets the tool-firing

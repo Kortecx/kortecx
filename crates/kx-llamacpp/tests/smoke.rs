@@ -168,7 +168,7 @@ fn smoke_end_to_end_inference() {
 /// inference latency is platform/model-sensitive — Metal vs CPU, and the toy
 /// stories260K is not representative of a production model). `just
 /// profile-inference` runs this and the numbers are copied into the PRIVATE
-/// `docs/benchmarks/` trend record (SN-2). It asserts only that generation
+/// `docs/benchmarks/` trend record. It asserts only that generation
 /// makes progress (no divide-by-zero, ≥ 2 tokens) so a broken pipeline still
 /// fails loudly.
 #[test]
@@ -341,7 +341,7 @@ fn smoke_vocab_special_tokens() {
 }
 
 // ---------------------------------------------------------------------------
-// Tightenings per the rigorous-testing mandate (SN-4): determinism assertions,
+// Tightenings per the rigorous-testing mandate: determinism assertions,
 // full-surface coverage, integration plumbing tests. The next three tests
 // move P1.7-b from "happy-path smoke" to "actually airtight at the wrapper
 // layer" by exercising guarantees that downstream code is going to rely on:
@@ -477,7 +477,7 @@ fn smoke_embedding_mode() {
     );
 }
 
-/// SN-4 reachability: `Context::perf_reset` is safe to call after a decode
+/// Reachability: `Context::perf_reset` is safe to call after a decode
 /// and resets the internal counters.
 ///
 /// Upstream quirks documented for the next reader:
@@ -525,7 +525,7 @@ fn smoke_perf_reset() {
     );
 }
 
-/// SN-4 plumbing: `ContextParams::with_n_threads` actually reaches llama.cpp.
+/// Plumbing: `ContextParams::with_n_threads` actually reaches llama.cpp.
 ///
 /// Decode the same prompt under two different thread counts; greedy output
 /// must be identical (decode is deterministic across thread counts on the
@@ -588,7 +588,7 @@ fn smoke_n_threads_plumbing_and_determinism() {
     );
 }
 
-/// SN-4 plumbing: `ModelParams::with_vocab_only(true)` loads only the
+/// Plumbing: `ModelParams::with_vocab_only(true)` loads only the
 /// tokenizer, not the weights. Verifies the vocab still works after a
 /// vocab-only load — the common "tokenize without paying for weights" path.
 #[test]
@@ -702,7 +702,7 @@ fn smoke_generator_iterator() {
 }
 
 /// Determinism on the HF-shaped surface: two `Generator` runs with greedy
-/// sampling over the same prompt must produce identical sequences (SN-4 #1).
+/// sampling over the same prompt must produce identical sequences.
 #[test]
 fn smoke_generator_determinism() {
     fn run() -> Vec<i32> {
@@ -844,7 +844,7 @@ fn smoke_flash_attn_modes_run_or_fail_closed() {
 /// vector. Acceptance proof for E3 — a single line replaces ~40 lines of
 /// embedding-mode context plumbing.
 ///
-/// Also asserts determinism per SN-4 #1.
+/// Also asserts determinism for the structural review.
 #[test]
 fn smoke_embed_one_shot_determinism() {
     let backend = LlamaBackend::new().expect("backend init");
@@ -1054,7 +1054,7 @@ fn smoke_state_save_restore_roundtrip() {
     );
 }
 
-/// SN-4 reachability for [`kx_llamacpp::LlamaError::EmbeddingsUnavailable`].
+/// Reachability for [`kx_llamacpp::LlamaError::EmbeddingsUnavailable`].
 ///
 /// `Context::embeddings_seq` must return that variant when the context was
 /// created with `PoolingType::None` (per-token, no pooled vector).

@@ -192,7 +192,7 @@ impl McpSessionCapability {
         self
     }
 
-    /// Bound the response size (IMP-16). `0` ⇒ the default cap (never "unbounded").
+    /// Bound the response size. `0` ⇒ the default cap (never "unbounded").
     #[must_use]
     pub fn with_max_response_bytes(mut self, max_bytes: usize) -> Self {
         self.max_response_bytes = if max_bytes == 0 {

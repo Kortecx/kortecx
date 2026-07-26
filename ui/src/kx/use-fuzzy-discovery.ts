@@ -1,7 +1,7 @@
 /**
  * Slice-B advisory fuzzy discovery over a dataset (`FuzzyDiscovery`, D151). The
  * fuzzy-in / exact-out primitive: it returns the ordered content-ref SET + a
- * DISPLAY-ONLY basis-point score (SN-8) — never content bytes. Like
+ * DISPLAY-ONLY basis-point score — never content bytes. Like
  * {@link useDatasetQuery} it tolerates an unwired gateway (UNIMPLEMENTED → the
  * `hnsw` feature is off) by surfacing the error for the panel to degrade.
  */

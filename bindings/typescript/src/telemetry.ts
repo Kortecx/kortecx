@@ -6,7 +6,7 @@
  * a digest input. Kept in its own module (the runs.ts module-per-concern
  * precedent).
  *
- * SN-8: ids are server-derived; the SDK only *encodes* the bytes to hex.
+ * ids are server-derived; the SDK only *encodes* the bytes to hex.
  */
 
 import type {

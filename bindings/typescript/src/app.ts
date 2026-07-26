@@ -17,7 +17,7 @@
  * An App WRAPS a blueprint (the byte-stable `toBlueprint()` output) with a minimal
  * prompt/rule/skill/memory rail, a 4-axis steering config, and per-step replay
  * intent. It carries NO authority — `run` re-compiles the blueprint and the server
- * re-resolves every warrant from the caller's grants (SN-8). The envelope
+ * re-resolves every warrant from the caller's grants. The envelope
  * serializes byte-identically to the Rust `kx-app` + the Python SDK (the golden
  * corpus). PURE DATA (web-safe); `save`/`run`/`export` resolve a client at call time.
  */
@@ -646,7 +646,7 @@ export class AppBuilder {
    * server and a credentialed connector (Gmail / Discord) actually fires inside the
    * agentic loop (the G2/#285 path). Saving is expected: an App is an explicitly-named
    * durable object; the save is idempotent (content-addressed envelope + handle upsert).
-   * The server re-resolves every warrant from the caller's grants (SN-8).
+   * The server re-resolves every warrant from the caller's grants.
    * `requireApproval` (opt-in, default `false`) runs the entry agentic step under the
    * per-run HITL gate, so an irreversible tool call pauses for an explicit grant/deny
    * before it fires. */

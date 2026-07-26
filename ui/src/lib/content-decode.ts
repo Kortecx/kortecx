@@ -163,7 +163,7 @@ export function decodeContent(bytes: Uint8Array, hints: DecodeHints = {}): Decod
   // (2-byte schema version ‖ fixed-int variant) — recognize it BEFORE the text /
   // media classification, since its low control bytes decode as valid UTF-8. The
   // decoder is exact + conservative (version + variant must match), so a real text
-  // / JSON payload is never mis-read as a verdict. Display-only (SN-8).
+  // / JSON payload is never mis-read as a verdict. Display-only.
   const verdict = decodeCriticVerdict(bytes);
   if (verdict !== null) {
     return { kind: "verdict", text: verdict, byteLength: bytes.length, truncated: false };

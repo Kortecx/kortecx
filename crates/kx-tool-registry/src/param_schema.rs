@@ -4,11 +4,11 @@
 //!
 //! Adopts the MCP `inputSchema` idea but as a **closed, integer-/bytes-typed**
 //! schema — there is **no `Float` variant**, so no float ever reaches the action
-//! path (SN-8). A model-proposed argument bag is untrusted JSON; it is validated
+//! path. A model-proposed argument bag is untrusted JSON; it is validated
 //! against the tool's declared schema **before** dispatch, mirroring the
 //! fail-closed, total, panic-free decode discipline of `kx_planner::decode` and
 //! `kx_mcp::decode` (size-cap is already applied upstream by
-//! `kx_model_harness::toolcall::parse_tool_call`, IMP-16). A tool with no schema
+//! `kx_model_harness::toolcall::parse_tool_call`). A tool with no schema
 //! (`input_schema: None`) is dispatched exactly as before (no validation).
 
 use std::collections::BTreeMap;
@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-/// A tool parameter's declared type. A CLOSED set with **no float** (SN-8 / D83):
+/// A tool parameter's declared type. A CLOSED set with **no float**:
 /// integers are exact, bytes/strings are length-bounded, enums are exact-match.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,7 +44,7 @@ pub enum ParamType {
     Bool,
     /// An exact-match against a fixed set of allowed string values.
     Enum {
-        /// The permitted values (exact equality; no fuzzy match, SN-8).
+        /// The permitted values (exact equality; no fuzzy match).
         allowed: BTreeSet<String>,
     },
 }
@@ -162,7 +162,7 @@ pub fn validate_args(schema: &InputSchema, args_bytes: &[u8]) -> Result<(), Sche
     // that validate are the bytes that fire (the coordinator re-derives the
     // normalized form for `WorkItem.tool_args` — `normalize_lenient_args`).
     // This relaxes only the arg SYNTAX surface, never the authority gate
-    // (name/grant resolution stays exact — SN-8).
+    // (name/grant resolution stays exact).
     let normalized = normalize_lenient_args(args_bytes);
     let args_bytes: &[u8] = normalized.as_ref();
     // Empty args == `{}` (the no-arguments case), mirroring the MCP capability.
@@ -221,7 +221,7 @@ pub fn validate_args(schema: &InputSchema, args_bytes: &[u8]) -> Result<(), Sche
 /// quote INSIDE a string is never touched) and a container stack so a key is quoted
 /// ONLY at an object-member start. Returns `Borrowed` when nothing changes.
 ///
-/// SN-8: this relaxes ARG SYNTAX only — a key/value is preserved BYTE-FOR-BYTE
+/// this relaxes ARG SYNTAX only — a key/value is preserved BYTE-FOR-BYTE
 /// (only its delimiters change: `text`→`"text"`, `'hi'`→`"hi"`), so the parameter
 /// NAME the schema matches stays EXACT; it never fuzzy-matches a name, coerces a
 /// value type, or widens a grant. ACCEPT-side best effort: if the repair still does
@@ -634,7 +634,7 @@ mod tests {
     #[test]
     fn quotes_an_unquoted_object_key_the_gemma_malformation() {
         // The live Gemma-4 witness: the model emits `{text: "pong"}` (unquoted key).
-        // The key is quoted BYTE-FOR-BYTE (name preserved exactly, SN-8) so it fires.
+        // The key is quoted BYTE-FOR-BYTE (name preserved exactly) so it fires.
         assert_eq!(
             normalize_lenient_args(br"{count: 5}").as_ref(),
             br#"{"count": 5}"#
@@ -676,7 +676,7 @@ mod tests {
     fn repairs_single_quoted_strings_the_gemma_value_malformation() {
         // The live Gemma-4 witness, post unquoted-key fix: the model emits
         // `{text: 'pong'}` (single-quoted value). The string is preserved
-        // byte-for-byte, only its delimiters change (SN-8).
+        // byte-for-byte, only its delimiters change.
         assert_eq!(
             normalize_lenient_args(br"{'label': 'hi'}").as_ref(),
             br#"{"label": "hi"}"#
@@ -702,7 +702,7 @@ mod tests {
 
     #[test]
     fn normalize_does_not_invent_validity_for_out_of_scope_malformations() {
-        // SN-8 / narrow-scope: an unquoted VALUE (not a string) stays fail-closed
+        // Narrow-scope: an unquoted VALUE (not a string) stays fail-closed
         // (genuinely ambiguous — `five` could be a typo'd keyword, not a string).
         assert!(validate_args(&schema(), br"{count: five}").is_err());
     }

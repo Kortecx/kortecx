@@ -1,4 +1,4 @@
-//! The dependency wall (Rule 1 / SN-8 / the D167 Extension Acceptance Gate item 3).
+//! The dependency wall (Rule 1 / the D167 Extension Acceptance Gate item 3).
 //! `kx-extension-sdk` is an FFI-FREE leaf: it curates the connector seams but must
 //! NEVER link the llama.cpp FFI (`kx-llamacpp`), the frozen trio
 //! (`kx-executor`/`kx-scheduler`), the journal writer, or the gateway/cluster/runtime

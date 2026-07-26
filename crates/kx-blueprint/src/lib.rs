@@ -5,7 +5,7 @@
 //! A blueprint is a vetted palette of PURE / MODEL / TOOL steps + DATA/CONTROL
 //! edges (`exec` is reserved). The client sends TOPOLOGY + PARAMS only; the server
 //! compiles the DAG, derives all identity, and builds every warrant from the
-//! party's grants (SN-8). [`to_request`] is the single canonical assembly every
+//! party's grants. [`to_request`] is the single canonical assembly every
 //! caller funnels through, so a blueprint lowers to a **byte-identical**
 //! `SubmitWorkflowRequest` whether it comes from `kx blueprint run --file`, the
 //! `kx chain` string DSL, `kx app run`, or the gateway's server-side App-pointer
@@ -107,7 +107,7 @@ pub struct DagSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_mode: Option<String>,
     /// PR-7: context-bundle handles to attach to the run (chain-level grounding the
-    /// SERVER resolves + injects into every entry Mote at bind, SN-8). Verbatim
+    /// SERVER resolves + injects into every entry Mote at bind). Verbatim
     /// order; empty ⇒ byte-identical to pre-PR-7.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub context_bundles: Vec<String>,
@@ -141,7 +141,7 @@ pub struct StepSpec {
     pub params: BTreeMap<String, String>,
     /// TOOL only (PR-6b-2): the tool-call arguments, serialized at lowering to ONE
     /// canonical-JSON object under [`TOOL_ARGS_KEY`] (sorted keys, compact) —
-    /// byte-identical to the Py/TS `tool()` factories. No floats (SN-8).
+    /// byte-identical to the Py/TS `tool()` factories. No floats.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub args: BTreeMap<String, serde_json::Value>,
     /// Agentic MODEL step only (PR-9b, D161.1): the bounded reason→tool→observe

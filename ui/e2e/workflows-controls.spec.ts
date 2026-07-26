@@ -113,7 +113,7 @@ test("echo results render as readable TEXT (honest passthrough) and the agent to
   await expect(page.getByTestId("chat-mode")).toHaveCount(0);
 
   // A committed echo result is readable text in the inspector's Result pane
-  // (GR15: `echo` commits its bound `topic` verbatim, never a placeholder).
+  // (`echo` commits its bound `topic` verbatim, never a placeholder).
   await runRecipe(page, { handle: "kx/recipes/echo", fields: { topic: "readable" } });
   await expect(page.getByTestId("mote-dag")).toBeVisible({ timeout: 30_000 });
   await expect

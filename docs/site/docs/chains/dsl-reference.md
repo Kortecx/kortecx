@@ -93,7 +93,7 @@ non-deterministic* `react` recipe, where the model picks tools dynamically).
   **order-preserving and deduped** (`p@x@x` == `p@x`). They lower into the model
   step's `tool_contract` (the same field a standalone `tool()` step uses). The
   **server** resolves each tagged tool in its live registry and builds the per-step
-  warrant — you never supply a warrant or grants (SN-8).
+  warrant — you never supply a warrant or grants.
 - The bounded-loop **budget** (`max_turns` / `max_tool_calls`) rides the task spec,
   not the `@` grammar; absent ⇒ the server default (8 turns / 6 tool calls).
 - `@` on a **non-model** handle (`pure@tool`) is a fail-closed authoring error.
@@ -218,7 +218,7 @@ defined twice).
 ### The authoring ladder
 
 Reach for the lowest rung that fits — each lowers to the same `SubmitWorkflow` the
-server compiles and warrants (SN-8):
+server compiles and warrants:
 
 1. **`kx invoke <recipe>`** — run a published recipe by handle (`--args '{…}'`). The
    easiest front door for a ready-made capability.
@@ -281,7 +281,7 @@ See [Agents & reasoning → Vision in agents](../agent-runner.md#vision-in-agent
 for `run_agent(image=…)` / `Agent.run(task, image=…)` / `kx agent run --image`.
 
 The handles lower **verbatim** into the request's `context_bundles` (no DSL-side
-sort or dedup — the server canonicalizes the sorted ref-set at bind, SN-8). A
+sort or dedup — the server canonicalizes the sorted ref-set at bind). A
 chain with no attached context lowers byte-identically to pre-context-bundle, and
 the attachment's byte-identity across Python, TypeScript, and the CLI is pinned by
 the golden corpus alongside the topology.
@@ -300,7 +300,7 @@ kx blueprint import --file plan.json            # validate + summarize offline
 The SDKs mirror this: `flow.export(path)` / `Chain.to_blueprint()` and
 `Chain.from_blueprint(_file)`. Export → import re-compiles to a **byte-identical**
 request. The artifact pins explicit `kind` but leaves `model_id` as authored (empty binds
-the serve's model, SN-8), so a blueprint is portable across serves. See
+the serve's model), so a blueprint is portable across serves. See
 [Blueprint builder → Portable blueprints](../blueprint-builder.md#portable-blueprints--export--import).
 
 ## Per-language authoring

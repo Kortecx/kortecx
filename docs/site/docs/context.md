@@ -21,7 +21,7 @@ run, and the same prompt with the same grounding re-derives the same identity
 > **The bundle store is off the truth path.** Bundle manifests live in an
 > off-journal `bundles.db` sidecar — never journaled, never a `MoteId`/digest
 > input. Dropping the file loses the index (re-author to restore); it cannot move
-> the canonical projection digest. The `bundle_ref` is **server-derived** (SN-8):
+> the canonical projection digest. The `bundle_ref` is **server-derived**:
 > you name a handle, the server derives the identity, and a bundle is visible only
 > to the party that authored it (no cross-party existence oracle).
 

@@ -214,7 +214,7 @@ fn assemble_two_parents_one_tool() {
     // Parent bytes are resolved content (NEVER hashes).
     assert_eq!(&ctx.items[0].bytes[..], parent_a_bytes);
     assert_eq!(&ctx.items[1].bytes[..], parent_b_bytes);
-    // Tool item leads with the granted name + pinned version (PR-1/BUG-32 steering +
+    // Tool item leads with the granted name + pinned version (PR-1 steering +
     // RC3), then the description (this byte change is prompt-only — see `source_ref`).
     assert_eq!(
         &ctx.items[2].bytes[..],
@@ -643,7 +643,7 @@ fn render_tool_menu_lists_each_granted_tool_with_typed_example() {
 
     let menu = render_tool_menu(&grants, &registry);
 
-    // Leads with the exact namespaced callable (PR-1 name-steering / BUG-33) AND the
+    // Leads with the exact namespaced callable (PR-1 name-steering) AND the
     // pinned version (RC3 — so the model emits the EXACT `"version"`, not a guess).
     assert!(menu.contains("name: mcp-echo/echo"), "menu: {menu}");
     assert!(

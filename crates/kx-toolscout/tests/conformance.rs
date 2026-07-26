@@ -76,7 +76,7 @@ fn ungranted_tool_refuses_lowering() {
 
 #[test]
 fn right_name_wrong_version_is_just_as_refused() {
-    // SN-8: the grant is the exact (name, version) PAIR — a version drift is
+    // the grant is the exact (name, version) PAIR — a version drift is
     // an ungranted tool, never a fuzzy match (the kx-toolcall pin, restated).
     let bundle = bundle_of(vec![tool("web-search", "3")], "find it");
     let warrant = warrant_granting(&[tool("web-search", "2")]);

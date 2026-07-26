@@ -5,7 +5,7 @@
 // casts on byte seeds, helper-fn definitions after let-bindings, etc.) that
 // would be needless friction to refactor.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
-//! Property tests for `kx-normalizer` (SN-4 v2 #6 — pinned per D33 + `context-assembly.md` §4).
+//! Property tests for `kx-normalizer` (the structural review — pinned per D33 + `context-assembly.md` §4).
 //!
 //! Properties:
 //!

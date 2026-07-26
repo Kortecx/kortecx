@@ -3,7 +3,7 @@
  * steps + DATA/CONTROL edges) for `SubmitWorkflow`. Kept in its own module so
  * `types.ts` stays a thin aggregator (the Rust core's module-per-concern discipline).
  *
- * SN-8: the builder NEVER computes a MoteId or a warrant — it only assembles the
+ * the builder NEVER computes a MoteId or a warrant — it only assembles the
  * topology + params the SERVER compiles + admits. The server assigns each step's
  * logic_ref from its kind and builds every warrant from the party's grants; a
  * tampered client DAG only changes what is PROPOSED, never what identity it gets.
@@ -85,7 +85,7 @@ export class BlueprintBuilder {
 
   /**
    * PR-7: attach context-bundle handles to the run (verbatim order — the SERVER
-   * canonicalizes + injects into every entry Mote at bind, SN-8). An empty list ⇒
+   * canonicalizes + injects into every entry Mote at bind). An empty list ⇒
    * a request byte-identical to pre-PR-7.
    */
   contextBundles(handles: readonly string[]): this {

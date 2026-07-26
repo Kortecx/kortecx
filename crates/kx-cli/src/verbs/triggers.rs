@@ -9,7 +9,7 @@
 //! resolved). Cron accepts interval seconds (`--cron 300`) OR a 5-field crontab
 //! expr (`--cron "0 9 * * 1-5" --timezone America/New_York`). `--require-approval`
 //! adds a per-trigger HITL gate (D114). On an event the gateway starts a FRESH
-//! registered run via the Invoke/RunApp propose-proxy. SN-8: `trigger_id` is
+//! registered run via the Invoke/RunApp propose-proxy. `trigger_id` is
 //! server-derived; the run binds under the REGISTRANT's party; the auth secret is
 //! referenced by NAME only (never the value, D81). `test` dry-runs WITHOUT firing;
 //! `fire` is the inbound `grpc` event verb (idempotency-keyed dedup).

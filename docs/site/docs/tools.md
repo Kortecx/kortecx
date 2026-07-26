@@ -14,7 +14,7 @@ committed as a durable fact, exactly-once, replay-re-read. There are two surface
   the governance inventory: what is registered, with what provenance, status, and
   egress authority. This is the source of truth for *what tools exist*.
 - **Advisory discovery** (`kx tools list` / `kx tools score`) — a display-only
-  ranking to help *choose* a tool. A score never authorizes anything (SN-8).
+  ranking to help *choose* a tool. A score never authorizes anything.
 
 > **Authorization is always the runtime's, never a score or a registration.** A
 > tool fires only under a **server-issued warrant**, re-verified by the broker at
@@ -110,7 +110,7 @@ the runtime grants it to the `kx/recipes/react-rag` loop, so the model can searc
 on its own: `{"dataset": <name>, "query": <text>, "k": <1..64>}` → ordered passages (chunk
 hash + text + provenance) over the [hybrid](./datasets.md) index. No egress, no filesystem
 scope, `Readback` (auto-proceeds the HITL gate); the committed Observation is the ordered
-chunk-ref set (scores excluded, SN-8). A missing/empty dataset returns an empty observation
+chunk-ref set (scores excluded). A missing/empty dataset returns an empty observation
 the agent recovers from — the loop never dead-letters on a retrieval miss.
 
 ## Reviewing what agents produce
@@ -204,7 +204,7 @@ Example: {"op": "add", "a": 0, "b": 0}
   description, typed inputs, and a worked example so the model emits the right keys.
 - **One renderer.** It reuses the same renderer the context assembler uses, so the
   menu the model sees is identical across the harness and the live server.
-- **Off-digest, advisory (SN-8).** The menu is built at dispatch and never journaled
+- **Off-digest, advisory.** The menu is built at dispatch and never journaled
   or part of a run's identity (the digest is invariant); it is *advisory* — the
   warrant grant-check and `inputSchema` validation remain the only authority.
 
@@ -238,7 +238,7 @@ step** into a DAG to fire a single registered tool deterministically — a disco
 external MCP tool, a `RegisterTool`'d declarative tool, or the bundled `fs-list`.
 The server resolves the tool in its live registry and builds the per-step warrant
 from the tool's **declared** capability scope (you never supply a warrant — the
-client-`tool_grants` boundary stays refused, SN-8). The authored arguments lower to
+client-`tool_grants` boundary stays refused). The authored arguments lower to
 one canonical-JSON object the coordinator validates against the tool's typed schema
 fail-closed at every lease (so a crash re-derives byte-identical args).
 
@@ -278,7 +278,7 @@ and the UI** (the `tests/golden/chains` parity gate).
 Turn a plain function into a real, governed tool. The SDK exposes your decorated
 functions as a **local stdio MCP server**, and the runtime **dials it through the
 same external-MCP gateway** above — so a local function is just another dialed MCP
-tool the runtime fires under a server-built warrant (SN-8). **No new runtime
+tool the runtime fires under a server-built warrant. **No new runtime
 substrate**, no proto change.
 
 ```python
@@ -325,7 +325,7 @@ string.
 | **Steered / dynamic** | `Agent(tools=[fn], dynamic=True)` → `kx/recipes/react-auto` (the model chooses) | ✅ the model picks tools turn by turn and fires them (needs a served model + `KX_SERVE_AUTOGRANT=1`) — a dialed tool's namespaced `&lt;server&gt;/&lt;name&gt;` name resolves from the model's bare/leaf call |
 | **Frozen / deterministic-agentic** | `Agent(tools=[fn])` — a fixed tool set, replayable bounded loop | ✅ fires the granted SET in a bounded reason→tool→observe loop — **no** `KX_SERVE_AUTOGRANT` needed (the step grants its OWN exact tools) |
 
-All three lanes fire today. The SN-8 authority gate stays exact: a model's bare/leaf or version-less name resolves to a **unique** granted tool (`&lt;server&gt;/&lt;name&gt;` → the grant), and ambiguity or an unknown name is refused fail-closed — the model never widens its grants.
+All three lanes fire today. The authority gate stays exact: a model's bare/leaf or version-less name resolves to a **unique** granted tool (`&lt;server&gt;/&lt;name&gt;` → the grant), and ambiguity or an unknown name is refused fail-closed — the model never widens its grants.
 
 **Dev-scoped & co-located.** The runtime *spawns* the stdio tool-server subprocess,
 so this is the **Node / local-Python** SDK on the **same machine** as `kx serve`:
@@ -354,7 +354,7 @@ The runtime **dials external MCP servers** (stdio + HTTP, including Py/TS-SDK-
 exposed gateways), discovers their tools, and registers each into the same durable
 registry — namespaced `<server>/<remote>` so tools from different servers never
 collide. Connections live in an off-journal, rebuildable `connections.db` sidecar
-(never a `MoteId`/digest input); the `connection_id` is server-derived (SN-8).
+(never a `MoteId`/digest input); the `connection_id` is server-derived.
 
 ```bash
 # A curated first-class provider (G1) — one step fills the command + credential-ref
@@ -440,7 +440,7 @@ refused on a version mismatch.
 - **Per-server rate-limit.** A token bucket per server bounds dial bursts.
 - **Warrant-gated egress.** A discovered tool's `net_scope` is egress to *only*
   its origin server's host; the broker re-checks `request.net_scope ⊆ warrant` at
-  every call. A prompt-injected call to an ungranted tool never fires (SN-8).
+  every call. A prompt-injected call to an ungranted tool never fires.
 - **Secret-less credentials (D81).** A connection stores the credential **ref name
   only** (an env var / vault key); the secret value is read transiently at dial and
   never journaled / staged / shown to the model. A URL must not embed credentials

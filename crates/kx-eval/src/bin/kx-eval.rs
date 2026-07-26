@@ -84,7 +84,7 @@ fn git_sha() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// A lightweight environment label (GR10: every recorded number carries a label).
+/// A lightweight environment label (every recorded number carries a label).
 fn env_label() -> String {
     let cores = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)

@@ -292,7 +292,7 @@ async fn cross_party_bundle_isolation_and_server_derived_identity() {
         .into_inner();
     assert_eq!(
         bob_put.bundle_ref, alice_put.bundle_ref,
-        "same manifest ⇒ same server-derived bundle_ref (SN-8; client cannot forge it)"
+        "same manifest ⇒ same server-derived bundle_ref (client cannot forge it)"
     );
     // Alice's bundle is unchanged + still hers.
     let alice_after = c

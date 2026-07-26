@@ -32,7 +32,7 @@ import { ScheduleButton } from "./ScheduleButton";
  * `kortecx.app/v1` envelopes (`ListApps`). Each App is a portable blueprint
  * wrapped with by-reference references + a 4-axis steering config; Run compiles
  * its blueprint and submits it (the server re-resolves every warrant from the
- * caller's grants, SN-8). "View details" opens a read-only summary popover.
+ * caller's grants). "View details" opens a read-only summary popover.
  *
  * POC-5a adds the agentic "New App" scaffold (inline panel) — author an App
  * here, the agent scaffolds a starter project tree into its CoW branch, then Open

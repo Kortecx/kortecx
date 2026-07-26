@@ -7,7 +7,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx model lifecycle (M4, D108.2): the backend-agnostic registry of model IDENTITY, declared MODALITIES (text/image/audio/video), projector (mmproj) path, and a fail-closed GGUF-header validator. A ModelResolver maps a ModelId → ModelDescriptor so an InferenceBackend sources paths + capabilities from one place instead of a frozen HashMap. FFI-FREE by construction (no kx-llamacpp dep) so `cargo install kx-runtime` still needs no C++ toolchain; the LIVE loaded-model handle cache lives in the backend (kx-inference), keyed by this crate's identity_digest. Off the trust path (SN-8): never gates selection/commit/audit."
+description = "kortecx model lifecycle (M4, D108.2): the backend-agnostic registry of model IDENTITY, declared MODALITIES (text/image/audio/video), projector (mmproj) path, and a fail-closed GGUF-header validator. A ModelResolver maps a ModelId → ModelDescriptor so an InferenceBackend sources paths + capabilities from one place instead of a frozen HashMap. FFI-FREE by construction (no kx-llamacpp dep) so `cargo install kx-runtime` still needs no C++ toolchain; the LIVE loaded-model handle cache lives in the backend (kx-inference), keyed by this crate's identity_digest. Off the trust path: never gates selection/commit/audit."
 
 [lib]
 path = "src/lib.rs"

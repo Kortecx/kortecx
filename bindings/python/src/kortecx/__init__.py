@@ -324,7 +324,7 @@ __all__ = [
     "PullStatus",
     # POC-3 Models lifecycle: the load/offload outcome
     "ModelLifecycleResult",
-    # POC-1 Settings: the connected gateway's effective config (display-only, SN-8)
+    # POC-1 Settings: the connected gateway's effective config (display-only)
     "ServerInfo",
     # Batch B: per-mote definition inspection (display-only)
     "MoteDetail",
@@ -351,7 +351,7 @@ __all__ = [
     "FuzzyHit",
     "IngestResult",
     "IngestDocument",
-    # W1.A5 toolscout (advisory/display-only — scores never authorize, SN-8)
+    # W1.A5 toolscout (advisory/display-only — scores never authorize)
     "ToolManifest",
     "KeywordSet",
     "ManifestScore",

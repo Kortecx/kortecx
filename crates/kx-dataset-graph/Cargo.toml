@@ -7,7 +7,7 @@ rust-version = { workspace = true }
 license      = { workspace = true }
 authors      = { workspace = true }
 repository   = { workspace = true }
-description  = "kortecx opt-in GRAPH-RAG retrieval leg — a pure-Rust, in-memory knowledge graph of (subject, predicate, object) triples extracted from corpus chunks, with a deterministic multi-hop neighbour walk that returns source ContentRefs as a third RRF fusion leg alongside the dense (HNSW) + sparse (BM25) legs. Off the truth path (SN-8): the graph is a rebuildable projection; only the ordered neighbour-ref SET is committed, matched downstream by exact hash — similarity/traversal never touch a MoteId. Default-off behind KX_FLAG_SERVE_GRAPH_RAG; an empty graph leg is byte-identical to the 2-leg fuse."
+description = "kortecx opt-in GRAPH-RAG retrieval leg — a pure-Rust, in-memory knowledge graph of (subject, predicate, object) triples extracted from corpus chunks, with a deterministic multi-hop neighbour walk that returns source ContentRefs as a third RRF fusion leg alongside the dense (HNSW) + sparse (BM25) legs. Off the truth path: the graph is a rebuildable projection; only the ordered neighbour-ref SET is committed, matched downstream by exact hash — similarity/traversal never touch a MoteId. Default-off behind KX_FLAG_SERVE_GRAPH_RAG; an empty graph leg is byte-identical to the 2-leg fuse."
 
 [lib]
 path = "src/lib.rs"

@@ -4,7 +4,7 @@
 //!
 //! Behaviour is selected by `KX_MCP_MOCK_MODE` (default `echo`):
 //! - `echo` — reply `{"result":{"echoed":<arguments verbatim>}}`, deterministic in the request args (content-addressed dedup on replay).
-//! - `big` — reply with a result string of `KX_MCP_MOCK_BIG_BYTES` chars (drives the IMP-16 oversize-cap refusal).
+//! - `big` — reply with a result string of `KX_MCP_MOCK_BIG_BYTES` chars (drives the oversize-cap refusal).
 //! - `error` — reply with a JSON-RPC `error` object.
 //! - `malformed` — reply with truncated/garbled JSON.
 //! - `slow` — sleep `KX_MCP_MOCK_SLEEP_MS` then `echo` (drives the timeout path).

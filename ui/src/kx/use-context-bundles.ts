@@ -5,7 +5,7 @@
  * A context bundle is named, content-addressed grounding the caller attaches to a
  * run (`invoke(handle, args, { context: [handle] })`); the server resolves it to
  * its content-refs and folds them into the entry Mote's identity-bearing config,
- * so a different attached context ⇒ a different run. SN-8: `bundleRef` is
+ * so a different attached context ⇒ a different run. `bundleRef` is
  * SERVER-derived; bundles are caller-scoped (a not-found / not-owned bundle is
  * uniform — no cross-party existence oracle). Degrades to a not-wired empty state
  * on a gateway without the bundle store (UNIMPLEMENTED).

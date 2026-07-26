@@ -1,6 +1,6 @@
 //! `kx recipe list | search` — the recipe catalog + advisory discovery over the
 //! gateway (`ListRecipes` + `SearchRecipes`, PR-4 Batch D). Tri-surface parity
-//! with the UI + SDK. Everything here is ADVISORY/DISPLAY-ONLY (SN-8): the
+//! with the UI + SDK. Everything here is ADVISORY/DISPLAY-ONLY: the
 //! `score_bp` ranks a picker, never authorizes a recipe. The CLI never sends a
 //! warrant; `kx invoke` stays the authorization gate.
 

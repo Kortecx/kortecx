@@ -17,7 +17,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** A recall result is the ordered EXACT memory-ref SET only. The
+//! - **Identity.** A recall result is the ordered EXACT memory-ref SET only. The
 //!   similarity [`MemoryHit::score`] is DISPLAY-ONLY — it never enters a committed
 //!   fact, a `MoteId`, or any identity/commit path. Similarity stays *inside* the
 //!   store; the runtime matches by exact cryptographic equality.

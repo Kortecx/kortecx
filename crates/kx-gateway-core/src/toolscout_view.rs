@@ -9,7 +9,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8 / advisory-never-authorizes.** Every score and verdict crossing
+//! - **Advisory never authorizes.** Every score and verdict crossing
 //!   this seam is DISPLAY-ONLY: never a committed fact, never an identity
 //!   input, never an authorization. The host's verdict is a dry-run of the
 //!   real fail-closed lowering gate whose output is DISCARDED; the broker

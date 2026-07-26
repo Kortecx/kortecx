@@ -8,7 +8,7 @@
 //!
 //! # Boundaries (load-bearing)
 //!
-//! - **SN-8.** The committed observation carries the ordered EXACT memory content-refs
+//! - **Identity.** The committed observation carries the ordered EXACT memory content-refs
 //!   (+ text for the model to read) — the similarity `score` is DROPPED, never
 //!   committed, never an identity input. (Mirrors `retrieve@1` / `query_corpus`.)
 //! - **Read-only.** `IdempotencyClass::Readback` ⇒ the HITL gate auto-proceeds it; no
@@ -76,7 +76,7 @@ struct RecallArgs {
     k: Option<u32>,
 }
 
-/// One recalled memory — content hash + text. NO `score` (SN-8).
+/// One recalled memory — content hash + text. NO `score`.
 #[derive(Serialize)]
 struct Recalled {
     r#ref: String,
@@ -132,7 +132,7 @@ impl Capability for RecallCapability {
                     memories.push(Recalled {
                         r#ref: ContentRef::from_bytes(h.memory_id).to_hex(),
                         text: String::from_utf8_lossy(&h.content).into_owned(),
-                        // h.score is intentionally DROPPED here (SN-8).
+                        // h.score is intentionally DROPPED here.
                     });
                 }
                 let note = if memories.is_empty() {
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(mems[0]["ref"], ContentRef::from_bytes([1; 32]).to_hex());
         assert!(
             !String::from_utf8_lossy(&out).contains("score"),
-            "the committed observation must not carry a similarity score (SN-8)"
+            "the committed observation must not carry a similarity score"
         );
     }
 

@@ -9,7 +9,7 @@
  * connectors' credentials (attach adds, detach prunes). Empty sub-objects are
  * omitted; keys are rebuilt rather than `delete`d (biome perf rule).
  *
- * Attaching grants NOTHING (SN-8): at RunApp the server intersects these wishes
+ * Attaching grants NOTHING: at RunApp the server intersects these wishes
  * against the caller's grants + the live broker. `SaveApp` re-canonicalizes.
  */
 
@@ -57,7 +57,7 @@ export function readModelRoute(env: Env): string {
 
 /** The names of the skills attached to the App (`references.skills`). A read-only view
  *  needs only the names: the instructions ride in CAS, and which of a skill's tool
- *  wishes survive is decided at run (SN-8). */
+ *  wishes survive is decided at run. */
 export function readSkillNames(env: Env): string[] {
   const skills = (env.references as { skills?: { name?: string }[] })?.skills;
   return (skills ?? []).map((s) => s.name ?? "").filter((n) => n !== "");

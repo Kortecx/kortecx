@@ -8,7 +8,7 @@ import { rootRoute } from "./__root";
 /**
  * Context — the data & storage umbrella (POC-5c / D168): reusable bundles (PR-7) plus
  * the Datasets / Data Lab tab (T3.7). The section view loads lazily; each tab degrades
- * to a not-wired empty state on a gateway without that store (don't-fake-gaps, GR15).
+ * to a not-wired empty state on a gateway without that store (don't-fake-gaps).
  */
 const ContextSection = lazy(() =>
   import("../../components/sections/ContextSection").then((m) => ({ default: m.ContextSection })),

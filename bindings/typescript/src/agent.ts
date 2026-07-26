@@ -12,7 +12,7 @@
  * recipe. The frozen tool-EXECUTION is LIVE — the `Agent({ tools: [fn] })` one-liner over
  * local `localTool(...)` defs now fires (`run` registers each as a stdio MCP tool and
  * grants its namespaced `<server>/<name>` to the step; a model's bare/leaf call resolves
- * to that grant). No `KX_SERVE_AUTOGRANT` needed. SN-8: intent only.
+ * to that grant). No `KX_SERVE_AUTOGRANT` needed. Intent only.
  */
 
 import type { ReasoningMode } from "./chains.js";
@@ -153,7 +153,7 @@ export class Agent {
       // AGENTIC-VISION: an attached image routes to the image-grounded ReAct loop
       // (`kx/recipes/react-vision`, form-gated) so the served VLM reasons over the image
       // on every turn. The bounded-loop budget mirrors the dynamic lane; local custom
-      // tools + an image is a future combo. Fail-closed when no vision model (GR15).
+      // tools + an image is a future combo. Fail-closed when no vision model.
       const baseArgs = {
         instruction: this.prompt(task),
         max_turns: this.opts.maxTurns ?? 8,
@@ -196,8 +196,8 @@ export class Agent {
     // part of the step's identity (replayable). `asFlow` → `runChain` resolves any local
     // `localTool(...)` defs to their namespaced `<server>/<name>` and writes them into the
     // step's toolContract; the served model fires them in a bounded reason→tool→observe
-    // loop (a model's bare/leaf name resolves to the grant — the BUG-32 fix). No
-    // `KX_SERVE_AUTOGRANT` needed: the step grants its OWN exact tools (SN-8 — the server
+    // loop (a model's bare/leaf name resolves to the grant — the fix). No
+    // `KX_SERVE_AUTOGRANT` needed: the step grants its OWN exact tools (the server
     // still compiles + warrants every step).
     return this.asFlow(task).run({
       wait: opts.wait,

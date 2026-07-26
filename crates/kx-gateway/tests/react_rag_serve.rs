@@ -13,7 +13,7 @@
 //!      hybrid HostDatasetView::query and commits the passages as the Observation
 //!   -> the chain settles a terminal Answer (durable facts via ListReactTurns).
 //!
-//! Drive on BOTH engines (GR24; #[ignore], runtime-skips without a served model):
+//! Drive on BOTH engines (#[ignore], runtime-skips without a served model):
 //!   # llama.cpp (decoder-as-embedder honest-degrade, or set KX_SERVE_EMBED_MODEL):
 //!   KX_SERVE_MODEL_GGUF=.../gemma-4-12b-it-q4_k_m.gguf \
 //!     cargo test -p kx-gateway --features inference,hnsw --test react_rag_serve -- --ignored --nocapture

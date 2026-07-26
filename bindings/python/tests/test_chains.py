@@ -160,7 +160,7 @@ def test_context_is_emitted_in_the_lowering() -> None:
 
 
 def test_context_order_is_preserved_not_sorted() -> None:
-    """The DSL never sorts/dedups — the SERVER canonicalizes at bind (SN-8)."""
+    """The DSL never sorts/dedups — the SERVER canonicalizes at bind."""
     handles = ["z/ctx/two", "a/ctx/one"]
     req = chain("a", {"a": pure()}, context=handles).build()
     assert list(req.context_bundles) == handles
@@ -299,7 +299,7 @@ def test_agentic_grants_on_non_model_raise() -> None:
 
 
 def test_model_id_is_optional_and_lowers_to_empty() -> None:
-    # Omit model_id (prompt-only) — the server binds the served model (SN-8). The
+    # Omit model_id (prompt-only) — the server binds the served model. The
     # lowering carries an empty model_id; a default_model fills it client-side at submit.
     lowered = chain("p > q", {"p": model(prompt="go"), "q": pure()}).lowering()
     assert lowered["steps"][0]["kind"] == "model"

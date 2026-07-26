@@ -2,7 +2,7 @@
 ``GetContentBatch`` item.
 
 Kept in its own module so ``types.py`` stays a thin aggregator (the Rust core's
-module-per-concern discipline, GR3). SN-8: ``content_ref`` is SERVER-DERIVED
+module-per-concern discipline). ``content_ref`` is SERVER-DERIVED
 (blake3 over the payload) — the client never names an identity. An upload is a
 CONTENT-STORE write, never a journal write; ``media_type``/``filename`` are
 advisory audit fields. A batch item whose ref was unauthorized / missing /

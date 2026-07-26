@@ -519,7 +519,7 @@ fn malformed_replan_round_dead_letters_that_shaper() {
 fn replan_proposing_an_unknown_role_dead_letters_that_round() {
     // Round 0: a child fails. Round 1: the model proposes a role NOT in the recipe
     // allowlist → `lower` fails closed (UnknownRecipe) inside `replan` → the round-1
-    // shaper dead-letters (SN-8: an unvetted role never materializes). The run
+    // shaper dead-letters (an unvetted role never materializes). The run
     // completes; the round-0 committed prefix is untouched.
     // Calls: [plan0, child0=FAIL, replan1=ghost-role].
     let replies = vec![
@@ -543,7 +543,7 @@ fn replan_proposing_an_unknown_role_dead_letters_that_round() {
     assert_eq!(
         p.committed_count(),
         1,
-        "no unvetted child ever materialized (SN-8)"
+        "no unvetted child ever materialized"
     );
 }
 

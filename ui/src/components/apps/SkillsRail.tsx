@@ -3,7 +3,7 @@
  *
  * A skill is a DECLARATIVE `kortecx.skill/v1` bundle the envelope references by
  * `SkillRef { name, instructions_ref, tools }` (`references.skills`). Attaching
- * grants NOTHING (SN-8): at `RunApp` the server intersects the skill's tool
+ * grants NOTHING: at `RunApp` the server intersects the skill's tool
  * WISHES against the caller's grants and the live broker. Attach/detach is a
  * structure edit — it re-saves the envelope (`SaveApp`), so a LOCKED App
  * refuses it (the POC-5d lock covers structure edits; the control renders

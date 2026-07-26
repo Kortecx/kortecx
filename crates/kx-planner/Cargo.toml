@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "kortecx planner (M6) — lowers an untrusted model PROPOSAL into a registered Mote DAG. Decodes plan bytes fail-closed (IMP-5), selects ROLES not raw permissions (D75 — warrant = intersect(parent, role)), and lowers to a kx_workflow::WorkflowDef (compiled by kx_workflow::compile, the structural gate) or a kx_mote::TopologyDecision (loop → shaper, D76). PURE lowering library: sits ABOVE the scheduler and depends ONLY on kx-workflow + kx-mote + kx-warrant + kx-critic-types — NEVER kx-scheduler/kx-projection/kx-executor/kx-inference (the P2 thesis test). The model-runs-once + context-assembly wiring lives in kx-model-harness."
+description = "kortecx planner (M6) — lowers an untrusted model PROPOSAL into a registered Mote DAG. Decodes plan bytes fail-closed, selects ROLES not raw permissions (D75 — warrant = intersect(parent, role)), and lowers to a kx_workflow::WorkflowDef (compiled by kx_workflow::compile, the structural gate) or a kx_mote::TopologyDecision (loop → shaper, D76). PURE lowering library: sits ABOVE the scheduler and depends ONLY on kx-workflow + kx-mote + kx-warrant + kx-critic-types — NEVER kx-scheduler/kx-projection/kx-executor/kx-inference (the P2 thesis test). The model-runs-once + context-assembly wiring lives in kx-model-harness."
 
 [lib]
 path = "src/lib.rs"
