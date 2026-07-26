@@ -690,6 +690,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // (`register_capability` is `&self`/interior-mutable) on the SAME broker the
     // worker dispatches through.
     let local_broker = Arc::new(LocalCapabilityBroker::new((*content).clone()));
+    // The sandboxed script shim, put into the shared content store so a script
+    // dispatch can materialize it as its body. `None` when the binary is not
+    // shipped alongside this serve — in which case script registration REFUSES
+    // rather than degrading, because the only other way to run a script would be
+    // on the host (Golden Rule 9).
+    let script_shim_ref = crate::scripts::provision_shim(&content);
+    if script_shim_ref.is_none() {
+        tracing::info!(
+            "no sandbox script shim found; scripts will not register on this serve"
+        );
+    }
     // PR-2d-2 (react-tools-live): register the bundled deterministic stdio tool's
     // capability — the live ReAct loop's "Act" step — when its binary is present
     // AND a fit serve model resolved (no model ⇒ no react chain can drive it).

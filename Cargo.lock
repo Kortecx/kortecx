@@ -1833,6 +1833,7 @@ dependencies = [
  "kx-pricing",
  "kx-proto",
  "kx-refusal",
+ "kx-script-runner",
  "kx-skill",
  "kx-tool-registry",
  "kx-toolcall",
@@ -2320,6 +2321,14 @@ dependencies = [
  "smallvec",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "kx-script-runner"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "tempfile",
 ]
 
 [[package]]

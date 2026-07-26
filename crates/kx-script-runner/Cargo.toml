@@ -1,0 +1,30 @@
+[package]
+name         = "kx-script-runner"
+version      = "0.1.0"
+edition      = { workspace = true }
+rust-version = { workspace = true }
+license      = { workspace = true }
+authors      = { workspace = true }
+repository   = { workspace = true }
+description  = "kortecx sandboxed script shim — the body binary the platform sandbox spawns when a registered script fires. The sandbox backends read a 64-char hex content ref from a body's stdout; an arbitrary user script cannot honour that, so this shim stands between them: it execs `<interpreter> <script>` inside the already-applied sandbox with a CLEARED environment, writes the child's raw stdout to a warrant-mounted path, and prints the ref of those bytes. The host re-hashes what it reads and refuses a mismatch, so result integrity rests on BLAKE3 rather than on this binary being correct. Ships as a lib (the descriptor codec, shared with the writer so the two ends cannot drift) plus one bin."
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "kx-script-runner"
+path = "src/bin/kx_script_runner.rs"
+
+[dependencies]
+# The result-ref hash. Deliberately the ONLY dependency: this binary runs inside
+# the sandbox, so every crate it links is parsing surface a script's output can
+# reach. No serde, no JSON — the descriptor codec below is a fixed, length-
+# prefixed schema this crate owns end to end.
+blake3 = { workspace = true }
+
+[dev-dependencies]
+# Scratch dirs for the shim's behaviour tests (scripts, descriptors, result files).
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

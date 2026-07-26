@@ -245,6 +245,14 @@ mod mote_defs;
 mod provision;
 #[cfg(feature = "embedded-worker")]
 mod real_exec;
+// The first-class `script` primitive: an operator registers a named, versioned
+// program; the runtime compiles its DECLARED wish into a warrant and the broker
+// intersects that against the caller's own grants at fire time. Every run goes
+// through the platform sandbox (bwrap / sandbox-exec) via `real_exec`, fail-closed
+// — a missing shim means scripts do not register. Needs the embedded broker +
+// executor; off-journal, off-digest.
+#[cfg(feature = "embedded-worker")]
+pub mod scripts;
 // PR-D: the run_inputs.db sidecar (the RunInputsStore seam) — the Invoke args
 // captured at submit so a run recovered from ListRuns can pre-fill its recipe
 // form and be re-invoked with edits ("Re-run with changes"). Rebuildable-to-

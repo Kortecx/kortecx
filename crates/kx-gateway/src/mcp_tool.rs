@@ -439,30 +439,7 @@ pub(crate) fn react_system_override() -> Option<String> {
 /// first, then the fixed in-image path, then a dev/test walk up to the workspace
 /// `target/` dir (the `real_body_binary_path` precedent). `None` ⇒ no binary on
 /// this host/image (fail-soft). Shared by every bundled stdio tool.
-fn bundled_binary_path(bin: &str, env_override: &str) -> Option<PathBuf> {
-    if let Some(over) = std::env::var_os(env_override) {
-        let path = PathBuf::from(over);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-    let in_image = PathBuf::from(format!("/usr/local/libexec/kx/{bin}"));
-    if in_image.exists() {
-        return Some(in_image);
-    }
-    let exe = std::env::current_exe().ok()?;
-    for ancestor in exe.ancestors() {
-        if ancestor.file_name().is_some_and(|n| n == "target") {
-            for profile in ["debug", "release"] {
-                let candidate = ancestor.join(profile).join(bin);
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    None
-}
+use crate::real_exec::bundled_binary_path;
 
 /// The bundled echo binary's path (`KX_MCP_ECHO_PATH` override).
 fn echo_binary_path() -> Option<PathBuf> {
