@@ -142,20 +142,33 @@ jobs:
             FAIL=1
           fi
 
-          # Decision ids are the same class but far more numerous, so they are gated
-          # WITHOUT a retroactive sweep: existing occurrences are untouched and only NEW
-          # ones fail. Extract TOKENS, not lines — a line can carry both an allowlisted
-          # value and a fresh id, and a line-level filter would let the pair through.
-          # Allowlisted: a decision id that is a LIVE WIRE VALUE (a refusal code surfaced
-          # as gRPC metadata and asserted across Rust + both SDKs). Renaming it breaks the
-          # wire. Add to DECISION_ALLOW only for another value with that property.
-          DECISION_ALLOW='^D66$'
-          DECISION_HITS=$(echo "$SCANNABLE" \
-            | grep -oE '(^|[^A-Za-z0-9])D[0-9]{2,3}(\.[0-9]+)*([^A-Za-z0-9]|$)' \
-            | grep -oE 'D[0-9]{2,3}(\.[0-9]+)*' | sort -u | grep -vE "$DECISION_ALLOW" || true)
+          # Decision ids are the same class but far more numerous, and they are gated
+          # WITHOUT a retroactive sweep. That makes the test "is this id NEW TO THE REPO",
+          # not "is it on an added line": the ids already here are grandfathered wherever
+          # they appear, and only one that exists nowhere in main fails. This also keeps a
+          # live wire value (a refusal code carried in gRPC metadata and asserted across
+          # Rust and both SDKs) passing, since it is already in main.
+          #
+          # An added-line test would be unusable, and provably so: rewording a comment
+          # re-adds every id it contains as a fresh line, so a PR that DELETES ids still
+          # fails. Measured on the sweep that introduced this gate — 220 removed, 86
+          # added, zero genuinely new — an added-line test failed it. A gate that rejects
+          # the change improving the very thing it guards is a gate people switch off.
+          #
+          # Extract TOKENS, not lines: one line can carry both a grandfathered id and a
+          # fresh one, and a line-level filter would let the pair through.
+          git fetch --quiet origin main
+          DECISION_HITS=""
+          for tok in $(echo "$SCANNABLE" \
+                | grep -oE '(^|[^A-Za-z0-9])D[0-9]{2,3}(\.[0-9]+)*([^A-Za-z0-9]|$)' \
+                | grep -oE 'D[0-9]{2,3}(\.[0-9]+)*' | sort -u); do
+            if ! git grep -qE "(^|[^A-Za-z0-9])${tok}([^A-Za-z0-9]|\$)" origin/main -- . 2>/dev/null; then
+              DECISION_HITS="${DECISION_HITS}${tok} "
+            fi
+          done
           if [ -n "$DECISION_HITS" ]; then
-            echo "❌ LEAK: added line(s) carry an internal decision id:"
-            echo "$DECISION_HITS" | head -5 | sed 's/^/    /'
+            echo "❌ LEAK: added line(s) introduce a decision id that does not exist in main:"
+            echo "$DECISION_HITS" | tr ' ' '\n' | grep -v '^$' | head -5 | sed 's/^/    /'
             FAIL=1
           fi
 
