@@ -315,3 +315,17 @@ export { encode, decode, asBytes, INSTANCE_LEN, REF_LEN } from "./hexids.js";
 export * as proto from "./gen/kortecx/v1/gateway_pb.js";
 
 export const VERSION = "0.1.0";
+
+export {
+  RegisteredScript,
+  scriptEnvToProto,
+  scriptMountsToProto,
+  scriptSourceBytes,
+} from "./scripts.js";
+export type {
+  RegisterScriptInput,
+  RegisteredScriptsPage,
+  ScriptEnvPair,
+  ScriptMount,
+  ScriptWithSource,
+} from "./scripts.js";

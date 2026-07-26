@@ -7,16 +7,20 @@ import { ErrorNotice } from "../ErrorNotice";
 import { AutoGrantStatus } from "../tools/AutoGrantStatus";
 import { BundleComposer } from "../tools/BundleComposer";
 import { ConnectionsPanel } from "../tools/ConnectionsPanel";
+import { IntegrationsPanel } from "../tools/IntegrationsPanel";
 import { ManifestGrid } from "../tools/ManifestGrid";
 import { RegisterToolForm } from "../tools/RegisterToolForm";
 import { RegisteredToolsPanel } from "../tools/RegisteredToolsPanel";
 import { ScoreLadder } from "../tools/ScoreLadder";
+import { ScriptsPanel } from "../tools/ScriptsPanel";
 import { SecretsPanel } from "../tools/SecretsPanel";
 import { SkillsPanel } from "../tools/SkillsPanel";
 import { TriggersPanel } from "../tools/TriggersPanel";
 
 const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
   { id: "tools", label: "Tools" },
+  { id: "scripts", label: "Scripts" },
+  { id: "integrations", label: "Integrations" },
   { id: "connections", label: "Connections" },
   { id: "skills", label: "Skills" },
   { id: "triggers", label: "Triggers" },
@@ -24,15 +28,20 @@ const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
 ];
 
 /**
- * Integrations — the hub over the gateway's tool + integration plane. FOUR
- * URL-addressable tabs (the ContextSection/SystemsSection view-toggle precedent —
- * tab state rides the route's validated search so this stays a pure renderer):
+ * MCP — the hub over everything an agent can call. URL-addressable tabs (the
+ * ContextSection/SystemsSection view-toggle precedent — tab state rides the
+ * route's validated search so this stays a pure renderer):
  *
  * 1. **Tools** — the durable tool inventory (`DiscoverTools`) + register/deregister
  *    controls, the autonomous-access posture, and the advisory toolscout (manifests
  *    + a dry-run TaskBundle scorer). Registration grants NO authority; every
  *    score/verdict is display-only and never authorizes anything.
- * 2. **Connections** — dial external MCP servers (the live untrusted-egress surface).
+ * 2. **Scripts** — the durable script registry (`ListScripts`) + register/deregister.
+ *    A script is a tool whose declaration carries source, an interpreter and a
+ *    resource wish; it runs in the platform sandbox under the CALLER's grants, and
+ *    a serve that cannot sandbox refuses to register one at all.
+ * 3. **Integrations** — the connectors bundled with this runtime, and how to dial them.
+ * 4. **Connections** — dial external MCP servers (the live untrusted-egress surface).
  * 3. **Triggers** — bind an inbound event (webhook / cron / RPC) to a recipe handle.
  * 4. **Secrets** — the local OS-keychain store; a `SecretRef` NAME is what a
  *    Connection's / Trigger's `credential_ref` points at (the value is write-only, D81).
@@ -51,16 +60,17 @@ export function ToolsSection({
     <section className="screen" data-testid="tools-section">
       <div className="section-head">
         <div>
-          <h1>Integrations</h1>
+          <h1>MCP</h1>
           <p className="muted">
-            Register, govern, and connect the tools, external servers, event triggers, and secrets
-            your agents use. Registration grants no authority: a tool fires only under a
-            server-issued warrant, re-verified by the broker at every call.
+            Register, govern, and connect everything your agents can call — tools, sandboxed
+            scripts, bundled integrations, external servers, event triggers and secrets.
+            Registration grants no authority: anything here fires only under a server-issued
+            warrant, re-verified at every call.
           </p>
         </div>
       </div>
 
-      <fieldset className="view-toggle" aria-label="Integrations view" data-testid="tools-tabs">
+      <fieldset className="view-toggle" aria-label="MCP view" data-testid="tools-tabs">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -74,7 +84,11 @@ export function ToolsSection({
         ))}
       </fieldset>
 
-      {tab === "connections" ? (
+      {tab === "scripts" ? (
+        <ScriptsPanel />
+      ) : tab === "integrations" ? (
+        <IntegrationsPanel />
+      ) : tab === "connections" ? (
         <ConnectionsTab />
       ) : tab === "skills" ? (
         <SkillsPanel />

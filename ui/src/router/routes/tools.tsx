@@ -9,11 +9,25 @@ const ToolsSection = lazy(() =>
   import("../../components/sections/ToolsSection").then((m) => ({ default: m.ToolsSection })),
 );
 
-/** The Integrations tabs: tools (default, absent), connections, skills, triggers, secrets. */
-export type ToolsTab = "tools" | "connections" | "skills" | "triggers" | "secrets";
+/** The MCP tabs: tools (default, absent), scripts, integrations, connections, skills, triggers, secrets. */
+export type ToolsTab =
+  | "tools"
+  | "scripts"
+  | "integrations"
+  | "connections"
+  | "skills"
+  | "triggers"
+  | "secrets";
 /** The non-default tabs carried in the route search (`tools` is the absent default). */
 type ToolsTabSearch = Exclude<ToolsTab, "tools">;
-const TAB_SEARCH: readonly ToolsTabSearch[] = ["connections", "skills", "triggers", "secrets"];
+const TAB_SEARCH: readonly ToolsTabSearch[] = [
+  "scripts",
+  "integrations",
+  "connections",
+  "skills",
+  "triggers",
+  "secrets",
+];
 interface ToolsSearch {
   /** The active tab; absent = the Tools tab. */
   tab?: ToolsTabSearch;
