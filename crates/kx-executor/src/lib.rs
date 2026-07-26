@@ -40,7 +40,8 @@
 //!
 //! # Architecture
 //!
-//! Two non-overlapping seams:
+//! Two non-overlapping seams (per `docs/design/capability-broker.md` §3 and
+//! `docs/design/resource-manager.md` §3):
 //! - **Capability broker** (D24, `kx-capability`) — workflow-declared
 //!   effects. The executor invokes `CapabilityBroker::dispatch` for every
 //!   tool call. NOT consumed in PR 9a (PURE Motes have no effects).
@@ -53,7 +54,7 @@
 //!
 //! # `std::process::Command` forbidden
 //!
-//! By definition of done: NO `std::process::Command`
+//! Per `02-crate-specs.md` §`kx-executor` DoD: NO `std::process::Command`
 //! shell-outs in this crate. The `crates/kx-executor/clippy.toml` enforces
 //! this at compile time (PR 9a-hardening will wire the lint; for PR 9a the
 //! grep audit is the manual check).

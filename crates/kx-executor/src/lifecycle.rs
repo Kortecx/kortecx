@@ -3,7 +3,7 @@
 //! `BackendUnsupported`; the integration test path passes a
 //! [`TestMoteExecutor`] that returns a deterministic ref).
 //!
-//! The six-step executor lifecycle:
+//! The six-step lifecycle from `02-crate-specs.md` §`kx-executor`:
 //! 1. Resolve warrant from `Proposed.warrant_ref` (PR 9a: caller-provided
 //!    since 9a doesn't ship the journal-fold path).
 //! 2. `ResourceManager::acquire` under `warrant.resource_ceiling`.

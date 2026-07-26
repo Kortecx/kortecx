@@ -1,7 +1,7 @@
 // The `Dispatcher` — D35's "router is a dispatcher with capability
 // enforcement, NOT a model selector."
 //
-// Dispatch flow (locked):
+// Dispatch flow (per 02-crate-specs.md:467-478, locked):
 //   1. kx-model-validator::check(provided, required) →
 //      TypeOk | DegradedSubtype | TypeError(refuse).
 //   2. kx-memoizer::lookup(mote, snapshot) →
@@ -32,7 +32,7 @@ use crate::types::{inference_params_from_mote, InferenceError, InferenceInput, I
 /// What `Dispatcher::dispatch_mote` returns when it succeeds.
 ///
 /// `CacheHit` means the memoizer found a prior committed result for an
-/// identity-equivalent Mote (exact cryptographic equality by exact equality);
+/// identity-equivalent Mote (exact cryptographic equality per SN-8);
 /// the executor either returns it as-is (`Pure` / `ReadOnlyNondet`) or
 /// uses it as the canonical result while the broker re-dispatches the
 /// world-mutating effect (`WorldMutating { redispatch_effect: true }`).

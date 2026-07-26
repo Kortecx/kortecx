@@ -1,4 +1,4 @@
-//! Fact-zero protocol (D34, P0.13) — the seed IS fact zero.
+//! Fact-zero protocol (D34, `docs/design/seed-as-fact-zero.md` P0.13).
 //!
 //! `submit_run` writes a synthetic `Committed`-shaped journal entry as the
 //! FIRST entry of a run; root Mote dispatch is gated on fact-zero's commit;
