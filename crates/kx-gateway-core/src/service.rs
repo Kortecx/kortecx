@@ -468,13 +468,15 @@ pub type EventStream =
 /// The event-tailing seam behind `StreamEvents`. The default [`SnapshotTailer`]
 /// emits the deltas in `(since_seq, head]` once and ends (snapshot-to-head); the
 /// host can inject a LIVE tailer (R5 — `kx-gateway`'s `LiveTailer`) that keeps the
-/// stream open and emits frames as the journal advances. Spoken in gateway-core's
-/// own vocabulary (a [`JournalReader`] + the frozen [`EventFrame`](proto::EventFrame))
-/// so the live tailer lives in the binary WITHOUT putting a runtime/timer dep on
-/// the read-fold crate (the dep wall).
+/// stream open and emits frames as the journal advances, waking on
+/// [`JournalReader::subscribe`]. Spoken in gateway-core's own vocabulary (a
+/// [`JournalReader`] + the frozen [`EventFrame`](proto::EventFrame)) so the live tailer
+/// lives in the binary WITHOUT putting a runtime/timer dep on the read-fold crate (the
+/// dep wall) — the subscription type crosses that wall, but awaiting it needs a runtime
+/// only where one already exists.
 pub trait EventTailer: Send + Sync {
     /// Open the event stream for `(instance_id, since_seq)`. `reader` is owned
-    /// (`Arc`) so a tailer that spawns a poller can outlive the handler call. The
+    /// (`Arc`) so a tailer that spawns a follower can outlive the handler call. The
     /// ownership check is the tailer's first action.
     ///
     /// # Errors

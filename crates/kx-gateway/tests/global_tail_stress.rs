@@ -199,9 +199,23 @@ async fn fan_out_holds_the_envelope_with_a_stalled_subscriber() {
     );
 }
 
-/// GR10 M8a — commit→global-frame delivery latency through the 250 ms poll
-/// cadence (p50/p95 over 40 rounds — the poll interval dominates by design;
-/// the number pins the ceiling a push-based journal `watch` would beat).
+/// GR10 M8a — commit→global-frame delivery latency (p50/p95 over 40 rounds).
+///
+/// This measured the 250 ms poll cadence, and said in its own comment that the number
+/// "pins the ceiling a push-based journal `watch` would beat". The subscription seam is
+/// that watch, so the ceiling moved and the assertion moved with it — from "within 2
+/// polls + noise" (600 ms) to a bound **no polling build could satisfy**.
+///
+/// That retune is what turns a measurement into an A/B. Under a 250 ms poll, delivery
+/// latency is uniform on [0, 250 ms], so p95 lands near 237 ms with probability ≈ 1 over
+/// 40 rounds; a subscription delivers in single-digit milliseconds. 50 ms sits an order of
+/// magnitude above the expected value and five times below the polling floor, so it cannot
+/// flake on a loaded runner and cannot pass if the seam regresses to polling.
+///
+/// Note this exercises the **two-handle** topology directly — `journal` writes, `reader`
+/// is a second `SqliteJournal` on the same path — which is the production shape and the
+/// case a per-handle watch would silently break.
+///
 /// Persisted to the private benchmarks trend file. (M8b — the telemetry sink's
 /// per-event hot-path cost — is measured in `telemetry.rs`'s ignored unit
 /// test, where the crate-private ledger is constructible.)
@@ -250,9 +264,11 @@ async fn m8a_commit_to_frame_latency() {
     let p50 = lat[lat.len() / 2];
     let p95 = lat[lat.len() * 95 / 100];
 
-    println!("GR10 M8a commit→frame latency p50 {p50:?} p95 {p95:?} (poll cadence 250ms)");
+    println!("GR10 M8a commit→frame latency p50 {p50:?} p95 {p95:?} (journal subscription)");
     assert!(
-        p95 < Duration::from_millis(600),
-        "latency within 2 polls + noise"
+        p95 < Duration::from_millis(50),
+        "commit→frame p95 was {p95:?}. A subscription delivers in single-digit ms; the \
+         250 ms poll this replaced put p95 near 237 ms. A number in that region means \
+         the follower is back on a timer."
     );
 }

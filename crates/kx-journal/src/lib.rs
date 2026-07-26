@@ -63,6 +63,12 @@
 //! - **Backend-agnostic trait.** [`Journal`] does not name SQLite or any in-process
 //!   type in its signature. The OSS impl is [`SqliteJournal`]; the cloud impl
 //!   (replicated journal, P5.5) lands behind the same trait without redesign.
+//! - **Commits announce themselves.** A writable backend implements
+//!   [`WatchableJournal`], and a [`JournalSubscription`] wakes on every commit — so a
+//!   reader follows the log without polling it. The notification carries a watermark,
+//!   never entries, and the subscriber's own cursor is what makes delivery exactly-once;
+//!   see [`WatchableJournal`] for why that is a property of the protocol rather than of
+//!   the channel.
 //!
 //! ## What lives here
 //!
@@ -77,6 +83,9 @@
 //!   pinning `schema_version`.
 //! - [`InMemoryJournal`] — an in-memory backend for trait-seam proof + downstream
 //!   test fixtures.
+//! - [`WatchableJournal`] / [`JournalWatch`] / [`JournalSubscription`] — the
+//!   change-notification seam. Watches are keyed by journal *file*, not by handle, so
+//!   the serve's writer and reader handles on one path share one.
 //! - [`encode_entry`], [`decode_entry`], [`repudiation_idempotency_key`] — encoding
 //!   primitives + the Repudiated dedupe-key derivation per D15.
 //!
@@ -104,11 +113,13 @@ pub use crate::migration::{
     migrate_entry, MIN_SUPPORTED_SCHEMA_VERSION, V5_ABSENT_IDEMPOTENCY_CLASS,
 };
 pub use crate::sqlite::{migrate_to, MigrationReport, ReplayJournal, SqliteJournal};
+pub use crate::watch::{JournalSubscription, JournalWatch, JournalWatchClosed, WatchableJournal};
 
 mod entry;
 mod in_memory;
 mod migration;
 mod sqlite;
+mod watch;
 
 use std::ops::Range;
 

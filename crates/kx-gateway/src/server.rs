@@ -1365,10 +1365,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         let reader = reader.clone();
         let mut shutdown = live_shutdown_rx.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            let mut signal = crate::env_caps::journal_signal(reader.as_ref());
             loop {
                 tokio::select! {
-                    _ = tick.tick() => { ledger.fold(reader.as_ref()); }
+                    () = signal.changed() => { ledger.fold(reader.as_ref()); }
                     _ = shutdown.changed() => {
                         if *shutdown.borrow() {
                             ledger.fold(reader.as_ref()); // final catch-up
@@ -1381,17 +1381,24 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     };
     // (3f-ter) Batch C: the telemetry join tick — drains the bounded hot-path
     //      event queue and joins rows to the journal's Committed facts (seq +
-    //      watermark instance), mirroring the capture tick's cadence + shutdown
+    //      watermark instance), mirroring the capture fold's journal signal + shutdown
     //      catch-up. Off the sole-writer thread; read-only journal handle.
+    // The initial backfill is EXPLICIT, as it already is for capture and alerts above.
+    // It used to be implicit: `tokio::time::interval` yields its first tick immediately,
+    // so the loop folded once at startup as a side effect of how the timer is specified.
+    // A subscription has no such first wakeup — it waits for a commit — so restoring the
+    // startup fold by hand is what keeps a serve resumed over an existing journal from
+    // reporting a stale join until the next write.
+    telemetry_ledger.join_fold(reader.as_ref());
     let telemetry_task = {
         let ledger = telemetry_ledger.clone();
         let reader = reader.clone();
         let mut shutdown = live_shutdown_rx.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            let mut signal = crate::env_caps::journal_signal(reader.as_ref());
             loop {
                 tokio::select! {
-                    _ = tick.tick() => { ledger.join_fold(reader.as_ref()); }
+                    () = signal.changed() => { ledger.join_fold(reader.as_ref()); }
                     _ = shutdown.changed() => {
                         if *shutdown.borrow() {
                             ledger.join_fold(reader.as_ref()); // final catch-up
@@ -1404,17 +1411,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     };
     // (3f-quinquies) W1a-2: the alerts fold tick — incrementally folds the
     //      journal tail's terminal `Failed` facts into the alerts.db read-cache,
-    //      mirroring the capture tick's cadence + shutdown catch-up. Off the
+    //      mirroring the capture fold's journal signal + shutdown catch-up. Off the
     //      sole-writer thread; read-only journal handle.
     let alerts_task = {
         let ledger = alerts_db.clone();
         let reader = reader.clone();
         let mut shutdown = live_shutdown_rx.clone();
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            let mut signal = crate::env_caps::journal_signal(reader.as_ref());
             loop {
                 tokio::select! {
-                    _ = tick.tick() => { ledger.fold(reader.as_ref()); }
+                    () = signal.changed() => { ledger.fold(reader.as_ref()); }
                     _ = shutdown.changed() => {
                         if *shutdown.borrow() {
                             ledger.fold(reader.as_ref()); // final catch-up
@@ -1426,19 +1433,27 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         })
     };
     // (3f-sexies) W1a (T-OBS2): the metrics fold tick — incrementally folds the
-    //      journal tail into the cached RED snapshot, mirroring the telemetry tick's
-    //      cadence + shutdown catch-up. Off the sole-writer thread; read-only handle;
-    //      fail-open (a fold error keeps the last good snapshot). Spawned only when
-    //      `--metrics-listen` is set; `None` ⇒ no task, byte-identical to today.
+    //      journal tail into the cached RED snapshot, mirroring the telemetry fold's
+    //      journal signal + shutdown catch-up. Off the sole-writer thread; read-only
+    //      handle; fail-open (a fold error keeps the last good snapshot). Spawned only
+    //      when `--metrics-listen` is set; `None` ⇒ no task, byte-identical to today.
     let metrics_task = metrics_handle.clone().map(|handle| {
         let mut shutdown = live_shutdown_rx.clone();
+        let reader = reader.clone();
+        // Same explicit startup fold as telemetry, and it matters more here: the RED
+        // snapshot lives in memory and starts at zero, so without it a `/metrics` scrape
+        // on a serve resumed over an existing journal would report zeros until the first
+        // new commit landed.
+        if let Err(error) = handle.refresh() {
+            tracing::debug!(%error, "initial metrics fold failed; serving an empty snapshot");
+        }
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_millis(250));
+            let mut signal = crate::env_caps::journal_signal(reader.as_ref());
             loop {
                 tokio::select! {
-                    _ = tick.tick() => {
+                    () = signal.changed() => {
                         if let Err(error) = handle.refresh() {
-                            tracing::debug!(%error, "metrics fold tick failed; serving last snapshot");
+                            tracing::debug!(%error, "metrics fold failed; serving last snapshot");
                         }
                     }
                     _ = shutdown.changed() => {

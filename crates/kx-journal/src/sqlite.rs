@@ -54,6 +54,7 @@ use crate::entry::{
     JOURNAL_SCHEMA_VERSION, KIND_COMMITTED, KIND_EFFECT_STAGED, KIND_REPUDIATED, MAX_ENTRY_LEN,
 };
 use crate::migration::{migrate_entry, MIN_SUPPORTED_SCHEMA_VERSION};
+use crate::watch::{JournalSubscription, JournalWatch, WatchableJournal};
 use crate::{Journal, JournalError};
 
 const METADATA_SCHEMA_VERSION_KEY: &str = "schema_version";
@@ -94,6 +95,10 @@ const METADATA_SCHEMA_VERSION_KEY: &str = "schema_version";
 /// ```
 pub struct SqliteJournal {
     conn: std::sync::Mutex<Connection>,
+    /// Shared with every other handle on the same file — see [`JournalWatch`]. A
+    /// per-handle watch would leave the serve's read handle deaf to the writer handle's
+    /// commits, and the symptom would be silence rather than an error.
+    watch: std::sync::Arc<JournalWatch>,
 }
 
 impl std::fmt::Debug for SqliteJournal {
@@ -119,8 +124,12 @@ impl SqliteJournal {
         Self::configure(&conn)?;
         Self::initialize(&conn)?;
         Self::verify_schema_version(&conn)?;
+        // AFTER opening: opening is what creates the file, and only an existing path can
+        // be canonicalized into the key that makes two handles on one journal agree.
+        let watch = crate::watch::watch_for_path(path.as_ref());
         Ok(Self {
             conn: std::sync::Mutex::new(conn),
+            watch,
         })
     }
 
@@ -131,8 +140,11 @@ impl SqliteJournal {
         Self::configure(&conn)?;
         Self::initialize(&conn)?;
         Self::verify_schema_version(&conn)?;
+        // A private watch: each in-memory database is its own journal with no path to
+        // share, so there is nothing for a second handle to observe.
         Ok(Self {
             conn: std::sync::Mutex::new(conn),
+            watch: JournalWatch::new(),
         })
     }
 
@@ -205,10 +217,18 @@ impl SqliteJournal {
 
 impl Journal for SqliteJournal {
     fn append(&self, entry: JournalEntry) -> Result<JournalEntry, JournalError> {
-        let mut conn = self.conn.lock().expect("poisoned mutex");
-        let txn = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let durable = append_one(&txn, entry)?;
-        txn.commit()?;
+        let durable = {
+            let mut conn = self.conn.lock().expect("poisoned mutex");
+            let txn = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let durable = append_one(&txn, entry)?;
+            txn.commit()?;
+            durable
+        };
+        // AFTER the commit returns, so a woken reader is guaranteed to find the row.
+        // Announcing it any earlier spends the only wakeup this seq will ever get on a
+        // read that cannot see it yet. A dedupe hit returns a pre-existing (lower) seq;
+        // `publish` is monotone, so that announces nothing.
+        self.watch.publish(durable.seq());
         Ok(durable)
     }
 
@@ -216,18 +236,33 @@ impl Journal for SqliteJournal {
         if entries.is_empty() {
             return Ok(Vec::new());
         }
-        let mut conn = self.conn.lock().expect("poisoned mutex");
         // One BEGIN IMMEDIATE transaction for the whole batch (group commit):
         // every entry's dedupe SELECT + `seq` assignment + INSERT see the prior
         // in-batch inserts (so within-batch duplicates dedupe and seqs stay
         // contiguous), and the first error short-circuits before `commit`, so the
         // `Transaction`'s Drop rolls the entire batch back — all-or-nothing.
-        let txn = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut durable = Vec::with_capacity(entries.len());
-        for entry in entries {
-            durable.push(append_one(&txn, entry)?);
+        let durable = {
+            let mut conn = self.conn.lock().expect("poisoned mutex");
+            let txn = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let mut durable = Vec::with_capacity(entries.len());
+            for entry in entries {
+                durable.push(append_one(&txn, entry)?);
+            }
+            txn.commit()?;
+            durable
+        };
+        // The batch's HIGHEST seq. Subscribers read `current_seq()` as the authority, so
+        // for an all-new batch any member's seq would in fact wake them adequately — but
+        // a batch may MIX dedupe hits with new entries, and a dedupe hit returns its
+        // original, much older `seq`. Publish anything but the max and a mostly-duplicate
+        // batch announces a watermark at or below the current one, which `publish`
+        // correctly suppresses — so the one genuinely new entry in it is announced to
+        // nobody, and stays invisible until some unrelated later write happens to wake
+        // the stream. `max` rather than `last` for exactly that reason: the final element
+        // is not necessarily the largest.
+        if let Some(head) = durable.iter().map(JournalEntry::seq).max() {
+            self.watch.publish(head);
         }
-        txn.commit()?;
         Ok(durable)
     }
 
@@ -354,6 +389,18 @@ impl Journal for SqliteJournal {
         Ok(v as u64)
     }
 }
+
+impl WatchableJournal for SqliteJournal {
+    fn subscribe(&self) -> JournalSubscription {
+        self.watch.subscribe()
+    }
+}
+
+// `ReplayJournal` deliberately does NOT implement `WatchableJournal`. Its `append` and
+// `append_batch` both refuse (`Invariant("read-only")`), so a watch on it could never
+// fire — and a subscription that cannot move is worse than an absent one, because it
+// reads as a live seam and behaves as a hang. Leaving the trait unimplemented makes that
+// a compile error at the use site instead.
 
 // ---------------------------------------------------------------------------
 // Helpers

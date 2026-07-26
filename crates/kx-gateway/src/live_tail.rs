@@ -2,26 +2,36 @@
 //! upgrade + the source the WebSocket bridge reuses).
 //!
 //! Unlike the default snapshot-to-head [`kx_gateway_core::SnapshotTailer`], this
-//! keeps the stream OPEN: after catching up to the current head it polls
-//! `current_seq()` on a fixed interval and emits a new [`EventFrame`] whenever the
-//! journal advances. The journal exposes no change-notification, so polling is the
-//! honest interim — a push-based journal `watch` seam is a flagged optimization
-//! (own PR). It is **read-side only**: it never writes the journal or touches the
-//! digest; the coordinator stays the sole writer.
+//! keeps the stream OPEN: after catching up to the current head it **subscribes** to the
+//! journal and emits a new [`EventFrame`] whenever the journal advances. An idle stream
+//! therefore reads the journal not at all, and a commit reaches a client as fast as the
+//! frame can be built rather than on the next tick of a timer. It is **read-side only**:
+//! it never writes the journal or touches the digest; the coordinator stays the sole
+//! writer.
+//!
+//! This used to poll `current_seq()` every 250 ms, because the journal exposed no change
+//! notification. It does now ([`kx_journal::WatchableJournal`]), and the old cadence
+//! survives only as [`crate::journal_signal::JournalSignal::Poll`] under
+//! `KX_SERVE_JOURNAL_WATCH=off`.
+//!
+//! What did **not** change is the delivery protocol, and that is the reason the swap is
+//! safe: a subscriber advances its own cursor and reads the contiguous range
+//! `(cursor, head]` from the journal, so wakeups may coalesce or arrive spuriously
+//! without affecting what is delivered. The notification decides *when* to read, never
+//! *what* was written.
 //!
 //! ## Lifecycle + backpressure
 //! - **Bounded per-subscriber queue** (`SUBSCRIBER_QUEUE` frames). A consumer that
-//!   falls behind fills the queue; the poller then terminates the stream with
+//!   falls behind fills the queue; the follower then terminates the stream with
 //!   `Status::resource_exhausted` (the "CatchupRequired" signal — it is a `Status`,
 //!   not a wire field, since the frozen proto has no such message). The client
 //!   resumes a fresh `StreamEvents` from its last `next_seq` — bounded memory, the
 //!   journal + other subscribers untouched.
-//! - **No task leak.** The poller `select!`s the poll timer against
+//! - **No task leak.** The follower `select!`s its journal signal against
 //!   [`Sender::closed`]; when the client disconnects (the `ReceiverStream` drops),
-//!   the poller returns promptly. A send error (receiver gone) also returns.
+//!   the follower returns promptly. A send error (receiver gone) also returns.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use kx_gateway_core::{
     check_run_ownership, frames_for_range, global_frames_for_range, seed_global_cursor,
@@ -32,28 +42,25 @@ use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Status;
 
-/// How often the poller re-reads `current_seq()` to detect new entries. Matches
-/// the CLI/worker idle cadence; sub-interval latency awaits the push-based journal
-/// `watch` seam (a flagged optimization).
-const POLL_INTERVAL: Duration = Duration::from_millis(250);
+use crate::journal_signal::JournalSignal;
 
 /// Bounded per-subscriber frame queue. A consumer that lags past this is dropped
 /// with `resource_exhausted` (CatchupRequired) and resumes from its last `next_seq`.
 const SUBSCRIBER_QUEUE: usize = 256;
 
-/// The live-tail [`EventTailer`]: per subscriber, spawn a poller that emits frames
+/// The live-tail [`EventTailer`]: per subscriber, spawn a follower that emits frames
 /// as the journal advances. Held in the `kx-gateway` binary (where tokio
 /// `time`/`sync` live) so `kx-gateway-core` keeps its passive-read-fold dep wall.
 #[derive(Clone)]
 pub struct LiveTailer {
-    /// Flips to `true` on server shutdown so in-flight poll loops exit promptly,
+    /// Flips to `true` on server shutdown so in-flight follow loops exit promptly,
     /// their streams end, and tonic's graceful drain completes — a live stream
     /// otherwise keeps its RPC in-flight forever and would deadlock shutdown.
     shutdown: watch::Receiver<bool>,
 }
 
 impl LiveTailer {
-    /// Build a live tailer whose poll loops stop when `shutdown` flips to `true`.
+    /// Build a live tailer whose follow loops stop when `shutdown` flips to `true`.
     #[must_use]
     pub fn new(shutdown: watch::Receiver<bool>) -> Self {
         Self { shutdown }
@@ -69,22 +76,34 @@ impl EventTailer for LiveTailer {
         since_seq: u64,
     ) -> Result<EventStream, Status> {
         // Ownership is a clean PRE-stream error (uniform permission_denied), so an
-        // unauthorized caller never spawns a poller.
+        // unauthorized caller never spawns a follower.
         check_run_ownership(reader.as_ref(), instance_id).map_err(Status::from)?;
+        // Subscribe BEFORE the follower's catch-up read, which happens inside the spawned
+        // task. The order is the contract: a commit landing in between is either below
+        // the head that read observes, or announced to this subscription. Subscribing
+        // after the read would leave a window in which it is neither.
+        let signal = crate::env_caps::journal_signal(reader.as_ref());
         let (tx, rx) = mpsc::channel::<Result<proto::EventFrame, Status>>(SUBSCRIBER_QUEUE);
-        tokio::spawn(poll_loop(reader, since_seq, tx, self.shutdown.clone()));
+        tokio::spawn(follow_loop(
+            reader,
+            since_seq,
+            tx,
+            self.shutdown.clone(),
+            signal,
+        ));
         Ok(Box::pin(ReceiverStream::new(rx)))
     }
 }
 
-/// The per-subscriber poll loop: catch up to head, then emit on each advance until
+/// The per-subscriber follow loop: catch up to head, then emit on each advance until
 /// the client disconnects, a read fails, the consumer falls too far behind, or the
 /// server shuts down.
-async fn poll_loop(
+async fn follow_loop(
     reader: Arc<dyn JournalReader>,
     since_seq: u64,
     tx: mpsc::Sender<Result<proto::EventFrame, Status>>,
     mut shutdown: watch::Receiver<bool>,
+    mut signal: JournalSignal,
 ) {
     // Subscribed during shutdown (or the sender already dropped): stop immediately.
     if *shutdown.borrow() {
@@ -104,16 +123,18 @@ async fn poll_loop(
     }
 
     loop {
-        // Wait for the next tick OR a client disconnect OR server shutdown (prompt
-        // cleanup, no task leak, no shutdown deadlock).
+        // Wait for the journal to advance OR a client disconnect OR server shutdown
+        // (prompt cleanup, no task leak, no shutdown deadlock).
         tokio::select! {
-            () = tokio::time::sleep(POLL_INTERVAL) => {}
+            () = signal.changed() => {}
             () = tx.closed() => return,
             _ = shutdown.changed() => return,
         }
         let Some(head) = read_head(&reader, &tx).await else {
             return;
         };
+        // The `head > cursor` guard stays, and still earns its keep: a wakeup is a hint
+        // that something changed, not a promise that THIS subscriber is owed a frame.
         if head > cursor && !emit_range(&reader, &mut cursor, head, &tx).await {
             return;
         }
@@ -121,7 +142,7 @@ async fn poll_loop(
 }
 
 /// Read the journal head; on error, signal it (best-effort) and return `None`.
-/// Generic over the frame type so both the per-run and the global poll loops
+/// Generic over the frame type so both the per-run and the global follow loops
 /// share it.
 async fn read_head<F>(
     reader: &Arc<dyn JournalReader>,
@@ -137,7 +158,7 @@ async fn read_head<F>(
 }
 
 /// The Batch C live GLOBAL tailer — the [`LiveTailer`] twin behind
-/// `StreamAllEvents` (and the WS `/events/all` channel). Same poll cadence,
+/// `StreamAllEvents` (and the WS `/events/all` channel). Same journal signal,
 /// bounded per-subscriber queue, CatchupRequired overflow, and shutdown
 /// discipline; two deliberate differences: NO ownership gate (operator-global —
 /// the host auth interceptor is the gate; cloud must party-scope or deny, the
@@ -150,7 +171,7 @@ pub struct GlobalLiveTailer {
 }
 
 impl GlobalLiveTailer {
-    /// Build a global live tailer whose poll loops stop when `shutdown` flips
+    /// Build a global live tailer whose follow loops stop when `shutdown` flips
     /// to `true`.
     #[must_use]
     pub fn new(shutdown: watch::Receiver<bool>) -> Self {
@@ -166,22 +187,35 @@ impl GlobalEventTailer for GlobalLiveTailer {
         since_seq: u64,
     ) -> Result<GlobalEventStream, Status> {
         // Seed the attribution watermark as a clean PRE-stream error: a reader
-        // failure surfaces as `internal` before any poller spawns.
+        // failure surfaces as `internal` before any follower spawns.
         let cursor = seed_global_cursor(reader.as_ref(), since_seq).map_err(Status::from)?;
+        // See `LiveTailer::stream`: subscribe before the follower's catch-up read.
+        let signal = crate::env_caps::journal_signal(reader.as_ref());
         let (tx, rx) = mpsc::channel::<Result<proto::GlobalEventFrame, Status>>(SUBSCRIBER_QUEUE);
-        tokio::spawn(global_poll_loop(reader, cursor, tx, self.shutdown.clone()));
+        tokio::spawn(global_follow_loop(
+            reader,
+            cursor,
+            tx,
+            self.shutdown.clone(),
+            signal,
+        ));
         Ok(Box::pin(ReceiverStream::new(rx)))
     }
 }
 
-/// The global per-subscriber poll loop — the [`poll_loop`] twin over the
+/// The global per-subscriber follow loop — the [`follow_loop`] twin over the
 /// stateful [`GlobalCursor`]. Same lifecycle: catch up, then emit on each
 /// advance until disconnect / read failure / overflow / shutdown.
-async fn global_poll_loop(
+///
+/// The two-field cursor (seq advanced per delivered frame, run-attribution watermark
+/// adopted only after a whole range lands) is **untouched** by the move off the timer.
+/// Only what the loop waits on changed; what it does on waking did not.
+async fn global_follow_loop(
     reader: Arc<dyn JournalReader>,
     mut cursor: GlobalCursor,
     tx: mpsc::Sender<Result<proto::GlobalEventFrame, Status>>,
     mut shutdown: watch::Receiver<bool>,
+    mut signal: JournalSignal,
 ) {
     if *shutdown.borrow() {
         return;
@@ -195,7 +229,7 @@ async fn global_poll_loop(
 
     loop {
         tokio::select! {
-            () = tokio::time::sleep(POLL_INTERVAL) => {}
+            () = signal.changed() => {}
             () = tx.closed() => return,
             _ = shutdown.changed() => return,
         }
@@ -339,7 +373,7 @@ mod tests {
         let head = reader.current_seq().unwrap();
 
         // Capacity 1: the first frame fills the queue, the second overflows.
-        // The emit runs in its OWN task (the production shape — the poller and
+        // The emit runs in its OWN task (the production shape — the follower and
         // the consumer are concurrent): the terminal-error `send().await` only
         // completes once the consumer drains the buffered frame.
         let (tx, mut rx) = mpsc::channel::<Result<proto::GlobalEventFrame, Status>>(1);
@@ -373,6 +407,138 @@ mod tests {
         assert_eq!(
             total, head,
             "delivered + resumed = every delta exactly once"
+        );
+    }
+
+    /// A [`JournalReader`] that counts how many times it is asked for the head.
+    ///
+    /// The whole point of this change is a number that must read **zero** for an idle
+    /// follower, and could never read zero while it polled.
+    struct CountingReader {
+        inner: ReadOnly<InMemoryJournal>,
+        head_reads: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl JournalReader for CountingReader {
+        fn read_entries_by_seq(
+            &self,
+            range: std::ops::Range<u64>,
+        ) -> Result<Box<dyn Iterator<Item = JournalEntry> + '_>, kx_journal::JournalError> {
+            self.inner.read_entries_by_seq(range)
+        }
+
+        fn current_seq(&self) -> Result<u64, kx_journal::JournalError> {
+            self.head_reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.current_seq()
+        }
+
+        fn subscribe(&self) -> kx_journal::JournalSubscription {
+            self.inner.subscribe()
+        }
+    }
+
+    /// **An idle follower must not touch the journal at all.**
+    ///
+    /// This is the A/B observable for the whole change, chosen because its null value is
+    /// structurally impossible under the fix. "Frames still arrive" would read identically
+    /// with polling or with a subscription and would prove nothing. "Latency improved" is a
+    /// distribution, so a lucky sample proves nothing either. A *count of reads while
+    /// nothing is happening* can only be zero if nothing polls.
+    ///
+    /// The magnitude is what makes it a signal rather than a threshold: over this window a
+    /// 250 ms poll performs `IDLE_WINDOW / 250ms` reads, so the assertion is `== 0` against
+    /// an expectation of eight — not a tuned bound that could drift into passing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_idle_follower_never_reads_the_journal() {
+        const IDLE_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+
+        let journal = InMemoryJournal::new();
+        journal
+            .append(JournalEntry::RunRegistered {
+                instance_id: [7; INSTANCE_ID_LEN],
+                recipe_fingerprint: [8; 32],
+                ts: 1,
+                seq: 0,
+            })
+            .unwrap();
+
+        let head_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let reader: Arc<dyn JournalReader> = Arc::new(CountingReader {
+            inner: ReadOnly::new(journal),
+            head_reads: head_reads.clone(),
+        });
+
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (tx, mut rx) = mpsc::channel::<Result<proto::EventFrame, Status>>(SUBSCRIBER_QUEUE);
+        let signal = JournalSignal::Watch(reader.subscribe());
+        let follower = tokio::spawn(follow_loop(reader, 0, tx, shutdown_rx, signal));
+
+        // Drain the catch-up frame, then count only what happens after it. The catch-up
+        // read is legitimate and is not what this test is about.
+        let _catch_up = rx.recv().await.unwrap().unwrap();
+        head_reads.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        tokio::time::sleep(IDLE_WINDOW).await;
+
+        let observed = head_reads.load(std::sync::atomic::Ordering::SeqCst);
+        follower.abort();
+        assert_eq!(
+            observed,
+            0,
+            "an idle follower read the journal head {observed} time(s) in {IDLE_WINDOW:?}; \
+             the 250 ms poll this replaced would have read it {} times",
+            IDLE_WINDOW.as_millis() / 250
+        );
+    }
+
+    /// The converse, so the guard above is a measurement rather than a tautology: under
+    /// `JournalSignal::Poll` — the legacy mode `KX_SERVE_JOURNAL_WATCH=off` selects — the
+    /// same idle follower reads the head repeatedly.
+    ///
+    /// Without this, `== 0` could be passing because the follower is broken, or wired to
+    /// nothing, or never spawned. Pinning both arms of the same code path is what turns
+    /// the number into evidence, and it is also the proof that the operator rollback
+    /// actually restores the old behaviour rather than merely claiming to.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_legacy_poll_mode_still_reads_the_journal_while_idle() {
+        const IDLE_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+
+        let journal = InMemoryJournal::new();
+        journal
+            .append(JournalEntry::RunRegistered {
+                instance_id: [7; INSTANCE_ID_LEN],
+                recipe_fingerprint: [8; 32],
+                ts: 1,
+                seq: 0,
+            })
+            .unwrap();
+
+        let head_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let reader: Arc<dyn JournalReader> = Arc::new(CountingReader {
+            inner: ReadOnly::new(journal),
+            head_reads: head_reads.clone(),
+        });
+
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (tx, mut rx) = mpsc::channel::<Result<proto::EventFrame, Status>>(SUBSCRIBER_QUEUE);
+        let signal = JournalSignal::Poll(crate::journal_signal::LEGACY_POLL_INTERVAL);
+        let follower = tokio::spawn(follow_loop(reader, 0, tx, shutdown_rx, signal));
+
+        let _catch_up = rx.recv().await.unwrap().unwrap();
+        head_reads.store(0, std::sync::atomic::Ordering::SeqCst);
+
+        tokio::time::sleep(IDLE_WINDOW).await;
+
+        let observed = head_reads.load(std::sync::atomic::Ordering::SeqCst);
+        follower.abort();
+        // A loose floor, not a count: this exists to prove the two modes DIFFER, and a
+        // tight number here would be a scheduler-timing flake with nothing to say.
+        assert!(
+            observed >= 2,
+            "the legacy poll mode read the journal head only {observed} time(s) in \
+             {IDLE_WINDOW:?} — it is not polling, so the zero measured in the default \
+             mode is not evidence of anything"
         );
     }
 }

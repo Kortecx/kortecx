@@ -70,6 +70,25 @@ kx events --all --kind committed,failed --json > feed.ndjson
 kx events --all --kind failed --follow
 ```
 
+### How live the live feed is
+
+Everything inside the serve that follows the journal — both event streams and the
+capture, telemetry, alerts and metrics folds — **subscribes** to it. A commit wakes them
+directly, so a `--follow` tail shows an event as soon as the frame can be built, and a
+serve with nothing happening does not read its journal at all.
+
+Delivery does not depend on that. Each follower tracks its own cursor and reads the
+contiguous range it is owed, so notifications may coalesce without anything being missed
+or repeated; the subscription decides *when* to read, never *what* was written.
+
+```bash
+# restore the previous behaviour (a 250 ms poll) — an escape hatch, not a tuning knob:
+KX_SERVE_JOURNAL_WATCH=off kx serve
+```
+
+Client-side waiting (`--wait`, the SDK `wait_*` helpers) still polls: that is a separate
+seam, over the wire rather than inside the serve.
+
 ### Per-mote telemetry
 
 `ListMoteTelemetry` is the host-measured execution exhaust — wall-clock, model and

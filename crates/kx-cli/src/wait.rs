@@ -6,6 +6,13 @@
 //! used; it is forward-compatible with R5's live events (the poll loop becomes a
 //! subscription, the [`WaitOutcome`] is unchanged).
 //!
+//! **This poll is still a poll, and deliberately so.** The serve's own journal followers
+//! now subscribe rather than poll, but that is a seam *inside* the server: it changed how
+//! `StreamEvents` learns the journal advanced, not how a client learns a run finished.
+//! Turning the loop below into a subscription means pushing run-completion over the wire,
+//! which is a protocol change and its own piece of work. Until then the server-side
+//! improvement shows up here only as fresher data per poll, not as fewer polls.
+//!
 //! Two entry points: [`await_result`] targets a specific `terminal_mote_id` (the
 //! `invoke` path, which gets one from `InvokeResponse`); [`await_any_result`]
 //! waits for the first committed Mote in a run (the `submit` path, whose
