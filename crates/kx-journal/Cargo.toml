@@ -20,12 +20,19 @@ rusqlite   = { workspace = true }
 serde      = { workspace = true }
 smallvec   = { workspace = true }
 thiserror  = { workspace = true }
+# `sync` ONLY, with tokio's defaults off: this pulls the `watch` primitive behind the
+# change-notification seam and nothing else — no reactor, no timer, no threads, no
+# executor. The spine stays a synchronous crate; only its notification is awaitable.
+tokio      = { version = "1", default-features = false, features = ["sync"] }
 tracing    = { workspace = true }
 
 [dev-dependencies]
 tempfile           = { workspace = true }
 tracing-subscriber = { workspace = true }
 proptest           = { workspace = true }
+# A runtime + timers for the subscription tests and doctests only. The library itself
+# needs neither — `time` is here so a broken seam fails on a deadline instead of hanging.
+tokio              = { workspace = true, features = ["time"] }
 
 [lints]
 workspace = true

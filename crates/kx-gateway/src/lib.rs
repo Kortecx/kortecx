@@ -131,6 +131,9 @@ mod error;
 // product signal, never journaled), off-journal, off-digest. Like uploads, no
 // executor wrapper — always-on, FFI-free (rusqlite already in the closure).
 mod feedback;
+// How every follower in the serve waits for the journal to advance — a subscription by
+// default, the legacy 250 ms timer under `KX_SERVE_JOURNAL_WATCH=off`.
+mod journal_signal;
 mod live_tail;
 // W1a (T-OBS2): the always-available Prometheus `/metrics` listener (opt-in via
 // `--metrics-listen`). FFI-free (hyper http1 only); not feature-gated.

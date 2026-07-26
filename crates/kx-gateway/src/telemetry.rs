@@ -650,12 +650,14 @@ mod tests {
     /// read-only seam deliberately exposes no write surface).
     struct GrowableReader {
         entries: std::sync::RwLock<Vec<JournalEntry>>,
+        watch: std::sync::Arc<kx_journal::JournalWatch>,
     }
 
     impl GrowableReader {
         fn new() -> Self {
             Self {
                 entries: std::sync::RwLock::new(Vec::new()),
+                watch: kx_journal::JournalWatch::new(),
             }
         }
 
@@ -666,6 +668,10 @@ mod tests {
                 _ => {}
             }
             self.entries.write().unwrap().push(entry);
+            // This double GROWS, so it announces — same contract as a real backend. A
+            // fixture that mutated silently would be a subscription seam that only ever
+            // works in production, which is the wrong way round.
+            self.watch.publish(seq);
         }
     }
 
@@ -694,6 +700,10 @@ mod tests {
                 .map(JournalEntry::seq)
                 .max()
                 .unwrap_or(0))
+        }
+
+        fn subscribe(&self) -> kx_journal::JournalSubscription {
+            self.watch.subscribe()
         }
     }
 

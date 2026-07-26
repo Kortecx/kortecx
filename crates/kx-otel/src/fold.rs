@@ -136,6 +136,20 @@ mod tests {
     /// from journal append/dedup/ordering rules.
     struct MockReader {
         entries: Vec<(u64, JournalEntry)>,
+        /// Held so [`JournalReader::subscribe`] hands back a live subscription rather
+        /// than one whose sender has already dropped. It never publishes, and that is
+        /// accurate: this reader's entry list is fixed at construction, so "the journal
+        /// never advances" is the truth about it, not a stub.
+        watch: std::sync::Arc<kx_journal::JournalWatch>,
+    }
+
+    impl MockReader {
+        fn new(entries: Vec<(u64, JournalEntry)>) -> Self {
+            Self {
+                entries,
+                watch: kx_journal::JournalWatch::new(),
+            }
+        }
     }
 
     impl JournalReader for MockReader {
@@ -154,6 +168,10 @@ mod tests {
 
         fn current_seq(&self) -> Result<u64, JournalError> {
             Ok(self.entries.iter().map(|(s, _)| *s).max().unwrap_or(0))
+        }
+
+        fn subscribe(&self) -> kx_journal::JournalSubscription {
+            self.watch.subscribe()
         }
     }
 
@@ -191,15 +209,13 @@ mod tests {
 
     #[test]
     fn folds_red_counters_from_a_fixed_journal() {
-        let reader = MockReader {
-            entries: vec![
-                (1, run_registered(1)),
-                (2, committed(2)),
-                (3, committed(3)),
-                (4, failed(4, FailureReason::TimedOut)),
-                (5, failed(5, FailureReason::DeadLettered)),
-            ],
-        };
+        let reader = MockReader::new(vec![
+            (1, run_registered(1)),
+            (2, committed(2)),
+            (3, committed(3)),
+            (4, failed(4, FailureReason::TimedOut)),
+            (5, failed(5, FailureReason::DeadLettered)),
+        ]);
         let mut state = MetricsState::new();
         state.fold_from(&reader).unwrap();
 
@@ -223,25 +239,17 @@ mod tests {
     fn fold_is_incremental_and_idempotent() {
         let mut entries = vec![(1, run_registered(1)), (2, committed(2))];
         let mut state = MetricsState::new();
-        state
-            .fold_from(&MockReader {
-                entries: entries.clone(),
-            })
-            .unwrap();
+        state.fold_from(&MockReader::new(entries.clone())).unwrap();
         assert_eq!(state.committed, 1);
         assert_eq!(state.last_seq, 2);
 
         // Re-folding the SAME journal adds nothing (idempotent).
-        state
-            .fold_from(&MockReader {
-                entries: entries.clone(),
-            })
-            .unwrap();
+        state.fold_from(&MockReader::new(entries.clone())).unwrap();
         assert_eq!(state.committed, 1, "re-fold must not double-count");
 
         // Append a new commit; only the new tail is folded.
         entries.push((3, committed(3)));
-        state.fold_from(&MockReader { entries }).unwrap();
+        state.fold_from(&MockReader::new(entries)).unwrap();
         assert_eq!(state.committed, 2);
         assert_eq!(state.last_seq, 3);
     }
@@ -250,7 +258,7 @@ mod tests {
     fn empty_journal_is_all_zero() {
         let state = {
             let mut s = MetricsState::new();
-            s.fold_from(&MockReader { entries: vec![] }).unwrap();
+            s.fold_from(&MockReader::new(vec![])).unwrap();
             s
         };
         assert_eq!(state, MetricsState::default());
@@ -279,7 +287,7 @@ mod tests {
             };
             entries.push((seq, e));
         }
-        let reader = MockReader { entries };
+        let reader = MockReader::new(entries);
 
         let t0 = Instant::now();
         let mut state = MetricsState::new();

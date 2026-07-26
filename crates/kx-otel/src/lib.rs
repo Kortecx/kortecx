@@ -112,7 +112,9 @@ mod tests {
 
     use super::*;
 
-    struct EmptyReader;
+    /// The `watch` is held so `subscribe` returns a live subscription; it never
+    /// publishes, which is the literal truth about a reader that is always empty.
+    struct EmptyReader(std::sync::Arc<kx_journal::JournalWatch>);
     impl JournalReader for EmptyReader {
         fn read_entries_by_seq(
             &self,
@@ -123,11 +125,17 @@ mod tests {
         fn current_seq(&self) -> Result<u64, JournalError> {
             Ok(0)
         }
+        fn subscribe(&self) -> kx_journal::JournalSubscription {
+            self.0.subscribe()
+        }
     }
 
     #[test]
     fn handle_renders_empty_state() {
-        let handle = MetricsHandle::new(Arc::new(EmptyReader), BuildInfo { version: "0.0.0" });
+        let handle = MetricsHandle::new(
+            Arc::new(EmptyReader(kx_journal::JournalWatch::new())),
+            BuildInfo { version: "0.0.0" },
+        );
         handle.refresh().unwrap();
         let body = handle.render(None);
         assert!(body.contains("kortecx_up 1"));

@@ -6,6 +6,22 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ## [Unreleased]
 
+### Changed
+
+- **The journal announces its own commits, and nothing inside the serve polls it any
+  more.** `kx-journal` gains a change-notification seam (`WatchableJournal`,
+  `JournalSubscription`); the two event streams and the capture, telemetry, alerts and
+  metrics folds all subscribe instead of re-reading `current_seq()` every 250 ms. An idle
+  serve now performs **zero** journal reads where it previously performed sixteen a
+  second, and commit→frame delivery drops from a quarter-second-quantized wait to
+  single-digit milliseconds. Delivery is unchanged and remains exactly-once: each
+  follower keeps its own cursor and reads the contiguous range it is owed, so a
+  notification decides when to read, never what was written. Watches are keyed by journal
+  *file*, so the serve's writer handle and read handle share one. Client-side waiting
+  (`--wait`, the SDK helpers) is a separate, over-the-wire seam and still polls.
+  `KX_SERVE_JOURNAL_WATCH=off` restores the previous 250 ms cadence. (kx-journal,
+  kx-gateway)
+
 ## [0.2.0-rc.1] — 2026-07-25
 
 The first release candidate. Everything below has accumulated since 0.1.1: **Apps** — the

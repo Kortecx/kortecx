@@ -11,7 +11,7 @@
 //! or a future replicated backend in any deployment.
 
 use std::ops::Range;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use kx_content::ContentRef;
 use kx_mote::{MoteDefHash, MoteId};
@@ -19,6 +19,7 @@ use kx_mote::{MoteDefHash, MoteId};
 use crate::entry::{
     repudiation_idempotency_key, JournalEntry, KIND_COMMITTED, KIND_EFFECT_STAGED, KIND_REPUDIATED,
 };
+use crate::watch::{JournalSubscription, JournalWatch, WatchableJournal};
 use crate::{Journal, JournalError};
 
 #[derive(Default)]
@@ -45,6 +46,9 @@ struct State {
 #[derive(Default)]
 pub struct InMemoryJournal {
     state: RwLock<State>,
+    /// Private to this journal: an in-memory database has no path to share, so there is
+    /// no second handle onto it that could need the same watch.
+    watch: Arc<JournalWatch>,
 }
 
 impl std::fmt::Debug for InMemoryJournal {
@@ -101,6 +105,10 @@ impl Journal for InMemoryJournal {
         set_seq(&mut entry, next_seq);
 
         state.entries.push(entry.clone());
+        // Release the write lock BEFORE announcing, so a subscriber woken on another
+        // thread can take the read lock immediately instead of blocking on this writer.
+        drop(state);
+        self.watch.publish(next_seq);
         Ok(entry)
     }
 
@@ -151,6 +159,12 @@ impl Journal for InMemoryJournal {
 
         state.entries.extend(staged);
         state.next_seq = next_seq;
+        // Same two rules as the SQLite batch path: release the lock first, then announce
+        // the batch's HIGHEST seq. `next_seq` is exactly that — it is the last value the
+        // loop assigned, and a dedupe hit consumed none — so entries in the middle of the
+        // batch are covered by the one wakeup rather than stranded until the next write.
+        drop(state);
+        self.watch.publish(next_seq);
         Ok(durable)
     }
 
@@ -220,6 +234,12 @@ impl Journal for InMemoryJournal {
     fn count_entries(&self) -> Result<u64, JournalError> {
         let state = self.state.read().expect("poisoned lock");
         Ok(state.entries.len() as u64)
+    }
+}
+
+impl WatchableJournal for InMemoryJournal {
+    fn subscribe(&self) -> JournalSubscription {
+        self.watch.subscribe()
     }
 }
 

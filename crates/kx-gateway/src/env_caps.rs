@@ -15,6 +15,8 @@
 //! executor's `inference_params_from_mote` still clamps; the env only moves the
 //! seeded ceiling, it cannot bypass downstream enforcement.
 
+use crate::journal_signal::{JournalSignal, LEGACY_POLL_INTERVAL};
+
 /// Default F-7 serve-context window. Used only on the inference serve path
 /// (`window_bytes` + the `assemble_serve` overflow test), so it is gated to match.
 #[cfg(feature = "serve-engine")]
@@ -195,6 +197,25 @@ pub(crate) fn resolve_effect_concurrency() -> usize {
         1,
         MAX_EFFECT_CONCURRENCY,
     )
+}
+
+/// Build the wait primitive every journal follower in the serve uses.
+///
+/// Default: a subscription on `reader`, so a follower wakes on a commit and an idle serve
+/// reads the journal not at all. `KX_SERVE_JOURNAL_WATCH=off` restores the legacy 250 ms
+/// timer — see [`crate::journal_signal`] for why that mode is kept and why it cannot mask
+/// a broken subscription.
+///
+/// Only the exact string `off` selects the legacy path. Anything else — unset, empty,
+/// misspelled, `0`, `false` — is the default, which is the safe direction for a knob whose
+/// wrong setting is merely slower rather than incorrect. (Deliberately unlike
+/// [`parse_cap`]'s numeric knobs, where a value out of range has a meaningful clamp.)
+pub(crate) fn journal_signal(reader: &dyn kx_gateway_core::JournalReader) -> JournalSignal {
+    if std::env::var("KX_SERVE_JOURNAL_WATCH").is_ok_and(|v| v.trim().eq_ignore_ascii_case("off")) {
+        JournalSignal::Poll(LEGACY_POLL_INTERVAL)
+    } else {
+        JournalSignal::Watch(reader.subscribe())
+    }
 }
 
 /// Resolve the embedded-worker POOL size. Precedence: the `--workers` flag

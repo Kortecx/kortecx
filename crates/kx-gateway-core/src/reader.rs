@@ -7,7 +7,7 @@
 use std::ops::Range;
 
 use kx_content::{ContentRef, ContentStore};
-use kx_journal::{Journal, JournalEntry, JournalError};
+use kx_journal::{Journal, JournalEntry, JournalError, JournalSubscription, WatchableJournal};
 
 /// The read-only subset of a journal a read-fold backend may touch. Deliberately
 /// has no `append`/`append_batch` — gateway-core cannot name a write.
@@ -21,6 +21,16 @@ pub trait JournalReader: Send + Sync {
 
     /// The largest `seq` written so far (`0` for an empty journal).
     fn current_seq(&self) -> Result<u64, JournalError>;
+
+    /// A subscription that wakes whenever the journal advances. Mirrors
+    /// [`WatchableJournal::subscribe`], and is the reason a live surface can follow the
+    /// log without re-reading [`current_seq`](JournalReader::current_seq) on a timer.
+    ///
+    /// Required rather than defaulted **on purpose**: a default that returned a
+    /// never-firing subscription would compile everywhere and hang every follower, and
+    /// this trait's implementors include test doubles, which are exactly the place such a
+    /// default would go unnoticed.
+    fn subscribe(&self) -> JournalSubscription;
 }
 
 /// Wraps any [`Journal`] and exposes **only** its read methods. The inner
@@ -34,7 +44,7 @@ impl<J: Journal> ReadOnly<J> {
     }
 }
 
-impl<J: Journal + Send + Sync> JournalReader for ReadOnly<J> {
+impl<J: Journal + WatchableJournal + Send + Sync> JournalReader for ReadOnly<J> {
     fn read_entries_by_seq(
         &self,
         range: Range<u64>,
@@ -44,6 +54,10 @@ impl<J: Journal + Send + Sync> JournalReader for ReadOnly<J> {
 
     fn current_seq(&self) -> Result<u64, JournalError> {
         self.0.current_seq()
+    }
+
+    fn subscribe(&self) -> JournalSubscription {
+        self.0.subscribe()
     }
 }
 
