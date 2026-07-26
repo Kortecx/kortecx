@@ -10815,7 +10815,7 @@ export const KxGateway: GenService<{
    * via the broker); List/Discover/Test/Deregister govern the connections. The
    * live untrusted-egress surface: admission + dial-time SSRF vetting,
    * per-server rate-limit, warrant-gated egress, secret-less CredentialRef.
-   * server-derived connection/tool ids; client tool_grants stay refused.
+   * Server-derived connection/tool ids; client tool_grants stay refused.
    * OAuth/device-flow + a hosted credential marketplace are CLOUD.
    *
    * @generated from rpc kortecx.v1.KxGateway.RegisterMcpServer
