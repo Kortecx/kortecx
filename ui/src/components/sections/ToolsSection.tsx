@@ -151,8 +151,8 @@ function ToolsTabBody() {
 
       <h2>Discovery &amp; preview</h2>
       <p className="muted">
-        Advisory by construction: ranking scores and dry-run verdicts are display-only — they
-        never authorize a tool.
+        Advisory by construction: ranking scores and dry-run verdicts are display-only — they never
+        authorize a tool.
       </p>
 
       {manifests.isLoading ? <EmptyState title="Loading tools…" /> : null}

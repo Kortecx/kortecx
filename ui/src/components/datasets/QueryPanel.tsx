@@ -180,8 +180,8 @@ export function QueryPanel({ dataset }: { dataset: string | null }) {
 
       {mode === "discover" ? (
         <p className="muted dataset-discover-note">
-          Advisory discovery — returns content-addressed refs + a display-only score. Resolve
-          bytes by the exact ref via the SDK.
+          Advisory discovery — returns content-addressed refs + a display-only score. Resolve bytes
+          by the exact ref via the SDK.
         </p>
       ) : null}
 
