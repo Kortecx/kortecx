@@ -99,6 +99,7 @@ mod service;
 mod skills_view;
 mod submit;
 mod telemetry_view;
+mod script_admin;
 mod tool_registry_admin;
 mod toolscout_view;
 mod trigger_admin;
@@ -195,6 +196,10 @@ pub use submit::{
     RunSubmitter, SubmitMoteOutcome, SubmitStatus, SubmitterError, TonicCoordinatorSubmitter,
 };
 pub use telemetry_view::{ModelTokenRollup, MoteTelemetryEntry, TelemetrySummary, TelemetryView};
+pub use script_admin::{
+    RegisteredScriptEntry, ScriptAdmin, ScriptAdminError, ScriptEnvWire, ScriptMountWire,
+    ScriptRegistration,
+};
 pub use tool_registry_admin::{
     RegisteredToolEntry, ToolAdminError, ToolParamWire, ToolRegistration, ToolRegistryAdmin,
     ToolSchemaWire,

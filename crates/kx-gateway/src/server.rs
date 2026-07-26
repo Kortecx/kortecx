@@ -701,6 +701,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             "no sandbox script shim found; scripts will not register on this serve"
         );
     }
+    let script_admin = Arc::new(crate::scripts::HostScriptRegistry::new(
+        tool_registry.clone(),
+        (*content).clone(),
+        local_broker.clone(),
+        script_shim_ref,
+        default_executor_class(),
+    ));
+    // The registry is durable; the broker is not. Without this a restarted serve
+    // would resolve a previously registered script and then fail at dispatch with
+    // an unknown capability — a row that reads as live and is not.
+    script_admin.rehydrate();
     // PR-2d-2 (react-tools-live): register the bundled deterministic stdio tool's
     // capability — the live ReAct loop's "Act" step — when its binary is present
     // AND a fit serve model resolved (no model ⇒ no react chain can drive it).
@@ -1771,6 +1782,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             tool_registry.clone(),
             crate::tools::tool_host_allowlist(),
         )))
+        // Scripts share the tool registry, the content store and the live broker,
+        // so one registered over the RPC is immediately fireable by the running
+        // loop rather than after a restart.
+        .with_script_admin(script_admin.clone())
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
         .with_server_info(server_info_facts)

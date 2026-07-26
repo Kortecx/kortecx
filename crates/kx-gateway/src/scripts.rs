@@ -57,16 +57,19 @@ use kx_mote::{
     EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, NdClass,
     PromptTemplateHash, ToolName, ToolVersion, MOTE_DEF_SCHEMA_VERSION,
 };
+use kx_gateway_core::{RegisteredScriptEntry, ScriptAdmin, ScriptAdminError, ScriptRegistration};
 use kx_script_runner::{hex32, result_ref_bytes, ScriptDescriptor};
 use kx_tool_registry::{
     IdempotencyClass, InputSchema, ParamSpec, ParamType, RegistrationError, SqliteToolRegistry,
-    ToolDef, ToolKind, ToolProvenance,
+    ToolDef, ToolKind, ToolProvenance, ToolRegistry,
 };
 use kx_warrant::{
     ExecutorClass, FsMode, FsScope, Host, ModelRoute, MoteClass, NetScope, ResourceCeiling,
     SecretScope, ToolRequirement, WarrantSpec,
 };
-use serde::Deserialize;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 use crate::real_exec::{bundled_binary_path, run_script_body, ScriptPlumbing};
 
@@ -650,11 +653,23 @@ pub fn register_script<S: ContentStore + Send + Sync>(
         ))?;
     let interpreter_read_roots = Interpreter::read_roots(&interpreter_path);
 
-    let script_ref = store
+    let source_ref = store
         .put(&decl.source)
         .map_err(|e| ScriptAdmissionError::Storage(e.to_string()))?;
+    // The registry row points at the RECORD, which pins the source by ref along
+    // with the interpreter and fixed arguments. See `ScriptRecord`.
+    let record = ScriptRecord {
+        interpreter: decl.interpreter.as_str().to_string(),
+        source_ref: *source_ref.as_bytes(),
+        argv: decl.argv.clone(),
+        env: decl.env.clone(),
+        max_output_bytes: decl.wish.output_cap(),
+    };
+    let record_ref = store
+        .put(&record.encode()?)
+        .map_err(|e| ScriptAdmissionError::Storage(e.to_string()))?;
 
-    let def = script_tool_def(decl, script_ref);
+    let def = script_tool_def(decl, record_ref);
     // Always `HumanAuthored`: a script arrives through an operator-facing RPC, and
     // nothing on this path may self-assert `SelfGenerated` to launder lineage past
     // the review a generated tool owes.
@@ -669,7 +684,7 @@ pub fn register_script<S: ContentStore + Send + Sync>(
     broker.register_capability(Box::new(ScriptCapability {
         name: decl.name.clone(),
         version: decl.version.clone(),
-        script_ref,
+        script_ref: source_ref,
         shim_ref,
         interpreter_path,
         interpreter_read_roots,
@@ -686,7 +701,7 @@ pub fn register_script<S: ContentStore + Send + Sync>(
         interpreter = decl.interpreter.as_str(),
         "script registered (sandboxed; authority decided per call against the caller's warrant)"
     );
-    Ok(script_ref)
+    Ok(source_ref)
 }
 
 /// The accepted interpreter tokens, for an admission error's `allowed` list.
@@ -696,4 +711,414 @@ pub fn allowed_interpreters() -> String {
         .map(|i| i.as_str())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+
+// ---------------------------------------------------------------------------
+// the durable record
+// ---------------------------------------------------------------------------
+
+/// What the registry row points at: everything needed to reconstruct a script's
+/// capability, with the source itself pinned by reference.
+///
+/// The registry has columns for a tool, not for a script — no interpreter, no
+/// argv, no output cap. Rather than smuggle those into a text field, the row's
+/// content ref names THIS record, and the record names the source. So the
+/// registry still pins the exact thing that will run, and now pins the
+/// interpreter and fixed arguments too: changing any of them is a different
+/// record, a different ref, and therefore a different registration.
+///
+/// It also makes a script survive a restart. The broker is in-memory; the
+/// registry is durable. Without a record the runtime could read back a row it
+/// had no way to make fireable again, and the tool would resolve and then fail
+/// at dispatch with nothing to explain it. [`rehydrate`] walks these records at
+/// startup and re-registers each capability.
+#[derive(Serialize, Deserialize)]
+struct ScriptRecord {
+    interpreter: String,
+    source_ref: [u8; 32],
+    argv: Vec<String>,
+    env: Vec<(String, String)>,
+    max_output_bytes: u64,
+}
+
+impl ScriptRecord {
+    /// Canonical JSON — a pure function of the fields, so the same declaration
+    /// always lands on the same ref.
+    fn encode(&self) -> Result<Vec<u8>, ScriptAdmissionError> {
+        serde_json::to_vec(self).map_err(|e| ScriptAdmissionError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        serde_json::from_slice(bytes).ok()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// the host admin seam
+// ---------------------------------------------------------------------------
+
+/// The [`ScriptAdmin`] host impl.
+///
+/// Holds the same durable registry, content store and broker the serve path
+/// uses, so a script registered over the RPC is immediately fireable by the
+/// running loop — there is no second inventory that could disagree with the one
+/// authority is decided against.
+pub struct HostScriptRegistry<S: ContentStore + Send + Sync + 'static> {
+    registry: Arc<SqliteToolRegistry>,
+    store: LocalFsContentStore,
+    broker: Arc<LocalCapabilityBroker<S>>,
+    /// `None` when no sandbox shim shipped with this serve. Every registration
+    /// then refuses, rather than admitting a script the runtime could only run on
+    /// the host.
+    shim_ref: Option<ContentRef>,
+    exec_class: ExecutorClass,
+}
+
+impl<S: ContentStore + Send + Sync + 'static> HostScriptRegistry<S> {
+    /// Compose the admin over the live serve objects.
+    pub fn new(
+        registry: Arc<SqliteToolRegistry>,
+        store: LocalFsContentStore,
+        broker: Arc<LocalCapabilityBroker<S>>,
+        shim_ref: Option<ContentRef>,
+        exec_class: ExecutorClass,
+    ) -> Self {
+        Self {
+            registry,
+            store,
+            broker,
+            shim_ref,
+            exec_class,
+        }
+    }
+
+    /// Read one script's row, its record and its source. `None` when the
+    /// `(name, version)` is absent, or names a tool that is not a script —
+    /// reporting one as the other would let a caller believe it can read a
+    /// source that does not exist.
+    fn row(&self, name: &str, version: &str) -> Option<(RegisteredScriptEntry, Vec<u8>)> {
+        let def = self
+            .registry
+            .lookup(&ToolName(name.to_string()), &ToolVersion(version.to_string()))?;
+        let ToolKind::LocalScript { script_ref } = def.kind else {
+            return None;
+        };
+        let record = ScriptRecord::decode(self.store.get(&script_ref).ok()?.as_ref())?;
+        let source = self
+            .store
+            .get(&ContentRef::from_bytes(record.source_ref))
+            .ok()?
+            .as_ref()
+            .to_vec();
+        Some((entry_from(&def, &record), source))
+    }
+
+    /// Re-register every durably recorded script's capability on the broker.
+    ///
+    /// The registry survives a restart; the broker does not. Without this a
+    /// restarted serve would resolve a script's tool and then fail at dispatch
+    /// with an unknown capability — a row that looks live and is not. Each
+    /// failure is logged and skipped rather than aborting startup: one script
+    /// whose interpreter has since been uninstalled must not stop a serve.
+    pub fn rehydrate(&self) -> usize {
+        let Ok(rows) = self.registry.discover(usize::MAX, None) else {
+            return 0;
+        };
+        let mut live = 0;
+        for row in rows {
+            let ToolKind::LocalScript { script_ref } = row.def.kind else {
+                continue;
+            };
+            match self.reinstate(&row.def.tool_id, &row.def.tool_version, script_ref) {
+                Ok(()) => live += 1,
+                Err(error) => tracing::warn!(
+                    script = %row.def.tool_id.0,
+                    %error,
+                    "a recorded script could not be made fireable and was skipped"
+                ),
+            }
+        }
+        if live > 0 {
+            tracing::info!(count = live, "recorded scripts restored");
+        }
+        live
+    }
+
+    /// Rebuild one capability from its durable record.
+    fn reinstate(
+        &self,
+        name: &ToolName,
+        version: &ToolVersion,
+        script_ref: ContentRef,
+    ) -> Result<(), ScriptAdmissionError> {
+        let shim_ref = self.shim_ref.ok_or(ScriptAdmissionError::ShimUnavailable)?;
+        let bytes = self
+            .store
+            .get(&script_ref)
+            .map_err(|e| ScriptAdmissionError::Storage(e.to_string()))?;
+        let record = ScriptRecord::decode(bytes.as_ref())
+            .ok_or_else(|| ScriptAdmissionError::Storage("unreadable script record".into()))?;
+        let interpreter = Interpreter::parse(&record.interpreter).ok_or_else(|| {
+            ScriptAdmissionError::UnknownInterpreter {
+                got: record.interpreter.clone(),
+                allowed: allowed_interpreters(),
+            }
+        })?;
+        let interpreter_path = interpreter
+            .resolve()
+            .ok_or(ScriptAdmissionError::InterpreterUnavailable(
+                interpreter.as_str(),
+            ))?;
+        let def = self
+            .registry
+            .lookup(name, version)
+            .ok_or_else(|| ScriptAdmissionError::Storage("row vanished".into()))?;
+        self.broker.register_capability(Box::new(ScriptCapability {
+            name: name.clone(),
+            version: version.clone(),
+            script_ref: ContentRef::from_bytes(record.source_ref),
+            shim_ref,
+            interpreter_read_roots: Interpreter::read_roots(&interpreter_path),
+            interpreter_path,
+            argv: record.argv,
+            env: record.env,
+            ceiling: def.required_capability.min_resource_ceiling,
+            max_output_bytes: record.max_output_bytes,
+            exec_class: self.exec_class,
+            store: self.store.clone(),
+        }));
+        Ok(())
+    }
+}
+
+/// Project a registry row + its record into the admin seam's wire row.
+/// The wire row shows the SOURCE's ref — what an operator wants to see and
+/// diff. The record's own ref is an implementation detail of how the runtime
+/// finds it again, so it is deliberately not surfaced.
+fn entry_from(def: &ToolDef, record: &ScriptRecord) -> RegisteredScriptEntry {
+    let req = &def.required_capability;
+    RegisteredScriptEntry {
+        script_id: script_id_of(&def.tool_id, &def.tool_version),
+        script_name: def.tool_id.0.clone(),
+        script_version: def.tool_version.0.clone(),
+        interpreter: record.interpreter.clone(),
+        description: def.description.clone(),
+        source_ref_hex: hex32(&record.source_ref),
+        fs_scope_summary: summarize_fs(&req.fs_scope_required),
+        net_scope_summary: summarize_net(&req.net_scope_required),
+        wall_clock_ms: req.min_resource_ceiling.wall_clock_ms,
+        max_output_bytes: record.max_output_bytes,
+    }
+}
+
+/// Display summary of a declared filesystem wish.
+fn summarize_fs(scope: &FsScope) -> String {
+    if scope.mounts.is_empty() {
+        return "none".to_string();
+    }
+    scope
+        .mounts
+        .iter()
+        .map(|(path, mode)| {
+            let tag = match mode {
+                FsMode::ReadOnly => "ro",
+                FsMode::ReadWrite => "rw",
+                FsMode::ExecOnly => "exec",
+            };
+            format!("{tag}:{}", path.display())
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Display summary of a declared egress wish.
+fn summarize_net(scope: &NetScope) -> String {
+    match scope {
+        NetScope::None => "none".to_string(),
+        NetScope::EgressAllowlist(hosts) if hosts.is_empty() => "none".to_string(),
+        NetScope::EgressAllowlist(hosts) => format!(
+            "egress:{}",
+            hosts
+                .iter()
+                .map(|h| h.0.clone())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
+/// The 16-byte server-derived id, from the identity halves the grant key uses.
+/// Deterministic, so the same script reports the same id across restarts.
+fn script_id_of(name: &ToolName, version: &ToolVersion) -> [u8; 16] {
+    // Length-delimited so ("ab","c") and ("a","bc") cannot collide.
+    let mut seed = Vec::with_capacity(name.0.len() + version.0.len() + 16);
+    seed.extend_from_slice(b"kx-script-id");
+    seed.extend_from_slice(&(name.0.len() as u64).to_le_bytes());
+    seed.extend_from_slice(name.0.as_bytes());
+    seed.extend_from_slice(version.0.as_bytes());
+    let full = ContentRef::of(&seed);
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&full.as_bytes()[..16]);
+    id
+}
+
+impl<S: ContentStore + Send + Sync + 'static> ScriptAdmin for HostScriptRegistry<S> {
+    fn register(&self, reg: ScriptRegistration) -> Result<[u8; 16], ScriptAdminError> {
+        let interpreter = Interpreter::parse(&reg.interpreter).ok_or_else(|| {
+            ScriptAdminError::InvalidArgument(format!(
+                "unknown interpreter {:?}; this build accepts {}",
+                reg.interpreter,
+                allowed_interpreters()
+            ))
+        })?;
+        let mut fs_mounts = BTreeMap::new();
+        for mount in &reg.fs_mounts {
+            let mode = match mount.mode.as_str() {
+                "ro" => FsMode::ReadOnly,
+                "rw" => FsMode::ReadWrite,
+                "exec" => FsMode::ExecOnly,
+                other => {
+                    return Err(ScriptAdminError::InvalidArgument(format!(
+                        "unknown mount mode {other:?}; expected ro, rw or exec"
+                    )))
+                }
+            };
+            let path = PathBuf::from(&mount.path);
+            if !path.is_absolute() {
+                return Err(ScriptAdminError::InvalidArgument(format!(
+                    "mount {:?} must be an absolute path",
+                    mount.path
+                )));
+            }
+            fs_mounts.insert(path, mode);
+        }
+        let net_hosts = reg.net_hosts.iter().map(|h| Host(h.clone())).collect();
+
+        let decl = ScriptDecl {
+            name: ToolName(reg.script_name),
+            version: ToolVersion(reg.script_version),
+            interpreter,
+            source: reg.source,
+            description: reg.description,
+            // The RPC has no author field; the registration is operator-driven by
+            // construction (a client that reached this seam is an authenticated
+            // party), and nothing downstream reads it for enforcement.
+            author: "operator".to_string(),
+            argv: reg.argv,
+            env: reg
+                .env
+                .into_iter()
+                .map(|pair| (pair.key, pair.value))
+                .collect(),
+            wish: ScriptWish {
+                fs_mounts,
+                net_hosts,
+                wall_clock_ms: reg.wall_clock_ms,
+                mem_bytes: reg.mem_bytes,
+                max_output_bytes: reg.max_output_bytes,
+            },
+        };
+        let id = script_id_of(&decl.name, &decl.version);
+        register_script(
+            &decl,
+            self.shim_ref,
+            &self.store,
+            &self.registry,
+            &self.broker,
+            self.exec_class,
+        )
+        .map_err(|e| admission_status(&e))?;
+        Ok(id)
+    }
+
+    fn deregister(
+        &self,
+        script_name: &str,
+        script_version: &str,
+    ) -> Result<bool, kx_gateway_core::GatewayError> {
+        let name = ToolName(script_name.to_string());
+        let version = ToolVersion(script_version.to_string());
+        // Only a script may be deregistered here: routing a tool through the
+        // script surface would let a caller remove one by naming it as the other.
+        if !matches!(
+            self.registry.lookup(&name, &version).map(|d| d.kind),
+            Some(ToolKind::LocalScript { .. })
+        ) {
+            return Ok(false);
+        }
+        // Removing the registry row is what withdraws authority: a dispatch needs
+        // the tool in BOTH the caller's warrant grants and the Mote's contract,
+        // and neither can be minted for a tool that no longer resolves. The
+        // in-memory capability outliving the row is therefore inert.
+        self.registry
+            .deregister(&name, &version)
+            .map_err(|e| kx_gateway_core::GatewayError::Internal(e.to_string()))
+    }
+
+    fn list(
+        &self,
+        limit: usize,
+        after: Option<(String, String)>,
+    ) -> Result<(Vec<RegisteredScriptEntry>, bool), kx_gateway_core::GatewayError> {
+        let cursor = after
+            .as_ref()
+            .map(|(name, version)| (name.as_str(), version.as_str()));
+        // Ask for one more than the page so `has_more` is observed rather than
+        // guessed. Scripts are a subset of the registry, so the over-read is
+        // filtered afterwards and the page is refilled until it is full or the
+        // registry is exhausted.
+        let rows = self
+            .registry
+            .discover(usize::MAX, cursor)
+            .map_err(|e| kx_gateway_core::GatewayError::Internal(e.to_string()))?;
+        let mut out = Vec::new();
+        let mut has_more = false;
+        for row in rows {
+            let ToolKind::LocalScript { script_ref } = row.def.kind else {
+                continue;
+            };
+            if out.len() == limit {
+                has_more = true;
+                break;
+            }
+            let Ok(bytes) = self.store.get(&script_ref) else {
+                continue;
+            };
+            let Some(record) = ScriptRecord::decode(bytes.as_ref()) else {
+                continue;
+            };
+            out.push(entry_from(&row.def, &record));
+        }
+        Ok((out, has_more))
+    }
+
+    fn get(
+        &self,
+        script_name: &str,
+        script_version: &str,
+    ) -> Result<Option<(RegisteredScriptEntry, Vec<u8>)>, kx_gateway_core::GatewayError> {
+        Ok(self.row(script_name, script_version))
+    }
+}
+
+/// Map an admission refusal onto the seam's error vocabulary.
+///
+/// The split matters at the RPC edge: a bad field is the caller's to fix, while a
+/// missing shim or interpreter is the SERVE's limitation — the request was
+/// well-formed and this host simply cannot honour it, which is not something a
+/// client can correct by retrying with different arguments.
+fn admission_status(err: &ScriptAdmissionError) -> ScriptAdminError {
+    match err {
+        ScriptAdmissionError::UnknownInterpreter { .. }
+        | ScriptAdmissionError::BadSource { .. }
+        | ScriptAdmissionError::BadIdentity => ScriptAdminError::InvalidArgument(err.to_string()),
+        ScriptAdmissionError::ShimUnavailable
+        | ScriptAdmissionError::InterpreterUnavailable(_) => {
+            ScriptAdminError::Unavailable(err.to_string())
+        }
+        ScriptAdmissionError::Storage(_) | ScriptAdmissionError::Registration(_) => {
+            ScriptAdminError::Storage(err.to_string())
+        }
+    }
 }
