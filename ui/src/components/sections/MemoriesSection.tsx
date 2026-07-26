@@ -25,7 +25,7 @@ function snippet(text: string, max = 120): string {
 }
 
 /** The not-wired guidance shown when the gateway has memory disabled (UNIMPLEMENTED)
- * or lacks an embedder (FAILED_PRECONDITION). Honest, don't-fake-gaps. */
+ *  or lacks an embedder (FAILED_PRECONDITION). Honest, don't-fake-gaps. */
 function NotWired() {
   return (
     <p className="notice notice--warn" data-testid="memories-not-wired">

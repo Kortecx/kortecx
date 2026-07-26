@@ -8,7 +8,7 @@ import { NewBranchForm } from "../branches/NewBranchForm";
  * 1. **Your branches (govern/review)** — the durable inventory (`ListBranches`):
  *    every branch this party authored, its `{path → ref}` manifest, the
  *    server-derived `branchRef`, the CoW parent (if a fork), and a delete control
- * (unbinds the handle; the CAS blobs stay). Caller-scoped.
+ *    (unbinds the handle; the CAS blobs stay). Caller-scoped.
  * 2. **Author** — snapshot a confined path set (`SnapshotInto`) or create/fork a
  *    branch (`CreateBranch`). Files are read server-side from `KX_SERVE_FS_ROOT`;
  *    the host is never written (Phase-A).

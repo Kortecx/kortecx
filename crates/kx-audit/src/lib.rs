@@ -13,7 +13,7 @@
 //! - **Join keys only.** Every [`AuditEvent`] field is an ALREADY-DERIVED value —
 //!   a [`kx_mote::MoteId`] / [`kx_content::ContentRef`] hash, an
 //!   [`kx_mote::NdClass`], an integer count, or the 32-byte product digest. The
-//! sink ECHOES runtime state; it NEVER recomputes a `MoteId`. It records
+//!   sink ECHOES runtime state; it NEVER recomputes a `MoteId`. It records
 //!   **no payload bytes, no model output, no warrant secrets** — only the hashes
 //!   that join back to truth.
 //! - **Operational telemetry, not the source of truth.** The journal is the

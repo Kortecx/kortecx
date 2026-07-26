@@ -239,7 +239,7 @@ pub fn decode_loop_proposal(bytes: &[u8], max_bytes: usize) -> Result<LoopPropos
 ///
 /// A SEPARATE boundary from [`decode_loop_proposal`] (the PR-2 initial-round
 /// decode, kept byte-frozen) — but the IDENTICAL untrusted-bytes discipline
-///: size-check BEFORE parse, a leading `<think>` strip, decode into fixed
+/// : size-check BEFORE parse, a leading `<think>` strip, decode into fixed
 /// flat structs (never a dynamic `Value`), `deny_unknown_fields` on every struct
 /// (no `confidence`/score smuggle — D77). The escalation reason is bounded by
 /// [`MAX_FLAG_HUMAN_BYTES`]. `max_bytes` is the warrant-derived output ceiling.

@@ -58,7 +58,7 @@ use crate::request::{BrokerHandle, EffectRequest};
 ///    before staging. External effects thus never run under the registry
 ///    lock, so a stream of in-flight effects cannot delay
 ///    `register_capability`. This composes with the workspace's
-/// concurrency-test discipline which the integration
+///    concurrency-test discipline which the integration
 ///    tests exercise.
 pub struct LocalCapabilityBroker<S: ContentStore + Send + Sync> {
     pub(crate) store: S,

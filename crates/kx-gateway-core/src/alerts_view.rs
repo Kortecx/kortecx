@@ -23,7 +23,7 @@
 //!   this inbox.
 //! - **OSS = the read-only VIEW.** The triage LIFECYCLE (acknowledge / resolve),
 //!   the alert-rule engine, and outbound notifications are a CLOUD capability
-//! (D156 / D129) — this seam carries no mutate method.
+//!   (D156 / D129) — this seam carries no mutate method.
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without the sidecar degrades
 //!   forward-compatibly.
 

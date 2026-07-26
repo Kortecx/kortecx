@@ -195,7 +195,7 @@ export function localToolsOf(
 }
 
 /** A deterministic dependency-free server name per defining module (so re-runs
- * upsert the same connection — `connection_id_of(name)` is deterministic). */
+ *  upsert the same connection — `connection_id_of(name)` is deterministic). */
 export function serverNameFor(module: string): string {
   // FNV-1a 32-bit — stable + dependency-free (no cryptographic strength needed).
   let h = 0x811c9dc5;

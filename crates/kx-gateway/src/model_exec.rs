@@ -1716,7 +1716,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     ///   dead-letters the turn (F4) and the chain settles `DeadLettered`. A
     ///   half-formed proposal never commits (the harness fresh-turn contract) and
     ///   a prompt-injected, warrant-UNGRANTED tool name never reaches the journal
-    /// (injection cannot escalate).
+    ///   (injection cannot escalate).
     /// - `Ok(Some(_))` ⇒ the RAW envelope COMMITS as the turn's `result_ref`
     ///   (PR-2d-2 — the PR-2d-1 answer-only fence is replaced by the live tool
     ///   round): the committed turn IS the frozen decision's source; the

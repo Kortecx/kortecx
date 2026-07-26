@@ -88,7 +88,7 @@ export class Memory {
 }
 
 /** One recall hit: the content-addressed ref (hex), the bytes, and the DISPLAY-ONLY
- * similarity score (never an identity input). */
+ *  similarity score (never an identity input). */
 export class MemoryHit {
   constructor(
     readonly memoryId: string,

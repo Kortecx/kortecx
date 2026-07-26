@@ -303,7 +303,7 @@ pub async fn execute(args: BranchArgs) -> Result<(), CliError> {
 
             // (2) Invoke `react-edit` (a single model step) with the body attached
             //     as a context ref. The directive tells the model to emit ONLY the
-            // edited body (no silent transform; reasoning=off keeps the
+            //     edited body (no silent transform; reasoning=off keeps the
             //     committed answer the file verbatim).
             let args_json = edit_args_json(&path, &instruction);
             let resp = client

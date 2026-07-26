@@ -10,7 +10,7 @@
 //!   App (uniform not-found / empty list — no cross-party oracle); Bob saving the
 //!   same handle makes BOB's OWN row, never mutates Alice's.
 //! - **bad envelope ⇒ `InvalidArgument`**: a non-envelope payload is refused at the
-//! boundary (the host validates — the envelope carries no authority).
+//!   boundary (the host validates — the envelope carries no authority).
 
 #![cfg(feature = "embedded-worker")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]

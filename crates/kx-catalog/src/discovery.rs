@@ -9,7 +9,7 @@
 //!   `by_signature` (the registry's exact hash lookup).
 //! - **(b) FUZZY vector discovery** — [`FuzzyDiscovery`], a thin wrapper over a
 //!   `kx_dataset::RetrievalIndex` confined to `ReadOnlyNondet` semantics (the same
-//! Identity boundary `kx_workflow::retrieval` documents). Embeddings are OPAQUE,
+//!   Identity boundary `kx_workflow::retrieval` documents). Embeddings are OPAQUE,
 //!   caller-supplied vectors; the catalog never computes them.
 //!
 //! # The hard identity boundary

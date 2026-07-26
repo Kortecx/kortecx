@@ -8,7 +8,7 @@
 //! - `kx memory list [--instance <hex16>] [--limit N] [--json]` — the episodic log,
 //!   newest-first, optionally scoped to one run.
 //! - `kx memory recall --text <query> [--k N] [--json]` — the top-k most-similar
-//! memories. Each hit's `score` is DISPLAY-ONLY — a ranking aid, never an
+//!   memories. Each hit's `score` is DISPLAY-ONLY — a ranking aid, never an
 //!   identity input; the durable result is the ordered content-ref SET.
 //! - `kx memory forget <memory_id_hex> [--json]` — erase a memory by its content id.
 //!

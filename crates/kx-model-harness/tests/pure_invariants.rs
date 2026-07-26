@@ -6,7 +6,7 @@
 //! - **F** — step capture: `Full` retains reasoning/thinking; `ActionsOnly`
 //!   strips them at the boundary, keeping only the action join key.
 //! - **H** — graph-RAG: the committed retrieval fact is the ordered refs only;
-//! the same neighbours with different float scores ⇒ identical fact.
+//!   the same neighbours with different float scores ⇒ identical fact.
 //! - **I** — no float on identity: the integer `temperature_bps` participates in
 //!   `MoteId`; similarity scores never do (H).
 

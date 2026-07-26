@@ -16,7 +16,7 @@
 //!   EMPTY**: dropping it loses product signal, never truth.
 //! - **Advisory only.** `instance_id`/`mote_id`/`content_ref`/`recipe_handle`/
 //!   `model_id` are display/join/audit fields; identity is the server-derived
-//! `feedback_id` alone. The caller `principal` is SERVER-resolved (the
+//!   `feedback_id` alone. The caller `principal` is SERVER-resolved (the
 //!   `PutContent` precedent), never trusted off the wire.
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without the sidecar degrades
 //!   forward-compatibly.

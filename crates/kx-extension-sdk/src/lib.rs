@@ -31,7 +31,7 @@
 //!   ├─ dial:      open a session over the kx-mcp transport
 //!   ├─ discover:  tools/list  (the connector's JSON-Schema tool manifests)
 //!   ├─ register:  each tool into the durable registry as ToolKind::Mcp,
-//! │ namespaced `<server>/<remote>` (server-derived id)
+//!   │ namespaced `<server>/<remote>` (server-derived id)
 //!   └─ govern:    persist the connection in the off-journal connections.db
 //! ```
 //!

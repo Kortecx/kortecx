@@ -28,7 +28,7 @@ export const queryKeys = {
   /** The advisory tool manifests (`ListToolManifests`) — display-only, never authority. */
   toolManifests: (endpoint: string) => ["kx", endpoint, "tool-manifests"] as const,
   /** The durable tools-registry inventory (`DiscoverTools`, PR-6a) — the governance
-   * view (what is registered, with what authority). Registration grants none. */
+   *  view (what is registered, with what authority). Registration grants none. */
   discoverTools: (endpoint: string) => ["kx", endpoint, "discover-tools"] as const,
   /** The registered external MCP servers (`ListMcpServers`, PR-6b-1) — the live
    *  Connections govern surface. Server-derived ids; credentials by NAME only. */
@@ -41,10 +41,10 @@ export const queryKeys = {
    *  `authSecretPresent` reports only whether a ref NAME is attached (never a value). */
   triggers: (endpoint: string, limit: number) => ["kx", endpoint, "triggers", limit] as const,
   /** This party's context bundles (`ListContextBundles`, PR-7) — named,
-   * content-addressed grounding. Caller-scoped; `bundleRef` is server-derived. */
+   *  content-addressed grounding. Caller-scoped; `bundleRef` is server-derived. */
   contextBundles: (endpoint: string) => ["kx", endpoint, "context-bundles"] as const,
   /** This party's POC-4 Apps (`ListApps`) — durable kortecx.app/v1 envelopes.
-   * Caller-scoped; `appRef` is server-derived. */
+   *  Caller-scoped; `appRef` is server-derived. */
   apps: (endpoint: string) => ["kx", endpoint, "apps"] as const,
   /** This party's skills (`ListSkills`) — declarative kortecx.skill/v1
    *  bundles (instructions + tool grant-WISHES; a wish is never a grant). */
@@ -76,7 +76,7 @@ export const queryKeys = {
   contextItemBody: (endpoint: string, contentRef: string) =>
     ["kx", endpoint, "context-item-body", contentRef] as const,
   /** This party's D155 branches (`ListBranches`) — content-addressed file branches.
-   * Caller-scoped; `branchRef` is server-derived. */
+   *  Caller-scoped; `branchRef` is server-derived. */
   branches: (endpoint: string) => ["kx", endpoint, "branches"] as const,
   /** The datasets (RAG corpora) the gateway holds (`ListDatasets`). */
   datasets: (endpoint: string) => ["kx", endpoint, "datasets"] as const,
@@ -137,7 +137,7 @@ export const queryKeys = {
   /** RC6a: the pending HITL approvals inbox (`ListPendingApprovals`, D114) — the
    *  govern surface over withheld world-mutating actions. Polled (approvals are NOT
    *  on the event stream); `limit` scopes the page. `requestId` is server-derived;
-   * a grant/deny releases a staged action, never mints a warrant. */
+   *  a grant/deny releases a staged action, never mints a warrant. */
   pendingApprovals: (endpoint: string, limit: number) =>
     ["kx", endpoint, "pending-approvals", limit] as const,
 };

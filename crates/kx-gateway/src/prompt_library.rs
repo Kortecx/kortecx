@@ -59,7 +59,7 @@ add a step only when it does distinct work.";
 /// 2. **The model may NAME a capability.** Steps carry a `tools` list drawn from a menu the
 ///    SERVER computed from the caller's own ceiling. Naming is not granting: every id is
 ///    intersected back against that ceiling host-side, so this widens what can be ASKED FOR
-/// and nothing else. The role palette still supplies every other capability axis.
+///    and nothing else. The role palette still supplies every other capability axis.
 pub(crate) const DERIVE_SYSTEM: &str = "You are designing a Kortecx APP: a durable, reusable \
 automation that a schedule, a trigger, or another workflow runs. Turn the user's request into \
 the SMALLEST workflow of collaborating agent roles that fully achieves it.\n\

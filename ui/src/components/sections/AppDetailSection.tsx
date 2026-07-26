@@ -407,7 +407,7 @@ export function AppDetailSection({
 type Mode = "view" | "direct" | "agentic";
 
 /** The right pane: view a file, edit it directly (Monaco → save), or edit it
- * agentically through the review/diff gate. Lock-gated. */
+ *  agentically through the review/diff gate. Lock-gated. */
 function FilePane({
   handle,
   path,

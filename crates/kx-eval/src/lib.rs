@@ -33,7 +33,7 @@
 //!   the canonical projection digest `7d22d4bd`, and the frozen trio never depends on
 //!   it. FFI-free (no `kx-llamacpp`/`kx-inference` edge ever).
 //! - **The gating baseline is a COMMITTED corpus** (`corpus/golden-v1/baseline.json`),
-//! not the gitignored `docs/benchmarks/`. RC1 commits it capturing the current
+//!   not the gitignored `docs/benchmarks/`. RC1 commits it capturing the current
 //!   (`T-GEMMA-PAREN`) parse coverage as the "before"; RC2 raises it in-PR.
 //! - **The corpus is content-addressed** — every [`EvalReport`] records the
 //!   `suite_digest`, so a corpus change is visible and forces a deliberate re-baseline.

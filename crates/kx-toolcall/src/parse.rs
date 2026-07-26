@@ -943,7 +943,7 @@ pub fn parse_tool_call(
     //      DEFINED delimiter set (not a `{` search) — recognized BEFORE the JSON
     //      gate. Version-less + separator-variant names (`fs_list`) are resolved
     //      against the grant set, and the result is gated by the SAME exact
-    // `tool_grants` equality. Anything not opening with this exact
+    //      `tool_grants` equality. Anything not opening with this exact
     //      delimiter falls through to the JSON envelope path, byte-identical for
     //      every existing row (no current input begins with `<|tool_call>`).
     if let Some(native) = extract_gemma_native(trimmed) {
@@ -954,7 +954,7 @@ pub fn parse_tool_call(
     //       markers (`<|tool_call>call:{"tool_call":{…}}<tool_call|>`) rather than the
     //       bare `call:NAME{ARGS}`. The native arm above reads an EMPTY name there (the
     //       `{` follows the optional `call:`), so recover the inner envelope through the
-    // SAME exact-grant resolution + args cap as a bare envelope — the identity rule unchanged (the
+    //       SAME exact-grant resolution + args cap as a bare envelope — the identity rule unchanged (the
     //       DEFINED marker is the boundary, never a `{` search). A wrapped object that is
     //       NOT a `tool_call` envelope falls through to a normal completion. (Live
     //       RC4b witness: Gemma-4 emits this for the `retrieve` tool — T-GEMMA-ENVELOPE-IN-MARKER.)
@@ -971,7 +971,7 @@ pub fn parse_tool_call(
     //      — two MORE DEFINED-delimiter shapes (markers required; never a `{` search),
     //      each wrapping a `{"name":…, "arguments"|"parameters"|"args":…}` object.
     //      The name + args flow through the SAME grant resolution + exact
-    // `tool_grants` equality as every other arm; the args bag tolerates
+    //      `tool_grants` equality as every other arm; the args bag tolerates
     //      the model's alias + a pre-serialized-string value. A marker that does not
     //      wrap a NAMED object falls through (like a bare Gemma marker), byte-identical
     //      for every existing row (no current input begins with these markers).
@@ -1015,7 +1015,7 @@ pub fn parse_tool_call(
     };
 
     // (3) The model committed to a tool call. Enforce tool ∈ warrant.tool_grants via the
-    // SHARED envelope resolver (exact (name, version) crypto-equality FIRST;
+    //     SHARED envelope resolver (exact (name, version) crypto-equality FIRST;
     //     empty-version name-resolve for the menu-label drift shape; args carried verbatim
     //     + size-capped) — the SAME path the Gemma-marked-envelope recovery uses.
     Ok(Some(resolve_envelope_call(raw, warrant, max_args_bytes)?))

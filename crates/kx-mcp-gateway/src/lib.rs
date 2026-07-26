@@ -24,7 +24,7 @@
 //! - **Per-server rate-limit:** an integer token bucket per server name.
 //! - **Warrant-gated egress:** each registered tool's `net_scope` is egress to
 //!   ONLY its server's host; the broker's `precheck` enforces a fired tool's
-//! `net_scope ⊆ warrant.net_scope` (the model fires only granted tools).
+//!   `net_scope ⊆ warrant.net_scope` (the model fires only granted tools).
 //! - **Secret-less credentials (D81):** a connection stores the credential ref
 //!   NAME only; the secret is read transiently at dial and never journaled.
 //! - **Server-derived ids:** `connection_id` + the discovered tool ids are

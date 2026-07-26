@@ -1158,7 +1158,7 @@ message ModelSummary {
   string source = 10;                    // Model Control v2: provenance — "local" (startup GGUF) |
                                          //   "ollama" (daemon-discovered) | "pulled-ollama" |
                                          //   "pulled-url" (runtime `kx models pull`). Display/audit
-                                         // only; empty on an old host (additive)
+                                         //   only; empty on an old host (additive)
   bool active = 11;                      // Model Control v2: true iff this is the server's ACTIVE
                                          //   default (the SetActiveModel choice — an off-journal
                                          //   advisory hint; the server never silently re-routes

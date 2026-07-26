@@ -12,7 +12,7 @@
 //!    decodes the completion **fail-closed** via [`kx_planner::decode_loop_proposal`],
 //!    enforces the per-decision child budget, and lowers it through *vetted
 //!    recipes* ([`kx_planner::lower_loop_to_topology_decision`]) into a
-//! `TopologyDecision` (the model proposes role *names*; identity axes +
+//!    `TopologyDecision` (the model proposes role *names*; identity axes +
 //!    warrant narrowing are the runtime's).
 //! 2. The decision's canonical bytes are staged as the shaper's effect (a
 //!    [`kx_runtime::broker::DemoBroker`] response), so the shaper's committed
@@ -307,7 +307,7 @@ where
 
         // (5) Lower through VETTED recipes — role identity axes (logic_ref /
         //     nd_class / effect_pattern) come from the recipe, never model output
-        // (server-derived). An unregistered role fails closed.
+        //     (server-derived). An unregistered role fails closed.
         lower_loop_to_topology_decision(&proposal, &*self.recipes)
             .map_err(|e| TopologyProviderError(format!("lower: {e}")))
     }

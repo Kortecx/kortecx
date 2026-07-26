@@ -24,7 +24,7 @@
 //!    proves the negative invariant ("bytes is never the hash") across BOTH
 //!    code paths in `assemble`.
 //! 7. **Tool-path shape (H-2)**: tool items carry the menu text
-//! (`"name: <grant_id>\n<description>"`, PR-1 name-steering) as `bytes`
+//!    (`"name: <grant_id>\n<description>"`, PR-1 name-steering) as `bytes`
 //!    and `blake3(canonical_bincode(ToolDef))` as `source_ref`. The
 //!    `event.resolved_def_hash` MUST match the freshly-computed hash —
 //!    deviation would mean the registry handed out a wrong content-address.

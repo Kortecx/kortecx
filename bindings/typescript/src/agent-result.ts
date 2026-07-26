@@ -13,7 +13,7 @@ import { decodeCriticVerdict } from "./critic.js";
 import type { ReactTurn } from "./react.js";
 
 /** One tool action the agent took — a settled ReAct `tool` turn. The `toolId` /
- * `toolVersion` are the GRANTED tool's, never the model's raw proposal.
+ *  `toolVersion` are the GRANTED tool's, never the model's raw proposal.
  *  T-MULTI-ELEMENT-TOOLCALLS: when a turn fires N tools at once, each is a distinct
  *  action sharing `turn`, ordered by `callIndex` (0..N-1). */
 export class AuditedAction {
@@ -61,7 +61,7 @@ export class AgentResult {
 
   /** T-AGENT2: if this run's terminal is an LLM-judge (`kx/recipes/judge`), the
    *  decoded `"valid"` / `"invalid: <reason>"` summary; `null` for a plain answer.
-   * Display-only. */
+   *  Display-only. */
   get verdict(): string | null {
     return this.answerBytes === null ? null : decodeCriticVerdict(this.answerBytes);
   }

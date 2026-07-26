@@ -14,7 +14,7 @@
 //!    folding entry `args` into the first model step's prompt (the server-side analogue
 //!    of the SDK `_inject_app_args`);
 //! 4. author SERVER-SIDE (every warrant resolved from the party's grants, never a
-//! client warrant — server-minted), reusing the live [`HostWorkflowAuthor`];
+//!    client warrant — server-minted), reusing the live [`HostWorkflowAuthor`];
 //! 5. set the tool-firing warrants' `SecretScope::AllowList` to the App's
 //!    `guards.secret_scope` (bounded by the referenced connections' credentials) so the
 //!    broker precheck lets a credentialed connector (Gmail/Discord) be dialed inside the
@@ -1469,7 +1469,7 @@ impl HostAppAuthor {
         //      model_route` is a WISH intersected with the served catalog: if this serve
         //      offers it, pin it onto every model step that did not already name a model
         //      (an explicit per-step id wins); if it does NOT, REFUSE the run at submit —
-        // never silently run on a different model (the user names the model, no
+        //      never silently run on a different model (the user names the model, no
         //      auto-select, never degrade-to-primary). Empty route ⇒ no injection ⇒
         //      byte-identical to the pre-PR-3 path (the digest no-op).
         let route = &env.steering_config.model.model_route;

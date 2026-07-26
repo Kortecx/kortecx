@@ -36,7 +36,7 @@ import type { BuilderEdge, BuilderGraph, BuilderStep, BuilderStepKind } from "./
 export interface UnmodeledReport {
   /** `true` ⇒ the blueprint has a structure the visual editor cannot faithfully
    *  round-trip (an `exec` / `body_signature_id` step) — the canvas is READ-ONLY and
-   * Save is hidden (never a lossy save). */
+   *  Save is hidden (never a lossy save). */
   readonly refuseEdit: boolean;
   /** A human reason when `refuseEdit` is true. */
   readonly reason: string | null;

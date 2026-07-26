@@ -77,7 +77,7 @@ export class DatasetSummary {
 }
 
 /** One retrieval hit: the content-addressed ref (hex) of the CHUNK, the chunk
- * bytes, and the DISPLAY-ONLY similarity score (never an identity input).
+ *  bytes, and the DISPLAY-ONLY similarity score (never an identity input).
  *  RC4a adds chunk provenance (`parentRef` / `chunkIndex` / `chunkCount`). */
 export class DatasetHit {
   constructor(

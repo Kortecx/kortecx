@@ -30,7 +30,7 @@ const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
  *
  * 1. **Tools** — the durable tool inventory (`DiscoverTools`) + register/deregister
  *    controls, the autonomous-access posture, and the advisory toolscout (manifests
- * + a dry-run TaskBundle scorer). Registration grants NO authority; every
+ *    + a dry-run TaskBundle scorer). Registration grants NO authority; every
  *    score/verdict is display-only and never authorizes anything.
  * 2. **Connections** — dial external MCP servers (the live untrusted-egress surface).
  * 3. **Triggers** — bind an inbound event (webhook / cron / RPC) to a recipe handle.

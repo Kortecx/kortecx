@@ -5,7 +5,7 @@
 //!   forward-compat, not an empty lie);
 //! - the principal is SERVER-resolved (no stamped party ⇒ `Unauthenticated`);
 //!   the `feedback_id` is SERVER-derived + DETERMINISTIC over `(message_id,
-//! principal)`, so a re-rating OVERWRITES (the client can neither name
+//!   principal)`, so a re-rating OVERWRITES (the client can neither name
 //!   nor forge it);
 //! - the rating must be UP/DOWN, the `message_id` is required, the comment is
 //!   capped — all fail-closed BEFORE the write;

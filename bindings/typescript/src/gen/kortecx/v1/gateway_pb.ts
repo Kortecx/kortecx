@@ -4080,7 +4080,7 @@ export type ModelSummary = Message<"kortecx.v1.ModelSummary"> & {
   /**
    *   "ollama" (daemon-discovered) | "pulled-ollama" |
    *   "pulled-url" (runtime `kx models pull`). Display/audit
-   * only; empty on an old host (additive)
+   *   only; empty on an old host (additive)
    *
    * Model Control v2: true iff this is the server's ACTIVE
    *

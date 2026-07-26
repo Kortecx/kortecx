@@ -16,7 +16,7 @@ const TABS: ReadonlyArray<{ id: ContextTab; label: string }> = [
  *
  * 1. **Bundles** — named, content-addressed instruction/file bundles a caller attaches
  *    to a run (PR-7, `bundles.db`): the durable inventory (`ListContextBundles`) + an
- * author form (`PutContextBundle`). Caller-scoped. The default tab.
+ *    author form (`PutContextBundle`). Caller-scoped. The default tab.
  * 2. **Datasets** — the RAG corpora / Data Lab (`datasets.db`): the existing
  *    {@link DatasetsSection} verbatim (ingest, semantic search, agent outputs).
  *

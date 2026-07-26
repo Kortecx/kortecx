@@ -674,7 +674,7 @@ const TOOL_CALL_TRIGGERS: [&str; 1] = [r#"[\s\S]*?(\{[ \t\n]*"tool_call")"#];
 ///   tokenizers (Gemma's digit/punctuation tokens span the char-level grammar's
 ///   boundaries — `T-RERANK-GBNF-CRASH`). The model emits a clean array after its
 ///   reasoning anyway, and `kx_toolcall::parse_permutation` strips the preamble +
-/// enforces a valid permutation. (Ollama, which has no such sampler, applies
+///   enforces a valid permutation. (Ollama, which has no such sampler, applies
 ///   the permutation as a strict whole-response `format`.)
 fn build_sampler<'b>(
     backend: &'b LlamaBackend,

@@ -31,7 +31,7 @@ function snippet(text: string, max = 140): string {
  *  - **Discover** (`FuzzyDiscovery`, Slice-B) is the advisory fuzzy-in / exact-out
  *    primitive: it returns ONLY content-addressed refs + a DISPLAY-ONLY score —
  *    resolve bytes by the EXACT ref (the SDK / programmatic path). No content is
- * shown here, honestly (the refs are the result).
+ *    shown here, honestly (the refs are the result).
  *
  * The query text is embedded server-side (the `inference` feature); without an
  * embedder the gateway returns FAILED_PRECONDITION and the panel shows the

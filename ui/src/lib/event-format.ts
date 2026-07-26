@@ -161,7 +161,7 @@ export function matchesFeedFilter(d: EventLike, filter: FeedFilter, recipeName?:
 
 /** Serialize the (filtered) feed to NDJSON — one server-derived object per line,
  *  matching the CLI `kx events --all --json` shape per kind (snake_case `type` +
- * hex join keys ONLY; never payloads/secrets). The result text is NOT
+ *  hex join keys ONLY; never payloads/secrets). The result text is NOT
  *  exported here (it is content-addressed; the hash is the join key). */
 export function feedToNdjson(deltas: readonly EventLike[]): string {
   return deltas.map((d) => JSON.stringify(deltaToWire(d))).join("\n");

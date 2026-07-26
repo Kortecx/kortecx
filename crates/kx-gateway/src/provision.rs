@@ -1947,7 +1947,7 @@ impl HostRecipeBinder {
     ///   grounding seam is wired, and retrieval succeeds — the original context refs
     ///   PLUS the exact 64-hex refs of the dataset's top-`k` documents (each staged
     ///   into the run content store so the fold resolves; `put` is content-addressed,
-    /// so the staged ref equals the dataset hit's `content_ref` — exact-out).
+    ///   so the staged ref equals the dataset hit's `content_ref` — exact-out).
     ///
     /// HONEST DEGRADE: no dataset arg, no grounding seam (the non-`hnsw` build), an
     /// empty prompt, or any retrieval failure (unknown dataset / no embedder / empty
@@ -3985,7 +3985,7 @@ pub(crate) fn tool_union_warrant(
 ///   computes for an unauthorized party).
 /// - The effective role carries EXPLICIT `tool_grants` ⇒ `Some(allowlist)` — the
 ///   wish is STRICTLY intersected against it (a restricted role genuinely
-/// constrains; Narrowing).
+///   constrains; Narrowing).
 /// - The effective role's tool set is EMPTY (today's universal seed —
 ///   `blueprint_base` grants no tools to anyone) ⇒ `None` = "no per-tool
 ///   narrowing expressed"; the wish is bounded by registration + broker

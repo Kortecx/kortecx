@@ -27,7 +27,7 @@
 //! - **Flat builtin id.** `retrieve@1` is a `ToolKind::Builtin` (like `fs-list@1`):
 //!   the model proposes the FULL name `retrieve`, which `kx_toolcall::resolve_granted_name`
 //!   matches by EXACT equality (`id_matches`). The `<server>/<remote>` convention is
-//! ONLY for MCP tools where the model emits the bare remote leaf (the guard);
+//!   ONLY for MCP tools where the model emits the bare remote leaf (the guard);
 //!   a builtin needs no `/` and using one would be semantically wrong (no MCP server).
 //! - **Fail-SOFT, never dead-letter.** A missing/unavailable/stale dataset (every
 //!   recoverable [`DatasetError`]) returns an EMPTY-passage observation the model reads

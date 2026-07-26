@@ -17,7 +17,7 @@ import { BlueprintBuilder, PERSONAS, task } from "@kortecx/sdk/web";
 /** The authored step palette (EXEC is reserved server-side; the UI offers
  *  PURE / MODEL / TOOL). TOOL (PR-6b-2) fires a single REGISTERED tool: the SERVER
  *  resolves it in the live registry + builds the per-step warrant (client tool_grants
- * stay refused — the identity rule), so adding it does NOT reopen the admission boundary. */
+ *  stay refused — the identity rule), so adding it does NOT reopen the admission boundary. */
 export type BuilderStepKind = "pure" | "model" | "tool";
 
 /** One authored builder step. `params` is the JSON-OBJECT TEXT the user edits in
@@ -46,7 +46,7 @@ export interface BuilderStep {
    *  makes this a DETERMINISTIC-AGENTIC step — a bounded reason→tool→observe loop over
    *  the FIXED set (the set is part of the step's identity). Empty ⇒ a plain model step
    *  (byte-identical to before). The SERVER builds the union warrant + drives the loop
-   * (client tool_grants stay refused). */
+   *  (client tool_grants stay refused). */
   readonly toolContract: Readonly<Record<string, string>>;
   /** APP ONLY: the catalog SKILL names bound to this step. This and the two below are the
    *  per-node capability BINDINGS — they name entries in the App envelope's `references`,
@@ -147,7 +147,7 @@ export function validateAcyclic(graph: BuilderGraph): AcyclicResult {
  *
  *  `allowEmptyModel` (POC-5d): when true, a MODEL step may leave `modelId` empty —
  *  it binds the SERVED model at run (the portable App convention; the server resolves
- * it). The blueprint builder (authoring a one-shot run here-and-now) keeps
+ *  it). The blueprint builder (authoring a one-shot run here-and-now) keeps
  *  requiring an explicit model (default false); the App lineage editor passes true so
  *  a served-model App can be re-saved. */
 export function validationError(
@@ -352,7 +352,7 @@ export function newStep(kind: BuilderStepKind, id: string): BuilderStep {
 
 /** A pattern the builder can insert. `consensusJudge` reduces via a MODEL judge that
  *  SELECTS the best candidate; `consensusMajority` reduces via a PURE sink the server
- * folds to the exact-equality plurality (ties → first-appearance). */
+ *  folds to the exact-equality plurality (ties → first-appearance). */
 export type PatternKind = "swarm" | "supervisor" | "consensusJudge" | "consensusMajority";
 
 /** The `config_subset` key marking a PURE sink as an exact-equality consensus vote —

@@ -72,7 +72,7 @@ export function triggerAuthName(auth: number): TriggerAuthName {
 }
 
 /** A `RegisterTrigger` request shape. The auth secret is referenced by NAME only
- * (never the value, D81). The server derives the trigger id. */
+ *  (never the value, D81). The server derives the trigger id. */
 export interface RegisterTriggerInput {
   /** Unique operator handle (derives the trigger id). */
   readonly name: string;

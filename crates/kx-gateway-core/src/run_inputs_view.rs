@@ -32,7 +32,7 @@
 //!   `PutContent`/`SubmitFeedback` precedent), never trusted off the wire, and is
 //!   stored for audit only — there is NO read-time party filter in gateway-core
 //!   (single-tenant; cross-tenant enforcement is the `kx-cloud/gateway-auth`
-//! Identity wall above, exactly as for `feedback.db`/`uploads.db`).
+//!   Identity wall above, exactly as for `feedback.db`/`uploads.db`).
 //! - **`None` seam ⇒ `unimplemented`.** A gateway without the sidecar degrades
 //!   forward-compatibly (old client / old binary).
 

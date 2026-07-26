@@ -1473,7 +1473,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      ranked by a startup-built index. The verdict dry-runs the REAL
     //      lowering gate against the SERVER react warrant when the react
     //      runtime is live; otherwise it degrades to UNAVAILABLE. Read-only,
-    // display-only — never an authorization.
+    //      display-only — never an authorization.
     // PR-6a: the advisory toolscout manifests come from the SAME durable registry
     // the serve path resolves + DiscoverTools reads (built-ins + the bundled echo
     // when its capability resolved). One source for the discovery surfaces.

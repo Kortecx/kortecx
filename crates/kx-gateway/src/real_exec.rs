@@ -11,7 +11,7 @@
 //!   **reconcile** its result bytes into the shared content store so the
 //!   coordinator's D55 phantom-ref guard passes at commit;
 //! - any other (a bodyless PURE Mote, e.g. `echo`) → the honest passthrough
-//! fallback (it commits the Mote's real input, never a placeholder).
+//!   fallback (it commits the Mote's real input, never a placeholder).
 //!
 //! In the OSS serve path the router is wired with `real_body_ref = None` (no body
 //! binary is provisioned — script/tool execution is OSS-scoped-out, D141.4), so
