@@ -199,7 +199,7 @@ async fn fan_out_holds_the_envelope_with_a_stalled_subscriber() {
     );
 }
 
-/// GR10 M8a — commit→global-frame delivery latency (p50/p95 over 40 rounds).
+/// Commit→global-frame delivery latency (p50/p95 over 40 rounds).
 ///
 /// This measured the 250 ms poll cadence, and said in its own comment that the number
 /// "pins the ceiling a push-based journal `watch` would beat". The subscription seam is
@@ -216,11 +216,11 @@ async fn fan_out_holds_the_envelope_with_a_stalled_subscriber() {
 /// is a second `SqliteJournal` on the same path — which is the production shape and the
 /// case a per-handle watch would silently break.
 ///
-/// Persisted to the private benchmarks trend file. (M8b — the telemetry sink's
-/// per-event hot-path cost — is measured in `telemetry.rs`'s ignored unit
-/// test, where the crate-private ledger is constructible.)
+/// Persisted to the benchmarks trend file. (The telemetry sink's per-event hot-path
+/// cost is measured in `telemetry.rs`'s ignored unit test, where the crate-private
+/// ledger is constructible.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "GR10 measurement — run in release via `just scale-smoke`"]
+#[ignore = "latency measurement — run in release via `just scale-smoke`"]
 async fn m8a_commit_to_frame_latency() {
     let dir = tempfile::TempDir::new().unwrap();
     let path = dir.path().join("kx.db");
@@ -243,7 +243,7 @@ async fn m8a_commit_to_frame_latency() {
         .await
         .unwrap();
 
-    // M8a: one commit per round, time append→frame-delivery.
+    // One commit per round, timing append→frame-delivery.
     let mut lat = Vec::with_capacity(40);
     for i in 0..40u64 {
         let t = Instant::now();
@@ -264,7 +264,7 @@ async fn m8a_commit_to_frame_latency() {
     let p50 = lat[lat.len() / 2];
     let p95 = lat[lat.len() * 95 / 100];
 
-    println!("GR10 M8a commit→frame latency p50 {p50:?} p95 {p95:?} (journal subscription)");
+    println!("commit→frame latency p50 {p50:?} p95 {p95:?} (journal subscription)");
     assert!(
         p95 < Duration::from_millis(50),
         "commit→frame p95 was {p95:?}. A subscription delivers in single-digit ms; the \
