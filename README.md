@@ -261,28 +261,38 @@ integer per-mille (0–1000), from **Gemma-4-12B on both local engines**:
 
 | Family | What a task proves | Ollama | llama.cpp |
 | --- | --- | ---: | ---: |
-| **tool** | picks the right tool; the answer carries a fact only that tool could supply | 1000 | 1000 |
-| **react** | an instruction naming a tool it was never granted fires **nothing** | 0 | 1000 |
+| **tool** | picks the right tool, and carries its result into the NEXT tool call | 1000 | 833 |
+| **react** | decides *whether* to use a tool: refuses an ungranted one, reaches for a needed one, answers a known fact without either | 1000 | 1000 |
 | **reach** | reaches past the prompt — searches a dataset, recalls a memory, inherits a capability | 1000 | 1000 |
 | **swarm** | N agents in parallel, one gather merging their committed outputs | 1000 | 1000 |
-| **script** | runs a registered script in the sandbox and answers from what it computed | 500 | 500 |
+| **script** | runs a registered script in the sandbox and answers from what it computed | 1000 | 666 |
 
 `groundedness` and `memory_quality` both score **1000**: when the runtime answers from a dataset or
 a durable memory, the evidence is really in the answer.
 
-Two of those numbers are not good, and they are published because that is the point of measuring.
+Three of these numbers are worth explaining, and none of them is flattering.
 
-**script scores 500 on both engines.** A script fires correctly and aggregates its input, and then
-neither engine chains that result into a following tool call — one answers wrong, the other gives
-up. Identical on both, so it is the runtime's loop rather than model noise. An easier task (count
-the words in a short phrase) scored 1000 and reported the capability as healthy; a task that asks
-the model to carry a computed value forward does not.
+**The loop could not chain across tools, and now it can.** `script` and the multi-tool `tool` tasks
+used to fail because the runtime rendered every tool result as an anonymous `[context N]` block —
+the model had to *infer* which call produced which observation, and reliably failed to. Results are
+now labelled with the tool that produced them. That single change is what moved `script` from 500
+to 1000; a prompt rewrite that also stopped instructing the model to answer after one tool
+contributed the third hop on the longest chain. Same tasks, same models, same fixtures.
 
-**react scores 0 on Ollama.** Told to use a tool it was never granted, that build loops until it
-runs out of turns instead of simply saying so. The *runtime* refused the tool in both cases — no
-ungranted tool ever fired — but only a real-model benchmark tells you which engine needs less
-babysitting. Numbers are environment-labelled and reproducible locally; nothing here is a marketing
-benchmark run on hardware you don't have.
+**llama.cpp scores 833 and 666 because it does arithmetic in its head and gets it wrong.** On two
+chaining tasks it looks up the operand correctly, skips the calculator, and reports a wrong product
+— `7,848,161` for 8147 × 963, `5,418,844` for 13322 × 407. Ollama calls the tool and gets both
+right. These tasks used to ask for `42 + 8` and `120 + 305 + 75`, which a model answers without
+calling anything, so both engines scored full marks while proving nothing. The numbers got *worse*
+when the questions got honest, which is the point.
+
+**Steering the loop toward tool use made it over-call.** `tool_call_f1` on Ollama is 872, not 1000:
+the model fires an extra, unnecessary call on several tasks, including two on a question it already
+knows the answer to. That cost is real, it is in the published numbers rather than tuned away
+against one model, and the benchmark carries a task whose whole job is to fail if it gets worse.
+
+Numbers are environment-labelled and reproducible locally; nothing here is a marketing benchmark run
+on hardware you don't have.
 
 ## Observability & cost
 

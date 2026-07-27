@@ -1863,12 +1863,18 @@ async fn settle_nudge_lets_a_looping_model_answer() {
     assert!(common::lease_work(&svc, worker, MAC, 16).await.is_empty());
 }
 
-/// W2 vs A2 precedence: a chain that REJECTS every turn re-prompts with the
-/// rejection reason and NEVER gets the settle-nudge — the reject arm takes
-/// precedence (the nudge requires `prev_reject.is_none()`), so a model is never
-/// told both "you were rejected" and "stop calling tools" in the same turn.
+/// W2 vs A2 (A4): a chain that REJECTS every turn re-prompts with the rejection reason,
+/// and is nudged ONLY on its last useful turn.
+///
+/// The guarantee this test really protects — unchanged — is that a MID-BUDGET rejection
+/// is pure self-correction: the model is never prematurely ordered to stop calling tools,
+/// so one bad-args turn early in a chain leaves it free to retry. What changed is the
+/// old over-reach onto the LAST turn: there, reject-precedence meant the model was never
+/// answer-FORCED (the gateway arms answer-only off the nudge / duplicate markers), so a
+/// chain proposing an ungranted tool burned its whole budget and dead-lettered rather
+/// than saying so — `task_success@react` = 0 on Ollama. The two now COMPOSE on that turn.
 #[tokio::test]
-async fn reject_tail_takes_precedence_over_the_nudge() {
+async fn a_reject_reprompt_only_nudges_on_the_last_turn() {
     let dir = TempDir::new().unwrap();
     let (svc, store) = coordinator(&dir);
     let w = warrant(true);
@@ -1896,14 +1902,102 @@ async fn reject_tail_takes_precedence_over_the_nudge() {
         .await;
     }
 
-    // turns 1.. all re-prompt with REJECTED; NONE ever carries the settle-nudge.
+    // A2 self-correction is UNCONDITIONAL: every post-rejection turn carries the reason.
     assert!(
         turn_prompts.iter().skip(1).all(|p| p.contains("REJECTED")),
         "every post-rejection turn carries the A2 re-prompt"
     );
+    let (last, earlier) = turn_prompts.split_last().expect("at least one turn ran");
+    // THE REAL GUARANTEE, unweakened: while budget REMAINS, a rejection never tells the
+    // model to stop calling tools.
     assert!(
-        turn_prompts.iter().all(|p| !p.contains(NUDGE_MARK)),
-        "a rejected tail never gets the settle-nudge (reject precedence)"
+        earlier.iter().all(|p| !p.contains(NUDGE_MARK)),
+        "a mid-budget rejection must never carry the settle-nudge — A2 self-correction \
+         stays free to retry a tool: {earlier:#?}"
+    );
+    // A4: on the LAST useful turn the two COMPOSE, so the gateway's answer-force arms
+    // and the chain can settle instead of burning the budget on re-rejections.
+    assert!(
+        last.contains("REJECTED") && last.contains(NUDGE_MARK),
+        "the last turn carries BOTH the rejection reason and the settle-nudge: {last}"
+    );
+}
+
+/// A4, the BEHAVIOURAL half: a chain that would otherwise burn its whole budget on
+/// re-rejections can now settle on an `Answer` instead of dead-lettering.
+///
+/// The prompt assertions above only prove the instruction was BUILT. This proves the
+/// consequence — and it is the shape of the `react` bench task that scored 0 on Ollama:
+/// a model told to use a tool it was never granted, refused every time by the runtime,
+/// looping until exhaustion instead of simply saying so.
+#[tokio::test]
+async fn a_nudged_reject_tail_can_settle_on_an_answer() {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+
+    let mut settled_answer = false;
+    for _ in 0..16 {
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        let Some(item) = leased.into_iter().next() else {
+            break;
+        };
+        let turn: Mote = item.mote.unwrap().try_into().unwrap();
+        let prompt = turn_prompt(&turn);
+        if prompt.contains(NUDGE_MARK) {
+            // The runtime has told it to settle — a model that obeys answers in prose.
+            commit_raw(
+                &svc,
+                &store,
+                &turn,
+                &w,
+                b"I could not use that tool.",
+                worker,
+            )
+            .await;
+            settled_answer = true;
+            break;
+        }
+        // Until then: keep proposing a schema-invalid call (⇒ Rejected every turn).
+        commit_raw(
+            &svc,
+            &store,
+            &turn,
+            &w,
+            br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"zz":"x"}}}"#,
+            worker,
+        )
+        .await;
+    }
+    assert!(
+        settled_answer,
+        "a reject-only chain must REACH the settle-nudge — without it the chain never \
+         gets an answer-forced turn and simply exhausts its budget"
+    );
+
+    let facts = react_facts(&svc, &dir).await;
+    assert!(
+        facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::Answer,
+                ..
+            }
+        )),
+        "the nudged reject tail settles the chain on an Answer"
+    );
+    assert!(
+        !facts.iter().any(|f| matches!(
+            f,
+            JournalEntry::ReactRound {
+                branch: ReactBranch::DeadLettered,
+                ..
+            }
+        )),
+        "and never dead-letters — that terminal is exactly the react=0 failure"
     );
 }
 
@@ -1949,6 +2043,68 @@ async fn crash_resume_releases_the_inflight_turn_with_the_same_identity() {
             ..
         }
     ));
+}
+
+/// A4 (recovery half): crash with a RE-PROMPTED turn in flight ⇒ recovery rebuilds the
+/// byte-identical Mote and re-leases it.
+///
+/// This was a live wedge. `recover_react_chain` rebuilt an in-flight turn from
+/// `base_prompt_ref` ALONE, never re-applying the A2 re-prompt / W2 nudge that
+/// `advance_react_chain` had used — so for any turn whose instruction differed from the
+/// base, `rebuilt.id != latest.turn_mote_id`, the fail-closed divergence check fired, the
+/// turn was never re-inserted, and the chain sat `Pending` forever. Which means a crash
+/// mid-chain permanently wedged ANY chain that had ever had a rejection. Before the fix
+/// this test re-leases ZERO items.
+#[tokio::test]
+async fn crash_resume_rebuilds_a_reprompted_turn_and_re_leases_it() {
+    let dir = TempDir::new().unwrap();
+    let w = warrant(true);
+    let turn1_id;
+    {
+        let (svc, store) = coordinator(&dir);
+        let (_, _) = submit_react(&svc, &seed_mote(), &w).await;
+        let worker = common::register(&svc, "w").await;
+
+        // Turn 0 commits a schema-invalid envelope ⇒ Rejected ⇒ turn 1 is RE-PROMPTED.
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+        commit_raw(
+            &svc,
+            &store,
+            &turn0,
+            &w,
+            br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"zz":"x"}}}"#,
+            worker,
+        )
+        .await;
+
+        // Lease turn 1 (the re-prompted one) and crash WITHOUT committing it.
+        let leased = common::lease_work(&svc, worker, MAC, 16).await;
+        assert_eq!(leased.len(), 1, "the re-prompted turn 1 is leased");
+        let turn1: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+        assert!(
+            turn_prompt(&turn1).contains("REJECTED"),
+            "turn 1 must carry the A2 re-prompt — otherwise this test proves nothing"
+        );
+        turn1_id = turn1.id.as_bytes().to_vec();
+        // svc dropped here → simulated crash with a re-prompted turn in flight.
+    }
+
+    let (svc, _store) = coordinator(&dir);
+    let worker = common::register(&svc, "w2").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(
+        leased.len(),
+        1,
+        "the in-flight RE-PROMPTED turn is re-leased after restart (it used to wedge: \
+         the rebuild diverged from the durable fact and was refused)"
+    );
+    let turn1: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    assert_eq!(
+        turn1.id.as_bytes().to_vec(),
+        turn1_id,
+        "the rebuilt re-prompted turn has the SAME identity (R49)"
+    );
 }
 
 /// Crash with the OBSERVATION in flight (the Tool fact frozen, the observation

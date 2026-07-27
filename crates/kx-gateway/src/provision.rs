@@ -3399,7 +3399,10 @@ pub(crate) fn react_warrant(
         model_route: ModelRoute {
             model_id: model_id.clone(),
             max_input_tokens: 4_096,
-            max_output_tokens: 512,
+            // A1 arm 3: the per-turn decode budget a chaining turn actually needs. The
+            // DECLARED value is what the backend receives (`inference_params_from_mote`);
+            // the warrant is only the ceiling. See `env_caps::react_max_output_tokens`.
+            max_output_tokens: crate::env_caps::react_max_output_tokens(),
             max_calls: 8,
         },
         resource_ceiling: ResourceCeiling {
@@ -3450,7 +3453,10 @@ pub(crate) fn react_fs_warrant(
         model_route: ModelRoute {
             model_id: model_id.clone(),
             max_input_tokens: 4_096,
-            max_output_tokens: 512,
+            // A1 arm 3: the per-turn decode budget a chaining turn actually needs. The
+            // DECLARED value is what the backend receives (`inference_params_from_mote`);
+            // the warrant is only the ceiling. See `env_caps::react_max_output_tokens`.
+            max_output_tokens: crate::env_caps::react_max_output_tokens(),
             max_calls: 8,
         },
         resource_ceiling: ResourceCeiling {
@@ -3493,7 +3499,10 @@ pub(crate) fn react_memory_warrant(
         model_route: ModelRoute {
             model_id: model_id.clone(),
             max_input_tokens: 4_096,
-            max_output_tokens: 512,
+            // A1 arm 3: the per-turn decode budget a chaining turn actually needs. The
+            // DECLARED value is what the backend receives (`inference_params_from_mote`);
+            // the warrant is only the ceiling. See `env_caps::react_max_output_tokens`.
+            max_output_tokens: crate::env_caps::react_max_output_tokens(),
             max_calls: 8,
         },
         resource_ceiling: ResourceCeiling {
@@ -4241,7 +4250,10 @@ pub(crate) fn react_auto_base_warrant(
         model_route: ModelRoute {
             model_id: model_id.clone(),
             max_input_tokens: 4_096,
-            max_output_tokens: 512,
+            // A1 arm 3 — `tool_union_warrant` clones this `model_route` verbatim, so this
+            // is the value the AUTONOMOUS loop (`kx/recipes/react-auto`, which every
+            // tool/react/script bench family drives) actually decodes under.
+            max_output_tokens: crate::env_caps::react_max_output_tokens(),
             max_calls: 8,
         },
         resource_ceiling: ResourceCeiling {
@@ -6315,6 +6327,147 @@ mod tests {
         assert!(
             mote.mote.def.inference_params.max_output_tokens > 512,
             "a 512-token declared cap truncates a full scaffolded file mid-body"
+        );
+    }
+
+    /// A1 arm 3: every react warrant reads its decode budget from the ONE knob, and the
+    /// AUTONOMOUS loop's union warrant carries it through.
+    ///
+    /// This is the test that would catch the arm shipping DEAD. `react_auto_base_warrant`
+    /// is the one the bench families actually drive (`tool`, `react` and `script` all
+    /// route to `kx/recipes/react-auto`), and `tool_union_warrant` REBUILDS the bound
+    /// warrant from the live broker at bind — cloning `base.model_route`. If that clone
+    /// ever stopped carrying the route, raising the knob would move the constant and
+    /// nothing else, and every other assertion here would still pass.
+    #[test]
+    fn every_react_warrant_declares_the_configured_output_budget() {
+        let model = ModelId("m".to_string());
+        let expected = crate::env_caps::react_max_output_tokens();
+        let tool = (ToolName("mcp-echo/echo".into()), ToolVersion("1".into()));
+        let tools = [tool.clone()];
+        for (name, w) in [
+            ("react", react_warrant(ExecutorClass::Bwrap, &model, &tool)),
+            (
+                "react-fs",
+                react_fs_warrant(
+                    ExecutorClass::Bwrap,
+                    &model,
+                    &tools,
+                    std::path::Path::new("/tmp"),
+                ),
+            ),
+            (
+                "react-memory",
+                react_memory_warrant(ExecutorClass::Bwrap, &model, &tools),
+            ),
+            (
+                "react-auto",
+                react_auto_base_warrant(ExecutorClass::Bwrap, &model),
+            ),
+        ] {
+            assert_eq!(
+                w.model_route.max_output_tokens, expected,
+                "{name} declares the react decode budget"
+            );
+        }
+
+        // The union warrant the autonomous loop actually binds must carry the route
+        // through — an empty def set still exercises the `base.model_route` clone.
+        let base = react_auto_base_warrant(ExecutorClass::Bwrap, &model);
+        let union = tool_union_warrant(&base, &std::collections::BTreeMap::new());
+        assert_eq!(
+            union.model_route.max_output_tokens, expected,
+            "the react-auto UNION warrant carries the decode budget (this is the warrant \
+             every tool/react/script bench task decodes under)"
+        );
+
+        // The canonical model-free demo is a different warrant and must NOT have moved —
+        // it is on the digest.
+        assert_eq!(
+            demo_warrant(ExecutorClass::Bwrap)
+                .model_route
+                .max_output_tokens,
+            512,
+            "the canonical demo warrant is digest-bearing and stays at 512"
+        );
+    }
+
+    /// A1 arm 3, the UPGRADE hazard, pinned as a test because reasoning about it gave
+    /// the wrong answer twice.
+    ///
+    /// A recipe body is keyed by what it COMPILES to (`ManifestId`), and a step warrant
+    /// is NOT part of that identity — so changing a react warrant produces different body
+    /// BYTES under the SAME recipe id, which `publish_body` refuses as an immutability
+    /// violation. `seed_recipe` propagates that with `?`, and `open_serve` is called with
+    /// `?` at startup: on a state dir seeded by an older binary, a changed react warrant
+    /// would fail the SERVE BOOT rather than silently taking the stale value.
+    ///
+    /// **This test REPRODUCES a defect rather than asserting a fix.** It is why
+    /// `DEFAULT_REACT_MAX_OUTPUT_TOKENS` stays at 512 and the raise is an operator
+    /// opt-in: shipping a new default would fail the boot of every existing install.
+    ///
+    /// The defect is pre-existing and broader than this knob — the same conflict fires
+    /// when an operator changes the served model or the granted tool set on a dir seeded
+    /// by an earlier run, because none of those are part of the recipe identity either.
+    /// The immutability rule itself must NOT be relaxed to paper over it: precisely
+    /// because the recipe id does not cover the warrant, a permissive `publish_body`
+    /// would let a replacement body WIDEN a recipe's authority under an unchanged id.
+    /// The real fix is for the recipe identity to cover the step warrant (or a genuine
+    /// version-successor path) — a catalog change, out of scope for a loop PR.
+    ///
+    /// When that fix lands this test goes red and points at itself: invert it to
+    /// `.expect("boot 2 survives")` and drop the opt-in default.
+    #[test]
+    fn a_react_warrant_change_conflicts_on_an_already_seeded_state_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions = SqliteVersionLedger::open(dir.path().join("versions.db")).unwrap();
+        let bodies = SqliteBodyLedger::open(dir.path().join("bodies.db")).unwrap();
+        let grants = SqliteGrantLedger::open(dir.path().join("grants.db")).unwrap();
+        let owner = PartyId::new("owner");
+        let handle = react_handle().unwrap();
+        let model = ModelId("m".to_string());
+        let tool = (ToolName("mcp-echo/echo".into()), ToolVersion("1".into()));
+
+        let mut small = react_warrant(ExecutorClass::Bwrap, &model, &tool);
+        small.model_route.max_output_tokens = 512;
+        let mut large = small.clone();
+        large.model_route.max_output_tokens = 2_048;
+
+        let body_of = |w: &WarrantSpec| {
+            recipe_body(
+                LogicRef::from_bytes(REACT_LOGIC_REF),
+                w,
+                &[kx_mote::REACT_INSTRUCTION_KEY],
+            )
+        };
+        let seed = |w: &WarrantSpec| {
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                &["p".to_string()],
+                &handle,
+                body_of(w),
+                w,
+            )
+        };
+        // Boot 1: a dir seeded by the older binary.
+        seed(&small).expect("the first boot seeds cleanly");
+        // Re-seeding the SAME warrant is idempotent — this is every normal restart, and
+        // it must stay green or the hazard below would be indistinguishable from noise.
+        seed(&small).expect("an unchanged re-seed is a no-op");
+        // Boot 2: the upgraded binary, one warrant field different.
+        let err = seed(&large).expect_err(
+            "KNOWN DEFECT: a changed step warrant produces different body bytes under an \
+             UNCHANGED recipe id, so the body ledger refuses it — and this is the serve's \
+             startup path, propagated with `?`. If this now succeeds, the catalog was \
+             fixed: see this test's doc comment.",
+        );
+        assert!(
+            err.to_string().contains("immutability"),
+            "the boot fails on the body-ledger immutability conflict, not something else: \
+             {err}"
         );
     }
 

@@ -29,13 +29,35 @@ struct Args {
     key: String,
 }
 
-/// The fixed seed map (deterministic). Values are simple constants — no quotes / control
-/// bytes — so they embed safely in the JSON-RPC reply string.
+/// The fixed seed map (deterministic). Values are simple constants — no quotes / raw
+/// control bytes — so they embed safely in the JSON-RPC reply string. (`ledger_q3` carries
+/// `\n` as the two-character JSON ESCAPE, not a raw newline, so the reply stays valid JSON
+/// and the consumer decodes real line breaks — the shape `script-csv-total` already uses.)
+///
+/// The `relay_*`, `ledger_q3`, `unit_cost` and `mission_atlas9` entries exist for the
+/// bench's chaining tasks. Their values are deliberately ARBITRARY tokens and irregular
+/// numbers: an oracle a model can reach from its own knowledge measures the model, not the
+/// runtime, which is how `kv-then-calc` scored full marks while calling one of its two
+/// tools.
 const SEED: &[(&str, &str)] = &[
     ("a", "alpha"),
     ("b", "beta"),
     ("capital_of_france", "Paris"),
     ("x", "42"),
+    // `kv-two-hop`: the first value IS the second key. The terminal token exists nowhere
+    // but here, so the task is unreachable without both hops actually firing.
+    ("relay_start", "relay_node_7"),
+    ("relay_node_7", "QUILL-MERIDIAN-58"),
+    // `ledger-chain`: a CSV only the store holds, feeding script → calc.
+    (
+        "ledger_q3",
+        "atlas,4821\\nborea,3307\\ncygnus,5194\\ndelta,2760",
+    ),
+    // `kv-then-calc`: an operand the model cannot know, sized so the arithmetic is not
+    // something it reliably does in its head.
+    ("unit_cost", "8147"),
+    // `react-tool-needed`: a fact with no world-knowledge prior.
+    ("mission_atlas9", "SCRUBBED-PENDING-REVIEW"),
 ];
 
 fn main() {

@@ -82,14 +82,38 @@
       }
     },
     {
-      "id": "kv-then-calc",
+      "id": "kv-two-hop",
       "family": "tool",
-      "description": "Sequential two-tool chain: a store lookup feeds an arithmetic step.",
-      "instruction": "Use your available tools to look up the value stored under the key 'x', then add 8 to that value, and report the resulting number.",
+      "description": "Two-hop chain through the SAME tool with DIFFERENT arguments: the first lookup returns a key, and the second returns a token that exists nowhere but the store. STRUCTURALLY unguessable — there is no arithmetic and no world-knowledge prior, so the oracle cannot be satisfied unless the observation of hop 1 really reached the argument of hop 2. This is the chaining proof the suite lacked; the arithmetic chains below can only rely on tool_call_f1 for firing.",
+      "instruction": "Look up the value stored under the key 'relay_start'. The value you get back is itself a key — look THAT key up as well, and report the value it holds, exactly.",
       "expect": {
         "terminal": "answer",
         "answer_must_contain": [
-          "50"
+          "QUILL-MERIDIAN-58"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 3,
+        "ideal_tool_calls": 2
+      }
+    },
+    {
+      "id": "kv-then-calc",
+      "family": "tool",
+      "description": "Sequential two-tool chain: a store lookup feeds an arithmetic step. The operand lives only in the store and the product is large enough that mental arithmetic is unreliable — but multiplication is derivable IN PRINCIPLE, so read this task's task_success alongside its tool_call_f1, which is the metric for firing. It replaces an oracle of 42+8=50, which a model reached without ever calling the second tool.",
+      "instruction": "Use your available tools to look up the value stored under the key 'unit_cost', then multiply that value by 963, and report the resulting number.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "7845561"
         ],
         "expected_tools": [
           {
@@ -114,6 +138,41 @@
         "terminal": "answer",
         "answer_must_contain": [
           "TOOL NOT AVAILABLE"
+        ],
+        "expected_tools": [],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "react-tool-needed",
+      "family": "react",
+      "description": "Positive decision: the answer is a fact with no world-knowledge prior, and no tool is named in the prompt — so the model must decide FOR ITSELF that this needs a tool, and which of the granted tools takes a key. The family was a single negative test before this; a family that can only ever prove a refusal cannot move when the loop improves.",
+      "instruction": "What status is currently recorded for mission ATLAS-9? The record is stored under the identifier 'mission_atlas9'. Report the status exactly as recorded.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "SCRUBBED-PENDING-REVIEW"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "react-no-tool-needed",
+      "family": "react",
+      "description": "The counterweight, and the regression detector for the tool-steer prompt: a question answerable from the model's own knowledge, asked with the full tool menu in view. expected_tools is EMPTY, so any spurious call drives tool_call_f1 to 0. Steering the loop harder toward chaining is exactly the change that would break this, which is why it exists.",
+      "instruction": "Which planet in our solar system is closest to the Sun? Reply with just the planet name.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "Mercury"
         ],
         "expected_tools": [],
         "ideal_turns": 1,
@@ -226,12 +285,12 @@
     {
       "id": "script-then-calc",
       "family": "script",
-      "description": "Script feeding a tool: the script's aggregate is the calculator's operand, so an unfired script cannot reach the answer by any route.",
-      "instruction": "First total the amounts in this CSV, one name,amount per line:\\nalpha,120\\nbeta,305\\ngamma,75\\nThen add 500 to that total using your calculator tool, and report the final number.",
+      "description": "Script feeding a tool: the script's aggregate is the calculator's operand. The amounts and the multiplier are sized so that skipping either tool means doing the arithmetic in your head and probably getting it wrong — measured: with the previous 120/305/75 and 'add 500', a model reached the answer having fired ONE of the two tools, which is the same hollowness kv-then-calc had.",
+      "instruction": "First total the amounts in this CSV, one name,amount per line:\\nalpha,4821\\nbeta,3307\\ngamma,5194\\nThen multiply that total by 407 using your calculator tool, and report the final number.",
       "expect": {
         "terminal": "answer",
         "answer_must_contain": [
-          "1000"
+          "5422054"
         ],
         "expected_tools": [
           {
@@ -245,6 +304,34 @@
         ],
         "ideal_turns": 3,
         "ideal_tool_calls": 2
+      }
+    },
+    {
+      "id": "ledger-chain",
+      "family": "script",
+      "description": "THREE distinct tools in sequence: a store lookup returns a CSV, a sandboxed script aggregates it, and a calculator scales the aggregate. Nothing in the prompt carries the data, so a model cannot shortcut the first hop; the later hops are arithmetic and therefore derivable in principle once the CSV is in context, so gate this on task_success AND tool_call_f1 together. The suite previously had no chain longer than two tools.",
+      "instruction": "The key 'ledger_q3' in your key-value store holds a CSV, one name,amount per line. Retrieve it, total the amounts, then multiply that total by 3 using your calculator tool, and report the final number.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "48246"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "script/csv-total",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "mcp-calc/calc",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 4,
+        "ideal_tool_calls": 3
       }
     }
   ]

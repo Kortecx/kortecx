@@ -4422,27 +4422,27 @@ fn advance_react_chain<J: Journal>(
     // `prev_reject.is_none()`. PURE over frozen facts (counters fold-re-derived,
     // caps anchor-durable) ⇒ recovery-stable, no new durable state (the A2
     // precedent). `saturating_add` matches the house style (cf. `turns_used` above).
-    let nudge = prev_reject.is_none()
-        && (tool_calls.saturating_add(1) >= anchor.max_tool_calls
-            || turns_used.saturating_add(1) >= anchor.max_turns);
-    // PR-3 (A2) / W2: build the next turn's instruction. A REJECTED tail re-prompts
-    // with the durable reason so the model self-corrects; a TOOL tail one round from
-    // exhaustion gets the settle-nudge. Both are deterministic (pure functions of
-    // frozen facts + the anchor's immutable base prompt), so a recovery re-fold
-    // re-derives the byte-identical turn Mote (the instruction rides PROMPT_KEY).
-    let reprompt;
-    let nudged;
-    let turn_instruction: &str = match &prev_reject {
-        Some((_, reason)) => {
-            reprompt = crate::react_shape::render_reprompt(instruction, reason);
-            &reprompt
-        }
-        None if nudge => {
-            nudged = crate::react_shape::render_settle_nudge(instruction);
-            &nudged
-        }
-        None => instruction,
-    };
+    // A4: near-budget is a property of the COUNTERS ALONE. It used to also require
+    // `prev_reject.is_none()`, on the reasoning that the A2 re-prompt "already says
+    // answer directly if you cannot". But that is a SUGGESTION, not a force: only the
+    // nudge and a DUPLICATE reject carry a marker the gateway matches to arm
+    // `react_answer_force` (which suppresses the tool menu and drops the tool arm from
+    // the Ollama grammar). So a chain that keeps proposing an UNGRANTED tool was
+    // re-prompted every turn, never nudged, and burned its whole budget into a
+    // DeadLettered chain instead of answering — `task_success@react` = 0 on Ollama.
+    let near_budget = tool_calls.saturating_add(1) >= anchor.max_tool_calls
+        || turns_used.saturating_add(1) >= anchor.max_turns;
+    // PR-3 (A2) / W2 / A4: build the next turn's instruction. Deterministic (a pure
+    // function of frozen facts + the anchor's immutable base prompt), so a recovery
+    // re-fold re-derives the byte-identical turn Mote (the instruction rides PROMPT_KEY)
+    // — and it goes through the SAME chooser `recover_react_chain` uses, so the two can
+    // no longer drift.
+    let rendered = crate::react_shape::render_turn_instruction(
+        instruction,
+        prev_reject.as_ref().map(|(_, reason)| reason.as_str()),
+        near_budget,
+    );
+    let turn_instruction: &str = rendered.as_ref();
     let next_turn = turn + 1;
     let model_id = ModelId(anchor.model_id.clone());
     let next = crate::react_shape::build_chain_turn(
@@ -4840,10 +4840,53 @@ fn recover_react_chain<J: Journal>(
         let Ok(warrant) = decode_warrant(warrant_bytes.as_ref()) else {
             continue;
         };
+        // A4: re-derive the instruction the SAME way `advance_react_chain` did when it
+        // built this turn — from the frozen rounds BEFORE it. Rebuilding from the base
+        // prompt alone (what this did before) is correct only for a turn that was never
+        // re-prompted or nudged; for any other, `rebuilt.id` diverged from the durable
+        // fact, the fail-closed check below fired, the turn was never re-inserted, and
+        // the chain wedged `Pending` forever. So a crash mid-chain used to permanently
+        // wedge ANY chain that had ever had a rejection. Pure over frozen facts; the caps
+        // ride every round record, so no anchor lookup is needed.
+        let prior: Vec<&kx_projection::ReactRoundRecord> = projection
+            .react_rounds_of(&instance_id, &step_salt)
+            .filter(|r| r.turn < latest.turn)
+            .collect();
+        let prior_tool_calls = u32::try_from(
+            prior
+                .iter()
+                .map(|r| match &r.branch {
+                    ReactBranch::Tool { .. } | ReactBranch::Rejected { .. } => 1,
+                    ReactBranch::ToolBatch { calls } => calls.len(),
+                    _ => 0,
+                })
+                .sum::<usize>(),
+        )
+        .unwrap_or(u32::MAX);
+        // `advance_react_chain` builds turn T while processing turn T-1, where its
+        // `turns_used` = (T-1)+1 = T. Turn 0 has no predecessor (the seed swap builds it
+        // with the base instruction), which this reproduces: `prior` is empty.
+        let near_budget = prior_tool_calls.saturating_add(1) >= latest.max_tool_calls
+            || latest.turn.saturating_add(1) >= latest.max_turns;
+        let prev_reject: Option<String> = latest.turn.checked_sub(1).and_then(|prev| {
+            prior
+                .iter()
+                .filter(|r| r.turn == prev)
+                .max_by_key(|r| r.seq)
+                .and_then(|r| match &r.branch {
+                    ReactBranch::Rejected { reason } => Some(reason.clone()),
+                    _ => None,
+                })
+        });
+        let rendered = crate::react_shape::render_turn_instruction(
+            instruction,
+            prev_reject.as_deref(),
+            near_budget,
+        );
         let model_id = ModelId(latest.model_id.clone());
         let rebuilt = crate::react_shape::build_chain_turn(
             &model_id,
-            instruction,
+            rendered.as_ref(),
             latest.turn,
             &instance_id,
             step_salt,

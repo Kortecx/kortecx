@@ -424,6 +424,29 @@ impl LiveSuiteOutcome {
     }
 }
 
+/// The `missing_recipe` recorded for a task held back by [`task_filter`] rather than by
+/// an unprovisioned recipe — so a filtered run reads unmistakably as a diagnostic and can
+/// never be mistaken for missing coverage.
+pub const FILTERED_OUT: &str = "(held back by KX_BENCH_ONLY)";
+
+/// The optional `KX_BENCH_ONLY` task-id allowlist (comma-separated), for attributing a
+/// loop change to one arm without driving all sixteen tasks on a served model.
+///
+/// Unset / empty ⇒ `None` ⇒ the whole suite runs, byte-identically to before. Every task
+/// it holds back is reported as SKIPPED, so `LiveSuiteOutcome::is_complete` is false and a
+/// baseline capture is refused — the filter cannot be used to ratchet the corpus against a
+/// subset.
+fn task_filter() -> Option<BTreeSet<String>> {
+    let raw = std::env::var("KX_BENCH_ONLY").ok()?;
+    let ids: BTreeSet<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    (!ids.is_empty()).then_some(ids)
+}
+
 /// One family the serve could not drive, and why.
 #[derive(Debug, Clone)]
 pub struct SkippedFamily {
@@ -470,7 +493,22 @@ pub async fn score_live_suite(
     let mut per_task: Vec<TaskScore> = Vec::with_capacity(corpus.suite.tasks.len());
     let mut transcripts: Vec<Transcript> = Vec::with_capacity(corpus.suite.tasks.len());
     let mut skipped: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    let only = task_filter();
     for task in &corpus.suite.tasks {
+        // A DIAGNOSTIC filter for attributing a loop change to one arm without paying for
+        // the whole suite. A filtered-out task is recorded as SKIPPED, which is what makes
+        // this safe: `is_complete()` goes false, so the caller's baseline-capture guard
+        // refuses the run. Without that, a filter would be a way to ratchet the entire
+        // corpus against a hand-picked subset — the exact failure that guard exists for.
+        if let Some(only) = only.as_ref() {
+            if !only.contains(&task.id) {
+                skipped
+                    .entry((task.family.clone(), FILTERED_OUT.to_string()))
+                    .or_default()
+                    .push(task.id.clone());
+                continue;
+            }
+        }
         let drive = drive_for(task)?;
         if let Some(handle) = drive.required_recipe() {
             if !provisioned.contains(handle) {
@@ -945,6 +983,42 @@ mod tests {
         );
         assert!(observation_tools_for(&bench_task("kv-lookup-x")).is_empty());
         assert!(observation_tools_for(&bench_task("swarm-fanout-gather")).is_empty());
+    }
+
+    /// The attribution filter cannot become a way to ratchet the corpus against a subset.
+    ///
+    /// A filtered run reports every held-back task as SKIPPED, so `is_complete()` is
+    /// false and the driver's capture guard refuses it — the same mechanism that already
+    /// protects against an unprovisioned family. Without this the filter would be a
+    /// quiet path to a baseline over three tasks that reads as full coverage forever.
+    #[test]
+    fn a_filtered_run_can_never_be_captured_as_a_baseline() {
+        let report = kx_eval::aggregate(
+            "bench-v1".into(),
+            "digest".into(),
+            vec![],
+            &ScoreOutput::not_applicable("format_coverage", "N/A"),
+            &[],
+            "env".into(),
+            "sha".into(),
+        );
+        let filtered = LiveSuiteOutcome {
+            report,
+            skipped: vec![SkippedFamily {
+                family: "tool".into(),
+                missing_recipe: FILTERED_OUT.into(),
+                task_ids: vec!["kv-lookup-x".into()],
+            }],
+            transcripts: vec![],
+        };
+        assert!(
+            !filtered.is_complete(),
+            "a KX_BENCH_ONLY run is INCOMPLETE by construction"
+        );
+        assert!(
+            filtered.skipped[0].missing_recipe.contains("KX_BENCH_ONLY"),
+            "and it says WHY, so a filtered run is never mistaken for missing coverage"
+        );
     }
 
     /// The baseline guard: an outcome that skipped a family is NOT complete, so the

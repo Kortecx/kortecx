@@ -1,14 +1,14 @@
 {
   "suite_id": "bench-v1",
-  "suite_digest": "eac91c822ce7da0f2bfd208f1d3a47e61c12d160f6ed65d8594bf02c4629e91d",
+  "suite_digest": "0ceaefb76d4519d8f76899962aac9b281cb44601756844926ab212fa4cd2a4ae",
   "gates": [
     {
       "id": "task_success",
-      "per_mille": 916
+      "per_mille": 875
     },
     {
       "id": "tool_call_f1",
-      "per_mille": 972
+      "per_mille": 958
     },
     {
       "id": "groundedness",
@@ -16,7 +16,7 @@
     },
     {
       "id": "loop_efficiency",
-      "per_mille": 976
+      "per_mille": 964
     },
     {
       "id": "memory_quality",
@@ -56,15 +56,15 @@
     },
     {
       "id": "task_success@script",
-      "per_mille": 500
+      "per_mille": 666
     },
     {
       "id": "tool_call_f1@script",
-      "per_mille": 833
+      "per_mille": 888
     },
     {
       "id": "loop_efficiency@script",
-      "per_mille": 857
+      "per_mille": 904
     },
     {
       "id": "task_success@swarm",
@@ -80,15 +80,15 @@
     },
     {
       "id": "task_success@tool",
-      "per_mille": 1000
+      "per_mille": 833
     },
     {
       "id": "tool_call_f1@tool",
-      "per_mille": 1000
+      "per_mille": 944
     },
     {
       "id": "loop_efficiency@tool",
-      "per_mille": 1000
+      "per_mille": 952
     }
   ]
 }

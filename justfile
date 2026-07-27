@@ -877,9 +877,12 @@ eval-real:
 # the gitignored `docs/benchmarks/`; the committed per-engine baseline is the fail-closed
 # ratchet.
 #
-# COVERAGE: the suite spans four substrate families — `tool` + `react` (the ReAct loop and
-# its tool contract), `reach` (retrieval · durable memory · an App inheriting the
-# principal's capability ceiling) and `swarm` (fan-out → gather). `hnsw` is in the feature
+# COVERAGE: the suite spans five substrate families — `tool` + `react` (the ReAct loop, its
+# tool contract, and the decision of whether to reach for a tool at all), `script` (a
+# registered script run in the sandbox), `reach` (retrieval · durable memory · an App
+# inheriting the principal's capability ceiling) and `swarm` (fan-out → gather). Several
+# `tool`/`script` tasks are multi-hop, because a single-tool task cannot tell you whether
+# the loop carries an observation into the NEXT call. `hnsw` is in the feature
 # set and `KX_SERVE_MEMORY` is set because react-rag / react-memory are provisioned ONLY
 # when their capabilities are registered; without them those families SKIP (loudly) and a
 # baseline capture is refused, because the committed baseline is keyed by the whole corpus
@@ -887,7 +890,7 @@ eval-real:
 #
 # Drive BOTH engines (restart per run). The Ollama arm needs a DEDICATED EMBEDDER, or
 # `ingest_documents` fails and the whole `reach` family skips — the run then prints
-# `reach_fixtures=false` and covers 7 of 10 tasks. The invocation documented here used to
+# `reach_fixtures=false` and covers 13 of 16 tasks. The invocation documented here used to
 # omit it, so following this header exactly produced a partial run that still reported a
 # result (and could not capture a baseline at all, which is the fail-closed preflight doing
 # its job against instructions that could never satisfy it):

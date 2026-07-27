@@ -207,4 +207,92 @@ mod tests {
             }
         }
     }
+
+    /// A2, the de-hollowing proof: the chaining oracle FAILS when the chain is broken.
+    ///
+    /// This is the property `kv-then-calc` did not have. Its answer was 42+8=50, which a
+    /// model reached having called one of its two tools — so it scored 1000 while proving
+    /// nothing, and `task_success@tool` = 1000 was partly hollow with it.
+    ///
+    /// The test scores the SHIPPED expectation (not a hand-rolled copy) against two
+    /// synthetic runs, so weakening the task in `suite.json` breaks the test rather than
+    /// quietly restoring the hollowness. Deterministic and model-free: it cannot pass by
+    /// luck the way a live run can.
+    #[test]
+    fn the_two_hop_oracle_fails_when_the_chain_is_broken() {
+        use crate::scorers::{score_transcript, ScoreValue};
+        use crate::transcript::{Branch, Transcript, TurnRecord};
+
+        let c = load_bench_v1().expect("bench-v1 suite parses");
+        let task = c
+            .suite
+            .tasks
+            .iter()
+            .find(|t| t.id == "kv-two-hop")
+            .expect("kv-two-hop is the structurally-underivable chaining task");
+
+        let kv_turn = |turn: u32| TurnRecord {
+            turn,
+            branch: Branch::Tool,
+            tool_id: "mcp-kv/get".to_string(),
+            tool_version: "1".to_string(),
+            call_index: 0,
+            rejection_reason: String::new(),
+        };
+        let run = |turns: Vec<TurnRecord>, answer: &str| Transcript {
+            task_id: task.id.clone(),
+            turns,
+            final_answer: Some(answer.to_string()),
+            retrieved_docs: vec![],
+            rerank: None,
+            max_turns: 8,
+            max_tool_calls: 20,
+        };
+        let answer_turn = |turn: u32| TurnRecord {
+            turn,
+            branch: Branch::Answer,
+            tool_id: String::new(),
+            tool_version: String::new(),
+            call_index: 0,
+            rejection_reason: String::new(),
+        };
+        let success_of = |t: &Transcript| {
+            score_transcript(&crate::scorers::ScoreInput {
+                transcript: t,
+                expect: &task.expect,
+            })
+            .into_iter()
+            .find(|s| s.metric_id == "task_success")
+            .and_then(|s| match s.value {
+                ScoreValue::Gate { per_mille } => Some(per_mille),
+                ScoreValue::Spike { .. } => None,
+            })
+            .expect("task_success is always applicable and always a gate")
+        };
+
+        // BOTH hops fired and the terminal token was carried out ⇒ full marks.
+        let chained = run(
+            vec![kv_turn(0), kv_turn(1), answer_turn(2)],
+            "The value is QUILL-MERIDIAN-58.",
+        );
+        assert_eq!(
+            success_of(&chained),
+            1000,
+            "an actually-chained run scores full marks"
+        );
+
+        // The chain BROKEN: hop 1 fired, hop 2 never did, and the model answered with the
+        // best thing it had — the intermediate key. There is no route from there to the
+        // terminal token, so the oracle must read 0. If this ever reads 1000, the task has
+        // become derivable and measures the model instead of the runtime.
+        let broken = run(
+            vec![kv_turn(0), answer_turn(1)],
+            "The value is relay_node_7.",
+        );
+        assert_eq!(
+            success_of(&broken),
+            0,
+            "a run that never made the second hop CANNOT satisfy the oracle"
+        );
+    }
 }
