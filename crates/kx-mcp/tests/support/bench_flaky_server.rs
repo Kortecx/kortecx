@@ -9,13 +9,13 @@
 //! per connection, and it answers `tools/list` so it can be DISCOVERED like any real
 //! connector rather than hand-wired.
 //!
-//! Modes (argv[1], default `healthy`):
+//! Modes (`argv[1]`, default `healthy`):
 //! - `healthy`   — echo the arguments back. The control: same bin, same path, working.
 //! - `error`     — a JSON-RPC `error` object. The call reached the tool and it refused.
 //! - `malformed` — truncated JSON. The call SUCCEEDED at the transport and the payload is
-//!                 unusable, which is what a half-written response looks like.
+//!   unusable, which is what a half-written response looks like.
 //! - `slow`      — sleep `argv[2]` ms (default 600_000) before replying, to be cut off by
-//!                 the operator's per-Mote deadline.
+//!   the operator's per-Mote deadline.
 //!
 //! Deliberately NOT a bundled production tool: a shipped tool must not carry
 //! failure-injection switches, which is why this lives under `tests/support` and is built
