@@ -32,7 +32,15 @@ use kx_proto::proto::kx_gateway_client::KxGatewayClient;
 use tonic::transport::Channel;
 
 /// The per-task settle budget (a 12B model on CPU can take minutes per task).
-const SETTLE_TIMEOUT: Duration = Duration::from_secs(240);
+///
+/// Sized for the LONGEST chain in the corpus on the SLOWEST engine, not for the typical
+/// task. At 240s the in-process llama.cpp arm timed out on a three-turn chain and the whole
+/// suite aborted with `NotSettled` — a task that was working correctly, just not finishing
+/// inside a budget set when nothing chained past two turns. A timeout that truncates a
+/// legitimate chain does not measure the runtime, it measures the timeout, and it fails in
+/// the most misleading way available: as a capability failure. Typical tasks still settle
+/// in ~90s on that engine, so this is headroom rather than a slower run.
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(600);
 /// The aggregate `task_success` floor a CAPABLE model must clear (per-mille). Store-only
 /// kv facts + a deterministic echo make the oracle a genuine tool-use proof; a capable
 /// Gemma clears these comfortably (observed 1000/1000 on gemma3:12b). Set below the
