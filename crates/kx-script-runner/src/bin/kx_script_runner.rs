@@ -219,9 +219,21 @@ fn apply_memory_ceiling(mem_bytes: u64) -> Result<(), String> {
     // `rlimit`; it is called before any thread is spawned and its only effect is
     // on this process's own limits.
     if unsafe { libc::setrlimit(libc::RLIMIT_AS, &raw const rlim) } != 0 {
+        let err = std::io::Error::last_os_error();
+        // EINVAL here means the platform has no address-space limit to set —
+        // macOS is one. REFUSE rather than run: a script that declared a memory
+        // ceiling and got none would be running with more than it asked for, and
+        // silently under-enforcing a declared limit is the failure this design
+        // exists to prevent. Declaring 0 runs without a ceiling, explicitly.
+        if err.raw_os_error() == Some(libc::EINVAL) {
+            return Err(format!(
+                "this platform cannot enforce a {mem_bytes}-byte memory ceiling \
+                 (setrlimit RLIMIT_AS is unsupported here); declare 0 to run \
+                 without one"
+            ));
+        }
         return Err(format!(
-            "could not apply the {mem_bytes}-byte memory ceiling: {}",
-            std::io::Error::last_os_error()
+            "could not apply the {mem_bytes}-byte memory ceiling: {err}"
         ));
     }
     Ok(())

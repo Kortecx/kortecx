@@ -332,24 +332,56 @@ fn a_script_within_its_budget_is_unaffected() {
     assert_eq!(stdout, hex32(&result_ref_bytes(b"quick")));
 }
 
-/// A declared memory ceiling reaches the interpreter. The ceiling is set on the
-/// shim and inherited across exec, so a script asking for far more than it is
-/// allowed fails rather than being quietly granted it.
+/// ★ A declared memory ceiling is either ENFORCED or REFUSED — never ignored.
+///
+/// Asserted by asking the shell what limit it runs under, not by trying to
+/// allocate past one: an allocation test depends on which shell `/bin/sh` is
+/// (bash-as-sh on macOS, dash on Debian), on `seq` existing, and on how the
+/// allocator fails. That version passed on macOS for the wrong reason — the run
+/// failed because `setrlimit` itself errored, not because the ceiling held — and
+/// failed on Linux because the allocation simply stayed under the limit.
+///
+/// macOS has no `RLIMIT_AS`, so the honest outcomes differ by platform and both
+/// are checked here. What must NEVER happen is the third one: the script running
+/// with no ceiling while its declaration says it has one.
 #[test]
-fn a_memory_ceiling_is_inherited_by_the_interpreter() {
+fn a_declared_memory_ceiling_is_enforced_or_refused_but_never_ignored() {
     let fx = Fixture::new();
-    // Ask the shell to allocate a string far past the ceiling.
-    let script = fx.script("x=$(printf 'a%.0s' $(seq 1 50000000)); printf '%s' \"${#x}\"");
-    let mut descriptor = fx.descriptor(&script);
-    descriptor.mem_bytes = 32 * 1024 * 1024;
-    descriptor.wall_clock_ms = 20_000;
+    let script = fx.script("ulimit -v");
 
-    let (ok, _, stderr) = fx.run(&descriptor);
-    assert!(
-        !ok,
-        "a script allocating far past its {}-byte ceiling succeeded — the limit \
-         did not reach the interpreter",
-        descriptor.mem_bytes
+    let mut capped = fx.descriptor(&script);
+    capped.mem_bytes = 64 * 1024 * 1024;
+    let (ok, _, stderr) = fx.run(&capped);
+
+    if !ok {
+        assert!(
+            stderr.contains("cannot enforce"),
+            "a ceiling that could not be applied must say so plainly: {stderr}"
+        );
+        return;
+    }
+
+    let reported = fs::read_to_string(&capped.out_path).unwrap();
+    let reported = reported.trim().to_string();
+    if reported == "unlimited" {
+        panic!(
+            "the run succeeded and the child reports NO limit — a declared ceiling \
+             was silently ignored"
+        );
+    }
+    assert_eq!(
+        reported, "65536",
+        "the child should run under the declared 64 MiB ceiling, reported in KB"
     );
-    assert!(!stderr.is_empty(), "a refused run should say why");
+
+    // The pair: with nothing declared the child must NOT report that same limit,
+    // or the number above came from the host rather than the declaration.
+    let uncapped = fx.descriptor(&script);
+    let (ok, _, stderr) = fx.run(&uncapped);
+    assert!(ok, "the shim failed: {stderr}");
+    assert_ne!(
+        fs::read_to_string(&uncapped.out_path).unwrap().trim(),
+        "65536",
+        "an undeclared ceiling produced the same limit as a declared one"
+    );
 }
