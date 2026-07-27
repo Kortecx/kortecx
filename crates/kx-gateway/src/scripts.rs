@@ -43,7 +43,7 @@
 //! ## Execution
 //!
 //! Scripts never run on the host. Every dispatch goes through
-//! [`crate::real_exec::spawn_body_in_sandbox`] — bwrap on Linux, sandbox-exec on
+//! the sandbox seam in `real_exec` — bwrap on Linux, sandbox-exec on
 //! macOS — with the bundled shim as the body binary. If the sandbox cannot run,
 //! or the shim was never provisioned, the dispatch **refuses**. There is no
 //! configuration in which a script runs unsandboxed.
@@ -278,11 +278,11 @@ pub struct ScriptWish {
     pub fs_mounts: BTreeMap<PathBuf, FsMode>,
     /// Hosts the script wants to reach. Empty ⇒ no egress at all.
     pub net_hosts: BTreeSet<Host>,
-    /// Wall-clock budget in milliseconds (0 ⇒ [`DEFAULT_WALL_CLOCK_MS`]).
+    /// Wall-clock budget in milliseconds (0 ⇒ the host default, 30s).
     pub wall_clock_ms: u64,
     /// Memory ceiling in bytes (0 ⇒ unset, the platform default applies).
     pub mem_bytes: u64,
-    /// Output ceiling in bytes (0 ⇒ [`DEFAULT_MAX_OUTPUT_BYTES`]).
+    /// Output ceiling in bytes (0 ⇒ the host default, 1 MiB).
     pub max_output_bytes: u64,
 }
 
