@@ -223,70 +223,84 @@ function RegisterScriptForm() {
   }
 
   return (
-    <form className="stack" onSubmit={submit} data-testid="register-script-form">
+    <form className="register-script-form" onSubmit={submit} data-testid="register-script-form">
       <h3>Register a script</h3>
       <p className="muted">
         The source is stored by content hash, so the registry pins the exact bytes that will run. A
         serve without a sandbox — or without this interpreter — refuses rather than running it
         unsandboxed.
       </p>
-      <label htmlFor="script-name">Name</label>
-      <input
-        id="script-name"
-        data-testid="script-name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="report/summarize"
-        required
-      />
-      <label htmlFor="script-version">Version</label>
-      <input
-        id="script-version"
-        data-testid="script-version"
-        value={version}
-        onChange={(e) => setVersion(e.target.value)}
-        required
-      />
-      <label htmlFor="script-interpreter">Interpreter</label>
-      <select
-        id="script-interpreter"
-        data-testid="script-interpreter"
-        value={interpreter}
-        onChange={(e) => setInterpreter(e.target.value as InterpreterChoice)}
-      >
-        {INTERPRETERS.map((choice) => (
-          <option key={choice} value={choice}>
-            {choice}
-          </option>
-        ))}
-      </select>
-      <label htmlFor="script-description">Description</label>
-      <input
-        id="script-description"
-        data-testid="script-description"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        placeholder="What an agent should use this for"
-      />
-      <label htmlFor="script-source">Source</label>
-      <textarea
-        id="script-source"
-        data-testid="script-source"
-        value={source}
-        onChange={(e) => setSource(e.target.value)}
-        rows={8}
-        placeholder={'read -r input\nprintf "handled: %s" "$input"'}
-        required
-      />
-      <label htmlFor="script-mounts">Files it needs — one per line, as mode:path</label>
-      <textarea
-        id="script-mounts"
-        data-testid="script-mounts"
-        value={mounts}
-        onChange={(e) => setMounts(e.target.value)}
-        rows={3}
-        placeholder={"ro:/srv/data\nrw:/srv/out"}
-      />
+      <div className="register-script-form__row">
+        <div className="register-script-form__field">
+          <label htmlFor="script-name">Name</label>
+          <input
+            id="script-name"
+            data-testid="script-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="report/summarize"
+            required
+          />
+        </div>
+        <div className="register-script-form__field">
+          <label htmlFor="script-version">Version</label>
+          <input
+            id="script-version"
+            data-testid="script-version"
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+            required
+          />
+        </div>
+        <div className="register-script-form__field">
+          <label htmlFor="script-interpreter">Interpreter</label>
+          <select
+            id="script-interpreter"
+            data-testid="script-interpreter"
+            value={interpreter}
+            onChange={(e) => setInterpreter(e.target.value as InterpreterChoice)}
+          >
+            {INTERPRETERS.map((choice) => (
+              <option key={choice} value={choice}>
+                {choice}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="register-script-form__field">
+        <label htmlFor="script-description">Description</label>
+        <input
+          id="script-description"
+          data-testid="script-description"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What an agent should use this for"
+        />
+      </div>
+      <div className="register-script-form__field">
+        <label htmlFor="script-source">Source</label>
+        <textarea
+          id="script-source"
+          data-testid="script-source"
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+          rows={8}
+          placeholder={'read -r input\nprintf "handled: %s" "$input"'}
+          required
+        />
+      </div>
+      <div className="register-script-form__field">
+        <label htmlFor="script-mounts">Files it needs — one per line, as mode:path</label>
+        <textarea
+          id="script-mounts"
+          data-testid="script-mounts"
+          value={mounts}
+          onChange={(e) => setMounts(e.target.value)}
+          rows={3}
+          placeholder={"ro:/srv/data\nrw:/srv/out"}
+        />
+      </div>
       {err ? (
         <p className="field-error" data-testid="register-script-error" role="alert">
           {err.message}
