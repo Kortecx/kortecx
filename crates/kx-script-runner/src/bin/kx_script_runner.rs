@@ -303,8 +303,8 @@ fn tail(stderr_bytes: &[u8]) -> String {
 /// half-written file at all.
 fn write_atomically(path: &str, bytes: &[u8]) -> Result<(), String> {
     let temp_path = format!("{path}.partial");
-    let mut file = fs::File::create(&temp_path)
-        .map_err(|e| format!("could not create {temp_path}: {e}"))?;
+    let mut file =
+        fs::File::create(&temp_path).map_err(|e| format!("could not create {temp_path}: {e}"))?;
     file.write_all(bytes)
         .map_err(|e| format!("could not write {temp_path}: {e}"))?;
     file.sync_all()

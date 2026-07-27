@@ -697,9 +697,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // on the host (Golden Rule 9).
     let script_shim_ref = crate::scripts::provision_shim(&content);
     if script_shim_ref.is_none() {
-        tracing::info!(
-            "no sandbox script shim found; scripts will not register on this serve"
-        );
+        tracing::info!("no sandbox script shim found; scripts will not register on this serve");
     }
     let script_admin = Arc::new(crate::scripts::HostScriptRegistry::new(
         tool_registry.clone(),

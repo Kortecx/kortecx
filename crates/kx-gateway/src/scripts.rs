@@ -53,11 +53,11 @@ use std::path::{Path, PathBuf};
 
 use kx_capability::{Capability, CapabilityFailureReason, EffectRequest, LocalCapabilityBroker};
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
+use kx_gateway_core::{RegisteredScriptEntry, ScriptAdmin, ScriptAdminError, ScriptRegistration};
 use kx_mote::{
     EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, NdClass,
     PromptTemplateHash, ToolName, ToolVersion, MOTE_DEF_SCHEMA_VERSION,
 };
-use kx_gateway_core::{RegisteredScriptEntry, ScriptAdmin, ScriptAdminError, ScriptRegistration};
 use kx_script_runner::{hex32, result_ref_bytes, ScriptDescriptor};
 use kx_tool_registry::{
     IdempotencyClass, InputSchema, ParamSpec, ParamType, RegistrationError, SqliteToolRegistry,
@@ -550,7 +550,6 @@ impl ScriptCapability {
     }
 }
 
-
 impl Capability for ScriptCapability {
     fn name(&self) -> &ToolName {
         &self.name
@@ -642,8 +641,8 @@ fn parse_input_arg(payload: &[u8]) -> Result<String, CapabilityFailureReason> {
     if payload.is_empty() {
         return Ok(String::new());
     }
-    let args: ScriptArgs = serde_json::from_slice(payload)
-        .map_err(|e| fail(&format!("bad args: {e}")))?;
+    let args: ScriptArgs =
+        serde_json::from_slice(payload).map_err(|e| fail(&format!("bad args: {e}")))?;
     if args.input.len() > MAX_SCRIPT_BYTES {
         return Err(fail(&format!(
             "input is {} bytes, over the {MAX_SCRIPT_BYTES}-byte cap",
@@ -660,8 +659,6 @@ fn fail(reason: &str) -> CapabilityFailureReason {
 // ---------------------------------------------------------------------------
 // registration
 // ---------------------------------------------------------------------------
-
-
 
 /// The mounts an interpreter needs, shared by a real dispatch and the registration
 /// probe so the probe proves the same conditions the run will get.
@@ -742,7 +739,14 @@ fn probe_interpreter(
     let mut rejected = Vec::new();
     for candidate in candidates {
         let read_roots = Interpreter::read_roots(&candidate);
-        match run_probe(&candidate, &read_roots, interpreter, shim_ref, store, exec_class) {
+        match run_probe(
+            &candidate,
+            &read_roots,
+            interpreter,
+            shim_ref,
+            store,
+            exec_class,
+        ) {
             Ok(()) => return Ok((candidate, read_roots)),
             Err(reason) => {
                 tracing::info!(
@@ -989,7 +993,6 @@ pub fn allowed_interpreters() -> String {
         .join(", ")
 }
 
-
 // ---------------------------------------------------------------------------
 // the durable record
 // ---------------------------------------------------------------------------
@@ -1074,9 +1077,10 @@ impl<S: ContentStore + Send + Sync + 'static> HostScriptRegistry<S> {
     /// reporting one as the other would let a caller believe it can read a
     /// source that does not exist.
     fn row(&self, name: &str, version: &str) -> Option<(RegisteredScriptEntry, Vec<u8>)> {
-        let def = self
-            .registry
-            .lookup(&ToolName(name.to_string()), &ToolVersion(version.to_string()))?;
+        let def = self.registry.lookup(
+            &ToolName(name.to_string()),
+            &ToolVersion(version.to_string()),
+        )?;
         let ToolKind::LocalScript { script_ref } = def.kind else {
             return None;
         };
@@ -1141,12 +1145,13 @@ impl<S: ContentStore + Send + Sync + 'static> HostScriptRegistry<S> {
                 allowed: allowed_interpreters(),
             }
         })?;
-        let interpreter_path = interpreter
-            .resolve()
-            .ok_or(ScriptAdmissionError::InterpreterUnavailable {
-                interpreter: interpreter.as_str(),
-                detail: "no candidate resolved during restore".into(),
-            })?;
+        let interpreter_path =
+            interpreter
+                .resolve()
+                .ok_or(ScriptAdmissionError::InterpreterUnavailable {
+                    interpreter: interpreter.as_str(),
+                    detail: "no candidate resolved during restore".into(),
+                })?;
         let def = self
             .registry
             .lookup(name, version)
@@ -1440,10 +1445,7 @@ pub const BENCH_SCRIPT_SOURCE: &str = "rows=0\ntotal=0\n\
 /// the bundled MCP tools, so a model emitting the bare leaf still resolves.
 #[must_use]
 pub fn bench_script_tool() -> (ToolName, ToolVersion) {
-    (
-        ToolName("script/csv-total".into()),
-        ToolVersion("1".into()),
-    )
+    (ToolName("script/csv-total".into()), ToolVersion("1".into()))
 }
 
 /// Register the bundled benchmark script. Fail-soft: a serve that cannot sandbox

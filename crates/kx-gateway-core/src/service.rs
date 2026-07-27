@@ -3894,9 +3894,10 @@ impl KxGateway for GatewayService {
         // the tool's requirement — the client supplies no warrant and no id.
         // A serve that cannot run a script sandboxed refuses here rather than
         // registering something that would have to run on the host.
-        let admin = self.script_admin.as_ref().ok_or_else(|| {
-            Status::unimplemented("RegisterScript: no script registry wired")
-        })?;
+        let admin = self
+            .script_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("RegisterScript: no script registry wired"))?;
         let req = request.into_inner();
         if req.script_name.trim().is_empty() || req.script_version.trim().is_empty() {
             return Err(Status::invalid_argument(
@@ -3956,17 +3957,17 @@ impl KxGateway for GatewayService {
         &self,
         request: Request<proto::DeregisterScriptRequest>,
     ) -> Result<Response<proto::DeregisterScriptResponse>, Status> {
-        let admin = self.script_admin.as_ref().ok_or_else(|| {
-            Status::unimplemented("DeregisterScript: no script registry wired")
-        })?;
+        let admin = self
+            .script_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("DeregisterScript: no script registry wired"))?;
         let req = request.into_inner();
         if req.script_name.trim().is_empty() || req.script_version.trim().is_empty() {
             return Err(Status::invalid_argument(
                 "script_name and script_version are required",
             ));
         }
-        let removed = admin
-            .deregister(&req.script_name, &req.script_version)?;
+        let removed = admin.deregister(&req.script_name, &req.script_version)?;
         Ok(Response::new(proto::DeregisterScriptResponse { removed }))
     }
 

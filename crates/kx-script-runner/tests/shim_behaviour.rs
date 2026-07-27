@@ -299,7 +299,10 @@ fn a_runaway_script_is_stopped_at_its_budget() {
     let (ok, stdout, stderr) = fx.run(&descriptor);
     let elapsed = started.elapsed();
 
-    assert!(!ok, "a script that ran 20x its budget was allowed to finish");
+    assert!(
+        !ok,
+        "a script that ran 20x its budget was allowed to finish"
+    );
     assert!(stdout.is_empty(), "no ref may be printed for a stopped run");
     assert!(
         stderr.contains("exceeded its 1500 ms budget"),

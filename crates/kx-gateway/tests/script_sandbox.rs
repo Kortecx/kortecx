@@ -34,20 +34,18 @@ use std::path::PathBuf;
 
 use kx_capability::{CapabilityBroker, EffectRequest, LocalCapabilityBroker};
 use kx_content::{ContentRef, ContentStore, LocalFsContentStore};
+use kx_gateway_core::ScriptAdmin;
 use kx_mote::{
     EffectPattern, GraphPosition, InputDataId, LogicRef, ModelId, Mote, MoteDef, NdClass,
     PromptTemplateHash, ToolName, ToolVersion, MOTE_DEF_SCHEMA_VERSION,
 };
-use kx_gateway_core::ScriptAdmin;
 use kx_tool_registry::{SqliteToolRegistry, ToolRegistry};
 use kx_warrant::{
-    FsMode, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling, SecretScope,
-    ToolGrant, WarrantSpec,
+    FsMode, FsScope, ModelRoute, MoteClass, NetScope, ResourceCeiling, SecretScope, ToolGrant,
+    WarrantSpec,
 };
 
-use kx_gateway::scripts::{
-    provision_shim, register_script, Interpreter, ScriptDecl, ScriptWish,
-};
+use kx_gateway::scripts::{provision_shim, register_script, Interpreter, ScriptDecl, ScriptWish};
 
 /// The shim must be built for these to mean anything. Runtime-skip (loudly)
 /// rather than pass with nothing exercised.
@@ -339,12 +337,9 @@ fn a_wish_wider_than_the_grant_is_refused_and_the_same_script_fires_when_granted
     // Arm A — the caller grants NO filesystem. The declared wish is not a subset,
     // so the broker refuses before the capability is ever invoked.
     let ungranted = granting_warrant(&d.name, &d.version, BTreeMap::new());
-    let refused = h.broker.dispatch(
-        &mote,
-        &ungranted,
-        &d.name,
-        request("", declared.clone()),
-    );
+    let refused = h
+        .broker
+        .dispatch(&mote, &ungranted, &d.name, request("", declared.clone()));
     assert!(
         matches!(
             refused,
@@ -453,7 +448,10 @@ fn a_registered_script_is_fireable_again_after_a_restart() {
     let Some(shim) = shim_or_skip(&h.store) else {
         return;
     };
-    let d = decl("script/durable", "read -r line; printf 'restored:%s' \"$line\"");
+    let d = decl(
+        "script/durable",
+        "read -r line; printf 'restored:%s' \"$line\"",
+    );
     register_script(
         &d,
         Some(shim),
@@ -474,9 +472,10 @@ fn a_registered_script_is_fireable_again_after_a_restart() {
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
 
-    let before = restarted
-        .broker
-        .dispatch(&mote, &warrant, &d.name, request("x", FsScope::empty()));
+    let before =
+        restarted
+            .broker
+            .dispatch(&mote, &warrant, &d.name, request("x", FsScope::empty()));
     assert!(
         before.is_err(),
         "a fresh broker should not already know the script — this test would be \
@@ -492,7 +491,6 @@ fn a_registered_script_is_fireable_again_after_a_restart() {
     let staged = restarted.store.get(&handle.staged_ref).expect("staged");
     assert_eq!(String::from_utf8_lossy(&staged).trim_end(), "restored:x");
 }
-
 
 /// ★ The benchmark's oracle must be RIGHT, or the family measures a correct model
 /// against a wrong expectation and scores it zero.
@@ -546,15 +544,13 @@ fn the_bundled_benchmark_script_computes_what_the_suite_expects() {
     }
 }
 
-
 /// Build a declaration for a given interpreter, skipping when it is unavailable.
-fn decl_for(
-    name: &str,
-    interpreter: Interpreter,
-    source: &str,
-) -> Option<ScriptDecl> {
+fn decl_for(name: &str, interpreter: Interpreter, source: &str) -> Option<ScriptDecl> {
     if interpreter.resolve().is_none() {
-        eprintln!("SKIP: {} is not installed on this host", interpreter.as_str());
+        eprintln!(
+            "SKIP: {} is not installed on this host",
+            interpreter.as_str()
+        );
         return None;
     }
     let (tool_id, version) = tool(name);
@@ -748,8 +744,11 @@ fn the_output_cap_holds_at_a_realistic_size() {
 
     // And a payload just under the cap still succeeds — otherwise "it refused"
     // could simply mean large outputs never work.
-    let mut ok_decl = decl("script/large-but-ok", "i=0; while [ $i -lt 256 ]; do \
-                            printf '%01024d' $i; i=$((i+1)); done");
+    let mut ok_decl = decl(
+        "script/large-but-ok",
+        "i=0; while [ $i -lt 256 ]; do \
+                            printf '%01024d' $i; i=$((i+1)); done",
+    );
     ok_decl.wish.max_output_bytes = 1024 * 1024;
     register_script(
         &ok_decl,
@@ -764,7 +763,12 @@ fn the_output_cap_holds_at_a_realistic_size() {
     let warrant = granting_warrant(&ok_decl.name, &ok_decl.version, BTreeMap::new());
     let handle = h
         .broker
-        .dispatch(&mote, &warrant, &ok_decl.name, request("", FsScope::empty()))
+        .dispatch(
+            &mote,
+            &warrant,
+            &ok_decl.name,
+            request("", FsScope::empty()),
+        )
         .expect("a 256 KiB output under a 1 MiB cap should succeed");
     let staged = h.store.get(&handle.staged_ref).expect("staged");
     assert_eq!(staged.as_ref().len(), 256 * 1024);
@@ -888,7 +892,10 @@ fn a_runaway_script_is_stopped_by_its_declared_time_budget() {
         .dispatch(&mote, &warrant, &d.name, request("", FsScope::empty()));
     let elapsed = started.elapsed();
 
-    assert!(got.is_err(), "a script that ran 15x its budget was allowed to finish");
+    assert!(
+        got.is_err(),
+        "a script that ran 15x its budget was allowed to finish"
+    );
     assert!(
         elapsed < std::time::Duration::from_secs(15),
         "the budget did not stop it — the call took {elapsed:?}, near the script's \
@@ -972,7 +979,12 @@ print(json.dumps({{"revenue": {{k: round(v, 2) for k, v in sorted(totals.items()
             &mote,
             &warrant,
             &d.name,
-            request("", FsScope { mounts: d.wish.fs_mounts.clone() }),
+            request(
+                "",
+                FsScope {
+                    mounts: d.wish.fs_mounts.clone(),
+                },
+            ),
         )
         .expect("the python3 script should fire");
 

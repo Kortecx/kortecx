@@ -337,8 +337,7 @@ mod macos {
     ) -> Result<String, MoteExecutorError> {
         // The shim, materialized executable in its own directory so the exec rule
         // covering it covers nothing else.
-        let bin_dir =
-            tempfile::tempdir().map_err(|e| internal(&format!("shim dir: {e}")))?;
+        let bin_dir = tempfile::tempdir().map_err(|e| internal(&format!("shim dir: {e}")))?;
         let shim_path = bin_dir.path().join("shim");
         let shim_bytes = store
             .get(&shim_ref)
@@ -398,7 +397,6 @@ mod macos {
         Ok(printed)
     }
 
-
     /// Spawn and wait, killing the child if it outlives `wall_clock_ms`.
     ///
     /// The pipes are drained on their own threads: a child that fills a pipe
@@ -433,8 +431,8 @@ mod macos {
             buf
         });
 
-        let deadline = (wall_clock_ms > 0)
-            .then(|| Instant::now() + Duration::from_millis(wall_clock_ms));
+        let deadline =
+            (wall_clock_ms > 0).then(|| Instant::now() + Duration::from_millis(wall_clock_ms));
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
@@ -523,7 +521,6 @@ mod macos {
         push_rule(&mut profile, "file-write*", &write_dir);
         Ok(profile)
     }
-
 
     /// Emit the egress rules this platform can express, and REFUSE the ones it
     /// cannot.
