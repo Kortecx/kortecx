@@ -666,9 +666,11 @@ const REACT_SYSTEM: &str = "You are a precise, autonomous assistant that can cal
 accomplish the task. Think step by step. When a tool is needed, reply with EXACTLY one JSON \
 object and nothing else: {\"tool_call\":{\"name\":\"<tool name>\",\"version\":\"<tool version>\",\
 \"args\":{ ... }}} — use a name and version from the provided tool list and fill args per that \
-tool's inputs. After a tool result is returned, keep reasoning. When you have enough information, \
-reply with the final answer as plain text and do NOT emit a tool_call. Never invent a tool, \
-version, or argument that is not listed.";
+tool's inputs. You work ONE step per turn: after a tool result is returned, keep reasoning, and \
+if the task still needs another step, call the NEXT tool — passing values from the result you \
+just received as its arguments. Chaining tools this way is expected, and a task may need several \
+before you can answer. When you have enough information, reply with the final answer as plain \
+text and do NOT emit a tool_call. Never invent a tool, version, or argument that is not listed.";
 
 /// gemma3 connector-tool-fire (`T-RUNAPP-RAG-RECIPE-ROUTE` generalized from RAG to
 /// arbitrary connector/skill tool-calls): a shared tool-USE directive appended to the
@@ -682,11 +684,30 @@ version, or argument that is not listed.";
 /// the MoteId / off-digest (it rides the ephemeral menu, never a committed fact), and it
 /// reaches BOTH the connector agentic turn AND react-rag on BOTH engines from the ONE menu
 /// choke point — the exact gap that left the connector path unprimed.
+///
+/// **A1 (chaining).** This directive used to END with *"Once a tool has returned a result,
+/// USE that result to write your final plain-text answer"* — an instruction to TERMINATE
+/// after one tool, re-issued on every tool-eligible turn INCLUDING the post-observation one
+/// where a second call belongs. Measured: `task_success@script` = 500 on both engines,
+/// because `script-then-calc` fires its script and then never chains into the calculator.
+/// It now names the multi-step shape, points at the labelled trajectory blocks
+/// ([`crate::assemble_serve`]) so "the result" has a resolvable referent, and frames
+/// act-vs-answer as a decision rather than a conclusion.
+///
+/// The anti-loop clause is KEPT but sharpened from "the same tool" to "the same tool with
+/// the SAME arguments" — exactly `kx_toolcall::is_duplicate_call`'s predicate. The prompt
+/// used to over-forbid relative to the runtime guard, discouraging legitimate
+/// same-tool-different-args steps (a two-hop lookup, a poll) the guard allows.
 const TOOL_STEER_DIRECTIVE: &str = "Use the tools listed above to gather or act on the real \
 data the task needs BEFORE you answer: when a listed tool can obtain the authoritative \
-result, call it (using the format above) rather than answering from memory. Once a tool has \
-returned a result, USE that result to write your final plain-text answer — do NOT call the \
-same tool again with the same arguments.";
+result, call it (using the format above) rather than answering from memory. A task may need \
+SEVERAL tools in sequence. The numbered blocks below are the conversation so far, oldest \
+first: a [step] block is what you said, and a [result of <tool>] block is what that tool \
+returned. Read the MOST RECENT result — if the task still needs another step, call the NEXT \
+tool now, passing values from that result as its arguments; only when no further tool is \
+needed, write your final plain-text answer from the results you have. Never repeat a call you \
+already made with the SAME arguments — call a different tool, call the same tool with \
+DIFFERENT arguments, or answer.";
 
 /// Qwen ChatML wrapping of a user prompt with an EXPLICIT system message — the
 /// **training contract** the companion model repo mirrors (kept byte-identical to
@@ -1426,7 +1447,7 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // byte-identical to pre-F-7. A missing/oversized upstream fails closed.
         let instruction = match self.take_parent_context(mote.id) {
             Some(parents) if !parents.is_empty() => {
-                let context = self.assemble_parent_context(mote, &parents)?;
+                let context = self.assemble_parent_context(mote, &parents, warrant)?;
                 format!("{context}{instruction}")
             }
             _ => instruction,
@@ -1697,9 +1718,14 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         &self,
         mote: &Mote,
         parents: &[(MoteId, ContentRef)],
+        warrant: &WarrantSpec,
     ) -> Result<String, MoteExecutorError> {
         let assembled = if Self::is_react_turn(mote) {
-            crate::assemble_serve::assemble_trajectory(parents, &self.store)
+            // The warrant is what lets the trajectory render name the tool each
+            // observation came from: a turn block IS the committed `{"tool_call":…}`
+            // envelope, and decoding it needs the same grant set + arg cap the
+            // coordinator froze the call under.
+            crate::assemble_serve::assemble_trajectory(parents, &self.store, warrant)
         } else {
             crate::assemble_serve::assemble_from_parent_results(parents, &self.store)
         };
@@ -3889,6 +3915,15 @@ mod tests {
     /// the serve-side curated-prompt↔parser agreement.)
     #[test]
     fn react_system_envelope_round_trips_through_parse_tool_call() {
+        // The pin has to reach the CONSTANT, not just a literal retyped here — otherwise
+        // corrupting `REACT_SYSTEM`'s envelope leaves this test green and the claim in
+        // its own doc comment false.
+        assert!(
+            REACT_SYSTEM.contains(
+                r#"{"tool_call":{"name":"<tool name>","version":"<tool version>","args":{ ... }}}"#
+            ),
+            "REACT_SYSTEM still states the canonical envelope: {REACT_SYSTEM}"
+        );
         let warrant = granted_warrant(); // grants mcp-echo v1
         let envelope = br#"{"tool_call":{"name":"mcp-echo","version":"1","args":{"text":"ping"}}}"#;
         let call =
@@ -3897,6 +3932,33 @@ mod tests {
                 .expect("a tool call is decoded");
         assert_eq!(call.name, kx_mote::ToolName("mcp-echo".into()));
         assert_eq!(call.version, kx_mote::ToolVersion("1".into()));
+    }
+
+    /// A1: the two prompt properties that regressed silently before, each of which the
+    /// codebase had only stated in prose.
+    #[test]
+    fn the_tool_steer_directive_permits_chaining_and_shows_no_envelope() {
+        // (1) The no-second-example constraint. `fold_react_rag_dataset` (provision.rs)
+        //     records that a second inline `{tool_call}` example primed Gemma-4 to emit a
+        //     stray `call:` prefix; the menu + REACT_SYSTEM own the envelope. That rule
+        //     had no mechanical guard — a future edit could re-add one and pass CI.
+        assert!(
+            !TOOL_STEER_DIRECTIVE.contains("tool_call"),
+            "the steer directive NAMES the behavior, never shows the envelope: \
+             {TOOL_STEER_DIRECTIVE}"
+        );
+        // (2) It must not tell the model to terminate after one tool. This exact
+        //     sentence capped `task_success@script` at 500 on BOTH engines.
+        assert!(
+            !TOOL_STEER_DIRECTIVE.contains("write your final plain-text answer — do NOT"),
+            "the terminate-after-one-tool instruction must not return"
+        );
+        // (3) The anti-loop clause survives, and matches `is_duplicate_call`'s predicate
+        //     (tool + version + ARGS) rather than over-forbidding the whole tool.
+        assert!(
+            TOOL_STEER_DIRECTIVE.contains("SAME arguments"),
+            "the duplicate-call steer is kept, scoped to identical ARGUMENTS"
+        );
     }
 
     /// PR-9d (model-side half): `dispatch_model` PREPENDS the carried grounding context

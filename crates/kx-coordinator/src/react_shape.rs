@@ -124,6 +124,67 @@ pub(crate) fn render_settle_nudge(base_instruction: &str) -> String {
     )
 }
 
+/// A4 (compose, don't choose): the LAST useful turn's instruction when the tail is
+/// `Rejected` AND the budget is one round from exhausting.
+///
+/// Under the previous either/or the reject arm won unconditionally, so a model that keeps
+/// proposing an UNGRANTED tool was re-prompted every turn, NEVER nudged, never
+/// answer-FORCED (the gateway arms its answer-only decode off [`kx_toolcall::
+/// SETTLE_NUDGE_MARKER`] / `DUPLICATE_REJECT_MARKER` in the frozen instruction), and burned
+/// the whole budget into a `DeadLettered` chain. Measured: `task_success@react` = 0 on
+/// Ollama, where the runtime correctly refused every ungranted proposal and the model
+/// still never got to say so. This says BOTH things: what was wrong, and that this is the
+/// last turn.
+///
+/// Layered on [`render_reprompt`] so the A2 bytes — twin-pinned across the dep wall
+/// against `kx_model_harness::react_reason::render_reprompt` — are reused verbatim rather
+/// than re-typed. The suffix embeds [`kx_toolcall::SETTLE_NUDGE_MARKER`] so
+/// `react_answer_force` arms on it exactly as on the plain nudge.
+///
+/// It deliberately does NOT reuse [`render_settle_nudge`]'s prose: that opens "You have
+/// already gathered tool results", and a reject-only chain has gathered NONE — a
+/// near-budget reject tail is precisely the case where that sentence is false.
+///
+/// PURE + total: a constant template over `(base, reason)`, both frozen, so a recovery
+/// re-fold rebuilds it byte-identically.
+#[must_use]
+pub(crate) fn render_reprompt_nudged(base_instruction: &str, reason: &str) -> String {
+    format!(
+        "{}\n\n[This is your LAST turn and your tool-call budget is nearly exhausted. \
+         Do NOT call another tool. Answer the question directly, in prose, using whatever \
+         you have — and say plainly what you could not determine.]",
+        render_reprompt(base_instruction, reason)
+    )
+}
+
+/// The ONE place a ReAct turn's instruction is chosen, over `(previous tail, budget)`.
+///
+/// Extracted so `advance_react_chain` (the live drive) and `recover_react_chain` (the
+/// crash re-fold) cannot disagree. They used to: recovery rebuilt an in-flight turn from
+/// `base_prompt_ref` ALONE, never re-applying either renderer, so any chain that had ever
+/// been re-prompted or nudged rebuilt to a DIFFERENT `MoteId` than the durable fact,
+/// tripped the fail-closed divergence check, and wedged `Pending` forever. Both callers
+/// now derive the instruction the same way from the same frozen facts.
+///
+/// PURE + total + deterministic — no clock, no RNG, no map iteration.
+#[must_use]
+pub(crate) fn render_turn_instruction<'a>(
+    base_instruction: &'a str,
+    prev_reject: Option<&str>,
+    near_budget: bool,
+) -> std::borrow::Cow<'a, str> {
+    match (prev_reject, near_budget) {
+        (Some(reason), true) => {
+            std::borrow::Cow::Owned(render_reprompt_nudged(base_instruction, reason))
+        }
+        (Some(reason), false) => {
+            std::borrow::Cow::Owned(render_reprompt(base_instruction, reason))
+        }
+        (None, true) => std::borrow::Cow::Owned(render_settle_nudge(base_instruction)),
+        (None, false) => std::borrow::Cow::Borrowed(base_instruction),
+    }
+}
+
 /// The run-salted 32-byte identity material for a ReAct turn:
 /// `blake3(b"kx-react-turn" ‖ instance_id ‖ turn.to_le_bytes())`. Deterministic +
 /// distinct per `(run, turn)`, and cryptographically distinct from the
@@ -997,6 +1058,25 @@ mod tests {
         assert!(
             nudge.contains(kx_toolcall::SETTLE_NUDGE_MARKER),
             "render_settle_nudge must carry the shared marker: {nudge}"
+        );
+        // A4: the COMPOSED near-budget reject re-prompt arms the same way. Without the
+        // marker it would read as an ordinary reject re-prompt — the model would keep its
+        // tool menu and its tool grammar arm, and the whole point of A4 (forcing the
+        // answer on the last turn instead of dead-lettering) would be silently absent.
+        let composed = render_reprompt_nudged("list the files", "the args did not validate");
+        assert!(
+            composed.contains(kx_toolcall::SETTLE_NUDGE_MARKER),
+            "render_reprompt_nudged must carry the shared marker: {composed}"
+        );
+        assert!(
+            composed.contains("REJECTED") && composed.contains("the args did not validate"),
+            "…and must still carry the A2 rejection reason: {composed}"
+        );
+        // It is layered on `render_reprompt`, so the twin-pinned bytes are reused verbatim
+        // rather than re-typed — a drift here would break the harness twin, not just this.
+        assert!(
+            composed.starts_with(&render_reprompt("list the files", "the args did not validate")),
+            "the composed render must PREFIX-match the plain A2 re-prompt: {composed}"
         );
         // A duplicate re-prompt embeds the duplicate reason, which carries the marker.
         let call = kx_toolcall::ToolCall {

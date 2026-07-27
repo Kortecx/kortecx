@@ -44,6 +44,46 @@ pub(crate) const DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS: u32 = 6_144;
 /// match (the `DEFAULT_WINDOW_BYTES` precedent).
 #[cfg(feature = "serve-engine")]
 pub(crate) const DEFAULT_PLANNER_MAX_OUTPUT_TOKENS: u32 = 1_536;
+/// Default per-turn ReAct decode budget — the value every react warrant carries into
+/// `ModelRoute.max_output_tokens`, and from there into each turn's identity-bearing
+/// `InferenceParams`.
+///
+/// Was a hard-coded `512` on every react warrant. That is the same defect
+/// [`DEFAULT_PLANNER_MAX_OUTPUT_TOKENS`] documents one subsystem over: a reasoning model
+/// spends part of the budget on a `<think>` block that is stripped before decode, so a
+/// turn that must emit a preamble AND a complete `{"tool_call":…}` envelope truncates
+/// mid-envelope, the proposal is REJECTED as malformed, and the loop burns a tool-call
+/// unit on a re-prompt. It presents as "the model will not chain tools" for what is
+/// really a budget. Sized for a chaining turn carrying a trajectory, not for the
+/// shortest call that ever fit. Overridable via `KX_SERVE_REACT_MAX_OUTPUT_TOKENS`.
+///
+/// NOTE: this rides the chain's ANCHOR-DURABLE warrant into every turn, so it is
+/// constant within a chain by construction — an operator changing the env mid-run cannot
+/// perturb a recovery re-fold (a stronger property than the
+/// [`DEFAULT_APP_PROJECT_RAIL_BYTES`] precedent, which is only pure at a fixed setting).
+/// It also widens `kx_toolcall::max_args_bytes` (= 4× this), deliberately: the args a
+/// model may propose are bounded by the same budget that produced them, and the schema
+/// validation + grant check remain independent authority gates.
+///
+/// ## Why the DEFAULT is still 512
+///
+/// Raising it is an OPERATOR OPT-IN rather than a new default, because changing a react
+/// warrant is not currently a safe upgrade. A recipe body is keyed by what it COMPILES to
+/// (`Manifest::recipe` = seed + Mote ids), and a step warrant is NOT part of that
+/// identity — so a changed warrant yields different body BYTES under the SAME recipe id,
+/// which `BodyLedger::publish_body` refuses as an immutability conflict. `seed_recipe`
+/// propagates that with `?` and `DemoLibrary::open_serve` is called with `?` at startup,
+/// so a new default would fail the SERVE BOOT of every state dir seeded by an older
+/// binary. (The immutability rule is load-bearing and must not be relaxed: because the
+/// recipe id does not cover the warrant, relaxing it would let a replacement body widen a
+/// recipe's authority under an unchanged id.)
+///
+/// That hazard is PRE-EXISTING and broader than this knob — it fires for any react
+/// warrant change on an existing dir, including switching the served model or the granted
+/// tool set. Pinned by `provision::tests::reseeding_a_recipe_at_a_new_budget_does_not_\
+/// break_the_boot`. Fixing it needs the recipe identity to cover the step warrant (or a
+/// real version-successor path), which is a catalog change, not a loop change.
+pub(crate) const DEFAULT_REACT_MAX_OUTPUT_TOKENS: u32 = 512;
 /// Default chat-RAG top-k ceiling (the untrusted `k` is clamped to this).
 pub(crate) const DEFAULT_CHAT_RAG_MAX_K: usize = 16;
 /// Default total-bytes budget for an App's PROJECT context rail — the `.md` files the
@@ -138,6 +178,21 @@ pub(crate) fn scaffold_max_output_tokens() -> u32 {
             .ok()
             .as_deref(),
         DEFAULT_SCAFFOLD_MAX_OUTPUT_TOKENS,
+        MAX_EDIT_TOKENS,
+    )
+}
+
+/// The per-turn ReAct decode budget (`KX_SERVE_REACT_MAX_OUTPUT_TOKENS`). Read where the
+/// react warrants are BUILT (`provision::react_warrant` and its siblings), so a chain
+/// freezes one value on its anchor and every turn of that chain reads it back from there.
+/// Additive + default-preserving (unset ⇒ [`DEFAULT_REACT_MAX_OUTPUT_TOKENS`]); the
+/// model-free canonical demo carries its own warrant and is untouched.
+pub(crate) fn react_max_output_tokens() -> u32 {
+    parse_cap_u32(
+        std::env::var("KX_SERVE_REACT_MAX_OUTPUT_TOKENS")
+            .ok()
+            .as_deref(),
+        DEFAULT_REACT_MAX_OUTPUT_TOKENS,
         MAX_EDIT_TOKENS,
     )
 }
