@@ -177,9 +177,7 @@ pub(crate) fn render_turn_instruction<'a>(
         (Some(reason), true) => {
             std::borrow::Cow::Owned(render_reprompt_nudged(base_instruction, reason))
         }
-        (Some(reason), false) => {
-            std::borrow::Cow::Owned(render_reprompt(base_instruction, reason))
-        }
+        (Some(reason), false) => std::borrow::Cow::Owned(render_reprompt(base_instruction, reason)),
         (None, true) => std::borrow::Cow::Owned(render_settle_nudge(base_instruction)),
         (None, false) => std::borrow::Cow::Borrowed(base_instruction),
     }
@@ -1075,7 +1073,10 @@ mod tests {
         // It is layered on `render_reprompt`, so the twin-pinned bytes are reused verbatim
         // rather than re-typed — a drift here would break the harness twin, not just this.
         assert!(
-            composed.starts_with(&render_reprompt("list the files", "the args did not validate")),
+            composed.starts_with(&render_reprompt(
+                "list the files",
+                "the args did not validate"
+            )),
             "the composed render must PREFIX-match the plain A2 re-prompt: {composed}"
         );
         // A duplicate re-prompt embeds the duplicate reason, which carries the marker.

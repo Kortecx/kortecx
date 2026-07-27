@@ -483,7 +483,11 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
                 continue;
             };
             let shown: String = answer.chars().take(400).collect();
-            let tail = if answer.chars().count() > 400 { "…" } else { "" };
+            let tail = if answer.chars().count() > 400 {
+                "…"
+            } else {
+                ""
+            };
             eprintln!(
                 "eval-bench: ANSWER {} (oracle unsatisfied) → {shown:?}{tail}",
                 t.task_id

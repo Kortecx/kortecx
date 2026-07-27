@@ -195,7 +195,10 @@ mod tests {
     #[test]
     fn the_answer_arm_refuses_an_empty_answer() {
         let spec = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")]);
-        for v in [render_answer_only(&spec), render_union(&spec)["oneOf"][1].clone()] {
+        for v in [
+            render_answer_only(&spec),
+            render_union(&spec)["oneOf"][1].clone(),
+        ] {
             assert_eq!(
                 v["properties"]["answer"]["minLength"],
                 json!(1),

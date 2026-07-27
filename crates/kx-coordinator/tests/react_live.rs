@@ -1949,7 +1949,15 @@ async fn a_nudged_reject_tail_can_settle_on_an_answer() {
         let prompt = turn_prompt(&turn);
         if prompt.contains(NUDGE_MARK) {
             // The runtime has told it to settle — a model that obeys answers in prose.
-            commit_raw(&svc, &store, &turn, &w, b"I could not use that tool.", worker).await;
+            commit_raw(
+                &svc,
+                &store,
+                &turn,
+                &w,
+                b"I could not use that tool.",
+                worker,
+            )
+            .await;
             settled_answer = true;
             break;
         }

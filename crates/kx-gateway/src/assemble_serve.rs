@@ -697,7 +697,9 @@ mod tests {
         // The defect this pins: both blocks used to render as anonymous `[context N]`,
         // so the model had to INFER that block 2 was the result of the call in block 1.
         let (_dir, store) = store();
-        let turn = store.put(&envelope("mcp-kv/get", r#"{"key":"x"}"#)).unwrap();
+        let turn = store
+            .put(&envelope("mcp-kv/get", r#"{"key":"x"}"#))
+            .unwrap();
         let obs = store.put(br#"{"value":"42"}"#).unwrap();
         let out = assemble_trajectory(
             &[(mote_id(1), turn), (mote_id(2), obs)],
@@ -803,7 +805,9 @@ mod tests {
         // observation cannot be re-read as a new proposal — which would both mislabel
         // it and shift every later block's role.
         let (_dir, store) = store();
-        let turn = store.put(&envelope("mcp-kv/get", r#"{"key":"q"}"#)).unwrap();
+        let turn = store
+            .put(&envelope("mcp-kv/get", r#"{"key":"q"}"#))
+            .unwrap();
         let echoed = store
             .put(&envelope("mcp-calc/calc", r#"{"op":"add","a":1,"b":2}"#))
             .unwrap();

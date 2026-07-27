@@ -63,9 +63,7 @@ fn contains_oracle(answer: &str, degrouped: &str, needle: &str) -> bool {
     if answer.contains(needle) {
         return true;
     }
-    !needle.is_empty()
-        && needle.chars().all(|c| c.is_ascii_digit())
-        && degrouped.contains(needle)
+    !needle.is_empty() && needle.chars().all(|c| c.is_ascii_digit()) && degrouped.contains(needle)
 }
 
 /// `answer` with `,` / `_` / thin spaces dropped when they sit BETWEEN two ASCII digits —
@@ -97,9 +95,8 @@ mod tests {
     /// matching things it should not.
     #[test]
     fn a_numeric_oracle_tolerates_thousands_separators_only() {
-        let hit = |answer: &str, needle: &str| {
-            contains_oracle(answer, &degroup_digits(answer), needle)
-        };
+        let hit =
+            |answer: &str, needle: &str| contains_oracle(answer, &degroup_digits(answer), needle);
         // The live failure this exists for.
         assert!(hit("a final number of 1,000.", "1000"));
         assert!(hit("total 5_422_054 units", "5422054"));
