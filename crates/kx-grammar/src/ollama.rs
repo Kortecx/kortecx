@@ -95,7 +95,16 @@ pub(crate) fn render_answer_only(spec: &ToolEnvelopeSpec) -> Value {
 fn answer_arm() -> Value {
     json!({
         "type": "object",
-        "properties": { "answer": { "type": "string" } },
+        // `minLength` is what stops the settle arm being satisfied by NOTHING. An
+        // answer-force turn (a duplicate-call rejection, or the near-budget nudge)
+        // DROPS the tool arm, so this schema is the model's only legal output — and an
+        // unbounded `string` let a weak model emit `{"answer": ""}`, which parses, commits,
+        // and settles the chain on an empty answer. Observed live: a model that re-proposed
+        // an identical call was refused, forced onto this arm, and settled with nothing,
+        // scoring 0 on a task whose tool had already returned the right number. A forced
+        // answer that says nothing is strictly worse than a dead-letter, because it looks
+        // like the run succeeded.
+        "properties": { "answer": { "type": "string", "minLength": 1 } },
         "required": ["answer"],
         "additionalProperties": false
     })
@@ -174,6 +183,25 @@ mod tests {
         // It is BYTE-identical to the union's answer arm (the shared `answer_arm`).
         let union = render_union(&spec);
         assert_eq!(v, union["oneOf"][1]);
+    }
+
+    /// The settle arm cannot be satisfied by NOTHING.
+    ///
+    /// On an answer-force turn the tool arm is dropped, so this schema is the model's
+    /// only legal output. With an unbounded `string` a weak model emitted
+    /// `{"answer": ""}` — which parses, commits, and settles the chain having said
+    /// nothing, scoring 0 on a task whose tool had already returned the right value.
+    /// That is worse than a dead-letter: it looks like the run succeeded.
+    #[test]
+    fn the_answer_arm_refuses_an_empty_answer() {
+        let spec = ToolEnvelopeSpec::new(vec![ToolSpec::new("slack/read_channel", "1")]);
+        for v in [render_answer_only(&spec), render_union(&spec)["oneOf"][1].clone()] {
+            assert_eq!(
+                v["properties"]["answer"]["minLength"],
+                json!(1),
+                "the answer arm must require at least one character: {v}"
+            );
+        }
     }
 
     #[test]

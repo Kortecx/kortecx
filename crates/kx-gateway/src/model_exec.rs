@@ -698,16 +698,16 @@ text and do NOT emit a tool_call. Never invent a tool, version, or argument that
 /// the SAME arguments" — exactly `kx_toolcall::is_duplicate_call`'s predicate. The prompt
 /// used to over-forbid relative to the runtime guard, discouraging legitimate
 /// same-tool-different-args steps (a two-hop lookup, a poll) the guard allows.
-const TOOL_STEER_DIRECTIVE: &str = "Use the tools listed above to gather or act on the real \
-data the task needs BEFORE you answer: when a listed tool can obtain the authoritative \
-result, call it (using the format above) rather than answering from memory. A task may need \
-SEVERAL tools in sequence. The numbered blocks below are the conversation so far, oldest \
-first: a [step] block is what you said, and a [result of <tool>] block is what that tool \
-returned. Read the MOST RECENT result — if the task still needs another step, call the NEXT \
-tool now, passing values from that result as its arguments; only when no further tool is \
-needed, write your final plain-text answer from the results you have. Never repeat a call you \
-already made with the SAME arguments — call a different tool, call the same tool with \
-DIFFERENT arguments, or answer.";
+const TOOL_STEER_DIRECTIVE: &str = "Use the tools listed above to obtain data the task needs \
+that you do not already have: when a listed tool holds the authoritative value, call it \
+(using the format above) rather than guessing. A task may need SEVERAL tools in sequence. \
+The numbered blocks below are the conversation so far, oldest first: a [step] block is what \
+you said, and a [result of <tool>] block is what that tool returned. Read the MOST RECENT \
+result and decide ONE of these: if you can already answer the question, answer NOW in plain \
+text, quoting the exact values you were given; otherwise, if the task still needs a value \
+you do not have, call the NEXT tool, passing values from that result as its arguments. Do \
+not call a tool whose result you already have, and never repeat a call with the SAME \
+arguments.";
 
 /// Qwen ChatML wrapping of a user prompt with an EXPLICIT system message — the
 /// **training contract** the companion model repo mirrors (kept byte-identical to

@@ -449,6 +449,39 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
             }
         }
     }
+    // The ANSWER witness for a task that answered but failed its oracle. The trajectory
+    // witness below covers runs that never reached an answer; this covers the other half,
+    // which is just as much "a verdict without evidence": `answer missing oracle
+    // substrings: ["384"]` tells you the substring was absent and NOTHING about what the
+    // model actually said, so diagnosing it means re-running the suite by hand. Bounded,
+    // because an answer is model-authored text of unbounded length.
+    {
+        let failed: std::collections::BTreeSet<&str> = report
+            .per_task
+            .iter()
+            .filter(|t| {
+                t.scores.iter().any(|s| {
+                    s.metric_id == "task_success"
+                        && matches!(s.value, kx_eval::ScoreValue::Gate { per_mille: 0 })
+                })
+            })
+            .map(|t| t.task_id.as_str())
+            .collect();
+        for t in &outcome.transcripts {
+            if !failed.contains(t.task_id.as_str()) {
+                continue;
+            }
+            let Some(answer) = t.final_answer.as_deref() else {
+                continue;
+            };
+            let shown: String = answer.chars().take(400).collect();
+            let tail = if answer.chars().count() > 400 { "…" } else { "" };
+            eprintln!(
+                "eval-bench: ANSWER {} (oracle unsatisfied) → {shown:?}{tail}",
+                t.task_id
+            );
+        }
+    }
     // The TRAJECTORY witness for anything that did not answer. A per-task gate of 0 is a
     // verdict without evidence; this prints what the run actually did — which tool it
     // proposed, what the runtime refused and why, where it stopped — so a failure is
