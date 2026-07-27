@@ -233,6 +233,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libclang-dev clang cmake build-essential
 
+      # `bubblewrap` IS the Linux sandbox. Without it the executor's execvp fails
+      # with the marker status 71, every sandboxed-script test refuses at
+      # registration, and — because those tests skip on a host that cannot sandbox
+      # — the whole script suite would pass by never running. A capability whose
+      # tests silently skip on the only platform CI exercises is untested.
+      #
+      # Recent Ubuntu restricts unprivileged user namespaces via AppArmor, which
+      # bwrap needs; the sysctl is best-effort so this cannot fail the job on an
+      # image where the knob is absent. The probe prints which way it went, so a
+      # silent skip is visible in the log rather than inferred.
+      - name: Install the Linux sandbox (bubblewrap) so the script tests actually run
+        run: |
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          if bwrap --ro-bind / / --unshare-net true; then
+            echo "bwrap works — the sandboxed-script tests will run"
+          else
+            echo "::warning::bwrap present but cannot run here; the script tests will skip"
+          fi
+
       # The full-workspace debug target (incl. the llama.cpp FFI build) plus
       # the restored cargo-test cache (~4 GiB compressed, 3-5x extracted) no
       # longer fit in a standard runner's ~14 GB free disk — the job died with

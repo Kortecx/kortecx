@@ -232,15 +232,9 @@ fn a_registered_script_executes_in_the_sandbox_and_returns_its_output() {
         "script/measure",
         "read -r line; printf 'measured:%s:%s' \"${#line}\" \"$line\"",
     );
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
@@ -279,15 +273,9 @@ fn a_script_cannot_exec_a_binary_outside_its_granted_directories() {
         return;
     };
     let d = decl("script/escape-attempt", "printf 'abc' | rev");
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
@@ -319,15 +307,9 @@ fn a_wish_wider_than_the_grant_is_refused_and_the_same_script_fires_when_granted
     d.wish
         .fs_mounts
         .insert(wanted_path.clone(), FsMode::ReadOnly);
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mote = calling_mote(&d.name, &d.version);
     let declared = FsScope {
@@ -406,15 +388,9 @@ fn the_registry_pins_the_exact_source_and_reads_it_back() {
         return;
     };
     let d = decl("script/pinned", "printf 'v1'");
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let admin = h.admin(Some(shim));
     let (row, source) = admin
@@ -452,15 +428,9 @@ fn a_registered_script_is_fireable_again_after_a_restart() {
         "script/durable",
         "read -r line; printf 'restored:%s' \"$line\"",
     );
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     // A restart: the durable registry and store survive; the broker does not.
     let restarted = Harness {
@@ -505,14 +475,18 @@ fn the_bundled_benchmark_script_computes_what_the_suite_expects() {
         return;
     };
     let (name, version) = kx_gateway::scripts::bench_script_tool();
-    kx_gateway::scripts::register_bench_script(
+    if kx_gateway::scripts::register_bench_script(
         Some(shim),
         &h.store,
         &h.registry,
         &h.broker,
         kx_gateway::default_executor_class(),
     )
-    .expect("the bundled benchmark script should register");
+    .is_none()
+    {
+        eprintln!("SKIP: this host cannot run a sandboxed script");
+        return;
+    }
 
     let mote = calling_mote(&name, &version);
     let warrant = granting_warrant(&name, &version, BTreeMap::new());
@@ -541,6 +515,40 @@ fn the_bundled_benchmark_script_computes_what_the_suite_expects() {
             expected,
             "the suite's script-family answer for {input:?} must be what the script computes"
         );
+    }
+}
+
+/// Register a script, or skip the test when THIS HOST cannot sandbox.
+///
+/// Registration probes the declared interpreter through the real platform
+/// sandbox, so `InterpreterUnavailable` means the host cannot run a confined
+/// script at all — no `bwrap`, restricted user namespaces, no usable interpreter.
+/// A CI runner without bwrap is that host, and these tests have nothing to say
+/// there.
+///
+/// Deliberately narrow: ONLY that variant skips. Any other admission error is a
+/// real refusal and still fails the test, so this cannot quietly turn the whole
+/// suite into a no-op the way a blanket `is_err() => return` would.
+fn register_or_skip(d: &ScriptDecl, shim: kx_content::ContentRef, h: &Harness) -> Option<()> {
+    match register_script(
+        d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    ) {
+        Ok(_) => Some(()),
+        Err(kx_gateway::scripts::ScriptAdmissionError::InterpreterUnavailable {
+            interpreter,
+            detail,
+        }) => {
+            eprintln!("SKIP: this host cannot run a sandboxed {interpreter} script ({detail})");
+            None
+        }
+        Err(other) => {
+            panic!("registration failed for a reason that is not a host limitation: {other}")
+        }
     }
 }
 
@@ -596,15 +604,9 @@ process.stdin.on("end", () => {
     let Some(d) = decl_for("script/order-totals", Interpreter::Node, source) else {
         return;
     };
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("a node script should register when node is discoverable");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
@@ -659,15 +661,9 @@ sock.setTimeout(4000, () => {{ process.stdout.write("BLOCKED"); process.exit(0);
     };
 
     // Arm A — no egress declared, none granted.
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
     let handle = h
@@ -684,15 +680,9 @@ sock.setTimeout(4000, () => {{ process.stdout.write("BLOCKED"); process.exit(0);
     // Arm B — the same script, egress declared AND granted.
     d.name = ToolName("script/egress-granted".into());
     d.wish.net_hosts = [kx_warrant::Host("127.0.0.1".into())].into_iter().collect();
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
     let mote = calling_mote(&d.name, &d.version);
     let mut granted = granting_warrant(&d.name, &d.version, BTreeMap::new());
     granted.net_scope = d.wish_net_scope_for_test();
@@ -725,15 +715,9 @@ fn the_output_cap_holds_at_a_realistic_size() {
                   printf '%01024d' $i; i=$((i+1)); done";
     let mut d = decl("script/floods", source);
     d.wish.max_output_bytes = 1024 * 1024;
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
@@ -750,15 +734,9 @@ fn the_output_cap_holds_at_a_realistic_size() {
                             printf '%01024d' $i; i=$((i+1)); done",
     );
     ok_decl.wish.max_output_bytes = 1024 * 1024;
-    register_script(
-        &ok_decl,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&ok_decl, shim, &h).is_none() {
+        return;
+    }
     let mote = calling_mote(&ok_decl.name, &ok_decl.version);
     let warrant = granting_warrant(&ok_decl.name, &ok_decl.version, BTreeMap::new());
     let handle = h
@@ -788,15 +766,9 @@ fn concurrent_script_dispatches_do_not_collide() {
         "script/echoes-its-input",
         "read -r line; printf 'got:%s' \"$line\"",
     );
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mut handles = Vec::new();
     for i in 0..8 {
@@ -838,15 +810,9 @@ fn partial_output_before_a_failure_is_not_committed() {
         "script/fails-late",
         "printf 'looks like a real answer'; exit 7",
     );
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
@@ -874,15 +840,9 @@ fn a_runaway_script_is_stopped_by_its_declared_time_budget() {
     };
     let mut d = decl("script/runaway", "sleep 30; printf 'finished anyway'");
     d.wish.wall_clock_ms = 2_000;
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("registration");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
@@ -961,15 +921,9 @@ print(json.dumps({{"revenue": {{k: round(v, 2) for k, v in sorted(totals.items()
             ..ScriptWish::default()
         },
     };
-    register_script(
-        &d,
-        Some(shim),
-        &h.store,
-        &h.registry,
-        &h.broker,
-        kx_gateway::default_executor_class(),
-    )
-    .expect("a python3 script should register when python3 is usable");
+    if register_or_skip(&d, shim, &h).is_none() {
+        return;
+    }
 
     let mote = calling_mote(&d.name, &d.version);
     let warrant = granting_warrant(&d.name, &d.version, d.wish.fs_mounts.clone());
