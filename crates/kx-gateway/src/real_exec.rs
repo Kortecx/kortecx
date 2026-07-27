@@ -238,11 +238,15 @@ pub(crate) struct ScriptPlumbing {
     /// Directories that must be readable (the script, the descriptor, the
     /// interpreter's standard library).
     pub(crate) read_dirs: Vec<std::path::PathBuf>,
-    /// Individual paths whose METADATA must be readable — the ancestor chain
-    /// above the interpreter. An interpreter resolves its own real path at
-    /// startup, and that walk stats every component; without them it dies with
+    /// Individual paths whose METADATA must be readable — the ancestor chain above
+    /// the interpreter. An interpreter resolves its own real path at startup, and
+    /// that walk stats every component; without them it dies with
     /// `realpath: Operation not permitted`. Granted as `literal`, one path each,
     /// rather than a subtree: stat-ing `/opt` is not reading what is under it.
+    ///
+    /// macOS only. `bwrap` binds paths outright and has no path-walk permission
+    /// model, so nothing reads this on Linux.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) metadata_paths: Vec<std::path::PathBuf>,
     /// The single writable directory — where the result is written.
     pub(crate) write_dir: std::path::PathBuf,
@@ -283,12 +287,30 @@ pub(crate) fn run_script_body(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (shim_ref, plumbing);
+        let _ = shim_ref;
+        // bwrap binds what the WARRANT names, so the plumbing has to be merged in
+        // before the spawn — otherwise the sandbox contains the caller's grants and
+        // nothing else, and the script cannot reach its own source, its interpreter
+        // or the directory it must write the result to.
+        let mut wired = warrant.clone();
+        for dir in plumbing.exec_dirs.iter().chain(&plumbing.read_dirs) {
+            wired
+                .fs_scope
+                .mounts
+                .entry(dir.clone())
+                .or_insert(kx_warrant::FsMode::ReadOnly);
+        }
+        // The one writable mount, inserted last so it cannot be downgraded by a
+        // read-only entry for the same path.
+        wired
+            .fs_scope
+            .mounts
+            .insert(plumbing.write_dir.clone(), kx_warrant::FsMode::ReadWrite);
         let result = spawn_body_in_sandbox(
             store,
             exec_class,
             mote,
-            warrant,
+            &wired,
             None,
             descriptor_bytes,
             Some(&plumbing.write_dir),
