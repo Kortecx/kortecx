@@ -995,11 +995,27 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         }
         missing.sort();
         missing.dedup();
+        // Two very different causes produce the same symptom, and the message has to
+        // separate them or it sends the reader to the wrong place. A menu AT the cap
+        // probably lost a late-sorting id to truncation; a menu below the cap means the
+        // tool was never registered at all — a bin that was not built, or a registration
+        // that failed softly.
+        let at_cap = granted.len() >= 16;
         assert!(
             missing.is_empty(),
-            "these tools an oracle depends on were never granted to the model — almost \
-             certainly the auto-grant cap dropping late-sorting ids. Their tasks would \
-             have scored 0 and read as model failures: {missing:?}"
+            "these tools an oracle depends on were never offered to the model, so their \
+             tasks would have scored 0 and read as model failures: {missing:?}\n\
+             the granted menu holds {} tool(s), which suggests {}\n\
+             granted: {:?}",
+            granted.len(),
+            if at_cap {
+                "the auto-grant cap truncated a late-sorting id (look for the cap warning \
+                 in the serve log)"
+            } else {
+                "the tool was never REGISTERED — check its bin was built (`cargo build -p \
+                 kx-mcp -p kx-script-runner`), since registration fails soft"
+            },
+            granted
         );
         eprintln!(
             "eval-bench: grant guard holds — every expected tool was offered ({} distinct \

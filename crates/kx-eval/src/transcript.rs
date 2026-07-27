@@ -83,19 +83,22 @@ pub struct ToolKey {
 /// only and can be absent entirely. A scripted (Tier-A) fixture authors it directly,
 /// which is what makes the ratio testable without a model.
 ///
-/// `total_ms` is measured around the whole task — dispatch, every turn, every tool
-/// round, and the settle poll. `model_ms` is the summed execution time of the motes a
-/// model actually ran; `tool_ms` the same for tool-bearing motes. The three do not have
-/// to add up: time spent scheduling, folding, committing and polling belongs to none of
-/// them, and that remainder is precisely what the ratio is watching.
+/// `total_ms` spans the run's first Mote starting to its last one finishing; `model_ms`
+/// is the summed execution time of the Motes a model actually ran. The difference is
+/// everything else — scheduling, folding, committing, leasing, and the tool rounds — and
+/// that remainder is precisely what the ratio watches.
+///
+/// There is deliberately no `tool_ms`. Tool time is not separately attributable here: the
+/// telemetry row's tool id comes from the Mote's DECLARED contract, which under an
+/// auto-granted loop is the whole menu on the model's turn and empty on the observation
+/// that actually fired. A field derived from that would have read 0 whether tools ran or
+/// not, which is not a measurement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TranscriptTiming {
     /// Wall-clock for the whole task, end to end.
     pub total_ms: u64,
     /// Summed execution wall-clock of the run's model motes.
     pub model_ms: u64,
-    /// Summed execution wall-clock of the run's tool-bearing motes.
-    pub tool_ms: u64,
 }
 
 /// The reduced record of one agent run — the input to every scorer.

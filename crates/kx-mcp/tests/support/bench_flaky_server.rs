@@ -34,16 +34,35 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(600_000);
 
-    // One request line in, one reply line out, exit — the stdio transport's contract.
-    let mut line = String::new();
+    // Read lines until EOF rather than exactly one.
+    //
+    // A single-shot dispatch sends one request and closes, so looping costs nothing
+    // there. DISCOVERY does not: it sends `initialize` and then `tools/list` down the
+    // SAME stdin, and a server that exits after the first reply is discovered with zero
+    // tools — which registers cleanly, reports `connected`, and leaves the model with no
+    // tool at all. That failure is silent at every layer except the score.
     let stdin = std::io::stdin();
-    let _ = stdin.lock().read_line(&mut line);
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let reply = reply_to(&line, &mode, sleep_ms);
+        if writeln!(out, "{reply}").is_err() || out.flush().is_err() {
+            break;
+        }
+    }
+}
 
-    let request: serde_json::Value = serde_json::from_str(&line).unwrap_or(serde_json::Value::Null);
+/// Answer one JSON-RPC request line.
+fn reply_to(line: &str, mode: &str, sleep_ms: u64) -> String {
+    let request: serde_json::Value = serde_json::from_str(line).unwrap_or(serde_json::Value::Null);
     let id = request.get("id").cloned().unwrap_or(serde_json::json!(1));
     let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
 
-    let reply = match method {
+    match method {
         // Discovery must work in EVERY mode, including the broken ones: a tool that
         // cannot be discovered is a tool the model never sees, and the failure families
         // would then measure a missing grant instead of a failing call.
@@ -66,7 +85,7 @@ fn main() {
                        "serverInfo": {"name": "kx-bench-flaky", "version": "1"}}
         })
         .to_string(),
-        _ => match mode.as_str() {
+        _ => match mode {
             "error" => serde_json::json!({
                 "jsonrpc": "2.0", "id": id,
                 "error": {"code": -32000, "message": "incident feed unavailable"}
@@ -79,12 +98,7 @@ fn main() {
             }
             _ => echoed(&id, &request),
         },
-    };
-
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-    let _ = writeln!(out, "{reply}");
-    let _ = out.flush();
+    }
 }
 
 /// Echo the call's `arguments` back inside a result — deterministic in the request, so a

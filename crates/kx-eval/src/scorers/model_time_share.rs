@@ -49,8 +49,8 @@ pub(super) fn score(input: &ScoreInput) -> ScoreOutput {
     .unwrap_or(PER_MILLE);
     let overhead_ms = t.total_ms.saturating_sub(t.model_ms);
     let detail = format!(
-        "model {}ms of {}ms total ({}ms tool, {}ms not in the model)",
-        t.model_ms, t.total_ms, t.tool_ms, overhead_ms
+        "model {}ms of {}ms total ({overhead_ms}ms not in the model)",
+        t.model_ms, t.total_ms
     );
     ScoreOutput::gate("model_time_share", per_mille, detail)
 }
@@ -115,7 +115,6 @@ mod tests {
         let s = score_of(Some(TranscriptTiming {
             total_ms: 1000,
             model_ms: 1000,
-            tool_ms: 0,
         }));
         assert_eq!(s.gate_per_mille(), Some(PER_MILLE));
     }
@@ -126,12 +125,10 @@ mod tests {
         let fast = score_of(Some(TranscriptTiming {
             total_ms: 1000,
             model_ms: 800,
-            tool_ms: 100,
         }));
         let slow = score_of(Some(TranscriptTiming {
             total_ms: 2000,
             model_ms: 800,
-            tool_ms: 100,
         }));
         assert_eq!(fast.gate_per_mille(), Some(800));
         assert_eq!(slow.gate_per_mille(), Some(400));
@@ -149,12 +146,10 @@ mod tests {
         let baseline = score_of(Some(TranscriptTiming {
             total_ms: 1000,
             model_ms: 700,
-            tool_ms: 100,
         }));
         let slower_host = score_of(Some(TranscriptTiming {
             total_ms: 1000 + 500,
             model_ms: 700 + 500,
-            tool_ms: 100,
         }));
         assert!(
             slower_host.gate_per_mille() >= baseline.gate_per_mille(),
@@ -174,7 +169,6 @@ mod tests {
         let s = score_of(Some(TranscriptTiming {
             total_ms: 0,
             model_ms: 0,
-            tool_ms: 0,
         }));
         assert!(!s.applicable);
     }
@@ -186,7 +180,6 @@ mod tests {
         let s = score_of(Some(TranscriptTiming {
             total_ms: 100,
             model_ms: 400,
-            tool_ms: 0,
         }));
         assert_eq!(s.gate_per_mille(), Some(PER_MILLE));
     }

@@ -771,23 +771,17 @@ fn timing_from_rows(rows: &[proto::MoteTelemetryRow]) -> Option<TranscriptTiming
         .iter()
         .map(|r| r.started_unix_ms.saturating_add(r.wall_clock_ms))
         .max()?;
-    // A model Mote carries the model that ran it; a tool-bearing Mote carries its tool.
-    // The two are disjoint by construction (separate upserts on the same row), so no
-    // Mote is counted twice.
+    // A model Mote carries the model that ran it. Tool time is NOT split out: see
+    // `TranscriptTiming` — the row's tool id comes from the declared contract, not from
+    // what fired, so any tool total built from it would be a number that cannot move.
     let model_ms = rows
         .iter()
         .filter(|r| !r.model_id.is_empty())
         .map(|r| r.wall_clock_ms)
         .sum();
-    let tool_ms = rows
-        .iter()
-        .filter(|r| !r.tool_id.is_empty())
-        .map(|r| r.wall_clock_ms)
-        .sum();
     Some(TranscriptTiming {
         total_ms: end.saturating_sub(start),
         model_ms,
-        tool_ms,
     })
 }
 
@@ -1070,6 +1064,60 @@ fn branch_from_wire(s: &str) -> Branch {
 mod tests {
     use super::*;
 
+    /// A task's declared budget must be one the recipe will actually ADMIT.
+    ///
+    /// This cost a full 26-task run to discover. A task asked for 14 turns; the react
+    /// recipe's parameter contract admits `1..=8` and re-validates it fail-closed, so the
+    /// invoke was refused with `OutOfRange` — fifty minutes in, after every task before it
+    /// had already been driven on the model. Nothing model-free knew the corpus could
+    /// declare a budget the runtime would reject.
+    ///
+    /// The ceiling is not negotiable from here: it lives in the recipe body, and changing
+    /// a recipe body under an unchanged id is refused as an immutability conflict at boot.
+    /// So the corpus is what has to fit, and this is where that is enforced — in a test
+    /// that runs in a second, rather than in a benchmark that runs for an hour.
+    #[test]
+    fn no_task_declares_a_budget_the_recipe_would_refuse() {
+        // Mirrors `provision`'s react free-param contract: `0 < max_turns <= 8` and
+        // `0 < max_tool_calls <= 20`, re-validated fail-closed on every invoke.
+        const ADMITTED_MAX_TURNS: u32 = 8;
+        const ADMITTED_MAX_TOOL_CALLS: u32 = 20;
+        let corpus = kx_eval::load_bench_v1().expect("bench-v1 corpus loads");
+        for t in &corpus.suite.tasks {
+            if let Some(turns) = t.expect.max_turns {
+                assert!(
+                    turns > 0 && turns <= ADMITTED_MAX_TURNS,
+                    "task {} declares max_turns {turns}, outside the admitted 1..={ADMITTED_MAX_TURNS}",
+                    t.id
+                );
+            }
+            if let Some(calls) = t.expect.max_tool_calls {
+                assert!(
+                    calls > 0 && calls <= ADMITTED_MAX_TOOL_CALLS,
+                    "task {} declares max_tool_calls {calls}, outside the admitted \
+                     1..={ADMITTED_MAX_TOOL_CALLS}",
+                    t.id
+                );
+            }
+            // And the ideal must be reachable inside the budget the task will run under,
+            // or the task is unsatisfiable by construction and its score says nothing.
+            let budget_turns = t.expect.max_turns.unwrap_or(BENCH_MAX_TURNS);
+            assert!(
+                t.expect.ideal_turns <= budget_turns,
+                "task {} needs {} turns ideally but will be admitted only {budget_turns}",
+                t.id,
+                t.expect.ideal_turns
+            );
+            let budget_calls = t.expect.max_tool_calls.unwrap_or(BENCH_MAX_TOOL_CALLS);
+            assert!(
+                t.expect.ideal_tool_calls <= budget_calls,
+                "task {} needs {} tool calls ideally but will be admitted only {budget_calls}",
+                t.id,
+                t.expect.ideal_tool_calls
+            );
+        }
+    }
+
     /// One joined telemetry row. `model_id` and `tool_id` are the discriminator the
     /// split relies on: the sidecar upserts them from two different events, so a model
     /// Mote carries the first and a tool-bearing Mote the second.
@@ -1103,7 +1151,6 @@ mod tests {
         let t = timing_from_rows(&rows).expect("rows produce a timing");
         assert_eq!(t.total_ms, 260, "span from first start to last finish");
         assert_eq!(t.model_ms, 160, "both model motes, and only those");
-        assert_eq!(t.tool_ms, 30, "the tool mote, and only that");
         assert_eq!(
             t.total_ms - t.model_ms,
             100,
@@ -1127,7 +1174,7 @@ mod tests {
         let rows = [row(10, 0, 40, "", "mcp-echo/echo")];
         let t = timing_from_rows(&rows).expect("a non-empty window measures");
         assert_eq!(t.model_ms, 0);
-        assert_eq!(t.tool_ms, 40);
+        assert_eq!(t.total_ms, 40, "the span is still the span");
     }
 
     /// The spikes never gate, and they must say how much of the suite they cover: a p95
@@ -1146,7 +1193,6 @@ mod tests {
             timing: ms.map(|total_ms| TranscriptTiming {
                 total_ms,
                 model_ms: total_ms / 2,
-                tool_ms: 0,
             }),
         };
         let spikes = latency_spikes(&[with(Some(100)), with(None), with(Some(300))]);
