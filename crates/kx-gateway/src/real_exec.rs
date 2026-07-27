@@ -238,6 +238,12 @@ pub(crate) struct ScriptPlumbing {
     /// Directories that must be readable (the script, the descriptor, the
     /// interpreter's standard library).
     pub(crate) read_dirs: Vec<std::path::PathBuf>,
+    /// Individual paths whose METADATA must be readable — the ancestor chain
+    /// above the interpreter. An interpreter resolves its own real path at
+    /// startup, and that walk stats every component; without them it dies with
+    /// `realpath: Operation not permitted`. Granted as `literal`, one path each,
+    /// rather than a subtree: stat-ing `/opt` is not reading what is under it.
+    pub(crate) metadata_paths: Vec<std::path::PathBuf>,
     /// The single writable directory — where the result is written.
     pub(crate) write_dir: std::path::PathBuf,
 }
@@ -350,7 +356,17 @@ mod macos {
         // `sandbox-exec -p <profile> <shim> <descriptor>`. The child's cwd is the
         // writable directory: it is inherited, and a shell whose cwd it cannot
         // stat fails `getcwd` before it runs a line.
-        let output = Command::new("/usr/bin/sandbox-exec")
+        //
+        // Spawned rather than `output()`ed because BOTH halves of the ceiling are
+        // this path's job. The SBPL profile is access control only — the mapping
+        // deliberately leaves resource control to `setrlimit` — and by spawning
+        // `sandbox-exec` here instead of going through the executor backend, this
+        // path took on the backend's responsibility for applying it. A script that
+        // declared a time budget and then ran past it would otherwise hold a worker
+        // open for as long as it liked.
+        let ceiling = warrant.resource_ceiling;
+        let mut command = Command::new("/usr/bin/sandbox-exec");
+        command
             .arg("-p")
             .arg(&profile)
             .arg(&shim_path)
@@ -358,9 +374,12 @@ mod macos {
             .current_dir(&plumbing.write_dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .map_err(|e| internal(&format!("sandbox-exec: {e}")))?;
+            .stderr(Stdio::piped());
+        // The MEMORY half of the ceiling is applied by the shim, which is the
+        // interpreter's direct parent (this crate forbids unsafe, and `setrlimit`
+        // needs it). This deadline is the outer backstop: it stops a shim that is
+        // itself wedged, which the shim's own timer cannot.
+        let output = run_with_deadline(command, ceiling.wall_clock_ms)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -379,6 +398,83 @@ mod macos {
         Ok(printed)
     }
 
+
+    /// Spawn and wait, killing the child if it outlives `wall_clock_ms`.
+    ///
+    /// The pipes are drained on their own threads: a child that fills a pipe
+    /// buffer blocks on write, so a parent that waits before reading would deadlock
+    /// with a chatty script and never reach its own deadline check.
+    ///
+    /// `wall_clock_ms == 0` means no budget was declared, and the call waits.
+    fn run_with_deadline(
+        mut command: Command,
+        wall_clock_ms: u64,
+    ) -> Result<std::process::Output, MoteExecutorError> {
+        use std::io::Read as _;
+        use std::time::{Duration, Instant};
+
+        let mut child = command
+            .spawn()
+            .map_err(|e| internal(&format!("sandbox-exec: {e}")))?;
+        let mut stdout = child.stdout.take();
+        let mut stderr = child.stderr.take();
+        let out_reader = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(pipe) = stdout.as_mut() {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        });
+        let err_reader = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(pipe) = stderr.as_mut() {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            buf
+        });
+
+        let deadline = (wall_clock_ms > 0)
+            .then(|| Instant::now() + Duration::from_millis(wall_clock_ms));
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {
+                    if deadline.is_some_and(|d| Instant::now() >= d) {
+                        // Kill, then still join the readers: their pipes close with
+                        // the child, so this cannot hang.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let _ = out_reader.join();
+                        let stderr_bytes = err_reader.join().unwrap_or_default();
+                        return Err(internal(&format!(
+                            "the script exceeded its {wall_clock_ms} ms budget and was \
+                             stopped{}",
+                            tail_of(&stderr_bytes)
+                        )));
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(e) => return Err(internal(&format!("waiting for the script: {e}"))),
+            }
+        };
+        Ok(std::process::Output {
+            status,
+            stdout: out_reader.join().unwrap_or_default(),
+            stderr: err_reader.join().unwrap_or_default(),
+        })
+    }
+
+    /// Render captured stderr as a trailing diagnostic, or nothing when empty.
+    fn tail_of(stderr_bytes: &[u8]) -> String {
+        if stderr_bytes.is_empty() {
+            return String::new();
+        }
+        format!(
+            "; stderr: {}",
+            String::from_utf8_lossy(stderr_bytes).trim_end()
+        )
+    }
+
     /// The warrant's own SBPL, plus the rules the mapping has no axis for.
     fn build_profile(
         warrant: &WarrantSpec,
@@ -386,9 +482,21 @@ mod macos {
         bin_dir: &std::path::Path,
     ) -> Result<String, MoteExecutorError> {
         // Policy: exactly what the caller granted, rendered by the same pure
-        // function every other sandboxed body goes through.
-        let mut profile = String::from_utf8(profile_from_warrant(warrant).as_bytes().to_vec())
+        // function every other sandboxed body goes through — with EGRESS taken out
+        // and re-emitted below.
+        //
+        // The mapping renders an allowlisted host as `(remote ip "<host>:*")`, and
+        // this platform's profile language rejects anything but `*` or `localhost`
+        // there: a bare address makes the WHOLE profile fail to load, so a body
+        // with any egress at all cannot start. Rendering the filesystem half from a
+        // net-scope-free copy and emitting egress here keeps one source of truth
+        // for everything the mapping CAN express, and confines the workaround to
+        // the axis it cannot.
+        let mut fs_only = warrant.clone();
+        fs_only.net_scope = kx_warrant::NetScope::None;
+        let mut profile = String::from_utf8(profile_from_warrant(&fs_only).as_bytes().to_vec())
             .map_err(|e| internal(&format!("profile encode: {e}")))?;
+        push_egress(&mut profile, &warrant.net_scope)?;
 
         // Mechanism. `process-fork` is the one that blocks everything: without it
         // the shim cannot spawn the interpreter, and no script can spawn a
@@ -407,10 +515,59 @@ mod macos {
         for dir in &plumbing.read_dirs {
             push_rule(&mut profile, "file-read*", &canonical(dir));
         }
+        for path in &plumbing.metadata_paths {
+            push_literal(&mut profile, "file-read-metadata", &canonical(path));
+        }
         let write_dir = canonical(&plumbing.write_dir);
         push_rule(&mut profile, "file-read*", &write_dir);
         push_rule(&mut profile, "file-write*", &write_dir);
         Ok(profile)
+    }
+
+
+    /// Emit the egress rules this platform can express, and REFUSE the ones it
+    /// cannot.
+    ///
+    /// Per-host filtering is not expressible here — the profile language accepts
+    /// only `*` or `localhost` as the host of a network address. Falling back to
+    /// blanket `(allow network-outbound)` would hand a script the whole network
+    /// when its declaration asked for one host, which is precisely the widening
+    /// this design exists to prevent. So a host that cannot be expressed is a
+    /// refusal, not a broadening.
+    fn push_egress(
+        profile: &mut String,
+        net_scope: &kx_warrant::NetScope,
+    ) -> Result<(), MoteExecutorError> {
+        let kx_warrant::NetScope::EgressAllowlist(hosts) = net_scope else {
+            return Ok(()); // deny-default already holds
+        };
+        if hosts.is_empty() {
+            return Ok(());
+        }
+        for host in hosts {
+            match host.0.as_str() {
+                "localhost" | "127.0.0.1" | "::1" => {
+                    let _ = writeln!(
+                        profile,
+                        "(allow network-outbound (remote ip \"localhost:*\"))"
+                    );
+                }
+                other => {
+                    return Err(internal(&format!(
+                        "this platform's sandbox cannot confine egress to {other} — it \
+                         expresses only localhost or unrestricted, and granting \
+                         unrestricted would exceed what the script declared"
+                    )))
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `(allow <op> (literal "<path>"))` — that ONE path, not what is beneath it.
+    fn push_literal(profile: &mut String, op: &str, path: &str) {
+        let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+        let _ = writeln!(profile, "(allow {op} (literal \"{escaped}\"))");
     }
 
     /// `(allow <op> (subpath "<path>"))`, escaped for SBPL's Lisp strings.

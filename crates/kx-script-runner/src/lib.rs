@@ -86,6 +86,16 @@ pub struct ScriptDescriptor {
     pub stdin_bytes: Vec<u8>,
     /// The child's complete environment (see the type docs). Empty ⇒ none.
     pub env: Vec<(String, String)>,
+    /// Wall-clock budget in milliseconds. The shim stops the script when it is
+    /// exceeded. 0 ⇒ no budget.
+    ///
+    /// Enforced HERE, not by the caller alone, because the shim is the
+    /// interpreter's direct parent: it can stop precisely the process that
+    /// overran, while an outer deadline can only kill the whole sandbox.
+    pub wall_clock_ms: u64,
+    /// Address-space ceiling in bytes, applied to the shim before it execs so the
+    /// interpreter inherits it. 0 ⇒ unset.
+    pub mem_bytes: u64,
     /// Refuse — never truncate — once the child's stdout exceeds this many
     /// bytes.
     ///
@@ -154,6 +164,8 @@ impl ScriptDescriptor {
         put_str(&mut out, &self.out_path);
         put_bytes(&mut out, &self.stdin_bytes);
         out.extend_from_slice(&self.max_output_bytes.to_le_bytes());
+        out.extend_from_slice(&self.wall_clock_ms.to_le_bytes());
+        out.extend_from_slice(&self.mem_bytes.to_le_bytes());
         put_len(&mut out, self.argv.len());
         for arg in &self.argv {
             put_str(&mut out, arg);
@@ -188,6 +200,8 @@ impl ScriptDescriptor {
         let out_path = cur.take_str("out_path")?;
         let stdin_bytes = cur.take_bytes("stdin_bytes")?.to_vec();
         let max_output_bytes = cur.take_u64("max_output_bytes")?;
+        let wall_clock_ms = cur.take_u64("wall_clock_ms")?;
+        let mem_bytes = cur.take_u64("mem_bytes")?;
 
         let arg_count = cur.take_len("argv_len")?;
         let mut argv = Vec::with_capacity(arg_count);
@@ -212,6 +226,8 @@ impl ScriptDescriptor {
             argv,
             stdin_bytes,
             env,
+            wall_clock_ms,
+            mem_bytes,
             max_output_bytes,
         })
     }
@@ -335,6 +351,8 @@ mod tests {
             stdin_bytes: b"{\"k\":1}".to_vec(),
             env: vec![("LANG".into(), "C".into())],
             max_output_bytes: 1024,
+            wall_clock_ms: 5_000,
+            mem_bytes: 256 * 1024 * 1024,
         }
     }
 

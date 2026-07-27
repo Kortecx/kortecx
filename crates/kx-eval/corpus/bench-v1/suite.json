@@ -204,18 +204,18 @@
       }
     },
     {
-      "id": "script-word-count",
+      "id": "script-csv-total",
       "family": "script",
-      "description": "Single script: fire the sandboxed word-count script and report what it returned.",
-      "instruction": "Use your available tools to count the words in this text: 'the quick brown fox jumps'. Report the tool's result exactly as it returned it.",
+      "description": "Single script: aggregate a real CSV through the sandboxed script and report what it returned. Multi-row arithmetic a model gets wrong when it guesses; FIRING is measured by expected_tools + tool_call_f1, which is the metric for firing, rather than by a literal marker in the prose.",
+      "instruction": "Use your available tools to total the amounts in this CSV, one name,amount per line:\\nnorth,1372\\nsouth,894\\neast,2051\\nwest,663\\nnorth,1189\\nsouth,447\\neast,1908\\nwest,726\\nReport the total the tool gave you.",
       "expect": {
         "terminal": "answer",
         "answer_must_contain": [
-          "WORDS=5"
+          "9250"
         ],
         "expected_tools": [
           {
-            "tool_id": "script/word-count",
+            "tool_id": "script/csv-total",
             "tool_version": "1"
           }
         ],
@@ -226,16 +226,16 @@
     {
       "id": "script-then-calc",
       "family": "script",
-      "description": "Script feeding a tool: the script's computed count is the calc operand, so an unfired script cannot produce the answer.",
-      "instruction": "First count the words in this text: 'alpha beta gamma'. Then add 10 to that count using your calculator tool, and report the final number.",
+      "description": "Script feeding a tool: the script's aggregate is the calculator's operand, so an unfired script cannot reach the answer by any route.",
+      "instruction": "First total the amounts in this CSV, one name,amount per line:\\nalpha,120\\nbeta,305\\ngamma,75\\nThen add 500 to that total using your calculator tool, and report the final number.",
       "expect": {
         "terminal": "answer",
         "answer_must_contain": [
-          "13"
+          "1000"
         ],
         "expected_tools": [
           {
-            "tool_id": "script/word-count",
+            "tool_id": "script/csv-total",
             "tool_version": "1"
           },
           {

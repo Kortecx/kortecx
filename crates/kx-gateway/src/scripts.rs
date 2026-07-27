@@ -81,6 +81,9 @@ const MAX_SCRIPT_BYTES: usize = 1024 * 1024;
 /// Default ceiling on a script's output. Exceeding it REFUSES the call — a
 /// truncated result would read as a complete answer.
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 1024 * 1024;
+/// Budget for an interpreter probe at registration — short, because a probe that
+/// hangs must not hang the registration.
+const PROBE_BUDGET_MS: u64 = 10_000;
 /// Default wall-clock budget for one script run.
 const DEFAULT_WALL_CLOCK_MS: u64 = 30_000;
 
@@ -157,23 +160,58 @@ impl Interpreter {
         }
     }
 
-    /// Resolve to an absolute, canonical path on this host, or `None`.
+    /// A trivial script that prints `ok`, used to prove a candidate actually runs.
+    const fn probe_source(self) -> &'static str {
+        match self {
+            Self::Sh => "printf ok",
+            Self::Python3 => "print('ok', end='')",
+            Self::Node => "process.stdout.write('ok')",
+        }
+    }
+
+    /// Every candidate that exists on this host, canonical, in priority order:
+    /// the operator override, then `PATH`, then the well-known absolute paths.
+    ///
+    /// **`PATH` is searched, not just the fixed list.** Version managers — nvm,
+    /// pyenv, asdf, conda — install outside every system prefix, and they are the
+    /// normal case on a developer machine, not an exotic one. A fixed list alone
+    /// tells someone with a working `node` that node is not installed.
+    ///
+    /// Existence only; whether a candidate actually WORKS is settled by probing
+    /// it, because on this platform some of them do not.
     ///
     /// Canonical because the macOS sandbox matches `subpath` rules against the
     /// kernel's resolved path: a rule written for a symlinked path silently never
     /// matches, and the exec fails with no indication of why.
-    pub fn resolve(self) -> Option<PathBuf> {
-        if let Some(over) = std::env::var_os(self.path_env()) {
-            let path = PathBuf::from(over);
+    fn resolved_candidates(self) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let push = |path: PathBuf, out: &mut Vec<PathBuf>| {
             if path.is_file() {
-                return std::fs::canonicalize(path).ok();
+                if let Ok(canonical) = std::fs::canonicalize(path) {
+                    if !out.contains(&canonical) {
+                        out.push(canonical);
+                    }
+                }
+            }
+        };
+        if let Some(over) = std::env::var_os(self.path_env()) {
+            push(PathBuf::from(over), &mut out);
+        }
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                push(dir.join(self.as_str()), &mut out);
             }
         }
-        self.candidates()
-            .iter()
-            .map(PathBuf::from)
-            .find(|p| p.is_file())
-            .and_then(|p| std::fs::canonicalize(p).ok())
+        for candidate in self.candidates() {
+            push(PathBuf::from(candidate), &mut out);
+        }
+        out
+    }
+
+    /// The first candidate that exists. Kept for callers that only need a path
+    /// (display, tests); registration uses the PROBED resolution instead.
+    pub fn resolve(self) -> Option<PathBuf> {
+        self.resolved_candidates().into_iter().next()
     }
 
     /// The directory that must be execute-only for the interpreter to launch.
@@ -248,6 +286,16 @@ pub struct ScriptWish {
     pub max_output_bytes: u64,
 }
 
+impl ScriptDecl {
+    /// The egress scope this declaration compiles to — exposed so a test can
+    /// build the matching caller grant without duplicating the mapping (a second
+    /// copy would let the two drift and quietly stop testing the same thing).
+    #[must_use]
+    pub fn wish_net_scope_for_test(&self) -> NetScope {
+        self.wish.net_scope()
+    }
+}
+
 impl ScriptWish {
     fn net_scope(&self) -> NetScope {
         if self.net_hosts.is_empty() {
@@ -317,9 +365,17 @@ pub enum ScriptAdmissionError {
         /// The accepted tokens, comma-separated.
         allowed: String,
     },
-    /// The interpreter is allowed but not installed on this host.
-    #[error("interpreter {0} is not installed on this host")]
-    InterpreterUnavailable(&'static str),
+    /// The interpreter is allowed but no candidate on this host could run a
+    /// script under the sandbox. Carries WHY per candidate: "not installed" is a
+    /// misleading thing to tell someone who has it installed and whose real
+    /// problem is that it will not start confined.
+    #[error("no usable {interpreter} on this host: {detail}")]
+    InterpreterUnavailable {
+        /// Which interpreter was asked for.
+        interpreter: &'static str,
+        /// One line per candidate tried, with the reason it was rejected.
+        detail: String,
+    },
     /// The sandbox shim is not present, so nothing could run the script safely.
     #[error(
         "the sandbox shim ({SHIM_BIN}) is not available, so scripts cannot run sandboxed \
@@ -457,17 +513,12 @@ impl ScriptCapability {
     /// rule naming `/bin/sh` expands to "everything under the directory /bin/sh"
     /// and matches nothing at all.
     fn plumbing(&self, src_dir: &Path, out_dir: &Path) -> ScriptPlumbing {
-        let mut exec_dirs = Vec::new();
-        if let Some(dir) = Interpreter::exec_dir(&self.interpreter_path) {
-            exec_dirs.push(dir);
-        }
-        let mut read_dirs = self.interpreter_read_roots.clone();
-        read_dirs.push(src_dir.to_path_buf());
-        ScriptPlumbing {
-            exec_dirs,
-            read_dirs,
-            write_dir: out_dir.to_path_buf(),
-        }
+        interpreter_plumbing(
+            &self.interpreter_path,
+            &self.interpreter_read_roots,
+            src_dir,
+            out_dir,
+        )
     }
 
     /// The synthetic Mote that carries the shim as its body.
@@ -532,13 +583,25 @@ impl Capability for ScriptCapability {
             .map_err(|e| fail(&format!("could not materialize the script: {e}")))?;
         let out_path = out_dir.path().join("result");
 
+        // Canonical paths in the descriptor: the sandbox matches rules against the
+        // kernel's resolved path, and an interpreter resolves whatever it is
+        // handed. Passing `/var/...` when the rules say `/private/var/...` makes
+        // the interpreter stat a path no rule covers.
         let descriptor = ScriptDescriptor {
             interpreter_path: self.interpreter_path.to_string_lossy().into_owned(),
-            script_path: script_path.to_string_lossy().into_owned(),
-            out_path: out_path.to_string_lossy().into_owned(),
+            script_path: canonical_or(&script_path).to_string_lossy().into_owned(),
+            out_path: canonical_or(out_dir.path())
+                .join("result")
+                .to_string_lossy()
+                .into_owned(),
             argv: self.argv.clone(),
             stdin_bytes: input.into_bytes(),
             env: self.env.clone(),
+            // The ceiling travels to the shim, which is the interpreter's direct
+            // parent and can therefore stop precisely what overran. The host keeps
+            // its own outer deadline as a backstop for a wedged shim.
+            wall_clock_ms: self.ceiling.wall_clock_ms,
+            mem_bytes: self.ceiling.mem_bytes,
             max_output_bytes: self.max_output_bytes,
         };
 
@@ -598,6 +661,212 @@ fn fail(reason: &str) -> CapabilityFailureReason {
 // registration
 // ---------------------------------------------------------------------------
 
+
+
+/// The mounts an interpreter needs, shared by a real dispatch and the registration
+/// probe so the probe proves the same conditions the run will get.
+///
+/// The interpreter's PREFIX is execute-as-well-as-readable, not merely readable: a
+/// framework-packaged interpreter re-execs a bundled binary inside its own prefix
+/// during startup, so read alone gets `posix_spawn: Undefined error: 0` — a
+/// message that names neither the path nor the permission.
+fn interpreter_plumbing(
+    interpreter_path: &Path,
+    read_roots: &[PathBuf],
+    src_dir: &Path,
+    out_dir: &Path,
+) -> ScriptPlumbing {
+    let mut exec_dirs = Vec::new();
+    if let Some(dir) = Interpreter::exec_dir(interpreter_path) {
+        exec_dirs.push(dir);
+    }
+    exec_dirs.extend(read_roots.iter().cloned());
+    // Ancestors of the SCRIPT and the OUTPUT too, not just the interpreter. An
+    // interpreter resolves its main module to a real path before running it, and
+    // that walk stats every component above the script — which lives in a scratch
+    // directory whose ancestors nothing else had a reason to grant.
+    let mut metadata_paths = ancestors_of(interpreter_path);
+    for dir in [src_dir, out_dir] {
+        for ancestor in ancestors_of(&canonical_or(dir).join("x")) {
+            if !metadata_paths.contains(&ancestor) {
+                metadata_paths.push(ancestor);
+            }
+        }
+    }
+    ScriptPlumbing {
+        exec_dirs,
+        read_dirs: vec![src_dir.to_path_buf()],
+        metadata_paths,
+        write_dir: out_dir.to_path_buf(),
+    }
+}
+
+/// Canonicalize, falling back to the path as given when it cannot be resolved.
+fn canonical_or(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Every directory above `path`, excluding the filesystem root.
+///
+/// The root is excluded deliberately: it needs no grant, and naming it would put
+/// a rule about `/` in a profile whose whole point is that nothing is granted by
+/// default.
+fn ancestors_of(path: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir.parent().is_none() {
+            break;
+        }
+        out.push(dir.to_path_buf());
+        current = dir.parent();
+    }
+    out
+}
+
+/// Find an interpreter that actually runs a script under this platform's sandbox.
+///
+/// Returns the working path and its read roots, or `None` when no candidate
+/// survives — which registration turns into a refusal, because a script whose
+/// interpreter cannot run is not a script the runtime should offer a model.
+fn probe_interpreter(
+    interpreter: Interpreter,
+    shim_ref: ContentRef,
+    store: &LocalFsContentStore,
+    exec_class: ExecutorClass,
+) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let candidates = interpreter.resolved_candidates();
+    if candidates.is_empty() {
+        return Err("no candidate found on PATH or in the well-known locations".into());
+    }
+    let mut rejected = Vec::new();
+    for candidate in candidates {
+        let read_roots = Interpreter::read_roots(&candidate);
+        match run_probe(&candidate, &read_roots, interpreter, shim_ref, store, exec_class) {
+            Ok(()) => return Ok((candidate, read_roots)),
+            Err(reason) => {
+                tracing::info!(
+                    interpreter = interpreter.as_str(),
+                    candidate = %candidate.display(),
+                    %reason,
+                    "interpreter candidate did not run under the sandbox; trying the next"
+                );
+                rejected.push(format!("{}: {reason}", candidate.display()));
+            }
+        }
+    }
+    Err(rejected.join("; "))
+}
+
+/// Run `probe_source` through the real sandbox and require `ok` back.
+fn run_probe(
+    interpreter_path: &Path,
+    read_roots: &[PathBuf],
+    interpreter: Interpreter,
+    shim_ref: ContentRef,
+    store: &LocalFsContentStore,
+    exec_class: ExecutorClass,
+) -> Result<(), String> {
+    let src_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let out_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let script_path = src_dir.path().join("probe");
+    std::fs::write(&script_path, interpreter.probe_source()).map_err(|e| e.to_string())?;
+    let out_path = out_dir.path().join("result");
+
+    let descriptor = ScriptDescriptor {
+        interpreter_path: interpreter_path.to_string_lossy().into_owned(),
+        script_path: canonical_or(&script_path).to_string_lossy().into_owned(),
+        out_path: canonical_or(out_dir.path())
+            .join("result")
+            .to_string_lossy()
+            .into_owned(),
+        argv: Vec::new(),
+        stdin_bytes: Vec::new(),
+        env: Vec::new(),
+        // A probe that hangs must not hang the registration.
+        wall_clock_ms: PROBE_BUDGET_MS,
+        mem_bytes: 0,
+        max_output_bytes: 64,
+    };
+    let plumbing =
+        interpreter_plumbing(interpreter_path, read_roots, src_dir.path(), out_dir.path());
+    let warrant = probe_warrant(exec_class);
+    let mote = probe_mote(shim_ref);
+    run_script_body(
+        store,
+        exec_class,
+        shim_ref,
+        &mote,
+        &warrant,
+        &descriptor.encode(),
+        &plumbing,
+    )
+    .map_err(|e| e.to_string())?;
+    let produced = std::fs::read(&out_path).map_err(|e| e.to_string())?;
+    if produced == b"ok" {
+        Ok(())
+    } else {
+        Err(format!(
+            "the probe returned {:?} rather than \"ok\"",
+            String::from_utf8_lossy(&produced)
+        ))
+    }
+}
+
+/// The probe's warrant grants nothing: it needs no caller data, so anything it
+/// could reach would be a bug in the plumbing rather than a requirement.
+fn probe_warrant(exec_class: ExecutorClass) -> WarrantSpec {
+    WarrantSpec {
+        mote_class: MoteClass::Pure,
+        nd_class: MoteClass::Pure,
+        fs_scope: FsScope::empty(),
+        net_scope: NetScope::None,
+        syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+        tool_grants: BTreeSet::new(),
+        model_route: ModelRoute {
+            model_id: ModelId("local".into()),
+            max_input_tokens: 0,
+            max_output_tokens: 0,
+            max_calls: 0,
+        },
+        resource_ceiling: ResourceCeiling {
+            cpu_milli: 0,
+            mem_bytes: 0,
+            wall_clock_ms: PROBE_BUDGET_MS,
+            fd_count: 0,
+            disk_bytes: 0,
+        },
+        environment_ref: None,
+        executor_class: exec_class,
+        secret_scope: SecretScope::None,
+        ..Default::default()
+    }
+}
+
+/// The synthetic body Mote the probe runs under.
+fn probe_mote(shim_ref: ContentRef) -> Mote {
+    let def = MoteDef {
+        critic_check: None,
+        logic_ref: LogicRef::from_bytes(*shim_ref.as_bytes()),
+        model_id: ModelId("local".into()),
+        prompt_template_hash: PromptTemplateHash::from_bytes([0; 32]),
+        tool_contract: BTreeMap::new(),
+        nd_class: NdClass::Pure,
+        config_subset: BTreeMap::new(),
+        effect_pattern: EffectPattern::IdempotentByConstruction,
+        critic_for: None,
+        is_topology_shaper: false,
+        inference_params: kx_mote::InferenceParams::default(),
+        schema_version: MOTE_DEF_SCHEMA_VERSION,
+    };
+    Mote::new(
+        def,
+        InputDataId::from_bytes([0; 32]),
+        GraphPosition(b"probe".to_vec()),
+        smallvec::SmallVec::new(),
+    )
+}
+
 /// The shim's content ref, `put` into the store so the executor's body resolver
 /// can materialize it. `None` when the binary is not present — in which case no
 /// script registers, rather than registering something that cannot run safely.
@@ -645,13 +914,20 @@ pub fn register_script<S: ContentStore + Send + Sync>(
         });
     }
     let shim_ref = shim_ref.ok_or(ScriptAdmissionError::ShimUnavailable)?;
-    let interpreter_path = decl
-        .interpreter
-        .resolve()
-        .ok_or(ScriptAdmissionError::InterpreterUnavailable(
-            decl.interpreter.as_str(),
-        ))?;
-    let interpreter_read_roots = Interpreter::read_roots(&interpreter_path);
+    // PROBE, do not assume. A candidate that exists is not a candidate that works:
+    // `/usr/bin/python3` on macOS is a developer-tools trampoline that answers
+    // `--version` happily from a normal shell and then fails inside the sandbox,
+    // where it cannot reach what it wants to delegate to. Checking `is_file()`
+    // would register a script whose first fire is its first failure — so each
+    // candidate is run, sandboxed, exactly as a real script will be, and the first
+    // that comes back is the one used.
+    let (interpreter_path, interpreter_read_roots) =
+        probe_interpreter(decl.interpreter, shim_ref, store, exec_class).map_err(|detail| {
+            ScriptAdmissionError::InterpreterUnavailable {
+                interpreter: decl.interpreter.as_str(),
+                detail,
+            }
+        })?;
 
     let source_ref = store
         .put(&decl.source)
@@ -867,9 +1143,10 @@ impl<S: ContentStore + Send + Sync + 'static> HostScriptRegistry<S> {
         })?;
         let interpreter_path = interpreter
             .resolve()
-            .ok_or(ScriptAdmissionError::InterpreterUnavailable(
-                interpreter.as_str(),
-            ))?;
+            .ok_or(ScriptAdmissionError::InterpreterUnavailable {
+                interpreter: interpreter.as_str(),
+                detail: "no candidate resolved during restore".into(),
+            })?;
         let def = self
             .registry
             .lookup(name, version)
@@ -1114,7 +1391,7 @@ fn admission_status(err: &ScriptAdmissionError) -> ScriptAdminError {
         | ScriptAdmissionError::BadSource { .. }
         | ScriptAdmissionError::BadIdentity => ScriptAdminError::InvalidArgument(err.to_string()),
         ScriptAdmissionError::ShimUnavailable
-        | ScriptAdmissionError::InterpreterUnavailable(_) => {
+        | ScriptAdmissionError::InterpreterUnavailable { .. } => {
             ScriptAdminError::Unavailable(err.to_string())
         }
         ScriptAdmissionError::Storage(_) | ScriptAdmissionError::Registration(_) => {
@@ -1129,22 +1406,42 @@ fn admission_status(err: &ScriptAdmissionError) -> ScriptAdminError {
 
 /// The bundled ORACLE script the live benchmark's `script` family drives.
 ///
-/// Deliberately a computation the model cannot shortcut by reasoning: it counts
-/// the words in whatever arrives on stdin. A model that answers from its own
-/// head produces a plausible number; only a model that actually FIRED the script
-/// produces the one the script computed. That is what makes the family measure
-/// script execution rather than arithmetic.
+/// Aggregates a CSV on stdin: one `name,amount` row per line, out comes the row
+/// count and the total. Real data processing rather than a toy — a word count
+/// over a five-word phrase is something a model answers from its own head, so it
+/// measures the model and not the capability.
 ///
-/// Registered only alongside the other bundled oracle tools, on the same
-/// auto-grant condition, so a serve that does not opt in is unchanged.
-pub const BENCH_SCRIPT_SOURCE: &str = "read -r line\nset -- $line\nprintf 'WORDS=%s' \"$#\"\n";
+/// It is NOT fully underivable, and pretending otherwise would be worse than
+/// saying so: the input reaches the model in the instruction, so a careful model
+/// can sum the column itself. Making the answer truly unknowable would mean
+/// giving the script a data file the model never sees, and that needs the
+/// autonomous loop's warrant to carry filesystem scope — a far larger grant than
+/// a benchmark should be the reason for. What this DOES buy is a multi-row
+/// arithmetic the model gets wrong when it guesses, while `expected_tools` and
+/// `tool_call_f1` measure firing directly, which is the metric for firing.
+///
+/// Pure shell builtins: the only executables a script gets are those in the
+/// interpreter's own directory, so anything reaching into `/usr/bin` would not
+/// run.
+/// The `|| [ -n "$name" ]` is load-bearing, not defensive noise: `read` returns
+/// non-zero when the final line has no trailing newline, so the plain loop drops
+/// the last row and returns a total that is quietly, plausibly wrong. Real CSVs
+/// arrive without a trailing newline all the time, and a single-line test never
+/// shows it.
+pub const BENCH_SCRIPT_SOURCE: &str = "rows=0\ntotal=0\n\
+     while IFS=, read -r name amount || [ -n \"$name\" ]; do\n\
+     case \"$amount\" in ''|*[!0-9]*) name=''; continue;; esac\n\
+     rows=$((rows + 1))\n\
+     total=$((total + amount))\n\
+     name=''\n\
+     done\nprintf 'ROWS=%s TOTAL=%s' \"$rows\" \"$total\"\n";
 
 /// The bundled benchmark script's identity. The `<group>/<leaf>` shape mirrors
 /// the bundled MCP tools, so a model emitting the bare leaf still resolves.
 #[must_use]
 pub fn bench_script_tool() -> (ToolName, ToolVersion) {
     (
-        ToolName("script/word-count".into()),
+        ToolName("script/csv-total".into()),
         ToolVersion("1".into()),
     )
 }
@@ -1164,8 +1461,9 @@ pub fn register_bench_script<S: ContentStore + Send + Sync>(
         version: version.clone(),
         interpreter: Interpreter::Sh,
         source: BENCH_SCRIPT_SOURCE.as_bytes().to_vec(),
-        description: "Count the words in the given text. Args: {\"input\": <text>}. \
-                      Returns WORDS=<n>. Runs sandboxed; no files, no network."
+        description: "Aggregate a CSV of name,amount rows. Args: {\"input\": <csv text, \
+                      one name,amount per line>}. Returns 'ROWS=<n> TOTAL=<sum>'. Runs \
+                      sandboxed; no files, no network."
             .into(),
         author: "bundled".into(),
         argv: Vec::new(),

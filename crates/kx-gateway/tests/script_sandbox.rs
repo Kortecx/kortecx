@@ -196,9 +196,27 @@ fn request(input: &str, fs_scope: FsScope) -> EffectRequest {
     }
 }
 
+/// Proper JSON string escaping. The hand-rolled version this replaces did not
+/// escape control characters, so the first multi-line payload produced a
+/// malformed tool call — which is worth noting beyond the test: a script taking
+/// CSV gets it through the JSON tool-call envelope, and every newline has to
+/// survive that trip.
 fn serde_json_string(s: &str) -> String {
-    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// ★ The script RAN. Under the old passthrough the committed bytes are the
@@ -476,11 +494,12 @@ fn a_registered_script_is_fireable_again_after_a_restart() {
 }
 
 
-/// ★ The benchmark's oracle must be RIGHT, or the family measures the model
-/// against a wrong expectation and a correct model scores zero.
+/// ★ The benchmark's oracle must be RIGHT, or the family measures a correct model
+/// against a wrong expectation and scores it zero.
 ///
 /// These are the exact inputs and answers the `script` family's tasks assert, run
-/// through the real sandbox rather than reasoned about.
+/// through the real sandbox rather than reasoned about — a shell aggregation loop
+/// is precisely the kind of thing that looks obviously correct and is not.
 #[test]
 fn the_bundled_benchmark_script_computes_what_the_suite_expects() {
     let h = Harness::new();
@@ -500,17 +519,23 @@ fn the_bundled_benchmark_script_computes_what_the_suite_expects() {
     let mote = calling_mote(&name, &version);
     let warrant = granting_warrant(&name, &version, BTreeMap::new());
     for (input, expected) in [
-        ("the quick brown fox jumps", "WORDS=5"),
-        ("alpha beta gamma", "WORDS=3"),
+        (
+            "north,1372\nsouth,894\neast,2051\nwest,663\n\
+             north,1189\nsouth,447\neast,1908\nwest,726",
+            "ROWS=8 TOTAL=9250",
+        ),
+        ("alpha,120\nbeta,305\ngamma,75", "ROWS=3 TOTAL=500"),
+        // A malformed row is skipped, not counted and not fatal — real CSVs have
+        // headers and blank lines, and an oracle that dies on one is not usable.
+        ("name,amount\nalpha,10\n\nbeta,5", "ROWS=2 TOTAL=15"),
+        // A single row with no trailing newline: the shape that silently dropped
+        // the last record before the loop was fixed to read it.
+        ("solo,42", "ROWS=1 TOTAL=42"),
+        ("", "ROWS=0 TOTAL=0"),
     ] {
         let handle = h
             .broker
-            .dispatch(
-                &mote,
-                &warrant,
-                &name,
-                request(input, FsScope::empty()),
-            )
+            .dispatch(&mote, &warrant, &name, request(input, FsScope::empty()))
             .expect("dispatch");
         let staged = h.store.get(&handle.staged_ref).expect("staged");
         assert_eq!(
@@ -519,4 +544,445 @@ fn the_bundled_benchmark_script_computes_what_the_suite_expects() {
             "the suite's script-family answer for {input:?} must be what the script computes"
         );
     }
+}
+
+
+/// Build a declaration for a given interpreter, skipping when it is unavailable.
+fn decl_for(
+    name: &str,
+    interpreter: Interpreter,
+    source: &str,
+) -> Option<ScriptDecl> {
+    if interpreter.resolve().is_none() {
+        eprintln!("SKIP: {} is not installed on this host", interpreter.as_str());
+        return None;
+    }
+    let (tool_id, version) = tool(name);
+    Some(ScriptDecl {
+        name: tool_id,
+        version,
+        interpreter,
+        source: source.as_bytes().to_vec(),
+        description: "a real-workload test script".into(),
+        author: "tests".into(),
+        argv: Vec::new(),
+        env: Vec::new(),
+        wish: ScriptWish {
+            wall_clock_ms: 30_000,
+            ..ScriptWish::default()
+        },
+    })
+}
+
+/// ★ node on a real workload — JSON in, aggregation, JSON out.
+///
+/// node was in the interpreter allowlist and had never executed. It is also the
+/// interpreter most likely to be installed by a version manager rather than a
+/// system package, so this doubles as proof that discovery finds one.
+#[test]
+fn node_transforms_real_json() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    let source = r#"
+let raw = "";
+process.stdin.on("data", (c) => (raw += c));
+process.stdin.on("end", () => {
+  const orders = JSON.parse(raw);
+  const byStatus = {};
+  for (const o of orders) {
+    byStatus[o.status] = (byStatus[o.status] || 0) + o.total;
+  }
+  process.stdout.write(JSON.stringify(byStatus, Object.keys(byStatus).sort()));
+});
+"#;
+    let Some(d) = decl_for("script/order-totals", Interpreter::Node, source) else {
+        return;
+    };
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("a node script should register when node is discoverable");
+
+    let mote = calling_mote(&d.name, &d.version);
+    let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
+    let orders = r#"[{"status":"paid","total":40},{"status":"open","total":15},{"status":"paid","total":2}]"#;
+    let handle = h
+        .broker
+        .dispatch(&mote, &warrant, &d.name, request(orders, FsScope::empty()))
+        .expect("the node script should fire");
+    let staged = h.store.get(&handle.staged_ref).expect("staged");
+    let text = String::from_utf8_lossy(&staged);
+    assert!(
+        text.contains("\"paid\":42") && text.contains("\"open\":15"),
+        "node did not aggregate the JSON correctly: {text}"
+    );
+}
+
+/// ★ Egress is denied unless granted — as a PAIR, because "the fetch failed" is
+/// also what a wrong URL, a down host or a typo produces.
+///
+/// Arm A: a script with no egress in its wish cannot open a socket. Arm B: the
+/// same script, with the loopback host in its wish AND in the caller's warrant,
+/// reaches a listener started by the test. Only the pair separates *denied* from
+/// *never worked*.
+#[test]
+fn egress_is_denied_unless_the_caller_granted_it() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    // A local listener that answers one line, so "reachable" is a real outcome
+    // rather than an assumption about the outside world.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for mut s in listener.incoming().take(4).flatten() {
+            use std::io::Write as _;
+            let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHELLO");
+        }
+    });
+
+    let source = format!(
+        r#"
+const net = require("net");
+const sock = net.connect({port}, "127.0.0.1");
+sock.on("data", (d) => {{ process.stdout.write("REACHED"); sock.end(); }});
+sock.on("error", () => {{ process.stdout.write("BLOCKED"); process.exit(0); }});
+sock.setTimeout(4000, () => {{ process.stdout.write("BLOCKED"); process.exit(0); }});
+"#
+    );
+    let Some(mut d) = decl_for("script/egress-probe", Interpreter::Node, &source) else {
+        return;
+    };
+
+    // Arm A — no egress declared, none granted.
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("registration");
+    let mote = calling_mote(&d.name, &d.version);
+    let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
+    let handle = h
+        .broker
+        .dispatch(&mote, &warrant, &d.name, request("", FsScope::empty()))
+        .expect("the script itself should run; only its socket should be refused");
+    let denied = h.store.get(&handle.staged_ref).expect("staged");
+    assert_eq!(
+        String::from_utf8_lossy(&denied).trim(),
+        "BLOCKED",
+        "a script with no egress in its wish opened a socket"
+    );
+
+    // Arm B — the same script, egress declared AND granted.
+    d.name = ToolName("script/egress-granted".into());
+    d.wish.net_hosts = [kx_warrant::Host("127.0.0.1".into())].into_iter().collect();
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("registration");
+    let mote = calling_mote(&d.name, &d.version);
+    let mut granted = granting_warrant(&d.name, &d.version, BTreeMap::new());
+    granted.net_scope = d.wish_net_scope_for_test();
+    let mut req = request("", FsScope::empty());
+    req.net_scope = granted.net_scope.clone();
+    let handle = h
+        .broker
+        .dispatch(&mote, &granted, &d.name, req)
+        .expect("a granted script should fire");
+    let reached = h.store.get(&handle.staged_ref).expect("staged");
+    assert_eq!(
+        String::from_utf8_lossy(&reached).trim(),
+        "REACHED",
+        "a script whose caller granted the host could not reach it — arm A's \
+         BLOCKED would then prove nothing"
+    );
+}
+
+/// ★ The output cap at a REALISTIC size. A cap tested at four bytes says nothing
+/// about a cap at a megabyte: the buffering, the pipe behaviour and the bounded
+/// read are all different at scale.
+#[test]
+fn the_output_cap_holds_at_a_realistic_size() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    // ~2 MiB of real output, against a 1 MiB declared cap.
+    let source = "i=0; while [ $i -lt 2048 ]; do \
+                  printf '%01024d' $i; i=$((i+1)); done";
+    let mut d = decl("script/floods", source);
+    d.wish.max_output_bytes = 1024 * 1024;
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("registration");
+
+    let mote = calling_mote(&d.name, &d.version);
+    let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
+    let got = h
+        .broker
+        .dispatch(&mote, &warrant, &d.name, request("", FsScope::empty()));
+    assert!(got.is_err(), "2 MiB of output passed a 1 MiB cap");
+
+    // And a payload just under the cap still succeeds — otherwise "it refused"
+    // could simply mean large outputs never work.
+    let mut ok_decl = decl("script/large-but-ok", "i=0; while [ $i -lt 256 ]; do \
+                            printf '%01024d' $i; i=$((i+1)); done");
+    ok_decl.wish.max_output_bytes = 1024 * 1024;
+    register_script(
+        &ok_decl,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("registration");
+    let mote = calling_mote(&ok_decl.name, &ok_decl.version);
+    let warrant = granting_warrant(&ok_decl.name, &ok_decl.version, BTreeMap::new());
+    let handle = h
+        .broker
+        .dispatch(&mote, &warrant, &ok_decl.name, request("", FsScope::empty()))
+        .expect("a 256 KiB output under a 1 MiB cap should succeed");
+    let staged = h.store.get(&handle.staged_ref).expect("staged");
+    assert_eq!(staged.as_ref().len(), 256 * 1024);
+}
+
+/// ★ Concurrent dispatches must not collide. Every run gets its own scratch
+/// directories and its own descriptor; if any of that were shared, parallel
+/// scripts would read each other's input or overwrite each other's result — and a
+/// serial test cannot see it.
+#[test]
+fn concurrent_script_dispatches_do_not_collide() {
+    let h = std::sync::Arc::new(Harness::new());
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    let d = decl(
+        "script/echoes-its-input",
+        "read -r line; printf 'got:%s' \"$line\"",
+    );
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("registration");
+
+    let mut handles = Vec::new();
+    for i in 0..8 {
+        let h = std::sync::Arc::clone(&h);
+        let name = d.name.clone();
+        let version = d.version.clone();
+        handles.push(std::thread::spawn(move || {
+            let mote = calling_mote(&name, &version);
+            let warrant = granting_warrant(&name, &version, BTreeMap::new());
+            let input = format!("caller-{i}");
+            let handle = h
+                .broker
+                .dispatch(&mote, &warrant, &name, request(&input, FsScope::empty()))
+                .expect("dispatch");
+            let staged = h.store.get(&handle.staged_ref).expect("staged");
+            (i, String::from_utf8_lossy(&staged).trim_end().to_string())
+        }));
+    }
+    for handle in handles {
+        let (i, output) = handle.join().expect("thread");
+        assert_eq!(
+            output,
+            format!("got:caller-{i}"),
+            "a concurrent run saw another caller's input"
+        );
+    }
+}
+
+/// ★ A script that produces output and THEN fails must not have its partial
+/// output committed as a successful result. This is the shape most likely to
+/// mislead an agent: bytes that look like an answer, from a run that broke.
+#[test]
+fn partial_output_before_a_failure_is_not_committed() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    let d = decl(
+        "script/fails-late",
+        "printf 'looks like a real answer'; exit 7",
+    );
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("registration");
+
+    let mote = calling_mote(&d.name, &d.version);
+    let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
+    let got = h
+        .broker
+        .dispatch(&mote, &warrant, &d.name, request("", FsScope::empty()));
+    assert!(
+        got.is_err(),
+        "a script that exited 7 had its partial output accepted as an answer"
+    );
+}
+
+/// ★ A declared time budget must actually STOP a runaway script.
+///
+/// The axis a fast script can never exercise: an aggregation returns in
+/// milliseconds, so a missing timeout and a working one look identical. Here the
+/// script sleeps far past its budget, so the two are distinguishable — enforced
+/// means a quick failure, ignored means the call blocks for the whole sleep and
+/// then SUCCEEDS.
+#[test]
+fn a_runaway_script_is_stopped_by_its_declared_time_budget() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    let mut d = decl("script/runaway", "sleep 30; printf 'finished anyway'");
+    d.wish.wall_clock_ms = 2_000;
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("registration");
+
+    let mote = calling_mote(&d.name, &d.version);
+    let warrant = granting_warrant(&d.name, &d.version, BTreeMap::new());
+    let started = std::time::Instant::now();
+    let got = h
+        .broker
+        .dispatch(&mote, &warrant, &d.name, request("", FsScope::empty()));
+    let elapsed = started.elapsed();
+
+    assert!(got.is_err(), "a script that ran 15x its budget was allowed to finish");
+    assert!(
+        elapsed < std::time::Duration::from_secs(15),
+        "the budget did not stop it — the call took {elapsed:?}, near the script's \
+         own 30s sleep rather than its 2s budget"
+    );
+}
+
+/// ★ A REAL workload, on a real interpreter, over a real file.
+///
+/// The shell tests run an interpreter whose prefix needs no mount at all, so the
+/// interpreter-prefix and ancestor-metadata grants that python and node depend on
+/// went unexercised. A shell one-liner also cannot show whether an interpreter can
+/// reach its own standard library through the sandbox, which is the thing most
+/// likely to be wrong.
+#[test]
+fn python3_processes_a_real_csv_from_a_mounted_directory() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    if Interpreter::Python3.resolve().is_none() {
+        eprintln!("SKIP: python3 is not installed on this host");
+        return;
+    }
+
+    let data = tempfile::tempdir().unwrap();
+    let data_dir = std::fs::canonicalize(data.path()).unwrap();
+    std::fs::write(
+        data_dir.join("sales.csv"),
+        "region,units,unit_price\n\
+         north,12,4.50\n\
+         south,7,4.50\n\
+         north,3,10.00\n\
+         east,20,1.25\n",
+    )
+    .unwrap();
+
+    let source = format!(
+        r#"
+import csv, json, collections
+totals = collections.defaultdict(float)
+with open("{}/sales.csv", newline="") as fh:
+    for row in csv.DictReader(fh):
+        totals[row["region"]] += int(row["units"]) * float(row["unit_price"])
+print(json.dumps({{"revenue": {{k: round(v, 2) for k, v in sorted(totals.items())}}}}))
+"#,
+        data_dir.display()
+    );
+
+    let (tool_id, version) = tool("script/revenue-by-region");
+    let d = ScriptDecl {
+        name: tool_id,
+        version,
+        interpreter: Interpreter::Python3,
+        source: source.into_bytes(),
+        description: "Aggregate revenue per region from the sales CSV.".into(),
+        author: "tests".into(),
+        argv: Vec::new(),
+        env: Vec::new(),
+        wish: ScriptWish {
+            fs_mounts: [(data_dir.clone(), FsMode::ReadOnly)].into_iter().collect(),
+            wall_clock_ms: 30_000,
+            ..ScriptWish::default()
+        },
+    };
+    register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    )
+    .expect("a python3 script should register when python3 is usable");
+
+    let mote = calling_mote(&d.name, &d.version);
+    let warrant = granting_warrant(&d.name, &d.version, d.wish.fs_mounts.clone());
+    let handle = h
+        .broker
+        .dispatch(
+            &mote,
+            &warrant,
+            &d.name,
+            request("", FsScope { mounts: d.wish.fs_mounts.clone() }),
+        )
+        .expect("the python3 script should fire");
+
+    let staged = h.store.get(&handle.staged_ref).expect("staged");
+    let text = String::from_utf8_lossy(&staged);
+    // north = 12*4.50 + 3*10.00 = 84.0; south = 31.5; east = 25.0
+    assert!(
+        text.contains("\"north\": 84.0")
+            && text.contains("\"south\": 31.5")
+            && text.contains("\"east\": 25.0"),
+        "python3 did not aggregate the mounted CSV correctly: {text}"
+    );
 }

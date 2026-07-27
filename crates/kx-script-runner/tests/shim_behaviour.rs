@@ -64,6 +64,8 @@ impl Fixture {
             argv: Vec::new(),
             stdin_bytes: Vec::new(),
             env: Vec::new(),
+            wall_clock_ms: 10_000,
+            mem_bytes: 0,
             max_output_bytes: 64 * 1024,
         }
     }
@@ -277,4 +279,74 @@ fn binary_output_survives_byte_for_byte() {
     let written = fs::read(&descriptor.out_path).unwrap();
     assert_eq!(written, b"\x01\x02\xff\x00\n");
     assert_eq!(stdout, hex32(&result_ref_bytes(&written)));
+}
+
+/// ★ A declared time budget must actually stop a runaway script.
+///
+/// The axis a fast script can never exercise: a word-count returns in
+/// milliseconds, so a missing timeout and a working one look identical. Here the
+/// script sleeps far past its budget, so the two are distinguishable — enforced
+/// means a quick failure, ignored means the call blocks for the whole sleep and
+/// then SUCCEEDS.
+#[test]
+fn a_runaway_script_is_stopped_at_its_budget() {
+    let fx = Fixture::new();
+    let script = fx.script("sleep 30; printf 'finished anyway'");
+    let mut descriptor = fx.descriptor(&script);
+    descriptor.wall_clock_ms = 1_500;
+
+    let started = std::time::Instant::now();
+    let (ok, stdout, stderr) = fx.run(&descriptor);
+    let elapsed = started.elapsed();
+
+    assert!(!ok, "a script that ran 20x its budget was allowed to finish");
+    assert!(stdout.is_empty(), "no ref may be printed for a stopped run");
+    assert!(
+        stderr.contains("exceeded its 1500 ms budget"),
+        "unexpected diagnostic: {stderr}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "the budget did not stop it — took {elapsed:?}, near the script's own 30s sleep"
+    );
+    assert!(
+        !Path::new(&descriptor.out_path).exists(),
+        "a stopped run must not leave a result behind"
+    );
+}
+
+/// A script that finishes inside its budget is unaffected — the pair that keeps
+/// the test above from passing merely because everything times out.
+#[test]
+fn a_script_within_its_budget_is_unaffected() {
+    let fx = Fixture::new();
+    let script = fx.script("printf 'quick'");
+    let mut descriptor = fx.descriptor(&script);
+    descriptor.wall_clock_ms = 10_000;
+
+    let (ok, stdout, stderr) = fx.run(&descriptor);
+    assert!(ok, "a prompt script was stopped anyway: {stderr}");
+    assert_eq!(stdout, hex32(&result_ref_bytes(b"quick")));
+}
+
+/// A declared memory ceiling reaches the interpreter. The ceiling is set on the
+/// shim and inherited across exec, so a script asking for far more than it is
+/// allowed fails rather than being quietly granted it.
+#[test]
+fn a_memory_ceiling_is_inherited_by_the_interpreter() {
+    let fx = Fixture::new();
+    // Ask the shell to allocate a string far past the ceiling.
+    let script = fx.script("x=$(printf 'a%.0s' $(seq 1 50000000)); printf '%s' \"${#x}\"");
+    let mut descriptor = fx.descriptor(&script);
+    descriptor.mem_bytes = 32 * 1024 * 1024;
+    descriptor.wall_clock_ms = 20_000;
+
+    let (ok, _, stderr) = fx.run(&descriptor);
+    assert!(
+        !ok,
+        "a script allocating far past its {}-byte ceiling succeeded — the limit \
+         did not reach the interpreter",
+        descriptor.mem_bytes
+    );
+    assert!(!stderr.is_empty(), "a refused run should say why");
 }

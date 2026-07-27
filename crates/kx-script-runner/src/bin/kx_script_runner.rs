@@ -18,13 +18,20 @@
 //!   knob the serve happens to hold can be read by a script.
 //! - **Oversized output is refused, never truncated.** A truncated result reads
 //!   as a complete answer, and whatever consumes it has no way to tell.
+//! - **The declared ceiling is enforced HERE.** The memory limit is applied to
+//!   this process before it execs, so the interpreter inherits it, and the time
+//!   budget is timed against the child directly — this process is the script's
+//!   parent, so it can stop precisely the thing that overran. The host keeps an
+//!   outer deadline as a backstop for a wedged shim.
 //! - **Only the hex ref reaches stdout.** Every diagnostic goes to stderr, which
 //!   the sandbox does not capture — so a chatty script cannot corrupt the ref
 //!   the backend is about to parse.
 
 use std::fs;
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt as _;
 use std::process::{Command, ExitCode, Stdio};
+use std::time::{Duration, Instant};
 
 use kx_script_runner::{hex32, result_ref_bytes, ScriptDescriptor};
 
@@ -102,6 +109,31 @@ fn execute(descriptor: &ScriptDescriptor) -> Result<Vec<u8>, String> {
         command.env(key, value);
     }
 
+    // Put the script in its OWN process group, so stopping it stops everything it
+    // started. A shell that spawns a helper (`sleep`, a pipeline stage) leaves that
+    // helper holding the stdout pipe open, so killing only the direct child neither
+    // ends the work nor unblocks the reader — the run would still take as long as
+    // the script felt like taking.
+    //
+    // SAFETY: `pre_exec` runs in the forked child, where only async-signal-safe
+    // calls are permitted. `setpgid` is async-signal-safe per POSIX and touches
+    // only the calling process.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setpgid(0, 0) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+
+    // The memory ceiling, applied to THIS process before the fork so the
+    // interpreter inherits it. Set here rather than by the host because the host
+    // crate forbids unsafe, and because a limit set on the direct parent is the
+    // one the child actually gets.
+    apply_memory_ceiling(descriptor.mem_bytes)?;
+
     let mut child = command.spawn().map_err(|e| {
         format!(
             "could not spawn interpreter {}: {e}",
@@ -117,6 +149,21 @@ fn execute(descriptor: &ScriptDescriptor) -> Result<Vec<u8>, String> {
         let _ = stdin.flush();
     }
 
+    // BOTH pipes are drained on their own threads, and the deadline is watched
+    // here. Reading stdout inline would block until the child closed it — which a
+    // runaway script never does — so the budget check would not be reached until
+    // after the script had already finished. Killing the child closes the pipes,
+    // which is what lets these threads finish.
+    let limit = descriptor.max_output_bytes.saturating_add(1);
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "the child's stdout pipe was not available".to_string())?;
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let outcome = stdout.by_ref().take(limit).read_to_end(&mut buf);
+        (buf, outcome.err())
+    });
     let stderr_reader = child.stderr.take().map(|stderr| {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
@@ -125,24 +172,17 @@ fn execute(descriptor: &ScriptDescriptor) -> Result<Vec<u8>, String> {
         })
     });
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "the child's stdout pipe was not available".to_string())?;
-    // Read one byte beyond the cap so an overflow is detectable rather than
-    // silently clipped at exactly the limit.
-    let limit = descriptor.max_output_bytes.saturating_add(1);
-    let mut collected = Vec::new();
-    let read_result = stdout.take(limit).read_to_end(&mut collected);
-
-    let status = child
-        .wait()
-        .map_err(|e| format!("could not wait for the script: {e}"))?;
+    let status = wait_within_budget(&mut child, descriptor.wall_clock_ms);
+    let (collected, read_error) = out_reader.join().unwrap_or_else(|_| (Vec::new(), None));
     let stderr_bytes = stderr_reader
         .and_then(|handle| handle.join().ok())
         .unwrap_or_default();
 
-    read_result.map_err(|e| format!("could not read the script's output: {e}"))?;
+    // Report the budget failure with whatever the script managed to say first.
+    let status = status.map_err(|reason| format!("{reason}{}", tail(&stderr_bytes)))?;
+    if let Some(e) = read_error {
+        return Err(format!("could not read the script's output: {e}"));
+    }
 
     if !status.success() {
         return Err(format!(
@@ -161,6 +201,88 @@ fn execute(descriptor: &ScriptDescriptor) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(collected)
+}
+
+/// Apply the address-space ceiling to this process. 0 ⇒ unset.
+///
+/// `RLIMIT_AS` is inherited across fork+exec, so setting it here bounds the
+/// interpreter and everything it spawns.
+fn apply_memory_ceiling(mem_bytes: u64) -> Result<(), String> {
+    if mem_bytes == 0 {
+        return Ok(());
+    }
+    let rlim = libc::rlimit {
+        rlim_cur: mem_bytes,
+        rlim_max: mem_bytes,
+    };
+    // SAFETY: `setrlimit` takes a pointer to a fully-initialized, stack-allocated
+    // `rlimit`; it is called before any thread is spawned and its only effect is
+    // on this process's own limits.
+    if unsafe { libc::setrlimit(libc::RLIMIT_AS, &raw const rlim) } != 0 {
+        return Err(format!(
+            "could not apply the {mem_bytes}-byte memory ceiling: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+/// Wait for the script, stopping it if it outlives its budget. 0 ⇒ no budget.
+///
+/// Escalates SIGTERM → SIGKILL: a script that installs a handler, or is mid-write,
+/// gets a chance to exit cleanly, but cannot decline to stop.
+fn wait_within_budget(
+    child: &mut std::process::Child,
+    wall_clock_ms: u64,
+) -> Result<std::process::ExitStatus, String> {
+    if wall_clock_ms == 0 {
+        return child
+            .wait()
+            .map_err(|e| format!("could not wait for the script: {e}"));
+    }
+    let deadline = Instant::now() + Duration::from_millis(wall_clock_ms);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    stop(child);
+                    return Err(format!(
+                        "the script exceeded its {wall_clock_ms} ms budget and was stopped"
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => return Err(format!("could not wait for the script: {e}")),
+        }
+    }
+}
+
+/// Terminate the script's whole process GROUP: ask, then insist.
+///
+/// The group, not the process — see the `setpgid` note in `execute`. A negative
+/// pid signals the group led by that pid.
+fn stop(child: &mut std::process::Child) {
+    #[allow(clippy::cast_possible_wrap)]
+    let pgid = child.id() as libc::pid_t;
+    // SAFETY: signalling a process group this process created is safe; a failed
+    // signal (the group is already gone) is reported through the return value,
+    // deliberately ignored because the outcome is the same either way.
+    unsafe {
+        libc::kill(-pgid, libc::SIGTERM);
+    }
+    let grace = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < grace {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // SAFETY: as above — the insistent half.
+    unsafe {
+        libc::kill(-pgid, libc::SIGKILL);
+    }
+    let _ = child.wait();
 }
 
 /// Render captured stderr as a trailing diagnostic, or nothing when it is empty.

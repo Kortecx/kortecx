@@ -21,6 +21,10 @@ path = "src/bin/kx_script_runner.rs"
 # reach. No serde, no JSON — the descriptor codec below is a fixed, length-
 # prefixed schema this crate owns end to end.
 blake3 = { workspace = true }
+# `setrlimit` for the declared memory / fd ceiling, applied to this process before
+# it execs so the interpreter inherits it. Not parsing surface — it is called once,
+# with stack-allocated structs, before any script bytes are read.
+libc = { workspace = true }
 
 [dev-dependencies]
 # Scratch dirs for the shim's behaviour tests (scripts, descriptors, result files).
