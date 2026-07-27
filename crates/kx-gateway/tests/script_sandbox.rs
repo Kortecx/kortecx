@@ -745,14 +745,24 @@ fn a_ceiling_this_host_cannot_enforce_is_refused_at_registration() {
         "the refusal must name what it could not honour: {why}"
     );
 
-    // And the refusal is scoped: drop the unenforceable axis and the SAME script
-    // registers. Without this the test would also pass if registration had simply
-    // stopped working.
+    // And the refusal is SCOPED: drop the unenforceable axis and the same script
+    // registers. Without this half, the test would also pass if registration had simply
+    // stopped working altogether.
+    //
+    // This half needs a host that can actually run a sandboxed script, and the refusal
+    // above does not — it is checked before the interpreter is ever probed, which is why
+    // the first half runs everywhere. On a host with no usable sandboxed interpreter the
+    // control is skipped rather than asserted, matching every other test in this file:
+    // asserting it would report "this machine has no bwrap" as "the refusal is too
+    // broad", which is a different claim entirely.
     d.wish.net_hosts.clear();
-    assert!(
-        register_or_skip(&d, shim, &h).is_some(),
-        "the same script with no egress declared must still register"
-    );
+    if register_or_skip(&d, shim, &h).is_none() {
+        eprintln!(
+            "SKIP (control half): this host cannot register a sandboxed script at all, so \
+             'the same script without the unenforceable axis still registers' is unprovable \
+             here. The refusal itself was asserted above."
+        );
+    }
 }
 
 /// ★ The output cap at a REALISTIC size. A cap tested at four bytes says nothing
