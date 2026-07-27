@@ -10,21 +10,40 @@ test.afterEach(() => {
 });
 
 /**
- * The Integrations hub (D170 foundation seam) — the Tools section is now a tabbed
- * hub: Tools | Connections | Triggers | Secrets. This is a RENDER-level check (the
- * Triggers/Secrets stores may degrade to a not-wired state on an FFI-free serve, so
- * we assert the tab switch + the always-present register/add forms, never a live
- * trigger fire — keeping it flake-free per the e2e harness guidance).
+ * The MCP hub (D170 foundation seam) — the Tools section is a tabbed hub:
+ * Tools | Scripts | Integrations | Connections | Skills | Triggers | Secrets. This
+ * is a RENDER-level check (the Triggers/Secrets stores may degrade to a not-wired
+ * state on an FFI-free serve, so we assert the tab switch + the always-present
+ * register/add forms, never a live trigger fire — keeping it flake-free per the
+ * e2e harness guidance).
  */
-test("Integrations hub: Triggers + Secrets tabs render their govern forms", async ({ page }) => {
+test("MCP hub: Scripts, Triggers + Secrets tabs render their govern forms", async ({ page }) => {
   gw = await spawnGateway({ corsOrigin: SPA_ORIGIN });
   await connectConsole(page, gw);
 
   await page.getByTestId("nav-tools").click();
   await expect(page.getByTestId("tools-section")).toBeVisible();
-  // The relabelled section reads "Integrations" with the four-tab toggle.
-  await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+  // The relabelled section reads "MCP" with its tab toggle.
+  // `exact` + the level matter here: accessible-name matching is a substring by
+  // default, and "Register an external MCP tool" further down the page also
+  // contains "MCP", so an unqualified match is ambiguous rather than absent.
+  await expect(page.getByRole("heading", { level: 1, name: "MCP", exact: true })).toBeVisible();
   await expect(page.getByTestId("tools-tabs")).toBeVisible();
+
+  // Scripts tab → the registry view and its register form. A serve without the
+  // script RPCs degrades to an honest not-wired empty state, so assert whichever
+  // of the two rendered rather than pinning the wired case and flaking on a build
+  // that does not have it.
+  await page.getByTestId("tools-tab-scripts").click();
+  await expect(
+    page.getByTestId("scripts-panel").or(page.getByText("Scripts need a newer gateway")),
+  ).toBeVisible();
+
+  // Integrations tab → the bundled connectors, which are a static catalog and so
+  // always render regardless of what the gateway reports.
+  await page.getByTestId("tools-tab-integrations").click();
+  await expect(page.getByTestId("integrations-panel")).toBeVisible();
+  await expect(page.getByTestId("integration-dial-gmail")).toBeVisible();
 
   // Triggers tab → the register form is always present (kind + auth CHIP groups,
   // recipe handle, submit), independent of whether the registry store is wired.

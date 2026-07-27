@@ -7,7 +7,7 @@
  * in `shell/Icon.tsx`. The `nav-model` unit test pins both invariants.
  *
  * POC-5c (D168): the console is a flat set of plain-button sections — New Chat · Apps ·
- * Workflows · Context · Integrations · Models · Security — with NO sidebar groups and
+ * Workflows · Context · MCP · Models · Security — with NO sidebar groups and
  * NO "Coming" placeholders. Display labels rename freely; section IDS/icons stay on the
  * frozen wire-legacy handles (`chat`/`runs`/`recipes`/`systems` — test-ids, RPC names
  * never rename, the D136 Blueprints precedent). The section moves fold the demoted
@@ -109,14 +109,14 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     hint: "Reusable bundles & RAG datasets",
   },
   {
-    // Display says "Integrations" (the Tools/Connections/Triggers/Secrets hub); the
+    // Display says "MCP" (the hub over everything an agent can call); the
     // id/path/icon stay on the frozen `tools` wire-legacy handle (test-ids, route,
     // telemetry never rename — the D136 Blueprints precedent).
     id: "tools",
-    label: "Integrations",
+    label: "MCP",
     path: "/tools",
     icon: "tools",
-    hint: "Tools, MCP connections, triggers & secrets",
+    hint: "Tools, scripts, integrations, connections, triggers & secrets",
   },
   {
     // A read-only view over the models serving this gateway (`ListModels`) plus the

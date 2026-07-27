@@ -51,6 +51,23 @@
  *     instead of repeated at a dozen navigations) is pulled eager by the route modules
  *     that validate `?chain=`/`?anchor=`. Measured 673,979 B (origin/main) → 674,866 B
  *     (+887 B eager); bumped to the next KiB boundary.
+ *   - 665 KiB → 670 KiB (the script primitive): the eager SDK client gains
+ *     registerScript / listScripts / getScript / deregisterScript, the `RegisteredScript`
+ *     model, and the regenerated proto descriptor for the four new messages. Like every
+ *     entry above it rides the eager `common.js`, which connection-context loads up front,
+ *     so a generated message schema cannot be lazy-split per feature. The two new PANELS
+ *     are route-lazy and cost nothing eager.
+ *
+ *     Measured with clean installs of BOTH packages, A/B against origin/main with the SDK
+ *     rebuilt from main too (rebuilding only the UI leaves this branch's SDK `dist` in
+ *     place — it is gitignored, so a stash does not revert it, and the "baseline" then
+ *     silently includes the change under test): main 683,190 B → this branch 685,034 B
+ *     (+1,844 B eager). Bumped to the next KiB boundary above the measured value.
+ *
+ *     NOTE for whoever reads this next: those local numbers put ORIGIN/MAIN itself over the
+ *     previous 680,960 B budget, yet main's CI is green — so the local toolchain measures a
+ *     few KiB heavier than CI's (both are node 22; CI resolves a later patch). The DELTA is
+ *     the trustworthy half of the measurement; the absolute is not comparable across hosts.
  *
  * Exit 1 over budget. The printed table doubles as the measurement evidence blob.
  */
@@ -70,7 +87,7 @@ const DIST = join(UI_ROOT, "dist");
 // `deriveApp` mapping additions, and the SDK client is eager on every route. Adding a
 // per-step contract axis buys that; bumping here — in the PR that spends it — is the same move
 // #375, #363, #362, #358 and #304 each made.
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 680_960);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 686_080);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

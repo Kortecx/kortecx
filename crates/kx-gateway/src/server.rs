@@ -690,6 +690,26 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // (`register_capability` is `&self`/interior-mutable) on the SAME broker the
     // worker dispatches through.
     let local_broker = Arc::new(LocalCapabilityBroker::new((*content).clone()));
+    // The sandboxed script shim, put into the shared content store so a script
+    // dispatch can materialize it as its body. `None` when the binary is not
+    // shipped alongside this serve — in which case script registration REFUSES
+    // rather than degrading, because the only other way to run a script would be
+    // on the host (Golden Rule 9).
+    let script_shim_ref = crate::scripts::provision_shim(&content);
+    if script_shim_ref.is_none() {
+        tracing::info!("no sandbox script shim found; scripts will not register on this serve");
+    }
+    let script_admin = Arc::new(crate::scripts::HostScriptRegistry::new(
+        tool_registry.clone(),
+        (*content).clone(),
+        local_broker.clone(),
+        script_shim_ref,
+        default_executor_class(),
+    ));
+    // The registry is durable; the broker is not. Without this a restarted serve
+    // would resolve a previously registered script and then fail at dispatch with
+    // an unknown capability — a row that reads as live and is not.
+    script_admin.rehydrate();
     // PR-2d-2 (react-tools-live): register the bundled deterministic stdio tool's
     // capability — the live ReAct loop's "Act" step — when its binary is present
     // AND a fit serve model resolved (no model ⇒ no react chain can drive it).
@@ -766,6 +786,26 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     };
     #[cfg(not(feature = "serve-engine"))]
     let react_oracle_tools: Vec<(kx_mote::ToolName, kx_mote::ToolVersion)> = Vec::new();
+    // The bundled benchmark SCRIPT, on the same auto-grant condition as the oracle
+    // tools above: it is what the live benchmark's script family fires, so it must
+    // be grantable for that family to measure anything. Fail-soft — a serve that
+    // cannot sandbox simply does not get it.
+    #[cfg(feature = "serve-engine")]
+    let react_oracle_tools = {
+        let mut tools = react_oracle_tools;
+        if autogrant {
+            if let Some(script) = crate::scripts::register_bench_script(
+                script_shim_ref,
+                &content,
+                &tool_registry,
+                &local_broker,
+                default_executor_class(),
+            ) {
+                tools.push(script);
+            }
+        }
+        tools
+    };
     let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
     // Parallel-local-exec: the bounded embedded-worker POOL. Resolve the size
     // from `--workers` / `KX_WORKERS` / `KX_SERVE_WORKER_POOL` (default 1 = the
@@ -1760,6 +1800,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             tool_registry.clone(),
             crate::tools::tool_host_allowlist(),
         )))
+        // Scripts share the tool registry, the content store and the live broker,
+        // so one registered over the RPC is immediately fireable by the running
+        // loop rather than after a restart.
+        .with_script_admin(script_admin.clone())
         .with_put_content_cap(cfg.content_max_bytes)
         .with_model_catalog_view(models_view)
         .with_server_info(server_info_facts)

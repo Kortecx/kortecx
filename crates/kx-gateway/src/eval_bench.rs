@@ -24,6 +24,7 @@
 //! |---------|------------------------------------------|-----------------------------|
 //! | `tool`  | `Invoke` `react-auto`                    | [`fold_run_transcript`]     |
 //! | `react` | `Invoke` `react-auto`                    | [`fold_run_transcript`]     |
+//! | `script`| `Invoke` `react-auto`                    | [`fold_run_transcript`]     |
 //! | `reach` | `Invoke` `react-rag`/`react-memory`, or `RunApp` | [`fold_run_transcript`] (+ observations) |
 //! | `swarm` | `SubmitWorkflow`                         | [`fold_workflow_transcript`]|
 //!
@@ -162,7 +163,10 @@ pub fn drive_for(task: &GoldenTask) -> Result<Drive, BenchError> {
     match task.family.as_str() {
         // The tool-contract families both run the autogranted ReAct loop: one measures
         // that the granted tools FIRE, the other that an ungranted one does not.
-        "tool" | "react" => Ok(Drive::React {
+        // `script` rides the same loop by design — a registered script IS a tool to
+        // the model, and the family exists to measure that a SANDBOXED body actually
+        // ran, not that a different calling convention works.
+        "tool" | "react" | "script" => Ok(Drive::React {
             handle: REACT_AUTO_RECIPE_HANDLE,
             dataset: None,
         }),

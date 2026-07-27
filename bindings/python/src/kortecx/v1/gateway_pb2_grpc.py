@@ -279,6 +279,26 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.FromString,
                 _registered_method=True)
+        self.RegisterScript = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RegisterScript',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterScriptRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterScriptResponse.FromString,
+                _registered_method=True)
+        self.DeregisterScript = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeregisterScript',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterScriptRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterScriptResponse.FromString,
+                _registered_method=True)
+        self.ListScripts = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListScripts',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListScriptsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListScriptsResponse.FromString,
+                _registered_method=True)
+        self.GetScript = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetScript',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetScriptRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetScriptResponse.FromString,
+                _registered_method=True)
         self.RegisterMcpServer = channel.unary_unary(
                 '/kortecx.v1.KxGateway/RegisterMcpServer',
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterMcpServerRequest.SerializeToString,
@@ -907,6 +927,35 @@ class KxGatewayServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def DiscoverTools(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RegisterScript(self, request, context):
+        """Additive: the declarative SCRIPT registry (see RegisterScriptRequest for the
+        authority model). A script registers into the SAME durable registry a tool
+        does and fires through the same broker; only its declaration differs.
+        Registration grants no authority, script_id is server-derived, and a serve
+        that cannot sandbox refuses rather than running a script on the host.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeregisterScript(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListScripts(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetScript(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1600,6 +1649,26 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.DiscoverTools,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.SerializeToString,
+            ),
+            'RegisterScript': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterScript,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RegisterScriptRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RegisterScriptResponse.SerializeToString,
+            ),
+            'DeregisterScript': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeregisterScript,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterScriptRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeregisterScriptResponse.SerializeToString,
+            ),
+            'ListScripts': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListScripts,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListScriptsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListScriptsResponse.SerializeToString,
+            ),
+            'GetScript': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetScript,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetScriptRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetScriptResponse.SerializeToString,
             ),
             'RegisterMcpServer': grpc.unary_unary_rpc_method_handler(
                     servicer.RegisterMcpServer,
@@ -3200,6 +3269,114 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/DiscoverTools',
             kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.DiscoverToolsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterScript(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RegisterScript',
+            kortecx_dot_v1_dot_gateway__pb2.RegisterScriptRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RegisterScriptResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeregisterScript(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeregisterScript',
+            kortecx_dot_v1_dot_gateway__pb2.DeregisterScriptRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeregisterScriptResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListScripts(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListScripts',
+            kortecx_dot_v1_dot_gateway__pb2.ListScriptsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListScriptsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetScript(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetScript',
+            kortecx_dot_v1_dot_gateway__pb2.GetScriptRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetScriptResponse.FromString,
             options,
             channel_credentials,
             insecure,

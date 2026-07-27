@@ -30,6 +30,7 @@ export const queryKeys = {
   /** The durable tools-registry inventory (`DiscoverTools`, PR-6a) — the governance
    *  view (what is registered, with what authority). Registration grants none. */
   discoverTools: (endpoint: string) => ["kx", endpoint, "discover-tools"] as const,
+  listScripts: (endpoint: string) => ["kx", endpoint, "list-scripts"] as const,
   /** The registered external MCP servers (`ListMcpServers`, PR-6b-1) — the live
    *  Connections govern surface. Server-derived ids; credentials by NAME only. */
   mcpServers: (endpoint: string) => ["kx", endpoint, "mcp-servers"] as const,

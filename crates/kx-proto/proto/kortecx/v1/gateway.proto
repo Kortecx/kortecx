@@ -1972,6 +1972,100 @@ message RegisterToolResponse {
   string registration_status  = 2;       // "Approved" (HumanAuthored)
 }
 
+// ---------------------------------------------------------------------------
+// The declarative SCRIPT registry. A script is a named, versioned program the
+// operator registers once and the runtime fires as an ordinary tool: same
+// registry, same (name, version) grant key, same broker. These RPCs exist
+// because a script's DECLARATION differs (source bytes, an interpreter, a
+// resource wish) — not because its authority does.
+//
+// Registration grants NO authority. The declared wish becomes the tool's
+// requirement, and the broker still refuses any dispatch whose requirement is
+// not a subset of the granting warrant, so a script wanting more than its caller
+// has is refused before it runs. `script_id` is SERVER-DERIVED; the client never
+// names an identity and never supplies a warrant.
+//
+// A model calling a script controls exactly one thing: the `input` string, which
+// arrives on the script's stdin. `argv` and `env` are fixed here, at
+// registration, and the sandboxed child's environment is CLEARED rather than
+// filtered — nothing the serve holds is inherited.
+//
+// Scripts run in the platform sandbox (bwrap / sandbox-exec) or not at all. A
+// serve with no sandbox shim, or an interpreter the host does not have, REFUSES
+// the registration: a script that cannot run sandboxed must never become
+// offerable to a model.
+// ---------------------------------------------------------------------------
+
+// One declared filesystem mount. `mode`: "ro" | "rw" | "exec".
+message ScriptMount {
+  string path = 1;                       // absolute
+  string mode = 2;                       // closed vocabulary (see above)
+}
+// One environment pair fixed at registration. NEVER model-controlled.
+message ScriptEnv {
+  string key   = 1;
+  string value = 2;
+}
+message RegisterScriptRequest {
+  string script_name    = 1;             // identity half (the grant-set key)
+  string script_version = 2;             // identity half
+  string description    = 3;             // free-form; NEVER parsed for enforcement
+  string interpreter    = 4;             // validated against the host's CLOSED allowlist
+  bytes  source         = 5;             // the script's source bytes
+  repeated string argv  = 6;             // fixed args; NEVER model-controlled
+  repeated ScriptEnv env = 7;            // fixed environment; empty = none at all
+  repeated ScriptMount fs_mounts = 8;    // the filesystem it DECLARES it needs
+  repeated string net_hosts = 9;         // the hosts it DECLARES it needs; empty = no egress
+  uint64 wall_clock_ms    = 10;          // 0 = host default
+  uint64 mem_bytes        = 11;          // 0 = unset
+  uint64 max_output_bytes = 12;          // 0 = host default; over it REFUSES, never truncates
+}
+message RegisterScriptResponse {
+  bytes script_id = 1;                   // 16B SERVER-DERIVED id
+}
+
+message DeregisterScriptRequest {
+  string script_name    = 1;
+  string script_version = 2;             // exact (name, version)
+}
+message DeregisterScriptResponse {
+  bool removed = 1;                      // false iff absent
+}
+
+// One registered script's inventory row. Every scope field is a DISPLAY summary;
+// authority never rides this wire.
+message RegisteredScript {
+  bytes  script_id         = 1;          // 16B server-derived
+  string script_name       = 2;
+  string script_version    = 3;
+  string interpreter       = 4;
+  string description       = 5;
+  string source_ref_hex    = 6;          // content ref of the EXACT bytes that run
+  string fs_scope_summary  = 7;          // display: "none" | "ro:/a,rw:/b"
+  string net_scope_summary = 8;          // display: "none" | "egress:host[,host]"
+  uint64 wall_clock_ms     = 9;
+  uint64 max_output_bytes  = 10;
+}
+message ListScriptsRequest {
+  uint32 limit         = 1;              // page size; server clamps 1..=256 (absent = 100)
+  string after_name    = 2;              // exclusive cursor: last row's name
+  string after_version = 3;              // cursor tiebreak
+}
+message ListScriptsResponse {
+  repeated RegisteredScript scripts = 1; // (name, version) order
+  bool has_more = 2;
+}
+
+message GetScriptRequest {
+  string script_name    = 1;
+  string script_version = 2;
+}
+message GetScriptResponse {
+  bool found = 1;
+  RegisteredScript script = 2;
+  bytes source = 3;                      // the registered source bytes
+}
+
 message DeregisterToolRequest {
   string tool_name    = 1;
   string tool_version = 2;               // exact (name, version); built-ins refused
@@ -2605,6 +2699,15 @@ service KxGateway {
   rpc RegisterTool(RegisterToolRequest) returns (RegisterToolResponse);
   rpc DeregisterTool(DeregisterToolRequest) returns (DeregisterToolResponse);
   rpc DiscoverTools(DiscoverToolsRequest) returns (DiscoverToolsResponse);
+  // Additive: the declarative SCRIPT registry (see RegisterScriptRequest for the
+  // authority model). A script registers into the SAME durable registry a tool
+  // does and fires through the same broker; only its declaration differs.
+  // Registration grants no authority, script_id is server-derived, and a serve
+  // that cannot sandbox refuses rather than running a script on the host.
+  rpc RegisterScript(RegisterScriptRequest) returns (RegisterScriptResponse);
+  rpc DeregisterScript(DeregisterScriptRequest) returns (DeregisterScriptResponse);
+  rpc ListScripts(ListScriptsRequest) returns (ListScriptsResponse);
+  rpc GetScript(GetScriptRequest) returns (GetScriptResponse);
   // PR-6b-1 additive (D159): the EXTERNAL MCP gateway. RegisterMcpServer dials a
   // remote MCP server (stdio + Streamable-HTTP) and registers its discovered
   // tools into the SAME tools.db (each namespaced `<server>/<remote>`, fireable

@@ -94,6 +94,7 @@ mod rerank;
 mod run_inputs_view;
 mod runs;
 mod scaffold;
+mod script_admin;
 mod server_info;
 mod service;
 mod skills_view;
@@ -174,6 +175,10 @@ pub use mote_def_view::MoteDefView;
 pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYTES};
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use run_inputs_view::{RunInputsEntry, RunInputsRecord, RunInputsStore};
+pub use script_admin::{
+    RegisteredScriptEntry, ScriptAdmin, ScriptAdminError, ScriptEnvWire, ScriptMountWire,
+    ScriptRegistration,
+};
 pub use secret_admin::{SecretAdmin, SecretAdminError, SecretNameView};
 pub use server_info::ServerInfoFacts;
 pub use service::{

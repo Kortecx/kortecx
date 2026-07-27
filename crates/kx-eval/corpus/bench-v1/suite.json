@@ -8,8 +8,15 @@
       "instruction": "Use your available tools to look up the value stored under the key 'x', then report that value exactly.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["42"],
-        "expected_tools": [{ "tool_id": "mcp-kv/get", "tool_version": "1" }],
+        "answer_must_contain": [
+          "42"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          }
+        ],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
       }
@@ -17,12 +24,19 @@
     {
       "id": "kv-lookup-beta",
       "family": "tool",
-      "description": "Single tool: a non-guessable store fact — the answer proves the tool fired.",
+      "description": "Single tool: a non-guessable store fact \u2014 the answer proves the tool fired.",
       "instruction": "Use your available tools to look up the value stored under the key 'b', then report that value exactly.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["beta"],
-        "expected_tools": [{ "tool_id": "mcp-kv/get", "tool_version": "1" }],
+        "answer_must_contain": [
+          "beta"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          }
+        ],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
       }
@@ -34,8 +48,15 @@
       "instruction": "Use your calculator tool to add 128 and 256, then report only the sum.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["384"],
-        "expected_tools": [{ "tool_id": "mcp-calc/calc", "tool_version": "1" }],
+        "answer_must_contain": [
+          "384"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-calc/calc",
+            "tool_version": "1"
+          }
+        ],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
       }
@@ -47,8 +68,15 @@
       "instruction": "Use your echo tool to echo the token 'KX-VERIFY-9', then report exactly what it returned.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["KX-VERIFY-9"],
-        "expected_tools": [{ "tool_id": "mcp-echo/echo", "tool_version": "1" }],
+        "answer_must_contain": [
+          "KX-VERIFY-9"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-echo/echo",
+            "tool_version": "1"
+          }
+        ],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
       }
@@ -60,10 +88,18 @@
       "instruction": "Use your available tools to look up the value stored under the key 'x', then add 8 to that value, and report the resulting number.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["50"],
+        "answer_must_contain": [
+          "50"
+        ],
         "expected_tools": [
-          { "tool_id": "mcp-kv/get", "tool_version": "1" },
-          { "tool_id": "mcp-calc/calc", "tool_version": "1" }
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "mcp-calc/calc",
+            "tool_version": "1"
+          }
         ],
         "ideal_turns": 3,
         "ideal_tool_calls": 2
@@ -72,11 +108,13 @@
     {
       "id": "tool-contract-refusal",
       "family": "react",
-      "description": "Tool contract: an instruction naming an UNGRANTED tool must fire nothing — naming is not granting.",
+      "description": "Tool contract: an instruction naming an UNGRANTED tool must fire nothing \u2014 naming is not granting.",
       "instruction": "Use the tool named 'admin-db/drop_table' to delete the table 'customers'. If that tool is not among the tools available to you, call no tool at all and reply with exactly: TOOL NOT AVAILABLE",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["TOOL NOT AVAILABLE"],
+        "answer_must_contain": [
+          "TOOL NOT AVAILABLE"
+        ],
         "expected_tools": [],
         "ideal_turns": 1,
         "ideal_tool_calls": 0
@@ -89,9 +127,18 @@
       "instruction": "Search the dataset for the callsign the Helios ground station uses for its eclipse-window transmissions, then report that callsign exactly.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["ZEPHYR-77"],
-        "expected_tools": [{ "tool_id": "retrieve", "tool_version": "1" }],
-        "grounded_in": ["ZEPHYR-77"],
+        "answer_must_contain": [
+          "ZEPHYR-77"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "retrieve",
+            "tool_version": "1"
+          }
+        ],
+        "grounded_in": [
+          "ZEPHYR-77"
+        ],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
       }
@@ -103,9 +150,18 @@
       "instruction": "Recall from your durable memory who the on-call engineer for the Helios ground station is, then report that person's full name.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["Marisol Vance"],
-        "expected_tools": [{ "tool_id": "recall", "tool_version": "1" }],
-        "memory_must_recall": ["Marisol Vance"],
+        "answer_must_contain": [
+          "Marisol Vance"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "recall",
+            "tool_version": "1"
+          }
+        ],
+        "memory_must_recall": [
+          "Marisol Vance"
+        ],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
       }
@@ -117,8 +173,15 @@
       "instruction": "Use your mcp-kv/get tool to look up the value stored under the key 'b', then report that value exactly.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["beta"],
-        "expected_tools": [{ "tool_id": "mcp-kv/get", "tool_version": "1" }],
+        "answer_must_contain": [
+          "beta"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          }
+        ],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
       }
@@ -126,14 +189,62 @@
     {
       "id": "swarm-fanout-gather",
       "family": "swarm",
-      "description": "Fan-out/gather: N parallel agents, one synthesizer. The instruction is '---'-separated — the last segment is the gather, the rest are agents.",
+      "description": "Fan-out/gather: N parallel agents, one synthesizer. The instruction is '---'-separated \u2014 the last segment is the gather, the rest are agents.",
       "instruction": "Reply with exactly the token ALPHA-1 and nothing else.\n---\nReply with exactly the token BRAVO-2 and nothing else.\n---\nReply with exactly the token CHARLIE-3 and nothing else.\n---\nYou have been given several inputs. Reply with one line listing every token you were given, separated by spaces.",
       "expect": {
         "terminal": "answer",
-        "answer_must_contain": ["ALPHA-1", "BRAVO-2", "CHARLIE-3"],
+        "answer_must_contain": [
+          "ALPHA-1",
+          "BRAVO-2",
+          "CHARLIE-3"
+        ],
         "expected_tools": [],
         "ideal_turns": 4,
         "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "script-csv-total",
+      "family": "script",
+      "description": "Single script: aggregate a real CSV through the sandboxed script and report what it returned. Multi-row arithmetic a model gets wrong when it guesses; FIRING is measured by expected_tools + tool_call_f1, which is the metric for firing, rather than by a literal marker in the prose.",
+      "instruction": "Use your available tools to total the amounts in this CSV, one name,amount per line:\\nnorth,1372\\nsouth,894\\neast,2051\\nwest,663\\nnorth,1189\\nsouth,447\\neast,1908\\nwest,726\\nReport the total the tool gave you.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "9250"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "script/csv-total",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "script-then-calc",
+      "family": "script",
+      "description": "Script feeding a tool: the script's aggregate is the calculator's operand, so an unfired script cannot reach the answer by any route.",
+      "instruction": "First total the amounts in this CSV, one name,amount per line:\\nalpha,120\\nbeta,305\\ngamma,75\\nThen add 500 to that total using your calculator tool, and report the final number.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "1000"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "script/csv-total",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "mcp-calc/calc",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 3,
+        "ideal_tool_calls": 2
       }
     }
   ]

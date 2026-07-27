@@ -3624,6 +3624,39 @@ button.card-grid__title:hover {
   min-width: 0;
   font-size: 0.82rem;
 }
+/* The script register form. Mirrors `.register-tool-form`: a flex column, so a
+   label and its control stack instead of flowing inline — which is what the
+   default (no layout class) produced, with the labels colliding into a row and
+   the hint text stranded beside the submit button. Caught by a visual pass; every
+   DOM-level check passed, because every element WAS present. */
+.register-script-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.6rem 0 0;
+}
+.register-script-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.register-script-form__field label {
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+}
+/* Identity on one row where there is width for it, stacking on a narrow viewport
+   rather than squeezing three controls into an unusable strip. */
+.register-script-form__row {
+  display: grid;
+  grid-template-columns: 2fr 0.6fr 0.9fr;
+  gap: 0.6rem;
+}
+@media (max-width: 720px) {
+  .register-script-form__row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .register-tool-form {
   display: flex;
   flex-direction: column;

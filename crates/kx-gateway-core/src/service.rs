@@ -766,6 +766,11 @@ pub struct GatewayService {
     /// external MCP server + Connections + parallel fan-out are PR-6b/Cloud
     /// — this seam stores a vetted `server_host`, never dials it.
     tool_admin: Option<Arc<dyn crate::tool_registry_admin::ToolRegistryAdmin>>,
+    /// The optional SCRIPT registry admin seam. `None` ⇒ the four script RPCs
+    /// return `unimplemented`. A script registers into the same durable registry
+    /// a tool does and fires through the same broker; only its declaration
+    /// differs. Off-journal, off-digest, off-identity.
+    script_admin: Option<Arc<dyn crate::script_admin::ScriptAdmin>>,
     /// The optional EXTERNAL MCP gateway admin seam (PR-6b-1 — the host injects an
     /// `McpGateway` wrapper that DIALS external MCP servers + registers their
     /// tools into the same `tools.db`). `None` ⇒ `RegisterMcpServer`/
@@ -932,6 +937,7 @@ impl GatewayService {
             run_inputs: None,
             alerts: None,
             tool_admin: None,
+            script_admin: None,
             mcp_admin: None,
             secret_admin: None,
             secret_writes_loopback_ok: false,
@@ -1302,6 +1308,18 @@ impl GatewayService {
         self
     }
 
+    /// Inject the SCRIPT registry admin seam. `None` (the default) ⇒ the four
+    /// script RPCs return `unimplemented`, so a serve without scripts wired
+    /// degrades forward-compatibly.
+    #[must_use]
+    pub fn with_script_admin(
+        mut self,
+        script_admin: Arc<dyn crate::script_admin::ScriptAdmin>,
+    ) -> Self {
+        self.script_admin = Some(script_admin);
+        self
+    }
+
     /// Inject the EXTERNAL MCP gateway admin seam (PR-6b-1). `None` (the default)
     /// ⇒ the 5 MCP-server RPCs return `unimplemented`.
     #[must_use]
@@ -1639,6 +1657,18 @@ fn tool_admin_status(err: crate::ToolAdminError) -> Status {
         crate::ToolAdminError::HostRejected(detail) => Status::permission_denied(detail),
         crate::ToolAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
         crate::ToolAdminError::Storage(detail) => Status::internal(detail),
+    }
+}
+
+/// Map a script admin refusal onto the fail-closed gRPC status. A malformed
+/// field is `invalid_argument`; a serve that cannot sandbox is
+/// `failed_precondition` (the request is fine, this serve cannot honour it, and
+/// running unsandboxed is not an alternative); a storage failure is `internal`.
+fn script_admin_status(err: crate::ScriptAdminError) -> Status {
+    match err {
+        crate::ScriptAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
+        crate::ScriptAdminError::Unavailable(detail) => Status::failed_precondition(detail),
+        crate::ScriptAdminError::Storage(detail) => Status::internal(detail),
     }
 }
 
@@ -3854,6 +3884,146 @@ impl KxGateway for GatewayService {
         }))
     }
 
+    async fn register_script(
+        &self,
+        request: Request<proto::RegisterScriptRequest>,
+    ) -> Result<Response<proto::RegisterScriptResponse>, Status> {
+        // A durable write into the same off-journal registry a tool registers
+        // into. The host validates the interpreter against its closed allowlist,
+        // stores the source content-addressed, and compiles the DECLARED wish into
+        // the tool's requirement — the client supplies no warrant and no id.
+        // A serve that cannot run a script sandboxed refuses here rather than
+        // registering something that would have to run on the host.
+        let admin = self
+            .script_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("RegisterScript: no script registry wired"))?;
+        let req = request.into_inner();
+        if req.script_name.trim().is_empty() || req.script_version.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "script_name and script_version are required",
+            ));
+        }
+        if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
+            return Err(Status::invalid_argument("description too long"));
+        }
+        if req.source.is_empty() {
+            return Err(Status::invalid_argument("source is required"));
+        }
+        if req.argv.len() > MAX_TOOL_PARAMS
+            || req.env.len() > MAX_TOOL_PARAMS
+            || req.fs_mounts.len() > MAX_TOOL_PARAMS
+            || req.net_hosts.len() > MAX_TOOL_PARAMS
+        {
+            return Err(Status::invalid_argument(
+                "too many argv / env / fs_mounts / net_hosts entries",
+            ));
+        }
+        let reg = crate::ScriptRegistration {
+            script_name: req.script_name,
+            script_version: req.script_version,
+            description: req.description,
+            interpreter: req.interpreter,
+            source: req.source,
+            argv: req.argv,
+            env: req
+                .env
+                .into_iter()
+                .map(|e| crate::ScriptEnvWire {
+                    key: e.key,
+                    value: e.value,
+                })
+                .collect(),
+            fs_mounts: req
+                .fs_mounts
+                .into_iter()
+                .map(|m| crate::ScriptMountWire {
+                    path: m.path,
+                    mode: m.mode,
+                })
+                .collect(),
+            net_hosts: req.net_hosts,
+            wall_clock_ms: req.wall_clock_ms,
+            mem_bytes: req.mem_bytes,
+            max_output_bytes: req.max_output_bytes,
+        };
+        let script_id = admin.register(reg).map_err(script_admin_status)?;
+        Ok(Response::new(proto::RegisterScriptResponse {
+            script_id: script_id.to_vec(),
+        }))
+    }
+
+    async fn deregister_script(
+        &self,
+        request: Request<proto::DeregisterScriptRequest>,
+    ) -> Result<Response<proto::DeregisterScriptResponse>, Status> {
+        let admin = self
+            .script_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("DeregisterScript: no script registry wired"))?;
+        let req = request.into_inner();
+        if req.script_name.trim().is_empty() || req.script_version.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "script_name and script_version are required",
+            ));
+        }
+        let removed = admin.deregister(&req.script_name, &req.script_version)?;
+        Ok(Response::new(proto::DeregisterScriptResponse { removed }))
+    }
+
+    async fn list_scripts(
+        &self,
+        request: Request<proto::ListScriptsRequest>,
+    ) -> Result<Response<proto::ListScriptsResponse>, Status> {
+        let admin = self
+            .script_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("ListScripts: no script registry wired"))?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100usize
+        } else {
+            (req.limit as usize).clamp(1, 256)
+        };
+        let after = if req.after_name.is_empty() {
+            None
+        } else {
+            Some((req.after_name, req.after_version))
+        };
+        let (rows, has_more) = admin.list(limit, after)?;
+        Ok(Response::new(proto::ListScriptsResponse {
+            scripts: rows
+                .into_iter()
+                .map(script_entry_to_proto)
+                .collect::<Vec<_>>(),
+            has_more,
+        }))
+    }
+
+    async fn get_script(
+        &self,
+        request: Request<proto::GetScriptRequest>,
+    ) -> Result<Response<proto::GetScriptResponse>, Status> {
+        let admin = self
+            .script_admin
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("GetScript: no script registry wired"))?;
+        let req = request.into_inner();
+        let found = admin.get(&req.script_name, &req.script_version)?;
+        Ok(Response::new(match found {
+            Some((row, source)) => proto::GetScriptResponse {
+                found: true,
+                script: Some(script_entry_to_proto(row)),
+                source,
+            },
+            None => proto::GetScriptResponse {
+                found: false,
+                script: None,
+                source: Vec::new(),
+            },
+        }))
+    }
+
     async fn register_tool(
         &self,
         request: Request<proto::RegisterToolRequest>,
@@ -5528,6 +5698,23 @@ fn warrant_view_to_proto(w: WarrantProjection) -> proto::WarrantView {
 }
 
 /// Map a gateway-core grant entry into the wire type.
+/// Project one registered script into its wire row. Every scope field is a
+/// DISPLAY summary; authority never rides this wire.
+fn script_entry_to_proto(e: crate::RegisteredScriptEntry) -> proto::RegisteredScript {
+    proto::RegisteredScript {
+        script_id: e.script_id.to_vec(),
+        script_name: e.script_name,
+        script_version: e.script_version,
+        interpreter: e.interpreter,
+        description: e.description,
+        source_ref_hex: e.source_ref_hex,
+        fs_scope_summary: e.fs_scope_summary,
+        net_scope_summary: e.net_scope_summary,
+        wall_clock_ms: e.wall_clock_ms,
+        max_output_bytes: e.max_output_bytes,
+    }
+}
+
 fn grant_entry_to_proto(g: GrantEntry) -> proto::GrantView {
     proto::GrantView {
         grantor: g.grantor,

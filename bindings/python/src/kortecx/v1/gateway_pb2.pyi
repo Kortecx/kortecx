@@ -2312,6 +2312,130 @@ class RegisterToolResponse(_message.Message):
     registration_status: str
     def __init__(self, tool_id: _Optional[bytes] = ..., registration_status: _Optional[str] = ...) -> None: ...
 
+class ScriptMount(_message.Message):
+    __slots__ = ("path", "mode")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    MODE_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    mode: str
+    def __init__(self, path: _Optional[str] = ..., mode: _Optional[str] = ...) -> None: ...
+
+class ScriptEnv(_message.Message):
+    __slots__ = ("key", "value")
+    KEY_FIELD_NUMBER: _ClassVar[int]
+    VALUE_FIELD_NUMBER: _ClassVar[int]
+    key: str
+    value: str
+    def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
+
+class RegisterScriptRequest(_message.Message):
+    __slots__ = ("script_name", "script_version", "description", "interpreter", "source", "argv", "env", "fs_mounts", "net_hosts", "wall_clock_ms", "mem_bytes", "max_output_bytes")
+    SCRIPT_NAME_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    INTERPRETER_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    ARGV_FIELD_NUMBER: _ClassVar[int]
+    ENV_FIELD_NUMBER: _ClassVar[int]
+    FS_MOUNTS_FIELD_NUMBER: _ClassVar[int]
+    NET_HOSTS_FIELD_NUMBER: _ClassVar[int]
+    WALL_CLOCK_MS_FIELD_NUMBER: _ClassVar[int]
+    MEM_BYTES_FIELD_NUMBER: _ClassVar[int]
+    MAX_OUTPUT_BYTES_FIELD_NUMBER: _ClassVar[int]
+    script_name: str
+    script_version: str
+    description: str
+    interpreter: str
+    source: bytes
+    argv: _containers.RepeatedScalarFieldContainer[str]
+    env: _containers.RepeatedCompositeFieldContainer[ScriptEnv]
+    fs_mounts: _containers.RepeatedCompositeFieldContainer[ScriptMount]
+    net_hosts: _containers.RepeatedScalarFieldContainer[str]
+    wall_clock_ms: int
+    mem_bytes: int
+    max_output_bytes: int
+    def __init__(self, script_name: _Optional[str] = ..., script_version: _Optional[str] = ..., description: _Optional[str] = ..., interpreter: _Optional[str] = ..., source: _Optional[bytes] = ..., argv: _Optional[_Iterable[str]] = ..., env: _Optional[_Iterable[_Union[ScriptEnv, _Mapping]]] = ..., fs_mounts: _Optional[_Iterable[_Union[ScriptMount, _Mapping]]] = ..., net_hosts: _Optional[_Iterable[str]] = ..., wall_clock_ms: _Optional[int] = ..., mem_bytes: _Optional[int] = ..., max_output_bytes: _Optional[int] = ...) -> None: ...
+
+class RegisterScriptResponse(_message.Message):
+    __slots__ = ("script_id",)
+    SCRIPT_ID_FIELD_NUMBER: _ClassVar[int]
+    script_id: bytes
+    def __init__(self, script_id: _Optional[bytes] = ...) -> None: ...
+
+class DeregisterScriptRequest(_message.Message):
+    __slots__ = ("script_name", "script_version")
+    SCRIPT_NAME_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    script_name: str
+    script_version: str
+    def __init__(self, script_name: _Optional[str] = ..., script_version: _Optional[str] = ...) -> None: ...
+
+class DeregisterScriptResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...
+
+class RegisteredScript(_message.Message):
+    __slots__ = ("script_id", "script_name", "script_version", "interpreter", "description", "source_ref_hex", "fs_scope_summary", "net_scope_summary", "wall_clock_ms", "max_output_bytes")
+    SCRIPT_ID_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_NAME_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    INTERPRETER_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_REF_HEX_FIELD_NUMBER: _ClassVar[int]
+    FS_SCOPE_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    NET_SCOPE_SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    WALL_CLOCK_MS_FIELD_NUMBER: _ClassVar[int]
+    MAX_OUTPUT_BYTES_FIELD_NUMBER: _ClassVar[int]
+    script_id: bytes
+    script_name: str
+    script_version: str
+    interpreter: str
+    description: str
+    source_ref_hex: str
+    fs_scope_summary: str
+    net_scope_summary: str
+    wall_clock_ms: int
+    max_output_bytes: int
+    def __init__(self, script_id: _Optional[bytes] = ..., script_name: _Optional[str] = ..., script_version: _Optional[str] = ..., interpreter: _Optional[str] = ..., description: _Optional[str] = ..., source_ref_hex: _Optional[str] = ..., fs_scope_summary: _Optional[str] = ..., net_scope_summary: _Optional[str] = ..., wall_clock_ms: _Optional[int] = ..., max_output_bytes: _Optional[int] = ...) -> None: ...
+
+class ListScriptsRequest(_message.Message):
+    __slots__ = ("limit", "after_name", "after_version")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_NAME_FIELD_NUMBER: _ClassVar[int]
+    AFTER_VERSION_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_name: str
+    after_version: str
+    def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ..., after_version: _Optional[str] = ...) -> None: ...
+
+class ListScriptsResponse(_message.Message):
+    __slots__ = ("scripts", "has_more")
+    SCRIPTS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    scripts: _containers.RepeatedCompositeFieldContainer[RegisteredScript]
+    has_more: bool
+    def __init__(self, scripts: _Optional[_Iterable[_Union[RegisteredScript, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class GetScriptRequest(_message.Message):
+    __slots__ = ("script_name", "script_version")
+    SCRIPT_NAME_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    script_name: str
+    script_version: str
+    def __init__(self, script_name: _Optional[str] = ..., script_version: _Optional[str] = ...) -> None: ...
+
+class GetScriptResponse(_message.Message):
+    __slots__ = ("found", "script", "source")
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    found: bool
+    script: RegisteredScript
+    source: bytes
+    def __init__(self, found: bool = ..., script: _Optional[_Union[RegisteredScript, _Mapping]] = ..., source: _Optional[bytes] = ...) -> None: ...
+
 class DeregisterToolRequest(_message.Message):
     __slots__ = ("tool_name", "tool_version")
     TOOL_NAME_FIELD_NUMBER: _ClassVar[int]

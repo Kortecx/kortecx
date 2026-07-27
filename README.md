@@ -256,24 +256,33 @@ Agent quality here is a number you can gate on. Two suites, one set of scorers:
   each run's own committed answer with those same scorers. It ratchets against a committed
   per-engine baseline, so a capability regression fails rather than quietly scoring lower.
 
-The benchmark spans four families, each exercising a different part of the runtime. Scores are
+The benchmark spans five families, each exercising a different part of the runtime. Scores are
 integer per-mille (0–1000), from **Gemma-4-12B on both local engines**:
 
 | Family | What a task proves | Ollama | llama.cpp |
 | --- | --- | ---: | ---: |
-| **tool** | picks the right tool; the answer carries a fact only that tool could supply | 1000 | 800 |
-| **react** | an instruction naming a tool it was never granted fires **nothing** | 1000 | 1000 |
+| **tool** | picks the right tool; the answer carries a fact only that tool could supply | 1000 | 1000 |
+| **react** | an instruction naming a tool it was never granted fires **nothing** | 0 | 1000 |
 | **reach** | reaches past the prompt — searches a dataset, recalls a memory, inherits a capability | 1000 | 1000 |
 | **swarm** | N agents in parallel, one gather merging their committed outputs | 1000 | 1000 |
+| **script** | runs a registered script in the sandbox and answers from what it computed | 500 | 500 |
 
 `groundedness` and `memory_quality` both score **1000**: when the runtime answers from a dataset or
 a durable memory, the evidence is really in the answer.
 
-The engines disagree, and that is the point of measuring. Told to use an ungranted tool, one Gemma
-build called nothing while the other reached for a tool anyway — the *runtime* refused it in both
-cases, but only a real-model benchmark can tell you which model needs less babysitting. Numbers are
-environment-labelled and reproducible locally; nothing here is a marketing benchmark run on hardware
-you don't have.
+Two of those numbers are not good, and they are published because that is the point of measuring.
+
+**script scores 500 on both engines.** A script fires correctly and aggregates its input, and then
+neither engine chains that result into a following tool call — one answers wrong, the other gives
+up. Identical on both, so it is the runtime's loop rather than model noise. An easier task (count
+the words in a short phrase) scored 1000 and reported the capability as healthy; a task that asks
+the model to carry a computed value forward does not.
+
+**react scores 0 on Ollama.** Told to use a tool it was never granted, that build loops until it
+runs out of turns instead of simply saying so. The *runtime* refused the tool in both cases — no
+ungranted tool ever fired — but only a real-model benchmark tells you which engine needs less
+babysitting. Numbers are environment-labelled and reproducible locally; nothing here is a marketing
+benchmark run on hardware you don't have.
 
 ## Observability & cost
 

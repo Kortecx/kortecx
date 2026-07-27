@@ -90,6 +90,15 @@ import { ReplanRound, type ReplanRoundPage } from "./replan.js";
 import { ReRankTurn, type ReRankTurnPage } from "./rerank.js";
 import { Result, Run } from "./run.js";
 import { RunInputs, type RunPage, RunSummary } from "./runs.js";
+import {
+  type RegisterScriptInput,
+  RegisteredScript,
+  type RegisteredScriptsPage,
+  type ScriptWithSource,
+  scriptEnvToProto,
+  scriptMountsToProto,
+  scriptSourceBytes,
+} from "./scripts.js";
 import { SecretNameRow, type SecretNamesPage } from "./secrets.js";
 import { ServerInfo } from "./serverinfo.js";
 import { type AddSkillInput, AddSkillResult, SkillForm, SkillSummary } from "./skills.js";
@@ -2056,6 +2065,86 @@ export abstract class KxClientBase {
    */
   async deregisterTool(name: string, version: string): Promise<boolean> {
     const resp = await rpc(this.grpc.deregisterTool({ toolName: name, toolVersion: version }));
+    return resp.removed;
+  }
+
+  // --- the declarative SCRIPT registry ---
+
+  /**
+   * Register a script (`RegisterScript`). The serve validates the interpreter
+   * against its own closed allowlist, stores the source content-addressed, and
+   * compiles the DECLARED wish into the tool's requirement; the returned
+   * `scriptId` (hex) is SERVER-derived.
+   *
+   * Registration grants NO authority — the runtime still refuses any call whose
+   * requirement is not a subset of the calling warrant. A serve that cannot run
+   * the script sandboxed refuses (`failed_precondition`) rather than running it
+   * on the host.
+   */
+  async registerScript(input: RegisterScriptInput): Promise<string> {
+    const resp = await rpc(
+      this.grpc.registerScript({
+        scriptName: input.name,
+        scriptVersion: input.version,
+        description: input.description ?? "",
+        interpreter: input.interpreter,
+        source: scriptSourceBytes(input.source),
+        argv: [...(input.argv ?? [])],
+        env: scriptEnvToProto(input.env),
+        fsMounts: scriptMountsToProto(input.fsMounts),
+        netHosts: [...(input.netHosts ?? [])],
+        wallClockMs: BigInt(input.wallClockMs ?? 0),
+        memBytes: BigInt(input.memBytes ?? 0),
+        maxOutputBytes: BigInt(input.maxOutputBytes ?? 0),
+      }),
+    );
+    return encode(resp.scriptId);
+  }
+
+  /**
+   * The script registry INVENTORY (`ListScripts`), in `(name, version)` order.
+   * An old gateway (or one without scripts wired) throws {@link KxUnimplemented}.
+   */
+  async listScripts(
+    opts: { limit?: number; afterName?: string; afterVersion?: string } = {},
+  ): Promise<RegisteredScriptsPage> {
+    const resp = await rpc(
+      this.grpc.listScripts({
+        limit: opts.limit ?? 0,
+        afterName: opts.afterName ?? "",
+        afterVersion: opts.afterVersion ?? "",
+      }),
+    );
+    return {
+      scripts: resp.scripts.map((s) => RegisteredScript.fromProto(s)),
+      hasMore: resp.hasMore,
+    };
+  }
+
+  /**
+   * One script's row plus its registered source (`GetScript`). `null` when the
+   * `(name, version)` is absent, or names a tool that is not a script.
+   */
+  async getScript(name: string, version: string): Promise<ScriptWithSource | null> {
+    const resp = await rpc(this.grpc.getScript({ scriptName: name, scriptVersion: version }));
+    if (!resp.found || !resp.script) {
+      return null;
+    }
+    return {
+      script: RegisteredScript.fromProto(resp.script),
+      source: new TextDecoder().decode(resp.source),
+    };
+  }
+
+  /**
+   * Deregister a script by exact `(name, version)` (`DeregisterScript`). Returns
+   * `true` iff a row was removed. Removing the row is what withdraws authority: a
+   * call needs the tool to resolve, and a removed one does not.
+   */
+  async deregisterScript(name: string, version: string): Promise<boolean> {
+    const resp = await rpc(
+      this.grpc.deregisterScript({ scriptName: name, scriptVersion: version }),
+    );
     return resp.removed;
   }
 

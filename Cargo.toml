@@ -67,6 +67,7 @@ members = [
     "crates/kx-pricing",
     "crates/kx-flags",
     "crates/kx-eval",
+    "crates/kx-script-runner",
     # Integrations — bundled app connectors (external MCP-server processes the
     # runtime dials). Each is a self-contained leaf with NO kx-* runtime
     # dependency, kept under `integrations/` (not `crates/`) to separate the
@@ -190,7 +191,7 @@ kx-ollama            = { path = "crates/kx-ollama",            version = "0.1.0"
 kx-capability        = { path = "crates/kx-capability",        version = "0.1.1" }
 kx-executor          = { path = "crates/kx-executor",          version = "0.1.1" }
 kx-scheduler         = { path = "crates/kx-scheduler",         version = "0.1.1" }
-kx-proto             = { path = "crates/kx-proto",             version = "0.12.0" }
+kx-proto             = { path = "crates/kx-proto",             version = "0.13.0" }
 kx-blueprint         = { path = "crates/kx-blueprint",         version = "0.3.0" }
 kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.2.0" }
 kx-worker            = { path = "crates/kx-worker",            version = "0.3.0" }
@@ -331,6 +332,13 @@ kx-flags             = { path = "crates/kx-flags",             version = "0.1.0"
 # + frozen trio (a measurement leaf, never a committed fact). Composes kx-profile's
 # Gate/Spike report + kx-toolcall's parser + kx-critic's deterministic checks.
 kx-eval              = { path = "crates/kx-eval",              version = "0.2.0" }
+# The sandboxed script shim + its descriptor codec. The bundled binary is the BODY
+# the platform sandbox spawns when a registered script fires; it translates between
+# the executor's "print a content ref" body contract and a script's arbitrary stdout.
+# A leaf with ONE dependency (blake3) on purpose — everything it links is parsing
+# surface reachable from inside the sandbox. Off the journal + identity path; the
+# serve links only the lib half, to encode descriptors the binary decodes.
+kx-script-runner     = { path = "crates/kx-script-runner",     version = "0.1.0" }
 # R1 (D130) gateway dev BINARY: hosts the FROZEN KxGateway proto over kx-gateway-core
 # with an embedded single-system coordinator + local worker; the first network server
 # that binds a port outside tests. Deny-all auth stub (R2 fills it). FFI-free by default.
