@@ -1,6 +1,6 @@
 {
   "suite_id": "bench-v1",
-  "suite_digest": "b66514222377b270aa502614bbd4b91a3d803a4e906bfd4d43af3edd224ac5b6",
+  "suite_digest": "eac91c822ce7da0f2bfd208f1d3a47e61c12d160f6ed65d8594bf02c4629e91d",
   "gates": [
     {
       "id": "task_success",
@@ -8,7 +8,7 @@
     },
     {
       "id": "tool_call_f1",
-      "per_mille": 944
+      "per_mille": 972
     },
     {
       "id": "groundedness",
@@ -56,7 +56,7 @@
     },
     {
       "id": "task_success@script",
-      "per_mille": 1000
+      "per_mille": 500
     },
     {
       "id": "tool_call_f1@script",
@@ -64,7 +64,7 @@
     },
     {
       "id": "loop_efficiency@script",
-      "per_mille": 1000
+      "per_mille": 857
     },
     {
       "id": "task_success@swarm",
@@ -80,15 +80,15 @@
     },
     {
       "id": "task_success@tool",
-      "per_mille": 800
+      "per_mille": 1000
     },
     {
       "id": "tool_call_f1@tool",
-      "per_mille": 933
+      "per_mille": 1000
     },
     {
       "id": "loop_efficiency@tool",
-      "per_mille": 942
+      "per_mille": 1000
     }
   ]
 }
