@@ -84,6 +84,10 @@ mod tests {
             memory_must_recall: vec![],
             consolidation_must_capture: vec![],
             skill_wish_tools: vec![],
+            answer_must_not_contain: vec![],
+            forbidden_tools: vec![],
+            max_turns: None,
+            max_tool_calls: None,
             ideal_turns,
             ideal_tool_calls,
         }

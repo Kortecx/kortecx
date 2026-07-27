@@ -166,10 +166,22 @@ pub fn drive_for(task: &GoldenTask) -> Result<Drive, BenchError> {
         // `script` rides the same loop by design — a registered script IS a tool to
         // the model, and the family exists to measure that a SANDBOXED body actually
         // ran, not that a different calling convention works.
-        "tool" | "react" | "script" => Ok(Drive::React {
-            handle: REACT_AUTO_RECIPE_HANDLE,
-            dataset: None,
-        }),
+        //
+        // The realism families ride it too, and for the same reason: what distinguishes
+        // them is the TOOL they are given and the input they are handed, not a different
+        // calling convention. `http` reaches a tool over the network under a credential;
+        // `failure` is given tools that error, hang, or answer with garbage; `menu` has to
+        // choose from a menu too long to read as a list of two; `long` has to hold a plan
+        // across more turns than the loop was ever measured over; `adversarial` is handed
+        // input that is trying to steer it. Driving them down a bespoke shape would test
+        // the shape; driving them down the shape everything else uses is what makes their
+        // numbers comparable with the rest of the table.
+        "tool" | "react" | "script" | "http" | "failure" | "menu" | "long" | "adversarial" => {
+            Ok(Drive::React {
+                handle: REACT_AUTO_RECIPE_HANDLE,
+                dataset: None,
+            })
+        }
         "reach" => match task.id.as_str() {
             "rag-grounded-answer" => Ok(Drive::React {
                 handle: REACT_RAG_RECIPE_HANDLE,
@@ -791,10 +803,14 @@ async fn run_and_fold(
 ) -> Result<(Transcript, Vec<u8>), BenchError> {
     match drive {
         Drive::React { handle, dataset } => {
+            // A task may raise its own budget. The suite default is sized for a two-hop
+            // lookup; a long-horizon chain needs more, and running everything at the
+            // long task's budget would stop any short task from ever reaching its cap —
+            // which is itself something the suite measures.
             let mut args = serde_json::json!({
                 "instruction": task.instruction,
-                "max_turns": BENCH_MAX_TURNS,
-                "max_tool_calls": BENCH_MAX_TOOL_CALLS,
+                "max_turns": task.expect.max_turns.unwrap_or(BENCH_MAX_TURNS),
+                "max_tool_calls": task.expect.max_tool_calls.unwrap_or(BENCH_MAX_TOOL_CALLS),
             });
             if let (Some(ds), Some(obj)) = (dataset, args.as_object_mut()) {
                 obj.insert("dataset".into(), serde_json::Value::String((*ds).into()));

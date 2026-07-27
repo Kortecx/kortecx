@@ -264,10 +264,25 @@ fn map_input_schema(s: kx_gateway_core::ToolSchemaWire) -> Result<InputSchema, S
 /// Admission-time SSRF vetting of a `RegisterTool` `server_host` (`host[:port]`),
 /// deny-by-default. An IP literal is rejected unless it is a public address
 /// (loopback / private / link-local / metadata 169.254.169.254 / unspecified /
-/// multicast / broadcast / documentation / CGNAT / IPv6 ULA all refused); a DNS
-/// name is accepted unless an operator allowlist is set and excludes it. PR-6a
-/// does not DIAL the host — the behavioural rebind defense is PR-6b's dial-time
-/// `kx_mcp::egress::vet_resolved_addr`.
+/// multicast / broadcast / documentation / CGNAT / IPv6 ULA all refused) **or the
+/// operator explicitly allowlisted that exact literal**; a DNS name is accepted unless
+/// an operator allowlist is set and excludes it. Registration does not DIAL the host —
+/// the behavioural rebind defense is the dial-time `kx_mcp::egress::vet_resolved_addr`.
+///
+/// ## The explicit-literal opt-in
+///
+/// The dial gate has always permitted a non-public address when the host is an IP
+/// literal equal to it, on the grounds that the operator naming `127.0.0.1` outright is
+/// a decision, not an accident. This gate refused the same host unconditionally,
+/// consulting the allowlist only *after* the literal check it could never reach. The two
+/// halves of one deny-by-default policy therefore disagreed, and the disagreement had a
+/// direction: a local-first runtime could not register a tool served from the machine it
+/// was running on, however plainly its operator asked.
+///
+/// The rebind defense is untouched, because it never rested on this clause. A DNS name
+/// is not an IP literal, so a public name that resolves — or later re-resolves — to a
+/// private address still fails at dial. What is admitted here is only a host the
+/// operator typed, matched exactly against a list they set.
 ///
 /// # Errors
 /// A human-readable rejection reason (no internal detail; the host is echoed).
@@ -276,14 +291,16 @@ pub(crate) fn vet_registration_host(host_port: &str, allowlist: &[String]) -> Re
     if host.is_empty() {
         return Err("server_host is empty".to_string());
     }
+    let allowlisted = allowlist.iter().any(|h| h == host);
     if let Ok(ip) = host.parse::<IpAddr>() {
-        if !is_public_ip(&ip) {
+        if !is_public_ip(&ip) && !allowlisted {
             return Err(format!(
-                "server_host {host:?} is a non-public address (internal/link-local/metadata refused)"
+                "server_host {host:?} is a non-public address (internal/link-local/metadata \
+                 refused; add it to KX_SERVE_TOOL_HOST_ALLOWLIST to reach it deliberately)"
             ));
         }
     }
-    if !allowlist.is_empty() && !allowlist.iter().any(|h| h == host) {
+    if !allowlist.is_empty() && !allowlisted {
         return Err(format!(
             "server_host {host:?} is not in KX_SERVE_TOOL_HOST_ALLOWLIST"
         ));
@@ -388,8 +405,42 @@ mod tests {
         let allow = vec!["mcp.example.com".to_string()];
         assert!(vet_registration_host("mcp.example.com", &allow).is_ok());
         assert!(vet_registration_host("mcp.evil.com", &allow).is_err());
-        // An internal host is still refused even if "allowlisted".
+        // An internal host is refused when the allowlist does not name it — an
+        // allowlist for a DIFFERENT host is not permission to reach this one.
         assert!(vet_registration_host("127.0.0.1", &allow).is_err());
+    }
+
+    /// The operator may name a non-public literal outright, and only then. This is the
+    /// rule the DIAL gate (`kx_mcp::egress::vet_resolved_addr`) has always applied; this
+    /// gate refused unconditionally, so the two halves of one deny-by-default policy
+    /// disagreed and a local-first runtime could not register a tool served from its own
+    /// machine.
+    #[test]
+    fn an_explicitly_allowlisted_internal_literal_is_admitted() {
+        let allow = vec!["127.0.0.1".to_string()];
+        assert!(vet_registration_host("127.0.0.1", &allow).is_ok());
+        assert!(
+            vet_registration_host("127.0.0.1:8080", &allow).is_ok(),
+            "the port is not part of the host identity"
+        );
+        // Naming ONE internal literal is not permission to reach the rest of the
+        // internal network — least of all the metadata endpoint.
+        assert!(vet_registration_host("169.254.169.254", &allow).is_err());
+        assert!(vet_registration_host("10.0.0.5", &allow).is_err());
+        assert!(vet_registration_host("[::1]", &allow).is_err());
+    }
+
+    /// The opt-in is an ALLOWLIST entry, never a mode. With no allowlist set, every
+    /// non-public literal is still refused exactly as before — so an operator who
+    /// configured nothing gets the old behaviour, not a widened one.
+    #[test]
+    fn the_opt_in_does_not_widen_an_unconfigured_serve() {
+        for h in ["127.0.0.1", "10.0.0.5", "169.254.169.254", "[::1]:9000"] {
+            assert!(
+                vet_registration_host(h, &[]).is_err(),
+                "{h} must stay refused when no allowlist names it"
+            );
+        }
     }
 
     fn registration(name: &str, host: &str) -> ToolRegistration {

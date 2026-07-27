@@ -108,6 +108,10 @@ mod tests {
                     tool_version: "1".to_string(),
                 })
                 .collect(),
+            answer_must_not_contain: vec![],
+            forbidden_tools: vec![],
+            max_turns: None,
+            max_tool_calls: None,
             ideal_turns: 2,
             ideal_tool_calls: 1,
         }

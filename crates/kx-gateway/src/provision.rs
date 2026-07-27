@@ -3949,9 +3949,16 @@ pub(crate) fn tool_union_warrant(
     let mut tool_grants: BTreeSet<ToolGrant> = BTreeSet::new();
     let mut net_scope = NetScope::None;
     let mut fs_scope = FsScope::empty();
+    let mut dropped_to_cap: Vec<String> = Vec::new();
     for ((name, version), def) in defs {
         if tool_grants.len() >= AUTOGRANT_MAX_TOOLS {
-            break;
+            // Say what fell off. The prefix is deterministic, so a tool whose id sorts
+            // late is dropped every time — and a tool the model is never offered is
+            // indistinguishable, in the numbers, from a tool the model chose not to use.
+            // The sibling skill-wish fold has warned on exactly this since it was
+            // written; this path did it silently.
+            dropped_to_cap.push(format!("{}@{}", name.0, version.0));
+            continue;
         }
         let cap = &def.required_capability;
         // Only tools with the empty syscall profile can share one union warrant.
@@ -3970,7 +3977,7 @@ pub(crate) fn tool_union_warrant(
             tool_version: version.clone(),
         });
     }
-    WarrantSpec {
+    let warrant = WarrantSpec {
         mote_class: MoteClass::ReadOnlyNondet,
         nd_class: MoteClass::ReadOnlyNondet,
         fs_scope,
@@ -3982,7 +3989,18 @@ pub(crate) fn tool_union_warrant(
         environment_ref: None,
         executor_class: base.executor_class,
         ..Default::default()
+    };
+    if !dropped_to_cap.is_empty() {
+        tracing::warn!(
+            cap = AUTOGRANT_MAX_TOOLS,
+            registered = defs.len(),
+            dropped = %dropped_to_cap.join(", "),
+            "auto-grant tool menu hit its cap: these registered tools were NOT granted \
+             and the model will never see them (the prefix is by (id, version), so a \
+             late-sorting id is dropped every time)"
+        );
     }
+    warrant
 }
 
 /// A party's per-tool Use AUTHORITY for the skill-wish intersection,
