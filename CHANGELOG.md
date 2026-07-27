@@ -85,13 +85,20 @@ Interfaces may still change before 1.0 — pin a commit if you build on it.
   a committed per-engine baseline — so a capability regression fails a check instead of
   quietly scoring lower. (kx-eval/gateway)
 
-- **Benchmark coverage across four substrate families.** `bench-v1` spans ten tasks and
-  three invoke shapes: **tool** (picks the right tool; the answer carries a fact only that
-  tool could supply) · **react** (an instruction naming a tool it was never granted must
-  fire nothing) · **reach** (searches a dataset, recalls a memory, inherits a capability
-  ceiling) · **swarm** (fan-out → gather). Each family reports its own gate beside the
-  suite-wide ones. An unknown family is a hard error, never a silent fall-through — a task
-  driven down the wrong shape still produces a plausible number. (kx-eval/gateway/docs)
+- **Benchmark coverage across ten substrate families.** `bench-v1` spans 26 tasks and three
+  invoke shapes: **tool** (picks the right tool; the answer carries a fact only that tool
+  could supply) · **react** (an instruction naming a tool it was never granted must fire
+  nothing) · **reach** (searches a dataset of sixty-one documents built around near-miss
+  distractors, recalls a memory, inherits a capability ceiling) · **swarm** (fan-out →
+  gather) · **script** (runs a sandboxed script and answers from what it computed) ·
+  **http** (a tool reached over the network under a bearer credential, with pagination) ·
+  **failure** (tools that error, hang, and return unusable payloads, plus a healthy
+  control) · **menu** (selection from a menu as long as the runtime will present) ·
+  **long** (the longest chain the runtime admits) · **adversarial** (input trying to steer
+  the agent, including an instruction planted in a tool's output). Each family reports its
+  own gate beside the suite-wide ones. An unknown family is a hard error, never a silent
+  fall-through — a task driven down the wrong shape still produces a plausible number.
+  (kx-eval/gateway/docs)
 
 - **Apps — the durable, shareable unit of agentic capability.** An App is a
   `kortecx.app/v1` envelope that wraps a portable blueprint with by-reference

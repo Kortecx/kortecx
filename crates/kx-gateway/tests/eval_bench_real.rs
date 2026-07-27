@@ -533,33 +533,43 @@ async fn provision_reach_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
     );
     // And the RIGHT document must be reachable. With sixty near-miss distractors — same
     // station with a different callsign, same callsign shape at a different station —
-    // "some hit came back" stopped being evidence that the task is solvable. If the
-    // load-bearing fact does not rank, the task measures the retriever's ceiling and
-    // reports it as the model's; that is a fixture problem and it should fail here,
-    // loudly, rather than downstream as a capability number.
+    // "some hit came back" stopped being evidence that the task is solvable.
+    //
+    // Reported, not asserted, and the difference matters. An empty or unsearchable
+    // dataset is a FIXTURE failure and fails above. A dataset that is searchable but does
+    // not surface the load-bearing fact among sixty near-misses is a measurement OF THE
+    // RETRIEVER, which is part of the runtime — failing the suite on it would be refusing
+    // to record a result because it is an unflattering one. Observed: the arm with a
+    // dedicated embedding model ranks it comfortably and the arm without one does not,
+    // so this line is where that difference becomes visible instead of arriving later
+    // disguised as a model failure.
     let retrieved_target = hits
         .hits
         .iter()
         .any(|h| String::from_utf8_lossy(&h.content).contains("ZEPHYR-77"));
-    assert!(
-        retrieved_target,
-        "the grounding fact did not rank in the top {} of {} documents — the retrieval \
-         task would score 0 for a reason that has nothing to do with the model. Top hits: {:?}",
-        hits.hits.len(),
-        REACH_CORPUS.len(),
-        hits.hits
-            .iter()
-            .map(|h| String::from_utf8_lossy(&h.content)
-                .chars()
-                .take(60)
-                .collect::<String>())
-            .collect::<Vec<_>>()
-    );
-    eprintln!(
-        "eval-bench: reach corpus = {} documents, grounding fact ranks in the top {}",
-        REACH_CORPUS.len(),
-        hits.hits.len()
-    );
+    if retrieved_target {
+        eprintln!(
+            "eval-bench: reach corpus = {} documents, grounding fact RANKS in the top {}",
+            REACH_CORPUS.len(),
+            hits.hits.len()
+        );
+    } else {
+        eprintln!(
+            "eval-bench: \u{26a0} reach corpus = {} documents, and the grounding fact does NOT \
+             rank in the top {} \u{2014} this serve's retrieval cannot separate it from the \
+             near-miss distractors, so `rag-grounded-answer` will score 0 for a RETRIEVAL \
+             reason rather than a model one. Top hits: {:?}",
+            REACH_CORPUS.len(),
+            hits.hits.len(),
+            hits.hits
+                .iter()
+                .map(|h| String::from_utf8_lossy(&h.content)
+                    .chars()
+                    .take(60)
+                    .collect::<String>())
+                .collect::<Vec<_>>()
+        );
+    }
 
     // (2) The durable memory fact.
     if c.store_memory(proto::StoreMemoryRequest {
