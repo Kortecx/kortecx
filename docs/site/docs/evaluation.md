@@ -90,19 +90,24 @@ KX_SERVE_MODEL_GGUF=<gemma-12b.gguf> just eval-bench                   # llama.c
 ```
 
 The run's own preamble tells you what it actually covered — `reach_fixtures=true` means the
-dataset, memory and capability-inheritance tasks ran; `false` means it scored seven of ten
-and said so. Read that line before believing a number.
+dataset, memory and capability-inheritance tasks ran; `false` means it scored thirteen of
+sixteen and said so. Read that line before believing a number.
+
+`KX_BENCH_ONLY=<task-id,…>` narrows a run to named tasks while attributing a change to one
+part of the loop. It is a diagnostic only: every held-back task is reported as skipped, so
+the run is incomplete by construction and a baseline capture is refused.
 
 It is a **local** gate — never part of `just ci`, which stays model-free and flake-proof.
 A committed per-engine baseline is the fail-closed ratchet, and the oracle floors are
 asserted only for a model capable enough to be worth gating on.
 
-The suite spans four **families**, each exercising a different part of the runtime:
+The suite spans five **families**, each exercising a different part of the runtime:
 
 | Family | What a task proves |
 | --- | --- |
-| `tool` | The agent picks the right tool and its answer carries a fact only the tool could supply. |
-| `react` | An instruction naming a tool the run was never granted fires **nothing** — naming is not granting. |
+| `tool` | The agent picks the right tool and its answer carries a fact only the tool could supply — including chaining one tool's output into the next call. |
+| `react` | Whether to use a tool at all: an instruction naming a tool the run was never granted fires **nothing** (naming is not granting), a fact with no world-knowledge prior *is* looked up, and a question the model already knows is answered without reaching for anything. |
+| `script` | The agent runs a registered script in the sandbox and answers from what it computed. |
 | `reach` | How far the runtime reaches beyond the prompt: a [dataset](./datasets.md) it searches, a [memory](./memory.md) it recalls, and an app whose capability set is inherited rather than declared. |
 | `swarm` | N agents run in parallel and a gather merges their committed outputs — the answer must carry every agent's contribution. |
 
