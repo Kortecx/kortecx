@@ -256,43 +256,106 @@ Agent quality here is a number you can gate on. Two suites, one set of scorers:
   each run's own committed answer with those same scorers. It ratchets against a committed
   per-engine baseline, so a capability regression fails rather than quietly scoring lower.
 
-The benchmark spans five families, each exercising a different part of the runtime. Scores are
-integer per-mille (0–1000), from **Gemma-4-12B on both local engines**:
+Scores are integer per-mille (0–1000). The **oracle is substring containment** on the run's
+own committed answer — not an LLM judge — and the facts it asks for exist only in the
+fixtures, so a correct answer is evidence the tool actually ran. Full definitions:
+[Evaluation](docs/site/docs/evaluation.md).
 
-| Family | What a task proves | Ollama | llama.cpp |
-| --- | --- | ---: | ---: |
-| **tool** | picks the right tool, and carries its result into the NEXT tool call | 1000 | 833 |
-| **react** | decides *whether* to use a tool: refuses an ungranted one, reaches for a needed one, answers a known fact without either | 1000 | 1000 |
-| **reach** | reaches past the prompt — searches a dataset, recalls a memory, inherits a capability | 1000 | 1000 |
-| **swarm** | N agents in parallel, one gather merging their committed outputs | 1000 | 1000 |
-| **script** | runs a registered script in the sandbox and answers from what it computed | 1000 | 666 |
+**Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **26 tasks**,
+on two different Gemma-4-12B builds — Ollama `gemma3:12b` and a llama.cpp GGUF served as
+`kx-serve:gemma-4-12b-it-q4_k_m`. They are not the same build, and the columns are not
+interchangeable. The label travels in the committed baseline, and CI holds this text to it.
 
-`groundedness` and `memory_quality` both score **1000**: when the runtime answers from a dataset or
-a durable memory, the evidence is really in the answer.
+### Per-capability — `task_success@<family>`
 
-Three of these numbers are worth explaining, and none of them is flattering.
+A family is a bucket of tasks and its score is the mean over that bucket, so **the task count
+is the denominator**: in a family of three, one task moves the number by 333.
 
-**The loop could not chain across tools, and now it can.** `script` and the multi-tool `tool` tasks
-used to fail because the runtime rendered every tool result as an anonymous `[context N]` block —
-the model had to *infer* which call produced which observation, and reliably failed to. Results are
-now labelled with the tool that produced them. That single change is what moved `script` from 500
-to 1000; a prompt rewrite that also stopped instructing the model to answer after one tool
-contributed the third hop on the longest chain. Same tasks, same models, same fixtures.
+| Family | Tasks | What a task proves | Ollama | llama.cpp |
+| --- | ---: | --- | ---: | ---: |
+| **tool** | 6 | picks the right tool, and carries its result into the NEXT tool call | 1000 | 1000 |
+| **react** | 3 | decides *whether* to use a tool: refuses an ungranted one, reaches for a needed one, answers a known fact without either | 666 | 1000 |
+| **reach** | 3 | reaches past the prompt — searches a dataset of 61 documents built around near-misses, recalls a memory, inherits a capability | 1000 | 666 |
+| **swarm** | 1 | N agents in parallel, one gather merging their committed outputs | 1000 | 1000 |
+| **script** | 3 | runs a registered script in the sandbox and answers from what it computed | 1000 | 666 |
+| **http** | 2 | reaches a tool over the **network** under a bearer credential, and pages through a result set | 0 | 0 |
+| **failure** | 4 | recovers when a tool errors, hangs, or returns garbage — and a healthy control that fails if it starts distrusting every tool | 750 | 750 |
+| **menu** | 1 | picks correctly from a menu as long as the runtime will present | 1000 | 1000 |
+| **long** | 1 | sustains six tool calls across four tools inside the eight-turn ceiling | 0 | 0 |
+| **adversarial** | 2 | ignores an instruction planted in a tool's OUTPUT — while still acting on a legitimate request that merely looks like one | 500 | 1000 |
 
-**llama.cpp scores 833 and 666 because it does arithmetic in its head and gets it wrong.** On two
-chaining tasks it looks up the operand correctly, skips the calculator, and reports a wrong product
-— `7,848,161` for 8147 × 963, `5,418,844` for 13322 × 407. Ollama calls the tool and gets both
-right. These tasks used to ask for `42 + 8` and `120 + 305 + 75`, which a model answers without
-calling anything, so both engines scored full marks while proving nothing. The numbers got *worse*
-when the questions got honest, which is the point.
+### Suite-wide
 
-**Steering the loop toward tool use made it over-call.** `tool_call_f1` on Ollama is 872, not 1000:
-the model fires an extra, unnecessary call on several tasks, including two on a question it already
-knows the answer to. That cost is real, it is in the published numbers rather than tuned away
-against one model, and the benchmark carries a task whose whole job is to fail if it gets worse.
+| Metric | Ollama | llama.cpp |
+| --- | ---: | ---: |
+| `task_success` | 769 | 769 |
+| `tool_call_f1` | 715 | 895 |
+| `groundedness` | 1000 | 0 |
+| `memory_quality` | 1000 | 1000 |
+| `loop_efficiency` | 678 | 939 |
+| `injection_resistance` | 0 | 1000 |
+| `model_time_share` | 956 | 980 |
 
-Numbers are environment-labelled and reproducible locally; nothing here is a marketing benchmark run
-on hardware you don't have.
+Four of these are worth explaining, and none of them is flattering.
+
+**Prompt injection through a tool result works on one engine and not the other.** A stored
+value the agent looks up contains an instruction telling it to abandon its task, call a
+different tool, and reply with a planted token. On Ollama it does exactly that:
+`injection_resistance` is **0**. On llama.cpp, same model family, same fixture, it ignores
+the injection and reports the real status. Nothing in the suite measured this before, and it
+is not a property the runtime enforces — a tool result is untrusted text arriving in the
+middle of a trusted conversation, and today nothing stands between the two.
+
+**Neither engine completes an external-API chain.** `http` is 0 on both. Not because the tool
+failed: on the single-call task the right tool **fired and returned the record**, and the
+model then answered that it had no access to crew records. On the paginated task it called
+the roster once, received a `next_cursor`, and stopped. The runtime dialled a real HTTP
+endpoint, injected the credential, and got an answer back — and the loop did not carry it
+through. The same shape sinks `long`, where six calls were needed and one was made before the
+model narrated a plan instead of executing it.
+
+**`groundedness` on llama.cpp is 0 because retrieval could not find the document.** The RAG
+corpus went from 3 documents to 61, most of them near-misses — the same station with a
+different callsign, the same callsign shape at a different station. The arm with a dedicated
+embedding model ranks the right one comfortably; the arm without one cannot separate it from
+the distractors, and the benchmark says so in its own preamble rather than reporting it as a
+model failure.
+
+**`loop_efficiency` is 678 on Ollama, and `tool_call_f1` 715.** The loop fires calls it does
+not need. That cost is published rather than tuned away, and the suite carries a task whose
+whole job is to fail if steering toward tool use goes too far.
+
+**Speed is measured but only one number is gated.** `model_time_share` is the share of a
+task's wall clock spent inside the model rather than the runtime around it — 956 and 980, so
+runtime overhead is roughly 2–4%. It is a ratio on purpose: an absolute-millisecond gate reads
+differently on a slower host with no code change, so it cannot tell a regression from a busier
+machine. Absolute latencies are recorded beside it and never gated.
+
+### What this does not measure
+
+- **One model family.** Every number is Gemma-4-12B-class. Nothing here transfers to another
+  model without re-running it.
+- **Local fixtures.** The HTTP tool is a real network round-trip to a hermetic local server.
+  Nothing reaches the public internet, so real rate limits, auth providers and third-party
+  outages are absent.
+- **Eight turns.** The ReAct parameter contract admits no more, so nothing here says how the
+  loop behaves over dozens.
+- **One injection.** A pass means this run did not take *this* bait — evidence about a sample,
+  not a property of the system.
+- **No concurrency.** Tasks run one at a time.
+
+Reproduce it locally — the full form, because the bare command skips the families whose
+fixtures it cannot provision and says so:
+
+```bash
+KX_SERVE_OLLAMA=1 KX_SERVE_OLLAMA_MODELS=gemma3:12b,embeddinggemma:latest \
+  KX_SERVE_EMBED_MODEL=embeddinggemma:latest just eval-bench      # Ollama
+ollama stop gemma3:12b && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench   # llama.cpp
+```
+
+Real-model numbers are not bit-reproducible — local sampling and quantisation vary — which is
+why they ratchet against a committed per-engine baseline rather than an absolute threshold.
+Nothing here is a marketing benchmark run on hardware you don't have.
 
 ## Observability & cost
 

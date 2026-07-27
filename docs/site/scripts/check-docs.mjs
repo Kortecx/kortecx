@@ -132,7 +132,7 @@ const problems = [];
   // The column order is read from the table's own header rather than assumed: comparing
   // a claimed number against the wrong engine's baseline would pass or fail for the
   // wrong reason, and swapping two columns is an easy edit.
-  const header = /^\|\s*Family\s*\|[^|]*\|([^|]*)\|([^|]*)\|/m.exec(readme);
+  const header = /^\|\s*Family\s*\|[^|]*\|[^|]*\|([^|]*)\|([^|]*)\|/m.exec(readme);
   if (!header) {
     problems.push("README.md: benchmark table header not found — cannot verify its numbers");
   } else {
