@@ -285,12 +285,12 @@
     {
       "id": "script-then-calc",
       "family": "script",
-      "description": "Script feeding a tool: the script's aggregate is the calculator's operand, so an unfired script cannot reach the answer by any route.",
-      "instruction": "First total the amounts in this CSV, one name,amount per line:\\nalpha,120\\nbeta,305\\ngamma,75\\nThen add 500 to that total using your calculator tool, and report the final number.",
+      "description": "Script feeding a tool: the script's aggregate is the calculator's operand. The amounts and the multiplier are sized so that skipping either tool means doing the arithmetic in your head and probably getting it wrong — measured: with the previous 120/305/75 and 'add 500', a model reached the answer having fired ONE of the two tools, which is the same hollowness kv-then-calc had.",
+      "instruction": "First total the amounts in this CSV, one name,amount per line:\\nalpha,4821\\nbeta,3307\\ngamma,5194\\nThen multiply that total by 407 using your calculator tool, and report the final number.",
       "expect": {
         "terminal": "answer",
         "answer_must_contain": [
-          "1000"
+          "5422054"
         ],
         "expected_tools": [
           {
