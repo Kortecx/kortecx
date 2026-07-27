@@ -778,7 +778,18 @@ fn generate(
     start: Instant,
     timeout: Duration,
 ) -> Result<(Vec<u8>, u32), InferenceError> {
-    let ctx_params = ContextParams::new().with_n_ctx(job.n_ctx);
+    // The logical decode batch must admit the whole prompt. Left at the backend default
+    // (2048) it does not, and the failure is not an error — the engine ABORTS the
+    // process on `n_tokens_all <= n_batch`, taking the serve with it. That is reachable
+    // from ordinary configuration: a prompt grows with the tool menu, and registering
+    // enough tools is all it takes to cross 2048 tokens while still fitting the context
+    // the operator asked for. Sizing the batch to the context makes "fits the context"
+    // and "can be decoded" the same condition, which is what a caller already assumes.
+    // The multimodal path below has widened its batch for the same reason since it was
+    // written; the text path simply never had a prompt long enough to notice.
+    let ctx_params = ContextParams::new()
+        .with_n_ctx(job.n_ctx)
+        .with_n_batch(job.n_ctx);
     let mut ctx = Context::new_with_params(model, &ctx_params).map_err(map_llama_err)?;
     let vocab = model.vocab();
 
