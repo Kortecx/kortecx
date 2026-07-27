@@ -701,6 +701,60 @@ sock.setTimeout(4000, () => {{ process.stdout.write("BLOCKED"); process.exit(0);
     );
 }
 
+/// ★ A ceiling this host cannot apply is REFUSED at registration, not accepted and
+/// ignored.
+///
+/// The failure this closes: an egress allowlist naming a real host was accepted on every
+/// platform, stored, listed with its declared scope — and then, on Linux, run with the
+/// network completely open, because confining egress per host needs a firewall the
+/// runtime has no privileges to install. Nothing refused it and nothing said so, which
+/// made the declaration read as a constraint at every layer above the one that dropped it.
+///
+/// Asserted through the real `register_script`, not the probe's own predicate: a unit
+/// test of the predicate would pass whether or not anything ever consulted it.
+#[test]
+fn a_ceiling_this_host_cannot_enforce_is_refused_at_registration() {
+    let h = Harness::new();
+    let Some(shim) = shim_or_skip(&h.store) else {
+        return;
+    };
+    let Some(mut d) = decl_for("script/unenforceable", Interpreter::Sh, "printf ok") else {
+        return;
+    };
+    // A host that is not loopback: no platform here can confine a body to it.
+    d.wish.net_hosts = [kx_warrant::Host("api.example.com".into())]
+        .into_iter()
+        .collect();
+
+    let refused = register_script(
+        &d,
+        Some(shim),
+        &h.store,
+        &h.registry,
+        &h.broker,
+        kx_gateway::default_executor_class(),
+    );
+    let Err(kx_gateway::scripts::ScriptAdmissionError::UnenforceableCeiling(why)) = refused else {
+        panic!(
+            "a script declaring egress to a host this sandbox cannot confine must be \
+             REFUSED — accepting it publishes a ceiling that constrains nothing"
+        );
+    };
+    assert!(
+        why.contains("api.example.com"),
+        "the refusal must name what it could not honour: {why}"
+    );
+
+    // And the refusal is scoped: drop the unenforceable axis and the SAME script
+    // registers. Without this the test would also pass if registration had simply
+    // stopped working.
+    d.wish.net_hosts.clear();
+    assert!(
+        register_or_skip(&d, shim, &h).is_some(),
+        "the same script with no egress declared must still register"
+    );
+}
+
 /// ★ The output cap at a REALISTIC size. A cap tested at four bytes says nothing
 /// about a cap at a megabyte: the buffering, the pipe behaviour and the bounded
 /// read are all different at scale.

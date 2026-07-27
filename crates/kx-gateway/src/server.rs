@@ -806,6 +806,33 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         }
         tools
     };
+    // Say, once at startup, which axes of a declared sandbox ceiling THIS host can
+    // actually apply. An operator reading a script's declared scope has no other way to
+    // learn that one of its axes is carried and ignored here — and the axes that are
+    // ignored differ by platform, so there is no answer that holds everywhere.
+    {
+        let caps = crate::sandbox_probe::probe(default_executor_class());
+        for axis in &caps.axes {
+            tracing::debug!(
+                executor = caps.executor,
+                platform = caps.platform,
+                axis = axis.axis,
+                support = %axis.support,
+                detail = axis.detail,
+                "sandbox capability"
+            );
+        }
+        let unenforced: Vec<&str> = caps.unenforced().iter().map(|a| a.axis).collect();
+        if !unenforced.is_empty() {
+            tracing::info!(
+                executor = caps.executor,
+                platform = caps.platform,
+                axes = %unenforced.join(", "),
+                "sandbox: these ceiling axes are NOT enforced on this host — a script may \
+                 declare them, and nothing will hold them"
+            );
+        }
+    }
     let broker: Arc<dyn CapabilityBroker> = local_broker.clone();
     // Parallel-local-exec: the bounded embedded-worker POOL. Resolve the size
     // from `--workers` / `KX_WORKERS` / `KX_SERVE_WORKER_POOL` (default 1 = the
