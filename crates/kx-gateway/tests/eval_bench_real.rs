@@ -106,15 +106,27 @@ fn git_sha() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// The run's human environment label.
+///
+/// `KX_EVAL_ENV_LABEL` PREFIXES the derived label rather than replacing it. The override
+/// exists so a shared runner can say which runner it was, and a replacement would have
+/// let that name stand in for the host facts it cannot know — a label that hides what it
+/// is labelling. (It was set by the real-model workflow and read nowhere, which is the
+/// same failure in a quieter form: a knob that does nothing reads exactly like a knob
+/// that works.)
 fn env_label(engine: &str, model: &str) -> String {
     let cores = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
-    format!(
+    let derived = format!(
         "{}/{} ({cores} cores) | {engine} | {model}",
         std::env::consts::OS,
         std::env::consts::ARCH
-    )
+    );
+    match std::env::var("KX_EVAL_ENV_LABEL") {
+        Ok(tag) if !tag.trim().is_empty() => format!("{} | {derived}", tag.trim()),
+        _ => derived,
+    }
 }
 
 /// The committed per-engine Gemma baseline (the fail-closed ratchet), in the kx-eval corpus.
@@ -410,10 +422,16 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     );
 
     // THE WITNESS: drive every bench task on the served model + score its REAL output.
-    let outcome = score_live_suite(&mut c, &corpus, env_label.clone(), git_sha, SETTLE_TIMEOUT)
-        .await
-        .expect("score bench-v1 over live runs");
-    let report = outcome.report.clone();
+    let outcome = score_live_suite(
+        &mut c,
+        &corpus,
+        env_label.clone(),
+        git_sha.clone(),
+        SETTLE_TIMEOUT,
+    )
+    .await
+    .expect("score bench-v1 over live runs");
+    let mut report = outcome.report.clone();
     for s in &outcome.skipped {
         eprintln!(
             "eval-bench: SKIPPED family {:?} — {} not provisioned ({} task(s): {})",
@@ -441,14 +459,75 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         );
     }
 
+    // The label that travels WITH the numbers into the committed baseline. Recorded from
+    // the model the serve actually reports, not the one the operator asked for: those two
+    // differ exactly when a run is worthless, and the whole point of a label is to be
+    // right on the day it matters. Placed after the identity check above so a mismatch
+    // fails before it can be written down.
+    report.env = Some(kx_eval::BaselineEnv {
+        engine: engine.clone(),
+        model: if served.is_empty() {
+            model.clone()
+        } else {
+            served.clone()
+        },
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        cores: u32::try_from(
+            std::thread::available_parallelism()
+                .map(std::num::NonZeroUsize::get)
+                .unwrap_or(1),
+        )
+        .unwrap_or(1),
+        task_count: u32::try_from(corpus.suite.tasks.len()).unwrap_or(u32::MAX),
+        captured_unix_s: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        git_sha,
+    });
+
     // The gates + the per-task oracle detail.
     eprintln!(
         "eval-bench report — suite '{}' (digest {}…)",
         report.suite_id,
         &report.suite_digest[..16]
     );
+    if let Some(e) = &report.env {
+        eprintln!(
+            "  env: {} {} | {}/{} {} cores | {} tasks | sha {} | captured {}",
+            e.engine,
+            e.model,
+            e.os,
+            e.arch,
+            e.cores,
+            e.task_count,
+            &e.git_sha[..e.git_sha.len().min(12)],
+            e.captured_unix_s
+        );
+    }
     for g in &report.gates {
         eprintln!("  {:<22} {:>4} / 1000", g.id, g.per_mille);
+    }
+    // The measured, never-gated speed numbers. Printed BESIDE the gates and visibly
+    // labelled as spikes, so nobody reads a latency as something the ratchet holds:
+    // absolute milliseconds are a property of this machine, and only `model_time_share`
+    // survives being compared across two of them.
+    for s in &report.spikes {
+        eprintln!(
+            "  {:<22} {:>8.0} {} (spike — never gated)",
+            s.id, s.value, s.unit
+        );
+    }
+    if report
+        .spikes
+        .iter()
+        .all(|s| s.id != "measured_tasks" || s.value == 0.0)
+    {
+        eprintln!(
+            "eval-bench: ⚠ NO host timing was measured — the telemetry sidecar reported \
+             nothing, so `model_time_share` is absent rather than 0"
+        );
     }
     for t in &report.per_task {
         for s in &t.scores {

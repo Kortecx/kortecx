@@ -247,6 +247,7 @@ mod tests {
             rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
+            timing: None,
         };
         let answer_turn = |turn: u32| TurnRecord {
             turn,

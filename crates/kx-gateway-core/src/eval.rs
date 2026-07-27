@@ -58,6 +58,9 @@ pub(crate) fn score_run(
         rerank: None, // ScoreRun is expectation-free ⇒ the rerank-quality scorer is N/A.
         max_turns,
         max_tool_calls,
+        // ScoreRun reads only the trajectory (`analyze_run`), never a scorer, so it needs
+        // no host timing — and it must not pay the telemetry reads to fetch one.
+        timing: None,
     };
     let q = analyze_run(&transcript);
     Ok(proto::RunScore {

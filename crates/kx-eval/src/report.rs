@@ -59,6 +59,45 @@ pub struct GateValue {
     pub per_mille: u32,
 }
 
+/// What produced a set of numbers — the label without which a score is not a record.
+///
+/// A real-model score is meaningless without the model that produced it, and until this
+/// existed the committed baselines carried none: [`EvalReport::to_baseline`] dropped both
+/// `env_label` and `git_sha`, so the only labelled artifact was a gitignored trend file
+/// no reader ever sees. Two engines running two DIFFERENT models were published under one
+/// heading, and nothing could catch it.
+///
+/// Deliberately NOT part of the comparison: running on another machine is not a
+/// regression, and folding the host into the ratchet would make every number
+/// unreproducible by construction. It is here to be *read* — by a person, and by the
+/// docs check that holds the README's stated model and hardware to it.
+///
+/// This crate is a pure leaf: it defines the shape and never captures it. The caller that
+/// already knows the engine and the served model fills it in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaselineEnv {
+    /// The inference engine (`"ollama"` / `"llamacpp"`).
+    pub engine: String,
+    /// The served model id, exactly as the serve reported it — including any
+    /// quantisation suffix. The two engines do not run the same build, and this is the
+    /// field that makes that impossible to paper over.
+    pub model: String,
+    /// The host OS (`std::env::consts::OS`).
+    pub os: String,
+    /// The host architecture (`std::env::consts::ARCH`).
+    pub arch: String,
+    /// Logical cores.
+    pub cores: u32,
+    /// How many tasks the suite held when this was captured — the denominator behind
+    /// every per-family score.
+    pub task_count: u32,
+    /// Capture wall clock, seconds since the Unix epoch. Stored as an integer rather
+    /// than a formatted date so this crate needs no clock and no date dependency.
+    pub captured_unix_s: u64,
+    /// The commit the capture ran at.
+    pub git_sha: String,
+}
+
 /// The committed yardstick — the suite's Gate values at a known corpus digest. Lives at
 /// `corpus/golden-v1/baseline.json` (committed, NOT in the gitignored `docs/benchmarks/`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +106,10 @@ pub struct Baseline {
     pub suite_id: String,
     /// The corpus content digest (hex) the baseline is valid for.
     pub suite_digest: String,
+    /// What produced these numbers. `None` on a baseline captured before the label
+    /// existed — read-compatible, so an old committed file still loads and still gates.
+    #[serde(default)]
+    pub env: Option<BaselineEnv>,
     /// The Gate values, in a stable id order.
     pub gates: Vec<GateValue>,
 }
@@ -106,6 +149,11 @@ pub struct EvalReport {
     /// A short environment label (e.g. `"macos/aarch64 (8 cores)"`) — the "a number
     /// with no environment label is not a record" discipline, kept lightweight.
     pub env_label: String,
+    /// The structured form of that label, which is what survives into a committed
+    /// baseline. `None` for a report whose producer did not supply one (the
+    /// deterministic golden tier needs no host label — it has no host in its answer).
+    #[serde(default)]
+    pub env: Option<BaselineEnv>,
     /// The aggregate Gate values (the regression-gated surface).
     pub gates: Vec<GateValue>,
     /// Measurement-only Spikes (Tier-B latency etc.; advisory, never gated).
@@ -115,12 +163,13 @@ pub struct EvalReport {
 }
 
 impl EvalReport {
-    /// Extract the committed-baseline view (suite id + digest + Gate values).
+    /// Extract the committed-baseline view (suite id + digest + env label + Gate values).
     #[must_use]
     pub fn to_baseline(&self) -> Baseline {
         Baseline {
             suite_id: self.suite_id.clone(),
             suite_digest: self.suite_digest.clone(),
+            env: self.env.clone(),
             gates: self.gates.clone(),
         }
     }
@@ -236,6 +285,9 @@ pub fn aggregate(
         suite_digest,
         git_sha,
         env_label,
+        // The structured label is attached by the caller that knows the engine and the
+        // served model; `aggregate` is given neither and must not invent them.
+        env: None,
         gates,
         spikes: spike_metrics,
         per_task,
@@ -403,6 +455,7 @@ mod tests {
         let legacy = Baseline {
             suite_id: r.suite_id.clone(),
             suite_digest: r.suite_digest.clone(),
+            env: None,
             // Only the suite-wide gates, as an older capture would have written them.
             gates: r
                 .gates
@@ -413,6 +466,84 @@ mod tests {
         };
         assert!(legacy.gates.iter().any(|g| g.id == "task_success"));
         assert!(compare_to_baseline(&r, &legacy, 0).unwrap().ok);
+    }
+
+    /// The label must survive into the committed file, because the committed file is the
+    /// only artifact a reader ever sees — the labelled trend record is gitignored. This
+    /// is the regression guard for the bug that `to_baseline` used to have: it built a
+    /// baseline that dropped every trace of what produced it.
+    #[test]
+    fn a_baseline_carries_the_label_of_what_produced_it() {
+        let mut r = report();
+        r.env = Some(BaselineEnv {
+            engine: "ollama".into(),
+            model: "gemma3:12b".into(),
+            os: "macos".into(),
+            arch: "aarch64".into(),
+            cores: 8,
+            task_count: 16,
+            captured_unix_s: 1_753_500_000,
+            git_sha: "abc123".into(),
+        });
+        let round_tripped: Baseline =
+            serde_json::from_str(&serde_json::to_string(&r.to_baseline()).unwrap()).unwrap();
+        let env = round_tripped
+            .env
+            .expect("the label reaches the committed file");
+        assert_eq!(env.model, "gemma3:12b");
+        assert_eq!(
+            env.task_count, 16,
+            "the denominator behind every family score"
+        );
+    }
+
+    /// An already-committed baseline predates the label. It must still deserialize and
+    /// still gate — a measurement-contract addition that made every existing baseline
+    /// unreadable would force a re-capture on machines that cannot run the model.
+    #[test]
+    fn a_baseline_written_before_the_label_still_loads_and_gates() {
+        let legacy: Baseline = serde_json::from_str(
+            r#"{"suite_id":"bench-v1","suite_digest":"d","gates":[{"id":"task_success","per_mille":1000}]}"#,
+        )
+        .expect("a label-less baseline still deserializes");
+        assert!(legacy.env.is_none());
+        let mut r = report();
+        r.suite_digest = "d".into();
+        r.gates = vec![GateValue {
+            id: "task_success".into(),
+            per_mille: 1000,
+        }];
+        assert!(compare_to_baseline(&r, &legacy, 0).unwrap().ok);
+    }
+
+    /// LOSING a measurement is a regression, not a pass. A metric that scores N/A on
+    /// every task emits no gate at all, so a report can silently stop carrying one the
+    /// baseline records — a serve whose telemetry sidecar went missing stops producing
+    /// `model_time_share`, and "no number" must never read as "no change". The
+    /// comparison reads an absent gate as 0, which is what makes that loud.
+    #[test]
+    fn a_gate_the_report_stopped_emitting_is_a_regression() {
+        let r = report();
+        let mut baseline = r.to_baseline();
+        baseline.gates.push(GateValue {
+            id: "model_time_share".to_string(),
+            per_mille: 700,
+        });
+        assert!(
+            !r.gates.iter().any(|g| g.id == "model_time_share"),
+            "the report genuinely does not carry the gate — otherwise this proves nothing"
+        );
+        let cmp = compare_to_baseline(&r, &baseline, 200).unwrap();
+        assert!(!cmp.ok, "a vanished gate must fail closed");
+        let reg = cmp
+            .regressions
+            .iter()
+            .find(|x| x.metric_id == "model_time_share")
+            .expect("the vanished gate is reported by name");
+        assert_eq!(
+            reg.current_per_mille, 0,
+            "absent reads as 0, not as baseline"
+        );
     }
 
     /// A task with no family (an older trend record round-tripped through serde)
