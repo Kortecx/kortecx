@@ -1015,10 +1015,24 @@ async fn passk_trials(
             })
             .collect();
         for (id, passed) in &verdicts {
+            // A failed trial names its terminal: a dead letter and a wrong answer are
+            // different diagnoses (the first llama.cpp capture failed 12/12 by
+            // dead-letter — resource starvation, not model unreliability — and only
+            // the terminal made that legible).
+            let terminal = outcome
+                .transcripts
+                .iter()
+                .find(|t| &t.task_id == id)
+                .map(|t| t.terminal_branch());
             eprintln!(
-                "eval-bench: pass^k trial {} — {id} {}",
+                "eval-bench: pass^k trial {} — {id} {}{}",
                 trial + 1,
-                if *passed { "PASS" } else { "fail" }
+                if *passed { "PASS" } else { "fail" },
+                if *passed {
+                    String::new()
+                } else {
+                    format!(" (terminal {terminal:?})")
+                }
             );
         }
 
@@ -1543,6 +1557,16 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         false
     };
 
+    // The MAIN serve comes down BEFORE the trials, and this is a measurement condition,
+    // not tidiness: on the in-process engine the main serve's 12B stays resident, so a
+    // trial serve loading its own 12B beside it starves — and every trial task
+    // dead-letters in a way that reads exactly like model unreliability. Measured, not
+    // hypothetical: the first llama.cpp capture ran trials beside a live main serve and
+    // read 0/4 on tasks its own main suite had just passed. Nothing after the grant
+    // guard needs the main serve (the probes above were its last callers), so from here
+    // the arm holds ONE resident model at a time: each trial's serve, serially.
+    running.shutdown().await.unwrap();
+
     // The pass^k phase: K fully-fresh trials of the flagship set. Per-task 0/1000
     // verdicts ride as committed UNGATED spikes (a single K=4 Bernoulli draw flips
     // whole-swing across captures — noise no tolerance absorbs); the GATES are the
@@ -1631,7 +1655,7 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         let json = serde_json::to_string_pretty(&report.to_baseline()).unwrap();
         std::fs::write(&path, format!("{json}\n")).unwrap();
         eprintln!("eval-bench: baseline captured → {}", path.display());
-        running.shutdown().await.unwrap();
+        // The main serve is already down (before the trials).
         std::env::remove_var("KX_SERVE_AUTOGRANT");
         clear_bench_env();
         clear_bench_env();
@@ -1717,7 +1741,7 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         );
     }
 
-    running.shutdown().await.unwrap();
+    // The main serve is already down (before the trials).
     std::env::remove_var("KX_SERVE_AUTOGRANT");
     clear_bench_env();
 }
