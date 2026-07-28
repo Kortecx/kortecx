@@ -8,7 +8,7 @@
 //! dead-letter without a failing worker, so the e2e asserts the honest-empty,
 //! pagination, and auth contracts here.
 
-#![cfg(feature = "embedded-worker")]
+#![cfg(feature = "observability")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

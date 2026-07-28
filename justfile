@@ -750,6 +750,12 @@ features-guard:
     cargo check -p kx-cli --features hnsw
     cargo check -p kx-cli --features inference,hnsw
     echo " ✓ features-guard: hnsw + inference,hnsw both build"
+    # W6.1: the observability stack (kx-otel + /metrics + alerts.db + telemetry.db)
+    # is opt-in and deliberately OUT of the release feature set; both directions
+    # must stay buildable.
+    cargo check -p kx-cli --features observability
+    cargo check -p kx-gateway --features observability
+    echo " ✓ features-guard: observability builds (cli passthrough + gateway)"
     # W1a: the gateway-only / external-coordinator config (default feature
     # `embedded-worker` OFF) reserved by the `start_impl` stub must stay BUILDABLE,
     # so a feature-independent struct field never references a feature-gated import
@@ -909,7 +915,11 @@ eval-bench:
     # failure. It was implicit before (present in any tree that had run the script tests)
     # and absent in a fresh clone, which is exactly where it is hardest to spot.
     cargo build -p kx-script-runner
-    KX_SERVE_MEMORY=1 cargo test -p kx-gateway --features inference,hnsw --test eval_bench_real -- --ignored --nocapture --test-threads=1
+    # `observability` is REQUIRED here: the harness folds the GATED model_time_share
+    # (and per-task timing) from the telemetry.db sidecar. Without the feature the
+    # sidecar never opens, the gate stops being emitted, and the baseline comparison
+    # reads the missing gate as 0 and fails closed.
+    KX_SERVE_MEMORY=1 cargo test -p kx-gateway --features inference,hnsw,observability --test eval_bench_real -- --ignored --nocapture --test-threads=1
 
 # LOCAL / manual witness (NOT a CI job): drive a LIVE ReAct chain that FIRES a real
 # tool on a capable model. The DETERMINISTIC, CI-runnable regression guard for this

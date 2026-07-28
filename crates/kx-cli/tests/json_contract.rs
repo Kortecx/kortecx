@@ -50,16 +50,23 @@ const JSON_DOCUMENT_VERBS: &[&[&str]] = &[
     &["app", "list"],
     &["branch", "list"],
     &["models", "list"],
-    &["telemetry", "list"],
-    &["telemetry", "summary"],
     &["feedback", "list"],
     &["replan", "list"],
     &["react", "list"],
     &["rerank", "list"],
     &["capture", "list"],
-    &["alerts", "list"],
     &["approvals", "list"],
     &["signatures", "list"],
+];
+
+/// The observability read verbs succeed only when the gateway build carries the
+/// `observability` feature (W6.1); without it the server answers the seam's
+/// designed `unimplemented`, which the CLI surfaces as a non-zero exit.
+#[cfg(feature = "observability")]
+const OBSERVABILITY_JSON_VERBS: &[&[&str]] = &[
+    &["telemetry", "list"],
+    &["telemetry", "summary"],
+    &["alerts", "list"],
 ];
 
 /// The dataset plane is a build feature; `hnsw` is the flag its refusal must name.
@@ -71,7 +78,10 @@ async fn every_read_verb_answers_json_with_one_document() {
     let running = start_gateway(&dir, true, HashMap::new()).await;
     let ep = endpoint(&running);
 
-    for verb in JSON_DOCUMENT_VERBS {
+    let mut verbs: Vec<&[&str]> = JSON_DOCUMENT_VERBS.to_vec();
+    #[cfg(feature = "observability")]
+    verbs.extend_from_slice(OBSERVABILITY_JSON_VERBS);
+    for verb in verbs {
         let mut args: Vec<&str> = verb.to_vec();
         args.extend_from_slice(&["--endpoint", &ep, "--json"]);
         let out = run_kx(argv(&args)).await;

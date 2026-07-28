@@ -6,7 +6,7 @@
 //! rows survive a restart (same sidecar, same schema); and the RPC sits behind
 //! the auth interceptor.
 
-#![cfg(feature = "embedded-worker")]
+#![cfg(feature = "observability")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

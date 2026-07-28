@@ -1293,7 +1293,9 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     }
 
     /// Wire the Batch C telemetry usage hook (fail-open by the sink's contract;
-    /// the dispatch path is unchanged when unset).
+    /// the dispatch path is unchanged when unset). Only the `observability`
+    /// build has a ledger to wire, so only it compiles the setter.
+    #[cfg(feature = "observability")]
     pub(crate) fn with_usage_sink(mut self, usage: Arc<dyn crate::usage::UsageSink>) -> Self {
         self.usage = Some(usage);
         self

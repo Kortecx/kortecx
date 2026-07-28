@@ -327,6 +327,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let tls = pair_tls(tls_cert, tls_key)?;
 
     refuse_console_without_feature(console_listen)?;
+    refuse_metrics_without_feature(metrics_listen)?;
 
     Ok(GatewayConfig {
         listen,
@@ -419,6 +420,23 @@ fn refuse_console_without_feature(mode: ConsoleMode) -> Result<(), GatewayError>
                     .into(),
             ));
         }
+    }
+    Ok(())
+}
+
+/// W6.1: an EXPLICIT `--metrics-listen` on a binary built without the
+/// `observability` feature is a loud error (never a silent no-op) — the D139
+/// console-refusal posture, applied to the second opt-in listener.
+fn refuse_metrics_without_feature(
+    metrics_listen: Option<SocketAddr>,
+) -> Result<(), GatewayError> {
+    if !cfg!(feature = "observability") && metrics_listen.is_some() {
+        return Err(GatewayError::Config(
+            "this kx was built without the observability stack (`observability` \
+             feature); build from a repo checkout with `--features observability` \
+             to serve /metrics"
+                .into(),
+        ));
     }
     Ok(())
 }

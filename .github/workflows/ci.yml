@@ -185,6 +185,7 @@ jobs:
           fi
           cargo check -p kx-cli --features hnsw
           cargo check -p kx-cli --features inference,hnsw
+          cargo check -p kx-cli --features observability
           # The gateway-only / external-coordinator config: `kx-gateway`
           # --no-default-features (embedded-worker OFF ⇒ kx-coordinator unlinked)
           # must stay buildable, so a feature-independent path never references a
@@ -209,6 +210,19 @@ jobs:
         run: |
           cargo clippy -p kx-gateway --features hosted-apps --all-targets -- -D warnings
           cargo test -p kx-gateway --features hosted-apps
+
+      # W6.1: `observability` (the /metrics listener + alerts.db + telemetry.db)
+      # is a NON-DEFAULT feature the RELEASE deliberately excludes, so — exactly
+      # like `hosted-apps` above — nothing else in CI would compile it or its
+      # `#[cfg(feature = "observability")]` e2e suites (observability_e2e /
+      # alerts_e2e / telemetry_e2e), which would otherwise compile to ZERO tests
+      # and report `ok`. Both directions run here: the WITH arm (lint + tests)
+      # and the kx-cli passthrough's json-contract rows.
+      - name: observability feature gate (clippy + tests)
+        run: |
+          cargo clippy -p kx-gateway --features observability --all-targets -- -D warnings
+          cargo test -p kx-gateway --features observability
+          cargo test -p kx-cli --features observability --test json_contract
 
   # ---------------------------------------------------------------------------
   # test — full workspace test pass.
@@ -658,7 +672,9 @@ jobs:
       # (pure-Rust kx-dataset-hnsw + rusqlite, no llama.cpp) — so the contract tests
       # can exercise the client-vector ingest/query path on Linux with no model.
       - name: Build the FFI-free kx (serve + client) for the contract tests
-        run: cargo build -p kx-cli --features hnsw
+        # `observability` rides along (W6.1): the SDK contract suites page
+        # listMoteTelemetry rows, which needs the telemetry sidecar wired.
+        run: cargo build -p kx-cli --features hnsw,observability
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -729,7 +745,9 @@ jobs:
       # (pure-Rust kx-dataset-hnsw + rusqlite, no llama.cpp) — so the contract tests
       # can exercise the client-vector ingest/query path on Linux with no model.
       - name: Build the FFI-free kx (serve + client) for the contract tests
-        run: cargo build -p kx-cli --features hnsw
+        # `observability` rides along (W6.1): the SDK contract suites page
+        # listMoteTelemetry rows, which needs the telemetry sidecar wired.
+        run: cargo build -p kx-cli --features hnsw,observability
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -1028,13 +1046,13 @@ jobs:
       # (model lifecycle / cache / model_exec) lives under inference/embedded-worker.
       - name: clippy under --features inference (the cfg(inference) lint gap)
         run: |
-          cargo clippy -p kx-gateway --features inference,embedded-worker,hnsw \
+          cargo clippy -p kx-gateway --features inference,embedded-worker,hnsw,observability \
             --all-targets -- -D warnings
           cargo clippy -p kx-inference --features llamacpp --all-targets -- -D warnings
 
       - name: model-free tests under --features inference (the cfg(inference) test gap)
         run: |
-          cargo test -p kx-gateway --features inference,embedded-worker,hnsw -- --nocapture
+          cargo test -p kx-gateway --features inference,embedded-worker,hnsw,observability -- --nocapture
 
       # PR-A (pluggable inference engine): exercise the FFI-FREE `serve-engine` path —
       # the Ollama backend + the host RoutingBackend + the re-gated serve loop — so the
