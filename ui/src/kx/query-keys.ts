@@ -102,12 +102,6 @@ export const queryKeys = {
   health: (endpoint: string) => ["kx", endpoint, "health"] as const,
   /** POC-1 Settings "Workspace": the non-secret server configuration (`GetServerInfo`). */
   serverInfo: (endpoint: string) => ["kx", endpoint, "server-info"] as const,
-  /** The re-plan-round trail (`ListReplanRounds`), scoped by page size. */
-  replanRounds: (endpoint: string, limit: number) =>
-    ["kx", endpoint, "replan-rounds", limit] as const,
-  /** The re-rank-turn trail (`ListReRankTurns`, RC4c-2), scoped by page size. */
-  rerankTurns: (endpoint: string, limit: number) =>
-    ["kx", endpoint, "rerank-turns", limit] as const,
   /** The ReAct-turn trail (`ListReactTurns`); `instanceId` scopes to one run,
    *  `chainSalt` (PR-R1) to one chain within it (serve's shared journal). */
   reactTurns: (
