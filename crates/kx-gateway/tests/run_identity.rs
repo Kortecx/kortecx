@@ -8,7 +8,8 @@
 //! input-addressed bind identity.
 //!
 //! This test proves the detector the phase uses reads DIFFERENTLY in the two regimes —
-//! the L-196 question — without spending a second of model time: same-serve re-invoke
+//! the question every guard must answer: what would it read if the thing it measures
+//! were absent? — without spending a second of model time: same-serve re-invoke
 //! ⇒ SAME instance id (the replay signature the phase must never see across trials);
 //! fresh-serve re-invoke ⇒ DIFFERENT instance id under an EQUAL terminal Mote id (real
 //! re-execution of the same work). A pass^k phase whose trials shared an instance id

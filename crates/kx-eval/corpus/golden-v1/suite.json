@@ -472,7 +472,7 @@
     },
     {
       "id": "seq_wrong_order_null",
-      "description": "The L-196 null the sequence column exists for: the right SET of calls in the wrong ORDER. tool_call_f1 is an order-tolerant multiset and reads a perfect 1000 here by design; tool_seq_fsa must read 0 and tool_seq_psa 500, or the column measures nothing F1 does not.",
+      "description": "The null the sequence column exists for: the right SET of calls in the wrong ORDER. tool_call_f1 is an order-tolerant multiset and reads a perfect 1000 here by design; tool_seq_fsa must read 0 and tool_seq_psa 500, or the column measures nothing F1 does not.",
       "instruction": "Look up the value under the key 'x', then add 1 to it and report the result.",
       "expect": {
         "terminal": "answer",

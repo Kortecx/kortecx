@@ -105,7 +105,7 @@ fn rejection_recovery_loop_efficiency_is_750_per_task() {
     );
 }
 
-/// The two L-196 nulls, pinned per task (independent of aggregates and the baseline
+/// The two null fixtures, pinned per task (independent of aggregates and the baseline
 /// file): each proves its scorer reads DIFFERENTLY from the metric it complements on
 /// the exact input where the complement is blind.
 #[test]
