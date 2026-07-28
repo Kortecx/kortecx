@@ -300,6 +300,7 @@ The same rates drawn with their denominators — identical bars are not identica
 
 <!-- bench-chart:ollama — data checked against baseline.ollama.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
 ```mermaid
+%%{init: {"xyChart": {"width": 1100, "height": 420}}}%%
 xychart-beta
     title "task_success by family — Ollama gemma3:12b (passes/tasks)"
     x-axis ["tool (6/6)", "react (2/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)"]
@@ -309,6 +310,7 @@ xychart-beta
 
 <!-- bench-chart:llamacpp — data checked against baseline.llamacpp.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
 ```mermaid
+%%{init: {"xyChart": {"width": 1100, "height": 420}}}%%
 xychart-beta
     title "task_success by family — llama.cpp kx-serve:gemma-4-12b-it-q4_k_m (passes/tasks)"
     x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)"]
