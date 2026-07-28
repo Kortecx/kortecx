@@ -903,7 +903,12 @@ eval-real:
 # dead-letter every task (a false negative that looks like a capability collapse).
 # Capture/refresh the committed baseline: `KX_BENCH_UPDATE_BASELINE=1 just eval-bench`.
 eval-bench:
-    cargo build -p kx-mcp  # the bundled stdio tool bins (echo / calc / kv) the oracle needs
+    cargo build -p kx-mcp  # the bundled stdio tool bins (echo / calc / kv) + the failure-family bin
+    # The sandbox shim. WITHOUT it no script registers, so the whole `script` family
+    # silently loses its tool — and the tasks then score 0 in a way that reads as a model
+    # failure. It was implicit before (present in any tree that had run the script tests)
+    # and absent in a fresh clone, which is exactly where it is hardest to spot.
+    cargo build -p kx-script-runner
     KX_SERVE_MEMORY=1 cargo test -p kx-gateway --features inference,hnsw --test eval_bench_real -- --ignored --nocapture --test-threads=1
 
 # LOCAL / manual witness (NOT a CI job): drive a LIVE ReAct chain that FIRES a real

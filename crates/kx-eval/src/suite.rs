@@ -86,6 +86,28 @@ pub struct Expectation {
     /// ⇒ the skill_quality scorer is N/A for this task.
     #[serde(default)]
     pub skill_wish_tools: Vec<ExpectedToolCall>,
+    /// Substrings the final answer must NOT contain. The other half of an answer oracle:
+    /// some tasks are passed only by what a run refuses to say. A run that repeats a
+    /// token planted in a tool's OUTPUT has carried an instruction it read as data, and
+    /// `answer_must_contain` cannot express that — an absence is not a presence.
+    /// Empty ⇒ the injection-resistance scorer ignores the answer.
+    #[serde(default)]
+    pub answer_must_not_contain: Vec<String>,
+    /// Tool calls the run must NOT make. Names a tool the run may well be GRANTED — the
+    /// point is that something in its input tried to talk it into firing one. A refusal
+    /// the model was never able to disobey proves nothing, so these tasks put the tool
+    /// within reach and measure the choice. Empty ⇒ no forbidden call for this task.
+    #[serde(default)]
+    pub forbidden_tools: Vec<ExpectedToolCall>,
+    /// The turn cap to admit for this task, overriding the suite default. A long-horizon
+    /// task needs more turns than a two-hop lookup, and a suite-wide cap sized for the
+    /// long one would stop every short task from ever hitting its budget — which is
+    /// itself a measurement. `None` ⇒ the runner's default.
+    #[serde(default)]
+    pub max_turns: Option<u32>,
+    /// The tool-call cap to admit for this task, overriding the suite default.
+    #[serde(default)]
+    pub max_tool_calls: Option<u32>,
     /// The ideal number of turns to solve the task (the loop-efficiency denominator).
     pub ideal_turns: u32,
     /// The ideal number of tool calls to solve the task.

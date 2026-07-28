@@ -694,27 +694,31 @@ fn vet_registration_host(host: &str, allowlist: &[String]) -> Result<(), String>
     if host.is_empty() {
         return Err("server host is empty".to_string());
     }
+    // Normalize both sides (lowercase + strip a trailing FQDN dot) so the
+    // case/dot-insensitive allowlist match is consistent with how a host is
+    // compared elsewhere (review #6).
+    let want = normalize_host(host);
+    let allowlisted = allowlist.iter().any(|h| normalize_host(h) == want);
     if let Ok(ip) = host.parse::<IpAddr>() {
         let public = match ip {
             IpAddr::V4(v4) => is_public_v4(v4),
             IpAddr::V6(v6) => is_public_v6(&v6),
         };
-        if !public {
+        // A non-public literal the operator named EXACTLY is admitted — the same
+        // explicit opt-in the dial gate applies (`kx_mcp::egress::vet_resolved_addr`).
+        // The rebind defense is unaffected: a DNS name is not an IP literal, so a public
+        // name resolving to a private address is still refused there.
+        if !public && !allowlisted {
             return Err(format!(
-                "host {host:?} is a non-public address (internal/link-local/metadata refused)"
+                "host {host:?} is a non-public address (internal/link-local/metadata \
+                 refused; add it to KX_SERVE_TOOL_HOST_ALLOWLIST to reach it deliberately)"
             ));
         }
     }
-    // Normalize both sides (lowercase + strip a trailing FQDN dot) so the
-    // case/dot-insensitive allowlist match is consistent with how a host is
-    // compared elsewhere (review #6).
-    if !allowlist.is_empty() {
-        let want = normalize_host(host);
-        if !allowlist.iter().any(|h| normalize_host(h) == want) {
-            return Err(format!(
-                "host {host:?} is not in KX_SERVE_TOOL_HOST_ALLOWLIST"
-            ));
-        }
+    if !allowlist.is_empty() && !allowlisted {
+        return Err(format!(
+            "host {host:?} is not in KX_SERVE_TOOL_HOST_ALLOWLIST"
+        ));
     }
     Ok(())
 }
@@ -928,6 +932,20 @@ mod tests {
         let allow = vec!["mcp.example.com".to_string()];
         assert!(vet_registration_host("mcp.example.com", &allow).is_ok());
         assert!(vet_registration_host("evil.com", &allow).is_err());
+    }
+
+    /// The explicit-literal opt-in, matching the dial gate. Without it this crate and
+    /// `kx_mcp::egress` disagreed about the same address: the dialer would have reached
+    /// an allowlisted `127.0.0.1`, and admission never let a registration get that far.
+    #[test]
+    fn vet_admits_an_explicitly_allowlisted_internal_literal() {
+        let allow = vec!["127.0.0.1".to_string()];
+        assert!(vet_registration_host("127.0.0.1", &allow).is_ok());
+        // Naming one internal literal is not permission to reach the others.
+        assert!(vet_registration_host("169.254.169.254", &allow).is_err());
+        assert!(vet_registration_host("::1", &allow).is_err());
+        // And with nothing configured, nothing internal is reachable.
+        assert!(vet_registration_host("127.0.0.1", &[]).is_err());
     }
 
     #[test]

@@ -105,6 +105,7 @@ mod tests {
             rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
+            timing: None,
         };
         let q = analyze_run(&t);
         assert!(q.reached_answer);
@@ -129,6 +130,7 @@ mod tests {
             rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
+            timing: None,
         };
         let q = analyze_run(&t);
         assert!(!q.reached_answer);

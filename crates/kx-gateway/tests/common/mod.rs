@@ -11,6 +11,8 @@
     unreachable_pub
 )]
 
+pub mod bench_http;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::path::PathBuf;

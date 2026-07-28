@@ -76,6 +76,31 @@ pub struct ToolKey {
     pub version: String,
 }
 
+/// How a run's wall clock divided between the model and everything else.
+///
+/// Host-measured execution exhaust, never a fact: it comes from the `telemetry.db`
+/// sidecar (off-journal, off-digest, rebuildable-to-empty), so it is display/measurement
+/// only and can be absent entirely. A scripted (Tier-A) fixture authors it directly,
+/// which is what makes the ratio testable without a model.
+///
+/// `total_ms` spans the run's first Mote starting to its last one finishing; `model_ms`
+/// is the summed execution time of the Motes a model actually ran. The difference is
+/// everything else — scheduling, folding, committing, leasing, and the tool rounds — and
+/// that remainder is precisely what the ratio watches.
+///
+/// There is deliberately no `tool_ms`. Tool time is not separately attributable here: the
+/// telemetry row's tool id comes from the Mote's DECLARED contract, which under an
+/// auto-granted loop is the whole menu on the model's turn and empty on the observation
+/// that actually fired. A field derived from that would have read 0 whether tools ran or
+/// not, which is not a measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscriptTiming {
+    /// Wall-clock for the whole task, end to end.
+    pub total_ms: u64,
+    /// Summed execution wall-clock of the run's model motes.
+    pub model_ms: u64,
+}
+
 /// The reduced record of one agent run — the input to every scorer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Transcript {
@@ -100,6 +125,13 @@ pub struct Transcript {
     pub max_turns: u32,
     /// The run's admitted tool-call cap (durable at anchor).
     pub max_tool_calls: u32,
+    /// How the run's wall clock divided between the model and the runtime around it.
+    /// `None` when the host could not measure it — a serve with no telemetry sidecar,
+    /// or a scripted fixture that does not author one — in which case the timing
+    /// scorers report N/A rather than a zero. A zero and a no-measurement read
+    /// identically otherwise, and only one of them is a regression.
+    #[serde(default)]
+    pub timing: Option<TranscriptTiming>,
 }
 
 impl Transcript {
@@ -190,6 +222,7 @@ mod tests {
             rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
+            timing: None,
         };
         assert_eq!(t.terminal_branch(), Branch::Answer);
         assert_eq!(t.turns_used(), 2);
@@ -211,6 +244,7 @@ mod tests {
             rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
+            timing: None,
         };
         assert_eq!(t.turns_used(), 2); // turn 0 (batch) + turn 1 (answer)
         assert_eq!(t.tool_calls_used(), 2); // two calls in the batch
@@ -227,6 +261,7 @@ mod tests {
             rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
+            timing: None,
         };
         assert_eq!(t.terminal_branch(), Branch::Pending);
         assert_eq!(t.turns_used(), 0);

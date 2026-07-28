@@ -182,13 +182,35 @@ mod tests {
             c.suite.tasks.iter().map(|t| t.family.as_str()).collect();
         assert_eq!(
             families,
-            ["react", "reach", "script", "swarm", "tool"]
-                .into_iter()
-                .collect(),
+            [
+                "adversarial",
+                "failure",
+                "http",
+                "long",
+                "menu",
+                "react",
+                "reach",
+                "script",
+                "swarm",
+                "tool"
+            ]
+            .into_iter()
+            .collect(),
             "bench-v1 covers exactly the substrate families the runner drives"
         );
         // Each family carries at least one task — an empty family is coverage on paper.
-        for f in ["tool", "react", "reach", "swarm", "script"] {
+        for f in [
+            "tool",
+            "react",
+            "reach",
+            "swarm",
+            "script",
+            "http",
+            "failure",
+            "menu",
+            "long",
+            "adversarial",
+        ] {
             assert!(
                 c.suite.tasks.iter().any(|t| t.family == f),
                 "family {f} has at least one task"
@@ -196,8 +218,11 @@ mod tests {
         }
         // A tool-required task must name the tools it expects; a contract/negative task
         // must name NONE (that emptiness IS its assertion — see `tool-contract-refusal`).
+        // `failure` and `adversarial` are deliberately absent from this list: their point
+        // is often that a call must NOT happen, and requiring an expectation would turn
+        // "fired nothing, correctly" into a corpus error.
         for t in &c.suite.tasks {
-            if t.family == "tool" || t.family == "script" {
+            if ["tool", "script", "http", "menu", "long"].contains(&t.family.as_str()) {
                 assert!(
                     !t.expect.expected_tools.is_empty(),
                     "{}-family task {} expects at least one tool call",
@@ -247,6 +272,7 @@ mod tests {
             rerank: None,
             max_turns: 8,
             max_tool_calls: 20,
+            timing: None,
         };
         let answer_turn = |turn: u32| TurnRecord {
             turn,

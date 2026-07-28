@@ -48,6 +48,14 @@ proptest   = { workspace = true }
 name = "kx-mcp-mock-stdio"
 path = "tests/support/mock_stdio_server.rs"
 
+# Test-support: the benchmark's `failure` family tool. Same idea as the mock above, but
+# its mode comes from ARGV rather than the environment, so one binary can be registered
+# several times as several differently-broken tools on one serve — and it answers
+# `tools/list`, so it is DISCOVERED like a real connector instead of hand-wired.
+[[bin]]
+name = "kx-mcp-bench-flaky"
+path = "tests/support/bench_flaky_server.rs"
+
 # PR-2d-2 (react-tools-live): the BUNDLED deterministic stdio tool the live
 # `kx serve` ReAct loop fires (tool id `mcp-echo@1`, no egress, no chaos modes —
 # the production distillation of the mock's echo arm).

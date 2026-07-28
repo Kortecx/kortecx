@@ -42,7 +42,7 @@ use std::time::Duration;
 
 use kx_eval::{
     aggregate, score_transcript, BenchCorpus, Branch, EvalReport, GoldenTask, ScoreInput,
-    ScoreOutput, TaskScore, Transcript, TurnRecord,
+    ScoreOutput, TaskScore, Transcript, TranscriptTiming, TurnRecord,
 };
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
@@ -166,10 +166,22 @@ pub fn drive_for(task: &GoldenTask) -> Result<Drive, BenchError> {
         // `script` rides the same loop by design — a registered script IS a tool to
         // the model, and the family exists to measure that a SANDBOXED body actually
         // ran, not that a different calling convention works.
-        "tool" | "react" | "script" => Ok(Drive::React {
-            handle: REACT_AUTO_RECIPE_HANDLE,
-            dataset: None,
-        }),
+        //
+        // The realism families ride it too, and for the same reason: what distinguishes
+        // them is the TOOL they are given and the input they are handed, not a different
+        // calling convention. `http` reaches a tool over the network under a credential;
+        // `failure` is given tools that error, hang, or answer with garbage; `menu` has to
+        // choose from a menu too long to read as a list of two; `long` has to hold a plan
+        // across more turns than the loop was ever measured over; `adversarial` is handed
+        // input that is trying to steer it. Driving them down a bespoke shape would test
+        // the shape; driving them down the shape everything else uses is what makes their
+        // numbers comparable with the rest of the table.
+        "tool" | "react" | "script" | "http" | "failure" | "menu" | "long" | "adversarial" => {
+            Ok(Drive::React {
+                handle: REACT_AUTO_RECIPE_HANDLE,
+                dataset: None,
+            })
+        }
         "reach" => match task.id.as_str() {
             "rag-grounded-answer" => Ok(Drive::React {
                 handle: REACT_RAG_RECIPE_HANDLE,
@@ -284,6 +296,9 @@ pub async fn fold_run_transcript(
         rerank: None,
         max_turns,
         max_tool_calls,
+        // Attached by the caller, which alone knows the telemetry floor this run began
+        // above — the fold has no way to tell one task's execution exhaust from another's.
+        timing: None,
     })
 }
 
@@ -393,6 +408,8 @@ pub async fn fold_workflow_transcript(
             // A DAG has no ReAct budget; record what it actually used.
             max_turns: used,
             max_tool_calls: 0,
+            // Attached by the caller (see `fold_run_transcript`).
+            timing: None,
         });
     }
     Err(BenchError::NotSettled(task_id))
@@ -519,7 +536,12 @@ pub async fn score_live_suite(
                 continue;
             }
         }
-        let transcript = run_and_fold(client, task, &drive, settle_timeout).await?;
+        // The telemetry floor for THIS task, read before it is dispatched: everything
+        // the sidecar joins above it is this task's cost and no other's.
+        let since_seq = telemetry_high_water(client).await;
+        let (mut transcript, terminal_mote) =
+            run_and_fold(client, task, &drive, settle_timeout).await?;
+        transcript.timing = fold_timing(client, since_seq, &terminal_mote).await;
         let scores = score_transcript(&ScoreInput {
             transcript: &transcript,
             expect: &task.expect,
@@ -533,13 +555,14 @@ pub async fn score_live_suite(
     }
 
     let format_na = ScoreOutput::not_applicable("format_coverage", "N/A for a live suite");
+    let spikes = latency_spikes(&transcripts);
     Ok(LiveSuiteOutcome {
         report: aggregate(
             corpus.suite.id.clone(),
             corpus.suite_digest.clone(),
             per_task,
             &format_na,
-            &[],
+            &spikes,
             env_label,
             git_sha,
         ),
@@ -570,19 +593,218 @@ fn observation_tools_for(task: &GoldenTask) -> BTreeSet<String> {
         .collect()
 }
 
+/// The suite's absolute speed numbers, recorded and never gated.
+///
+/// These are the numbers a reader wants ("how long does a task take?") and precisely the
+/// numbers that must not be a gate: they are dominated by the host's GPU and would fail
+/// on a slower machine with no code change at all. `model_time_share` is the gated
+/// companion — a ratio, so a uniformly slower host moves both its terms together.
+///
+/// Percentiles are nearest-rank on the sorted per-task totals. Tasks whose timing did not
+/// land contribute to nothing here, and `measured_tasks` says how many did — a p95 over
+/// three of sixteen tasks is not a suite number, and the count is what makes that visible
+/// instead of leaving a confident-looking figure to be read as full coverage.
+fn latency_spikes(transcripts: &[Transcript]) -> Vec<ScoreOutput> {
+    let mut totals: Vec<u64> = transcripts
+        .iter()
+        .filter_map(|t| t.timing)
+        .map(|t| t.total_ms)
+        .collect();
+    let measured = totals.len();
+    let mut out = vec![ScoreOutput {
+        metric_id: "measured_tasks".to_string(),
+        value: kx_eval::ScoreValue::Spike {
+            #[allow(clippy::cast_precision_loss)]
+            value: measured as f64,
+            unit: "tasks".to_string(),
+        },
+        applicable: true,
+        detail: format!(
+            "{measured} of {} task(s) reported host timing",
+            transcripts.len()
+        ),
+    }];
+    if totals.is_empty() {
+        return out;
+    }
+    totals.sort_unstable();
+    let pct = |p: usize| -> u64 {
+        // Nearest-rank: the smallest value at or above the p-th percentile.
+        let rank = (p * totals.len()).div_ceil(100).max(1);
+        totals[rank - 1]
+    };
+    let sum: u64 = totals.iter().sum();
+    for (id, value) in [
+        ("task_latency_ms_p50", pct(50)),
+        ("task_latency_ms_p95", pct(95)),
+        ("task_latency_ms_max", *totals.last().unwrap_or(&0)),
+        ("suite_latency_ms_total", sum),
+    ] {
+        out.push(ScoreOutput {
+            metric_id: id.to_string(),
+            value: kx_eval::ScoreValue::Spike {
+                #[allow(clippy::cast_precision_loss)]
+                value: value as f64,
+                unit: "ms".to_string(),
+            },
+            applicable: true,
+            detail: format!("over {measured} measured task(s)"),
+        });
+    }
+    out
+}
+
+/// How long the harness waits for the telemetry sidecar's join tick to catch up with a
+/// settled run, and at what cadence. The tick is driven by a journal-commit signal, so
+/// the rows for a run's last motes land shortly AFTER the answer branch the settle poll
+/// returned on — mirroring the answer-commit retry a few functions down.
+const TELEMETRY_JOIN_POLLS: u32 = 50;
+const TELEMETRY_JOIN_INTERVAL: Duration = Duration::from_millis(100);
+
+/// The telemetry high-water mark — the newest joined row's journal seq, or 0 when the
+/// sidecar has nothing (or does not exist).
+///
+/// Read from the same RPC the window fold reads, deliberately: a high-water taken from a
+/// different source could disagree with the rows, and a window that disagrees with its
+/// own bounds silently mis-attributes one task's cost to another.
+async fn telemetry_high_water(client: &mut KxGatewayClient<Channel>) -> u64 {
+    client
+        .list_mote_telemetry(proto::ListMoteTelemetryRequest {
+            limit: Some(1),
+            instance_id: None,
+            mote_id: None,
+            before_seq: None,
+        })
+        .await
+        .ok()
+        .and_then(|r| r.into_inner().rows.first().map(|row| row.seq))
+        .unwrap_or(0)
+}
+
+/// Fold the host's execution exhaust for ONE task into a [`TranscriptTiming`].
+///
+/// **Why a seq WINDOW and not a mote-id set.** A run's cost is spread over three kinds of
+/// Mote — the model turns, the tool dispatches, and the observations parented to them —
+/// and only the first kind is in `ListReactTurns`. Enumerating ids would silently omit
+/// the other two and report a model share that is too high, i.e. it would flatter exactly
+/// the thing being gated. The suite runs `--test-threads=1` and drives one task at a
+/// time, so the journal seqs a task produced are precisely those above the high-water
+/// read before it was dispatched.
+///
+/// Returns `None` — never a zero — when the sidecar is absent, when the window is empty,
+/// or when `terminal_mote` never appears in it within the join budget. A partial window
+/// would under-count the model's time and read as runtime overhead that never happened,
+/// so a measurement that did not fully land is reported as no measurement at all.
+async fn fold_timing(
+    client: &mut KxGatewayClient<Channel>,
+    since_seq: u64,
+    terminal_mote: &[u8],
+) -> Option<TranscriptTiming> {
+    for attempt in 0..TELEMETRY_JOIN_POLLS {
+        if attempt > 0 {
+            tokio::time::sleep(TELEMETRY_JOIN_INTERVAL).await;
+        }
+        let rows = telemetry_window(client, since_seq).await;
+        // The join has caught up exactly when the run's LAST Mote is in the window.
+        // Row count is not a stopping condition: it can plateau mid-drain and would
+        // stop early on a run whose tail is still folding.
+        if !terminal_mote.is_empty() && !rows.iter().any(|r| r.mote_id == terminal_mote) {
+            continue;
+        }
+        return timing_from_rows(&rows);
+    }
+    None
+}
+
+/// Every joined telemetry row with `seq > since_seq`, newest-first paging until the
+/// window is exhausted. `ListMoteTelemetry` clamps its page to 500, so a long-horizon
+/// task needs more than one page — reading only the first would truncate the window and
+/// under-report the run's own cost.
+async fn telemetry_window(
+    client: &mut KxGatewayClient<Channel>,
+    since_seq: u64,
+) -> Vec<proto::MoteTelemetryRow> {
+    let mut out: Vec<proto::MoteTelemetryRow> = Vec::new();
+    let mut before: Option<u64> = None;
+    loop {
+        let Ok(resp) = client
+            .list_mote_telemetry(proto::ListMoteTelemetryRequest {
+                limit: Some(500),
+                instance_id: None,
+                mote_id: None,
+                before_seq: before,
+            })
+            .await
+        else {
+            // A serve without the sidecar answers `unimplemented`. No rows, and the
+            // caller turns that into "no timing" rather than a zero.
+            return Vec::new();
+        };
+        let resp = resp.into_inner();
+        if resp.rows.is_empty() {
+            return out;
+        }
+        let oldest = resp.rows.iter().map(|r| r.seq).min().unwrap_or(0);
+        let reached_floor = oldest <= since_seq;
+        out.extend(resp.rows.into_iter().filter(|r| r.seq > since_seq));
+        if reached_floor || !resp.has_more {
+            return out;
+        }
+        before = Some(oldest);
+    }
+}
+
+/// Split a task's telemetry window into the model's time and the runtime's.
+///
+/// `total_ms` is the span from the first Mote starting to the last one finishing — the
+/// runtime's own end-to-end cost for the task, which deliberately excludes the harness's
+/// fold RPCs (they are the benchmark's cost, not the runtime's, and charging them to the
+/// runtime would make the gate measure the instrument). The gaps BETWEEN motes are inside
+/// it, and on a multi-turn loop those gaps — scheduling, folding, committing, leasing —
+/// are the overhead worth watching.
+fn timing_from_rows(rows: &[proto::MoteTelemetryRow]) -> Option<TranscriptTiming> {
+    if rows.is_empty() {
+        return None;
+    }
+    let start = rows.iter().map(|r| r.started_unix_ms).min()?;
+    let end = rows
+        .iter()
+        .map(|r| r.started_unix_ms.saturating_add(r.wall_clock_ms))
+        .max()?;
+    // A model Mote carries the model that ran it. Tool time is NOT split out: see
+    // `TranscriptTiming` — the row's tool id comes from the declared contract, not from
+    // what fired, so any tool total built from it would be a number that cannot move.
+    let model_ms = rows
+        .iter()
+        .filter(|r| !r.model_id.is_empty())
+        .map(|r| r.wall_clock_ms)
+        .sum();
+    Some(TranscriptTiming {
+        total_ms: end.saturating_sub(start),
+        model_ms,
+    })
+}
+
 /// Drive ONE task through the shape its family names, and fold the settled run.
+///
+/// Returns the transcript beside the run's terminal Mote id (see
+/// [`settle_and_fold_react`] — the timing fold waits on it).
 async fn run_and_fold(
     client: &mut KxGatewayClient<Channel>,
     task: &GoldenTask,
     drive: &Drive,
     settle_timeout: Duration,
-) -> Result<Transcript, BenchError> {
+) -> Result<(Transcript, Vec<u8>), BenchError> {
     match drive {
         Drive::React { handle, dataset } => {
+            // A task may raise its own budget. The suite default is sized for a two-hop
+            // lookup; a long-horizon chain needs more, and running everything at the
+            // long task's budget would stop any short task from ever reaching its cap —
+            // which is itself something the suite measures.
             let mut args = serde_json::json!({
                 "instruction": task.instruction,
-                "max_turns": BENCH_MAX_TURNS,
-                "max_tool_calls": BENCH_MAX_TOOL_CALLS,
+                "max_turns": task.expect.max_turns.unwrap_or(BENCH_MAX_TURNS),
+                "max_tool_calls": task.expect.max_tool_calls.unwrap_or(BENCH_MAX_TOOL_CALLS),
             });
             if let (Some(ds), Some(obj)) = (dataset, args.as_object_mut()) {
                 obj.insert("dataset".into(), serde_json::Value::String((*ds).into()));
@@ -637,29 +859,34 @@ async fn run_and_fold(
                 .await
                 .map_err(|e| BenchError::Rpc("submit_workflow", e))?
                 .into_inner();
-            fold_workflow_transcript(
+            let terminal_mote = handle.terminal_mote_id.clone();
+            let transcript = fold_workflow_transcript(
                 client,
                 handle.instance_id,
                 handle.terminal_mote_id,
                 task.id.clone(),
                 settle_timeout,
             )
-            .await
+            .await?;
+            Ok((transcript, terminal_mote))
         }
     }
 }
 
 /// Poll a ReAct chain to a terminal branch, then fold it.
+///
+/// Returns the transcript beside the terminal turn's Mote id — the last Mote the run
+/// executes, which the timing fold waits on to know the telemetry join has caught up.
 async fn settle_and_fold_react(
     client: &mut KxGatewayClient<Channel>,
     instance_id: Vec<u8>,
     chain_salt: Vec<u8>,
     task: &GoldenTask,
     settle_timeout: Duration,
-) -> Result<Transcript, BenchError> {
+) -> Result<(Transcript, Vec<u8>), BenchError> {
     let step_salt = (!chain_salt.is_empty()).then(|| chain_salt.clone());
     let polls = (settle_timeout.as_millis() / 100).max(1);
-    let mut settled = false;
+    let mut terminal_mote: Option<Vec<u8>> = None;
     for _ in 0..polls {
         let t = client
             .list_react_turns(proto::ListReactTurnsRequest {
@@ -670,27 +897,30 @@ async fn settle_and_fold_react(
             .await
             .map_err(|e| BenchError::Rpc("list_react_turns", e))?
             .into_inner();
-        if t.turns
+        if let Some(row) = t
+            .turns
             .iter()
-            .any(|x| x.branch == "answer" || x.branch == "dead_lettered")
+            .filter(|x| x.branch == "answer" || x.branch == "dead_lettered")
+            .max_by_key(|x| x.seq)
         {
-            settled = true;
+            terminal_mote = Some(row.turn_mote_id.clone());
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    if !settled {
+    let Some(terminal_mote) = terminal_mote else {
         return Err(BenchError::NotSettled(task.id.clone()));
-    }
+    };
 
-    fold_run_transcript(
+    let transcript = fold_run_transcript(
         client,
         instance_id,
         chain_salt,
         task.id.clone(),
         &observation_tools_for(task),
     )
-    .await
+    .await?;
+    Ok((transcript, terminal_mote))
 }
 
 /// Lower a `swarm`-family instruction into the fan-out/gather chain `kx swarm` authors:
@@ -833,6 +1063,171 @@ fn branch_from_wire(s: &str) -> Branch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A task's declared budget must be one the recipe will actually ADMIT.
+    ///
+    /// This cost a full 26-task run to discover. A task asked for 14 turns; the react
+    /// recipe's parameter contract admits `1..=8` and re-validates it fail-closed, so the
+    /// invoke was refused with `OutOfRange` — fifty minutes in, after every task before it
+    /// had already been driven on the model. Nothing model-free knew the corpus could
+    /// declare a budget the runtime would reject.
+    ///
+    /// The ceiling is not negotiable from here: it lives in the recipe body, and changing
+    /// a recipe body under an unchanged id is refused as an immutability conflict at boot.
+    /// So the corpus is what has to fit, and this is where that is enforced — in a test
+    /// that runs in a second, rather than in a benchmark that runs for an hour.
+    #[test]
+    fn no_task_declares_a_budget_the_recipe_would_refuse() {
+        // Mirrors `provision`'s react free-param contract: `0 < max_turns <= 8` and
+        // `0 < max_tool_calls <= 20`, re-validated fail-closed on every invoke.
+        const ADMITTED_MAX_TURNS: u32 = 8;
+        const ADMITTED_MAX_TOOL_CALLS: u32 = 20;
+        let corpus = kx_eval::load_bench_v1().expect("bench-v1 corpus loads");
+        for t in &corpus.suite.tasks {
+            if let Some(turns) = t.expect.max_turns {
+                assert!(
+                    turns > 0 && turns <= ADMITTED_MAX_TURNS,
+                    "task {} declares max_turns {turns}, outside the admitted 1..={ADMITTED_MAX_TURNS}",
+                    t.id
+                );
+            }
+            if let Some(calls) = t.expect.max_tool_calls {
+                assert!(
+                    calls > 0 && calls <= ADMITTED_MAX_TOOL_CALLS,
+                    "task {} declares max_tool_calls {calls}, outside the admitted \
+                     1..={ADMITTED_MAX_TOOL_CALLS}",
+                    t.id
+                );
+            }
+            // And the ideal must be reachable inside the budget the task will run under,
+            // or the task is unsatisfiable by construction and its score says nothing.
+            let budget_turns = t.expect.max_turns.unwrap_or(BENCH_MAX_TURNS);
+            assert!(
+                t.expect.ideal_turns <= budget_turns,
+                "task {} needs {} turns ideally but will be admitted only {budget_turns}",
+                t.id,
+                t.expect.ideal_turns
+            );
+            let budget_calls = t.expect.max_tool_calls.unwrap_or(BENCH_MAX_TOOL_CALLS);
+            assert!(
+                t.expect.ideal_tool_calls <= budget_calls,
+                "task {} needs {} tool calls ideally but will be admitted only {budget_calls}",
+                t.id,
+                t.expect.ideal_tool_calls
+            );
+        }
+    }
+
+    /// One joined telemetry row. `model_id` and `tool_id` are the discriminator the
+    /// split relies on: the sidecar upserts them from two different events, so a model
+    /// Mote carries the first and a tool-bearing Mote the second.
+    fn row(seq: u64, started: u64, wall: u64, model: &str, tool: &str) -> proto::MoteTelemetryRow {
+        proto::MoteTelemetryRow {
+            mote_id: vec![u8::try_from(seq % 256).unwrap_or(0); 32],
+            instance_id: vec![7; 16],
+            wall_clock_ms: wall,
+            input_tokens: None,
+            output_tokens: None,
+            model_id: model.to_string(),
+            tool_id: tool.to_string(),
+            started_unix_ms: started,
+            seq,
+        }
+    }
+
+    /// The split the gate is built on: model time and tool time come off disjoint rows,
+    /// and the wall-clock span covers the whole run including the gaps between motes.
+    /// Those gaps are the runtime's own cost — scheduling, folding, committing — and if
+    /// they were excluded the gate would have nothing left to detect.
+    #[test]
+    fn timing_attributes_model_and_tool_time_separately() {
+        // t=0 model runs 100ms; a 50ms gap; t=150 a tool runs 30ms; another 20ms gap;
+        // t=200 the answering model turn runs 60ms. Span 0..260.
+        let rows = [
+            row(10, 0, 100, "gemma", ""),
+            row(11, 150, 30, "", "mcp-kv/get"),
+            row(12, 200, 60, "gemma", ""),
+        ];
+        let t = timing_from_rows(&rows).expect("rows produce a timing");
+        assert_eq!(t.total_ms, 260, "span from first start to last finish");
+        assert_eq!(t.model_ms, 160, "both model motes, and only those");
+        assert_eq!(
+            t.total_ms - t.model_ms,
+            100,
+            "the 70ms of gaps plus the 30ms tool round are not the model's time"
+        );
+    }
+
+    /// An empty window is NOT a zero-cost run — it is a run whose cost was not measured.
+    /// A zero here would score `model_time_share` 0 and read as the runtime having
+    /// consumed the entire task, which is a fabricated regression.
+    #[test]
+    fn an_empty_telemetry_window_is_no_measurement_not_a_zero() {
+        assert!(timing_from_rows(&[]).is_none());
+    }
+
+    /// A run with no model rows at all (an FFI-free serve that never records usage)
+    /// still yields a timing, with a zero model share — and that IS the honest reading:
+    /// the window has motes, none of them was a model.
+    #[test]
+    fn a_window_with_no_model_rows_reports_zero_model_time() {
+        let rows = [row(10, 0, 40, "", "mcp-echo/echo")];
+        let t = timing_from_rows(&rows).expect("a non-empty window measures");
+        assert_eq!(t.model_ms, 0);
+        assert_eq!(t.total_ms, 40, "the span is still the span");
+    }
+
+    /// The spikes never gate, and they must say how much of the suite they cover: a p95
+    /// computed over two of sixteen tasks is not a suite number. `measured_tasks` is what
+    /// stops a partial measurement reading as full coverage.
+    #[test]
+    fn latency_spikes_report_their_own_coverage() {
+        let with = |ms: Option<u64>| Transcript {
+            task_id: "t".into(),
+            turns: vec![],
+            final_answer: None,
+            retrieved_docs: vec![],
+            rerank: None,
+            max_turns: 8,
+            max_tool_calls: 6,
+            timing: ms.map(|total_ms| TranscriptTiming {
+                total_ms,
+                model_ms: total_ms / 2,
+            }),
+        };
+        let spikes = latency_spikes(&[with(Some(100)), with(None), with(Some(300))]);
+        let get = |id: &str| {
+            spikes
+                .iter()
+                .find(|s| s.metric_id == id)
+                .and_then(|s| match &s.value {
+                    kx_eval::ScoreValue::Spike { value, .. } => Some(*value),
+                    kx_eval::ScoreValue::Gate { .. } => None,
+                })
+        };
+        assert_eq!(
+            get("measured_tasks"),
+            Some(2.0),
+            "the unmeasured task is not counted"
+        );
+        assert_eq!(get("suite_latency_ms_total"), Some(400.0));
+        assert_eq!(get("task_latency_ms_max"), Some(300.0));
+        assert!(
+            spikes
+                .iter()
+                .all(|s| matches!(s.value, kx_eval::ScoreValue::Spike { .. })),
+            "every latency number is a Spike — none of them may ever gate"
+        );
+    }
+
+    /// With nothing measured at all, the coverage spike still reports — as a zero — so a
+    /// run that measured nothing is distinguishable from a run that was never asked to.
+    #[test]
+    fn latency_spikes_survive_a_suite_that_measured_nothing() {
+        let spikes = latency_spikes(&[]);
+        assert_eq!(spikes.len(), 1, "only the coverage count");
+        assert_eq!(spikes[0].metric_id, "measured_tasks");
+    }
 
     fn bench_task(id: &str) -> GoldenTask {
         kx_eval::load_bench_v1()

@@ -253,6 +253,12 @@ mod real_exec;
 // executor; off-journal, off-digest.
 #[cfg(feature = "embedded-worker")]
 pub mod scripts;
+// Which axes of a declared sandbox ceiling THIS host can actually enforce, and the
+// registration-time refusal that follows from it. A ceiling that is declared, carried,
+// displayed, and then ignored reads as a constraint at every layer above the one that
+// drops it; this names those axes and refuses a declaration the host cannot keep.
+#[cfg(feature = "embedded-worker")]
+pub mod sandbox_probe;
 // PR-D: the run_inputs.db sidecar (the RunInputsStore seam) — the Invoke args
 // captured at submit so a run recovered from ListRuns can pre-fill its recipe
 // form and be re-invoked with edits ("Re-run with changes"). Rebuildable-to-

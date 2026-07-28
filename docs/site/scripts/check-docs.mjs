@@ -126,13 +126,13 @@ const problems = [];
       continue;
     }
     const doc = JSON.parse(await readFile(path, "utf8"));
-    loaded.push([name, new Map(doc.gates.map((g) => [g.id, g.per_mille]))]);
+    loaded.push([name, new Map(doc.gates.map((g) => [g.id, g.per_mille])), doc.env]);
   }
 
   // The column order is read from the table's own header rather than assumed: comparing
   // a claimed number against the wrong engine's baseline would pass or fail for the
   // wrong reason, and swapping two columns is an easy edit.
-  const header = /^\|\s*Family\s*\|[^|]*\|([^|]*)\|([^|]*)\|/m.exec(readme);
+  const header = /^\|\s*Family\s*\|[^|]*\|[^|]*\|([^|]*)\|([^|]*)\|/m.exec(readme);
   if (!header) {
     problems.push("README.md: benchmark table header not found — cannot verify its numbers");
   } else {
@@ -146,15 +146,52 @@ const problems = [];
     }
   }
 
-  // `| **tool** | …prose… | 1000 | 800 |` — the family, then one column per engine in
-  // the header's order.
-  const rows = [...readme.matchAll(/^\|\s*\*\*(tool|react|reach|swarm)\*\*\s*\|[^|]*\|([^|]*)\|([^|]*)\|/gm)];
-  if (rows.length !== 4) {
-    problems.push(
-      `README.md: expected 4 benchmark family rows (tool/react/reach/swarm), found ${rows.length}`,
-    );
+  // The family rows are derived from the CORPUS, not from a hand-kept list here. The
+  // previous version matched `(tool|react|reach|swarm)` and asserted there were four —
+  // so the `script` row it did not name was published, unchecked, for as long as it
+  // existed, and adding a family meant remembering to edit a regex in another directory.
+  // Reading the corpus makes a new family a check that fails until the README carries it.
+  const suitePath = join(REPO, "crates/kx-eval/corpus/bench-v1/suite.json");
+  /** @type {Map<string, number>} family → task count */
+  const taskCounts = new Map();
+  if (!existsSync(suitePath)) {
+    problems.push("crates/kx-eval/corpus/bench-v1/suite.json: missing — the README quotes it");
+  } else {
+    const suite = JSON.parse(await readFile(suitePath, "utf8"));
+    for (const t of suite.tasks ?? []) {
+      taskCounts.set(t.family, (taskCounts.get(t.family) ?? 0) + 1);
+    }
   }
-  for (const [, family, ...cols] of rows) {
+
+  // `| **tool** | 6 | …prose… | 1000 | 833 |` — family, task COUNT, prose, then one
+  // column per engine in the header's order. The count is checked because it is the
+  // denominator: without it a reader cannot tell that 833 means five tasks out of six,
+  // and a family of one looks as solid as a family of six.
+  const rows = [
+    ...readme.matchAll(
+      /^\|\s*\*\*([a-z]+)\*\*\s*\|\s*(\d+)\s*\|[^|]*\|([^|]*)\|([^|]*)\|/gm,
+    ),
+  ];
+  const claimedFamilies = new Set(rows.map((r) => r[1]));
+  for (const family of taskCounts.keys()) {
+    if (!claimedFamilies.has(family)) {
+      problems.push(
+        `README.md: the benchmark table has no row for the '${family}' family, which the ` +
+          `corpus contains — an unpublished family is a measured capability the reader never sees`,
+      );
+    }
+  }
+  for (const [, family, count, ...cols] of rows) {
+    const expectedCount = taskCounts.get(family);
+    if (expectedCount === undefined) {
+      problems.push(`README.md: benchmark table names a '${family}' family the corpus does not have`);
+      continue;
+    }
+    if (Number(count) !== expectedCount) {
+      problems.push(
+        `README.md: '${family}' claims ${count} task(s), the corpus has ${expectedCount}`,
+      );
+    }
     loaded.forEach(([engine, gate], i) => {
       const claimed = Number(cols[i].trim());
       const actual = gate.get(`task_success@${family}`);
@@ -167,16 +204,65 @@ const problems = [];
       }
     });
   }
-  // The prose claim beside the table.
-  if (/`groundedness` and `memory_quality` both score \*\*1000\*\*/.test(readme)) {
-    for (const [engine, gate] of loaded) {
-      for (const id of ["groundedness", "memory_quality"]) {
-        if (gate.get(id) !== 1000) {
-          problems.push(
-            `README.md claims ${id} is 1000, but baseline.${engine} says ${gate.get(id)}`,
-          );
-        }
+
+  // The SUITE-WIDE numbers. These are the ones a family table can hide: every family can
+  // read well while `loop_efficiency` sits far below it, and publishing only the flattering
+  // half is the failure this check exists to make impossible.
+  // Format: `| `task_success` | 1000 | 875 |`
+  const suiteRows = [
+    ...readme.matchAll(/^\|\s*`([a-z_0-9]+)`\s*\|([^|]*)\|([^|]*)\|/gm),
+  ];
+  const publishedSuiteGates = new Set();
+  for (const [, metric, ...cols] of suiteRows) {
+    loaded.forEach(([engine, gate], i) => {
+      const actual = gate.get(metric);
+      if (actual === undefined) return; // not a gate row (a metric-definition table)
+      publishedSuiteGates.add(metric);
+      const claimed = Number(cols[i].trim());
+      if (claimed !== actual) {
+        problems.push(
+          `README.md: suite-wide ${metric} on ${engine} reads ${claimed}, baseline says ${actual}`,
+        );
       }
+    });
+  }
+  // Every suite-wide gate must appear, including the unflattering ones.
+  for (const [engine, gate] of loaded) {
+    for (const id of gate.keys()) {
+      if (id.includes("@")) continue; // per-family gates live in the family table
+      if (!publishedSuiteGates.has(id)) {
+        problems.push(
+          `README.md: baseline.${engine} carries a suite-wide '${id}' gate the README does ` +
+            `not publish — a number omitted from the table is a number chosen not to show`,
+        );
+      }
+    }
+  }
+
+  // (4) THE ENVIRONMENT LABEL. A real-model score without the model that produced it is
+  //     not a record. The README used to say "Gemma-4-12B on both local engines" while the
+  //     two arms ran two DIFFERENT builds, and nothing could catch it because the committed
+  //     baseline carried no label at all.
+  for (const [engine, , env] of loaded) {
+    if (!env) {
+      problems.push(
+        `baseline.${engine}: no env block — re-capture it (KX_BENCH_UPDATE_BASELINE=1), ` +
+          `since the README's environment claims are checked against it`,
+      );
+      continue;
+    }
+    if (env.model && !readme.includes(env.model)) {
+      problems.push(
+        `README.md: does not name '${env.model}', the model baseline.${engine} was captured ` +
+          `on — the two engines do not run the same build, and saying so is the point`,
+      );
+    }
+    const suiteTotal = [...taskCounts.values()].reduce((a, b) => a + b, 0);
+    if (env.task_count && suiteTotal && env.task_count !== suiteTotal) {
+      problems.push(
+        `baseline.${engine}: captured over ${env.task_count} task(s), the corpus now has ` +
+          `${suiteTotal} — re-capture before publishing`,
+      );
     }
   }
 }

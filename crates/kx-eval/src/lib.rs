@@ -66,8 +66,8 @@ pub use crate::corpus::{
 };
 pub use crate::error::EvalError;
 pub use crate::report::{
-    aggregate, compare_to_baseline, Baseline, BaselineComparison, EvalReport, GateValue,
-    Regression, SpikeMetric, TaskScore, FAMILY_GATE_SEP, GATE_UNIT, SCHEMA_VERSION,
+    aggregate, compare_to_baseline, Baseline, BaselineComparison, BaselineEnv, EvalReport,
+    GateValue, Regression, SpikeMetric, TaskScore, FAMILY_GATE_SEP, GATE_UNIT, SCHEMA_VERSION,
 };
 pub use crate::run_quality::{analyze_run, RunQuality};
 pub use crate::runner::{score_corpus, score_golden_v1, score_golden_v1_family};
@@ -76,4 +76,4 @@ pub use crate::scorers::{
     ScoreOutput, ScoreValue, TRANSCRIPT_SCORER_IDS,
 };
 pub use crate::suite::{Expectation, ExpectedTerminal, ExpectedToolCall, GoldenSuite, GoldenTask};
-pub use crate::transcript::{Branch, ToolKey, Transcript, TurnRecord};
+pub use crate::transcript::{Branch, ToolKey, Transcript, TranscriptTiming, TurnRecord};

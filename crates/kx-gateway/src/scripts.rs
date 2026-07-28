@@ -393,6 +393,15 @@ pub enum ScriptAdmissionError {
     /// Identity halves must be non-empty.
     #[error("script name and version must both be non-empty")]
     BadIdentity,
+    /// The declaration names a ceiling this host's sandbox cannot apply.
+    ///
+    /// Fail closed rather than accept it. A ceiling that is declared, carried through
+    /// the registry, shown in every listing, and then ignored by the spawn is worse than
+    /// one that was never offered: it reads as a constraint everywhere it appears. This
+    /// was the state of an egress allowlist on Linux — the script registered, ran, and
+    /// had the network wide open, and nothing anywhere said so.
+    #[error("this host cannot enforce a ceiling the script declared: {0}")]
+    UnenforceableCeiling(String),
     /// The content store or registry refused the write.
     #[error("could not store the script: {0}")]
     Storage(String),
@@ -918,6 +927,17 @@ pub fn register_script<S: ContentStore + Send + Sync>(
         });
     }
     let shim_ref = shim_ref.ok_or(ScriptAdmissionError::ShimUnavailable)?;
+    // Refuse a ceiling this host cannot keep, BEFORE anything is stored. Checked here
+    // rather than at the spawn because the spawn is too late to be honest: by then the
+    // script is registered, listed with its declared scope, and every surface above it
+    // has been told the constraint exists.
+    if let Some(why) = crate::sandbox_probe::unenforceable_wish(
+        exec_class,
+        decl.wish.net_hosts.iter().map(|h| h.0.as_str()),
+        decl.wish.mem_bytes > 0,
+    ) {
+        return Err(ScriptAdmissionError::UnenforceableCeiling(why));
+    }
     // PROBE, do not assume. A candidate that exists is not a candidate that works:
     // `/usr/bin/python3` on macOS is a developer-tools trampoline that answers
     // `--version` happily from a normal shell and then fails inside the sandbox,
@@ -1395,8 +1415,13 @@ fn admission_status(err: &ScriptAdmissionError) -> ScriptAdminError {
         ScriptAdmissionError::UnknownInterpreter { .. }
         | ScriptAdmissionError::BadSource { .. }
         | ScriptAdmissionError::BadIdentity => ScriptAdminError::InvalidArgument(err.to_string()),
+        // An unenforceable ceiling belongs with the other HOST limitations, not with the
+        // bad fields: the declaration is well-formed and would be honoured elsewhere.
+        // What is missing is a capability of this machine, which no amount of retrying
+        // with different arguments will supply — though narrowing the wish will.
         ScriptAdmissionError::ShimUnavailable
-        | ScriptAdmissionError::InterpreterUnavailable { .. } => {
+        | ScriptAdmissionError::InterpreterUnavailable { .. }
+        | ScriptAdmissionError::UnenforceableCeiling(_) => {
             ScriptAdminError::Unavailable(err.to_string())
         }
         ScriptAdmissionError::Storage(_) | ScriptAdmissionError::Registration(_) => {
