@@ -300,6 +300,10 @@ mod webhook;
 // embedded worker (the executor wrapper measures the worker's mote loop).
 #[cfg(feature = "embedded-worker")]
 mod telemetry;
+// The model-usage hook seam `model_exec` records through — trait-only, so the
+// dispatch path never depends on the ledger module that implements it.
+#[cfg(feature = "embedded-worker")]
+mod usage;
 // UI-3: the host-side teams (MembershipView) + grants (GrantView) read seams + the
 // idempotent demo-team seed.
 mod teams;

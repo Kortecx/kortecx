@@ -43,6 +43,7 @@ use kx_warrant::ExecutorClass;
 use rusqlite::{params, Connection};
 
 use crate::error::GatewayError;
+use crate::usage::UsageSink;
 use kx_gateway_core::GatewayError as CoreError;
 
 /// The telemetry sidecar schema version. A bump (or any decode failure) makes
@@ -102,18 +103,6 @@ enum TelemetryEvent {
         model_id: String,
         output_tokens: u64,
     },
-}
-
-/// The model-usage hook the inference build's `ModelRouterExecutor` records
-/// through (kept trait-shaped so `model_exec` needs no telemetry type beyond
-/// one `Arc<dyn UsageSink>`). Implementations MUST be non-blocking + infallible
-/// from the caller's view (the fail-open posture). Dead on the FFI-free build
-/// (no model dispatch exists to record).
-#[cfg_attr(not(feature = "inference"), allow(dead_code))]
-pub(crate) trait UsageSink: Send + Sync {
-    /// Record that a model dispatch for `mote_id` actually ran `model_id` and
-    /// emitted `output_tokens`. Never blocks; never fails the caller.
-    fn record_usage(&self, mote_id: [u8; 32], model_id: &str, output_tokens: u64);
 }
 
 /// The cloneable hot-path handle: a bounded `try_send` into the ledger's event
