@@ -115,6 +115,7 @@ mod tests {
         let s = score_of(Some(TranscriptTiming {
             total_ms: 1000,
             model_ms: 1000,
+            output_tokens: None,
         }));
         assert_eq!(s.gate_per_mille(), Some(PER_MILLE));
     }
@@ -125,10 +126,12 @@ mod tests {
         let fast = score_of(Some(TranscriptTiming {
             total_ms: 1000,
             model_ms: 800,
+            output_tokens: None,
         }));
         let slow = score_of(Some(TranscriptTiming {
             total_ms: 2000,
             model_ms: 800,
+            output_tokens: None,
         }));
         assert_eq!(fast.gate_per_mille(), Some(800));
         assert_eq!(slow.gate_per_mille(), Some(400));
@@ -146,10 +149,12 @@ mod tests {
         let baseline = score_of(Some(TranscriptTiming {
             total_ms: 1000,
             model_ms: 700,
+            output_tokens: None,
         }));
         let slower_host = score_of(Some(TranscriptTiming {
             total_ms: 1000 + 500,
             model_ms: 700 + 500,
+            output_tokens: None,
         }));
         assert!(
             slower_host.gate_per_mille() >= baseline.gate_per_mille(),
@@ -169,6 +174,7 @@ mod tests {
         let s = score_of(Some(TranscriptTiming {
             total_ms: 0,
             model_ms: 0,
+            output_tokens: None,
         }));
         assert!(!s.applicable);
     }
@@ -180,6 +186,7 @@ mod tests {
         let s = score_of(Some(TranscriptTiming {
             total_ms: 100,
             model_ms: 400,
+            output_tokens: None,
         }));
         assert_eq!(s.gate_per_mille(), Some(PER_MILLE));
     }

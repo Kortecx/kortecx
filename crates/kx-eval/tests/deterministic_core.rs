@@ -50,12 +50,20 @@ fn aggregate_gate_values_are_pinned() {
     };
     assert_eq!(gate("task_success"), Some(1000));
     assert_eq!(gate("tool_call_f1"), Some(1000));
-    assert_eq!(gate("groundedness"), Some(1000));
+    // The sequence columns are pinned BELOW perfect on purpose: the corpus carries
+    // `seq_wrong_order_null` (right set, wrong order — FSA 0, PSA 500 there), so a
+    // sequence scorer that went order-blind would read 1000 here and FAIL this exact
+    // pin. Six tasks expect tools: FSA (5×1000+0)/6, PSA (5×1000+500)/6.
+    assert_eq!(gate("tool_seq_fsa"), Some(833));
+    assert_eq!(gate("tool_seq_psa"), Some(916));
+    // Grounded tasks include `context_recall_unused_evidence_null` (evidence retrieved,
+    // answer ignored it): groundedness (1000+1000+0)/3, context_recall stays 1000 —
+    // the aggregate-level witness that the pair separates retrieval from grounding.
+    assert_eq!(gate("groundedness"), Some(666));
+    assert_eq!(gate("context_recall"), Some(1000));
     // The rejection-recovery task spends one extra turn ⇒ the aggregate is below perfect.
-    // The `skill_email_triage` task was added (loop_efficiency 1000), so 11 tasks:
-    // (1000×10 + 750) / 11 = 977 per-mille (integer floor; was 975 over 10 tasks —
-    // the deliberate re-baseline recorded with the suite_digest move).
-    assert_eq!(gate("loop_efficiency"), Some(977));
+    // 13 tasks: (1000×12 + 750) / 13 = 980 per-mille (integer floor).
+    assert_eq!(gate("loop_efficiency"), Some(980));
     // RC4c-2c: the LLM rerank moves the most-relevant passage (placed last) to the top.
     assert_eq!(gate("rerank_quality"), Some(1000));
     // RC5a: the agent recalled the fact it learned earlier AND grounded its answer on it
@@ -94,6 +102,41 @@ fn rejection_recovery_loop_efficiency_is_750_per_task() {
         matches!(le.value, ScoreValue::Gate { per_mille: 750 }),
         "rejection-recovery loop_efficiency should be 750, got {:?}",
         le.value
+    );
+}
+
+/// The two null fixtures, pinned per task (independent of aggregates and the baseline
+/// file): each proves its scorer reads DIFFERENTLY from the metric it complements on
+/// the exact input where the complement is blind.
+#[test]
+fn the_null_fixtures_separate_what_their_neighbour_metrics_cannot() {
+    let corpus = load_golden_v1().expect("corpus");
+    let report = score_corpus(&corpus, ENV_LABEL.into(), "test".into());
+    let score_of = |task: &str, metric: &str| {
+        report
+            .per_task
+            .iter()
+            .find(|t| t.task_id == task)
+            .unwrap_or_else(|| panic!("task {task} present"))
+            .scores
+            .iter()
+            .find(|s| s.metric_id == metric)
+            .unwrap_or_else(|| panic!("{metric} scored on {task}"))
+            .gate_per_mille()
+    };
+    // Right set, wrong order: F1 (order-tolerant) is blind, the sequence column is not.
+    assert_eq!(score_of("seq_wrong_order_null", "tool_call_f1"), Some(1000));
+    assert_eq!(score_of("seq_wrong_order_null", "tool_seq_fsa"), Some(0));
+    assert_eq!(score_of("seq_wrong_order_null", "tool_seq_psa"), Some(500));
+    // Evidence retrieved but unused: context_recall credits the retriever,
+    // groundedness debits the answer.
+    assert_eq!(
+        score_of("context_recall_unused_evidence_null", "context_recall"),
+        Some(1000)
+    );
+    assert_eq!(
+        score_of("context_recall_unused_evidence_null", "groundedness"),
+        Some(0)
     );
 }
 

@@ -176,12 +176,24 @@ pub fn drive_for(task: &GoldenTask) -> Result<Drive, BenchError> {
         // input that is trying to steer it. Driving them down a bespoke shape would test
         // the shape; driving them down the shape everything else uses is what makes their
         // numbers comparable with the rest of the table.
-        "tool" | "react" | "script" | "http" | "failure" | "menu" | "long" | "adversarial" => {
-            Ok(Drive::React {
-                handle: REACT_AUTO_RECIPE_HANDLE,
+        // `irrelevance` rides the same loop again: the family's whole question is
+        // whether the model, shown the SAME menu every tool family sees, declines to
+        // fire when nothing on it applies — a bespoke drive would remove the menu the
+        // decision is about.
+        "tool" | "react" | "script" | "http" | "failure" | "menu" | "long" | "adversarial"
+        | "irrelevance" => Ok(Drive::React {
+            handle: REACT_AUTO_RECIPE_HANDLE,
+            dataset: None,
+        }),
+        // The memory family runs the memory-tooled loop: both of its tasks are ABOUT
+        // remember/recall, which only that recipe grants.
+        "memory" => match task.id.as_str() {
+            "memory-update-recall" | "memory-abstains-when-absent" => Ok(Drive::React {
+                handle: REACT_MEMORY_RECIPE_HANDLE,
                 dataset: None,
-            })
-        }
+            }),
+            _ => Err(unknown()),
+        },
         "reach" => match task.id.as_str() {
             "rag-grounded-answer" => Ok(Drive::React {
                 handle: REACT_RAG_RECIPE_HANDLE,
@@ -447,7 +459,7 @@ impl LiveSuiteOutcome {
 pub const FILTERED_OUT: &str = "(held back by KX_BENCH_ONLY)";
 
 /// The optional `KX_BENCH_ONLY` task-id allowlist (comma-separated), for attributing a
-/// loop change to one arm without driving all sixteen tasks on a served model.
+/// loop change to one arm without driving the whole suite on a served model.
 ///
 /// Unset / empty ⇒ `None` ⇒ the whole suite runs, byte-identically to before. Every task
 /// it holds back is reported as SKIPPED, so `LiveSuiteOutcome::is_complete` is false and a
@@ -555,7 +567,8 @@ pub async fn score_live_suite(
     }
 
     let format_na = ScoreOutput::not_applicable("format_coverage", "N/A for a live suite");
-    let spikes = latency_spikes(&transcripts);
+    let mut spikes = latency_spikes(&transcripts);
+    spikes.extend(token_spikes(&per_task, &transcripts));
     Ok(LiveSuiteOutcome {
         report: aggregate(
             corpus.suite.id.clone(),
@@ -602,7 +615,7 @@ fn observation_tools_for(task: &GoldenTask) -> BTreeSet<String> {
 ///
 /// Percentiles are nearest-rank on the sorted per-task totals. Tasks whose timing did not
 /// land contribute to nothing here, and `measured_tasks` says how many did — a p95 over
-/// three of sixteen tasks is not a suite number, and the count is what makes that visible
+/// a handful of tasks is not a suite number, and the count is what makes that visible
 /// instead of leaving a confident-looking figure to be read as full coverage.
 fn latency_spikes(transcripts: &[Transcript]) -> Vec<ScoreOutput> {
     let mut totals: Vec<u64> = transcripts
@@ -650,6 +663,105 @@ fn latency_spikes(transcripts: &[Transcript]) -> Vec<ScoreOutput> {
             applicable: true,
             detail: format!("over {measured} measured task(s)"),
         });
+    }
+    out
+}
+
+/// An integer-valued Spike (tokens, counts) — the emission point is where rounding
+/// happens, so a committed baseline diffs in whole units.
+fn int_spike(id: &str, value: u64, unit: &str, detail: String) -> ScoreOutput {
+    ScoreOutput {
+        metric_id: id.to_string(),
+        value: kx_eval::ScoreValue::Spike {
+            #[allow(clippy::cast_precision_loss)]
+            value: value as f64,
+            unit: unit.to_string(),
+        },
+        applicable: true,
+        detail,
+    }
+}
+
+/// The suite's output-token economy, recorded and never gated.
+///
+/// Computed from the same telemetry windows the wall-clock split reads, so a task's
+/// tokens are attributed exactly as its time is. `per_task[i]` and `transcripts[i]` are
+/// pushed together by the driver loop, which is what lets a token sum sit beside its
+/// task's family and pass/fail without a join.
+///
+/// - `tokens_per_task_mean` (suite and per family): integer mean over the tasks that
+///   reported a count. `tokens_measured_tasks` is the coverage denominator beside them.
+/// - `tokens_per_success`: total measured output tokens per PASSED measured task — the
+///   cost of a success with the cost of the failures amortised into it. OMITTED when no
+///   measured task passed: a cost-per-success with zero successes is not a big number,
+///   it is no number (and its absence is what a reader should see).
+///
+/// There are no input-token spikes because OSS records no input count — a metric whose
+/// input the runtime does not record is not published, ever.
+fn token_spikes(per_task: &[TaskScore], transcripts: &[Transcript]) -> Vec<ScoreOutput> {
+    debug_assert_eq!(per_task.len(), transcripts.len());
+    let measured: Vec<(usize, u64)> = transcripts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| t.timing.and_then(|tm| tm.output_tokens).map(|tok| (i, tok)))
+        .collect();
+    let mut out = vec![int_spike(
+        "tokens_measured_tasks",
+        measured.len() as u64,
+        "tasks",
+        format!(
+            "{} of {} task(s) reported output-token counts",
+            measured.len(),
+            transcripts.len()
+        ),
+    )];
+    if measured.is_empty() {
+        return out;
+    }
+    let total: u64 = measured.iter().map(|(_, tok)| tok).sum();
+    out.push(int_spike(
+        "tokens_per_task_mean",
+        total / measured.len() as u64,
+        "tokens",
+        format!("mean over {} measured task(s)", measured.len()),
+    ));
+    // Per family, in first-appearance order (the published table's order).
+    let mut family_order: Vec<&str> = Vec::new();
+    let mut family_tokens: BTreeMap<&str, Vec<u64>> = BTreeMap::new();
+    for (i, tok) in &measured {
+        let family = per_task[*i].family.as_str();
+        if !family.is_empty() {
+            if !family_order.contains(&family) {
+                family_order.push(family);
+            }
+            family_tokens.entry(family).or_default().push(*tok);
+        }
+    }
+    for family in family_order {
+        let toks = &family_tokens[family];
+        out.push(int_spike(
+            &format!("tokens_per_task_mean@{family}"),
+            toks.iter().sum::<u64>() / toks.len() as u64,
+            "tokens",
+            format!("mean over {} measured task(s)", toks.len()),
+        ));
+    }
+    let passes = measured
+        .iter()
+        .filter(|(i, _)| {
+            per_task[*i]
+                .scores
+                .iter()
+                .any(|s| s.metric_id == "task_success" && s.gate_per_mille() == Some(1000))
+        })
+        .count() as u64;
+    if passes > 0 {
+        out.push(int_spike(
+            "tokens_per_success",
+            total / passes,
+            "tokens",
+            format!("total measured output tokens over {passes} passed task(s)"),
+        ));
     }
     out
 }
@@ -779,9 +891,19 @@ fn timing_from_rows(rows: &[proto::MoteTelemetryRow]) -> Option<TranscriptTiming
         .filter(|r| !r.model_id.is_empty())
         .map(|r| r.wall_clock_ms)
         .sum();
+    // The same model rows carry the run's output-token counts. Summed here because the
+    // window is already the task's exact cost attribution; `None` when no model row
+    // reported a count (a degraded build) — absent is not zero.
+    let token_rows: Vec<u64> = rows
+        .iter()
+        .filter(|r| !r.model_id.is_empty())
+        .filter_map(|r| r.output_tokens)
+        .collect();
+    let output_tokens = (!token_rows.is_empty()).then(|| token_rows.iter().sum());
     Some(TranscriptTiming {
         total_ms: end.saturating_sub(start),
         model_ms,
+        output_tokens,
     })
 }
 
@@ -1178,7 +1300,7 @@ mod tests {
     }
 
     /// The spikes never gate, and they must say how much of the suite they cover: a p95
-    /// computed over two of sixteen tasks is not a suite number. `measured_tasks` is what
+    /// computed over a couple of tasks is not a suite number. `measured_tasks` is what
     /// stops a partial measurement reading as full coverage.
     #[test]
     fn latency_spikes_report_their_own_coverage() {
@@ -1193,6 +1315,7 @@ mod tests {
             timing: ms.map(|total_ms| TranscriptTiming {
                 total_ms,
                 model_ms: total_ms / 2,
+                output_tokens: Some(total_ms), // 1 token/ms — an easy sum to pin below
             }),
         };
         let spikes = latency_spikes(&[with(Some(100)), with(None), with(Some(300))]);
@@ -1227,6 +1350,97 @@ mod tests {
         let spikes = latency_spikes(&[]);
         assert_eq!(spikes.len(), 1, "only the coverage count");
         assert_eq!(spikes[0].metric_id, "measured_tasks");
+    }
+
+    /// The token economy: attributed like the timing, covered by its own count, and
+    /// `tokens_per_success` OMITTED — not zero, not infinity — when nothing passed.
+    #[test]
+    fn token_spikes_cover_count_mean_family_and_success() {
+        let transcript = |tokens: Option<u64>| Transcript {
+            task_id: "t".into(),
+            turns: vec![],
+            final_answer: None,
+            retrieved_docs: vec![],
+            rerank: None,
+            max_turns: 8,
+            max_tool_calls: 6,
+            timing: tokens.map(|output| TranscriptTiming {
+                total_ms: 100,
+                model_ms: 50,
+                output_tokens: Some(output),
+            }),
+        };
+        let scored = |family: &str, success: u32| kx_eval::TaskScore {
+            task_id: "t".into(),
+            family: family.into(),
+            scores: vec![ScoreOutput::gate("task_success", success, "")],
+        };
+        let per_task = [
+            scored("tool", 1000),
+            scored("tool", 0),
+            scored("http", 1000),
+        ];
+        let transcripts = [
+            transcript(Some(200)),
+            transcript(Some(400)),
+            transcript(None), // measured nothing — out of every mean and denominator
+        ];
+        let spikes = token_spikes(&per_task, &transcripts);
+        let get = |id: &str| {
+            spikes
+                .iter()
+                .find(|s| s.metric_id == id)
+                .and_then(|s| match &s.value {
+                    kx_eval::ScoreValue::Spike { value, .. } => Some(*value),
+                    kx_eval::ScoreValue::Gate { .. } => None,
+                })
+        };
+        assert_eq!(get("tokens_measured_tasks"), Some(2.0));
+        assert_eq!(get("tokens_per_task_mean"), Some(300.0));
+        assert_eq!(get("tokens_per_task_mean@tool"), Some(300.0));
+        assert_eq!(
+            get("tokens_per_task_mean@http"),
+            None,
+            "a family whose tasks reported no counts publishes no mean"
+        );
+        // One measured pass (the 200-token task) carries the whole measured total.
+        assert_eq!(get("tokens_per_success"), Some(600.0));
+        assert!(
+            spikes
+                .iter()
+                .all(|s| matches!(s.value, kx_eval::ScoreValue::Spike { .. })),
+            "every token number is a Spike — none of them may ever gate"
+        );
+    }
+
+    /// The absence rule (a cost-per-success with zero successes is no number at all).
+    #[test]
+    fn tokens_per_success_is_omitted_when_nothing_passed() {
+        let per_task = [kx_eval::TaskScore {
+            task_id: "t".into(),
+            family: "tool".into(),
+            scores: vec![ScoreOutput::gate("task_success", 0, "")],
+        }];
+        let transcripts = [Transcript {
+            task_id: "t".into(),
+            turns: vec![],
+            final_answer: None,
+            retrieved_docs: vec![],
+            rerank: None,
+            max_turns: 8,
+            max_tool_calls: 6,
+            timing: Some(TranscriptTiming {
+                total_ms: 100,
+                model_ms: 50,
+                output_tokens: Some(500),
+            }),
+        }];
+        let spikes = token_spikes(&per_task, &transcripts);
+        assert!(spikes.iter().any(|s| s.metric_id == "tokens_per_task_mean"));
+        assert!(
+            spikes.iter().all(|s| s.metric_id != "tokens_per_success"),
+            "no successes ⇒ the spike is absent, never a division by zero or a zero"
+        );
     }
 
     fn bench_task(id: &str) -> GoldenTask {

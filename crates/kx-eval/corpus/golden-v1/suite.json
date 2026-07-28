@@ -469,6 +469,86 @@
         "max_turns": 8,
         "max_tool_calls": 20
       }
+    },
+    {
+      "id": "seq_wrong_order_null",
+      "description": "The null the sequence column exists for: the right SET of calls in the wrong ORDER. tool_call_f1 is an order-tolerant multiset and reads a perfect 1000 here by design; tool_seq_fsa must read 0 and tool_seq_psa 500, or the column measures nothing F1 does not.",
+      "instruction": "Look up the value under the key 'x', then add 1 to it and report the result.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "43"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "mcp-calc/calc",
+            "tool_version": "1"
+          }
+        ],
+        "grounded_in": [],
+        "ideal_turns": 3,
+        "ideal_tool_calls": 2
+      },
+      "scripted_transcript": {
+        "task_id": "seq_wrong_order_null",
+        "turns": [
+          {
+            "turn": 0,
+            "branch": "tool",
+            "tool_id": "mcp-calc/calc",
+            "tool_version": "1"
+          },
+          {
+            "turn": 1,
+            "branch": "tool",
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          },
+          {
+            "turn": 2,
+            "branch": "answer"
+          }
+        ],
+        "final_answer": "The result is 43",
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
+    },
+    {
+      "id": "context_recall_unused_evidence_null",
+      "description": "The retrieval-vs-grounding separation null: retrieval SURFACED the declared evidence and the answer ignored it. context_recall must read 1000 (the retriever did its job) where groundedness reads 0 (the answer is not grounded) \u2014 the pair is what tells a retrieval failure from a grounding failure, and a scorer that cannot produce this split is measuring the other one's thing.",
+      "instruction": "Report the eclipse-window callsign if you can confirm it from the archive.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "checked the archive"
+        ],
+        "expected_tools": [],
+        "grounded_in": [
+          "ZEPHYR-77"
+        ],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      },
+      "scripted_transcript": {
+        "task_id": "context_recall_unused_evidence_null",
+        "turns": [
+          {
+            "turn": 0,
+            "branch": "answer"
+          }
+        ],
+        "final_answer": "I checked the archive but cannot confirm the callsign.",
+        "retrieved_docs": [
+          "Relay bulletin: the Helios ground station eclipse-window callsign is ZEPHYR-77."
+        ],
+        "max_turns": 8,
+        "max_tool_calls": 20
+      }
     }
   ]
 }

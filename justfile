@@ -895,21 +895,28 @@ eval-real:
 # the gitignored `docs/benchmarks/`; the committed per-engine baseline is the fail-closed
 # ratchet.
 #
-# COVERAGE: the suite spans ten families (`tool` · `react` · `reach` · `swarm` · `script`
-# · `http` · `failure` · `menu` · `long` · `adversarial`); the family table in
-# docs/site/docs/evaluation.md is the authoritative description — this header stopped
-# hand-keeping a third copy after the five-family version of it silently rotted. Several
-# `tool`/`script` tasks are multi-hop, because a single-tool task cannot tell you whether
-# the loop carries an observation into the NEXT call. `hnsw` is in the feature
-# set and `KX_SERVE_MEMORY` is set because the `reach` family's fixtures (the RAG corpus,
-# the recall memory) are provisioned ONLY when their capabilities are registered;
-# without them the family SKIPS (loudly) and a
-# baseline capture is refused, because the committed baseline is keyed by the whole corpus
-# digest and a partial capture would ratchet every later run against a subset.
+# COVERAGE: the suite spans twelve families (`tool` · `react` · `reach` · `swarm` ·
+# `script` · `http` · `failure` · `menu` · `long` · `adversarial` · `irrelevance` ·
+# `memory`); the family table in docs/site/docs/evaluation.md is the authoritative
+# description — this header stopped hand-keeping a third copy after the five-family
+# version of it silently rotted. Several `tool`/`script` tasks are multi-hop, because a
+# single-tool task cannot tell you whether the loop carries an observation into the NEXT
+# call. `hnsw` is in the feature set and `KX_SERVE_MEMORY` is set because the `reach` and
+# `memory` families' fixtures (the RAG corpus, the recall + knowledge-update memories)
+# are provisioned ONLY when their capabilities are registered; without them the families
+# SKIP (loudly) and a baseline capture is refused, because the committed baseline is
+# keyed by the whole corpus digest and a partial capture would ratchet every later run
+# against a subset.
+#
+# AFTER the suite, a capturable run carries three more phases (all folded into the same
+# report and completeness flag): model-free RPC latency probes, the Success@8 retrieval
+# gate over the near-miss corpus, and the pass^k reliability phase — K=4 fully-fresh
+# serves re-running the corpus's flagship tasks (expect it to ADD roughly 10-25 min per
+# engine). `KX_BENCH_ONLY` diagnostic runs skip all three.
 #
 # Drive BOTH engines (restart per run). The Ollama arm needs a DEDICATED EMBEDDER, or
 # `ingest_documents` fails and the whole `reach` family skips — the run then prints
-# `reach_fixtures=false` and covers 23 of 26 tasks. The invocation documented here used to
+# `reach_fixtures=false` and drops the reach tasks. The invocation documented here used to
 # omit it, so following this header exactly produced a partial run that still reported a
 # result (and could not capture a baseline at all, which is the fail-closed preflight doing
 # its job against instructions that could never satisfy it):

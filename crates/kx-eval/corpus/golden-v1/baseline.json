@@ -1,6 +1,7 @@
 {
   "suite_id": "golden-v1",
-  "suite_digest": "d8403a24eecb7fb3f417291e3bc0e7dd4a604140072bb3f470834a37ce06dedb",
+  "suite_digest": "8c419b0bd9115c6fd9b81c2c8b53586763556966b6d8bb484a28c3e85cbb211c",
+  "env": null,
   "gates": [
     {
       "id": "task_success",
@@ -11,12 +12,24 @@
       "per_mille": 1000
     },
     {
+      "id": "tool_seq_fsa",
+      "per_mille": 833
+    },
+    {
+      "id": "tool_seq_psa",
+      "per_mille": 916
+    },
+    {
       "id": "groundedness",
+      "per_mille": 666
+    },
+    {
+      "id": "context_recall",
       "per_mille": 1000
     },
     {
       "id": "loop_efficiency",
-      "per_mille": 977
+      "per_mille": 980
     },
     {
       "id": "rerank_quality",
@@ -37,6 +50,71 @@
     {
       "id": "format_coverage",
       "per_mille": 1000
+    },
+    {
+      "id": "task_success@core",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_call_f1@core",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_fsa@core",
+      "per_mille": 800
+    },
+    {
+      "id": "tool_seq_psa@core",
+      "per_mille": 900
+    },
+    {
+      "id": "groundedness@core",
+      "per_mille": 666
+    },
+    {
+      "id": "context_recall@core",
+      "per_mille": 1000
+    },
+    {
+      "id": "loop_efficiency@core",
+      "per_mille": 979
+    },
+    {
+      "id": "rerank_quality@core",
+      "per_mille": 1000
+    },
+    {
+      "id": "memory_quality@core",
+      "per_mille": 1000
+    },
+    {
+      "id": "consolidation_quality@core",
+      "per_mille": 1000
+    },
+    {
+      "id": "task_success@skills",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_call_f1@skills",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_fsa@skills",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_psa@skills",
+      "per_mille": 1000
+    },
+    {
+      "id": "loop_efficiency@skills",
+      "per_mille": 1000
+    },
+    {
+      "id": "skill_quality@skills",
+      "per_mille": 1000
     }
-  ]
+  ],
+  "spikes": []
 }

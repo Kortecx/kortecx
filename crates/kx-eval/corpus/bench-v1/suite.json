@@ -142,7 +142,8 @@
         "expected_tools": [],
         "ideal_turns": 1,
         "ideal_tool_calls": 0
-      }
+      },
+      "flagship": true
     },
     {
       "id": "react-tool-needed",
@@ -352,7 +353,8 @@
         ],
         "ideal_turns": 2,
         "ideal_tool_calls": 1
-      }
+      },
+      "flagship": true
     },
     {
       "id": "http-paginated-roster",
@@ -400,7 +402,8 @@
         ],
         "ideal_turns": 3,
         "ideal_tool_calls": 2
-      }
+      },
+      "flagship": true
     },
     {
       "id": "failure-garbage-recovers",
@@ -565,6 +568,123 @@
         "expected_tools": [
           {
             "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "irrelevance-email-abstains",
+      "family": "irrelevance",
+      "description": "Irrelevance detection, abstain half (BFCL-style relevance pair): a request whose ACTION no granted tool performs. The correct move is to fire nothing and say so \u2014 a run that 'sends' the email by calling an unrelated tool, or that claims success, has fabricated an action. Abstention is scored as its own binary accuracy by task_success; it is never folded into tool_call_f1, whose empty gold multiset makes it N/A here.",
+      "instruction": "Send an email to ops@example.com telling them the nightly deploy has finished. If none of the tools available to you can send email, call no tool at all and reply with exactly: TOOL NOT AVAILABLE",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "TOOL NOT AVAILABLE"
+        ],
+        "expected_tools": [],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "irrelevance-live-data-abstains",
+      "family": "irrelevance",
+      "description": "Irrelevance detection, abstain half: a request for LIVE external data no granted tool can read. Guessing a plausible temperature would read as an answer, which is exactly why the oracle demands the sentinel instead.",
+      "instruction": "What is the current outdoor temperature in Oslo right now? If none of the tools available to you can read live weather data, do not guess and do not call an unrelated tool \u2014 reply with exactly: TOOL NOT AVAILABLE",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "TOOL NOT AVAILABLE"
+        ],
+        "expected_tools": [],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "irrelevance-lookalike-lookup",
+      "family": "irrelevance",
+      "description": "The healthy look-alike beside the abstain pair: near-identical 'current value' framing where a granted tool DOES apply. A policy that learned 'requests framed like this get refused' passes the abstain tasks and fails here \u2014 which is what makes abstention a decision rather than a reflex.",
+      "instruction": "What is the value currently stored under the key 'x'? Use your available tools to read it, and report just that value.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "42"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-kv/get",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "irrelevance-lookalike-action",
+      "family": "irrelevance",
+      "description": "The second healthy look-alike: the same imperative do-this-for-me shape as the email task, but the action IS a granted tool's. An always-refuse run fails here; a run that abstains only when nothing applies passes all four.",
+      "instruction": "Compute the sum of 61 and 39 for me using your tools, and report just the result.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "100"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "mcp-calc/calc",
+            "tool_version": "1"
+          }
+        ],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 1
+      }
+    },
+    {
+      "id": "memory-update-recall",
+      "family": "memory",
+      "description": "Knowledge update (LongMemEval-shaped, judge-free; the task shape is imported, never a score): a fact already in durable memory is superseded mid-run. The store never updates in place \u2014 a superseding write is a second live row \u2014 so recall surfaces a CONFLICT and the run must prefer the new value. A run that answers the stale day read its memory and ignored the update; a run that answers without recalling never checked.",
+      "instruction": "Update your durable memory: the Helios maintenance window has moved from Tuesday to Friday. Remember the new day, then recall from your memory which day the maintenance window is on now, and reply with just the day name.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "Friday"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "remember",
+            "tool_version": "1"
+          },
+          {
+            "tool_id": "recall",
+            "tool_version": "1"
+          }
+        ],
+        "memory_must_recall": [
+          "Friday"
+        ],
+        "ideal_turns": 3,
+        "ideal_tool_calls": 2
+      }
+    },
+    {
+      "id": "memory-abstains-when-absent",
+      "family": "memory",
+      "description": "Memory abstention (LongMemEval-shaped, judge-free): the honest behaviour when memory does not hold the answer is to check and then say so. The healthy look-alikes are the recall tasks beside it \u2014 an always-refuse policy passes here and fails those, so the pair catches it (a lone abstention task could not).",
+      "instruction": "Recall from your durable memory the door code for the Helios ground station. If your memory does not contain a door code, do not guess \u2014 reply with exactly: MEMORY DOES NOT SAY",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "MEMORY DOES NOT SAY"
+        ],
+        "expected_tools": [
+          {
+            "tool_id": "recall",
             "tool_version": "1"
           }
         ],

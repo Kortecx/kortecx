@@ -136,7 +136,12 @@ const problems = [];
       continue;
     }
     const doc = JSON.parse(await readFile(path, "utf8"));
-    loaded.push([name, new Map(doc.gates.map((g) => [g.id, g.per_mille])), doc.env]);
+    loaded.push([
+      name,
+      new Map(doc.gates.map((g) => [g.id, g.per_mille])),
+      doc.env,
+      new Map((doc.spikes ?? []).map((s) => [s.id, s])),
+    ]);
   }
 
   // The column order is read from the table's own header rather than assumed: comparing
@@ -194,10 +199,25 @@ const problems = [];
   );
   const groundedTaskCount = expectCount((e) => nonEmpty(e.grounded_in));
   const memoryTaskCount = expectCount((e) => nonEmpty(e.memory_must_recall));
+  // The sequence columns apply exactly where a gold call sequence exists.
+  const seqTaskCount = expectCount((e) => nonEmpty(e.expected_tools));
+  // The pass^k population is corpus data (`flagship: true`), so its denominator is
+  // derived here like every other one — changing the flagship set moves this check,
+  // the suite digest, and the baseline together.
+  const flagshipCount = suiteTasks.filter((t) => t.flagship === true).length;
+  // The Success@8 gate's denominator is its QUERY count, which lives beside the probe
+  // (RETRIEVAL_PROBES in crates/kx-gateway/tests/eval_bench_real.rs) — the one
+  // published denominator not derivable from the corpus, so it is pinned here and the
+  // `retrieval_success_at_8@queries` sentinel (1000 ⇔ every query executed) is what
+  // keeps a probe-count drift from passing silently.
+  const RETRIEVAL_PROBE_COUNT = 10;
   /** @type {Map<string, number>} suite-wide binary metric → its honest denominator */
   const binaryDenominators = new Map([
     ["task_success", suiteTotal],
     ["injection_resistance", injectionTaskCount],
+    ["tool_seq_fsa", seqTaskCount],
+    ["pass_k4", flagshipCount],
+    ["retrieval_success_at_8", RETRIEVAL_PROBE_COUNT],
   ]);
   const CELL = /^(\d+)\s*·\s*(\d+)\/(\d+)$/u;
 
@@ -289,6 +309,7 @@ const problems = [];
     const isBinary = binaryDenominators.has(metric);
     const singleTask =
       (metric === "groundedness" && groundedTaskCount === 1) ||
+      (metric === "context_recall" && groundedTaskCount === 1) ||
       (metric === "memory_quality" && memoryTaskCount === 1);
     loaded.forEach(([engine, gate], i) => {
       const actual = gate.get(metric);
@@ -502,6 +523,68 @@ const problems = [];
         }
       });
     });
+  }
+
+  // (7) THE PERFORMANCE TABLE — the published absolutes (tokens, latency), held to the
+  //     Spikes committed in the same baselines the gates come from. Spikes are never
+  //     gated (a slower host moves them and that is not a regression), but a published
+  //     absolute with no committed source is a number nobody can check — so the
+  //     baseline is where the docs' copy is verified, exactly as the env label is.
+  //     Every entry below must have a row; a cell is `<integer> <unit>` where the
+  //     capture recorded the spike and the em-dash `—` where it did not (an absent
+  //     measurement is shown as absent, never as 0 — tokens_per_success with zero
+  //     passes is the designed case).
+  {
+    const readme2 = await readFile(join(REPO, "README.md"), "utf8");
+    const REQUIRED_SPIKES = [
+      "tokens_per_task_mean",
+      "tokens_per_success",
+      "tokens_measured_tasks",
+      "task_latency_ms_p50",
+      "task_latency_ms_p95",
+      "store_memory_latency_ms_p50",
+      "store_memory_latency_ms_p95",
+      "recall_memory_latency_ms_p50",
+      "recall_memory_latency_ms_p95",
+      "query_dataset_latency_ms_p50",
+      "query_dataset_latency_ms_p95",
+      "rpc_probe_samples",
+    ];
+    const spikeRows = new Map(
+      [...readme2.matchAll(/^\|\s*`([a-z_0-9]+)`\s*\|([^|]*)\|([^|]*)\|/gm)].map((r) => [
+        r[1],
+        [r[2].trim(), r[3].trim()],
+      ]),
+    );
+    for (const id of REQUIRED_SPIKES) {
+      const row = spikeRows.get(id);
+      if (!row) {
+        problems.push(
+          `README.md: no performance-table row for spike '${id}' — a recorded absolute ` +
+            `omitted from the table is a number chosen not to show`,
+        );
+        continue;
+      }
+      loaded.forEach(([engine, , , spikes], i) => {
+        const cell = row[i];
+        const spike = spikes.get(id);
+        if (!spike) {
+          if (cell !== "—") {
+            problems.push(
+              `README.md: spike '${id}' on ${engine} reads '${cell}' but the baseline ` +
+                `recorded no such measurement — an absent measurement is published as '—'`,
+            );
+          }
+          return;
+        }
+        const expected = `${Math.round(spike.value)} ${spike.unit}`;
+        if (cell !== expected) {
+          problems.push(
+            `README.md: spike '${id}' on ${engine} reads '${cell}', baseline says '${expected}'`,
+          );
+        }
+      });
+    }
   }
 }
 

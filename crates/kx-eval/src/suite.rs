@@ -50,8 +50,11 @@ pub struct Expectation {
     /// dead-letter task.
     #[serde(default)]
     pub answer_must_contain: Vec<String>,
-    /// The tool calls the run is expected to make, as a multiset (order-tolerant). Empty
-    /// for an answer-only task.
+    /// The tool calls the run is expected to make. `tool_call_f1` reads it as a multiset
+    /// (order-tolerant); the array ORDER is normative — it is the gold call sequence the
+    /// `tool_seq_fsa`/`tool_seq_psa` scorers grade against, so author chains in call
+    /// order. Empty for an answer-only task (F1 and the sequence scorers are then N/A —
+    /// abstention is `task_success`'s to score, never folded into a call metric).
     #[serde(default)]
     pub expected_tools: Vec<ExpectedToolCall>,
     /// Tokens the answer must be GROUNDED in — each must appear both in the answer and
@@ -131,6 +134,12 @@ pub struct GoldenTask {
     pub instruction: String,
     /// What the run must achieve.
     pub expect: Expectation,
+    /// Membership in the pass^k flagship set — the tasks the bench re-runs K times on
+    /// fresh serves for the reliability gate. Committed in the corpus so the suite
+    /// digest COVERS the pass^k population: changing the set is corpus drift and forces
+    /// a deliberate re-capture, never a silent redefinition.
+    #[serde(default)]
+    pub flagship: bool,
     /// The deterministic Tier-A fixture (a scripted run that meets the expectation), or
     /// `None` for a REAL-ONLY task whose transcript is built live from a served-model run
     /// (the `bench-v1` slice). A `None` task has no deterministic tier — the Tier-A

@@ -19,8 +19,11 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// The unit string recorded for a Gate metric in the trend report.
 pub const GATE_UNIT: &str = "per_mille";
 
-/// A measurement-only Spike (e.g. a Tier-B latency) — recorded for the trend, never
-/// gated. Mirrors `kx_profile::Metric` of kind Spike.
+/// A measurement-only Spike (e.g. a Tier-B latency) — recorded, never gated. Mirrors
+/// `kx_profile::Metric` of kind Spike. Spikes travel with the gates into the committed
+/// baseline so the docs check can hold a published absolute to a committed source, but
+/// the comparison surface stays [`Baseline::gates`] alone — [`compare_to_baseline`]
+/// never reads a spike.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpikeMetric {
     /// The metric id.
@@ -100,7 +103,7 @@ pub struct BaselineEnv {
 
 /// The committed yardstick — the suite's Gate values at a known corpus digest. Lives at
 /// `corpus/golden-v1/baseline.json` (committed, NOT in the gitignored `docs/benchmarks/`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Baseline {
     /// The suite the baseline was captured on.
     pub suite_id: String,
@@ -112,6 +115,14 @@ pub struct Baseline {
     pub env: Option<BaselineEnv>,
     /// The Gate values, in a stable id order.
     pub gates: Vec<GateValue>,
+    /// The capture run's Spikes, carried verbatim under the [`BaselineEnv`] rule: here
+    /// to be *read* — by a person, and by the docs check that holds a published
+    /// absolute (tokens, latency) to the committed capture — never compared.
+    /// [`compare_to_baseline`] iterates `gates` alone; a slower host moves these
+    /// numbers and that is not a regression. Empty on a baseline captured before
+    /// spikes travelled (read-compatible).
+    #[serde(default)]
+    pub spikes: Vec<SpikeMetric>,
 }
 
 /// One metric that regressed below the baseline.
@@ -163,7 +174,8 @@ pub struct EvalReport {
 }
 
 impl EvalReport {
-    /// Extract the committed-baseline view (suite id + digest + env label + Gate values).
+    /// Extract the committed-baseline view: suite id + digest + env label + Gate values
+    /// + the capture's Spikes (readable, never compared — see [`Baseline::spikes`]).
     #[must_use]
     pub fn to_baseline(&self) -> Baseline {
         Baseline {
@@ -171,6 +183,7 @@ impl EvalReport {
             suite_digest: self.suite_digest.clone(),
             env: self.env.clone(),
             gates: self.gates.clone(),
+            spikes: self.spikes.clone(),
         }
     }
 
@@ -463,6 +476,7 @@ mod tests {
                 .filter(|g| !g.id.contains(FAMILY_GATE_SEP))
                 .cloned()
                 .collect(),
+            spikes: vec![],
         };
         assert!(legacy.gates.iter().any(|g| g.id == "task_success"));
         assert!(compare_to_baseline(&r, &legacy, 0).unwrap().ok);
@@ -543,6 +557,73 @@ mod tests {
         assert_eq!(
             reg.current_per_mille, 0,
             "absent reads as 0, not as baseline"
+        );
+    }
+
+    /// Spikes are readable, never compared: a baseline whose every spike differs from
+    /// the report's still compares clean. This is what makes committing them into the
+    /// baseline honest — a slower host moves them and that is not a regression.
+    #[test]
+    fn spikes_in_a_baseline_are_never_compared() {
+        let mut r = report();
+        r.spikes = vec![SpikeMetric {
+            id: "task_latency_ms_p50".into(),
+            value: 1000.0,
+            unit: "ms".into(),
+        }];
+        let mut base = r.to_baseline();
+        assert!(!base.spikes.is_empty(), "the capture carried its spikes");
+        base.spikes[0].value = 999_999.0; // a wildly different host
+        base.spikes.push(SpikeMetric {
+            id: "a_spike_the_report_never_produced".into(),
+            value: 1.0,
+            unit: "ms".into(),
+        });
+        assert!(compare_to_baseline(&r, &base, 0).unwrap().ok);
+    }
+
+    /// A baseline committed before spikes travelled has no `spikes` key at all. It must
+    /// still deserialize and still gate.
+    #[test]
+    fn a_baseline_written_before_spikes_still_loads_and_gates() {
+        let legacy: Baseline = serde_json::from_str(
+            r#"{"suite_id":"bench-v1","suite_digest":"d","gates":[{"id":"task_success","per_mille":500}]}"#,
+        )
+        .expect("a spike-less baseline still deserializes");
+        assert!(legacy.spikes.is_empty());
+        let mut r = report();
+        r.suite_digest = "d".into();
+        assert!(compare_to_baseline(&r, &legacy, 0).unwrap().ok);
+    }
+
+    /// The pass^k machinery sentinel: `pass_k4@trials` is captured at 1000 by any
+    /// successful capture, so a later gated run whose report lacks the phase entirely
+    /// reads it as 0 — a hard regression BY NAME, even when every per-task pass^k value
+    /// was captured at 0 and would compare 0-vs-0 silently. This pins the sentinel
+    /// against future tolerance or comparison changes.
+    #[test]
+    fn a_skipped_pass_k_phase_is_named_by_the_trials_sentinel() {
+        let r = report(); // carries no pass_k4 gates at all — the "phase skipped" shape
+        let mut base = r.to_baseline();
+        base.gates.push(GateValue {
+            id: "pass_k4@trials".into(),
+            per_mille: 1000,
+        });
+        base.gates.push(GateValue {
+            id: "pass_k4@http-authed-lookup".into(),
+            per_mille: 0, // a flagship captured at 0 cannot catch the skip…
+        });
+        let cmp = compare_to_baseline(&r, &base, 200).unwrap();
+        assert!(!cmp.ok, "the sentinel must fail the skipped phase closed");
+        let named: Vec<&str> = cmp
+            .regressions
+            .iter()
+            .map(|x| x.metric_id.as_str())
+            .collect();
+        assert!(named.contains(&"pass_k4@trials"), "…the sentinel names it");
+        assert!(
+            !named.contains(&"pass_k4@http-authed-lookup"),
+            "the 0-captured flagship stays silent — which is why the sentinel exists"
         );
     }
 

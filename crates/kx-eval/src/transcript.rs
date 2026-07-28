@@ -99,6 +99,12 @@ pub struct TranscriptTiming {
     pub total_ms: u64,
     /// Summed execution wall-clock of the run's model motes.
     pub model_ms: u64,
+    /// Summed OUTPUT tokens of the run's model motes, from the same telemetry rows the
+    /// wall-clock split reads. `None` when the rows carried no token counts (a degraded
+    /// build) — absent is not zero, exactly as with the timing itself. Input tokens are
+    /// deliberately not here: OSS records none, so no field exists to misreport one.
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
 }
 
 /// The reduced record of one agent run — the input to every scorer.

@@ -2,9 +2,13 @@
 //! the expected ones, by exact `(id, version)`.
 //!
 //! Order-tolerant (an F1 over the call multisets) so a model that reorders independent
-//! lookups is not penalised, while a wrong/missing/extra call is. Answer-only tasks
-//! (no expected calls, no actual calls) score a perfect 1000; a spurious call on such a
-//! task drives the score down.
+//! lookups is not penalised, while a wrong/missing/extra call is. The order-SENSITIVE
+//! companions are `tool_seq_fsa`/`tool_seq_psa`.
+//!
+//! Tasks that expect NO tool calls are N/A here (the BFCL convention): an empty gold
+//! multiset degenerates F1, so abstention is never folded into it — it is scored as
+//! its own binary accuracy by `task_success`, and a spurious call on an answer-only
+//! task still costs `loop_efficiency` (actual calls over an ideal of 0).
 
 use std::collections::BTreeMap;
 
@@ -15,18 +19,20 @@ use crate::transcript::ToolKey;
 use super::ScoreInput;
 
 pub(super) fn score(input: &ScoreInput) -> ScoreOutput {
-    let actual = input.transcript.actual_tool_calls();
     let expected: Vec<ToolKey> = input
         .expect
         .expected_tools
         .iter()
         .map(ExpectedToolCall::key)
         .collect();
-
-    let total = actual.len() + expected.len();
-    if total == 0 {
-        return ScoreOutput::gate("tool_call_f1", PER_MILLE, "no tools expected or called");
+    if expected.is_empty() {
+        return ScoreOutput::not_applicable(
+            "tool_call_f1",
+            "task expects no tool calls — an empty gold multiset degenerates F1",
+        );
     }
+    let actual = input.transcript.actual_tool_calls();
+    let total = actual.len() + expected.len();
 
     // Multiset intersection: consume one actual per matched expected.
     let mut pool: BTreeMap<&ToolKey, usize> = BTreeMap::new();
@@ -124,24 +130,27 @@ mod tests {
     }
 
     #[test]
-    fn answer_only_no_tools_is_perfect() {
-        let t = run(vec![]);
-        let e = expect(&[]);
-        assert_eq!(
-            score(&ScoreInput {
+    fn empty_gold_is_na_with_or_without_calls() {
+        // The BFCL convention: abstention is never folded into F1. An answer-only task
+        // is N/A whether the model behaved (no calls) or not (a spurious call) — the
+        // spurious call is loop_efficiency's and task_success's problem.
+        for turns in [vec![], vec![tool_turn(0, "kv/get", 0)]] {
+            let t = run(turns);
+            let e = expect(&[]);
+            let s = score(&ScoreInput {
                 transcript: &t,
-                expect: &e
-            })
-            .gate_per_mille(),
-            Some(PER_MILLE)
-        );
+                expect: &e,
+            });
+            assert!(!s.applicable);
+            assert_eq!(s.gate_per_mille(), None);
+        }
     }
 
     #[test]
-    fn spurious_call_lowers_score() {
-        // expected none, called one ⇒ F1 = 2*0/(1+0) = 0.
-        let t = run(vec![tool_turn(0, "kv/get", 0)]);
-        let e = expect(&[]);
+    fn missing_all_expected_calls_is_zero() {
+        // expected one, called none ⇒ F1 = 2*0/(0+1) = 0 — a real zero, not N/A.
+        let t = run(vec![]);
+        let e = expect(&["kv/get"]);
         assert_eq!(
             score(&ScoreInput {
                 transcript: &t,
