@@ -779,21 +779,35 @@ mod tests {
         let c = serve(base(&[]).unwrap());
         assert_eq!(c.metrics_listen, None);
         assert_eq!(c.audit_log, None);
-        // Opt-in: both parse.
-        let c = serve(
-            base(&[
-                "--metrics-listen",
-                "127.0.0.1:9090",
-                "--audit-log",
-                "/tmp/audit.jsonl",
-            ])
-            .unwrap(),
-        );
-        assert_eq!(
-            c.metrics_listen,
-            Some("127.0.0.1:9090".parse::<SocketAddr>().unwrap())
-        );
-        assert_eq!(c.audit_log, Some(PathBuf::from("/tmp/audit.jsonl")));
+        // Opt-in: `--audit-log` parses on every build; `--metrics-listen` only
+        // where the `observability` feature compiled the endpoint in. On a build
+        // without it an explicit ask is a LOUD error naming the feature (the
+        // D139 console-refusal posture) — never a silent no-op.
+        let opted = base(&[
+            "--metrics-listen",
+            "127.0.0.1:9090",
+            "--audit-log",
+            "/tmp/audit.jsonl",
+        ]);
+        #[cfg(feature = "observability")]
+        {
+            let c = serve(opted.unwrap());
+            assert_eq!(
+                c.metrics_listen,
+                Some("127.0.0.1:9090".parse::<SocketAddr>().unwrap())
+            );
+            assert_eq!(c.audit_log, Some(PathBuf::from("/tmp/audit.jsonl")));
+        }
+        #[cfg(not(feature = "observability"))]
+        {
+            let err = opted.expect_err("an explicit --metrics-listen must refuse");
+            assert!(
+                format!("{err}").contains("observability"),
+                "the refusal names the missing feature: {err}"
+            );
+            let c = serve(base(&["--audit-log", "/tmp/audit.jsonl"]).unwrap());
+            assert_eq!(c.audit_log, Some(PathBuf::from("/tmp/audit.jsonl")));
+        }
         // A malformed metrics addr is a config error; a missing value too.
         assert!(base(&["--metrics-listen", "not-an-addr"]).is_err());
         assert!(base(&["--metrics-listen"]).is_err());

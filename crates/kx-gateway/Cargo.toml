@@ -338,7 +338,7 @@ rcgen    = { workspace = true }
 tonic    = { workspace = true, features = ["tls"] }
 
 [features]
-default = ["embedded-worker", "mcp-gateway", "observability"]
+default = ["embedded-worker", "mcp-gateway"]
 # W6.1: the local observability stack — the `/metrics` listener (kx-otel), the
 # alerts.db read-cache, and the telemetry.db execution-exhaust sidecar. ON by
 # default for source builds; the RELEASE build names its features explicitly and
