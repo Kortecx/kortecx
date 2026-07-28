@@ -730,6 +730,18 @@ build-serve-engine:
     echo "Linting + unit-testing the FFI-free serve-engine model loop (model_exec)..."
     cargo clippy -p kx-gateway --features serve-engine,hnsw --lib -- -D warnings
     cargo test -p kx-gateway --features serve-engine,hnsw --lib -- --nocapture
+    # W6.1: the release deliberately EXCLUDES `observability`, and exclusion must
+    # be provable on the RC-shaped feature set, not just believed: no kx-otel in
+    # the closure, and the absence probe (RPCs unimplemented, no sidecars) runs
+    # under the same shape. `console` is left off here (its build.rs needs a
+    # built ui/dist this recipe does not make); the cargo-tree scan covers it.
+    echo "Asserting the RC shape excludes the observability stack..."
+    if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-otel'; then
+        echo " ✗ FAIL: the RC feature set linked kx-otel (observability leaked into the release shape)"
+        exit 1
+    fi
+    echo " ✓ no kx-otel in the prebuilt (console,hnsw,serve-engine,hosted-apps) closure"
+    cargo test -p kx-gateway --features serve-engine,hnsw,hosted-apps --test observability_absent -- --nocapture
     echo " ✓ build-serve-engine: PASS"
 
 # The installed-binary feature matrix stays buildable (the v0.1.0 campaign
