@@ -10,6 +10,7 @@
 //! an exact integer comparison, never a float.
 
 mod consolidation_quality;
+mod context_recall;
 mod format_coverage;
 mod groundedness;
 mod injection_resistance;
@@ -20,6 +21,7 @@ mod rerank_quality;
 mod skill_quality;
 mod task_success;
 mod tool_calls;
+mod tool_seq;
 
 pub use format_coverage::{score_format_coverage, FormatCase, FormatExpectation};
 
@@ -33,10 +35,13 @@ pub(crate) const PER_MILLE: u32 = 1000;
 
 /// The stable ids of the per-transcript scorers, in the order [`score_transcript`]
 /// emits them. Kept public so the report aggregator and tests can enumerate them.
-pub const TRANSCRIPT_SCORER_IDS: [&str; 10] = [
+pub const TRANSCRIPT_SCORER_IDS: [&str; 13] = [
     "task_success",
     "tool_call_f1",
+    "tool_seq_fsa",
+    "tool_seq_psa",
     "groundedness",
+    "context_recall",
     "loop_efficiency",
     "rerank_quality",
     "memory_quality",
@@ -129,7 +134,10 @@ pub fn score_transcript(input: &ScoreInput) -> Vec<ScoreOutput> {
     vec![
         task_success::score(input),
         tool_calls::score(input),
+        tool_seq::score_fsa(input),
+        tool_seq::score_psa(input),
         groundedness::score(input),
+        context_recall::score(input),
         loop_efficiency::score(input),
         rerank_quality::score(input),
         memory_quality::score(input),
