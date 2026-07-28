@@ -1484,7 +1484,7 @@ version = "0.1.0"
 
 [[package]]
 name = "kx-cli"
-version = "0.2.0-rc.1"
+version = "0.2.0-rc.2"
 dependencies = [
  "kx-app",
  "kx-appbundle",
@@ -1779,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "kx-gateway"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64",
  "bincode 2.0.1",

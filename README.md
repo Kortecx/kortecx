@@ -395,6 +395,11 @@ source needs Node ≥ 22. Hosted apps need Node and npm at run time.
 The gating story in one line: `--features inference,hnsw` plus a served model unlocks
 server-embedded retrieval and memory; memory also needs `KX_SERVE_MEMORY=1`.
 
+Local observability (the Prometheus `/metrics` listener, `kx telemetry`, `kx alerts`) is the
+opt-in `observability` feature, and the prebuilt binary deliberately excludes it — the release
+feature list says what the artifact contains. Add `--features observability` to a source build
+to turn the stack on; see [Observability](docs/site/docs/observability.md).
+
 Run `kx --help` for the full command surface.
 
 ## Production notes
