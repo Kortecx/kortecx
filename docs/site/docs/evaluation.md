@@ -19,8 +19,16 @@ Ollama / llama.cpp) and exposes two surfaces from the single `kx` / client entry
   tool-calls it spent, how much of its budget it burned, how many proposals were
   rejected.
 
-A score is an integer **per-mille** (`0..=1000`); a gate pass/fail is an exact integer
-comparison, never a float.
+A score is an integer **per-mille** (`0..=1000`) — a rate on a 0–1000 scale (769 ≡ 76.9%),
+never a count — and a gate pass/fail is an exact integer comparison, never a float. An
+aggregate is the **floor** of the integer mean over the tasks the metric applied to, so
+resolution follows the denominator: a one-task family can only read 0 or 1000, a three-task
+family only 0 · 333 · 666 · 1000, and the 26-task suite moves in steps of ~38. Where a
+metric is pass/fail per task (`task_success` everywhere, and `injection_resistance`), the
+published tables print the exact fraction beside the rate — `666 · 2/3` is two of three
+tasks passed. The graded metrics have no task fraction (they are per-task fractions
+averaged); of those, `groundedness` and `memory_quality` are each exercised by a **single**
+corpus task today, so their suite-wide number is that one task's score.
 
 ## What it measures
 
@@ -140,21 +148,23 @@ A committed per-engine baseline is the fail-closed ratchet, and the oracle floor
 asserted only for a model capable enough to be worth gating on.
 
 The suite spans ten **families**, each exercising a different part of the runtime. A family
-is a bucket of tasks, and its gate is the mean over that bucket — so the **task count is the
-denominator**, and in a family of three, one task flipping moves the score by 333.
+is a bucket of tasks, and its gate is the floor mean over that bucket — so the **task count
+is the denominator**, and the fraction beside each rate is the exact pass count. The numbers
+are the committed `bench-v1` baselines (`macos/aarch64`, the two builds named above), held
+to this table by `check-docs`.
 
-| Family | Tasks | What a task proves |
-| --- | ---: | --- |
-| `tool` | 6 | The agent picks the right tool and its answer carries a fact only the tool could supply — including chaining one tool's output into the next call. |
-| `react` | 3 | Whether to use a tool at all: an instruction naming a tool the run was never granted fires **nothing** (naming is not granting), a fact with no world-knowledge prior *is* looked up, and a question the model already knows is answered without reaching for anything. |
-| `script` | 3 | The agent runs a registered script in the sandbox and answers from what it computed. |
-| `reach` | 3 | How far the runtime reaches beyond the prompt: a [dataset](./datasets.md) it searches, a [memory](./memory.md) it recalls, and an app whose capability set is inherited rather than declared. |
-| `swarm` | 1 | N agents run in parallel and a gather merges their committed outputs — the answer must carry every agent's contribution. |
-| `http` | 2 | A tool reached over the **network**, not a bundled subprocess: the runtime dials it over HTTP, presents a bearer credential resolved at dispatch, and pages through a result set whose answer is on the second page. |
-| `failure` | 4 | Tools that error, hang, and return unusable payloads. The loop must surface the failure and let the model take another turn — and a healthy control fails if it starts distrusting every tool. |
-| `menu` | 1 | Selection when the menu is as long as the runtime will present, rather than a choice between two obvious options. |
-| `long` | 1 | The longest chain the runtime admits: six tool calls across four distinct tools, inside the eight-turn ceiling. |
-| `adversarial` | 2 | Input that is trying to steer the agent — including an instruction planted in a **tool's output** — paired with a legitimate request that merely looks like one. |
+| Family | Tasks | What a task proves | Ollama | llama.cpp |
+| --- | ---: | --- | ---: | ---: |
+| `tool` | 6 | The agent picks the right tool and its answer carries a fact only the tool could supply — including chaining one tool's output into the next call. | 1000 · 6/6 | 1000 · 6/6 |
+| `react` | 3 | Whether to use a tool at all: an instruction naming a tool the run was never granted fires **nothing** (naming is not granting), a fact with no world-knowledge prior *is* looked up, and a question the model already knows is answered without reaching for anything. | 666 · 2/3 | 1000 · 3/3 |
+| `script` | 3 | The agent runs a registered script in the sandbox and answers from what it computed. | 1000 · 3/3 | 666 · 2/3 |
+| `reach` | 3 | How far the runtime reaches beyond the prompt: a [dataset](./datasets.md) it searches, a [memory](./memory.md) it recalls, and an app whose capability set is inherited rather than declared. | 1000 · 3/3 | 666 · 2/3 |
+| `swarm` | 1 | N agents run in parallel and a gather merges their committed outputs — the answer must carry every agent's contribution. | 1000 · 1/1 | 1000 · 1/1 |
+| `http` | 2 | A tool reached over the **network**, not a bundled subprocess: the runtime dials it over HTTP, presents a bearer credential resolved at dispatch, and pages through a result set whose answer is on the second page. | 0 · 0/2 | 0 · 0/2 |
+| `failure` | 4 | Tools that error, hang, and return unusable payloads. The loop must surface the failure and let the model take another turn — and a healthy control fails if it starts distrusting every tool. | 750 · 3/4 | 750 · 3/4 |
+| `menu` | 1 | Selection when the menu is as long as the runtime will present, rather than a choice between two obvious options. | 1000 · 1/1 | 1000 · 1/1 |
+| `long` | 1 | The longest chain the runtime admits: six tool calls across four distinct tools, inside the eight-turn ceiling. | 0 · 0/1 | 0 · 0/1 |
+| `adversarial` | 2 | Input that is trying to steer the agent — including an instruction planted in a **tool's output** — paired with a legitimate request that merely looks like one. | 500 · 1/2 | 1000 · 2/2 |
 
 Each family reports its own gate (`task_success@swarm`) beside the suite-wide one, so a
 regression in one capability is visible instead of being averaged away by the others.
