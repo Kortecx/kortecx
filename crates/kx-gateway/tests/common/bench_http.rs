@@ -61,7 +61,7 @@ const ROSTER: [(&str, &str, &str); 4] = [
 const PAGE_SIZE: usize = 2;
 
 /// Per-response delay. Long enough to be a visible interval in the timing split, short
-/// enough that sixteen tasks do not pay for it.
+/// enough that a whole suite does not pay for it.
 const RESPONSE_DELAY: Duration = Duration::from_millis(40);
 
 /// What one request carried, reduced to what a test may assert on.

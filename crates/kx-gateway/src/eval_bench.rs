@@ -459,7 +459,7 @@ impl LiveSuiteOutcome {
 pub const FILTERED_OUT: &str = "(held back by KX_BENCH_ONLY)";
 
 /// The optional `KX_BENCH_ONLY` task-id allowlist (comma-separated), for attributing a
-/// loop change to one arm without driving all sixteen tasks on a served model.
+/// loop change to one arm without driving the whole suite on a served model.
 ///
 /// Unset / empty ⇒ `None` ⇒ the whole suite runs, byte-identically to before. Every task
 /// it holds back is reported as SKIPPED, so `LiveSuiteOutcome::is_complete` is false and a
@@ -615,7 +615,7 @@ fn observation_tools_for(task: &GoldenTask) -> BTreeSet<String> {
 ///
 /// Percentiles are nearest-rank on the sorted per-task totals. Tasks whose timing did not
 /// land contribute to nothing here, and `measured_tasks` says how many did — a p95 over
-/// three of sixteen tasks is not a suite number, and the count is what makes that visible
+/// a handful of tasks is not a suite number, and the count is what makes that visible
 /// instead of leaving a confident-looking figure to be read as full coverage.
 fn latency_spikes(transcripts: &[Transcript]) -> Vec<ScoreOutput> {
     let mut totals: Vec<u64> = transcripts
@@ -1300,7 +1300,7 @@ mod tests {
     }
 
     /// The spikes never gate, and they must say how much of the suite they cover: a p95
-    /// computed over two of sixteen tasks is not a suite number. `measured_tasks` is what
+    /// computed over a couple of tasks is not a suite number. `measured_tasks` is what
     /// stops a partial measurement reading as full coverage.
     #[test]
     fn latency_spikes_report_their_own_coverage() {

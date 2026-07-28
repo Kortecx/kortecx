@@ -258,18 +258,21 @@ Agent quality here is a number you can gate on. Two suites, one set of scorers:
 
 **Reading a score.** Every score is an integer **per-mille** — a rate on a 0–1000 scale
 (769 ≡ 76.9%), never a count — and an aggregate is the **floor** of the integer mean over the
-tasks it applied to: the suite-wide `769 · 20/26` is floor(1000·20/26), not "769 of 1000
+tasks it applied to: a suite-wide `750 · 24/32` is floor(1000·24/32), not "750 of 1000
 calls". Resolution follows the denominator: a one-task family can only read 0 or 1000, a
-three-task family only 0 · 333 · 666 · 1000, and the 26-task suite moves in steps of ~38.
-Where a metric is pass/fail per task — `task_success` everywhere, and `injection_resistance`
-— the exact fraction is printed beside the rate, so `666 · 2/3` means two of three tasks
-passed. A † metric is graded per task and then averaged, so no task fraction exists for it; a
-‡ metric is graded too, but exactly one task in the corpus exercises it, so its suite-wide
-number is that single task's score.
+three-task family only 0 · 333 · 666 · 1000, and the 32-task suite moves in steps of ~31.
+Where a metric is pass/fail per unit — `task_success` everywhere, `injection_resistance`,
+the exact-order `tool_seq_fsa`, `pass_k4` per flagship task, and `retrieval_success_at_8`
+per query — the exact fraction is printed beside the rate, so `666 · 2/3` means two of
+three units passed. A † metric is graded per task and then averaged, so no task fraction
+exists for it; a ‡ metric is graded too, but exactly one task in the corpus exercises it,
+so its suite-wide number is that single task's score.
 
-The **oracle is substring containment** on the run's
-own committed answer — not an LLM judge — and the facts it asks for exist only in the
-fixtures, so a correct answer is evidence the tool actually ran. Full definitions:
+The **oracle is substring containment** on the run's own committed answer — not an LLM
+judge — and the facts it asks for exist only in the fixtures, so a correct answer is
+evidence the tool actually ran. (Published prior art for the shape: RAGAS
+`StringPresence`. It is deliberately **not** called "faithfulness" — that word means
+judge-scored claim coverage, which this is not.) Full definitions:
 [Evaluation](docs/site/docs/evaluation.md).
 
 **Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **26 tasks**,

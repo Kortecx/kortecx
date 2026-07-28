@@ -1472,11 +1472,23 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // and the capture below, and every one folds into `complete` — a capture that
     // silently omitted a phase would ratchet later runs against numbers it never
     // produced. Env vars and the HTTP fixture must outlive all of them.
+    //
+    // A KX_BENCH_ONLY diagnostic run SKIPS all three: the filter exists to attribute a
+    // loop change to one arm cheaply, and a filtered run is already incapturable, so
+    // paying four fresh trials and three probe batteries for it would price the
+    // diagnostic out of use. The phase flags stay false, which keeps `complete` false —
+    // the same posture the filter already has with the suite itself.
+    let diagnostic_filter = std::env::var("KX_BENCH_ONLY").is_ok();
+    if diagnostic_filter {
+        eprintln!("eval-bench: post-suite phases SKIPPED (KX_BENCH_ONLY diagnostic run)");
+    }
 
     // The RPC latency probes (model-free; the main serve is still up). The docs
     // publish these from the committed baseline, so a capture without them is
     // incomplete — that is what folds `probes_ok` in below.
-    let probes_ok = if reach_ready {
+    let probes_ok = if diagnostic_filter {
+        false
+    } else if reach_ready {
         match rpc_latency_spikes(&mut c).await {
             Some(spikes) => {
                 for s in &spikes {
@@ -1511,7 +1523,9 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // (1000 iff every query executed — a captured 1000 there is what makes a later
     // run that skips the probe entirely read as a hard regression BY NAME, even on an
     // engine whose Success@8 was captured at 0).
-    let successk_complete = if reach_ready {
+    let successk_complete = if diagnostic_filter {
+        false
+    } else if reach_ready {
         let (hits, ran) = retrieval_success_probe(&mut c).await;
         if ran > 0 {
             report.gates.push(kx_eval::GateValue {
@@ -1533,9 +1547,13 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // verdicts ride as committed UNGATED spikes (a single K=4 Bernoulli draw flips
     // whole-swing across captures — noise no tolerance absorbs); the GATES are the
     // flagship mean and the `@trials` machinery sentinel, whose movements are signal.
-    let trials = passk_trials(&corpus, &fleet, &env_label, &report.git_sha).await;
+    let trials = if diagnostic_filter {
+        Vec::new()
+    } else {
+        passk_trials(&corpus, &fleet, &env_label, &report.git_sha).await
+    };
     let passk_complete = trials.len() == PASSK_TRIALS;
-    {
+    if !diagnostic_filter {
         let flagship_ids: Vec<String> = corpus
             .suite
             .tasks
