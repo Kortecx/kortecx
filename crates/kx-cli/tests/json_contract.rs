@@ -78,9 +78,10 @@ async fn every_read_verb_answers_json_with_one_document() {
     let running = start_gateway(&dir, true, HashMap::new()).await;
     let ep = endpoint(&running);
 
-    let mut verbs: Vec<&[&str]> = JSON_DOCUMENT_VERBS.to_vec();
     #[cfg(feature = "observability")]
-    verbs.extend_from_slice(OBSERVABILITY_JSON_VERBS);
+    let verbs: Vec<&[&str]> = [JSON_DOCUMENT_VERBS, OBSERVABILITY_JSON_VERBS].concat();
+    #[cfg(not(feature = "observability"))]
+    let verbs: Vec<&[&str]> = JSON_DOCUMENT_VERBS.to_vec();
     for verb in verbs {
         let mut args: Vec<&str> = verb.to_vec();
         args.extend_from_slice(&["--endpoint", &ep, "--json"]);
