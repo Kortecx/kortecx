@@ -6,6 +6,30 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ## [Unreleased]
 
+### Added
+
+- **The benchmark grows its industry legend: two new families, order-sensitive and
+  retrieval-side scorers, a reliability gate, and a cost/latency record.** `bench-v1`
+  spans twelve families and 32 tasks: an `irrelevance` family (BFCL-style relevance
+  pairs — abstain when no granted tool applies, beside healthy look-alikes that catch an
+  always-refuse policy) and a `memory` family (LongMemEval-shaped, judge-free: a
+  knowledge update whose superseded value stays live in the store, and an abstention
+  when memory holds no answer). New scorers: `tool_seq_fsa`/`tool_seq_psa` (NESTFUL-style
+  sequence accuracy — the order-sensitive columns beside the order-tolerant
+  `tool_call_f1`, which now goes N/A on an empty gold multiset instead of folding
+  abstention in), `context_recall` (the judge-free RAGAS `NonLLMContextRecall` shape),
+  `pass_k4` (tau2-style pass^k, K=4 fresh-serve trials over three corpus-flagged
+  flagship tasks; per-task values recorded, the mean gated, a trials sentinel making a
+  skipped phase fail by name), and `retrieval_success_at_8` (Success@k, binary
+  single-relevant qrels over the 61-document near-miss corpus). The failure family is
+  documented as what it measures: a tool-fault recovery rate over an
+  error/garbage/hang/healthy-control taxonomy. Captures now also record output-token
+  economy (tokens-per-task, tokens-per-success; no input-token figure exists because
+  the runtime records none) and model-free RPC latency probes (StoreMemory /
+  RecallMemory / QueryDataset p50/p95), committed as never-gated Spikes in the
+  per-engine baselines and held to the published tables by `check-docs`. (kx-eval,
+  kx-gateway)
+
 ### Changed
 
 - **The release build now says what it contains: local observability is the opt-in

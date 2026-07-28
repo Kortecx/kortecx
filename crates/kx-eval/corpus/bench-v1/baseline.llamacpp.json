@@ -1,32 +1,44 @@
 {
   "suite_id": "bench-v1",
-  "suite_digest": "e994dde802678380983cb5e19c3fb92bf53c60599ffbd185279e6844064bc709",
+  "suite_digest": "10879c929de43bb70e57f00a7e97b7923af433a4e23c2ad817c215b201fc3386",
   "env": {
     "engine": "llamacpp",
     "model": "kx-serve:gemma-4-12b-it-q4_k_m",
     "os": "macos",
     "arch": "aarch64",
     "cores": 8,
-    "task_count": 26,
-    "captured_unix_s": 1785187061,
-    "git_sha": "68e796c81d59068e0383b5f0186df21cd897e10e"
+    "task_count": 32,
+    "captured_unix_s": 1785244754,
+    "git_sha": "2d8d3b707ab16558eb7602d05f26f9c614cea00b"
   },
   "gates": [
     {
       "id": "task_success",
-      "per_mille": 769
+      "per_mille": 781
     },
     {
       "id": "tool_call_f1",
-      "per_mille": 895
+      "per_mille": 859
+    },
+    {
+      "id": "tool_seq_fsa",
+      "per_mille": 730
+    },
+    {
+      "id": "tool_seq_psa",
+      "per_mille": 823
     },
     {
       "id": "groundedness",
       "per_mille": 0
     },
     {
+      "id": "context_recall",
+      "per_mille": 0
+    },
+    {
       "id": "loop_efficiency",
-      "per_mille": 939
+      "per_mille": 952
     },
     {
       "id": "memory_quality",
@@ -34,7 +46,7 @@
     },
     {
       "id": "model_time_share",
-      "per_mille": 980
+      "per_mille": 984
     },
     {
       "id": "injection_resistance",
@@ -46,6 +58,14 @@
     },
     {
       "id": "tool_call_f1@adversarial",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_fsa@adversarial",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_psa@adversarial",
       "per_mille": 1000
     },
     {
@@ -66,7 +86,15 @@
     },
     {
       "id": "tool_call_f1@failure",
-      "per_mille": 916
+      "per_mille": 888
+    },
+    {
+      "id": "tool_seq_fsa@failure",
+      "per_mille": 666
+    },
+    {
+      "id": "tool_seq_psa@failure",
+      "per_mille": 833
     },
     {
       "id": "loop_efficiency@failure",
@@ -74,7 +102,7 @@
     },
     {
       "id": "model_time_share@failure",
-      "per_mille": 904
+      "per_mille": 923
     },
     {
       "id": "task_success@http",
@@ -85,12 +113,44 @@
       "per_mille": 666
     },
     {
+      "id": "tool_seq_fsa@http",
+      "per_mille": 0
+    },
+    {
+      "id": "tool_seq_psa@http",
+      "per_mille": 500
+    },
+    {
       "id": "loop_efficiency@http",
       "per_mille": 716
     },
     {
       "id": "model_time_share@http",
       "per_mille": 995
+    },
+    {
+      "id": "task_success@irrelevance",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_call_f1@irrelevance",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_fsa@irrelevance",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_psa@irrelevance",
+      "per_mille": 1000
+    },
+    {
+      "id": "loop_efficiency@irrelevance",
+      "per_mille": 1000
+    },
+    {
+      "id": "model_time_share@irrelevance",
+      "per_mille": 996
     },
     {
       "id": "task_success@long",
@@ -101,12 +161,48 @@
       "per_mille": 285
     },
     {
+      "id": "tool_seq_fsa@long",
+      "per_mille": 0
+    },
+    {
+      "id": "tool_seq_psa@long",
+      "per_mille": 166
+    },
+    {
       "id": "loop_efficiency@long",
       "per_mille": 1000
     },
     {
       "id": "model_time_share@long",
       "per_mille": 996
+    },
+    {
+      "id": "task_success@memory",
+      "per_mille": 500
+    },
+    {
+      "id": "tool_call_f1@memory",
+      "per_mille": 500
+    },
+    {
+      "id": "tool_seq_fsa@memory",
+      "per_mille": 500
+    },
+    {
+      "id": "tool_seq_psa@memory",
+      "per_mille": 500
+    },
+    {
+      "id": "loop_efficiency@memory",
+      "per_mille": 1000
+    },
+    {
+      "id": "memory_quality@memory",
+      "per_mille": 1000
+    },
+    {
+      "id": "model_time_share@memory",
+      "per_mille": 988
     },
     {
       "id": "task_success@menu",
@@ -117,12 +213,20 @@
       "per_mille": 1000
     },
     {
+      "id": "tool_seq_fsa@menu",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_psa@menu",
+      "per_mille": 1000
+    },
+    {
       "id": "loop_efficiency@menu",
       "per_mille": 1000
     },
     {
       "id": "model_time_share@menu",
-      "per_mille": 996
+      "per_mille": 997
     },
     {
       "id": "task_success@reach",
@@ -130,15 +234,27 @@
     },
     {
       "id": "tool_call_f1@reach",
-      "per_mille": 777
+      "per_mille": 800
+    },
+    {
+      "id": "tool_seq_fsa@reach",
+      "per_mille": 666
+    },
+    {
+      "id": "tool_seq_psa@reach",
+      "per_mille": 750
     },
     {
       "id": "groundedness@reach",
       "per_mille": 0
     },
     {
+      "id": "context_recall@reach",
+      "per_mille": 0
+    },
+    {
       "id": "loop_efficiency@reach",
-      "per_mille": 757
+      "per_mille": 777
     },
     {
       "id": "memory_quality@reach",
@@ -146,7 +262,7 @@
     },
     {
       "id": "model_time_share@reach",
-      "per_mille": 989
+      "per_mille": 992
     },
     {
       "id": "task_success@react",
@@ -154,6 +270,14 @@
     },
     {
       "id": "tool_call_f1@react",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_fsa@react",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_psa@react",
       "per_mille": 1000
     },
     {
@@ -173,6 +297,14 @@
       "per_mille": 888
     },
     {
+      "id": "tool_seq_fsa@script",
+      "per_mille": 666
+    },
+    {
+      "id": "tool_seq_psa@script",
+      "per_mille": 833
+    },
+    {
       "id": "loop_efficiency@script",
       "per_mille": 904
     },
@@ -182,10 +314,6 @@
     },
     {
       "id": "task_success@swarm",
-      "per_mille": 1000
-    },
-    {
-      "id": "tool_call_f1@swarm",
       "per_mille": 1000
     },
     {
@@ -205,12 +333,188 @@
       "per_mille": 1000
     },
     {
+      "id": "tool_seq_fsa@tool",
+      "per_mille": 1000
+    },
+    {
+      "id": "tool_seq_psa@tool",
+      "per_mille": 1000
+    },
+    {
       "id": "loop_efficiency@tool",
       "per_mille": 1000
     },
     {
       "id": "model_time_share@tool",
-      "per_mille": 996
+      "per_mille": 991
+    },
+    {
+      "id": "retrieval_success_at_8",
+      "per_mille": 800
+    },
+    {
+      "id": "retrieval_success_at_8@queries",
+      "per_mille": 1000
+    },
+    {
+      "id": "pass_k4",
+      "per_mille": 666
+    },
+    {
+      "id": "pass_k4@trials",
+      "per_mille": 1000
+    }
+  ],
+  "spikes": [
+    {
+      "id": "measured_tasks",
+      "value": 31.0,
+      "unit": "tasks"
+    },
+    {
+      "id": "task_latency_ms_p50",
+      "value": 120181.0,
+      "unit": "ms"
+    },
+    {
+      "id": "task_latency_ms_p95",
+      "value": 289312.0,
+      "unit": "ms"
+    },
+    {
+      "id": "task_latency_ms_max",
+      "value": 392672.0,
+      "unit": "ms"
+    },
+    {
+      "id": "suite_latency_ms_total",
+      "value": 4418653.0,
+      "unit": "ms"
+    },
+    {
+      "id": "tokens_measured_tasks",
+      "value": 31.0,
+      "unit": "tasks"
+    },
+    {
+      "id": "tokens_per_task_mean",
+      "value": 49.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@tool",
+      "value": 42.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@react",
+      "value": 15.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@reach",
+      "value": 33.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@swarm",
+      "value": 26.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@script",
+      "value": 140.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@http",
+      "value": 73.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@failure",
+      "value": 52.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@menu",
+      "value": 45.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@long",
+      "value": 118.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@adversarial",
+      "value": 30.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@irrelevance",
+      "value": 18.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_task_mean@memory",
+      "value": 36.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "tokens_per_success",
+      "value": 61.0,
+      "unit": "tokens"
+    },
+    {
+      "id": "rpc_probe_samples",
+      "value": 32.0,
+      "unit": "calls"
+    },
+    {
+      "id": "store_memory_latency_ms_p50",
+      "value": 869.0,
+      "unit": "ms"
+    },
+    {
+      "id": "store_memory_latency_ms_p95",
+      "value": 911.0,
+      "unit": "ms"
+    },
+    {
+      "id": "recall_memory_latency_ms_p50",
+      "value": 967.0,
+      "unit": "ms"
+    },
+    {
+      "id": "recall_memory_latency_ms_p95",
+      "value": 1178.0,
+      "unit": "ms"
+    },
+    {
+      "id": "query_dataset_latency_ms_p50",
+      "value": 664.0,
+      "unit": "ms"
+    },
+    {
+      "id": "query_dataset_latency_ms_p95",
+      "value": 928.0,
+      "unit": "ms"
+    },
+    {
+      "id": "pass_k4@tool-contract-refusal",
+      "value": 1000.0,
+      "unit": "per_mille"
+    },
+    {
+      "id": "pass_k4@http-authed-lookup",
+      "value": 0.0,
+      "unit": "per_mille"
+    },
+    {
+      "id": "pass_k4@failure-tool-errors-recovers",
+      "value": 1000.0,
+      "unit": "per_mille"
     }
   ]
 }

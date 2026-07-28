@@ -176,6 +176,8 @@ above), held to this table by `check-docs`.
 | `menu` | 1 | Selection when the menu is as long as the runtime will present, rather than a choice between two obvious options. | 1000 · 1/1 | 1000 · 1/1 |
 | `long` | 1 | The longest chain the runtime admits: six tool calls across four distinct tools, inside the eight-turn ceiling. | 0 · 0/1 | 0 · 0/1 |
 | `adversarial` | 2 | Input that is trying to steer the agent — including an instruction planted in a **tool's output** — paired with a legitimate request that merely looks like one. | 500 · 1/2 | 1000 · 2/2 |
+| `irrelevance` | 4 | Relevance detection, BFCL-style: two requests nothing on the granted menu can serve (an email send, a live weather read) where the correct move is to fire nothing and say so — beside two near-identically-phrased look-alikes a granted tool must serve, so an always-refuse policy fails the pair. | 1000 · 4/4 | 1000 · 4/4 |
+| `memory` | 2 | LongMemEval-shaped, judge-free: a knowledge update whose superseded value stays live in the store (recall surfaces the conflict; the run must answer the NEW value), and an abstention when memory holds no answer. | 1000 · 2/2 | 500 · 1/2 |
 
 Each family reports its own gate (`task_success@swarm`) beside the suite-wide one, so a
 regression in one capability is visible instead of being averaged away by the others.
@@ -257,7 +259,8 @@ p50/p95 — named for the exact RPC they time, because a memory recall and an AN
 query have different cost profiles and a merged "retrieval latency" would hide which one
 moved. The retrieval numbers honestly include query-embedding time: that is the cost a
 task actually pays. All of them are Spikes — committed into the baseline **to be read**
-(this page's performance table is checked against them), never compared by the ratchet.
+(the README's Cost-and-latency table is checked against them), never compared by the
+ratchet.
 
 **Tokens.** The same telemetry attributes each task's summed model **output tokens**, so
 the suite records tokens-per-task (per family and suite-wide) and tokens-per-success —

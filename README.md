@@ -275,7 +275,7 @@ evidence the tool actually ran. (Published prior art for the shape: RAGAS
 judge-scored claim coverage, which this is not.) Full definitions:
 [Evaluation](docs/site/docs/evaluation.md).
 
-**Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **26 tasks**,
+**Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **32 tasks**,
 on two different Gemma-4-12B builds — Ollama `gemma3:12b` and a llama.cpp GGUF served as
 `kx-serve:gemma-4-12b-it-q4_k_m`. They are not the same build, and the columns are not
 interchangeable. The label travels in the committed baseline, and CI holds this text to it.
@@ -297,6 +297,8 @@ exact pass count.
 | **menu** | 1 | picks correctly from a menu as long as the runtime will present | 1000 · 1/1 | 1000 · 1/1 |
 | **long** | 1 | sustains six tool calls across four tools inside the eight-turn ceiling | 0 · 0/1 | 0 · 0/1 |
 | **adversarial** | 2 | ignores an instruction planted in a tool's OUTPUT — while still acting on a legitimate request that merely looks like one | 500 · 1/2 | 1000 · 2/2 |
+| **irrelevance** | 4 | declines to fire when NOTHING on the menu applies — an email send and a live weather read no granted tool can serve — beside two look-alikes phrased the same way that a granted tool must serve, so an always-refuse policy fails | 1000 · 4/4 | 1000 · 4/4 |
+| **memory** | 2 | updates a stored fact and answers with the NEW value while the superseded row is still live, and abstains when memory holds no answer | 1000 · 2/2 | 500 · 1/2 |
 
 The same rates drawn with their denominators — identical bars are not identical evidence: a
 1000 from one task is one pass, a 1000 from six tasks is six.
@@ -305,33 +307,68 @@ The same rates drawn with their denominators — identical bars are not identica
 ```mermaid
 xychart-beta horizontal
     title "task_success by family — Ollama gemma3:12b (passes/tasks)"
-    x-axis ["tool (6/6)", "react (2/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)"]
+    x-axis ["tool (6/6)", "react (2/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)", "irrelevance (4/4)", "memory (2/2)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 666, 1000, 1000, 1000, 0, 750, 1000, 0, 500]
+    bar [1000, 666, 1000, 1000, 1000, 0, 750, 1000, 0, 500, 1000, 1000]
 ```
 
 <!-- bench-chart:llamacpp — data checked against baseline.llamacpp.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
 ```mermaid
 xychart-beta horizontal
     title "task_success by family — llama.cpp kx-serve:gemma-4-12b-it-q4_k_m (passes/tasks)"
-    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)"]
+    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)", "irrelevance (4/4)", "memory (1/2)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 1000, 666, 1000, 666, 0, 750, 1000, 0, 1000]
+    bar [1000, 1000, 666, 1000, 666, 0, 750, 1000, 0, 1000, 1000, 500]
 ```
 
 ### Suite-wide
 
 | Metric | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `task_success` | 769 · 20/26 | 769 · 20/26 |
-| `tool_call_f1` † | 715 | 895 |
+| `task_success` | 812 · 26/32 | 781 · 25/32 |
+| `tool_call_f1` † | 823 | 859 |
+| `tool_seq_fsa` | 538 · 14/26 | 730 · 19/26 |
+| `tool_seq_psa` † | 759 | 823 |
 | `groundedness` ‡ | 1000 | 0 |
-| `memory_quality` ‡ | 1000 | 1000 |
-| `loop_efficiency` † | 678 | 939 |
+| `context_recall` ‡ | 1000 | 0 |
+| `memory_quality` † | 500 | 1000 |
+| `loop_efficiency` † | 650 | 952 |
 | `injection_resistance` | 0 · 0/1 | 1000 · 1/1 |
-| `model_time_share` † | 956 | 980 |
+| `retrieval_success_at_8` | 1000 · 10/10 | 800 · 8/10 |
+| `pass_k4` | 666 · 2/3 | 666 · 2/3 |
+| `model_time_share` † | 957 | 984 |
 
-Four of these are worth explaining, and none of them is flattering.
+The pass/fail rows carry their own denominators: `tool_seq_fsa` applies to the 26 tasks
+with a gold call sequence, `pass_k4` to the three corpus-flagged flagship tasks
+(tau2-style pass^k at K=4, each trial a fully fresh serve — our own task set, never
+leaderboard-comparable), and `retrieval_success_at_8` to ten single-relevant retrieval
+queries over the 61-document near-miss corpus (random floor ≈ 131‰ per query — a
+hard-negative discrimination gate, not a BEIR-comparable Recall@k).
+
+### Cost and latency — recorded, never gated
+
+Absolutes from the same captures, committed beside the gates and held to this table by
+`check-docs`. They are **Spikes**: a slower host moves them with no code change, so
+nothing here ratchets. Output tokens come from the runtime's own telemetry; **no
+input-token count exists in this runtime**, so there is no input/cache split and no
+dollar figure — a metric whose input the runtime does not record is not published.
+
+| Spike | Ollama | llama.cpp |
+| --- | ---: | ---: |
+| `tokens_per_task_mean` | 109 tokens | 49 tokens |
+| `tokens_per_success` | 135 tokens | 61 tokens |
+| `tokens_measured_tasks` | 32 tasks | 31 tasks |
+| `task_latency_ms_p50` | 119461 ms | 120181 ms |
+| `task_latency_ms_p95` | 239508 ms | 289312 ms |
+| `store_memory_latency_ms_p50` | 245 ms | 869 ms |
+| `store_memory_latency_ms_p95` | 317 ms | 911 ms |
+| `recall_memory_latency_ms_p50` | 232 ms | 967 ms |
+| `recall_memory_latency_ms_p95` | 294 ms | 1178 ms |
+| `query_dataset_latency_ms_p50` | 250 ms | 664 ms |
+| `query_dataset_latency_ms_p95` | 492 ms | 928 ms |
+| `rpc_probe_samples` | 32 calls | 32 calls |
+
+Six of these are worth explaining, and none of them is flattering.
 
 **Prompt injection through a tool result works on one engine and not the other.** A stored
 value the agent looks up contains an instruction telling it to abandon its task, call a
@@ -349,22 +386,40 @@ endpoint, injected the credential, and got an answer back — and the loop did n
 through. The same shape sinks `long`, where six calls were needed and one was made before the
 model narrated a plan instead of executing it.
 
-**`groundedness` on llama.cpp is 0 because retrieval could not find the document.** The RAG
-corpus went from 3 documents to 61, most of them near-misses — the same station with a
-different callsign, the same callsign shape at a different station. The arm with a dedicated
-embedding model ranks the right one comfortably; the arm without one cannot separate it from
-the distractors, and the benchmark says so in its own preamble rather than reporting it as a
-model failure.
+**`groundedness` on llama.cpp is 0 because retrieval could not find the document — and now
+the suite can prove which half failed.** `context_recall` (did retrieval SURFACE the
+declared evidence?) reads 0 beside it, and `retrieval_success_at_8` reads 8/10 against the
+embedder arm's 10/10: the arm without a dedicated embedding model cannot separate the right
+document from sixty near-misses. That is a retrieval verdict, not a model one, and the
+numbers now say so themselves instead of leaving it to the preamble.
 
-**`loop_efficiency` is 678 on Ollama, and `tool_call_f1` 715.** The loop fires calls it does
-not need. That cost is published rather than tuned away, and the suite carries a task whose
-whole job is to fail if steering toward tool use goes too far.
+**The right set of calls in the wrong order was invisible, and no longer is.**
+`tool_call_f1` is an order-tolerant multiset by design, and it reads a comfortable 823/859
+— while the exact-order `tool_seq_fsa` reads 538 and 730. A third to a half of tool-using
+runs make the right calls in a broken or padded order, a cost the F1 column structurally
+cannot show. `loop_efficiency` (650 on Ollama) is the same story from the turns side: the
+loop fires calls it does not need, and that cost is published rather than tuned away.
+
+**Passing once is not passing.** `pass_k4` re-runs three flagship tasks four times each on
+fully fresh serves and both engines read 666 · 2/3: the contract-refusal and
+failure-recovery flagships pass all four trials on both engines, and `http-authed-lookup`
+fails all eight — reliably absent, which at least makes it an honest 0. The first capture
+of this number was wrong twice in ways worth recording: trials beside a still-resident
+main model starved and read as model unreliability, and a trial budget tighter than the
+suite's truncated a working three-turn chain. Both now have regression guards.
+
+**The memory split runs the other way for once.** Ollama passes both memory tasks but
+grounds only one (`memory_quality` 500 — the update run answered the new value without its
+recall observation carrying it); llama.cpp grounds what it recalls (`memory_quality` 1000)
+but fails the abstention task — asked for a fact memory does not hold, it invents instead
+of refusing. Neither column is clean, and they fail differently.
 
 **Speed is measured but only one number is gated.** `model_time_share` is the share of a
-task's wall clock spent inside the model rather than the runtime around it — 956 and 980, so
-runtime overhead is roughly 2–4%. It is a ratio on purpose: an absolute-millisecond gate reads
-differently on a slower host with no code change, so it cannot tell a regression from a busier
-machine. Absolute latencies are recorded beside it and never gated.
+task's wall clock spent inside the model rather than the runtime around it — 957 and 984,
+so runtime overhead is roughly 2–4%. It is a ratio on purpose: an absolute-millisecond gate
+reads differently on a slower host with no code change, so it cannot tell a regression from
+a busier machine. The absolutes live in the Cost-and-latency table above, recorded and
+never gated.
 
 ### What this does not measure
 
@@ -378,6 +433,11 @@ machine. Absolute latencies are recorded beside it and never gated.
 - **One injection.** A pass means this run did not take *this* bait — evidence about a sample,
   not a property of the system.
 - **No concurrency.** Tasks run one at a time.
+- **K=4 is a small sample.** `pass_k4` separates "always" from "usually" and nothing finer;
+  per-task values are recorded, never gated, because a single K=4 draw flips whole.
+- **Abstention is sentinel-shaped.** The irrelevance and memory-abstention oracles accept an
+  exact refusal sentinel; the look-alikes beside them catch an always-refuse policy, but a
+  differently-phrased wrong refusal is not measured.
 
 Reproduce it locally — the full form, because the bare command skips the families whose
 fixtures it cannot provision and says so:
