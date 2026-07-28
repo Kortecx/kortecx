@@ -14,6 +14,14 @@
 //!   `KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b just eval-bench`   # Ollama
 //!   `just fetch-gemma-model && KX_SERVE_MODEL_GGUF=<gemma-4-12b.gguf> just eval-bench`  # llama.cpp
 //! Capture/refresh the committed per-engine baseline with `KX_BENCH_UPDATE_BASELINE=1`.
+//!
+//! After the suite, three post-suite phases fold into the same report and the same
+//! completeness flag (a capture refuses a run any of them sat out of): the model-free
+//! RPC latency probes (store/recall/query p50-p95 Spikes), the Success@8 retrieval
+//! gate over the near-miss corpus, and the pass^k reliability phase — K fully-fresh
+//! serves re-running the corpus's flagship tasks, with instance-id disjointness
+//! asserted so a trial can never silently be a replay (see `tests/run_identity.rs`
+//! for the model-free proof of that detector).
 
 #![cfg(feature = "inference")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
@@ -274,6 +282,10 @@ const REACH_CORPUS: [&[u8]; 61] = [
 /// The durable fact the `reach` memory task must recall. Written by the operator before
 /// the run (all-zero instance) so the recall crosses a run boundary, which is the point.
 const REACH_MEMORY: &[u8] = b"The on-call engineer for the Helios ground station is Marisol Vance.";
+
+/// The STALE fact the `memory` family's knowledge-update task supersedes: the run must
+/// remember the NEW day and answer with it while this row is still live in the store.
+const MEMORY_STALE_FACT: &[u8] = b"The Helios maintenance window is on Tuesday.";
 
 /// The App the `reach-inherit-principal` task runs. It declares NO tools — its steering
 /// sets `reach: inherit_principal`, which REPLACES the (empty) declared wish with the
@@ -584,6 +596,21 @@ async fn provision_reach_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
         eprintln!("eval-bench: reach fixtures unavailable — StoreMemory failed (KX_SERVE_MEMORY?)");
         return false;
     }
+    // (2b) The STALE fact the `memory` family's knowledge-update task supersedes
+    // in-run. The store never updates in place, so after the run both this row and the
+    // model's superseding write are live — the conflict the task exists to create.
+    if c.store_memory(proto::StoreMemoryRequest {
+        content: MEMORY_STALE_FACT.to_vec(),
+        embedding: Vec::new(),
+        kind: proto::MemoryKind::Semantic as i32,
+        namespace: String::new(),
+    })
+    .await
+    .is_err()
+    {
+        eprintln!("eval-bench: memory fixtures unavailable — StoreMemory failed (KX_SERVE_MEMORY?)");
+        return false;
+    }
     let mems = c
         .list_memories(proto::ListMemoriesRequest {
             limit: Some(10),
@@ -592,14 +619,27 @@ async fn provision_reach_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
             include_tombstoned: false,
         })
         .await
-        .expect("list the freshly stored memory")
+        .expect("list the freshly stored memories")
         .into_inner();
+    for fact in ["Marisol Vance", "Tuesday"] {
+        assert!(
+            mems.memories
+                .iter()
+                .any(|m| String::from_utf8_lossy(&m.content).contains(fact)),
+            "the stored fact {fact:?} must be readable BEFORE scoring — an empty memory \
+             scores 0 and reads as a model failure"
+        );
+    }
+    // The memory-abstention task's precondition, checked from the same read-back: no
+    // stored fact mentions a door code, so the honest answer is the abstain sentinel.
+    // A fixture drift that stored one would flip that task's meaning silently.
     assert!(
-        mems.memories
+        !mems
+            .memories
             .iter()
-            .any(|m| String::from_utf8_lossy(&m.content).contains("Marisol Vance")),
-        "the recall fact must be readable BEFORE scoring — an empty memory scores 0 and \
-         reads as a model failure"
+            .any(|m| String::from_utf8_lossy(&m.content).to_ascii_lowercase().contains("door code")),
+        "no stored memory may mention a door code — the abstention task's premise is \
+         that memory does NOT hold the answer"
     );
 
     // (3) The inherit-principal App.
@@ -632,6 +672,400 @@ async fn provision_reach_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
         manifest.tools.iter().filter(|t| t.inherited).count()
     );
     true
+}
+
+/// Nearest-rank percentile over an ALREADY-SORTED sample (the same rule
+/// `eval_bench::latency_spikes` uses — one rule, so two spikes never disagree on what a
+/// p95 is).
+fn nearest_rank(sorted_ms: &[u64], p: usize) -> u64 {
+    let rank = (p * sorted_ms.len()).div_ceil(100).max(1);
+    sorted_ms[rank - 1]
+}
+
+/// An integer millisecond Spike.
+fn ms_spike(id: &str, value: u64, detail: String) -> kx_eval::ScoreOutput {
+    kx_eval::ScoreOutput {
+        metric_id: id.to_string(),
+        value: kx_eval::ScoreValue::Spike {
+            #[allow(clippy::cast_precision_loss)]
+            value: value as f64,
+            unit: "ms".to_string(),
+        },
+        applicable: true,
+        detail,
+    }
+}
+
+/// How many timed calls each RPC probe makes. Small enough to cost seconds, large
+/// enough that a p95 is a rank inside the sample rather than its max.
+const RPC_PROBE_SAMPLES: usize = 32;
+
+/// The persist/retrieval latency probes — model-free, run on the MAIN serve AFTER the
+/// suite is scored (so a probe write can never contaminate a memory oracle), before
+/// shutdown. Each is N timed RPCs → nearest-rank p50/p95 Spikes named for the exact RPC
+/// they time (`store_memory_…`, not a generic `persist_…` — an ANN query and a memory
+/// recall have different cost profiles, and one honest name each is what keeps them
+/// from being averaged together later).
+///
+/// Returns `None` — and no spikes at all — when a probe RPC fails: a latency percentile
+/// over a failed call distribution is not a latency, and the absence is what the
+/// capture guard reads.
+async fn rpc_latency_spikes(
+    c: &mut KxGatewayClient<Channel>,
+) -> Option<Vec<kx_eval::ScoreOutput>> {
+    let mut out = vec![kx_eval::ScoreOutput {
+        metric_id: "rpc_probe_samples".to_string(),
+        value: kx_eval::ScoreValue::Spike {
+            #[allow(clippy::cast_precision_loss)]
+            value: RPC_PROBE_SAMPLES as f64,
+            unit: "calls".to_string(),
+        },
+        applicable: true,
+        detail: "the sample count behind each rpc percentile below".to_string(),
+    }];
+
+    // StoreMemory. Distinct content per call — the store is content-addressed, and 32
+    // timings of `INSERT OR IGNORE` hitting the same row would time the ignore path.
+    let mut store_ms: Vec<u64> = Vec::with_capacity(RPC_PROBE_SAMPLES);
+    for i in 0..RPC_PROBE_SAMPLES {
+        let content = format!("bench-probe latency sample {i:02} — not a task fact");
+        let t0 = std::time::Instant::now();
+        let r = c
+            .store_memory(proto::StoreMemoryRequest {
+                content: content.into_bytes(),
+                embedding: Vec::new(),
+                kind: proto::MemoryKind::Semantic as i32,
+                namespace: "bench-probe".to_string(),
+            })
+            .await;
+        if r.is_err() {
+            eprintln!("eval-bench: ⚠ StoreMemory probe failed at sample {i} — no persist spikes");
+            return None;
+        }
+        store_ms.push(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX));
+    }
+
+    // RecallMemory (server-embed path — the cost a runtime recall actually pays).
+    let mut recall_ms: Vec<u64> = Vec::with_capacity(RPC_PROBE_SAMPLES);
+    for i in 0..RPC_PROBE_SAMPLES {
+        let t0 = std::time::Instant::now();
+        let r = c
+            .recall_memory(proto::RecallMemoryRequest {
+                query_text: "bench probe latency sample".to_string(),
+                query_embedding: Vec::new(),
+                k: 8,
+                namespace: "bench-probe".to_string(),
+            })
+            .await;
+        if r.is_err() {
+            eprintln!("eval-bench: ⚠ RecallMemory probe failed at sample {i} — no recall spikes");
+            return None;
+        }
+        recall_ms.push(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX));
+    }
+
+    // QueryDataset against the already-provisioned bench dataset. The timing honestly
+    // includes query embedding — that IS the retrieval cost a task pays.
+    let mut query_ms: Vec<u64> = Vec::with_capacity(RPC_PROBE_SAMPLES);
+    for i in 0..RPC_PROBE_SAMPLES {
+        let t0 = std::time::Instant::now();
+        let r = c
+            .query_dataset(proto::QueryDatasetRequest {
+                dataset: kx_gateway::eval_bench::BENCH_DATASET.to_string(),
+                query_text: "Helios ground station eclipse-window callsign".to_string(),
+                k: 8,
+                ..Default::default()
+            })
+            .await;
+        if r.is_err() {
+            eprintln!("eval-bench: ⚠ QueryDataset probe failed at sample {i} — no query spikes");
+            return None;
+        }
+        query_ms.push(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX));
+    }
+
+    for (prefix, samples) in [
+        ("store_memory_latency_ms", &mut store_ms),
+        ("recall_memory_latency_ms", &mut recall_ms),
+        ("query_dataset_latency_ms", &mut query_ms),
+    ] {
+        samples.sort_unstable();
+        let detail = format!("nearest-rank over {RPC_PROBE_SAMPLES} timed calls");
+        out.push(ms_spike(
+            &format!("{prefix}_p50"),
+            nearest_rank(samples, 50),
+            detail.clone(),
+        ));
+        out.push(ms_spike(
+            &format!("{prefix}_p95"),
+            nearest_rank(samples, 95),
+            detail,
+        ));
+    }
+    Some(out)
+}
+
+/// The Success@k retrieval probe's queries — each with ONE gold document in
+/// [`REACH_CORPUS`], identified by a needle that matches NO other document (note
+/// `"ZEPHYR-77 for"`: the bare callsign is a substring of the Selene near-miss's
+/// `ZEPHYR-77B`, and a needle that matches two documents is not a single-relevant
+/// qrel). Most queries target the NEAR-MISS documents on purpose: ranking the right
+/// near-miss above its neighbours is the hard-negative discrimination this gate is for.
+const RETRIEVAL_PROBES: [(&str, &str); 10] = [
+    (
+        "Helios ground station eclipse-window callsign",
+        "ZEPHYR-77 for",
+    ),
+    (
+        "What callsign does the Perihelion ground station use for eclipse-window transmissions",
+        "ZEPHYR-64",
+    ),
+    ("Anvil Bay ground station eclipse-window callsign", "TERRAPIN-77"),
+    ("Kestrel Flats ground station eclipse-window callsign", "ZEPHYR-90"),
+    ("Lowfield ground station eclipse-window callsign", "ORRERY-77"),
+    ("Selene ground station eclipse-window callsign", "ZEPHYR-77B"),
+    ("Tessellate ground station eclipse-window callsign", "MARLIN-77"),
+    (
+        "Which callsign does the Helios ground station use for emergency traffic",
+        "VESPER-77",
+    ),
+    (
+        "Which callsign did the Helios ground station retire after the refit",
+        "ZEPHYR-12",
+    ),
+    ("Helios ground station backup transmitter callsign", "ZEPHYR-78"),
+];
+
+/// The per-query Success@8 gate over the 61-document near-miss corpus — the promotion
+/// of what used to be a stderr-only preflight line into a scored, ratcheted number.
+///
+/// Published as exactly what it is: **Success@k with binary single-relevant qrels over
+/// 10 queries and 61 documents, random floor k/61 ≈ 131‰ per query** — a hard-negative
+/// discrimination regression gate, never a BEIR/Recall@k-comparable score.
+///
+/// Returns `(hits, ran)` — the caller folds `floor(1000·hits/ran)` into the gate and
+/// `ran == total` into the completeness sentinel. A query whose RPC failed does not
+/// count as a miss: a broken serve is machinery, and machinery must show up as an
+/// incomplete probe, never as a low score.
+async fn retrieval_success_probe(c: &mut KxGatewayClient<Channel>) -> (usize, usize) {
+    let mut hits = 0usize;
+    let mut ran = 0usize;
+    for (query, needle) in RETRIEVAL_PROBES {
+        let Ok(resp) = c
+            .query_dataset(proto::QueryDatasetRequest {
+                dataset: kx_gateway::eval_bench::BENCH_DATASET.to_string(),
+                query_text: query.to_string(),
+                k: 8,
+                ..Default::default()
+            })
+            .await
+        else {
+            eprintln!("eval-bench: ⚠ Success@8 query failed (RPC): {query:?}");
+            continue;
+        };
+        ran += 1;
+        let hit = resp
+            .into_inner()
+            .hits
+            .iter()
+            .any(|h| String::from_utf8_lossy(&h.content).contains(needle));
+        if hit {
+            hits += 1;
+        } else {
+            eprintln!("eval-bench: Success@8 MISS — gold {needle:?} not in top 8 for {query:?}");
+        }
+    }
+    eprintln!(
+        "eval-bench: Success@8 = {hits}/{ran} single-relevant queries (61-doc corpus, \
+         random floor ≈ 131‰/query)"
+    );
+    (hits, ran)
+}
+
+/// How many independent trials the pass^k phase runs, and the per-task settle budget
+/// inside a trial. The flagship tasks are short chains (ideal 1–3 turns); the suite-wide
+/// 600 s budget exists for the long-horizon task, which is deliberately NOT a flagship —
+/// a task that cannot settle in three minutes is not passing RELIABLY, which is the
+/// property under measurement.
+const PASSK_TRIALS: usize = 4;
+const PASSK_SETTLE_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// One pass^k trial's outcome: the per-task verdicts, and the instance ids its journal
+/// minted (the independence witness).
+struct PasskTrial {
+    verdicts: Vec<(String, bool)>,
+    instance_ids: std::collections::BTreeSet<Vec<u8>>,
+}
+
+/// The pass^k phase: K fully-fresh trials of the corpus's flagship tasks.
+///
+/// **Why a fresh serve per trial, and not K re-invokes.** Run identity is derived from
+/// the bound recipe + args, so an identical re-invoke on the SAME serve resolves to the
+/// same Mote ids and the memoizer serves the committed result as a cache hit — K
+/// "trials" would replay one trial and the phase would be structurally unable to read
+/// anything but K identical verdicts. A fresh state dir gives a fresh journal, a fresh
+/// nonce `instance_id`, and real re-execution. That is asserted, not assumed: each
+/// trial's journal must be EMPTY before dispatch (nothing to replay), and the trials'
+/// instance-id sets must be pairwise disjoint afterwards.
+///
+/// The trial re-registers the same manual tool menu the main run built (HTTP fixture,
+/// flaky servers, all decoys) — the menu is part of the model's input, and a trial with
+/// a thinner menu would be a different experiment. Reach fixtures are NOT provisioned:
+/// no flagship task touches a dataset, a memory, or an App.
+///
+/// A fixture/registration/dispatch failure PANICS or truncates the phase (fewer than K
+/// trials ran) — it must surface as incomplete machinery, never as a `fail` verdict
+/// against the model.
+async fn passk_trials(
+    corpus: &kx_eval::BenchCorpus,
+    fleet: &common::bench_http::BenchHttpServer,
+    env_label: &str,
+    git_sha: &str,
+) -> Vec<PasskTrial> {
+    let flagship: Vec<kx_eval::GoldenTask> = corpus
+        .suite
+        .tasks
+        .iter()
+        .filter(|t| t.flagship)
+        .cloned()
+        .collect();
+    assert!(
+        !flagship.is_empty(),
+        "the corpus declares flagship tasks (pinned in kx-eval)"
+    );
+    let trial_corpus = kx_eval::BenchCorpus {
+        suite: kx_eval::GoldenSuite {
+            id: corpus.suite.id.clone(),
+            tasks: flagship,
+        },
+        suite_digest: corpus.suite_digest.clone(),
+    };
+
+    let mut trials: Vec<PasskTrial> = Vec::with_capacity(PASSK_TRIALS);
+    for trial in 0..PASSK_TRIALS {
+        eprintln!("eval-bench: pass^k trial {}/{PASSK_TRIALS} — fresh serve", trial + 1);
+        let dir = tempfile::TempDir::new().unwrap();
+        let running = start(common::gateway_config(&dir, true, HashMap::new()))
+            .await
+            .unwrap();
+        let mut tc = client(running.local_addr()).await;
+
+        // The independence precondition: an empty journal has nothing to replay.
+        let pre = tc
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: Some(1),
+                instance_id: None,
+                step_salt: None,
+            })
+            .await
+            .expect("list turns on the fresh trial serve")
+            .into_inner();
+        assert!(
+            pre.turns.is_empty(),
+            "a pass^k trial serve must start with an EMPTY journal — this one has \
+             history, so its runs could be replays"
+        );
+
+        // The same menu the main run offered. A trial fixture failure panics inside
+        // these (the main run already proved both work, so a failure here is machinery).
+        assert!(
+            register_bench_http(&mut tc, fleet).await,
+            "the trial's HTTP connector must register — the main run's did"
+        );
+        assert!(
+            register_flaky_and_decoys(&mut tc).await,
+            "the trial's flaky connectors must register — the main run's did"
+        );
+
+        let outcome = match score_live_suite(
+            &mut tc,
+            &trial_corpus,
+            format!("{env_label} | pass^k trial {}", trial + 1),
+            git_sha.to_string(),
+            PASSK_SETTLE_TIMEOUT,
+        )
+        .await
+        {
+            Ok(o) => o,
+            Err(e) => {
+                // Machinery, not model: the phase is truncated and the capture guard
+                // reads the missing trial as incompleteness.
+                eprintln!("eval-bench: ⚠ pass^k trial {} DID NOT RUN — {e}", trial + 1);
+                running.shutdown().await.unwrap();
+                break;
+            }
+        };
+        assert!(
+            outcome.skipped.is_empty(),
+            "a flagship task was SKIPPED inside a trial ({:?}) — the trial serve is \
+             missing a recipe the main serve had",
+            outcome.skipped
+        );
+
+        let verdicts: Vec<(String, bool)> = outcome
+            .report
+            .per_task
+            .iter()
+            .map(|t| {
+                let passed = t
+                    .scores
+                    .iter()
+                    .any(|s| s.metric_id == "task_success" && s.gate_per_mille() == Some(1000));
+                (t.task_id.clone(), passed)
+            })
+            .collect();
+        for (id, passed) in &verdicts {
+            eprintln!(
+                "eval-bench: pass^k trial {} — {id} {}",
+                trial + 1,
+                if *passed { "PASS" } else { "fail" }
+            );
+        }
+
+        // The independence witness: the instance ids this trial's journal minted.
+        let instance_ids: std::collections::BTreeSet<Vec<u8>> = tc
+            .list_react_turns(proto::ListReactTurnsRequest {
+                limit: Some(200),
+                instance_id: None,
+                step_salt: None,
+            })
+            .await
+            .expect("list the trial's turns")
+            .into_inner()
+            .turns
+            .into_iter()
+            .map(|t| t.instance_id)
+            .collect();
+        assert!(
+            !instance_ids.is_empty(),
+            "a trial that ran tasks must have journaled turns"
+        );
+
+        // Two resident model contexts is an OOM on the in-process engine — the next
+        // trial's serve must not start until this one is fully down.
+        running.shutdown().await.unwrap();
+        trials.push(PasskTrial {
+            verdicts,
+            instance_ids,
+        });
+    }
+
+    // The cross-trial independence assert: pairwise-DISJOINT instance-id sets. (The
+    // chain salt is the same across trials by design — identity lives in the recipe,
+    // isolation lives in the state dir — so the id that must differ is the journal's
+    // nonce instance id, and it is the one checked.)
+    for a in 0..trials.len() {
+        for b in (a + 1)..trials.len() {
+            assert!(
+                trials[a].instance_ids.is_disjoint(&trials[b].instance_ids),
+                "trials {} and {} share an instance id — a shared id means a shared \
+                 journal, and a shared journal means a possible replay",
+                a + 1,
+                b + 1
+            );
+        }
+    }
+    trials
 }
 
 /// The distinct `(tool_id, tool_version)` pairs the served runs actually committed — the
@@ -1034,6 +1468,126 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         );
     }
 
+    // ── The post-suite phases. Every one folds into `report` BEFORE the trend write
+    // and the capture below, and every one folds into `complete` — a capture that
+    // silently omitted a phase would ratchet later runs against numbers it never
+    // produced. Env vars and the HTTP fixture must outlive all of them.
+
+    // The RPC latency probes (model-free; the main serve is still up). The docs
+    // publish these from the committed baseline, so a capture without them is
+    // incomplete — that is what folds `probes_ok` in below.
+    let probes_ok = if reach_ready {
+        match rpc_latency_spikes(&mut c).await {
+            Some(spikes) => {
+                for s in &spikes {
+                    eprintln!("  {:<28} {:>8.0} (spike — never gated)", s.metric_id, {
+                        match &s.value {
+                            kx_eval::ScoreValue::Spike { value, .. } => *value,
+                            kx_eval::ScoreValue::Gate { per_mille } => f64::from(*per_mille),
+                        }
+                    });
+                }
+                report.spikes.extend(spikes.into_iter().filter_map(|s| {
+                    match s.value {
+                        kx_eval::ScoreValue::Spike { value, unit } => Some(kx_eval::SpikeMetric {
+                            id: s.metric_id,
+                            value,
+                            unit,
+                        }),
+                        kx_eval::ScoreValue::Gate { .. } => None,
+                    }
+                }));
+                true
+            }
+            None => false,
+        }
+    } else {
+        eprintln!("eval-bench: RPC latency probes SKIPPED — reach fixtures unavailable");
+        false
+    };
+
+    // The Success@8 retrieval gate (the promoted stderr probe): per-query binary over
+    // single-relevant qrels, floor-mille mean, plus the `@queries` machinery sentinel
+    // (1000 iff every query executed — a captured 1000 there is what makes a later
+    // run that skips the probe entirely read as a hard regression BY NAME, even on an
+    // engine whose Success@8 was captured at 0).
+    let successk_complete = if reach_ready {
+        let (hits, ran) = retrieval_success_probe(&mut c).await;
+        if ran > 0 {
+            report.gates.push(kx_eval::GateValue {
+                id: "retrieval_success_at_8".to_string(),
+                per_mille: u32::try_from(hits * 1000 / ran).unwrap_or(0),
+            });
+        }
+        report.gates.push(kx_eval::GateValue {
+            id: "retrieval_success_at_8@queries".to_string(),
+            per_mille: u32::try_from(ran * 1000 / RETRIEVAL_PROBES.len()).unwrap_or(0),
+        });
+        ran == RETRIEVAL_PROBES.len()
+    } else {
+        eprintln!("eval-bench: Success@8 probe SKIPPED — reach fixtures unavailable");
+        false
+    };
+
+    // The pass^k phase: K fully-fresh trials of the flagship set. Per-task 0/1000
+    // verdicts ride as committed UNGATED spikes (a single K=4 Bernoulli draw flips
+    // whole-swing across captures — noise no tolerance absorbs); the GATES are the
+    // flagship mean and the `@trials` machinery sentinel, whose movements are signal.
+    let trials = passk_trials(&corpus, &fleet, &env_label, &report.git_sha).await;
+    let passk_complete = trials.len() == PASSK_TRIALS;
+    {
+        let flagship_ids: Vec<String> = corpus
+            .suite
+            .tasks
+            .iter()
+            .filter(|t| t.flagship)
+            .map(|t| t.id.clone())
+            .collect();
+        let mut per_task_pass: Vec<u32> = Vec::with_capacity(flagship_ids.len());
+        for id in &flagship_ids {
+            let all_pass = passk_complete
+                && trials.iter().all(|t| {
+                    t.verdicts
+                        .iter()
+                        .any(|(tid, passed)| tid == id && *passed)
+                });
+            let pm = if all_pass { 1000 } else { 0 };
+            per_task_pass.push(pm);
+            report.spikes.push(kx_eval::SpikeMetric {
+                id: format!("pass_k4@{id}"),
+                value: f64::from(pm),
+                unit: "per_mille".to_string(),
+            });
+            eprintln!(
+                "eval-bench: pass_k4@{id} = {pm} ({} of {PASSK_TRIALS} trials ran)",
+                trials.len()
+            );
+        }
+        // The flagship mean gates only over a COMPLETE phase — 3 verdicts from 2
+        // trials would be a different (easier) statistic under the same gate id.
+        if passk_complete && !per_task_pass.is_empty() {
+            let mean = per_task_pass.iter().map(|v| u64::from(*v)).sum::<u64>()
+                / per_task_pass.len() as u64;
+            report.gates.push(kx_eval::GateValue {
+                id: "pass_k4".to_string(),
+                per_mille: u32::try_from(mean).unwrap_or(0),
+            });
+        }
+        report.gates.push(kx_eval::GateValue {
+            id: "pass_k4@trials".to_string(),
+            per_mille: u32::try_from(trials.len() * 1000 / PASSK_TRIALS).unwrap_or(0),
+        });
+    }
+
+    // Recomposed AFTER the phases: a capture must refuse a run any phase sat out of.
+    let complete = complete && probes_ok && successk_complete && passk_complete;
+    if !complete {
+        eprintln!(
+            "eval-bench: ⚠ INCOMPLETE (suite or phase) — probes_ok={probes_ok} \
+             success@8_complete={successk_complete} pass^k_complete={passk_complete}"
+        );
+    }
+
     // Persist the env-labelled trend record (the gitignored docs/benchmarks sink).
     std::fs::create_dir_all(benchmarks_dir()).unwrap();
     let trend = benchmarks_dir().join(format!("bench-v1.{engine}.json"));
@@ -1051,7 +1605,9 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
             "refusing to capture a baseline from an INCOMPLETE run — the committed \
              baseline is keyed by the whole corpus digest, so a partial capture would \
              ratchet every later run against a subset. Provision the missing families \
-             (hnsw for react-rag, KX_SERVE_MEMORY for react-memory) and re-run."
+             (hnsw for react-rag, KX_SERVE_MEMORY for react-memory / the memory family) \
+             and check the phase flags above (rpc probes, Success@8, pass^k trials) — \
+             a capture must carry every number the docs publish."
         );
         let path = baseline_path(&engine);
         let json = serde_json::to_string_pretty(&report.to_baseline()).unwrap();
