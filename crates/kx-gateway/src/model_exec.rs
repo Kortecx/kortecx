@@ -1249,7 +1249,7 @@ pub(crate) struct ModelRouterExecutor<B: InferenceBackend> {
     /// (every model arm funnels through `dispatch_model`). Non-blocking +
     /// infallible by contract (the sink drops on a full queue); `None` ⇒
     /// byte-identical dispatch behavior.
-    usage: Option<Arc<dyn crate::telemetry::UsageSink>>,
+    usage: Option<Arc<dyn crate::usage::UsageSink>>,
     /// PR-4.2 (T-STREAM1): the optional ADVISORY token broker. When set,
     /// `dispatch_model` builds a per-mote sink that publishes each token's NEW
     /// bytes (keyed by `mote.id`) for the live stream, then `finish`es the mote on
@@ -1293,8 +1293,10 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
     }
 
     /// Wire the Batch C telemetry usage hook (fail-open by the sink's contract;
-    /// the dispatch path is unchanged when unset).
-    pub(crate) fn with_usage_sink(mut self, usage: Arc<dyn crate::telemetry::UsageSink>) -> Self {
+    /// the dispatch path is unchanged when unset). Only the `observability`
+    /// build has a ledger to wire, so only it compiles the setter.
+    #[cfg(feature = "observability")]
+    pub(crate) fn with_usage_sink(mut self, usage: Arc<dyn crate::usage::UsageSink>) -> Self {
         self.usage = Some(usage);
         self
     }

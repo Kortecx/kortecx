@@ -9,7 +9,7 @@
 //!   `mote_dispatched` + `mote_committed` JSONL lines (the committed Mote's hex id),
 //!   flushed deterministically on graceful shutdown.
 
-#![cfg(feature = "embedded-worker")]
+#![cfg(feature = "observability")]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic)]
 
 mod common;

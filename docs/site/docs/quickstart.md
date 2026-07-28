@@ -25,6 +25,7 @@ git clone https://github.com/Kortecx/kortecx.git && cd kortecx
 cargo install --path crates/kx-cli                               # the core runtime — no C++, no node
 cargo install --path crates/kx-cli --features hnsw               # + Datasets/RAG (still no C++)
 cargo install --path crates/kx-cli --features serve-engine,hnsw  # + serve local models via Ollama (still no C++)
+cargo install --path crates/kx-cli --features observability      # + /metrics, kx telemetry, kx alerts (still no C++)
 cargo install --path crates/kx-cli --features inference,hnsw     # + in-process llama.cpp inference (needs a C++ toolchain)
 ```
 

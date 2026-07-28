@@ -75,6 +75,7 @@ mod datasets;
 // inbox folded from the journal's TERMINAL `Failed` facts. Read-only,
 // off-truth-path, rebuildable (the capture.db posture). The triage lifecycle
 // (ack/resolve), rule engine, and notifications are a Cloud capability (D156).
+#[cfg(feature = "observability")]
 mod alerts;
 // PR-7: the bundles.db sidecar (the BundleStore seam) — context-bundle manifests
 // (PutContextBundle) + the bind-time resolution of `context_bundles`. Rebuildable-
@@ -135,8 +136,11 @@ mod feedback;
 // default, the legacy 250 ms timer under `KX_SERVE_JOURNAL_WATCH=off`.
 mod journal_signal;
 mod live_tail;
-// W1a (T-OBS2): the always-available Prometheus `/metrics` listener (opt-in via
-// `--metrics-listen`). FFI-free (hyper http1 only); not feature-gated.
+// W1a (T-OBS2): the Prometheus `/metrics` listener (opt-in via
+// `--metrics-listen`). FFI-free (hyper http1 only). W6.1: rides `observability`
+// so the release build's contents are defined; an explicit `--metrics-listen`
+// on a build without it is refused loudly (never a silent no-op).
+#[cfg(feature = "observability")]
 mod metrics;
 // PR-2d-2: the bundled deterministic stdio MCP tool's wiring (locate the bin,
 // register the capability + the typed ToolDef). Behind `serve-engine` (the react
@@ -296,10 +300,15 @@ mod webhook;
 // Batch C: the telemetry.db sidecar (the TelemetryView seam) — host-measured
 // execution exhaust (wall-clock / model usage / fired tool), joined to the
 // journal's Committed facts by a background tick. Rebuildable-to-EMPTY,
-// off-journal, off-digest; the hot-path sink is bounded + fail-open. Needs the
-// embedded worker (the executor wrapper measures the worker's mote loop).
-#[cfg(feature = "embedded-worker")]
+// off-journal, off-digest; the hot-path sink is bounded + fail-open. W6.1:
+// rides `observability` (which implies the embedded worker its executor
+// wrapper measures) so the release build's contents are defined.
+#[cfg(feature = "observability")]
 mod telemetry;
+// The model-usage hook seam `model_exec` records through — trait-only, so the
+// dispatch path never depends on the ledger module that implements it.
+#[cfg(feature = "embedded-worker")]
+mod usage;
 // UI-3: the host-side teams (MembershipView) + grants (GrantView) read seams + the
 // idempotent demo-team seed.
 mod teams;

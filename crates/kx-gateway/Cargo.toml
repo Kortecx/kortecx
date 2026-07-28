@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 [package]
 name         = "kx-gateway"
-version      = "0.1.1"
+version      = "0.2.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
@@ -258,7 +258,9 @@ http               = { workspace = true }
 bytes              = { workspace = true }
 # W1a (T-OBS2): RED metrics folded from the read-only journal + Prometheus text
 # render. FFI-free, no build.rs (the dep-wall + check-reproducible stay green).
-kx-otel            = { workspace = true }
+# W6.1: OPTIONAL — the edge rides the `observability` feature, so a build without
+# it provably excludes the whole metrics/alerts/telemetry stack from the artifact.
+kx-otel            = { workspace = true, optional = true }
 # W1a (T-OBS1): the JSONL operator audit sink for the serve path (the gateway
 # constructs it from `--audit-log` and injects it into the embedded coordinator).
 # Off the truth path; FFI-free (the dep-wall keeps it off the guarantee crates).
@@ -337,6 +339,15 @@ tonic    = { workspace = true, features = ["tls"] }
 
 [features]
 default = ["embedded-worker", "mcp-gateway"]
+# W6.1: the local observability stack — the `/metrics` listener (kx-otel), the
+# alerts.db read-cache, and the telemetry.db execution-exhaust sidecar. ON by
+# default for source builds; the RELEASE build names its features explicitly and
+# deliberately EXCLUDES this one (audit + monitoring are a Cloud capability), so
+# the RC artifact's contents are DEFINED rather than implied. Without it the
+# three read RPCs keep their designed degrade (`unimplemented` on a `None` view)
+# and `--metrics-listen` is refused loudly. Implies `embedded-worker`: the
+# telemetry executor wrapper measures the worker's mote loop.
+observability = ["dep:kx-otel", "embedded-worker"]
 # PR-6b-1 (D159): the EXTERNAL MCP gateway (dial external MCP servers + the
 # Connections govern surface + the 5 MCP-server RPCs). FFI-free (kx-mcp/ureq/
 # rusqlite), so it stays in the DEFAULT build without breaking `build-no-inference`

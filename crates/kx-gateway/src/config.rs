@@ -327,6 +327,7 @@ fn parse_serve(mut args: impl Iterator<Item = String>) -> Result<GatewayConfig, 
     let tls = pair_tls(tls_cert, tls_key)?;
 
     refuse_console_without_feature(console_listen)?;
+    refuse_metrics_without_feature(metrics_listen)?;
 
     Ok(GatewayConfig {
         listen,
@@ -419,6 +420,21 @@ fn refuse_console_without_feature(mode: ConsoleMode) -> Result<(), GatewayError>
                     .into(),
             ));
         }
+    }
+    Ok(())
+}
+
+/// W6.1: an EXPLICIT `--metrics-listen` on a binary built without the
+/// `observability` feature is a loud error (never a silent no-op) — the D139
+/// console-refusal posture, applied to the second opt-in listener.
+fn refuse_metrics_without_feature(metrics_listen: Option<SocketAddr>) -> Result<(), GatewayError> {
+    if !cfg!(feature = "observability") && metrics_listen.is_some() {
+        return Err(GatewayError::Config(
+            "this kx was built without the observability stack (`observability` \
+             feature); build from a repo checkout with `--features observability` \
+             to serve /metrics"
+                .into(),
+        ));
     }
     Ok(())
 }
@@ -761,21 +777,35 @@ mod tests {
         let c = serve(base(&[]).unwrap());
         assert_eq!(c.metrics_listen, None);
         assert_eq!(c.audit_log, None);
-        // Opt-in: both parse.
-        let c = serve(
-            base(&[
-                "--metrics-listen",
-                "127.0.0.1:9090",
-                "--audit-log",
-                "/tmp/audit.jsonl",
-            ])
-            .unwrap(),
-        );
-        assert_eq!(
-            c.metrics_listen,
-            Some("127.0.0.1:9090".parse::<SocketAddr>().unwrap())
-        );
-        assert_eq!(c.audit_log, Some(PathBuf::from("/tmp/audit.jsonl")));
+        // Opt-in: `--audit-log` parses on every build; `--metrics-listen` only
+        // where the `observability` feature compiled the endpoint in. On a build
+        // without it an explicit ask is a LOUD error naming the feature (the
+        // D139 console-refusal posture) — never a silent no-op.
+        let opted = base(&[
+            "--metrics-listen",
+            "127.0.0.1:9090",
+            "--audit-log",
+            "/tmp/audit.jsonl",
+        ]);
+        #[cfg(feature = "observability")]
+        {
+            let c = serve(opted.unwrap());
+            assert_eq!(
+                c.metrics_listen,
+                Some("127.0.0.1:9090".parse::<SocketAddr>().unwrap())
+            );
+            assert_eq!(c.audit_log, Some(PathBuf::from("/tmp/audit.jsonl")));
+        }
+        #[cfg(not(feature = "observability"))]
+        {
+            let err = opted.expect_err("an explicit --metrics-listen must refuse");
+            assert!(
+                format!("{err}").contains("observability"),
+                "the refusal names the missing feature: {err}"
+            );
+            let c = serve(base(&["--audit-log", "/tmp/audit.jsonl"]).unwrap());
+            assert_eq!(c.audit_log, Some(PathBuf::from("/tmp/audit.jsonl")));
+        }
         // A malformed metrics addr is a config error; a missing value too.
         assert!(base(&["--metrics-listen", "not-an-addr"]).is_err());
         assert!(base(&["--metrics-listen"]).is_err());

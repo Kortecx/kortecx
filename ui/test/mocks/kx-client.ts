@@ -14,16 +14,13 @@ export interface MockClientImpl {
   wsEvents?: (...args: unknown[]) => AsyncIterable<unknown>;
   /** An async-iterable of `GlobalDelta`s (the Batch C global tail). */
   wsAllEvents?: (...args: unknown[]) => AsyncIterable<unknown>;
-  listMoteTelemetry?: (...args: unknown[]) => Promise<unknown>;
   listRuns?: (...args: unknown[]) => Promise<unknown>;
   listRecipes?: (...args: unknown[]) => Promise<unknown>;
   getRecipeForm?: (...args: unknown[]) => Promise<unknown>;
   listTeams?: (...args: unknown[]) => Promise<unknown>;
   listTeamMembers?: (...args: unknown[]) => Promise<unknown>;
   listAssetGrants?: (...args: unknown[]) => Promise<unknown>;
-  listReplanRounds?: (...args: unknown[]) => Promise<unknown>;
   listReactTurns?: (...args: unknown[]) => Promise<unknown>;
-  listRerankTurns?: (...args: unknown[]) => Promise<unknown>;
   listCaptureRecords?: (...args: unknown[]) => Promise<unknown>;
   getMoteDetail?: (...args: unknown[]) => Promise<unknown>;
   getContentBatch?: (...args: unknown[]) => Promise<unknown>;
@@ -40,6 +37,16 @@ export interface MockClientImpl {
   getContextBundle?: (...args: unknown[]) => Promise<unknown>;
   editContextItem?: (...args: unknown[]) => Promise<unknown>;
   removeContextItem?: (...args: unknown[]) => Promise<unknown>;
+  // POC-4 / POC-5d: the App catalog (flat on the client). `toggleTemplate` is NOT a
+  // client method — the hook composes `getApp` → `saveApp`.
+  listApps?: (...args: unknown[]) => Promise<unknown>;
+  getApp?: (...args: unknown[]) => Promise<unknown>;
+  runApp?: (...args: unknown[]) => Promise<unknown>;
+  saveApp?: (...args: unknown[]) => Promise<unknown>;
+  deleteApp?: (...args: unknown[]) => Promise<unknown>;
+  exportAppBundle?: (...args: unknown[]) => Promise<unknown>;
+  importApp?: (...args: unknown[]) => Promise<unknown>;
+  cloneApp?: (...args: unknown[]) => Promise<unknown>;
   // MM-3 / D110: the host secret store (`client.secrets.*`). The value is write-only.
   secretsList?: (...args: unknown[]) => Promise<unknown>;
   secretsSet?: (...args: unknown[]) => Promise<unknown>;
@@ -50,11 +57,10 @@ export interface MockClientImpl {
   triggersTest?: (...args: unknown[]) => Promise<unknown>;
   triggersFire?: (...args: unknown[]) => Promise<unknown>;
   triggersRemove?: (...args: unknown[]) => Promise<unknown>;
-  // D114 / RC6a: the HITL approvals inbox (`client.approvals.*`) + cost readout (`client.cost.*`).
+  // D114 / RC6a: the HITL approvals inbox (`client.approvals.*`).
   approvalsListPending?: (...args: unknown[]) => Promise<unknown>;
   approvalsGrant?: (...args: unknown[]) => Promise<unknown>;
   approvalsDeny?: (...args: unknown[]) => Promise<unknown>;
-  costGetRunCost?: (...args: unknown[]) => Promise<unknown>;
   // PR-6b-1 / RC6a: the external-MCP-gateway connection methods (flat on the client;
   // surfaced read-only in Monitoring's connector-health panel).
   listMcpServers?: (...args: unknown[]) => Promise<unknown>;
@@ -102,14 +108,8 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   const listTeams = vi.fn(impl.listTeams ?? (async () => []));
   const listTeamMembers = vi.fn(impl.listTeamMembers ?? (async () => ({ owner: "", members: [] })));
   const listAssetGrants = vi.fn(impl.listAssetGrants ?? (async () => ({ owner: "", grants: [] })));
-  const listReplanRounds = vi.fn(
-    impl.listReplanRounds ?? (async () => ({ rounds: [], hasMore: false })),
-  );
   const listReactTurns = vi.fn(
     impl.listReactTurns ?? (async () => ({ turns: [], hasMore: false })),
-  );
-  const listRerankTurns = vi.fn(
-    impl.listRerankTurns ?? (async () => ({ turns: [], hasMore: false })),
   );
   const listCaptureRecords = vi.fn(
     impl.listCaptureRecords ?? (async () => ({ records: [], hasMore: false })),
@@ -120,9 +120,6 @@ export function makeMockClient(impl: MockClientImpl = {}) {
       async function* () {
         /* no events */
       },
-  );
-  const listMoteTelemetry = vi.fn(
-    impl.listMoteTelemetry ?? (async () => ({ rows: [], hasMore: false })),
   );
   const getMoteDetail = vi.fn(
     impl.getMoteDetail ??
@@ -165,6 +162,34 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   const putResult = { bundleRef: "ef".repeat(8), handle: "", deduplicated: false };
   const editContextItem = vi.fn(impl.editContextItem ?? (async () => putResult));
   const removeContextItem = vi.fn(impl.removeContextItem ?? (async () => putResult));
+  // POC-4 / POC-5d: the App catalog. `runApp`'s default is Run-shaped — it MUST carry
+  // `recipeFingerprint` or `useRunApp`'s shape guard rejects it as a waited Result.
+  const listApps = vi.fn(impl.listApps ?? (async () => []));
+  const getApp = vi.fn(impl.getApp ?? (async () => null));
+  const runApp = vi.fn(
+    impl.runApp ??
+      (async () => ({
+        instanceId: "ab".repeat(16),
+        reactChainSalt: "cd".repeat(16),
+        terminalMoteId: "ef".repeat(32),
+        recipeFingerprint: "12".repeat(32),
+      })),
+  );
+  const saveAppResult = { appRef: "ab".repeat(32), handle: "app", deduplicated: false };
+  const saveApp = vi.fn(impl.saveApp ?? (async () => saveAppResult));
+  const deleteApp = vi.fn(
+    impl.deleteApp ??
+      (async () => ({
+        removed: true,
+        branchUnbound: false,
+        lockCleared: false,
+        hostedStopped: false,
+        triggersRemoved: 0,
+      })),
+  );
+  const exportAppBundle = vi.fn(impl.exportAppBundle ?? (async () => ""));
+  const importApp = vi.fn(impl.importApp ?? (async () => saveAppResult));
+  const cloneApp = vi.fn(impl.cloneApp ?? (async () => saveAppResult));
   // MM-3 / D110: the host secret store namespace (`client.secrets.*`).
   const secretsList = vi.fn(impl.secretsList ?? (async () => ({ names: [], hasMore: false })));
   const secretsSet = vi.fn(impl.secretsSet ?? (async () => true));
@@ -177,25 +202,12 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     impl.triggersFire ?? (async () => ({ instanceId: "cd".repeat(8), deduped: false })),
   );
   const triggersRemove = vi.fn(impl.triggersRemove ?? (async () => true));
-  // D114 / RC6a: the HITL approvals inbox + the cost readout namespaces.
+  // D114 / RC6a: the HITL approvals inbox namespace.
   const approvalsListPending = vi.fn(
     impl.approvalsListPending ?? (async () => ({ approvals: [] })),
   );
   const approvalsGrant = vi.fn(impl.approvalsGrant ?? (async () => true));
   const approvalsDeny = vi.fn(impl.approvalsDeny ?? (async () => true));
-  const costGetRunCost = vi.fn(
-    impl.costGetRunCost ??
-      (async () => ({
-        instanceId: "",
-        turns: 0,
-        toolCalls: 0,
-        estimatedMicroUsd: 0,
-        ceilingMicroUsd: 0,
-        perTurnMicroUsd: 0,
-        perToolCallMicroUsd: 0,
-        overCeiling: false,
-      })),
-  );
   const listMcpServers = vi.fn(
     impl.listMcpServers ?? (async () => ({ servers: [], hasMore: false })),
   );
@@ -211,16 +223,13 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getSignature,
     wsEvents,
     wsAllEvents,
-    listMoteTelemetry,
     listRuns,
     listRecipes,
     getRecipeForm,
     listTeams,
     listTeamMembers,
     listAssetGrants,
-    listReplanRounds,
     listReactTurns,
-    listRerankTurns,
     listCaptureRecords,
     getMoteDetail,
     getContentBatch,
@@ -237,6 +246,14 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getContextBundle,
     editContextItem,
     removeContextItem,
+    listApps,
+    getApp,
+    runApp,
+    saveApp,
+    deleteApp,
+    exportAppBundle,
+    importApp,
+    cloneApp,
     secrets: { list: secretsList, set: secretsSet, remove: secretsRemove },
     triggers: {
       add: triggersAdd,
@@ -250,7 +267,6 @@ export function makeMockClient(impl: MockClientImpl = {}) {
       grant: approvalsGrant,
       deny: approvalsDeny,
     },
-    cost: { getRunCost: costGetRunCost },
     listMcpServers,
     testMcpServer,
     deregisterMcpServer,
@@ -275,9 +291,7 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     listTeams,
     listTeamMembers,
     listAssetGrants,
-    listReplanRounds,
     listReactTurns,
-    listRerankTurns,
     listCaptureRecords,
     getMoteDetail,
     getContentBatch,
@@ -294,6 +308,14 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     getContextBundle,
     editContextItem,
     removeContextItem,
+    listApps,
+    getApp,
+    runApp,
+    saveApp,
+    deleteApp,
+    exportAppBundle,
+    importApp,
+    cloneApp,
     secretsList,
     secretsSet,
     secretsRemove,
@@ -305,7 +327,6 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     approvalsListPending,
     approvalsGrant,
     approvalsDeny,
-    costGetRunCost,
     listMcpServers,
     testMcpServer,
     deregisterMcpServer,

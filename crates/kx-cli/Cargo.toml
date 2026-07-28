@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 [package]
 name         = "kx-cli"
-version      = "0.2.0-rc.1"
+version      = "0.2.0-rc.2"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
@@ -104,6 +104,14 @@ console = ["kx-gateway/console"]
 # `kx-cli` arm of `just features-guard`). Serving a hosted App needs Node/npm on the host
 # at RUN time; nothing is required at build time.
 hosted-apps = ["kx-gateway/hosted-apps"]
+# W6.1: build `kx serve` with the LOCAL OBSERVABILITY stack — forwards to the
+# kx-gateway `observability` feature (the /metrics listener + alerts.db +
+# telemetry.db sidecars). Deliberately NOT in the release feature set: audit +
+# monitoring are a Cloud capability, so the RC artifact provably excludes the
+# stack (`kx telemetry`/`kx alerts` then surface the server's honest
+# `unimplemented`, and `--metrics-listen` is refused loudly). FFI-FREE (kx-otel
+# is journal-fold + Prometheus text over the existing hyper stack).
+observability = ["kx-gateway/observability"]
 
 [dev-dependencies]
 # E2E: host an in-process gateway (kx_gateway::start) + drive CLIENT verbs as subprocesses.

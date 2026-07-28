@@ -16,21 +16,38 @@ fabricated: each number traces to a committed fact or an honest empty state.
 The console is a flat set of sections, so observability is not one "Monitoring"
 destination. It is split by scope, and three of the reads are **CLI/SDK-only today**:
 
-| What you want | Where it is |
-|---|---|
-| The cross-run live event tail, triage-able | the **Activity drawer** (navbar) |
-| One run's metrics + time travel | the **Activity drawer**, after picking a run |
-| Run history, newest-first | **Workflows → Runs** |
-| One run's DAG / step detail | the run-detail view |
-| Per-model telemetry + the token economy | `kx telemetry` / the SDK |
-| A run's cost guardrail | `kx cost` / the SDK |
-| The terminal-failure alerts inbox | `kx alerts` / the SDK |
-| RED counters for Prometheus | `--metrics-listen` |
+| What you want | Where it is | Build |
+|---|---|---|
+| The cross-run live event tail, triage-able | the **Activity drawer** (navbar) | every build |
+| One run's metrics + time travel | the **Activity drawer**, after picking a run | every build |
+| Run history, newest-first | **Workflows → Runs** | every build |
+| One run's DAG / step detail | the run-detail view | every build |
+| Per-model telemetry + the token economy | `kx telemetry` / the SDK | `--features observability` |
+| A run's cost guardrail | `kx cost` / the SDK | every build |
+| The terminal-failure alerts inbox | `kx alerts` / the SDK | `--features observability` |
+| RED counters for Prometheus | `--metrics-listen` | `--features observability` |
 
 Telemetry, cost and alerts had console homes before the console flattened to its
 current sections, and do not have one now. The RPCs, CLI verbs and SDK methods below
 are unchanged and fully supported; only the browser surface is absent, and this page
 says so rather than describing a tab you cannot open.
+
+**The build column matters.** The telemetry sidecar, the alerts inbox and the
+Prometheus endpoint ride the opt-in `observability` cargo feature, and the
+**prebuilt release binary deliberately excludes it** — richer monitoring is a
+managed Cloud capability, and the release's feature list says exactly what the
+artifact contains rather than implying it. Against a release binary, `kx
+telemetry` and `kx alerts` surface the server's honest `unimplemented`, and an
+explicit `--metrics-listen` is refused with an error naming the feature. A
+source build turns the stack on:
+
+```bash
+cargo install --path crates/kx-cli --features observability,serve-engine,hnsw
+```
+
+The journal-fold surfaces above the line — the Activity drawer, run metrics,
+health, run cost — are in every build: they read the journal itself, not a
+sidecar.
 
 ## The Activity drawer
 

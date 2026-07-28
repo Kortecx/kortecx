@@ -8,6 +8,19 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Changed
 
+- **The release build now says what it contains: local observability is the opt-in
+  `observability` feature, and the prebuilt binary excludes it.** One cargo feature
+  carries the Prometheus `/metrics` listener, the `alerts.db` inbox and the
+  `telemetry.db` execution-exhaust sidecar (the kx-otel edge is optional behind it).
+  Source builds opt in with `--features observability`; against a release binary,
+  `kx telemetry` / `kx alerts` surface the server's honest `unimplemented` and an
+  explicit `--metrics-listen` is refused with an error naming the feature. The wire
+  is untouched — no proto change, and the RPCs keep their designed degrade. Two new
+  test walls prove the property in both directions (the kx-otel edge absent from the
+  release closure; the RPCs inert and no sidecar created on a release-shaped build).
+  The journal-fold surfaces — the Activity drawer, run metrics, health, `kx cost`,
+  the audit log — are in every build. (kx-gateway 0.2.0, kx-cli 0.2.0-rc.2)
+
 - **The journal announces its own commits, and nothing inside the serve polls it any
   more.** `kx-journal` gains a change-notification seam (`WatchableJournal`,
   `JournalSubscription`); the two event streams and the capture, telemetry, alerts and

@@ -72,6 +72,12 @@ jobs:
           if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-llamacpp'; then
             echo "::error::the console/hnsw/serve-engine/hosted-apps features dragged the FFI into kx-cli"; exit 1
           fi
+          # W6.1: the release deliberately excludes the observability stack
+          # (audit + monitoring are a Cloud capability) — kx-otel appearing in
+          # THIS closure means the exclusion silently regressed.
+          if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-otel'; then
+            echo "::error::the release feature set linked kx-otel (observability must stay opt-in)"; exit 1
+          fi
 
       # PR-A.1: the prebuilt now ships `serve-engine` (FFI-free), so a toolchain-free
       # `curl | install.sh` install AUTO-DETECTS a running Ollama daemon and serves

@@ -45,8 +45,8 @@ use {
     kx_fleet::SqliteMembershipLedger,
     kx_gateway_core::{
         EventTailer, GatewayService, GlobalEventTailer, GrantView, JournalReader, MembershipView,
-        ReadOnly, RecipeBinder, RecipeCatalog, SignatureCatalog, TelemetryView,
-        TonicCoordinatorSubmitter, WorkflowAuthor,
+        ReadOnly, RecipeBinder, RecipeCatalog, SignatureCatalog, TonicCoordinatorSubmitter,
+        WorkflowAuthor,
     },
     kx_journal::SqliteJournal,
     kx_proto::proto::coordinator_server::CoordinatorServer,
@@ -606,7 +606,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // Batch C: the telemetry.db sidecar (host-measured execution exhaust —
     // wall-clock / model usage / fired tool). Rebuildable-to-EMPTY, off-journal,
     // off-digest; the hot-path sink is bounded + fail-open (drop-on-full), so it
-    // can never block, slow, or fail a run.
+    // can never block, slow, or fail a run. W6.1: rides `observability` — without
+    // it no ledger opens and ListMoteTelemetry keeps its designed `unimplemented`.
+    #[cfg(feature = "observability")]
     let telemetry_ledger = Arc::new(crate::telemetry::TelemetryLedger::open(&catalog_dir)?);
     // No real body is provisioned in the OSS serve path (script/tool execution is
     // OSS-scoped-out, D141.4), so the sandbox-routing seam is wired with no body ref:
@@ -646,27 +648,28 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let (executor, context_sink, serve_model): WiredExecutor = match shaper_runtime {
         Some(rt) => {
             tracing::info!(model = %rt.model_id.0, "AL1+PR-2b: live model + topology loop enabled");
-            let model_exec = Arc::new(
-                crate::model_exec::ModelRouterExecutor::new(
-                    executor,
-                    rt.backend,
-                    (*content).clone(),
-                    Some(rt.recipes),
-                )
-                // Batch C: the usage hook — every model arm funnels through
-                // dispatch_model, so this records the model that ACTUALLY ran +
-                // its output tokens (fail-open; dispatch unchanged).
-                .with_usage_sink(Arc::new(telemetry_ledger.sink()))
-                // PR-4.2: the ADVISORY token publisher — streams each model mote's
-                // tokens out-of-band (keyed by mote.id). Byte-identical dispatch.
-                .with_token_publisher(token_broker.clone())
-                // RC3 (T-REACT-TOOL-MENU): the SAME live `Arc<SqliteToolRegistry>` the
-                // coordinator settle + broker share (resolved at :479). A tool-eligible
-                // ReAct turn renders its granted-tool menu from this registry at
-                // dispatch — off-MoteDef / off-digest (the canonical no-tools demo
-                // renders no menu). Unsized-coerces to `Arc<dyn ToolRegistry>`.
-                .with_tool_registry(tool_registry.clone()),
-            );
+            let model_exec = crate::model_exec::ModelRouterExecutor::new(
+                executor,
+                rt.backend,
+                (*content).clone(),
+                Some(rt.recipes),
+            )
+            // PR-4.2: the ADVISORY token publisher — streams each model mote's
+            // tokens out-of-band (keyed by mote.id). Byte-identical dispatch.
+            .with_token_publisher(token_broker.clone())
+            // RC3 (T-REACT-TOOL-MENU): the SAME live `Arc<SqliteToolRegistry>` the
+            // coordinator settle + broker share (resolved at :479). A tool-eligible
+            // ReAct turn renders its granted-tool menu from this registry at
+            // dispatch — off-MoteDef / off-digest (the canonical no-tools demo
+            // renders no menu). Unsized-coerces to `Arc<dyn ToolRegistry>`.
+            .with_tool_registry(tool_registry.clone());
+            // Batch C: the usage hook — every model arm funnels through
+            // dispatch_model, so this records the model that ACTUALLY ran +
+            // its output tokens (fail-open; dispatch unchanged). W6.1: only the
+            // observability build has a ledger to record into.
+            #[cfg(feature = "observability")]
+            let model_exec = model_exec.with_usage_sink(Arc::new(telemetry_ledger.sink()));
+            let model_exec = Arc::new(model_exec);
             let sink: Arc<dyn kx_worker::ContextSink> = model_exec.clone();
             let wrapped: Arc<dyn MoteExecutor> = model_exec;
             (wrapped, Some(sink), Some(rt.model_id))
@@ -680,7 +683,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // Batch C: the OUTERMOST executor wrapper — every leased mote (echo /
     // real-exec / model / shaper / react turn / critic) gets a wall-clock row.
     // Structurally fail-open: the wrapper returns the inner result verbatim on
-    // every path and records via a bounded try_send.
+    // every path and records via a bounded try_send. W6.1: without the
+    // `observability` ledger there is nothing to record into, so the unwrapped
+    // executor stands (byte-identical dispatch, no measurement).
+    #[cfg(feature = "observability")]
     let executor: Arc<dyn MoteExecutor> = Arc::new(crate::telemetry::TelemetryExecutor::new(
         executor,
         telemetry_ledger.sink(),
@@ -945,6 +951,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // Built only when `--metrics-listen` is set (default OFF, deny-by-default). A
     // background tick refreshes the cached snapshot; the `/metrics` scrape serves it
     // without scanning the journal, so scrape latency is independent of journal size.
+    #[cfg(feature = "observability")]
     let metrics_handle = cfg.metrics_listen.map(|_| {
         kx_otel::MetricsHandle::new(
             reader.clone(),
@@ -1425,7 +1432,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      journal, off-digest. The triage lifecycle (ack/resolve), the rule
     //      engine, and notifications are a Cloud capability (D156). Same hard-
     //      error posture as capture on an unrecoverable open.
+    #[cfg(feature = "observability")]
     let alerts_db = Arc::new(crate::alerts::AlertsDb::open(&catalog_dir)?);
+    #[cfg(feature = "observability")]
     alerts_db.fold(reader.as_ref()); // initial backfill before serving reads
     let capture_task = {
         let ledger = capture_ledger.clone();
@@ -1456,7 +1465,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // A subscription has no such first wakeup — it waits for a commit — so restoring the
     // startup fold by hand is what keeps a serve resumed over an existing journal from
     // reporting a stale join until the next write.
+    #[cfg(feature = "observability")]
     telemetry_ledger.join_fold(reader.as_ref());
+    #[cfg(feature = "observability")]
     let telemetry_task = {
         let ledger = telemetry_ledger.clone();
         let reader = reader.clone();
@@ -1480,6 +1491,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      journal tail's terminal `Failed` facts into the alerts.db read-cache,
     //      mirroring the capture fold's journal signal + shutdown catch-up. Off the
     //      sole-writer thread; read-only journal handle.
+    #[cfg(feature = "observability")]
     let alerts_task = {
         let ledger = alerts_db.clone();
         let reader = reader.clone();
@@ -1504,6 +1516,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      journal signal + shutdown catch-up. Off the sole-writer thread; read-only
     //      handle; fail-open (a fold error keeps the last good snapshot). Spawned only
     //      when `--metrics-listen` is set; `None` ⇒ no task, byte-identical to today.
+    #[cfg(feature = "observability")]
     let metrics_task = metrics_handle.clone().map(|handle| {
         let mut shutdown = live_shutdown_rx.clone();
         let reader = reader.clone();
@@ -1817,7 +1830,6 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_uploads_ledger(uploads_db)
         .with_feedback_store(feedback_db)
         .with_run_inputs_store(run_inputs_db)
-        .with_alerts_view(alerts_db)
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db.clone())
         .with_skill_catalog(skills_db.clone())
@@ -1835,13 +1847,20 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_model_catalog_view(models_view)
         .with_server_info(server_info_facts)
         .with_mote_def_view(mote_defs_view)
-        .with_telemetry_view(telemetry_ledger.clone())
         .with_event_tailer(Arc::new(crate::live_tail::LiveTailer::new(
             live_shutdown_rx.clone(),
         )))
         .with_global_event_tailer(Arc::new(crate::live_tail::GlobalLiveTailer::new(
             live_shutdown_rx.clone(),
         )));
+    // W6.1: the observability read seams ride their feature. Without it the two
+    // RPCs keep the seam's designed degrade — `unimplemented` on a `None` view.
+    #[cfg(feature = "observability")]
+    {
+        gateway = gateway
+            .with_alerts_view(alerts_db)
+            .with_telemetry_view(telemetry_ledger.clone());
+    }
     // D213: wire the hosted-app supervisor (built above; behind `hosted-apps`).
     #[cfg(feature = "hosted-apps")]
     {
@@ -2215,6 +2234,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     //      like the console + ws accept loops (bind early, serve late — no orphan on
     //      a later fallible step). Unauthenticated by design (the scraper convention);
     //      a non-loopback bind is allowed but warns (Cloud adds auth/party-scope).
+    #[cfg(feature = "observability")]
     let (metrics_local_addr, metrics_tcp) = match cfg.metrics_listen {
         Some(addr) => {
             let tcp = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
@@ -2237,6 +2257,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         }
         None => (None, None),
     };
+    // W6.1: without the feature there is nothing to bind — config parsing already
+    // refused an explicit `--metrics-listen`, so this is always the None posture.
+    #[cfg(not(feature = "observability"))]
+    let metrics_local_addr: Option<SocketAddr> = None;
     // D113: bind the webhook ingress EARLY (fail-closed on a port conflict), spawn it
     // LATE (below, with the trigger admin). Per-trigger authenticated; a non-loopback
     // bind is allowed but warned (the NONE-auth posture is then refused at fire time).
@@ -2368,13 +2392,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         all(not(feature = "console"), not(feature = "serve-engine")),
         allow(unused_mut)
     )]
-    let mut aux = vec![
-        coord_task,
-        ws_task,
-        capture_task,
-        telemetry_task,
-        alerts_task,
-    ];
+    let mut aux = vec![coord_task, ws_task, capture_task];
+    #[cfg(feature = "observability")]
+    aux.push(telemetry_task);
+    #[cfg(feature = "observability")]
+    aux.push(alerts_task);
     // The pooled worker + heartbeat tasks (one pair per pool member; default
     // pool=1 ⇒ exactly one pair, same as before). All join the shutdown-abort set.
     aux.extend(worker_tasks);
@@ -2395,18 +2417,22 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // set (spawned only when `--metrics-listen` is set; served LATE, after every
     // fallible start step). The accept loop reuses the telemetry seam for the
     // recent-window latency block (None when no model Mote has run — honest omit).
-    if let Some(task) = metrics_task {
-        aux.push(task);
-    }
-    if let (Some(tcp), Some(handle)) = (metrics_tcp, metrics_handle) {
-        let telemetry_view: Option<Arc<dyn TelemetryView>> = Some(telemetry_ledger.clone());
-        aux.push(tokio::spawn(crate::metrics::serve_metrics(
-            tcp,
-            handle,
-            telemetry_view,
-        )));
-        if let Some(local) = metrics_local_addr {
-            tracing::info!(url = %format!("http://{local}/metrics"), "metrics endpoint ready");
+    #[cfg(feature = "observability")]
+    {
+        if let Some(task) = metrics_task {
+            aux.push(task);
+        }
+        if let (Some(tcp), Some(handle)) = (metrics_tcp, metrics_handle) {
+            let telemetry_view: Option<Arc<dyn kx_gateway_core::TelemetryView>> =
+                Some(telemetry_ledger.clone());
+            aux.push(tokio::spawn(crate::metrics::serve_metrics(
+                tcp,
+                handle,
+                telemetry_view,
+            )));
+            if let Some(local) = metrics_local_addr {
+                tracing::info!(url = %format!("http://{local}/metrics"), "metrics endpoint ready");
+            }
         }
     }
     // D113: spawn the trigger listeners over the SAME trigger admin the gRPC
@@ -2494,11 +2520,27 @@ fn log_startup_banner(
         .unwrap_or_else(|| Path::new("."));
     let console_url =
         console_local_addr.map_or_else(|| "(disabled)".to_string(), |a| format!("http://{a}/"));
-    // W1a (T-OBS2/T-OBS1): the opt-in observability surfaces, "(disabled)" when off.
+    // W1a (T-OBS2/T-OBS1): the opt-in observability surfaces, "(disabled)" when
+    // off. W6.1: a build without the `observability` feature has no sidecars and
+    // no listener — the banner says so instead of printing paths that never open.
+    #[cfg(feature = "observability")]
     let metrics_url = metrics_local_addr.map_or_else(
         || "(disabled)".to_string(),
         |a| format!("http://{a}/metrics"),
     );
+    #[cfg(not(feature = "observability"))]
+    let metrics_url = {
+        let _ = metrics_local_addr;
+        "(not in this build: observability)".to_string()
+    };
+    #[cfg(feature = "observability")]
+    let telemetry_db = catalog_dir.join("telemetry.db").display().to_string();
+    #[cfg(not(feature = "observability"))]
+    let telemetry_db = "(not in this build: observability)".to_string();
+    #[cfg(feature = "observability")]
+    let alerts_db = catalog_dir.join("alerts.db").display().to_string();
+    #[cfg(not(feature = "observability"))]
+    let alerts_db = "(not in this build: observability)".to_string();
     let audit_log = cfg
         .audit_log
         .as_ref()
@@ -2517,12 +2559,12 @@ fn log_startup_banner(
         catalog_dir   = %catalog_dir.display(),
         catalog_db    = %catalog_dir.join("catalog.db").display(),
         members_db    = %catalog_dir.join("members.db").display(),
-        telemetry_db  = %catalog_dir.join("telemetry.db").display(),
+        telemetry_db  = %telemetry_db,
         capture_db    = %catalog_dir.join("capture.db").display(),
         uploads_db    = %catalog_dir.join("uploads.db").display(),
         feedback_db   = %catalog_dir.join("feedback.db").display(),
         run_inputs_db = %catalog_dir.join("run_inputs.db").display(),
-        alerts_db     = %catalog_dir.join("alerts.db").display(),
+        alerts_db     = %alerts_db,
         branches_db   = %catalog_dir.join("branches.db").display(),
         datasets_dir  = %catalog_dir.join("datasets").display(),
         grpc_endpoint = %format!("http://{local_addr}"),

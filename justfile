@@ -730,6 +730,18 @@ build-serve-engine:
     echo "Linting + unit-testing the FFI-free serve-engine model loop (model_exec)..."
     cargo clippy -p kx-gateway --features serve-engine,hnsw --lib -- -D warnings
     cargo test -p kx-gateway --features serve-engine,hnsw --lib -- --nocapture
+    # W6.1: the release deliberately EXCLUDES `observability`, and exclusion must
+    # be provable on the RC-shaped feature set, not just believed: no kx-otel in
+    # the closure, and the absence probe (RPCs unimplemented, no sidecars) runs
+    # under the same shape. `console` is left off here (its build.rs needs a
+    # built ui/dist this recipe does not make); the cargo-tree scan covers it.
+    echo "Asserting the RC shape excludes the observability stack..."
+    if cargo tree -p kx-cli --features console,hnsw,serve-engine,hosted-apps -e normal | grep -qE 'kx-otel'; then
+        echo " ✗ FAIL: the RC feature set linked kx-otel (observability leaked into the release shape)"
+        exit 1
+    fi
+    echo " ✓ no kx-otel in the prebuilt (console,hnsw,serve-engine,hosted-apps) closure"
+    cargo test -p kx-gateway --features serve-engine,hnsw,hosted-apps --test observability_absent -- --nocapture
     echo " ✓ build-serve-engine: PASS"
 
 # The installed-binary feature matrix stays buildable (the v0.1.0 campaign
@@ -750,6 +762,12 @@ features-guard:
     cargo check -p kx-cli --features hnsw
     cargo check -p kx-cli --features inference,hnsw
     echo " ✓ features-guard: hnsw + inference,hnsw both build"
+    # W6.1: the observability stack (kx-otel + /metrics + alerts.db + telemetry.db)
+    # is opt-in and deliberately OUT of the release feature set; both directions
+    # must stay buildable.
+    cargo check -p kx-cli --features observability
+    cargo check -p kx-gateway --features observability
+    echo " ✓ features-guard: observability builds (cli passthrough + gateway)"
     # W1a: the gateway-only / external-coordinator config (default feature
     # `embedded-worker` OFF) reserved by the `start_impl` stub must stay BUILDABLE,
     # so a feature-independent struct field never references a feature-gated import
@@ -877,20 +895,21 @@ eval-real:
 # the gitignored `docs/benchmarks/`; the committed per-engine baseline is the fail-closed
 # ratchet.
 #
-# COVERAGE: the suite spans five substrate families — `tool` + `react` (the ReAct loop, its
-# tool contract, and the decision of whether to reach for a tool at all), `script` (a
-# registered script run in the sandbox), `reach` (retrieval · durable memory · an App
-# inheriting the principal's capability ceiling) and `swarm` (fan-out → gather). Several
+# COVERAGE: the suite spans ten families (`tool` · `react` · `reach` · `swarm` · `script`
+# · `http` · `failure` · `menu` · `long` · `adversarial`); the family table in
+# docs/site/docs/evaluation.md is the authoritative description — this header stopped
+# hand-keeping a third copy after the five-family version of it silently rotted. Several
 # `tool`/`script` tasks are multi-hop, because a single-tool task cannot tell you whether
 # the loop carries an observation into the NEXT call. `hnsw` is in the feature
-# set and `KX_SERVE_MEMORY` is set because react-rag / react-memory are provisioned ONLY
-# when their capabilities are registered; without them those families SKIP (loudly) and a
+# set and `KX_SERVE_MEMORY` is set because the `reach` family's fixtures (the RAG corpus,
+# the recall memory) are provisioned ONLY when their capabilities are registered;
+# without them the family SKIPS (loudly) and a
 # baseline capture is refused, because the committed baseline is keyed by the whole corpus
 # digest and a partial capture would ratchet every later run against a subset.
 #
 # Drive BOTH engines (restart per run). The Ollama arm needs a DEDICATED EMBEDDER, or
 # `ingest_documents` fails and the whole `reach` family skips — the run then prints
-# `reach_fixtures=false` and covers 13 of 16 tasks. The invocation documented here used to
+# `reach_fixtures=false` and covers 23 of 26 tasks. The invocation documented here used to
 # omit it, so following this header exactly produced a partial run that still reported a
 # result (and could not capture a baseline at all, which is the fail-closed preflight doing
 # its job against instructions that could never satisfy it):
@@ -909,7 +928,11 @@ eval-bench:
     # failure. It was implicit before (present in any tree that had run the script tests)
     # and absent in a fresh clone, which is exactly where it is hardest to spot.
     cargo build -p kx-script-runner
-    KX_SERVE_MEMORY=1 cargo test -p kx-gateway --features inference,hnsw --test eval_bench_real -- --ignored --nocapture --test-threads=1
+    # `observability` is REQUIRED here: the harness folds the GATED model_time_share
+    # (and per-task timing) from the telemetry.db sidecar. Without the feature the
+    # sidecar never opens, the gate stops being emitted, and the baseline comparison
+    # reads the missing gate as 0 and fails closed.
+    KX_SERVE_MEMORY=1 cargo test -p kx-gateway --features inference,hnsw,observability --test eval_bench_real -- --ignored --nocapture --test-threads=1
 
 # LOCAL / manual witness (NOT a CI job): drive a LIVE ReAct chain that FIRES a real
 # tool on a capable model. The DETERMINISTIC, CI-runnable regression guard for this
