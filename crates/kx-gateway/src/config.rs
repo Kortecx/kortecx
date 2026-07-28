@@ -427,9 +427,7 @@ fn refuse_console_without_feature(mode: ConsoleMode) -> Result<(), GatewayError>
 /// W6.1: an EXPLICIT `--metrics-listen` on a binary built without the
 /// `observability` feature is a loud error (never a silent no-op) — the D139
 /// console-refusal posture, applied to the second opt-in listener.
-fn refuse_metrics_without_feature(
-    metrics_listen: Option<SocketAddr>,
-) -> Result<(), GatewayError> {
+fn refuse_metrics_without_feature(metrics_listen: Option<SocketAddr>) -> Result<(), GatewayError> {
     if !cfg!(feature = "observability") && metrics_listen.is_some() {
         return Err(GatewayError::Config(
             "this kx was built without the observability stack (`observability` \
