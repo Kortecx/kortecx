@@ -883,12 +883,15 @@ async fn retrieval_success_probe(c: &mut KxGatewayClient<Channel>) -> (usize, us
 }
 
 /// How many independent trials the pass^k phase runs, and the per-task settle budget
-/// inside a trial. The flagship tasks are short chains (ideal 1–3 turns); the suite-wide
-/// 600 s budget exists for the long-horizon task, which is deliberately NOT a flagship —
-/// a task that cannot settle in three minutes is not passing RELIABLY, which is the
-/// property under measurement.
+/// inside a trial — the SAME budget the main suite runs under, on purpose. A tighter
+/// trial budget looked attractive (flagship chains are 1–3 turns) and re-created the
+/// exact failure the suite budget's own comment warns about: at 180 s the in-process
+/// llama.cpp arm truncated `failure-tool-errors-recovers` — a three-turn chain working
+/// correctly, just not finishing — and the whole phase read as machinery failure. A
+/// trial run under a different budget than the suite is also a different experiment;
+/// pass^k compares against the main suite's pass, so it must run under its conditions.
 const PASSK_TRIALS: usize = 4;
-const PASSK_SETTLE_TIMEOUT: Duration = Duration::from_secs(180);
+const PASSK_SETTLE_TIMEOUT: Duration = SETTLE_TIMEOUT;
 
 /// One pass^k trial's outcome: the per-task verdicts, and the instance ids its journal
 /// minted (the independence witness).
