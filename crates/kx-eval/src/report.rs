@@ -615,7 +615,11 @@ mod tests {
         });
         let cmp = compare_to_baseline(&r, &base, 200).unwrap();
         assert!(!cmp.ok, "the sentinel must fail the skipped phase closed");
-        let named: Vec<&str> = cmp.regressions.iter().map(|x| x.metric_id.as_str()).collect();
+        let named: Vec<&str> = cmp
+            .regressions
+            .iter()
+            .map(|x| x.metric_id.as_str())
+            .collect();
         assert!(named.contains(&"pass_k4@trials"), "…the sentinel names it");
         assert!(
             !named.contains(&"pass_k4@http-authed-lookup"),

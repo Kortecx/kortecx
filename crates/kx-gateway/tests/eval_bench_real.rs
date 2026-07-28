@@ -608,7 +608,9 @@ async fn provision_reach_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
     .await
     .is_err()
     {
-        eprintln!("eval-bench: memory fixtures unavailable — StoreMemory failed (KX_SERVE_MEMORY?)");
+        eprintln!(
+            "eval-bench: memory fixtures unavailable — StoreMemory failed (KX_SERVE_MEMORY?)"
+        );
         return false;
     }
     let mems = c
@@ -637,7 +639,9 @@ async fn provision_reach_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
         !mems
             .memories
             .iter()
-            .any(|m| String::from_utf8_lossy(&m.content).to_ascii_lowercase().contains("door code")),
+            .any(|m| String::from_utf8_lossy(&m.content)
+                .to_ascii_lowercase()
+                .contains("door code")),
         "no stored memory may mention a door code — the abstention task's premise is \
          that memory does NOT hold the answer"
     );
@@ -710,9 +714,7 @@ const RPC_PROBE_SAMPLES: usize = 32;
 /// Returns `None` — and no spikes at all — when a probe RPC fails: a latency percentile
 /// over a failed call distribution is not a latency, and the absence is what the
 /// capture guard reads.
-async fn rpc_latency_spikes(
-    c: &mut KxGatewayClient<Channel>,
-) -> Option<Vec<kx_eval::ScoreOutput>> {
+async fn rpc_latency_spikes(c: &mut KxGatewayClient<Channel>) -> Option<Vec<kx_eval::ScoreOutput>> {
     let mut out = vec![kx_eval::ScoreOutput {
         metric_id: "rpc_probe_samples".to_string(),
         value: kx_eval::ScoreValue::Spike {
@@ -820,11 +822,26 @@ const RETRIEVAL_PROBES: [(&str, &str); 10] = [
         "What callsign does the Perihelion ground station use for eclipse-window transmissions",
         "ZEPHYR-64",
     ),
-    ("Anvil Bay ground station eclipse-window callsign", "TERRAPIN-77"),
-    ("Kestrel Flats ground station eclipse-window callsign", "ZEPHYR-90"),
-    ("Lowfield ground station eclipse-window callsign", "ORRERY-77"),
-    ("Selene ground station eclipse-window callsign", "ZEPHYR-77B"),
-    ("Tessellate ground station eclipse-window callsign", "MARLIN-77"),
+    (
+        "Anvil Bay ground station eclipse-window callsign",
+        "TERRAPIN-77",
+    ),
+    (
+        "Kestrel Flats ground station eclipse-window callsign",
+        "ZEPHYR-90",
+    ),
+    (
+        "Lowfield ground station eclipse-window callsign",
+        "ORRERY-77",
+    ),
+    (
+        "Selene ground station eclipse-window callsign",
+        "ZEPHYR-77B",
+    ),
+    (
+        "Tessellate ground station eclipse-window callsign",
+        "MARLIN-77",
+    ),
     (
         "Which callsign does the Helios ground station use for emergency traffic",
         "VESPER-77",
@@ -833,7 +850,10 @@ const RETRIEVAL_PROBES: [(&str, &str); 10] = [
         "Which callsign did the Helios ground station retire after the refit",
         "ZEPHYR-12",
     ),
-    ("Helios ground station backup transmitter callsign", "ZEPHYR-78"),
+    (
+        "Helios ground station backup transmitter callsign",
+        "ZEPHYR-78",
+    ),
 ];
 
 /// The per-query Success@8 gate over the 61-document near-miss corpus — the promotion
@@ -946,7 +966,10 @@ async fn passk_trials(
 
     let mut trials: Vec<PasskTrial> = Vec::with_capacity(PASSK_TRIALS);
     for trial in 0..PASSK_TRIALS {
-        eprintln!("eval-bench: pass^k trial {}/{PASSK_TRIALS} — fresh serve", trial + 1);
+        eprintln!(
+            "eval-bench: pass^k trial {}/{PASSK_TRIALS} — fresh serve",
+            trial + 1
+        );
         let dir = tempfile::TempDir::new().unwrap();
         let running = start(common::gateway_config(&dir, true, HashMap::new()))
             .await
@@ -1516,16 +1539,16 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
                         }
                     });
                 }
-                report.spikes.extend(spikes.into_iter().filter_map(|s| {
-                    match s.value {
+                report
+                    .spikes
+                    .extend(spikes.into_iter().filter_map(|s| match s.value {
                         kx_eval::ScoreValue::Spike { value, unit } => Some(kx_eval::SpikeMetric {
                             id: s.metric_id,
                             value,
                             unit,
                         }),
                         kx_eval::ScoreValue::Gate { .. } => None,
-                    }
-                }));
+                    }));
                 true
             }
             None => false,
@@ -1591,11 +1614,9 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         let mut per_task_pass: Vec<u32> = Vec::with_capacity(flagship_ids.len());
         for id in &flagship_ids {
             let all_pass = passk_complete
-                && trials.iter().all(|t| {
-                    t.verdicts
-                        .iter()
-                        .any(|(tid, passed)| tid == id && *passed)
-                });
+                && trials
+                    .iter()
+                    .all(|t| t.verdicts.iter().any(|(tid, passed)| tid == id && *passed));
             let pm = if all_pass { 1000 } else { 0 };
             per_task_pass.push(pm);
             report.spikes.push(kx_eval::SpikeMetric {

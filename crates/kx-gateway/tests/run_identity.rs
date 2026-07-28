@@ -40,9 +40,7 @@ async fn client(addr: SocketAddr) -> KxGatewayClient<Channel> {
     panic!("client connects to the gateway at {endpoint}");
 }
 
-async fn invoke_and_settle(
-    c: &mut KxGatewayClient<Channel>,
-) -> (Vec<u8>, Vec<u8>) {
+async fn invoke_and_settle(c: &mut KxGatewayClient<Channel>) -> (Vec<u8>, Vec<u8>) {
     let resp = c
         .invoke(proto::InvokeRequest {
             handle: DEMO_RECIPE_HANDLE.to_string(),

@@ -230,7 +230,10 @@ mod tests {
     #[test]
     fn repeated_tool_ids_respect_multiplicity_and_order() {
         // page, page, get — dropping the second page: LCS 2 of max(2,3).
-        let t = run(vec![tool_turn(0, "fleet/page", 0), tool_turn(1, "fleet/get", 0)]);
+        let t = run(vec![
+            tool_turn(0, "fleet/page", 0),
+            tool_turn(1, "fleet/get", 0),
+        ]);
         let e = expect(&["fleet/page", "fleet/page", "fleet/get"]);
         assert_eq!(fsa(&t, &e), Some(0));
         assert_eq!(psa(&t, &e), Some(666));
