@@ -186,7 +186,9 @@ mod tests {
                 "adversarial",
                 "failure",
                 "http",
+                "irrelevance",
                 "long",
+                "memory",
                 "menu",
                 "react",
                 "reach",
@@ -210,6 +212,8 @@ mod tests {
             "menu",
             "long",
             "adversarial",
+            "irrelevance",
+            "memory",
         ] {
             assert!(
                 c.suite.tasks.iter().any(|t| t.family == f),
@@ -218,9 +222,10 @@ mod tests {
         }
         // A tool-required task must name the tools it expects; a contract/negative task
         // must name NONE (that emptiness IS its assertion — see `tool-contract-refusal`).
-        // `failure` and `adversarial` are deliberately absent from this list: their point
-        // is often that a call must NOT happen, and requiring an expectation would turn
-        // "fired nothing, correctly" into a corpus error.
+        // `failure`, `adversarial`, `irrelevance` and `memory` are deliberately absent
+        // from this list: their point is often that a call must NOT happen, and
+        // requiring an expectation would turn "fired nothing, correctly" into a corpus
+        // error.
         for t in &c.suite.tasks {
             if ["tool", "script", "http", "menu", "long"].contains(&t.family.as_str()) {
                 assert!(
@@ -231,6 +236,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The `@`-scope namespace stays unambiguous: a per-family gate is
+    /// `metric@[a-z]+`, a per-task pass^k gate is `pass_k4@<task-id-with-hyphens>`,
+    /// and the machinery sentinel is `pass_k4@trials`. That only works if the three
+    /// scope shapes can never collide — which this pins at the corpus.
+    #[test]
+    fn bench_v1_gate_scopes_cannot_collide() {
+        let c = load_bench_v1().expect("bench-v1 suite parses");
+        for t in &c.suite.tasks {
+            assert!(
+                t.family.chars().all(|ch| ch.is_ascii_lowercase()),
+                "family {:?} must be lowercase letters only — a hyphenated family \
+                 would collide with a per-task gate scope",
+                t.family
+            );
+            assert!(
+                t.id.contains('-'),
+                "task id {:?} must contain a hyphen — an unhyphenated id would \
+                 collide with a family gate scope",
+                t.id
+            );
+            assert_ne!(t.family, "trials", "the sentinel scope is reserved");
+        }
+    }
+
+    /// The pass^k flagship population is corpus data, covered by the suite digest —
+    /// changing it is corpus drift, never a silent redefinition. Exactly three tasks,
+    /// one per axis the reliability gate watches (a marginal react loop, the http
+    /// family, the failure family).
+    #[test]
+    fn bench_v1_flagship_set_is_exactly_three() {
+        let c = load_bench_v1().expect("bench-v1 suite parses");
+        let flagship: Vec<&str> = c
+            .suite
+            .tasks
+            .iter()
+            .filter(|t| t.flagship)
+            .map(|t| t.id.as_str())
+            .collect();
+        assert_eq!(
+            flagship.len(),
+            3,
+            "the pass^k flagship set is three tasks, got {flagship:?}"
+        );
     }
 
     /// A2, the de-hollowing proof: the chaining oracle FAILS when the chain is broken.
