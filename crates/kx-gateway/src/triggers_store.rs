@@ -54,7 +54,10 @@ CREATE TABLE IF NOT EXISTS triggers (
     enabled            INTEGER NOT NULL,
     next_fire_unix_ms  INTEGER NOT NULL,   -- cron watermark (0 ⇒ n/a)
     created_unix_ms    INTEGER NOT NULL,
-    last_fire_unix_ms  INTEGER NOT NULL    -- 0 ⇒ never fired
+    last_fire_unix_ms  INTEGER NOT NULL,   -- 0 ⇒ never fired
+    workflow_handle    TEXT NOT NULL DEFAULT '',   -- the saved workflow handle to RunWorkflow ('' ⇒ not a workflow target)
+    consecutive_failures INTEGER NOT NULL DEFAULT 0, -- cron fire failures since the last success
+    disabled_reason    TEXT NOT NULL DEFAULT ''    -- '' ⇒ healthy; non-empty ⇒ auto-disabled with this cause
 );
 CREATE TABLE IF NOT EXISTS trigger_fires (
     idempotency_key  TEXT PRIMARY KEY,     -- event-level dedup key
@@ -94,6 +97,13 @@ pub(crate) struct TriggerRow {
     pub next_fire_unix_ms: u64,
     pub created_unix_ms: u64,
     pub last_fire_unix_ms: u64,
+    /// The saved workflow handle to RunWorkflow (`""` ⇒ not a workflow target).
+    /// Exactly one of recipe/app/workflow handles is non-empty (validated at register).
+    pub workflow_handle: String,
+    /// Cron fire failures since the last success (the dead-letter counter).
+    pub consecutive_failures: u32,
+    /// `""` ⇒ healthy; non-empty ⇒ auto-disabled with this human-readable cause.
+    pub disabled_reason: String,
 }
 
 /// Server-derived 16-byte trigger id from the operator name (idempotent re-register).
@@ -145,6 +155,27 @@ impl TriggersDb {
         }
         conn.execute_batch(SCHEMA)
             .map_err(|e| GatewayError::Catalog(format!("triggers schema: {e}")))?;
+        // Additive columns migrate an existing v2 file in place WITHOUT a version
+        // bump (the apps.db ensure_column discipline — a bump would silently drop
+        // every registered trigger; old binaries ignore unknown columns because
+        // every statement names its columns).
+        for (column, decl) in [
+            (
+                "workflow_handle",
+                "ALTER TABLE triggers ADD COLUMN workflow_handle TEXT NOT NULL DEFAULT ''",
+            ),
+            (
+                "consecutive_failures",
+                "ALTER TABLE triggers ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "disabled_reason",
+                "ALTER TABLE triggers ADD COLUMN disabled_reason TEXT NOT NULL DEFAULT ''",
+            ),
+        ] {
+            Self::ensure_column(&conn, column, decl)
+                .map_err(|e| GatewayError::Catalog(format!("triggers migrate {column}: {e}")))?;
+        }
         conn.execute(
             "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
             params![SCHEMA_VERSION],
@@ -153,6 +184,20 @@ impl TriggersDb {
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Idempotently add one additive column (the apps.db helper, restated).
+    fn ensure_column(conn: &Connection, column: &str, decl: &str) -> rusqlite::Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(triggers)")?;
+        let present = stmt
+            .query_map([], |r| r.get::<_, String>(1))?
+            .filter_map(Result::ok)
+            .any(|col| col == column);
+        drop(stmt);
+        if !present {
+            conn.execute(decl, [])?;
+        }
+        Ok(())
     }
 
     fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
@@ -184,11 +229,13 @@ impl TriggersDb {
         conn.execute(
             "INSERT INTO triggers(trigger_id, name, kind, recipe_handle, args_template_json, \
              auth, auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, \
-             created_unix_ms, last_fire_unix_ms, app_handle, timezone, require_approval) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16) \
+             created_unix_ms, last_fire_unix_ms, app_handle, timezone, require_approval, \
+             workflow_handle, consecutive_failures, disabled_reason) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,0,'') \
              ON CONFLICT(name) DO UPDATE SET kind=?3, recipe_handle=?4, args_template_json=?5, \
              auth=?6, auth_secret_ref=?7, schedule_spec=?8, owner_party=?9, enabled=?10, \
-             next_fire_unix_ms=?11, app_handle=?14, timezone=?15, require_approval=?16",
+             next_fire_unix_ms=?11, app_handle=?14, timezone=?15, require_approval=?16, \
+             workflow_handle=?17, consecutive_failures=0, disabled_reason=''",
             params![
                 row.trigger_id.to_vec(),
                 row.name,
@@ -206,6 +253,7 @@ impl TriggersDb {
                 row.app_handle,
                 row.timezone,
                 i64::from(row.require_approval),
+                row.workflow_handle,
             ],
         )
         .map_err(|e| GatewayError::Catalog(format!("triggers upsert: {e}")))?;
@@ -218,7 +266,8 @@ impl TriggersDb {
         conn.query_row(
             "SELECT trigger_id, name, kind, recipe_handle, args_template_json, auth, \
              auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, created_unix_ms, \
-             last_fire_unix_ms, app_handle, timezone, require_approval FROM triggers WHERE name = ?1",
+             last_fire_unix_ms, app_handle, timezone, require_approval, workflow_handle, \
+             consecutive_failures, disabled_reason FROM triggers WHERE name = ?1",
             params![name],
             row_from,
         )
@@ -250,7 +299,8 @@ impl TriggersDb {
             .prepare(
                 "SELECT trigger_id, name, kind, recipe_handle, args_template_json, auth, \
                  auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, created_unix_ms, \
-                 last_fire_unix_ms, app_handle, timezone, require_approval FROM triggers \
+                 last_fire_unix_ms, app_handle, timezone, require_approval, workflow_handle, \
+             consecutive_failures, disabled_reason FROM triggers \
                  WHERE owner_party = ?1 AND name > ?2 ORDER BY name ASC LIMIT ?3",
             )
             .map_err(|e| GatewayError::Catalog(format!("triggers list prepare: {e}")))?;
@@ -303,6 +353,75 @@ impl TriggersDb {
             )
             .map_err(|e| GatewayError::Catalog(format!("triggers remove-by-app: {e}")))?;
         Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    /// Deregister every trigger of `owner_party` targeting `workflow_handle` (the
+    /// DeleteWorkflow cascade). The empty handle is the not-a-workflow-target
+    /// sentinel, never a wildcard (the `remove_by_app` posture).
+    pub(crate) fn remove_by_workflow(
+        &self,
+        owner_party: &str,
+        workflow_handle: &str,
+    ) -> Result<u32, GatewayError> {
+        if workflow_handle.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.lock()?;
+        let n = conn
+            .execute(
+                "DELETE FROM triggers WHERE owner_party = ?1 AND workflow_handle = ?2",
+                params![owner_party, workflow_handle],
+            )
+            .map_err(|e| GatewayError::Catalog(format!("triggers remove-by-workflow: {e}")))?;
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    /// Record one cron fire failure. When the new consecutive count reaches
+    /// `max` (and `max > 0`), the trigger is DISABLED with the truncated cause —
+    /// closing the forever-silent 5-second retry loop. Returns
+    /// `(consecutive_failures, disabled_now)`. Healthy triggers never reach
+    /// here (zero extra writes on the success path).
+    pub(crate) fn record_fire_failure(
+        &self,
+        name: &str,
+        reason: &str,
+        max: u32,
+    ) -> Result<(u32, bool), GatewayError> {
+        let conn = self.lock()?;
+        let count: i64 = conn
+            .query_row(
+                "UPDATE triggers SET consecutive_failures = consecutive_failures + 1 \
+                 WHERE name = ?1 RETURNING consecutive_failures",
+                params![name],
+                |r| r.get(0),
+            )
+            .map_err(|e| GatewayError::Catalog(format!("triggers fire-failure: {e}")))?;
+        let count = u32::try_from(count).unwrap_or(u32::MAX);
+        let disable = max > 0 && count >= max;
+        if disable {
+            let cause: String = reason.chars().take(240).collect();
+            conn.execute(
+                "UPDATE triggers SET enabled = 0, disabled_reason = ?2 WHERE name = ?1",
+                params![
+                    name,
+                    format!("auto-disabled after {count} consecutive fire failures; last: {cause}")
+                ],
+            )
+            .map_err(|e| GatewayError::Catalog(format!("triggers disable: {e}")))?;
+        }
+        Ok((count, disable))
+    }
+
+    /// Clear the dead-letter counter after a successful fire (called only when
+    /// the stored count was non-zero — the healthy path writes nothing).
+    pub(crate) fn clear_fire_failures(&self, name: &str) -> Result<(), GatewayError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE triggers SET consecutive_failures = 0, disabled_reason = '' WHERE name = ?1",
+            params![name],
+        )
+        .map_err(|e| GatewayError::Catalog(format!("triggers clear-failures: {e}")))?;
+        Ok(())
     }
 
     /// Pre-check dedup: the `instance_id` already recorded for `idempotency_key`, or
@@ -398,7 +517,8 @@ impl TriggersDb {
             .prepare(
                 "SELECT trigger_id, name, kind, recipe_handle, args_template_json, auth, \
                  auth_secret_ref, schedule_spec, owner_party, enabled, next_fire_unix_ms, created_unix_ms, \
-                 last_fire_unix_ms, app_handle, timezone, require_approval FROM triggers \
+                 last_fire_unix_ms, app_handle, timezone, require_approval, workflow_handle, \
+             consecutive_failures, disabled_reason FROM triggers \
                  WHERE kind = 'cron' AND enabled = 1 AND next_fire_unix_ms <= ?1 \
                  ORDER BY name ASC",
             )
@@ -445,6 +565,9 @@ fn row_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<TriggerRow> {
         app_handle: r.get(13)?,
         timezone: r.get(14)?,
         require_approval: r.get::<_, i64>(15)? != 0,
+        workflow_handle: r.get(16)?,
+        consecutive_failures: u32::try_from(r.get::<_, i64>(17)?).unwrap_or(u32::MAX),
+        disabled_reason: r.get(18)?,
     })
 }
 
@@ -477,6 +600,9 @@ mod tests {
             next_fire_unix_ms: if kind == "cron" { 1_000 } else { 0 },
             created_unix_ms: 500,
             last_fire_unix_ms: 0,
+            workflow_handle: String::new(),
+            consecutive_failures: 0,
+            disabled_reason: String::new(),
         }
     }
 
@@ -577,6 +703,127 @@ mod tests {
     }
 
     /// The App-delete cascade: reap exactly the caller's triggers for one App handle.
+    #[test]
+    fn remove_by_workflow_is_scoped_and_never_wildcards_on_the_sentinel() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = TriggersDb::open(dir.path()).unwrap();
+        let mut a = row("wf-a", "cron");
+        a.recipe_handle = String::new();
+        a.workflow_handle = "team/wf/x".to_string();
+        db.upsert(&a).unwrap();
+        let mut b = row("wf-b", "cron");
+        b.recipe_handle = String::new();
+        b.workflow_handle = "team/wf/keep".to_string();
+        db.upsert(&b).unwrap();
+        db.upsert(&row("recipe-c", "cron")).unwrap();
+        // Scoped removal takes exactly the named workflow's triggers…
+        assert_eq!(db.remove_by_workflow(OWNER, "team/wf/x").unwrap(), 1);
+        assert!(db.get("wf-a").unwrap().is_none());
+        assert!(db.get("wf-b").unwrap().is_some());
+        assert!(db.get("recipe-c").unwrap().is_some());
+        // …a foreign party removes nothing, and the empty sentinel NEVER wildcards.
+        assert_eq!(db.remove_by_workflow("mallory", "team/wf/keep").unwrap(), 0);
+        assert_eq!(db.remove_by_workflow(OWNER, "").unwrap(), 0);
+        assert!(db.get("wf-b").unwrap().is_some());
+        assert!(db.get("recipe-c").unwrap().is_some());
+    }
+
+    /// The dead-letter ledger: failures count, the threshold disables WITH the
+    /// recorded reason, success clears, and re-register re-enables (counter
+    /// reset by upsert).
+    #[test]
+    fn fire_failures_count_disable_clear_and_reset_on_reregister() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = TriggersDb::open(dir.path()).unwrap();
+        db.upsert(&row("cron-a", "cron")).unwrap();
+        assert_eq!(
+            db.record_fire_failure("cron-a", "boom 1", 3).unwrap(),
+            (1, false)
+        );
+        assert_eq!(
+            db.record_fire_failure("cron-a", "boom 2", 3).unwrap(),
+            (2, false)
+        );
+        let (count, disabled) = db.record_fire_failure("cron-a", "boom 3", 3).unwrap();
+        assert_eq!((count, disabled), (3, true));
+        let cfg = db.get("cron-a").unwrap().unwrap();
+        assert!(!cfg.enabled, "the threshold disables the trigger");
+        assert!(
+            cfg.disabled_reason.contains("3 consecutive"),
+            "{}",
+            cfg.disabled_reason
+        );
+        assert!(
+            cfg.disabled_reason.contains("boom 3"),
+            "the last cause is recorded"
+        );
+        // A success clears the ledger (the trigger stays disabled until re-registered).
+        db.clear_fire_failures("cron-a").unwrap();
+        let cfg = db.get("cron-a").unwrap().unwrap();
+        assert_eq!(cfg.consecutive_failures, 0);
+        assert!(cfg.disabled_reason.is_empty());
+        // Re-register = the operator's re-enable: enabled + counter reset.
+        db.record_fire_failure("cron-a", "boom", 1).unwrap();
+        db.upsert(&row("cron-a", "cron")).unwrap();
+        let cfg = db.get("cron-a").unwrap().unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.consecutive_failures, 0);
+        // max = 0 never disables (the opt-out posture).
+        for i in 0..10 {
+            let (_, disabled) = db.record_fire_failure("cron-a", "boom", 0).unwrap();
+            assert!(!disabled, "attempt {i} must not disable at max=0");
+        }
+    }
+
+    /// An EXISTING v2 file (pre-workflow columns) opens WITHOUT a rebuild —
+    /// its rows survive and read the migrated defaults. A version bump here
+    /// would silently drop every registered trigger.
+    #[test]
+    fn an_existing_v2_file_migrates_in_place_and_keeps_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("triggers.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE triggers (
+                    trigger_id BLOB PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                    kind TEXT NOT NULL, recipe_handle TEXT NOT NULL,
+                    app_handle TEXT NOT NULL DEFAULT '',
+                    args_template_json TEXT NOT NULL, auth TEXT NOT NULL,
+                    auth_secret_ref TEXT NOT NULL, schedule_spec TEXT NOT NULL,
+                    timezone TEXT NOT NULL DEFAULT 'UTC', owner_party TEXT NOT NULL,
+                    require_approval INTEGER NOT NULL DEFAULT 0,
+                    enabled INTEGER NOT NULL, next_fire_unix_ms INTEGER NOT NULL,
+                    created_unix_ms INTEGER NOT NULL, last_fire_unix_ms INTEGER NOT NULL);
+                 CREATE TABLE trigger_fires (idempotency_key TEXT PRIMARY KEY,
+                    trigger_id BLOB NOT NULL, instance_id BLOB NOT NULL,
+                    received_unix_ms INTEGER NOT NULL);
+                 CREATE TABLE meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+                 INSERT INTO meta(key, value) VALUES ('schema_version', 2);",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO triggers(trigger_id, name, kind, recipe_handle, app_handle, \
+                 args_template_json, auth, auth_secret_ref, schedule_spec, timezone, \
+                 owner_party, require_approval, enabled, next_fire_unix_ms, \
+                 created_unix_ms, last_fire_unix_ms) VALUES \
+                 (x'00112233445566778899aabbccddeeff', 'legacy', 'cron', 'kx/recipes/chat', \
+                 '', '', 'none', '', '60', 'UTC', 'local-dev', 0, 1, 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+        }
+        let db = TriggersDb::open(dir.path()).unwrap();
+        let legacy = db
+            .get("legacy")
+            .unwrap()
+            .expect("legacy rows survive the migration");
+        assert_eq!(legacy.workflow_handle, "");
+        assert_eq!(legacy.consecutive_failures, 0);
+        assert!(legacy.disabled_reason.is_empty());
+        assert!(legacy.enabled);
+    }
+
     #[test]
     fn remove_by_app_is_scoped_and_never_wildcards_on_the_recipe_sentinel() {
         let dir = tempfile::tempdir().unwrap();

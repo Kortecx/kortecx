@@ -1457,6 +1457,205 @@ async fn a_continue_policy_commits_the_failure_as_a_fact_and_the_quorum_proceeds
 }
 
 #[tokio::test]
+async fn a_workflow_trigger_registers_fires_and_cascades_on_delete() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // A DRAFT workflow is refused at REGISTRATION (never a forever-dead-letter).
+    c.save_workflow(with_bearer(
+        save_req("team/wf/draft-t", wf_envelope("draft-t"), "draft"),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let err = c
+        .register_trigger(with_bearer(
+            proto::RegisterTriggerRequest {
+                name: "draft-trigger".into(),
+                kind: proto::TriggerKind::Grpc as i32,
+                recipe_handle: String::new(),
+                app_handle: String::new(),
+                workflow_handle: "team/wf/draft-t".into(),
+                auth: proto::TriggerAuth::None as i32,
+                auth_secret_ref: String::new(),
+                schedule_spec: String::new(),
+                timezone: String::new(),
+                enabled: true,
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        err.message().contains("draft"),
+        "the refusal names the draft, got: {}",
+        err.message()
+    );
+
+    // An UN-SAVED workflow is refused at registration too.
+    let err = c
+        .register_trigger(with_bearer(
+            proto::RegisterTriggerRequest {
+                name: "ghost-trigger".into(),
+                kind: proto::TriggerKind::Grpc as i32,
+                recipe_handle: String::new(),
+                app_handle: String::new(),
+                workflow_handle: "team/wf/ghost".into(),
+                auth: proto::TriggerAuth::None as i32,
+                auth_secret_ref: String::new(),
+                schedule_spec: String::new(),
+                timezone: String::new(),
+                enabled: true,
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap_err();
+    assert!(
+        err.message().contains("not in your catalog"),
+        "got: {}",
+        err.message()
+    );
+
+    // A saved (active) workflow registers, and a gRPC SubmitTrigger fires it
+    // through the SAME RunWorkflow resolver — the run settles to Committed.
+    c.save_workflow(with_bearer(
+        save_req("team/wf/fired", wf_envelope("fired"), ""),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    c.register_trigger(with_bearer(
+        proto::RegisterTriggerRequest {
+            name: "wf-trigger".into(),
+            kind: proto::TriggerKind::Grpc as i32,
+            recipe_handle: String::new(),
+            app_handle: String::new(),
+            workflow_handle: "team/wf/fired".into(),
+            auth: proto::TriggerAuth::None as i32,
+            auth_secret_ref: String::new(),
+            schedule_spec: String::new(),
+            timezone: String::new(),
+            enabled: true,
+            require_approval: false,
+        },
+        "tok-alice",
+    ))
+    .await
+    .expect("an active workflow is schedulable");
+    let fired = c
+        .submit_trigger(with_bearer(
+            proto::SubmitTriggerRequest {
+                name: "wf-trigger".into(),
+                idempotency_key: "evt-1".into(),
+                payload_json: String::new(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(fired.instance_id.len(), 16);
+    // The run settles (find ANY committed terminal-looking progress: poll the
+    // projection until at least the two chain motes commit).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut committed = 0;
+    while std::time::Instant::now() < deadline {
+        let view = c
+            .get_projection(with_bearer(
+                proto::GetProjectionRequest {
+                    instance_id: fired.instance_id.clone(),
+                    at_seq: None,
+                },
+                "tok-alice",
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        committed = view
+            .motes
+            .iter()
+            .filter(|m| m.state == proto::MoteSnapshotState::Committed as i32)
+            .count();
+        if committed >= 2 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    }
+    assert!(committed >= 2, "the fired workflow run must settle");
+    // A replayed event dedups onto the same run.
+    let replay = c
+        .submit_trigger(with_bearer(
+            proto::SubmitTriggerRequest {
+                name: "wf-trigger".into(),
+                idempotency_key: "evt-1".into(),
+                payload_json: String::new(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(replay.deduped);
+    assert_eq!(replay.instance_id, fired.instance_id);
+
+    // The governance row carries the workflow target.
+    let listed = c
+        .list_triggers(with_bearer(
+            proto::ListTriggersRequest {
+                limit: 0,
+                after_name: String::new(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let row = listed
+        .triggers
+        .iter()
+        .find(|t| t.name == "wf-trigger")
+        .expect("the trigger lists");
+    assert_eq!(row.workflow_handle, "team/wf/fired");
+    assert!(row.disabled_reason.is_empty());
+    assert_eq!(row.consecutive_failures, 0);
+
+    // DeleteWorkflow cascades the trigger (the no-FK orphan hazard, closed).
+    let del = c
+        .delete_workflow(with_bearer(
+            proto::DeleteWorkflowRequest {
+                handle: "team/wf/fired".into(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(del.removed);
+    assert_eq!(del.triggers_removed, 1, "the workflow trigger is cascaded");
+    let listed = c
+        .list_triggers(with_bearer(
+            proto::ListTriggersRequest {
+                limit: 0,
+                after_name: String::new(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(
+        !listed.triggers.iter().any(|t| t.name == "wf-trigger"),
+        "the cascaded trigger is gone"
+    );
+}
+
+#[tokio::test]
 async fn oversized_envelope_is_refused_at_the_boundary() {
     let dir = tempfile::TempDir::new().unwrap();
     let running = start(common::gateway_config(&dir, false, two_party_tokens()))

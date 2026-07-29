@@ -4598,6 +4598,7 @@ impl KxGateway for GatewayService {
                 kind: kind.to_string(),
                 recipe_handle: req.recipe_handle,
                 app_handle: req.app_handle,
+                workflow_handle: req.workflow_handle,
                 auth: auth.to_string(),
                 auth_secret_ref: req.auth_secret_ref,
                 schedule_spec: req.schedule_spec,
@@ -4647,11 +4648,9 @@ impl KxGateway for GatewayService {
                     enabled: t.enabled,
                     require_approval: t.require_approval,
                     last_fire_unix_ms: t.last_fire_unix_ms,
-                    // Workflow governance fields — populated once the trigger
-                    // seam carries the workflow target + dead-letter posture.
-                    workflow_handle: String::new(),
-                    disabled_reason: String::new(),
-                    consecutive_failures: 0,
+                    workflow_handle: t.workflow_handle,
+                    disabled_reason: t.disabled_reason,
+                    consecutive_failures: t.consecutive_failures,
                 })
                 .collect(),
             has_more,
@@ -5591,11 +5590,16 @@ impl KxGateway for GatewayService {
         if !removed {
             return Ok(Response::new(proto::DeleteWorkflowResponse::default()));
         }
-        // 1. Triggers. No workflow-targeted trigger can exist until the trigger
-        //    seam learns the workflow target (its registration refuses the shape
-        //    today), so this reports an honest 0; the seam's cascade lands with
-        //    that tranche.
-        let triggers_removed = 0;
+        // 1. Triggers. `triggers.workflow_handle` has no FK, so an orphan is not
+        //    inert: the cron loop re-selects it every tick and RunWorkflow refuses
+        //    it (the same hazard the App cascade closes).
+        let triggers_removed = match self.trigger_admin.as_ref() {
+            Some(admin) => admin
+                .deregister_by_workflow(&principal, &req.handle)
+                .await
+                .unwrap_or(0),
+            None => 0,
+        };
         // 2. The lock row — LockApp is keyed by branch handle, and the workflow's
         //    definition branch shares its handle; a re-created workflow must not
         //    inherit a lock nobody set.

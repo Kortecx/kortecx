@@ -163,6 +163,17 @@ pub(crate) fn branch_history_max() -> usize {
     )
 }
 
+/// The cron dead-letter threshold (`KX_TRIGGER_DEADLETTER_MAX`): a trigger whose
+/// fires fail this many CONSECUTIVE times is auto-disabled with the reason
+/// recorded. `0` = never auto-disable (the pre-existing forever-retry posture,
+/// opt-out). Default 5.
+pub(crate) fn trigger_deadletter_max() -> u32 {
+    std::env::var("KX_TRIGGER_DEADLETTER_MAX")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(5)
+}
+
 /// The agentic-edit / scaffold-write input-token budget (`KX_SERVE_EDIT_MAX_INPUT_TOKENS`).
 pub(crate) fn edit_max_input_tokens() -> u32 {
     parse_cap_u32(

@@ -42,6 +42,12 @@ pub struct TriggerRegistration {
     /// Cron: a legacy interval in seconds (e.g. `"300"`) OR a 5-field crontab expression
     /// (e.g. `"0 9 * * 1-5"`); empty otherwise.
     pub schedule_spec: String,
+    /// The saved workflow handle the event runs via `RunWorkflow` (`""` ⇒ not a
+    /// workflow target). Exactly one of recipe/app/workflow handles is non-empty
+    /// (validated at register, KIND-AWARE: an unwired seam, an un-owned
+    /// workflow, or a draft refuses at REGISTRATION — never a forever
+    /// dead-lettering fire loop).
+    pub workflow_handle: String,
     /// IANA timezone for a 5-field cron expression (e.g. `"America/New_York"`); `""` ⇒
     /// UTC. Ignored for interval / non-cron triggers.
     pub timezone: String,
@@ -73,6 +79,14 @@ pub struct TriggerView {
     pub auth_secret_present: bool,
     /// Cron interval seconds or a 5-field crontab expr (empty for non-cron).
     pub schedule_spec: String,
+    /// The workflow target handle (`""` ⇒ not a workflow target).
+    pub workflow_handle: String,
+    /// `""` ⇒ healthy; non-empty ⇒ auto-disabled with this cause (the cron
+    /// dead-letter posture — a failing trigger is disabled with its reason,
+    /// never retried every poll tick forever in silence).
+    pub disabled_reason: String,
+    /// Cron fire failures since the last success (0 for healthy).
+    pub consecutive_failures: u32,
     /// IANA timezone for a 5-field cron expr (`""` ⇒ UTC).
     pub timezone: String,
     /// Whether the trigger is active.
@@ -155,6 +169,23 @@ pub trait TriggerAdmin: Send + Sync {
         owner_party: &str,
         app_handle: &str,
     ) -> Result<u32, TriggerAdminError>;
+
+    /// Deregister every trigger of `owner_party` targeting `workflow_handle`
+    /// (the DeleteWorkflow cascade — the same no-FK orphan hazard as
+    /// [`Self::deregister_by_app`]). The empty handle removes nothing.
+    ///
+    /// DEFAULTED to `Ok(0)` for impls that predate the workflow target (a test
+    /// fake keeps compiling and honestly removes nothing) — ⚠ the REAL impl
+    /// must override it, and its own store test asserts scoping + the
+    /// never-wildcard sentinel (the defaulted-method lesson).
+    async fn deregister_by_workflow(
+        &self,
+        owner_party: &str,
+        workflow_handle: &str,
+    ) -> Result<u32, TriggerAdminError> {
+        let _ = (owner_party, workflow_handle);
+        Ok(0)
+    }
 
     /// Fire an inbound event: dedup on `idempotency_key` (empty ⇒ server-derived from
     /// the payload), then — for a fresh key — bind the recipe under the trigger's owner
