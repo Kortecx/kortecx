@@ -1797,7 +1797,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // chain consumes `branches_db`; wired onto the gateway after the chain (behind the
     // `hosted-apps` feature). A plain host subprocess manager — off-journal, off-digest.
     #[cfg(feature = "hosted-apps")]
-    let hosted_supervisor: Arc<dyn kx_gateway_core::HostedAppSupervisor> =
+    let hosted_supervisor: Arc<dyn kx_gateway_core::HostedAppSupervisor> = {
+        // Resolve the isolation policy ONCE (env + platform probe) and say what it
+        // resolved to — the startup log is where an operator learns whether hosted
+        // children run confined on this serve.
+        let sandbox_policy = crate::hosted_sandbox::SandboxPolicy::resolve();
+        tracing::info!(posture = %sandbox_policy.posture(), "hosted-app isolation policy");
         Arc::new(crate::hostsupervisor::HostedSupervisor::new(
             &catalog_dir,
             apps_db.clone(),
@@ -1815,7 +1820,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 .resolve()
                 .map(|a| format!("http://{a}"))
                 .unwrap_or_default(),
-        ));
+            sandbox_policy,
+        ))
+    };
     let mut gateway = GatewayService::new(reader.clone(), submitter, content.clone())
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)

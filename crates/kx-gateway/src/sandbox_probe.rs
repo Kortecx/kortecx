@@ -96,6 +96,29 @@ impl SandboxCapabilities {
     }
 }
 
+/// Can THIS platform hold a hosted dev server confined? The requirements differ
+/// from a script's: the server LISTENS on loopback (inbound + bind, which the
+/// macOS profile language expresses and bwrap cannot — `--unshare-net` would
+/// sever the very port the gateway must reach), and it forks freely (macOS can
+/// GRANT fork explicitly; bwrap has no pid-limit axis but shares the verdict
+/// via the loopback refusal first). `Err` carries the reason a refusal/status
+/// detail surfaces verbatim.
+pub fn hosted_confinement() -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        if std::path::Path::new("/usr/bin/sandbox-exec").is_file() {
+            Ok(())
+        } else {
+            Err("the platform sandbox binary (/usr/bin/sandbox-exec) is missing".into())
+        }
+    } else {
+        Err(
+            "bwrap cannot confine a loopback-listening server (per-host egress and inbound \
+             loopback are unenforceable; --unshare-net would sever the served port)"
+                .into(),
+        )
+    }
+}
+
 /// Report what `exec_class` can enforce on this build's target platform.
 #[must_use]
 pub fn probe(exec_class: ExecutorClass) -> SandboxCapabilities {

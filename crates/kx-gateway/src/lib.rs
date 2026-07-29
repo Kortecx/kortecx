@@ -118,6 +118,8 @@ mod branches;
 // through kx-executor / never journaled), so the frozen executor digest is untouched.
 // Behind `hosted-apps` (implies `embedded-worker` for the branch/content seams).
 #[cfg(feature = "hosted-apps")]
+mod hosted_sandbox;
+#[cfg(feature = "hosted-apps")]
 mod hostsupervisor;
 // The Morphic Data Engine (campaign Batch 2): the durable serve-path capture
 // projection (capture.db sidecar folded from the read-only journal handle).

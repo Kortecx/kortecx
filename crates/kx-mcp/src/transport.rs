@@ -258,6 +258,7 @@ impl McpTransport for StdioTransport {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        hygienic_env(&mut cmd);
         for (key, value) in &self.envs {
             cmd.env(key, value);
         }
@@ -342,6 +343,7 @@ impl McpTransport for StdioTransport {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        hygienic_env(&mut cmd);
         for (key, value) in &self.envs {
             cmd.env(key, value);
         }
@@ -350,6 +352,21 @@ impl McpTransport for StdioTransport {
         }
         let session = StdioSession::spawn(cmd)?;
         Ok(Box::new(session))
+    }
+}
+
+/// Clear the child's environment down to a minimal allowlist. An MCP server used
+/// to inherit the WHOLE gateway environment — which can carry operator secrets it
+/// was never granted; D81 exists precisely so a server sees only the credentials
+/// DECLARED for it. What a server legitimately needs arrives explicitly: the
+/// connection's own `envs` and its injected credentials (both applied AFTER this),
+/// plus the substrate vars below that interpreters need to start at all.
+fn hygienic_env(cmd: &mut Command) {
+    cmd.env_clear();
+    for key in ["PATH", "HOME", "TMPDIR", "LANG"] {
+        if let Ok(v) = std::env::var(key) {
+            cmd.env(key, v);
+        }
     }
 }
 
