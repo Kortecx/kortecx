@@ -3074,6 +3074,19 @@ select {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+/* An App card carries the most controls of any card (run · schedule · lock · share ·
+ * download · kebab), and the cluster never shrinks — so in a three-up grid the NAME
+ * was left ~120px and a two-word title like "Daily Digest" wrapped. Give the name a
+ * readable floor and let the CLUSTER drop to its own right-aligned line instead:
+ * every affordance stays visible, and the name gets a full line to itself. Scoped to
+ * the Apps catalog — the other card grids carry two controls and already fit. */
+.card-grid[data-testid="apps-catalog"] .card-grid__head {
+  flex-wrap: wrap;
+  row-gap: 0.35rem;
+}
+.card-grid[data-testid="apps-catalog"] .card-grid__title {
+  flex: 1 1 14ch;
+}
 /* Clamp a long display NAME to two lines. Slice 2.5 truncated the handle; the name was
    left unbounded, so "hello world app with form to collect user information and submit
    to google my business" wrapped to four lines, made the card taller than its row
@@ -4172,6 +4185,18 @@ button.card-grid__title:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
+/* The library's default node fill and viewport mask are a fixed light grey that
+ * belongs to neither theme: on the review canvas the map read as three blank
+ * placeholder blocks — a loading skeleton, not a map of the workflow. Paint the
+ * nodes in the accent that marks a step everywhere else, and dim the off-viewport
+ * area with the same scrim the drawers use. */
+.dag-minimap .react-flow__minimap-node {
+  fill: var(--accent);
+  stroke: var(--border-md);
+}
+.dag-minimap .react-flow__minimap-mask {
+  fill: var(--scrim-color);
+}
 
 /* ---- DAG node-detail drawer (overlay; no layout thrash) ---- */
 .node-drawer__scrim {
@@ -4221,6 +4246,27 @@ button.card-grid__title:hover {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.35rem;
+}
+/* The review footer: Cancel · Start over · Create app. It used
+ * `.register-tool-form__row`, a TWO-column grid (1fr 0.4fr) built for a two-button
+ * row — so the third button wrapped to a second row and the footer rendered as a
+ * staircase. A footer is a row: the ways out on the left, the commit on the right,
+ * matching every dialog in the console. */
+.new-app-form__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+.new-app-form__actions [data-testid="new-app-approve"] {
+  order: 3;
+  margin-left: auto;
+}
+.new-app-form__actions [data-testid="new-app-start-over"] {
+  order: 2;
+}
+.new-app-form__actions [data-testid="new-app-cancel"] {
+  order: 1;
 }
 .node-drawer {
   position: absolute;
@@ -5345,6 +5391,11 @@ button.card-grid__title:hover {
   padding: 0.28rem 0.4rem;
   border: none;
   background: transparent;
+  /* The base `button` carries the primary action's accent GLOW. Resetting border
+   * and background but not the shadow left every row in the tree wearing the
+   * call-to-action's halo: the pane read as a stack of buttons, depth was
+   * invisible, and the selected file could not stand out from its siblings. */
+  box-shadow: none;
   color: var(--fg);
   text-align: left;
   cursor: pointer;
@@ -5632,6 +5683,22 @@ button.card-grid__title:hover {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+}
+/* Prose, not a label. The enclosing `.node-drawer__section` is a small-caps LABEL
+ * context, so an un-reset sentence renders as "THIS APP TAKES NO INPUTS." —
+ * shouting, with a full stop inside it. (Third child of this section to need the
+ * reset; `.run-preflight` and `.app-run-drawer__approval` carry the same one.) */
+.app-run-drawer__noinputs p {
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* The App HANDLE is a case-sensitive identifier — uppercasing it shows the reader
+ * a string that is not the one they would type. Always render it verbatim. */
+.node-drawer__section > code.mono {
+  font-size: 0.78rem;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 /* The HITL "require approval" toggle lives in a `.node-drawer__section` — a small-caps LABEL

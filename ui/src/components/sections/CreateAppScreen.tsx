@@ -258,7 +258,7 @@ function CreateResultDialog({
                   data-testid="app-create-result-open"
                   onClick={onOpen}
                 >
-                  Open app
+                  Open App
                 </button>
               </div>
             </>

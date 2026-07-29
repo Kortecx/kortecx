@@ -668,14 +668,14 @@ export function NewAppForm({
             </fieldset>
           )}
 
-          <div className="register-tool-form__row">
+          <div className="new-app-form__actions">
             <button
               type="button"
               data-testid="new-app-approve"
               onClick={onApprove}
               disabled={!canCreate}
             >
-              {create.isPending || scaffold.isPending ? "Creating…" : "Create app"}
+              {create.isPending || scaffold.isPending ? "Creating…" : "Create App"}
             </button>
             <button
               type="button"

@@ -94,7 +94,7 @@ export function AppRunDrawer({ handle, onClose }: { handle: string; onClose: () 
         transition={slideIn.transition}
       >
         <div className="node-drawer__head">
-          <h3>Run app</h3>
+          <h3>Run App</h3>
           <button type="button" className="linkbtn" onClick={onClose} aria-label="Close">
             ✕
           </button>
