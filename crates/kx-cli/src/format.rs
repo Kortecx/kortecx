@@ -1653,6 +1653,8 @@ pub fn render_save_app(resp: &proto::SaveAppResponse, json: bool) -> String {
 /// Both were dropped here, so `kx app list --json` could not tell a hosted app from a
 /// scheduled one while the console showed the difference on every card. Empty is the honest
 /// value for either on an older server, and it reads as the default the runtime applies.
+/// `lifecycle` rides for the same reason: "" is an app in good standing, `draft` is a
+/// created-but-scaffold-incomplete one (the badge the console paints).
 fn app_summary_json(s: &proto::AppSummary) -> Value {
     json!({
         "handle": s.handle,
@@ -1666,6 +1668,7 @@ fn app_summary_json(s: &proto::AppSummary) -> Value {
         "locked": s.locked,
         "kind": s.kind,
         "mode": s.mode,
+        "lifecycle": s.lifecycle,
     })
 }
 
@@ -4190,10 +4193,13 @@ mod tests {
             locked: false,
             kind: "functional".into(),
             mode: "codified".into(),
+            lifecycle: "draft".into(),
         };
         let v = app_summary_json(&s);
         assert_eq!(v["kind"], "functional");
         assert_eq!(v["mode"], "codified");
+        // A half-scaffolded app announces itself the same way the console badges it.
+        assert_eq!(v["lifecycle"], "draft");
         assert_eq!(v["step_count"], 3);
         // `delivers` is what makes an App pickable by another App, so a consumer scripting
         // against this output must be able to read it without a second RPC.
@@ -4204,10 +4210,12 @@ mod tests {
         let old = proto::AppSummary {
             kind: String::new(),
             mode: String::new(),
+            lifecycle: String::new(),
             ..s
         };
         let v = app_summary_json(&old);
         assert_eq!(v["kind"], "");
         assert_eq!(v["mode"], "");
+        assert_eq!(v["lifecycle"], "");
     }
 }
