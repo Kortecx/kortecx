@@ -4508,6 +4508,11 @@ impl KxGateway for GatewayService {
                     enabled: t.enabled,
                     require_approval: t.require_approval,
                     last_fire_unix_ms: t.last_fire_unix_ms,
+                    // Workflow governance fields — populated once the trigger
+                    // seam carries the workflow target + dead-letter posture.
+                    workflow_handle: String::new(),
+                    disabled_reason: String::new(),
+                    consecutive_failures: 0,
                 })
                 .collect(),
             has_more,
@@ -5121,7 +5126,59 @@ impl KxGateway for GatewayService {
             branch: Some(branch_to_proto(manifest)),
             new_version,
             deduplicated,
+            // The workflows tranche wires the catalog resync here; until then
+            // the restore honestly reports that no workflow row was touched.
+            workflow_resynced: false,
         }))
+    }
+
+    // The durable Workflow entity. Stubbed at the proto tranche: each returns
+    // the seam-absent posture until the workflows catalog + runner land (the
+    // RunApp-without-seam precedent). Kept as five explicit bodies so the
+    // tranche compiles green with ZERO behavior change.
+    async fn save_workflow(
+        &self,
+        _request: Request<proto::SaveWorkflowRequest>,
+    ) -> Result<Response<proto::SaveWorkflowResponse>, Status> {
+        Err(Status::unimplemented(
+            "SaveWorkflow: no workflow catalog wired",
+        ))
+    }
+
+    async fn list_workflows(
+        &self,
+        _request: Request<proto::ListWorkflowsRequest>,
+    ) -> Result<Response<proto::ListWorkflowsResponse>, Status> {
+        Err(Status::unimplemented(
+            "ListWorkflows: no workflow catalog wired",
+        ))
+    }
+
+    async fn get_workflow(
+        &self,
+        _request: Request<proto::GetWorkflowRequest>,
+    ) -> Result<Response<proto::GetWorkflowResponse>, Status> {
+        Err(Status::unimplemented(
+            "GetWorkflow: no workflow catalog wired",
+        ))
+    }
+
+    async fn run_workflow(
+        &self,
+        _request: Request<proto::RunWorkflowRequest>,
+    ) -> Result<Response<proto::RunHandle>, Status> {
+        Err(Status::unimplemented(
+            "RunWorkflow: no workflow runner wired",
+        ))
+    }
+
+    async fn delete_workflow(
+        &self,
+        _request: Request<proto::DeleteWorkflowRequest>,
+    ) -> Result<Response<proto::DeleteWorkflowResponse>, Status> {
+        Err(Status::unimplemented(
+            "DeleteWorkflow: no workflow catalog wired",
+        ))
     }
 
     async fn lock_app(

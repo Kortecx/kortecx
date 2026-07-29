@@ -993,6 +993,9 @@ enum WorkflowStepKind {
   WORKFLOW_STEP_KIND_MODEL       = 2;  // greedy model step routed by model_id + prompt (server logic_ref = MODEL sentinel)
   WORKFLOW_STEP_KIND_EXEC        = 3;  // references a REGISTERED body by signature id; server logic_ref = that body's content ref
   WORKFLOW_STEP_KIND_TOOL = 4; // PR-6a: a single registered tool step. The client sends kind + tool_contract={name:version}; the SERVER builds the per-step warrant narrowed against the party grant (client tool_grants stay structurally refused — BLOCKER #5). The tool MUST resolve in the durable registry or the step is refused.
+  WORKFLOW_STEP_KIND_HTTP        = 5;  // A deterministic credentialed HTTP dial lowered onto the builtin `http@1` tool. Args (url/method/headers/body/secret NAME) are identity-bearing step config; the SERVER derives the per-call net_scope from the declared url host and the secret_scope from the declared SecretRef NAME, both intersected against the caller's grants (wishes-never-grants). The secret VALUE is resolved transiently at dispatch and never journaled. GET/HEAD are read-only; mutating verbs stage-then-commit (approval-gate compatible).
+  WORKFLOW_STEP_KIND_WAIT        = 6;  // A DURABLE delay. The step's delay_ms is identity-bearing config; the serve journals the armed timer, a restart re-arms from the journal at the recorded fire instant, and firing IS the step's single Committed entry — a re-arm can never re-fire. The step commits its lone data parent's output verbatim (pure pass-through).
+  WORKFLOW_STEP_KIND_CONDITIONAL = 7;  // A typed data-driven predicate (equals | contains | json-path) over exactly ONE prior step's COMMITTED output; commits the selected arm. Arm steps of the untaken side commit a distinguished canonical SKIP sentinel (never fabricated output) so downstream joins stay honest. A model-JUDGED branch is NOT this kind — that is a MODEL step feeding a CONDITIONAL.
 }
 
 // Execution mode (blueprint-execution-modes.md). Additive, default = FROZEN.
@@ -1516,6 +1519,84 @@ message LockAppRequest   { string branch_handle = 1; }  // lock the App's projec
 message LockAppResponse  { bool locked = 1; }
 message UnlockAppRequest { string branch_handle = 1; }
 message UnlockAppResponse{ bool unlocked = 1; }
+
+// ---------------------------------------------------------------------------
+// The durable Workflow entity. A workflow is a `kortecx.workflow/v1`
+// JSON envelope: the SAME portable blueprint shape an App carries, wrapped with
+// by-REFERENCE context/tool/connection/dataset references and the 4-axis
+// steering config — but never hosted, never moded, and runnable/schedulable as
+// itself rather than only "Saved as an App". The envelope carries NO authority
+// (wishes, never grants): RunWorkflow re-lowers the blueprint through the SAME
+// canonical path RunApp uses and the server re-resolves every warrant from the
+// caller's OWN grants at run time. Persisted in an off-journal,
+// rebuildable-to-EMPTY `workflows.db` sidecar scoped to the authoring party;
+// the server derives `workflow_ref` from the canonical envelope. Definition
+// point-in-time history rides the SAME branch-history sidecar as Apps: every
+// non-dedup save appends the canonical bytes as a one-item branch version at
+// the workflow's handle, so ListBranchVersions/RestoreBranch work unchanged.
+// A workflow handle that names an existing App is REFUSED at save (branches,
+// locks, and history are (principal, handle)-keyed with no entity axis — a
+// shared handle would silently share all three).
+message WorkflowSummary {
+  string handle        = 1;  // 'namespace/collection/name' AssetPath catalog key (upsert key)
+  bytes  workflow_ref  = 2;  // 16B SERVER-DERIVED canonical-envelope hash (display/dedup)
+  string name          = 3;  // envelope name
+  string version       = 4;  // envelope version
+  string description   = 5;  // advisory (never parsed for enforcement)
+  repeated string tags = 6;  // catalog tags
+  uint32 step_count    = 7;  // blueprint step count (display only)
+  string delivers      = 8;  // advisory one-line statement of what one run PRODUCES (the AppSummary.delivers posture)
+  string lifecycle     = 9;  // advisory catalog state: "" (active) or "draft" (authoring incomplete — finish or discard). Caller-stated at save (a workflow has no scaffold loop; the save IS the authoring act). Display/routing + trigger-registration refusal only, never run enforcement.
+}
+message SaveWorkflowRequest {
+  string handle        = 1;  // catalog key (upsert key within the caller's scope)
+  bytes  envelope_json = 2;  // the kortecx.workflow/v1 JSON; server canonicalizes + derives workflow_ref
+  bytes  source_digest = 3;  // OPTIONAL 32B lineage hint (the workflow_digest a clone came from). A hint, never authenticity.
+  string lifecycle     = 4;  // "" (active) | "draft"; anything else is refused
+}
+message SaveWorkflowResponse {
+  bytes  workflow_ref = 1;   // 16B server-derived
+  string handle       = 2;   // echoed canonical handle
+  bool   deduplicated = 3;   // true iff an identical envelope was already bound to this handle
+}
+message ListWorkflowsRequest {
+  uint32 limit        = 1;   // 0 ⇒ server default; clamped to a server max
+  string after_handle = 2;   // exclusive cursor (deterministic handle order)
+}
+message ListWorkflowsResponse {
+  repeated WorkflowSummary workflows = 1;
+  bool has_more                      = 2;
+}
+message GetWorkflowRequest { string handle = 1; }
+message GetWorkflowResponse {
+  bool            found           = 1;  // uniform not-found for absent OR not-owned (no oracle)
+  bytes           envelope_json   = 2;  // canonical stored bytes (empty when not found)
+  WorkflowSummary summary         = 3;  // the derived summary (absent when not found)
+  bytes           workflow_digest = 4;  // 32B HANDLE-FREE portable identity (blake3 over the canonical envelope); empty when not found
+  bytes           source_digest   = 5;  // OPTIONAL 32B lineage hint; empty when authored-here or not found
+}
+// Run a caller-owned stored workflow SERVER-SIDE (the RunApp posture end to
+// end): read the validated envelope, lower through kx-blueprint::to_request,
+// resolve references against the caller's own registrations, build every
+// warrant server-side, register-then-submit. Returns the same RunHandle as
+// RunApp/SubmitWorkflow — terminal_mote_id is the run anchor for EVERY shape;
+// react_chain_salt only for the exactly-one-agentic-step shape (D239).
+message RunWorkflowRequest {
+  string handle           = 1;  // an existing saved workflow handle (caller-scoped)
+  bytes  args             = 2;  // optional entry-arg JSON object (empty = none); merged server-side
+  bool   require_approval = 3;  // per-run HITL posture (the RunAppRequest.require_approval contract)
+}
+// Delete a stored workflow + its dependents, most-recoverable last (the
+// DeleteApp cascade discipline): the catalog row is the point of no return,
+// then triggers, then the definition branch BINDING (CAS blobs + branch
+// HISTORY stay — delete+restore is the recreate path, D249.1).
+message DeleteWorkflowRequest { string handle = 1; }
+message DeleteWorkflowResponse {
+  bool   removed          = 1;  // false iff absent / not owned (no existence oracle)
+  bool   branch_unbound   = 2;  // the definition branch row was dropped (blobs + history stay)
+  bool   lock_cleared     = 3;  // a lock row existed at this handle and was released
+  uint32 triggers_removed = 4;  // triggers deregistered by the cascade
+}
 
 // D213 Experience lane — the hosted-app supervisor. A hosted (experience) App is a real
 // Vite-React / Next.js / Svelte project scaffolded into the App's branch; the supervisor
@@ -2385,6 +2466,12 @@ message RestoreBranchResponse {
   Branch branch      = 1;       // the manifest after the restore
   uint32 new_version = 2;       // the version the restore recorded (0 when deduplicated)
   bool   deduplicated = 3;      // true iff the branch already matched the requested version (no-op, nothing recorded)
+  // Additive: true iff the handle named a stored WORKFLOW and its catalog
+  // row was re-synced from the restored definition manifest. Kept honest: false
+  // on an App restore, false when no workflow row exists, and false when the
+  // resync half failed after the restore recorded (the divergence is visible,
+  // and the next save or a repeated restore heals it — the resync is idempotent).
+  bool   workflow_resynced = 4;
 }
 
 // ---------------------------------------------------------------------------
@@ -2510,9 +2597,13 @@ message RegisterTriggerRequest {
   string      schedule_spec      = 6;  // cron: interval seconds ("300") OR a 5-field crontab expr ("0 9 * * *"); empty otherwise
   bool        enabled            = 7;
   // T-APP-TRIGGER-TARGET (additive; back-compat: absent ⇒ recipe target, UTC, no HITL).
-  string      app_handle         = 8;  // a saved App handle to RunApp; EXACTLY ONE of recipe_handle | app_handle
+  string      app_handle         = 8;  // a saved App handle to RunApp; EXACTLY ONE of recipe_handle | app_handle | workflow_handle
   string      timezone           = 9;  // IANA zone for a 5-field cron expr (e.g. "America/New_York"); empty ⇒ UTC
   bool        require_approval   = 10; // per-trigger HITL (D114): withhold irreversible actions until an operator grant
+  // Additive (back-compat: absent ⇒ the 2-way recipe|app check). Kind-aware
+  // validation REFUSES at registration what would only dead-letter at fire time:
+  // an unwired workflow seam, a workflow the caller does not own, or a draft.
+  string      workflow_handle    = 11; // a saved workflow handle to RunWorkflow; EXACTLY ONE of recipe_handle | app_handle | workflow_handle
 }
 message RegisterTriggerResponse { bytes trigger_id = 1; }  // 16B server-derived
 
@@ -2534,6 +2625,14 @@ message TriggerView {                  // governance row — never a secret valu
   string      app_handle          = 10; // the App target handle ('' ⇒ a recipe target)
   string      timezone            = 11; // IANA zone for a 5-field cron expr ('' ⇒ UTC)
   bool        require_approval    = 12; // per-trigger HITL posture (D114)
+  // Additive governance fields. The dead-letter posture closes a standing
+  // hole: a trigger whose fires fail KX_TRIGGER_DEADLETTER_MAX consecutive
+  // times is DISABLED with the reason recorded, instead of retrying every poll
+  // tick forever in silence. A successful fire resets the counter; re-register
+  // re-enables.
+  string      workflow_handle     = 13; // the workflow target handle ('' ⇒ not a workflow target)
+  string      disabled_reason     = 14; // '' ⇒ healthy; non-empty ⇒ auto-disabled, human-readable cause (truncated last error)
+  uint32      consecutive_failures = 15; // fire failures since the last success (0 for healthy)
 }
 message ListTriggersResponse {
   repeated TriggerView triggers = 1;
@@ -2929,4 +3028,14 @@ service KxGateway {
   // Branch point-in-time history (append-only sidecar; see BranchVersion).
   rpc ListBranchVersions(ListBranchVersionsRequest) returns (ListBranchVersionsResponse);
   rpc RestoreBranch(RestoreBranchRequest) returns (RestoreBranchResponse);
+
+  // The durable Workflow entity (see WorkflowSummary). Save/List/Get/
+  // Delete are off-journal catalog ops over workflows.db; RunWorkflow is the
+  // RunApp posture over a stored workflow (server-built warrants, same
+  // RunHandle anchors). UNIMPLEMENTED on a serve without the seam.
+  rpc SaveWorkflow(SaveWorkflowRequest) returns (SaveWorkflowResponse);
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+  rpc RunWorkflow(RunWorkflowRequest) returns (RunHandle);
+  rpc DeleteWorkflow(DeleteWorkflowRequest) returns (DeleteWorkflowResponse);
 }

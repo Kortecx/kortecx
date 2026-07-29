@@ -243,6 +243,9 @@ pub async fn execute(args: TriggersArgs) -> Result<(), CliError> {
                 timezone: spec.timezone,
                 enabled: spec.enabled,
                 require_approval: spec.require_approval,
+                // The workflow target arrives with the trigger tranche's
+                // `--workflow` flag; until then the CLI registers recipe|app only.
+                workflow_handle: String::new(),
             };
             let resp = client
                 .register_trigger(resolved.request(req)?)
