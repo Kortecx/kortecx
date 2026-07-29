@@ -115,10 +115,6 @@ pub use apps_view::{
     app_dataset_scoped_name, app_digest_of, AppCatalog, AppRecord, APP_DATASET_SCOPE_DOMAIN,
     APP_DIGEST_DOMAIN, APP_LIFECYCLE_DRAFT, MAX_APP_ENVELOPE_BYTES,
 };
-pub use workflows_view::{
-    workflow_digest_of, WorkflowCatalog, WorkflowRecord, WORKFLOW_DIGEST_DOMAIN,
-    WORKFLOW_LIFECYCLE_DRAFT,
-};
 pub use branches_view::{
     BranchHistory, BranchItemRecord, BranchManifest, BranchStore, BranchVersionRecord,
     MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
@@ -157,6 +153,10 @@ pub use scaffold::{
     ScaffoldStep, AGENTS_GUIDANCE_PATH, APP_MANIFEST_PLAN_RECIPE_HANDLE,
     APP_SCAFFOLD_WRITE_RECIPE_HANDLE, CODIFIED_CONSUMED_PATHS, CODIFIED_SOURCE_EXTS,
     CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH, MANIFEST_MARKER_PATH, SKELETON,
+};
+pub use workflows_view::{
+    workflow_digest_of, WorkflowCatalog, WorkflowRecord, WORKFLOW_DIGEST_DOMAIN,
+    WORKFLOW_LIFECYCLE_DRAFT,
 };
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays

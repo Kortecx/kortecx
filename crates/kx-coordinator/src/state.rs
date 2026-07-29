@@ -1226,12 +1226,54 @@ fn resolve_authored_tool_args(mote: &Mote, tool_registry: &dyn ToolRegistry) -> 
             };
         }
     }
+    // The bundled `http@1` tool's egress requirement is PER-CALL: derive the
+    // request scope from the DECLARED url's host — a pure function of the
+    // identity-bearing args, so every fault is Permanent (the authoring gate
+    // already refused an unparseable url; this is the residual). The broker's
+    // `request ⊆ warrant` precheck then enforces it against the step warrant,
+    // whose grant the binder derived from the SAME declared host.
+    if name.0 == "http" {
+        return match http_request_host(&args_bytes) {
+            Some(host) => {
+                let mut hosts = std::collections::BTreeSet::new();
+                hosts.insert(kx_warrant::Host(host));
+                ArgResolution::Resolved((
+                    kx_tool_registry::normalize_lenient_args(&args_bytes).into_owned(),
+                    kx_warrant::NetScope::EgressAllowlist(hosts),
+                    def.required_capability.fs_scope_required.clone(),
+                ))
+            }
+            None => ArgResolution::Permanent {
+                reason: "http step args carry no parseable http(s) url host".to_string(),
+            },
+        };
+    }
     // PR-3 (A3c): fire the normalized bytes (matching `validate_args`).
     ArgResolution::Resolved((
         kx_tool_registry::normalize_lenient_args(&args_bytes).into_owned(),
         def.required_capability.net_scope_required.clone(),
         def.required_capability.fs_scope_required.clone(),
     ))
+}
+
+/// Extract the host of an http step's declared url — a dependency-free parse
+/// (kx-coordinator carries no url crate): strip `scheme://`, cut the authority
+/// at the first `/`/`?`/`#`, drop userinfo, strip a `:port`, unbracket IPv6.
+/// Scheme-bound to `http(s)`. Total: `None` for anything unparseable.
+fn http_request_host(args: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(args).ok()?;
+    let url = v.get("url")?.as_str()?;
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if let Some(bracketed) = host_port.strip_prefix('[') {
+        bracketed.split(']').next().unwrap_or(bracketed)
+    } else {
+        host_port.rsplit_once(':').map_or(host_port, |(h, _)| h)
+    };
+    (!host.is_empty()).then(|| host.to_string())
 }
 
 /// Decode a [`REACT_TURN_KEY`] marker value into its `(instance_id, step_salt)` chain

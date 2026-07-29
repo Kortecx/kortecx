@@ -2618,7 +2618,28 @@ impl HostWorkflowAuthor {
         // / model_route ceilings) NARROWED to THIS tool's grant + declared net/fs.
         // `author()` widens the party ceiling with the live registry so this survives
         // the intersect; the broker precheck + coordinator D66 re-verify at fire.
-        let warrant = tool_step_warrant(base, &tool_name, &tool_version, &tdef);
+        let mut warrant = tool_step_warrant(base, &tool_name, &tool_version, &tdef);
+        // The bundled `http@1` tool's REAL requirement is PER-CALL: its ToolDef
+        // declares `NetScope::None` (a static declaration could only be wrong),
+        // and the step warrant instead grants exactly the one dial the authored
+        // args declare — the url's host, and the secret NAME if one is named.
+        // Both come from the identity-bearing args (validated above), so the
+        // grant is least-privilege by construction and replay-stable. The
+        // broker's `request ⊆ warrant` precheck + the capability's own egress
+        // vet then enforce the same facts at dispatch (one kernel, re-checked).
+        if tool_name.0 == "http" {
+            let args: &[u8] = s.params.get(TOOL_ARGS_KEY).map_or(b"{}", Vec::as_slice);
+            let (host, secret_name) = http_args_scopes(args)
+                .map_err(|e| BinderError::InvalidArgs(format!("http step args: {e}")))?;
+            let mut hosts = BTreeSet::new();
+            hosts.insert(kx_warrant::Host(host));
+            warrant.net_scope = kx_warrant::NetScope::EgressAllowlist(hosts);
+            if let Some(name) = secret_name {
+                let mut names = BTreeSet::new();
+                names.insert(kx_warrant::SecretRef(name));
+                warrant.secret_scope = kx_warrant::SecretScope::AllowList(names);
+            }
+        }
         let mut sd = tool_step(
             logic_ref,
             base.model_route.model_id.clone(),
@@ -3533,6 +3554,31 @@ pub(crate) fn react_memory_warrant(
 /// the tool's scope is SERVER-vetted (the registry), so the per-party gate is "can
 /// author at all" (`effective` resolved); the broker precheck + coordinator D66
 /// re-verify every axis at fire.
+/// Parse an http step's authored args into `(host, secret_name)` — the two
+/// facts the per-call warrant grants. Scheme-bound (`http(s)` only); a
+/// hostless/unparseable url refuses at authoring, where the author can fix it.
+fn http_args_scopes(args: &[u8]) -> Result<(String, Option<String>), String> {
+    #[derive(serde::Deserialize)]
+    struct Probe {
+        url: String,
+        #[serde(default)]
+        secret_name: Option<String>,
+    }
+    // Unknown keys are the SCHEMA's business (validated fail-closed upstream);
+    // this probe reads only the two scope-bearing facts.
+    let probe: Probe = serde_json::from_slice(args).map_err(|e| format!("not an object: {e}"))?;
+    let parsed = url::Url::parse(&probe.url).map_err(|e| format!("invalid url: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => return Err(format!("unsupported scheme: {other}")),
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "url has no host".to_string())?
+        .to_string();
+    Ok((host, probe.secret_name))
+}
+
 fn tool_step_warrant(
     base: &WarrantSpec,
     name: &ToolName,

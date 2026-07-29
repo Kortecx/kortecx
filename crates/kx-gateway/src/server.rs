@@ -1093,6 +1093,28 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     ) {
         tracing::warn!(%error, "RC4b: failed to seed retrieve@1 into tools.db");
     }
+    // The workflow http step: seed http@1 + register the capability over the SAME
+    // keychain→env secret chain the MCP dial uses. mcp-gateway-gated (the ureq +
+    // secret-store surface lives there); a build without it authors no http steps
+    // (the tool is absent from the registry, so authoring refuses fail-closed).
+    #[cfg(feature = "mcp-gateway")]
+    {
+        if let Err(error) = tool_registry.register_server_tool(
+            crate::http_tool::http_tool_def(),
+            kx_tool_registry::ToolProvenance::HumanAuthored {
+                author: "kx-gateway".to_string(),
+            },
+            None,
+        ) {
+            tracing::warn!(%error, "failed to seed http@1 into tools.db");
+        }
+        let http_secrets: std::sync::Arc<dyn kx_mcp::SecretStore> =
+            std::sync::Arc::new(kx_mcp::ChainedSecretStore::new(
+                std::sync::Arc::new(crate::secrets::KeyringSecretStore::os()),
+                std::sync::Arc::new(kx_mcp::EnvSecretStore),
+            ));
+        crate::http_tool::register_http_capability(&local_broker, http_secrets);
+    }
     // RC5a (durable memory): seed remember@1 + recall@1 into the durable registry so
     // DiscoverTools + the react-memory tool menu show them, exactly when memory is
     // enabled (the hnsw + serve build + KX_SERVE_MEMORY). The capabilities themselves

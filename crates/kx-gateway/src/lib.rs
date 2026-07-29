@@ -160,6 +160,11 @@ mod mcp_tool;
 // (`serve-engine`) AND the dataset view (`hnsw`); off-digest, scores dropped.
 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
 mod retrieve_tool;
+// The workflow http step's bundled `http@1` capability: a deterministic,
+// credentialed, egress-vetted dial (redirects refused, size-capped,
+// secret-by-NAME). mcp-gateway-gated — the ureq + secret-store surface.
+#[cfg(feature = "mcp-gateway")]
+mod http_tool;
 // RC5a (durable memory): the serve-side HostMemoryView (memory.db + embedder) behind
 // the opt-in `hnsw` feature — the durable, per-namespace, cross-run memory store. The
 // StoreMemory/ListMemories/RecallMemory/ForgetMemory RPCs bind to it; off-digest.

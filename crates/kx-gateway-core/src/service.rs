@@ -1607,14 +1607,57 @@ pub fn author_steps_from_proto(
 ) -> Result<(Vec<AuthorStep>, Vec<AuthorEdge>, AuthorExecutionMode), Status> {
     let mut out_steps: Vec<AuthorStep> = Vec::with_capacity(steps.len());
     for s in steps {
+        // HTTP is sugar over the bundled `http@1` tool: the kind FORCES the
+        // contract (a client-supplied contract on an http step is refused —
+        // one meaning per kind, no ambiguity).
+        let mut forced_contract: Option<std::collections::BTreeMap<String, String>> = None;
         let kind = match proto::WorkflowStepKind::try_from(s.kind) {
             Ok(proto::WorkflowStepKind::Pure) => AuthorStepKind::Pure,
             Ok(proto::WorkflowStepKind::Model) => AuthorStepKind::Model,
             Ok(proto::WorkflowStepKind::Exec) => AuthorStepKind::Exec,
             Ok(proto::WorkflowStepKind::Tool) => AuthorStepKind::Tool,
+            Ok(proto::WorkflowStepKind::Http) => {
+                if !s.tool_contract.is_empty() {
+                    return Err(Status::invalid_argument(
+                        "an HTTP step binds the bundled http@1 tool; it must not carry \
+                         its own tool_contract",
+                    ));
+                }
+                forced_contract = Some(
+                    [("http".to_string(), "1".to_string())]
+                        .into_iter()
+                        .collect(),
+                );
+                AuthorStepKind::Tool
+            }
+            Ok(proto::WorkflowStepKind::Wait) => {
+                // A durable wait is a PURE step whose identity-bearing delay
+                // param the coordinator parks/arms/fires on. The delay must be
+                // authored, parseable, and positive — refused HERE so a wait
+                // that could never fire honestly is never admitted.
+                let delay_ok = s
+                    .params
+                    .get(kx_mote::WAIT_DELAY_MS_KEY)
+                    .and_then(|v| std::str::from_utf8(v).ok())
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .is_some_and(|ms| ms > 0);
+                if !delay_ok {
+                    return Err(Status::invalid_argument(format!(
+                        "a WAIT step requires params[{:?}] = a positive integer \
+                         millisecond delay",
+                        kx_mote::WAIT_DELAY_MS_KEY
+                    )));
+                }
+                AuthorStepKind::Pure
+            }
+            Ok(proto::WorkflowStepKind::Conditional) => {
+                return Err(Status::invalid_argument(
+                    "CONDITIONAL steps are not yet authorable on this serve",
+                ));
+            }
             _ => {
                 return Err(Status::invalid_argument(
-                    "WorkflowStep.kind must be PURE, MODEL, EXEC, or TOOL",
+                    "WorkflowStep.kind must be PURE, MODEL, EXEC, TOOL, HTTP, or WAIT",
                 ));
             }
         };
@@ -1631,7 +1674,7 @@ pub fn author_steps_from_proto(
             model_id: s.model_id,
             prompt: s.prompt,
             body_signature_id,
-            tool_contract: s.tool_contract.into_iter().collect(),
+            tool_contract: forced_contract.unwrap_or_else(|| s.tool_contract.into_iter().collect()),
             params: s.params.into_iter().collect(),
         });
     }
@@ -5290,7 +5333,8 @@ impl KxGateway for GatewayService {
         // a serve without the branch/content seams still saves; history simply
         // does not record (the AppCatalog degrade posture). The branch layer
         // dedups an unchanged ref, so a dedup save appends no history row.
-        if let (Some(writer), Some(branches)) = (self.content_writer.as_ref(), self.branches.as_ref())
+        if let (Some(writer), Some(branches)) =
+            (self.content_writer.as_ref(), self.branches.as_ref())
         {
             let history_result: Result<(), crate::error::GatewayError> = (|| {
                 // The CANONICAL stored bytes (not the client's), read back from
@@ -5306,7 +5350,10 @@ impl KxGateway for GatewayService {
                 Ok(())
             })();
             if let Err(e) = history_result {
-                tracing::warn!("workflow definition history not recorded for {}: {e}", req.handle);
+                tracing::warn!(
+                    "workflow definition history not recorded for {}: {e}",
+                    req.handle
+                );
             }
         }
         Ok(Response::new(proto::SaveWorkflowResponse {
@@ -5479,9 +5526,7 @@ impl KxGateway for GatewayService {
         request: Request<proto::DeleteWorkflowRequest>,
     ) -> Result<Response<proto::DeleteWorkflowResponse>, Status> {
         let workflows = self.workflows.as_ref().ok_or_else(|| {
-            Status::unimplemented(
-                "DeleteWorkflow: no workflow catalog wired (workflows.db absent)",
-            )
+            Status::unimplemented("DeleteWorkflow: no workflow catalog wired (workflows.db absent)")
         })?;
         let principal = caller_principal(&request)?;
         let req = request.into_inner();

@@ -360,7 +360,7 @@ observability = ["dep:kx-otel", "embedded-worker"]
 # firing capability). The autonomous ReAct loop's auto-grant of dialed tools ships
 # in PR-6b-2; here a dialed tool is registered + directly fireable through a
 # granting warrant. OAuth/device-flow + a credential marketplace = CLOUD.
-mcp-gateway = ["dep:kx-mcp", "dep:kx-mcp-gateway", "embedded-worker"]
+mcp-gateway = ["dep:kx-mcp", "dep:kx-mcp-gateway", "embedded-worker", "dep:ureq"]
 # The in-process coordinator + local worker (single-system OSS, D129). On by default so
 # the binary is genuinely reachable end-to-end (SubmitRun -> Committed). A future library
 # consumer can disable it to embed a gateway-only front end (then `serve` requires an

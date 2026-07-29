@@ -129,7 +129,14 @@ impl AppAuthor for HostWorkflowRunner {
         //     with the workflow handle so a cycle refusal names the whole path.
         let mut chain = vec![handle.to_string()];
         self.inner
-            .resolve_composes(&mut prepared, party, handle, require_approval, 0, &mut chain)
+            .resolve_composes(
+                &mut prepared,
+                party,
+                handle,
+                require_approval,
+                0,
+                &mut chain,
+            )
             .await?;
         // (4) One canonical lowering + server-side authoring (wishes ∩ grants).
         self.inner.author_prepared(party, prepared).await
@@ -460,14 +467,26 @@ mod tests {
         let dir = tmp_dir();
         let db = WorkflowsDb::open(&dir).unwrap();
         let (rec, dedup) = db
-            .save("alice", "team/wf/triage", &envelope("triage"), None, "draft")
+            .save(
+                "alice",
+                "team/wf/triage",
+                &envelope("triage"),
+                None,
+                "draft",
+            )
             .unwrap();
         assert!(!dedup);
         assert_eq!(rec.name, "triage");
         assert_eq!(rec.lifecycle, "draft");
         // Identical bytes + identical lifecycle ⇒ dedup.
         let (_, dedup2) = db
-            .save("alice", "team/wf/triage", &envelope("triage"), None, "draft")
+            .save(
+                "alice",
+                "team/wf/triage",
+                &envelope("triage"),
+                None,
+                "draft",
+            )
             .unwrap();
         assert!(dedup2);
         // Identical bytes + a lifecycle FLIP (finishing the draft) is a REAL
@@ -579,7 +598,9 @@ mod tests {
         assert_eq!(rec.lifecycle, "draft");
         assert!(db.set_lifecycle("alice", "team/wf/a", "").unwrap());
         // Absent / not-owned: uniform false, nothing written.
-        assert!(!db.set_lifecycle("alice", "team/wf/missing", "draft").unwrap());
+        assert!(!db
+            .set_lifecycle("alice", "team/wf/missing", "draft")
+            .unwrap());
         assert!(!db.set_lifecycle("bob", "team/wf/a", "draft").unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }

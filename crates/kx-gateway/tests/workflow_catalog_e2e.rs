@@ -429,7 +429,10 @@ async fn delete_cascades_row_first_and_history_survives_for_recreate() {
         del.branch_unbound,
         "the definition branch BINDING is dropped by the cascade"
     );
-    assert_eq!(del.triggers_removed, 0, "no workflow triggers can exist yet");
+    assert_eq!(
+        del.triggers_removed, 0,
+        "no workflow triggers can exist yet"
+    );
 
     // The row is gone…
     let got = c
@@ -496,9 +499,11 @@ async fn await_mote_committed(
             .await
             .unwrap()
             .into_inner();
-        if let Some(m) = view.motes.iter().find(|m| {
-            m.mote_id == mote_id && m.state == proto::MoteSnapshotState::Committed as i32
-        }) {
+        if let Some(m) = view
+            .motes
+            .iter()
+            .find(|m| m.mote_id == mote_id && m.state == proto::MoteSnapshotState::Committed as i32)
+        {
             assert!(
                 m.result_ref.is_some(),
                 "a committed terminal carries a result_ref"
@@ -540,7 +545,11 @@ async fn run_workflow_runs_a_pure_chain_to_its_terminal_anchor() {
     // react_chain_salt only for the exactly-one-agentic-step shape (this pure
     // chain has none, so the salt is EMPTY by construction).
     assert_eq!(run.instance_id.len(), 16);
-    assert_eq!(run.terminal_mote_id.len(), 32, "the run anchor is populated");
+    assert_eq!(
+        run.terminal_mote_id.len(),
+        32,
+        "the run anchor is populated"
+    );
     assert!(
         run.react_chain_salt.is_empty(),
         "a pure DAG has no agentic chain key"
@@ -708,9 +717,11 @@ async fn first_committed_at(
             .await
             .unwrap()
             .into_inner();
-        if view.motes.iter().any(|m| {
-            m.mote_id == mote_id && m.state == proto::MoteSnapshotState::Committed as i32
-        }) {
+        if view
+            .motes
+            .iter()
+            .any(|m| m.mote_id == mote_id && m.state == proto::MoteSnapshotState::Committed as i32)
+        {
             return Some(std::time::Instant::now());
         }
         tokio::time::sleep(std::time::Duration::from_millis(60)).await;
@@ -747,9 +758,15 @@ async fn a_durable_wait_holds_the_run_then_fires_once() {
         .into_inner();
     // The wait HOLDS: the terminal must not commit before the delay elapses.
     assert!(
-        first_committed_at(&mut c, "tok-alice", &run.instance_id, &run.terminal_mote_id, 600)
-            .await
-            .is_none(),
+        first_committed_at(
+            &mut c,
+            "tok-alice",
+            &run.instance_id,
+            &run.terminal_mote_id,
+            600
+        )
+        .await
+        .is_none(),
         "the wait committed before its delay — it did not hold"
     );
     // …and FIRES: committed within a generous settle budget, after ≥ delay.
@@ -862,6 +879,213 @@ async fn a_restart_re_arms_the_journaled_timer_and_never_re_fires() {
         held < std::time::Duration::from_millis(2 * delay_ms),
         "fired after {held:?} — the restart re-held the delay instead of \
          re-arming at the journaled instant"
+    );
+}
+
+/// A minimal local HTTP fixture: one background thread, answers every request
+/// with a fixed JSON body carrying a fixture-only token, and records whether an
+/// `authorization` header arrived. Plain std — hermetic, no model, no weather.
+fn spawn_http_fixture(expect_bearer: Option<&'static str>) -> (u16, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        // Serve a bounded number of requests then exit (test-scoped).
+        for stream in listener.incoming().take(4) {
+            let Ok(mut s) = stream else { continue };
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let authed = match expect_bearer {
+                None => true,
+                Some(token) => req
+                    .to_ascii_lowercase()
+                    .contains(&format!("authorization: bearer {token}").to_ascii_lowercase()),
+            };
+            let body = if authed {
+                r#"{"vessel":"kestrel","officer":"FIXTURE-TOKEN-77"}"#
+            } else {
+                r#"{"error":"missing bearer"}"#
+            };
+            let status = if authed { "200 OK" } else { "401 Unauthorized" };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = s.write_all(resp.as_bytes());
+        }
+    });
+    (port, handle)
+}
+
+#[tokio::test]
+async fn an_http_step_dials_with_its_named_secret_and_carries_the_answer() {
+    // The credential the step names — resolved by NAME at dispatch through the
+    // env arm of the secret chain; the VALUE never appears in the envelope.
+    std::env::set_var("KX_E2E_HTTP_TOKEN", "fixture-secret-42");
+    let (port, _fixture) = spawn_http_fixture(Some("fixture-secret-42"));
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // http (credentialed fetch) → pure (the carry) — the sequential-carry spine.
+    let blueprint = serde_json::json!({
+        "seed": 0,
+        "steps": [
+            { "kind": "http", "args": {
+                "url": format!("http://127.0.0.1:{port}/record"),
+                "secret_name": "KX_E2E_HTTP_TOKEN"
+            } },
+            { "kind": "pure", "prompt": "" }
+        ],
+        "edges": [ { "parent": 0, "child": 1, "data": true } ]
+    });
+    let env = kx_app::WorkflowEnvelope::new("dial", blueprint);
+    c.save_workflow(with_bearer(
+        save_req("team/wf/dial", env.to_canonical_json().unwrap(), ""),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let run = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/dial".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    await_mote_committed(&mut c, "tok-alice", &run.instance_id, &run.terminal_mote_id).await;
+
+    // The FIXTURE-ONLY token reached the run: read the http observation via the
+    // projection's ancestor set (the terminal's parent is the http step) and
+    // fetch its committed content — the oracle is underivable without the dial
+    // AND the credential (the fixture 401s a bearer-less request).
+    let view = c
+        .get_projection(with_bearer(
+            proto::GetProjectionRequest {
+                instance_id: run.instance_id.clone(),
+                at_seq: None,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut carried = false;
+    for m in &view.motes {
+        if m.state != proto::MoteSnapshotState::Committed as i32 {
+            continue;
+        }
+        let Some(r) = m.result_ref.clone() else {
+            continue;
+        };
+        let content = c
+            .get_content(with_bearer(
+                proto::GetContentRequest {
+                    instance_id: run.instance_id.clone(),
+                    content_ref: r,
+                },
+                "tok-alice",
+            ))
+            .await;
+        if let Ok(resp) = content {
+            let body = String::from_utf8_lossy(&resp.into_inner().payload).to_string();
+            if body.contains("FIXTURE-TOKEN-77") {
+                assert!(
+                    body.contains("\"status\":200"),
+                    "an ANSWERED dial commits its status: {body}"
+                );
+                carried = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        carried,
+        "the http observation carrying the fixture-only token must be committed in this run"
+    );
+}
+
+#[tokio::test]
+async fn an_http_step_naming_a_private_host_by_name_is_refused() {
+    // The SSRF A/B: `127.0.0.1` is a LITERAL the operator declared (allowed —
+    // the previous test); `localhost` is a NAME that resolves to a private
+    // address, which the egress kernel refuses (rebind defense) — the dial
+    // never happens and the step fails honestly rather than reach inside.
+    let (port, _fixture) = spawn_http_fixture(None);
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let blueprint = serde_json::json!({
+        "seed": 0,
+        "steps": [
+            { "kind": "http", "args": { "url": format!("http://localhost:{port}/record") } }
+        ]
+    });
+    let env = kx_app::WorkflowEnvelope::new("ssrf", blueprint);
+    c.save_workflow(with_bearer(
+        save_req("team/wf/ssrf", env.to_canonical_json().unwrap(), ""),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let run = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/ssrf".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    // The step must FAIL (dead-letter), never commit: poll for a terminal
+    // Failed state on the http mote and pin that it never commits.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut failed = false;
+    while std::time::Instant::now() < deadline {
+        let view = c
+            .get_projection(with_bearer(
+                proto::GetProjectionRequest {
+                    instance_id: run.instance_id.clone(),
+                    at_seq: None,
+                },
+                "tok-alice",
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        if view.motes.iter().any(|m| {
+            m.mote_id == run.terminal_mote_id
+                && m.state == proto::MoteSnapshotState::Committed as i32
+        }) {
+            panic!("a name-to-private dial must never commit");
+        }
+        if view
+            .motes
+            .iter()
+            .any(|m| m.state == proto::MoteSnapshotState::Failed as i32)
+        {
+            failed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(
+        failed,
+        "the refused dial must surface as an honest Failed state"
     );
 }
 

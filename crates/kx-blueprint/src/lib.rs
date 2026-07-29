@@ -276,15 +276,23 @@ impl StepSpec {
             "pure" => proto::WorkflowStepKind::Pure,
             "model" => proto::WorkflowStepKind::Model,
             "tool" => proto::WorkflowStepKind::Tool,
+            // The workflow http step: sugar over the bundled `http@1` tool —
+            // the SERVER forces the contract; the authored `args` carry the
+            // url/method/credential NAME (packed under TOOL_ARGS_KEY exactly
+            // like a tool step's).
+            "http" => proto::WorkflowStepKind::Http,
+            // The durable wait step: a PURE step whose identity-bearing
+            // `params["kx.wait.delay_ms"]` the coordinator parks/arms/fires on.
+            "wait" => proto::WorkflowStepKind::Wait,
             "exec" => {
                 return Err(BlueprintError::new(
                     "step kind `exec` is reserved (a registered body is not yet runnable); \
-                     use pure|model|tool",
+                     use pure|model|tool|http|wait",
                 ));
             }
             other => {
                 return Err(BlueprintError::new(format!(
-                    "step kind must be pure|model|tool, got {other:?}"
+                    "step kind must be pure|model|tool|http|wait, got {other:?}"
                 )));
             }
         };
@@ -301,6 +309,13 @@ impl StepSpec {
             proto::WorkflowStepKind::Tool if has_model => {
                 Some("a `tool` step has no model_id / prompt; name the tool in `tool_contract`")
             }
+            proto::WorkflowStepKind::Http if has_model || has_tool => Some(
+                "an `http` step has no model_id / prompt / tool_contract; declare the dial \
+                 in `args` ({url, method?, body?, secret_name?, ...})",
+            ),
+            proto::WorkflowStepKind::Wait if has_model || has_tool || has_args => Some(
+                "a `wait` step carries only params[\"kx.wait.delay_ms\"] (no model / tool / args)",
+            ),
             _ => None,
         };
         if let Some(why) = conflict {
@@ -409,7 +424,7 @@ pub fn to_request(spec: DagSpec) -> Result<proto::SubmitWorkflowRequest, Bluepri
         // under TOOL_ARGS_KEY (`s.args` is a BTreeMap ⇒ sorted keys; serde_json ⇒
         // compact) — byte-identical to the Py/TS factories + the coordinator's
         // `is_authored_tool` discriminant.
-        if kind == proto::WorkflowStepKind::Tool {
+        if kind == proto::WorkflowStepKind::Tool || kind == proto::WorkflowStepKind::Http {
             let blob = serde_json::to_string(&s.args)
                 .map_err(|e| BlueprintError::new(format!("tool args: {e}")))?;
             params.insert(TOOL_ARGS_KEY.to_string(), blob.into_bytes());
