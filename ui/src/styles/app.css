@@ -4185,6 +4185,21 @@ button.card-grid__title:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
+/* The zoom / fit controls ship with a hardcoded white tile and a dark glyph. The
+ * tile survived into dark theme while the glyph inherited the near-white page
+ * colour, leaving white-on-white buttons — the minus was invisible outright.
+ * Paint both from tokens so the control is legible in either theme. */
+.react-flow__controls-button {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+.react-flow__controls-button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
 /* The library's default node fill and viewport mask are a fixed light grey that
  * belongs to neither theme: on the review canvas the map read as three blank
  * placeholder blocks — a loading skeleton, not a map of the workflow. Paint the

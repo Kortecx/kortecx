@@ -21,6 +21,30 @@ import { HostedRestartButton } from "./HostedControls";
  * scaffold both refuse restore SERVER-side, so the drawer says why up front
  * instead of letting the confirm fail.
  */
+
+/**
+ * What each recorded cause MEANS to the person reading it. The wire values are
+ * the store's own vocabulary (`advance` is the branch-store verb for a write);
+ * rendering them verbatim asked the reader to know it. `create` and `restore`
+ * happen to read fine either way — they are mapped anyway, so the drawer never
+ * shows a raw enum for one cause and prose for the next.
+ */
+const CAUSE_LABEL: Record<string, string> = {
+  baseline: "Starting point",
+  create: "Created",
+  snapshot: "Snapshot",
+  advance: "Edited",
+  restore: "Restored",
+};
+
+const CAUSE_TITLE: Record<string, string> = {
+  baseline: "The earliest state this project has a record of",
+  create: "The project branch was created",
+  snapshot: "Files were copied in from disk",
+  advance: "A file in the project was written or changed",
+  restore: "An earlier recorded state was restored onto the project",
+};
+
 export function AppHistoryDrawer({
   handle,
   locked,
@@ -126,7 +150,7 @@ export function AppHistoryDrawer({
         ) : versions === null || versions.length === 0 ? (
           <EmptyState
             title="No recorded history yet"
-            detail="Every project change from now on is recorded here; history starts with the first change after this server upgrade."
+            detail="This App has no project branch yet. Once its project exists, every change to it is recorded here and any recorded state can be restored."
           />
         ) : (
           <ul className="app-history__list" data-testid="app-history-list">
@@ -141,8 +165,11 @@ export function AppHistoryDrawer({
                   data-testid={`app-history-row-${v.version}`}
                 >
                   <div className="app-history__meta">
-                    <span className={`app-history__cause app-history__cause--${v.cause}`}>
-                      {v.cause}
+                    <span
+                      className={`app-history__cause app-history__cause--${v.cause}`}
+                      title={CAUSE_TITLE[v.cause] ?? v.cause}
+                    >
+                      {CAUSE_LABEL[v.cause] ?? v.cause}
                     </span>
                     <span className="app-history__when">
                       {v.recordedUnixMs > 0
@@ -217,10 +244,10 @@ export function AppHistoryDrawer({
             >
               <h2 className="dialog-card__title">Restore this project?</h2>
               <p className="dialog-card__label">
-                Restore advances the project to the state recorded at{" "}
+                Restore advances the project to <strong>version {confirming.version}</strong>
                 {confirming.recordedUnixMs > 0
-                  ? new Date(confirming.recordedUnixMs).toLocaleString()
-                  : `version ${confirming.version}`}
+                  ? `, recorded ${new Date(confirming.recordedUnixMs).toLocaleString()}`
+                  : ""}
                 . Nothing is deleted — the restore is itself recorded, so you can restore forward
                 again.
                 {hosted
