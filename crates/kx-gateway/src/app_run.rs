@@ -1272,13 +1272,17 @@ fn dataset_manifest_lines(
         .collect()
 }
 
-/// `true` for a branch file that rides the App's project context rail: a `.md` file that is
-/// not a `.kortecx/` internal marker. `app.json` (a decorative copy of the manifest nothing
-/// parses) and the marker JSON fall out by the suffix filter; the prefix guard is belt-and-
-/// braces for any future `.kortecx/*.md`.
+/// `true` for a branch file that rides the App's project context rail.
+///
+/// `.kortecx/` is the reserved namespace with its own rule, IDENTICAL for both
+/// modes: only its MARKDOWN rides (`.kortecx/agents.md` — the project's guidance
+/// file, first on the rail by sort order, which is where steering belongs). The
+/// `.json` machine state (`manifest.json`, and anything like it) never rides —
+/// by construction, including in codified mode whose general arm would otherwise
+/// admit `.json`.
 fn is_project_rail_path(path: &str, mode: AppMode) -> bool {
-    if path.starts_with(".kortecx/") {
-        return false;
+    if let Some(rest) = path.strip_prefix(".kortecx/") {
+        return matches!(rest.rsplit('.').next(), Some("md"));
     }
     match mode {
         // Byte-for-byte the rule this rail has always applied.
@@ -1354,8 +1358,18 @@ fn project_rail_items(
                 it.path
             )));
         }
+        // `.kortecx/*.md` is GUIDANCE (steering), not project content — a distinct
+        // label so the assembler heading says what it is. Free to introduce: no
+        // pre-existing branch can hold one (the planner refuses `.kortecx/` paths,
+        // the scaffold wrote only the `.json` marker before the guidance file
+        // existed), so existing apps' rail items — and their MoteIds — are unmoved.
+        let label = if it.path.starts_with(".kortecx/") {
+            "guidance"
+        } else {
+            "project"
+        };
         items.push(ContextItemRef {
-            name: format!("project:{}", it.path),
+            name: format!("{label}:{}", it.path),
             content_ref: it.content_ref,
         });
     }
@@ -3749,7 +3763,7 @@ mod tests {
         use kx_content::ContentStore as _;
         let dir = tempfile::tempdir().unwrap();
         let content = std::sync::Arc::new(InMemoryContentStore::default());
-        let db = crate::branches::BranchesDb::open(dir.path(), content.clone(), None).unwrap();
+        let db = crate::branches::BranchesDb::open(dir.path(), content.clone(), None, 256).unwrap();
         std::mem::forget(dir); // keep the sqlite file alive for the test
         db.create("alice@acme", "apps/local/proj", None, "project")
             .unwrap();
@@ -3781,6 +3795,7 @@ mod tests {
             ("README.md", b"# readme"),
             ("app.json", b"{\"decorative\":true}"),
             (".kortecx/manifest.json", b"{}"),
+            (".kortecx/agents.md", b"answer in one sentence"),
             ("prompts/system.md", b"be terse"),
             ("rules/guardrails.md", b"never delete prod"),
         ];
@@ -3798,16 +3813,19 @@ mod tests {
         assert_eq!(a1, a2, "two calls must be byte-identical");
         assert_eq!(a1, b1, "selection must not depend on advance order");
 
-        // Only the three `.md` files, in path order; app.json + .kortecx excluded.
+        // Md-only, path-sorted; app.json + the .kortecx MARKER excluded. The
+        // guidance file rides FIRST (`.` sorts before every alphanumeric —
+        // steering before content) under its own `guidance:` label.
         let names: Vec<&str> = a1.iter().map(|i| i.name.as_str()).collect();
         assert_eq!(
             names,
             vec![
+                "guidance:.kortecx/agents.md",
                 "project:README.md",
                 "project:prompts/system.md",
                 "project:rules/guardrails.md"
             ],
-            "md-only, path-sorted, project: labeled"
+            "md-only, path-sorted, guidance first"
         );
         // The rule's content actually rides (the whole point).
         let rule_ref = ca.put(b"never delete prod").unwrap();
@@ -3829,6 +3847,7 @@ mod tests {
             ("workflow.json", b"{\"steps\":[]}"),
             ("tools.json", b"{\"tools\":{}}"),
             (".kortecx/manifest.json", b"{}"),
+            (".kortecx/agents.md", b"use two steps"),
         ];
         let (db, c) = branch_with(files);
         let mut env = env_on("apps/local/proj");
@@ -3839,13 +3858,33 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "guidance:.kortecx/agents.md",
                 "project:README.md",
                 "project:config/routing.json",
                 "project:queries/daily.sql",
                 "project:scripts/extract.py",
             ],
-            "path-sorted; the consumed config and .kortecx are excluded"
+            "path-sorted; guidance rides, the consumed config and the marker do not"
         );
+    }
+
+    /// The `.kortecx/` rule is IDENTICAL for both modes: its markdown (the guidance
+    /// file) rides, its machine state never does — including in codified mode,
+    /// whose general arm admits `.json` everywhere else.
+    #[test]
+    fn kortecx_markdown_rides_both_modes_but_the_manifest_never_does() {
+        for mode in [AppMode::Contextual, AppMode::Codified] {
+            assert!(is_project_rail_path(".kortecx/agents.md", mode), "{mode:?}");
+            assert!(is_project_rail_path(".kortecx/notes.md", mode), "{mode:?}");
+            assert!(
+                !is_project_rail_path(".kortecx/manifest.json", mode),
+                "{mode:?}"
+            );
+            assert!(
+                !is_project_rail_path(".kortecx/state.json", mode),
+                "{mode:?}"
+            );
+        }
     }
 
     /// The SAME branch, read as contextual, still folds markdown only. This is what makes the

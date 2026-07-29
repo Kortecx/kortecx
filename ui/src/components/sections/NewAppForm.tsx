@@ -14,8 +14,9 @@
  *  2. **review** — `DeriveApp` returns a design and NOTHING has been persisted. A scheduled
  *     design lands on the builder canvas as an editable graph; a hosted design lands as its
  *     planned file list.
- *  3. **approve** — only now does `SaveApp` + `ScaffoldApp` run, and the browser routes to the
- *     App's own page, where the scaffold streams in.
+ *  3. **approve** — only now does `SaveApp` + `ScaffoldApp` run. The form then hands the
+ *     launch outcome to its hosting screen (`/apps/create`), which shows the scaffold
+ *     streaming in and the terminal create result.
  *
  * **The graph is the whole create surface.** Tools, skills, integrations and grounding all
  * attach to the NODE that uses them, in the step drawer — there are no capability rails
@@ -33,7 +34,7 @@
 
 import { type AppDerivation, app, defaultHandle, flow } from "@kortecx/sdk/web";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, Suspense, lazy, useCallback, useMemo, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
@@ -111,19 +112,31 @@ function resolvedFramework(
 /** A successfully derived design (the `derived: true` arm), for brevity below. */
 type Design = Extract<AppDerivation, { derived: true }>;
 
+/** What "Create" actually did: the App that now exists + how its scaffold LAUNCH went. */
+export interface AppLaunchOutcome {
+  /** The saved App's handle (the App is real regardless of the launch outcome). */
+  readonly handle: string;
+  /** The kind the App was actually SAVED as (the form's own toggle, not the caller's). */
+  readonly kind: NewAppKind;
+  /** The scaffold-LAUNCH failure, if any — the App is saved and marked a draft;
+   *  `null` = the scaffold is running server-side (watch it via GetScaffoldStatus). */
+  readonly launchError: string | null;
+}
+
 export function NewAppForm({
   onClose,
   initialKind = "scheduled",
-  onKindAuthored,
+  onLaunched,
 }: {
   onClose: () => void;
   initialKind?: NewAppKind;
-  /** Called with the kind the App was actually SAVED as, so the catalog can follow it. */
-  onKindAuthored?: (kind: NewAppKind) => void;
+  /** Called once SaveApp succeeded and the scaffold launch SETTLED (either way).
+   *  The hosting screen owns everything after this — progress, the terminal
+   *  result, and navigation. The form itself never navigates. */
+  onLaunched: (outcome: AppLaunchOutcome) => void;
 }) {
   const { client, endpoint } = useConnection();
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const scaffold = useScaffoldApp();
   const derive = useDeriveApp();
   const datasets = useDatasets();
@@ -332,18 +345,20 @@ export function NewAppForm({
     const authoredKind = kind;
     create.mutate(undefined, {
       onSuccess: (appHandle) => {
-        onKindAuthored?.(authoredKind);
-        // Route to the App's OWN page and let the scaffold stream in there. The scaffold runs
-        // server-side and outlives this panel, so watching it inside a form that is about to
-        // close was always the wrong place for it. `onSettled`, not `onSuccess`: a scaffold that
-        // could not START still leaves a real, saved App, and stranding the author on a closed
-        // form with no way to reach it would be the worse failure.
+        // Hand the outcome to the hosting screen and let the scaffold stream THERE.
+        // The scaffold runs server-side and outlives this form. `onSettled`, not
+        // `onSuccess`: a scaffold that could not START still leaves a real, saved
+        // App (marked a draft by the server), and the screen's terminal result is
+        // where that failure — with its resume/discard affordances — is shown.
         scaffold.mutate(
           { handle: appHandle, goal: prompt.trim() },
           {
-            onSettled: () => {
-              onClose();
-              void navigate({ to: "/apps/$handle", params: { handle: appHandle } });
+            onSettled: (_launch, launchError) => {
+              onLaunched({
+                handle: appHandle,
+                kind: authoredKind,
+                launchError: launchError ? toUiError(launchError).message : null,
+              });
             },
           },
         );
@@ -353,13 +368,12 @@ export function NewAppForm({
 
   const deriveErr = derive.error ? toUiError(derive.error) : null;
   const createErr = create.error ? toUiError(create.error) : null;
-  const scaffoldErr = scaffold.error ? toUiError(scaffold.error) : null;
   const refusal = derive.data && !derive.data.derived ? derive.data.reason : null;
 
   const lede = useMemo(() => {
     if (reviewing) {
       return kind === "hosted"
-        ? "Review the project before it exists. Nothing has been created yet — edit the file plan and the app's details, then create it."
+        ? "Review the project before it exists. Nothing has been created yet — remove any planned files you don't want, name the app, then create it."
         : "Review the workflow before it exists. Nothing has been created yet — open any step to change what it does and what it may use: its tools, skills, integrations and grounding all live on the step. Then create the app.";
     }
     if (kind === "hosted") {
@@ -463,6 +477,37 @@ export function NewAppForm({
               aria-label="Describe the app"
               disabled={busy}
             />
+            {/* BEFORE the foot: the framework changes what "Design the app"
+                submits, so it must come before the control that submits — an
+                input the reader meets after the button is an input they set
+                by going back. */}
+            {kind === "hosted" ? (
+              <fieldset
+                className="new-app-form__rail"
+                aria-label="Framework"
+                data-testid="new-app-framework"
+              >
+                <legend className="muted">Framework</legend>
+                <div className="chips">
+                  {HOSTED_FRAMEWORKS.map((fw) => {
+                    const on = framework === fw.value;
+                    return (
+                      <button
+                        key={fw.value}
+                        type="button"
+                        className={on ? "chip chip--active" : "chip"}
+                        aria-pressed={on}
+                        data-testid={`new-app-framework-${fw.value}`}
+                        onClick={() => setFramework(fw.value)}
+                        disabled={busy}
+                      >
+                        {fw.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            ) : null}
             <div className="new-app-prompt__foot">
               <label
                 className="new-app-prompt__attach"
@@ -516,34 +561,6 @@ export function NewAppForm({
             ) : null}
           </div>
 
-          {kind === "hosted" ? (
-            <fieldset
-              className="new-app-form__rail"
-              aria-label="Framework"
-              data-testid="new-app-framework"
-            >
-              <legend className="muted">Framework</legend>
-              <div className="chips">
-                {HOSTED_FRAMEWORKS.map((fw) => {
-                  const on = framework === fw.value;
-                  return (
-                    <button
-                      key={fw.value}
-                      type="button"
-                      className={on ? "chip chip--active" : "chip"}
-                      aria-pressed={on}
-                      data-testid={`new-app-framework-${fw.value}`}
-                      onClick={() => setFramework(fw.value)}
-                      disabled={busy}
-                    >
-                      {fw.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-          ) : null}
-
           {refusal !== null ? (
             <p className="field-error" data-testid="new-app-derive-rejected" role="alert">
               {refusal}
@@ -577,18 +594,23 @@ export function NewAppForm({
             </ul>
           ) : null}
 
-          <input
-            type="text"
-            data-testid="new-app-name"
-            placeholder="App name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            aria-label="App name"
-            maxLength={80}
-            disabled={busy || create.isPending}
-            aria-invalid={collision !== null}
-            aria-describedby={collision !== null ? "new-app-name-collision" : undefined}
-          />
+          {/* A visible label, like the sibling fieldsets — a placeholder is the
+              field's only sighted affordance and it vanishes on the first keystroke. */}
+          <fieldset className="new-app-form__rail">
+            <legend className="muted">App name</legend>
+            <input
+              type="text"
+              data-testid="new-app-name"
+              placeholder="e.g. Morning triage"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              aria-label="App name"
+              maxLength={80}
+              disabled={busy || create.isPending}
+              aria-invalid={collision !== null}
+              aria-describedby={collision !== null ? "new-app-name-collision" : undefined}
+            />
+          </fieldset>
           {collision !== null ? (
             <p
               id="new-app-name-collision"
@@ -654,14 +676,14 @@ export function NewAppForm({
             </fieldset>
           )}
 
-          <div className="register-tool-form__row">
+          <div className="new-app-form__actions">
             <button
               type="button"
               data-testid="new-app-approve"
               onClick={onApprove}
               disabled={!canCreate}
             >
-              {create.isPending || scaffold.isPending ? "Creating…" : "Create app"}
+              {create.isPending || scaffold.isPending ? "Creating…" : "Create App"}
             </button>
             <button
               type="button"
@@ -688,11 +710,6 @@ export function NewAppForm({
       {createErr ? (
         <p className="field-error" data-testid="new-app-save-error" role="alert">
           {createErr.message}
-        </p>
-      ) : null}
-      {scaffoldErr ? (
-        <p className="field-error" data-testid="new-app-scaffold-error" role="alert">
-          {scaffoldErr.message}
         </p>
       ) : null}
     </GlowCard>

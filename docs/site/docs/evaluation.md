@@ -158,7 +158,7 @@ It is a **local** gate — never part of `just ci`, which stays model-free and f
 A committed per-engine baseline is the fail-closed ratchet, and the oracle floors are
 asserted only for a model capable enough to be worth gating on.
 
-The suite spans twelve **families**, each exercising a different part of the runtime. A
+The suite spans thirteen **families**, each exercising a different part of the runtime. A
 family is a bucket of tasks, and its gate is the floor mean over that bucket — so the **task
 count is the denominator**, and the fraction beside each rate is the exact pass count. The
 numbers are the committed `bench-v1` baselines (`macos/aarch64`, the two builds named
@@ -178,6 +178,7 @@ above), held to this table by `check-docs`.
 | `adversarial` | 2 | Input that is trying to steer the agent — including an instruction planted in a **tool's output** — paired with a legitimate request that merely looks like one. | 500 · 1/2 | 1000 · 2/2 |
 | `irrelevance` | 4 | Relevance detection, BFCL-style: two requests nothing on the granted menu can serve (an email send, a live weather read) where the correct move is to fire nothing and say so — beside two near-identically-phrased look-alikes a granted tool must serve, so an always-refuse policy fails the pair. | 1000 · 4/4 | 1000 · 4/4 |
 | `memory` | 2 | LongMemEval-shaped, judge-free: a knowledge update whose superseded value stays live in the store (recall surfaces the conflict; the run must answer the NEW value), and an abstention when memory holds no answer. | 1000 · 2/2 | 500 · 1/2 |
+| `scaffold` | 2 | Generated-app reach: the model plans and authors an entire project LIVE on this serve (one task per scheduled lane — contextual and codified), the app is then RUN, and the answer must carry an activation code that exists **only** inside the generated files — underivable unless the project actually reached the run's context. | 0 · 0/2 | 0 · 0/2 |
 
 Each family reports its own gate (`task_success@swarm`) beside the suite-wide one, so a
 regression in one capability is visible instead of being averaged away by the others.
@@ -201,6 +202,33 @@ No shipping agent framework gates on fault injection today; the research context
 context only — nothing here is a score on either). One honest caveat carried from that
 work: recovery ability ranks orthogonally to raw capability, which is exactly why the
 healthy control sits inside the family.
+
+### The scaffold family measures the app the model builds {#scaffold}
+
+`task_success@scaffold` drives the whole generated-app pipeline live: the model plans the
+project, authors every file (a 20-minute scaffold budget — planning plus per-file decodes
+on a 12B are minutes each; the suite's settle budget covers only the RUN that follows),
+and the finished app is then run with a prompt that never mentions the code the answer
+must contain. The activation code rides **only** the scaffold goal — never the run prompt,
+never the stored envelope — so a passing answer is evidence the generated project itself
+reached the run's context, and the canary-free fixture Apps beside it prove the code
+cannot leak in from anywhere else.
+
+**What a 0 means here is split by the `scaffold_completed@attempts` sentinel** — the
+per-mille of scaffold attempts that reached `done` within budget. A gate of 0 with the
+sentinel at 0 says the scaffolds never finished (the model ran out of its writing budget);
+a gate of 0 with a non-zero sentinel says at least one project was fully written and run,
+and the failure moved downstream into the run's grounding. The current captures show both
+shapes: Ollama 0 with sentinel 0 (both scaffolds timed out mid-write), llama.cpp 0 with
+sentinel 500 (the contextual project completed all seven files and ran — and the answer
+still failed to ground in the project it had just written). Per-scaffold durations and
+file counts are committed as ungated Spikes beside the gate.
+
+**Hosted apps are excluded, by construction rather than choice.** The family scores an
+app by RUNNING it and grading the run's committed answer; a hosted app has no blueprint
+to run — its product is a served web process, not an answer a substring oracle can grade
+— so the two scaffold tasks cover the two scheduled lanes (contextual and codified) and
+say nothing about the hosted scaffold path.
 
 ### Reliability — pass^k {#reliability}
 

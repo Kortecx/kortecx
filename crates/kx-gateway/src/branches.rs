@@ -54,8 +54,29 @@ CREATE TABLE IF NOT EXISTS branches (
     items_json    TEXT NOT NULL,   -- JSON [{path, ref(hex)}], path-sorted
     PRIMARY KEY (principal, handle)
 );
+CREATE TABLE IF NOT EXISTS branch_history (
+    principal        TEXT NOT NULL,     -- same scope as the branch row
+    handle           TEXT NOT NULL,
+    version          INTEGER NOT NULL,  -- 1-based per (principal, handle), monotone
+    branch_ref       BLOB NOT NULL,     -- the manifest hash AT this version (display only)
+    parent_handle    TEXT NOT NULL,
+    description      TEXT NOT NULL,
+    items_json       TEXT NOT NULL,     -- the full manifest at this version
+    recorded_unix_ms INTEGER NOT NULL,  -- sidecar wall-clock; advisory, never identity
+    cause            TEXT NOT NULL,     -- baseline|create|snapshot|advance|restore
+    PRIMARY KEY (principal, handle, version)
+);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 ";
+
+/// Bump on a `branch_history`-shape change: drops ONLY the history table (the
+/// branch rows themselves stay — history is the safety net, never the truth).
+const HISTORY_SCHEMA_VERSION: i64 = 1;
+
+/// The default per-handle history retention (FIFO — oldest versions pruned past
+/// the cap). Overridable via `KX_BRANCH_HISTORY_MAX` (resolved once at serve
+/// start and passed into [`BranchesDb::open`]).
+pub(crate) const DEFAULT_BRANCH_HISTORY_MAX: usize = 256;
 
 /// On-disk item row (content_ref carried as 64-char hex in `items_json`).
 #[derive(Serialize, Deserialize)]
@@ -147,6 +168,9 @@ pub(crate) struct BranchesDb<S: ContentStore> {
     fs_root: Option<PathBuf>,
     /// Per-file byte ceiling for a snapshot read (DoS guard; mirrors `fs-read@1`).
     max_bytes: u64,
+    /// Per-handle history retention (FIFO prune past this many versions). A
+    /// constructor value, never a per-call env read — tests inject it directly.
+    history_max: usize,
 }
 
 impl<S: ContentStore> BranchesDb<S> {
@@ -160,6 +184,7 @@ impl<S: ContentStore> BranchesDb<S> {
         dir: &Path,
         content: std::sync::Arc<S>,
         fs_root: Option<PathBuf>,
+        history_max: usize,
     ) -> Result<Self, GatewayError> {
         std::fs::create_dir_all(dir)
             .map_err(|e| GatewayError::Catalog(format!("branches dir: {e}")))?;
@@ -180,6 +205,7 @@ impl<S: ContentStore> BranchesDb<S> {
         if fresh_or_stale {
             conn.execute_batch(
                 "DROP TABLE IF EXISTS branches;
+                 DROP TABLE IF EXISTS branch_history;
                  DROP TABLE IF EXISTS meta;",
             )
             .map_err(|e| GatewayError::Catalog(format!("branches rebuild: {e}")))?;
@@ -191,11 +217,30 @@ impl<S: ContentStore> BranchesDb<S> {
             params![SCHEMA_VERSION],
         )
         .map_err(|e| GatewayError::Catalog(format!("branches meta init: {e}")))?;
+        // The history table versions independently: a history-shape change drops
+        // ONLY branch_history (the branch rows stay — history is the safety net,
+        // never the truth). `branches` predating the table reads as "no history
+        // yet"; the first non-dedup mutation seeds a baseline (see upsert).
+        let history_stale = match Self::read_meta(&conn, "history_schema_version") {
+            Ok(Some(v)) => v != HISTORY_SCHEMA_VERSION,
+            Ok(None) => false, // freshly created above; stamp below
+            Err(_) => true,
+        };
+        if history_stale {
+            conn.execute_batch("DELETE FROM branch_history;")
+                .map_err(|e| GatewayError::Catalog(format!("branch history rebuild: {e}")))?;
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('history_schema_version', ?1)",
+            params![HISTORY_SCHEMA_VERSION],
+        )
+        .map_err(|e| GatewayError::Catalog(format!("branches history meta: {e}")))?;
         Ok(Self {
             conn: Mutex::new(conn),
             content,
             fs_root,
             max_bytes: DEFAULT_MAX_READ_BYTES,
+            history_max: history_max.max(1),
         })
     }
 
@@ -209,16 +254,77 @@ impl<S: ContentStore> BranchesDb<S> {
     }
 
     fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
+        Self::read_meta(conn, "schema_version")
+    }
+
+    fn read_meta(conn: &Connection, key: &str) -> rusqlite::Result<Option<i64>> {
+        conn.query_row("SELECT value FROM meta WHERE key = ?1", params![key], |r| {
+            r.get(0)
+        })
         .map(Some)
         .or_else(|e| match e {
             rusqlite::Error::QueryReturnedNoRows => Ok(None),
             other => Err(other),
         })
+    }
+
+    fn now_unix_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+            .unwrap_or(0)
+    }
+
+    /// Append one `branch_history` row for `(principal, handle)` and FIFO-prune
+    /// past `history_max`. Returns the recorded version number.
+    #[allow(clippy::too_many_arguments)]
+    fn append_history(
+        conn: &Connection,
+        principal: &str,
+        handle: &str,
+        branch_ref: &[u8; 16],
+        parent: &str,
+        description: &str,
+        items_json: &str,
+        cause: &str,
+        history_max: usize,
+    ) -> Result<u32, CoreError> {
+        let next: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM branch_history \
+                 WHERE principal = ?1 AND handle = ?2",
+                params![principal, handle],
+                |r| r.get(0),
+            )
+            .map_err(|e| CoreError::Internal(format!("branch history next: {e}")))?;
+        conn.execute(
+            "INSERT INTO branch_history(principal, handle, version, branch_ref, parent_handle, \
+             description, items_json, recorded_unix_ms, cause) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                principal,
+                handle,
+                next,
+                branch_ref.to_vec(),
+                parent,
+                description,
+                items_json,
+                i64::try_from(Self::now_unix_ms()).unwrap_or(i64::MAX),
+                cause,
+            ],
+        )
+        .map_err(|e| CoreError::Internal(format!("branch history append: {e}")))?;
+        // FIFO retention: keep the newest `history_max` versions per handle.
+        conn.execute(
+            "DELETE FROM branch_history WHERE principal = ?1 AND handle = ?2 AND version <= ?3",
+            params![
+                principal,
+                handle,
+                next - i64::try_from(history_max).unwrap_or(i64::MAX)
+            ],
+        )
+        .map_err(|e| CoreError::Internal(format!("branch history prune: {e}")))?;
+        Ok(u32::try_from(next).unwrap_or(u32::MAX))
     }
 
     fn row_to_manifest(
@@ -291,7 +397,12 @@ impl<S: ContentStore> BranchesDb<S> {
     }
 
     /// Upsert a resolved manifest (items are path-sorted here) and return it with
-    /// the dedup signal.
+    /// the dedup signal plus the history version recorded (None on a dedup no-op).
+    ///
+    /// Every NON-dedup upsert appends a `branch_history` version tagged `cause`.
+    /// A pre-history row's first mutation seeds a `"baseline"` version from the
+    /// stored row FIRST, so the pre-upgrade state stays restorable.
+    #[allow(clippy::too_many_arguments)]
     fn upsert_manifest(
         conn: &Connection,
         principal: &str,
@@ -299,14 +410,19 @@ impl<S: ContentStore> BranchesDb<S> {
         parent: &str,
         description: &str,
         mut items: Vec<BranchItemRecord>,
-    ) -> Result<(BranchManifest, bool), CoreError> {
+        cause: &str,
+        history_max: usize,
+    ) -> Result<(BranchManifest, bool, Option<u32>), CoreError> {
         sort_items(&mut items);
         let branch_ref = branch_ref_of(handle, parent, &items);
-        let existing: Option<Vec<u8>> = conn
+        // The dedup probe reads the FULL existing row — the baseline seed below
+        // needs its fields, not just the ref.
+        let existing: Option<(Vec<u8>, String, String, String)> = conn
             .query_row(
-                "SELECT branch_ref FROM branches WHERE principal = ?1 AND handle = ?2",
+                "SELECT branch_ref, parent_handle, description, items_json FROM branches \
+                 WHERE principal = ?1 AND handle = ?2",
                 params![principal, handle],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .map(Some)
             .or_else(|e| match e {
@@ -314,7 +430,51 @@ impl<S: ContentStore> BranchesDb<S> {
                 other => Err(other),
             })
             .map_err(|e| CoreError::Internal(format!("branches dedup probe: {e}")))?;
-        let deduplicated = existing.as_deref() == Some(&branch_ref[..]);
+        let deduplicated =
+            existing.as_ref().map(|(r, _, _, _)| r.as_slice()) == Some(&branch_ref[..]);
+        let mut recorded = None;
+        if !deduplicated {
+            // Baseline seed: a row that predates the history table gets its
+            // CURRENT state recorded as version 1 before the mutation lands, so
+            // the first post-upgrade edit is undoable.
+            if let Some((old_ref, old_parent, old_desc, old_items)) = existing.as_ref() {
+                let none_yet: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM branch_history WHERE principal = ?1 AND handle = ?2",
+                        params![principal, handle],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| CoreError::Internal(format!("branch history probe: {e}")))?;
+                if none_yet == 0 {
+                    let mut old16 = [0u8; 16];
+                    let n = old_ref.len().min(16);
+                    old16[..n].copy_from_slice(&old_ref[..n]);
+                    Self::append_history(
+                        conn,
+                        principal,
+                        handle,
+                        &old16,
+                        old_parent,
+                        old_desc,
+                        old_items,
+                        "baseline",
+                        history_max,
+                    )?;
+                }
+            }
+            let items_json = items_to_json(&items);
+            recorded = Some(Self::append_history(
+                conn,
+                principal,
+                handle,
+                &branch_ref,
+                parent,
+                description,
+                &items_json,
+                cause,
+                history_max,
+            )?);
+        }
         conn.execute(
             "INSERT OR REPLACE INTO branches(principal, handle, branch_ref, parent_handle, description, items_json) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -337,6 +497,7 @@ impl<S: ContentStore> BranchesDb<S> {
                 items,
             },
             deduplicated,
+            recorded,
         ))
     }
 }
@@ -381,7 +542,17 @@ impl<S: ContentStore + Send + Sync + 'static> BranchStore for BranchesDb<S> {
                 None => (String::new(), Vec::new()),
             },
         };
-        Self::upsert_manifest(&conn, principal, handle, &parent, description, items)
+        let (m, dedup, _) = Self::upsert_manifest(
+            &conn,
+            principal,
+            handle,
+            &parent,
+            description,
+            items,
+            "create",
+            self.history_max,
+        )?;
+        Ok((m, dedup))
     }
 
     fn snapshot_into(
@@ -455,8 +626,16 @@ impl<S: ContentStore + Send + Sync + 'static> BranchStore for BranchesDb<S> {
             .into_iter()
             .map(|(path, content_ref)| BranchItemRecord { path, content_ref })
             .collect();
-        let (manifest, deduplicated) =
-            Self::upsert_manifest(&conn, principal, handle, &parent, description, items)?;
+        let (manifest, deduplicated, _) = Self::upsert_manifest(
+            &conn,
+            principal,
+            handle,
+            &parent,
+            description,
+            items,
+            "snapshot",
+            self.history_max,
+        )?;
         Ok((manifest, ingested, deduplicated))
     }
 
@@ -573,7 +752,135 @@ impl<S: ContentStore + Send + Sync + 'static> BranchStore for BranchesDb<S> {
             .into_iter()
             .map(|(path, content_ref)| BranchItemRecord { path, content_ref })
             .collect();
-        Self::upsert_manifest(&conn, principal, handle, &parent, &description, items)
+        let (m, dedup, _) = Self::upsert_manifest(
+            &conn,
+            principal,
+            handle,
+            &parent,
+            &description,
+            items,
+            "advance",
+            self.history_max,
+        )?;
+        Ok((m, dedup))
+    }
+}
+
+impl<S: ContentStore + Send + Sync + 'static> kx_gateway_core::BranchHistory for BranchesDb<S> {
+    fn list_versions(
+        &self,
+        principal: &str,
+        handle: &str,
+        limit: usize,
+        after_version: Option<u32>,
+    ) -> Result<Option<(Vec<kx_gateway_core::BranchVersionRecord>, bool)>, CoreError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CoreError::Internal("branches lock poisoned".into()))?;
+        // Exclusive DESCENDING cursor; no cursor ⇒ the newest page.
+        let ceiling = i64::from(after_version.unwrap_or(u32::MAX));
+        let fetch = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
+        let mut stmt = conn
+            .prepare(
+                "SELECT version, branch_ref, recorded_unix_ms, cause, items_json \
+                 FROM branch_history \
+                 WHERE principal = ?1 AND handle = ?2 AND version < ?3 \
+                 ORDER BY version DESC LIMIT ?4",
+            )
+            .map_err(|e| CoreError::Internal(format!("branch history list prepare: {e}")))?;
+        let rows = stmt
+            .query_map(params![principal, handle, ceiling, fetch], |r| {
+                let branch_ref = r.get::<_, Vec<u8>>(1)?;
+                let items_json = r.get::<_, String>(4)?;
+                let mut id = [0u8; 16];
+                let n = branch_ref.len().min(16);
+                id[..n].copy_from_slice(&branch_ref[..n]);
+                Ok(kx_gateway_core::BranchVersionRecord {
+                    version: u32::try_from(r.get::<_, i64>(0)?).unwrap_or(u32::MAX),
+                    branch_ref: id,
+                    recorded_unix_ms: u64::try_from(r.get::<_, i64>(2)?).unwrap_or(0),
+                    cause: r.get::<_, String>(3)?,
+                    item_count: u32::try_from(items_from_json(&items_json).len()).unwrap_or(0),
+                })
+            })
+            .map_err(|e| CoreError::Internal(format!("branch history list query: {e}")))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| CoreError::Internal(format!("branch history row: {e}")))?);
+        }
+        // Uniform None for absent / not-owned / no-history — a cursor past the
+        // oldest version on a branch WITH history still reports found (empty page).
+        if out.is_empty() && after_version.is_none() {
+            return Ok(None);
+        }
+        let has_more = out.len() > limit;
+        out.truncate(limit);
+        Ok(Some((out, has_more)))
+    }
+
+    fn restore(
+        &self,
+        principal: &str,
+        handle: &str,
+        version: u32,
+    ) -> Result<(BranchManifest, u32, bool), CoreError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CoreError::Internal("branches lock poisoned".into()))?;
+        // The historical manifest — uniform NotFound for unknown version / handle /
+        // principal (no cross-party existence oracle).
+        let (hist_parent, hist_desc, hist_items_json) = conn
+            .query_row(
+                "SELECT parent_handle, description, items_json FROM branch_history \
+                 WHERE principal = ?1 AND handle = ?2 AND version = ?3",
+                params![principal, handle, i64::from(version)],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    CoreError::NotFound("branch version not found")
+                }
+                other => CoreError::Internal(format!("branch history load: {other}")),
+            })?;
+        let items = items_from_json(&hist_items_json);
+        // Fail-closed: a manifest must never point at an unresolvable blob. CAS
+        // blobs are immutable and branch ops never collect them, so a recorded
+        // version SHOULD always resolve — refuse loudly if an operator GC'd blobs.
+        for it in &items {
+            if !self
+                .content
+                .contains(&kx_content::ContentRef(it.content_ref))
+            {
+                return Err(CoreError::InvalidArgument(
+                    "a recorded item no longer resolves in the content store; this version cannot be restored",
+                ));
+            }
+        }
+        // Restore re-points items under the CURRENT row's parent/description
+        // (it is not a re-fork); a deleted row is recreated from the history row.
+        let (parent, description) = match Self::load_manifest(&conn, principal, handle)? {
+            Some(current) => (current.parent_handle, current.description),
+            None => (hist_parent, hist_desc),
+        };
+        let (manifest, deduplicated, recorded) = Self::upsert_manifest(
+            &conn,
+            principal,
+            handle,
+            &parent,
+            &description,
+            items,
+            "restore",
+            self.history_max,
+        )?;
+        Ok((manifest, recorded.unwrap_or(0), deduplicated))
     }
 }
 
@@ -587,7 +894,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // leak the tempdir guard for the test's lifetime via Box::leak-free: keep it.
         let content = Arc::new(InMemoryContentStore::default());
-        let db = BranchesDb::open(dir.path(), content, root).unwrap();
+        let db = BranchesDb::open(dir.path(), content, root, 256).unwrap();
         std::mem::forget(dir); // keep the sqlite file alive for the test
         db
     }
@@ -925,6 +1232,304 @@ mod tests {
             db.get("alice", "ns/coll/x").unwrap().unwrap().items.len(),
             1
         );
+    }
+
+    // ---- Branch point-in-time history (`branch_history`) -------------------
+
+    use kx_gateway_core::BranchHistory as _;
+
+    /// Open a `BranchesDb` at an explicit dir (so a test can close + reopen it,
+    /// or reach the sqlite file with a raw connection between opens).
+    fn db_at(
+        dir: &Path,
+        content: Arc<InMemoryContentStore>,
+        history_max: usize,
+    ) -> BranchesDb<InMemoryContentStore> {
+        BranchesDb::open(dir, content, None, history_max).unwrap()
+    }
+
+    #[test]
+    fn every_non_dedup_mutation_records_a_version_with_its_cause() {
+        let db = db_with_root(None);
+        db.create("alice", "apps/local/a", None, "p").unwrap();
+        let r1 = db.content.put(b"one").unwrap();
+        db.advance("alice", "apps/local/a", "a.md", r1.0).unwrap();
+        let r2 = db.content.put(b"two").unwrap();
+        db.advance("alice", "apps/local/a", "b.md", r2.0).unwrap();
+
+        let (versions, has_more) = db
+            .list_versions("alice", "apps/local/a", 10, None)
+            .unwrap()
+            .expect("history exists");
+        assert!(!has_more);
+        // Newest-first: advance(b) → advance(a) → create.
+        let causes: Vec<&str> = versions.iter().map(|v| v.cause.as_str()).collect();
+        assert_eq!(causes, vec!["advance", "advance", "create"]);
+        assert_eq!(versions[0].version, 3);
+        assert_eq!(versions[0].item_count, 2);
+        assert_eq!(versions[2].item_count, 0);
+        // The recorded ref at the newest version IS the current branch ref.
+        let current = db.get("alice", "apps/local/a").unwrap().unwrap();
+        assert_eq!(versions[0].branch_ref, current.branch_ref);
+    }
+
+    #[test]
+    fn a_dedup_mutation_records_nothing() {
+        let db = db_with_root(None);
+        db.create("alice", "apps/local/a", None, "p").unwrap();
+        let r = db.content.put(b"x").unwrap();
+        db.advance("alice", "apps/local/a", "a.md", r.0).unwrap();
+        // Idempotent re-advance to the SAME ref + parentless re-create: no rows.
+        db.advance("alice", "apps/local/a", "a.md", r.0).unwrap();
+        db.create("alice", "apps/local/a", None, "p").unwrap();
+        let (versions, _) = db
+            .list_versions("alice", "apps/local/a", 10, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(versions.len(), 2, "create + one advance, nothing else");
+    }
+
+    #[test]
+    fn restore_appends_the_historical_items_and_preserves_current_metadata() {
+        let db = db_with_root(None);
+        db.create("alice", "apps/local/a", None, "the project")
+            .unwrap();
+        let v1 = db.content.put(b"version one").unwrap();
+        db.advance("alice", "apps/local/a", "doc.md", v1.0).unwrap();
+        let v2 = db.content.put(b"version two").unwrap();
+        db.advance("alice", "apps/local/a", "doc.md", v2.0).unwrap();
+
+        // Restore to the state after the FIRST advance (version 2: create=1, adv=2, adv=3).
+        let (m, new_version, dedup) = db.restore("alice", "apps/local/a", 2).unwrap();
+        assert!(!dedup);
+        assert_eq!(new_version, 4, "restore APPENDS — history is never rewound");
+        assert_eq!(m.items.len(), 1);
+        assert_eq!(
+            m.items[0].content_ref, v1.0,
+            "the historical body is current again"
+        );
+        assert_eq!(m.description, "the project", "current metadata preserved");
+        // The pre-restore state (v2) is still restorable — restore forward works.
+        let (fwd, _, _) = db.restore("alice", "apps/local/a", 3).unwrap();
+        assert_eq!(fwd.items[0].content_ref, v2.0);
+    }
+
+    #[test]
+    fn restore_to_the_current_state_is_a_dedup_noop() {
+        let db = db_with_root(None);
+        db.create("alice", "apps/local/a", None, "").unwrap();
+        let r = db.content.put(b"x").unwrap();
+        db.advance("alice", "apps/local/a", "a.md", r.0).unwrap();
+        let (_, new_version, dedup) = db.restore("alice", "apps/local/a", 2).unwrap();
+        assert!(dedup);
+        assert_eq!(new_version, 0, "nothing recorded on a no-op restore");
+        let (versions, _) = db
+            .list_versions("alice", "apps/local/a", 10, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(versions.len(), 2);
+    }
+
+    #[test]
+    fn restore_unknown_version_or_principal_is_uniform_not_found() {
+        let db = db_with_root(None);
+        db.create("alice", "apps/local/a", None, "").unwrap();
+        assert!(matches!(
+            db.restore("alice", "apps/local/a", 99).unwrap_err(),
+            CoreError::NotFound(_)
+        ));
+        assert!(matches!(
+            db.restore("bob", "apps/local/a", 1).unwrap_err(),
+            CoreError::NotFound(_)
+        ));
+        assert!(matches!(
+            db.restore("alice", "apps/local/missing", 1).unwrap_err(),
+            CoreError::NotFound(_)
+        ));
+    }
+
+    #[test]
+    fn history_survives_delete_and_restore_recreates_the_branch() {
+        // "Recreate without losing state": DeleteBranch unbinds the row; the
+        // versions (and the CAS blobs) stay, so restore brings the project back.
+        let db = db_with_root(None);
+        db.create("alice", "apps/local/a", None, "kept desc")
+            .unwrap();
+        let r = db.content.put(b"the work").unwrap();
+        db.advance("alice", "apps/local/a", "work.md", r.0).unwrap();
+        assert!(db.delete("alice", "apps/local/a").unwrap());
+        assert!(db.get("alice", "apps/local/a").unwrap().is_none());
+
+        let (m, _, dedup) = db.restore("alice", "apps/local/a", 2).unwrap();
+        assert!(!dedup);
+        assert_eq!(m.items.len(), 1);
+        assert_eq!(m.items[0].content_ref, r.0);
+        assert_eq!(m.description, "kept desc", "recreated from the history row");
+        assert!(db.get("alice", "apps/local/a").unwrap().is_some());
+    }
+
+    #[test]
+    fn retention_prunes_oldest_versions_fifo() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = Arc::new(InMemoryContentStore::default());
+        let db = db_at(dir.path(), content, 3);
+        db.create("alice", "apps/local/a", None, "").unwrap();
+        for i in 0..5u8 {
+            let r = db.content.put(&[i; 4]).unwrap();
+            db.advance("alice", "apps/local/a", "a.bin", r.0).unwrap();
+        }
+        // 6 mutations total, retention 3 ⇒ versions 4..=6 only.
+        let (versions, has_more) = db
+            .list_versions("alice", "apps/local/a", 10, None)
+            .unwrap()
+            .unwrap();
+        assert!(!has_more);
+        let nums: Vec<u32> = versions.iter().map(|v| v.version).collect();
+        assert_eq!(
+            nums,
+            vec![6, 5, 4],
+            "newest kept, oldest pruned, numbering monotone"
+        );
+    }
+
+    #[test]
+    fn list_versions_pages_newest_first_with_a_descending_cursor() {
+        let db = db_with_root(None);
+        db.create("alice", "apps/local/a", None, "").unwrap();
+        for i in 0..4u8 {
+            let r = db.content.put(&[i; 2]).unwrap();
+            db.advance("alice", "apps/local/a", "f", r.0).unwrap();
+        }
+        let (page1, more1) = db
+            .list_versions("alice", "apps/local/a", 2, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            page1.iter().map(|v| v.version).collect::<Vec<_>>(),
+            vec![5, 4]
+        );
+        assert!(more1);
+        let (page2, more2) = db
+            .list_versions("alice", "apps/local/a", 2, Some(4))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            page2.iter().map(|v| v.version).collect::<Vec<_>>(),
+            vec![3, 2]
+        );
+        assert!(more2);
+    }
+
+    #[test]
+    fn list_versions_is_uniformly_absent_for_no_history_or_cross_principal() {
+        let db = db_with_root(None);
+        assert!(db
+            .list_versions("alice", "apps/local/never", 10, None)
+            .unwrap()
+            .is_none());
+        db.create("alice", "apps/local/a", None, "").unwrap();
+        // caller-scoped: bob sees nothing of alice's history.
+        assert!(db
+            .list_versions("bob", "apps/local/a", 10, None)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_pre_history_row_seeds_a_baseline_on_its_first_mutation() {
+        // Simulate a branches.db written BEFORE the history table carried rows:
+        // build a populated row, purge its history out-of-band, reopen, mutate.
+        let dir = tempfile::tempdir().unwrap();
+        let content = Arc::new(InMemoryContentStore::default());
+        let pre = db_at(dir.path(), Arc::clone(&content), 256);
+        pre.create("alice", "apps/local/a", None, "pre-upgrade")
+            .unwrap();
+        let old = content.put(b"the pre-upgrade body").unwrap();
+        pre.advance("alice", "apps/local/a", "old.md", old.0)
+            .unwrap();
+        drop(pre);
+        {
+            let raw = Connection::open(dir.path().join("branches.db")).unwrap();
+            raw.execute("DELETE FROM branch_history", []).unwrap();
+        }
+
+        let db = db_at(dir.path(), Arc::clone(&content), 256);
+        assert!(
+            db.list_versions("alice", "apps/local/a", 10, None)
+                .unwrap()
+                .is_none(),
+            "a pre-history row honestly reports no history yet"
+        );
+        let new = content.put(b"the first post-upgrade edit").unwrap();
+        db.advance("alice", "apps/local/a", "new.md", new.0)
+            .unwrap();
+
+        let (versions, _) = db
+            .list_versions("alice", "apps/local/a", 10, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(versions.len(), 2, "baseline + the mutation");
+        assert_eq!(versions[1].cause, "baseline");
+        assert_eq!(versions[1].version, 1);
+        assert_eq!(
+            versions[1].item_count, 1,
+            "the pre-upgrade state, restorable"
+        );
+        // And the baseline is genuinely restorable: back to just old.md.
+        let (m, _, _) = db.restore("alice", "apps/local/a", 1).unwrap();
+        assert_eq!(m.items.len(), 1);
+        assert_eq!(m.items[0].path, "old.md");
+    }
+
+    #[test]
+    fn history_survives_a_reopen() {
+        // The deterministic form of "versions survive a serve restart".
+        let dir = tempfile::tempdir().unwrap();
+        let content = Arc::new(InMemoryContentStore::default());
+        let db = db_at(dir.path(), Arc::clone(&content), 256);
+        db.create("alice", "apps/local/a", None, "").unwrap();
+        let r = db.content.put(b"x").unwrap();
+        db.advance("alice", "apps/local/a", "a.md", r.0).unwrap();
+        drop(db);
+
+        let reopened = db_at(dir.path(), content, 256);
+        let (versions, _) = reopened
+            .list_versions("alice", "apps/local/a", 10, None)
+            .unwrap()
+            .expect("history rows survive the reopen");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].cause, "advance");
+    }
+
+    #[test]
+    fn restore_refuses_a_version_whose_blob_no_longer_resolves() {
+        // CAS blobs are immutable and branch ops never collect them, so this can
+        // only happen out-of-band (an operator GC) — but the manifest must still
+        // never point at an unresolvable blob. Forge such a row directly.
+        let dir = tempfile::tempdir().unwrap();
+        let content = Arc::new(InMemoryContentStore::default());
+        let db = db_at(dir.path(), Arc::clone(&content), 256);
+        db.create("alice", "apps/local/a", None, "").unwrap();
+        drop(db);
+        {
+            let raw = Connection::open(dir.path().join("branches.db")).unwrap();
+            raw.execute(
+                "INSERT INTO branch_history(principal, handle, version, branch_ref, parent_handle, \
+                 description, items_json, recorded_unix_ms, cause) \
+                 VALUES ('alice', 'apps/local/a', 99, x'00000000000000000000000000000000', '', '', \
+                 ?1, 0, 'advance')",
+                params![format!(
+                    "[{{\"path\":\"ghost.md\",\"ref\":\"{}\"}}]",
+                    "ab".repeat(32)
+                )],
+            )
+            .unwrap();
+        }
+        let db = db_at(dir.path(), content, 256);
+        assert!(matches!(
+            db.restore("alice", "apps/local/a", 99).unwrap_err(),
+            CoreError::InvalidArgument(_)
+        ));
     }
 
     #[test]

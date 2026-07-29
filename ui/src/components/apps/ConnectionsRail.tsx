@@ -59,9 +59,9 @@ export function ConnectionsRail({
     <div className="skills-rail" data-testid="app-connections-rail">
       <h3>Integrations</h3>
       <p className="muted">
-        Bind a connector by endpoint + the credential <em>name</em> (never the secret, D81); the
-        runtime scopes the named secret onto the tool warrant of the step(s) that use it — edit
-        which on the canvas (Lineage → Edit structure).
+        Bind a connector by endpoint + the credential <em>name</em> (never the secret); the runtime
+        scopes the named secret onto the tool warrant of the step(s) that use it — edit which on the
+        canvas (Lineage → Edit structure).
         {locked ? " App is locked — unlock to change integrations." : ""}
       </p>
       <ConnectionsPicker

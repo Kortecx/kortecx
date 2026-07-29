@@ -61,6 +61,39 @@ pub const BENCH_DATASET: &str = "kx-bench";
 /// `namespace/collection/name` AssetPath, not a bare name.
 pub const BENCH_REACH_APP_HANDLE: &str = "kx/bench/reach";
 
+/// The `scaffold` family's fixture Apps — saved CANARY-FREE by the harness; the
+/// canary rides only the task instruction, which becomes the SCAFFOLD goal.
+pub const BENCH_SCAFFOLD_CONTEXTUAL_HANDLE: &str = "kx/bench/scaffold-contextual";
+/// The codified twin of [`BENCH_SCAFFOLD_CONTEXTUAL_HANDLE`].
+pub const BENCH_SCAFFOLD_CODIFIED_HANDLE: &str = "kx/bench/scaffold-codified";
+
+/// The `scaffold` fixture Apps' ONE step prompt — a shared const so the harness
+/// that saves the envelope and the corpus leak test read the SAME bytes: the
+/// canary must never appear here, or the family measures nothing.
+pub const SCAFFOLD_RUN_PROMPT: &str = "Read this project's own files in your context, find the \
+     activation or channel code they record, and report that code exactly.";
+
+/// How long a LIVE scaffold may take before its task folds as failed (planning +
+/// per-file decodes on a 12B are minutes each; the suite settle budget covers
+/// only the RUN that follows).
+pub const SCAFFOLD_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+
+/// What one `scaffold`-family drive actually did — the attribution record the
+/// harness folds into the `scaffold_completed@attempts` sentinel and the
+/// per-task duration/file spikes (a 0 gate alone cannot say whether the
+/// scaffold never finished or the run answered wrong).
+#[derive(Debug, Clone)]
+pub struct ScaffoldRecord {
+    /// The task this scaffold belonged to.
+    pub task_id: String,
+    /// The scaffold reached `done` (the run may still have failed).
+    pub completed: bool,
+    /// Wall-clock of the scaffold phase alone (not the run).
+    pub duration_ms: u64,
+    /// Files the server reported done when the scaffold settled.
+    pub files_done: u64,
+}
+
 /// The separator between a swarm task's participant prompts. The instruction of a
 /// `swarm`-family task is a `---`-delimited list: every segment but the LAST is a
 /// parallel agent, the last is the gather that reads all of their committed outputs.
@@ -125,6 +158,14 @@ pub enum Drive {
         /// The saved App handle to run.
         handle: &'static str,
     },
+    /// Scaffold a saved App's project LIVE (the model plans + authors the files,
+    /// the task instruction as the goal), then run the App. A scaffold or run
+    /// failure folds as a SCORED-0 transcript — never a suite abort — so a bad
+    /// scaffold day reads as the capability failing, not the harness.
+    ScaffoldedApp {
+        /// The saved (canary-free) App handle to scaffold and run.
+        handle: &'static str,
+    },
     /// Submit a multi-agent fan-out/gather chain and fold from the run's terminal Mote.
     Swarm,
 }
@@ -137,8 +178,11 @@ impl Drive {
         match self {
             Drive::React { handle, .. } => Some(handle),
             // An App's entry step and a submitted workflow are bound from the request,
-            // not resolved from the recipe catalog.
-            Drive::App { .. } | Drive::Swarm => None,
+            // not resolved from the recipe catalog. The scaffold drive needs the two
+            // scaffold recipes, but those are a MACHINERY precondition the harness
+            // folds into `complete` (scaffold_ready) — absent machinery must refuse
+            // the capture, not skip the family into a green hole.
+            Drive::App { .. } | Drive::ScaffoldedApp { .. } | Drive::Swarm => None,
         }
     }
 }
@@ -205,6 +249,18 @@ pub fn drive_for(task: &GoldenTask) -> Result<Drive, BenchError> {
             }),
             "reach-inherit-principal" => Ok(Drive::App {
                 handle: BENCH_REACH_APP_HANDLE,
+            }),
+            _ => Err(unknown()),
+        },
+        // The generated-app family: scaffold LIVE, then run — the whole point is
+        // that the project the run consumes was authored by the model on THIS
+        // serve, minutes earlier, from the task's own goal.
+        "scaffold" => match task.id.as_str() {
+            "scaffold-contextual-runs" => Ok(Drive::ScaffoldedApp {
+                handle: BENCH_SCAFFOLD_CONTEXTUAL_HANDLE,
+            }),
+            "scaffold-codified-runs" => Ok(Drive::ScaffoldedApp {
+                handle: BENCH_SCAFFOLD_CODIFIED_HANDLE,
             }),
             _ => Err(unknown()),
         },
@@ -440,6 +496,11 @@ pub struct LiveSuiteOutcome {
     /// the runtime refused, where it dead-lettered) — and a benchmark you cannot
     /// interrogate is one you end up guessing about.
     pub transcripts: Vec<Transcript>,
+    /// What each `scaffold`-family drive actually did (one record per driven
+    /// task). The harness folds these into the `scaffold_completed@attempts`
+    /// sentinel + per-task duration/file spikes — the attribution a bare 0 gate
+    /// cannot carry.
+    pub scaffolds: Vec<ScaffoldRecord>,
 }
 
 impl LiveSuiteOutcome {
@@ -522,6 +583,7 @@ pub async fn score_live_suite(
     let mut per_task: Vec<TaskScore> = Vec::with_capacity(corpus.suite.tasks.len());
     let mut transcripts: Vec<Transcript> = Vec::with_capacity(corpus.suite.tasks.len());
     let mut skipped: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    let mut scaffolds: Vec<ScaffoldRecord> = Vec::new();
     let only = task_filter();
     for task in &corpus.suite.tasks {
         // A DIAGNOSTIC filter for attributing a loop change to one arm without paying for
@@ -551,9 +613,20 @@ pub async fn score_live_suite(
         // The telemetry floor for THIS task, read before it is dispatched: everything
         // the sidecar joins above it is this task's cost and no other's.
         let since_seq = telemetry_high_water(client).await;
-        let (mut transcript, terminal_mote) =
-            run_and_fold(client, task, &drive, settle_timeout).await?;
-        transcript.timing = fold_timing(client, since_seq, &terminal_mote).await;
+        let (mut transcript, terminal_mote) = if let Drive::ScaffoldedApp { handle } = &drive {
+            // Intercepted here (not via run_and_fold) so the ScaffoldRecord lands
+            // in the outcome — the sentinel/spike fold reads it.
+            let (t, m, record) = drive_scaffolded_app(client, handle, task, settle_timeout).await;
+            scaffolds.push(record);
+            (t, m)
+        } else {
+            run_and_fold(client, task, &drive, settle_timeout).await?
+        };
+        // A failed scaffold folds with NO terminal Mote — there is nothing for the
+        // telemetry join to wait on, and timing honestly stays None.
+        if !terminal_mote.is_empty() {
+            transcript.timing = fold_timing(client, since_seq, &terminal_mote).await;
+        }
         let scores = score_transcript(&ScoreInput {
             transcript: &transcript,
             expect: &task.expect,
@@ -588,6 +661,7 @@ pub async fn score_live_suite(
             })
             .collect(),
         transcripts,
+        scaffolds,
     })
 }
 
@@ -975,6 +1049,11 @@ async fn run_and_fold(
             )
             .await
         }
+        Drive::ScaffoldedApp { handle } => {
+            let (transcript, terminal, _record) =
+                drive_scaffolded_app(client, handle, task, settle_timeout).await;
+            Ok((transcript, terminal))
+        }
         Drive::Swarm => {
             let handle = client
                 .submit_workflow(swarm_request(&task.instruction))
@@ -992,6 +1071,134 @@ async fn run_and_fold(
             .await?;
             Ok((transcript, terminal_mote))
         }
+    }
+}
+
+/// The scored-0 transcript a failed scaffold (or a run that never settled) folds
+/// to: zero turns, no answer — `task_success` reads 0, the trajectory says the
+/// run never happened, and the [`ScaffoldRecord`] beside it says WHY. Never an
+/// error: a drive error aborts the whole suite, and one bad scaffold day must
+/// read as the capability failing, not the harness.
+fn scaffold_failure_transcript(task: &GoldenTask, reason: &str) -> Transcript {
+    tracing::warn!(task = %task.id, reason = %reason, "scaffold-family drive folded as failed");
+    Transcript {
+        task_id: task.id.clone(),
+        turns: Vec::new(),
+        final_answer: None,
+        retrieved_docs: Vec::new(),
+        rerank: None,
+        max_turns: task.expect.max_turns.unwrap_or(BENCH_MAX_TURNS),
+        max_tool_calls: task.expect.max_tool_calls.unwrap_or(BENCH_MAX_TOOL_CALLS),
+        timing: None,
+    }
+}
+
+/// The `scaffold` family's drive: launch a LIVE scaffold of the (canary-free)
+/// saved App with the task instruction as the goal, poll it to a terminal
+/// phase, then run the App and fold the run — recording what the scaffold
+/// phase did for the `attempts` sentinel + spikes.
+pub async fn drive_scaffolded_app(
+    client: &mut KxGatewayClient<Channel>,
+    handle: &str,
+    task: &GoldenTask,
+    settle_timeout: Duration,
+) -> (Transcript, Vec<u8>, ScaffoldRecord) {
+    let started = std::time::Instant::now();
+    let mut record = ScaffoldRecord {
+        task_id: task.id.clone(),
+        completed: false,
+        duration_ms: 0,
+        files_done: 0,
+    };
+    let fail = |task: &GoldenTask,
+                reason: &str,
+                mut record: ScaffoldRecord,
+                started: std::time::Instant| {
+        record.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        (
+            scaffold_failure_transcript(task, reason),
+            Vec::new(),
+            record,
+        )
+    };
+
+    if let Err(e) = client
+        .scaffold_app(proto::ScaffoldAppRequest {
+            handle: handle.to_string(),
+            branch_handle: String::new(),
+            instruction: task.instruction.clone(),
+        })
+        .await
+    {
+        return fail(task, &format!("scaffold launch: {e}"), record, started);
+    }
+
+    // Poll to a terminal scaffold phase (its OWN budget — planning + per-file
+    // decodes on a 12B are minutes each; the suite settle budget covers the run).
+    let deadline = std::time::Instant::now() + SCAFFOLD_TIMEOUT;
+    loop {
+        let status = match client
+            .get_scaffold_status(proto::GetScaffoldStatusRequest {
+                branch_handle: handle.to_string(),
+            })
+            .await
+        {
+            Ok(s) => s.into_inner(),
+            Err(e) => return fail(task, &format!("scaffold status: {e}"), record, started),
+        };
+        record.files_done = status.files_done.len() as u64;
+        let phase = proto::get_scaffold_status_response::Phase::try_from(status.phase)
+            .unwrap_or(proto::get_scaffold_status_response::Phase::Unspecified);
+        match phase {
+            proto::get_scaffold_status_response::Phase::Done => {
+                record.completed = true;
+                break;
+            }
+            proto::get_scaffold_status_response::Phase::Failed => {
+                return fail(
+                    task,
+                    &format!("scaffold failed: {}", status.detail),
+                    record,
+                    started,
+                );
+            }
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return fail(task, "scaffold did not settle in time", record, started);
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    record.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+    // Run the App off its stored (canary-free) envelope — empty args, exactly
+    // like every other App drive.
+    let args = match serde_json::to_vec(&serde_json::json!({})) {
+        Ok(a) => a,
+        Err(e) => return fail(task, &format!("args encode: {e}"), record, started),
+    };
+    let run = match client
+        .run_app(proto::RunAppRequest {
+            handle: handle.to_string(),
+            args,
+            require_approval: false,
+        })
+        .await
+    {
+        Ok(r) => r.into_inner(),
+        Err(e) => return fail(task, &format!("run_app: {e}"), record, started),
+    };
+    match settle_and_fold_react(
+        client,
+        run.instance_id,
+        run.react_chain_salt,
+        task,
+        settle_timeout,
+    )
+    .await
+    {
+        Ok((transcript, terminal)) => (transcript, terminal, record),
+        Err(e) => fail(task, &format!("run fold: {e}"), record, started),
     }
 }
 
@@ -1619,6 +1826,7 @@ mod tests {
                 task_ids: vec!["kv-lookup-x".into()],
             }],
             transcripts: vec![],
+            scaffolds: vec![],
         };
         assert!(
             !filtered.is_complete(),
@@ -1647,6 +1855,7 @@ mod tests {
             report: report.clone(),
             skipped: vec![],
             transcripts: vec![],
+            scaffolds: vec![],
         };
         assert!(complete.is_complete());
         let partial = LiveSuiteOutcome {
@@ -1657,8 +1866,60 @@ mod tests {
                 task_ids: vec!["rag-grounded-answer".into()],
             }],
             transcripts: vec![],
+            scaffolds: vec![],
         };
         assert!(!partial.is_complete());
+    }
+
+    /// The scaffold error-fold: a failed scaffold becomes a SCORED-0 transcript —
+    /// zero turns, no answer — never a suite abort. `task_success` reads 0 (the
+    /// capability failed on the day) and every canary-independent scorer stays
+    /// honestly N/A rather than crashing on the empty trajectory.
+    #[test]
+    fn a_failed_scaffold_folds_to_a_scored_zero_transcript() {
+        // The REAL corpus task, so the fold is proven against the expectation the
+        // suite actually scores with.
+        let corpus = kx_eval::load_bench_v1().expect("bench-v1 corpus loads");
+        let task = corpus
+            .suite
+            .tasks
+            .iter()
+            .find(|t| t.id == "scaffold-contextual-runs")
+            .expect("the contextual scaffold task exists")
+            .clone();
+        let t = scaffold_failure_transcript(&task, "scaffold failed: step timed out");
+        assert!(t.turns.is_empty());
+        assert!(t.final_answer.is_none());
+        let scores = kx_eval::score_transcript(&kx_eval::ScoreInput {
+            transcript: &t,
+            expect: &task.expect,
+        });
+        let success = scores
+            .iter()
+            .find(|s| s.metric_id == "task_success")
+            .expect("task_success scored");
+        match &success.value {
+            kx_eval::ScoreValue::Gate { per_mille } => assert_eq!(*per_mille, 0),
+            other @ kx_eval::ScoreValue::Spike { .. } => {
+                panic!("task_success must be a gate, got {other:?}")
+            }
+        }
+    }
+
+    /// The shared run prompt can never carry a scaffold canary — the envelope the
+    /// harness saves is built FROM this const, and the corpus test pins the other
+    /// half (the canary rides only its own task instruction).
+    #[test]
+    fn the_scaffold_run_prompt_is_canary_free() {
+        let corpus = kx_eval::load_bench_v1().expect("bench-v1 corpus loads");
+        for task in corpus.suite.tasks.iter().filter(|t| t.family == "scaffold") {
+            for canary in &task.expect.answer_must_contain {
+                assert!(
+                    !SCAFFOLD_RUN_PROMPT.contains(canary.as_str()),
+                    "the shared run prompt leaks {canary:?}"
+                );
+            }
+        }
     }
 
     #[test]

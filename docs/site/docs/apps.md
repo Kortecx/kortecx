@@ -205,8 +205,10 @@ deep links are stable. See [Branches](./branches.md) for the CoW mechanics.
 
 **Run** an App from the IDE header or the **Workflows** catalog. If the App declares an
 `input_schema`, a run drawer collects the inputs (they fold into the entry model step);
-otherwise it runs in one click. The run routes to its live DAG. OSS runs **one App at a
-time** — multi-app chaining is a Cloud capability. **Scheduling ships in OSS**: bind a cron
+otherwise it runs in one click. The run routes to its live DAG. Apps can **call other
+Apps** in OSS — composition is resolved at author time into one run, one journal (see
+[Apps that call other Apps](#apps-that-call-other-apps)); *(cross-party and cross-tenant
+app chaining is a Cloud capability)*. **Scheduling ships in OSS**: bind a cron
 trigger with `kx triggers add --kind cron --app <handle> --schedule "0 9 * * 1-5" --timezone
 <IANA>`, or use the calendar button on the App card. The CLI equivalent of a manual run is
 `kx app run <handle>` (`--arg k=v` per input).
@@ -406,7 +408,18 @@ both. You do not pay for it twice.
 - a step that calls an App the envelope does not declare in `references.apps`. `save()`
   derives those declarations from your graph; if you hand-author an envelope with
   `to_envelope()`, add them with `.with_app(...)` / `.withApp(...)`;
+- a declared App that is **not in your catalog** — a broken dependency, reported as such
+  (never a permission oracle: an App you cannot see refuses identically to one that does
+  not exist);
+- a called App that grounds on **run-level context bundles** — those are inputs a caller
+  hands a run, and a composed callee has no caller of its own. Attach the grounding to
+  the callee's *steps* (step-level datasets/skills compose fine);
 - calling a **hosted** App — it has no workflow to lower.
+
+**The OSS ↔ Cloud line.** Everything above is OSS: composition happens **in-process, at
+author time**, inside one party's catalog — one run, one journal, one lineage.
+*(Chaining across parties or tenants — calling an App someone else published, with its
+own authority — is a Cloud capability.)*
 
 **Choosing one.** `delivers()` is a single advisory line saying what a run of the App
 produces. It is carried on the catalog summary, so `kx app list` and the console show it —

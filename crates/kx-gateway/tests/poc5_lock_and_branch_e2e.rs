@@ -407,3 +407,151 @@ async fn scaffold_app_without_a_served_model_is_unimplemented() {
     // Model-free serve ⇒ no scaffold orchestrator ⇒ fail-closed `unimplemented`.
     assert_eq!(err.code(), Code::Unimplemented);
 }
+
+/// Branch point-in-time history through the live gateway: versions record
+/// newest-first with causes, restore re-points the manifest AND appends (never
+/// rewinds), a locked branch refuses restore with the same structured
+/// `LOCKED_BRANCH` code as AdvanceBranch, and the whole surface is
+/// caller-scoped with a uniform not-found.
+#[tokio::test]
+async fn restore_walks_history_refuses_lock_and_scopes_by_caller() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let handle = "team/apps/hist".to_string();
+    c.create_branch(with_bearer(
+        proto::CreateBranchRequest {
+            handle: handle.clone(),
+            description: "history proof".into(),
+            parent_handle: String::new(),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let v1 = put(&mut c, "tok-alice", b"draft one").await;
+    let v2 = put(&mut c, "tok-alice", b"draft two").await;
+    for cref in [&v1, &v2] {
+        c.advance_branch(with_bearer(
+            proto::AdvanceBranchRequest {
+                handle: handle.clone(),
+                path: "notes.md".into(),
+                content_ref: cref.clone(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap();
+    }
+
+    // Newest-first with causes: advance, advance, create.
+    let listed = c
+        .list_branch_versions(with_bearer(
+            proto::ListBranchVersionsRequest {
+                handle: handle.clone(),
+                limit: 0,
+                after_version: 0,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(listed.found);
+    let causes: Vec<&str> = listed.versions.iter().map(|v| v.cause.as_str()).collect();
+    assert_eq!(causes, vec!["advance", "advance", "create"]);
+
+    // Restore to version 2 (after the FIRST advance): the body reads as v1 again.
+    let restored = c
+        .restore_branch(with_bearer(
+            proto::RestoreBranchRequest {
+                handle: handle.clone(),
+                version: 2,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!restored.deduplicated);
+    assert_eq!(restored.new_version, 4, "restore appends, never rewinds");
+    let body = c
+        .get_branch_content(with_bearer(
+            proto::GetBranchContentRequest {
+                handle: handle.clone(),
+                path: "notes.md".into(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(body.found);
+    assert_eq!(body.payload, b"draft one");
+
+    // Locked ⇒ restore refused with the SAME structured code as AdvanceBranch.
+    c.lock_app(with_bearer(
+        proto::LockAppRequest {
+            branch_handle: handle.clone(),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let err = c
+        .restore_branch(with_bearer(
+            proto::RestoreBranchRequest {
+                handle: handle.clone(),
+                version: 3,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert_eq!(
+        err.metadata()
+            .get(kx_gateway_core::REFUSAL_CODE_METADATA_KEY)
+            .and_then(|v| v.to_str().ok()),
+        Some("LOCKED_BRANCH"),
+    );
+    c.unlock_app(with_bearer(
+        proto::UnlockAppRequest {
+            branch_handle: handle.clone(),
+        },
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+
+    // Caller-scoped, uniform: Bob's list reads found=false; Bob's restore is
+    // NOT_FOUND (never a permission oracle).
+    let bob_list = c
+        .list_branch_versions(with_bearer(
+            proto::ListBranchVersionsRequest {
+                handle: handle.clone(),
+                limit: 0,
+                after_version: 0,
+            },
+            "tok-bob",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(!bob_list.found);
+    assert!(bob_list.versions.is_empty());
+    let bob_err = c
+        .restore_branch(with_bearer(
+            proto::RestoreBranchRequest {
+                handle: handle.clone(),
+                version: 2,
+            },
+            "tok-bob",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(bob_err.code(), Code::NotFound);
+}

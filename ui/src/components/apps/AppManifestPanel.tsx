@@ -87,8 +87,8 @@ export function AppManifestPanel({
                 </div>
               ) : section === "tools" ? (
                 <p className="muted" data-testid="app-manifest-tools-empty">
-                  No MCP tools requested — at run the App inherits your principal's fireable tools (
-                  <code className="mono">wish ∩ grants ∩ fireable</code>).
+                  No MCP tools requested — at run the App inherits the tools your principal has
+                  granted and this serve can fire.
                 </p>
               ) : null}
             </>

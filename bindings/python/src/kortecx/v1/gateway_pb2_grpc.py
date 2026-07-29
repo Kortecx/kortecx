@@ -574,6 +574,16 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.RemoveSkillRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RemoveSkillResponse.FromString,
                 _registered_method=True)
+        self.ListBranchVersions = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListBranchVersions',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListBranchVersionsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListBranchVersionsResponse.FromString,
+                _registered_method=True)
+        self.RestoreBranch = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RestoreBranch',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RestoreBranchRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RestoreBranchResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -1402,6 +1412,19 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListBranchVersions(self, request, context):
+        """Branch point-in-time history (append-only sidecar; see BranchVersion).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RestoreBranch(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1944,6 +1967,16 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.RemoveSkill,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RemoveSkillRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.RemoveSkillResponse.SerializeToString,
+            ),
+            'ListBranchVersions': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListBranchVersions,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListBranchVersionsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListBranchVersionsResponse.SerializeToString,
+            ),
+            'RestoreBranch': grpc.unary_unary_rpc_method_handler(
+                    servicer.RestoreBranch,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RestoreBranchRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RestoreBranchResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -4862,6 +4895,60 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/RemoveSkill',
             kortecx_dot_v1_dot_gateway__pb2.RemoveSkillRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.RemoveSkillResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListBranchVersions(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListBranchVersions',
+            kortecx_dot_v1_dot_gateway__pb2.ListBranchVersionsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListBranchVersionsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RestoreBranch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RestoreBranch',
+            kortecx_dot_v1_dot_gateway__pb2.RestoreBranchRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RestoreBranchResponse.FromString,
             options,
             channel_credentials,
             insecure,

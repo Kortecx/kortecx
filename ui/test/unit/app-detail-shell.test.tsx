@@ -7,7 +7,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -85,9 +85,12 @@ vi.mock("../../src/kx/use-triggers", () => ({
   useTestTrigger: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null }),
   useFireTrigger: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null }),
 }));
+let BRANCH_ITEMS: Array<{ path: string; contentRef: string }> = [
+  { path: "README.md", contentRef: "ab".repeat(32) },
+];
 vi.mock("../../src/kx/use-app-files", () => ({
   useAppBranch: () => ({
-    data: { items: [{ path: "README.md", contentRef: "ab".repeat(32) }] },
+    data: { items: BRANCH_ITEMS },
     isLoading: false,
     isError: false,
     error: null,
@@ -109,10 +112,23 @@ vi.mock("../../src/kx/use-app-files", () => ({
   }),
 }));
 // The Files tab asks whether a scaffold is WRITING this App right now (the chat surface routes
-// here the moment an App is created). `done` ⇒ the tab shows the file tree, which is what every
-// assertion below is about.
+// here the moment an App is created). `done` (the default) ⇒ the tab shows the file tree, which
+// is what most assertions below are about; the latch cases flip PHASE/PENDING.
+let PHASE: "planning" | "writing" | "done" | "failed" = "done";
+let PENDING: string[] = [];
+const resumeScaffold = vi.fn();
 vi.mock("../../src/kx/use-scaffold-app", () => ({
-  useScaffoldStatus: () => ({ data: { phase: "done" } }),
+  useScaffoldStatus: () => ({ data: { phase: PHASE, filesPending: PENDING, detail: "" } }),
+  useScaffoldApp: () => ({ mutate: resumeScaffold, isPending: false, error: null }),
+}));
+// The live scaffold view has its own suite — the shell test asserts WHEN it mounts
+// (the latch), not what it renders.
+vi.mock("../../src/components/sections/ScaffoldProgress", () => ({
+  ScaffoldProgress: ({ onResume }: { onResume?: () => void }) => (
+    <div data-testid="scaffold-progress-stub">
+      <button type="button" data-testid="scaffold-stub-resume" onClick={onResume} />
+    </div>
+  ),
 }));
 vi.mock("../../src/kx/use-branches", () => ({
   useEditBranchPropose: () => ({
@@ -166,8 +182,12 @@ function render(ui: ReactElement) {
 afterEach(() => {
   LOCKED = false;
   KIND = "";
+  PHASE = "done";
+  PENDING = [];
+  BRANCH_ITEMS = [{ path: "README.md", contentRef: "ab".repeat(32) }];
   saveFile.mockReset();
   proposeMutate.mockReset();
+  resumeScaffold.mockReset();
   // The Files rail persists its collapsed flag to localStorage; reset between tests.
   localStorage.clear();
 });
@@ -303,5 +323,50 @@ describe("App IDE shell (POC-5d)", () => {
     KIND = "experience";
     render(<AppDetailSection handle="apps/local/site" />);
     expect(screen.queryByTestId("app-triggers-strip")).toBeNull();
+  });
+
+  // ---- the ScaffoldProgress mount latch (terminal states must be REACHABLE) ----
+
+  it("an app scaffolded long ago (done, never active this mount) shows the plain file tree", () => {
+    PHASE = "done";
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.queryByTestId("scaffold-progress-stub")).toBeNull();
+    expect(screen.getByTestId("file-tree")).toBeInTheDocument();
+  });
+
+  it("a live scaffold mounts the progress view", () => {
+    PHASE = "writing";
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.getByTestId("scaffold-progress-stub")).toBeInTheDocument();
+  });
+
+  it("a FAILED scaffold with pending files keeps the view mounted — with a live Resume", () => {
+    // Found cold (post-restart, never active in this mount): the failure notice
+    // and its Resume must still be reachable, not a bare partial tree.
+    PHASE = "failed";
+    PENDING = ["skills/main.md"];
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.getByTestId("scaffold-progress-stub")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("scaffold-stub-resume"));
+    expect(resumeScaffold).toHaveBeenCalledWith({ handle: "apps/local/echo" });
+  });
+
+  it("a failed scaffold with NOTHING pending falls through to the file tree", () => {
+    PHASE = "failed";
+    PENDING = [];
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.queryByTestId("scaffold-progress-stub")).toBeNull();
+  });
+
+  it("shows the guidance chip iff the branch holds .kortecx/agents.md", () => {
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.queryByTestId("app-guidance-chip")).toBeNull();
+    cleanup();
+    BRANCH_ITEMS = [
+      { path: "README.md", contentRef: "ab".repeat(32) },
+      { path: ".kortecx/agents.md", contentRef: "cd".repeat(32) },
+    ];
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.getByTestId("app-guidance-chip")).toBeInTheDocument();
   });
 });

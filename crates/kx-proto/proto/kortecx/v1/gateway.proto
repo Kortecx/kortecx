@@ -1266,6 +1266,7 @@ message AppSummary {
   string kind          = 9;  // D213 lane: "functional" (schedulable capability) or "experience" (hosted web app); empty on an old server ⇒ treat as functional
   string mode          = 10; // authoring mode: "contextual" (a text app steered by its own markdown) or "codified" (the model authors the code/config the runtime orchestrates from); always empty for "experience" (no such axis); empty on an old server ⇒ treat as contextual
   string delivers      = 11; // advisory one-line statement of what one run PRODUCES; the half of the record that makes an App pickable by another App. Carried on the summary so ONE ListApps is the whole composition registry. Never parsed for enforcement; empty on an old row/server
+  string lifecycle     = 12; // advisory catalog state: "" (active) or "draft" (created but its project scaffold has not completed — resume or discard). Display/routing only, never enforcement; carried on the summary so ONE ListApps paints every badge. Empty on an old row/server ⇒ active.
 }
 message SaveAppRequest {
   string handle        = 1;  // catalog key (upsert key within the caller's scope)
@@ -2352,6 +2353,40 @@ message GetBranchContentResponse {
   bool  found   = 2;                     // false uniformly for absent branch / absent path / not-owned
 }
 
+// Branch point-in-time history. Every non-dedup manifest mutation (create /
+// snapshot / advance / restore) appends one version row to an off-journal,
+// caller-scoped `branch_history` sidecar (bounded FIFO per handle). The CAS
+// blobs behind every recorded version are immutable and never collected by
+// branch ops, so any listed version is restorable. Restore APPENDS a new
+// version whose items are the historical items — history is never rewound,
+// a restore is itself history, and "restore forward" is always possible.
+message BranchVersion {
+  uint32 version          = 1;  // 1-based per (caller, handle), monotone (1 = oldest retained)
+  bytes  branch_ref       = 2;  // 16B SERVER-DERIVED manifest hash at this version (display only — never an input)
+  uint64 recorded_unix_ms = 3;  // sidecar wall-clock at record time; advisory, never identity
+  string cause            = 4;  // "baseline" | "create" | "snapshot" | "advance" | "restore"
+  uint32 item_count       = 5;  // manifest size at this version
+}
+message ListBranchVersionsRequest {
+  string handle        = 1;     // the branch (caller-scoped)
+  uint32 limit         = 2;     // page size; server clamps 1..=256 (absent = 100)
+  uint32 after_version = 3;     // exclusive DESCENDING cursor: return versions strictly older; 0 = newest page
+}
+message ListBranchVersionsResponse {
+  repeated BranchVersion versions = 1;  // newest-first
+  bool has_more = 2;
+  bool found    = 3;            // false uniformly for absent branch / not-owned / no history (no existence oracle)
+}
+message RestoreBranchRequest {
+  string handle  = 1;           // the branch to restore (caller-scoped)
+  uint32 version = 2;           // the recorded version whose items become the new current state
+}
+message RestoreBranchResponse {
+  Branch branch      = 1;       // the manifest after the restore
+  uint32 new_version = 2;       // the version the restore recorded (0 when deduplicated)
+  bool   deduplicated = 3;      // true iff the branch already matched the requested version (no-op, nothing recorded)
+}
+
 // ---------------------------------------------------------------------------
 // Service — the external client-facing gateway (distinct from Coordinator).
 // ---------------------------------------------------------------------------
@@ -2890,4 +2925,8 @@ service KxGateway {
   rpc GetSkillForm(GetSkillFormRequest) returns (GetSkillFormResponse);
   rpc AddSkill(AddSkillRequest) returns (AddSkillResponse);
   rpc RemoveSkill(RemoveSkillRequest) returns (RemoveSkillResponse);
+
+  // Branch point-in-time history (append-only sidecar; see BranchVersion).
+  rpc ListBranchVersions(ListBranchVersionsRequest) returns (ListBranchVersionsResponse);
+  rpc RestoreBranch(RestoreBranchRequest) returns (RestoreBranchResponse);
 }

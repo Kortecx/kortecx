@@ -1217,6 +1217,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         &catalog_dir,
         content.clone(),
         fs_list_root.clone(),
+        crate::env_caps::branch_history_max(),
     )?);
     // (3e) T3.7 / POC-1: the Datasets data-plane (RAG) view, behind the opt-in `hnsw`
     //      feature — a durable SQLite store + a rebuilt-on-open HNSW ANN index under
@@ -1752,6 +1753,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             // The CODIFIED lane folds the configuration it authored back onto the App, so
             // the orchestrator needs the same catalog the service is wired with.
             Some(apps_db.clone() as Arc<dyn kx_gateway_core::AppCatalog>),
+            // The durable phase mirror (a scaffold_state row in apps.db): a failed
+            // scaffold keeps its reason across a serve restart, and an interrupted
+            // one reads as interrupted instead of Writing forever.
+            Some(apps_db.clone() as Arc<dyn crate::apps::ScaffoldStateStore>),
         )))
     } else {
         None
@@ -1792,7 +1797,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // chain consumes `branches_db`; wired onto the gateway after the chain (behind the
     // `hosted-apps` feature). A plain host subprocess manager — off-journal, off-digest.
     #[cfg(feature = "hosted-apps")]
-    let hosted_supervisor: Arc<dyn kx_gateway_core::HostedAppSupervisor> =
+    let hosted_supervisor: Arc<dyn kx_gateway_core::HostedAppSupervisor> = {
+        // Resolve the isolation policy ONCE (env + platform probe) and say what it
+        // resolved to — the startup log is where an operator learns whether hosted
+        // children run confined on this serve.
+        let sandbox_policy = crate::hosted_sandbox::SandboxPolicy::resolve();
+        tracing::info!(posture = %sandbox_policy.posture(), "hosted-app isolation policy");
         Arc::new(crate::hostsupervisor::HostedSupervisor::new(
             &catalog_dir,
             apps_db.clone(),
@@ -1810,7 +1820,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 .resolve()
                 .map(|a| format!("http://{a}"))
                 .unwrap_or_default(),
-        ));
+            sandbox_policy,
+        ))
+    };
     let mut gateway = GatewayService::new(reader.clone(), submitter, content.clone())
         .with_signature_catalog(signature_catalog)
         .with_recipe_binder(binder)
@@ -1834,6 +1846,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_apps_catalog(apps_db.clone())
         .with_skill_catalog(skills_db.clone())
         .with_branches_store(branches_db.clone())
+        .with_branch_history(branches_db.clone())
         .with_lock_store(locks_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
             tool_registry.clone(),

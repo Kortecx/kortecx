@@ -278,6 +278,161 @@ async fn a_production_hosted_app_builds_then_serves_and_reports_its_lane() {
     assert!(reached_running, "the production app reached Running");
 }
 
+/// Find a file by NAME anywhere under the gateway's data dir (the workdir hash is
+/// the supervisor's own derivation — recomputing it here would agree by construction).
+fn find_file(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    for entry in std::fs::read_dir(root).ok()? {
+        let path = entry.ok()?.path();
+        if path.is_dir() {
+            if let Some(found) = find_file(&path, name) {
+                return Some(found);
+            }
+        } else if path.file_name().is_some_and(|n| n == name) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Drive `handle` (already saved) to Running and return its port.
+async fn start_to_running(c: &mut KxGatewayClient<Channel>, handle: &str) -> u32 {
+    c.start_hosted_app(proto::StartHostedAppRequest {
+        handle: handle.into(),
+        rebuild: false,
+    })
+    .await
+    .expect("start")
+    .into_inner();
+    for _ in 0..80 {
+        let st = c
+            .get_hosted_app_status(proto::GetHostedAppStatusRequest {
+                handle: handle.into(),
+            })
+            .await
+            .expect("status")
+            .into_inner();
+        assert_ne!(
+            st.state,
+            proto::HostedAppState::HostedFailed as i32,
+            "hosted app failed: {}",
+            st.detail
+        );
+        if st.state == proto::HostedAppState::HostedRunning as i32 {
+            return st.port;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    panic!("the hosted app never reached Running");
+}
+
+/// Stop kills the WHOLE process tree, not just the direct child.
+///
+/// The fixture forks a sleeper (the `npm run dev` → vite grandchild shape) and
+/// records its pid. `start_kill` alone — the pre-group-kill behaviour — reaped
+/// only the direct child and left the grandchild running; this asserts the
+/// GRANDCHILD dies on stop, which only the process-group kill achieves.
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_kills_the_whole_process_tree() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let fake = env!("CARGO_BIN_EXE_hosted_fake_server");
+    let handle = "team/apps/forker";
+    c.save_app(proto::SaveAppRequest {
+        handle: handle.into(),
+        envelope_json: hosted_envelope("forker", handle, &format!("{fake} --fork-child")),
+        source_digest: Vec::new(),
+    })
+    .await
+    .expect("save");
+    start_to_running(&mut c, handle).await;
+
+    let pid_file = find_file(dir.path(), "child.pid").expect("the fixture recorded its child");
+    let child_pid: i32 = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let alive = |pid: i32| nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok();
+    assert!(
+        alive(child_pid),
+        "the grandchild is alive while the app runs"
+    );
+
+    c.stop_hosted_app(proto::StopHostedAppRequest {
+        handle: handle.into(),
+    })
+    .await
+    .expect("stop");
+    let mut dead = false;
+    for _ in 0..50 {
+        if !alive(child_pid) {
+            dead = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(
+        dead,
+        "the GRANDCHILD must die on stop — a direct-child kill leaves the real server running"
+    );
+}
+
+/// Hosted children never inherit the gateway's environment.
+///
+/// The gateway's env can carry operator secrets; before the hygiene pass the
+/// whole thing reached every npm child. The fixture dumps its COMPLETE env: a
+/// canary set in the gateway process must be absent, and HOME must be the
+/// workdir-scoped one (proof the allowlist, not inheritance, produced the env).
+#[tokio::test]
+async fn hosted_children_never_inherit_the_gateway_environment() {
+    // Uniquely named; nothing else reads it, so the process-global set is benign.
+    std::env::set_var("KX_TEST_SECRET_CANARY", "leak-me-if-you-can");
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, true, HashMap::new()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    let fake = env!("CARGO_BIN_EXE_hosted_fake_server");
+    let handle = "team/apps/envdump";
+    c.save_app(proto::SaveAppRequest {
+        handle: handle.into(),
+        envelope_json: hosted_envelope(
+            "envdump",
+            handle,
+            &format!("{fake} --dump-env envdump.txt"),
+        ),
+        source_digest: Vec::new(),
+    })
+    .await
+    .expect("save");
+    start_to_running(&mut c, handle).await;
+
+    let dump_path = find_file(dir.path(), "envdump.txt").expect("the fixture dumped its env");
+    let dump = std::fs::read_to_string(&dump_path).unwrap();
+    assert!(
+        !dump.contains("KX_TEST_SECRET_CANARY"),
+        "the gateway's env must NOT reach a hosted child:\n{dump}"
+    );
+    let home_line = dump
+        .lines()
+        .find(|l| l.starts_with("HOME="))
+        .expect("the child has a HOME");
+    assert!(
+        home_line.contains(".kx-home"),
+        "HOME is the workdir-scoped one, not the operator's: {home_line}"
+    );
+    assert!(
+        dump.lines().any(|l| l.starts_with("PATH=")),
+        "the minimal PATH is present"
+    );
+}
+
 /// An app that never set `serve_mode` — i.e. every app authored before the field existed —
 /// keeps serving on the DEV lane. An unknown label must degrade the same way: unrecognized
 /// input can never silently promote an app into a lane it did not ask for.

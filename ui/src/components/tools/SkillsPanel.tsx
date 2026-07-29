@@ -54,7 +54,7 @@ function SkillDetail({ name }: { name: string }) {
               className={`chip chip--static${w.registered ? "" : " chip--soon"}`}
               title={
                 w.registered
-                  ? "This serve can currently fire it (advisory — granted only at run, wish ∩ grants ∩ fireable)"
+                  ? "This serve can currently fire it (advisory — at run it must also be granted by you)"
                   : "Not fireable on this serve (unregistered / undialed) — the wish will be dropped at run"
               }
             >
@@ -170,8 +170,9 @@ export function SkillsPanel() {
         Declarative <code className="mono">kortecx.skill/v1</code> bundles — instructions + tool
         grant-<em>wishes</em>. Attach one to an App (CLI{" "}
         <code className="mono">kx app new … --skill</code>, SDK{" "}
-        <code className="mono">.skill(…)</code>); at run the server grants only{" "}
-        <code className="mono">wish ∩ grants ∩ fireable</code> — a skill on its own grants nothing.
+        <code className="mono">.skill(…)</code>); at run the server grants only the tools the skill
+        asks for that you have granted and this serve can actually fire — a skill on its own grants
+        nothing.
       </p>
 
       {list.notWired ? (

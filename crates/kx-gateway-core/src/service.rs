@@ -810,6 +810,11 @@ pub struct GatewayService {
     /// off-journal, off-digest, rebuildable-to-empty. `SnapshotInto` READS host
     /// files into CAS (default-OFF); it never writes the host (Phase-B).
     branches: Option<Arc<dyn crate::branches_view::BranchStore>>,
+    /// The optional branch point-in-time history seam (the host's `branch_history`
+    /// table beside the branch row). `None` ⇒ `ListBranchVersions`/`RestoreBranch`
+    /// return `unimplemented`. Same posture as `branches`: caller-scoped,
+    /// off-journal, off-digest.
+    branch_history: Option<Arc<dyn crate::branches_view::BranchHistory>>,
     /// The optional App-catalog store seam (POC-4 — the host injects an
     /// `apps.db`-backed sidecar). `None` ⇒ the 3 App RPCs return `unimplemented`.
     /// Caller-scoped, off-journal, off-digest, rebuildable-to-empty. The envelope
@@ -945,6 +950,7 @@ impl GatewayService {
             approval_admin: None,
             bundles: None,
             branches: None,
+            branch_history: None,
             apps: None,
             skills: None,
             app_runner: None,
@@ -1390,6 +1396,19 @@ impl GatewayService {
         branches: Arc<dyn crate::branches_view::BranchStore>,
     ) -> Self {
         self.branches = Some(branches);
+        self
+    }
+
+    /// Wire the branch point-in-time history seam (the host's `branch_history`
+    /// table beside the branch row — usually the SAME store as
+    /// [`Self::with_branches_store`]). Without it `ListBranchVersions` /
+    /// `RestoreBranch` return `unimplemented`.
+    #[must_use]
+    pub fn with_branch_history(
+        mut self,
+        history: Arc<dyn crate::branches_view::BranchHistory>,
+    ) -> Self {
+        self.branch_history = Some(history);
         self
     }
 
@@ -1870,6 +1889,9 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // What one run PRODUCES — advisory, and the line the composition menu renders so
         // another App can pick this one on purpose. Empty ⇒ an App authored before the field.
         delivers: r.delivers,
+        // Catalog lifecycle ("" active / "draft" scaffold-incomplete) — advisory,
+        // display/routing only. ONE ListApps paints every badge (no N+1 status reads).
+        lifecycle: r.lifecycle,
     }
 }
 
@@ -5016,6 +5038,92 @@ impl KxGateway for GatewayService {
         }))
     }
 
+    async fn list_branch_versions(
+        &self,
+        request: Request<proto::ListBranchVersionsRequest>,
+    ) -> Result<Response<proto::ListBranchVersionsResponse>, Status> {
+        let history = self.branch_history.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListBranchVersions: no branch history store wired")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Page clamp mirrors ListBranches (1..=256, absent ⇒ 100).
+        let limit = match req.limit {
+            0 => 100,
+            n => n.min(256) as usize,
+        };
+        let after = (req.after_version > 0).then_some(req.after_version);
+        // Uniform found=false for absent / not-owned / no-history (no oracle).
+        let page = history.list_versions(&principal, &req.handle, limit, after)?;
+        Ok(Response::new(match page {
+            Some((versions, has_more)) => proto::ListBranchVersionsResponse {
+                versions: versions
+                    .into_iter()
+                    .map(|v| proto::BranchVersion {
+                        version: v.version,
+                        branch_ref: v.branch_ref.to_vec(),
+                        recorded_unix_ms: v.recorded_unix_ms,
+                        cause: v.cause,
+                        item_count: v.item_count,
+                    })
+                    .collect(),
+                has_more,
+                found: true,
+            },
+            None => proto::ListBranchVersionsResponse {
+                versions: Vec::new(),
+                has_more: false,
+                found: false,
+            },
+        }))
+    }
+
+    async fn restore_branch(
+        &self,
+        request: Request<proto::RestoreBranchRequest>,
+    ) -> Result<Response<proto::RestoreBranchResponse>, Status> {
+        let history = self
+            .branch_history
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("RestoreBranch: no branch history store wired"))?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.version == 0 {
+            return Err(Status::invalid_argument(
+                "restore requires a recorded version (1-based)",
+            ));
+        }
+        // POC-5b — the same lock chokepoint as AdvanceBranch: a restore moves the
+        // manifest, so a locked branch refuses it identically.
+        if let Some(locks) = self.locks.as_ref() {
+            if locks.is_locked(&principal, &req.handle)? {
+                return Err(with_refusal_code(
+                    Status::failed_precondition(
+                        "branch is locked; restore is refused (unlock the App to edit)",
+                    ),
+                    crate::locks_view::LOCKED_BRANCH_REFUSAL_CODE,
+                ));
+            }
+        }
+        // A LIVE scaffold owns the manifest — restoring under its write loop would
+        // interleave two authors. Gate on the in-process tracker, NOT status()
+        // (whose manifest fallback reads pending paths as Writing after a restart).
+        if let Some(scaffolder) = self.scaffolder.as_ref() {
+            if scaffolder.is_scaffold_active(&principal, &req.handle)? {
+                return Err(Status::failed_precondition(
+                    "a scaffold is writing this branch; wait for it to finish before restoring",
+                ));
+            }
+        }
+        let (manifest, new_version, deduplicated) =
+            history.restore(&principal, &req.handle, req.version)?;
+        Ok(Response::new(proto::RestoreBranchResponse {
+            branch: Some(branch_to_proto(manifest)),
+            new_version,
+            deduplicated,
+        }))
+    }
+
     async fn lock_app(
         &self,
         request: Request<proto::LockAppRequest>,
@@ -5096,12 +5204,21 @@ impl KxGateway for GatewayService {
         } else {
             req.instruction.clone()
         };
+        // Mark the App a DRAFT before the background loop spawns: a scaffold that
+        // fails to LAUNCH still leaves an honest draft, and the host clears the
+        // flag when the scaffold reaches Done. Advisory-only (display/routing);
+        // a store that predates the column degrades to no badge (`Ok(false)`).
+        apps.set_lifecycle(
+            &principal,
+            &req.handle,
+            crate::apps_view::APP_LIFECYCLE_DRAFT,
+        )?;
         // D213: a hosted (experience) app scaffolds its framework template's authored
         // files (page + README) into the branch — the static config is template-owned
         // (written to disk by the supervisor). The host parses the framework from the
         // opaque envelope bytes (gateway-core keeps app bytes opaque).
         let resumed = if record.kind == "experience" {
-            scaffolder.start_hosted(&principal, &branch_handle, &envelope, &goal)?
+            scaffolder.start_hosted(&principal, &req.handle, &branch_handle, &envelope, &goal)?
         } else {
             // The host driver creates/resumes the branch + spawns the background loop and
             // returns immediately (progress via GetScaffoldStatus + GetBranch). The envelope

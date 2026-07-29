@@ -12,7 +12,7 @@
  * store (UNIMPLEMENTED).
  */
 
-import type { Branch } from "@kortecx/sdk/web";
+import type { Branch, BranchVersion } from "@kortecx/sdk/web";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useConnection } from "./connection-context";
 import { toUiError } from "./errors";
@@ -187,6 +187,63 @@ export function useAdvanceBranch() {
       return client.advanceBranch(handle, path, contentRef);
     },
     onSuccess: (_res, { handle }) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.branches(endpoint) });
+      void qc.invalidateQueries({ queryKey: queryKeys.appBranch(endpoint, handle) });
+    },
+  });
+}
+
+/**
+ * A branch's recorded point-in-time versions, newest-first (`ListBranchVersions`).
+ * `null` data = the branch has no recorded history / is not found (uniform on the
+ * server — no existence oracle). Degrades to `notWired` on an old gateway.
+ */
+export function useBranchVersions(handle: string | null, enabled: boolean) {
+  const { client, endpoint, status } = useConnection();
+  const q = useQuery({
+    queryKey: queryKeys.branchVersions(endpoint, handle ?? ""),
+    enabled: enabled && status === "connected" && client !== null && handle !== null,
+    queryFn: async (): Promise<BranchVersion[] | null> => {
+      if (!client || handle === null) {
+        throw new Error("not connected");
+      }
+      return client.listBranchVersions(handle);
+    },
+  });
+  return {
+    versions: q.data ?? null,
+    notWired: q.isError && toUiError(q.error).kind === "not-wired",
+    isLoading: q.isLoading,
+    isError: q.isError,
+    error: q.error,
+    refetch: q.refetch,
+  };
+}
+
+export interface RestoreBranchVars {
+  readonly handle: string;
+  readonly version: number;
+}
+
+/**
+ * Restore a branch to a recorded version (`RestoreBranch`). Restore APPENDS a
+ * new version (history is never rewound — you can always restore forward
+ * again). Refused while the branch is locked or a scaffold is writing it.
+ * Invalidates the version list AND the App branch manifest so the file tree
+ * re-pulls the restored bodies.
+ */
+export function useRestoreBranch() {
+  const { client, endpoint } = useConnection();
+  const qc = useQueryClient();
+  return useMutation<unknown, unknown, RestoreBranchVars>({
+    mutationFn: async ({ handle, version }) => {
+      if (!client) {
+        throw new Error("not connected");
+      }
+      return client.restoreBranch(handle, version);
+    },
+    onSuccess: (_res, { handle }) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.branchVersions(endpoint, handle) });
       void qc.invalidateQueries({ queryKey: queryKeys.branches(endpoint) });
       void qc.invalidateQueries({ queryKey: queryKeys.appBranch(endpoint, handle) });
     },

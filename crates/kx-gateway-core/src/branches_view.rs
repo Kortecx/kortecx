@@ -162,3 +162,73 @@ pub trait BranchStore: Send + Sync {
         content_ref: [u8; 32],
     ) -> Result<(BranchManifest, bool), GatewayError>;
 }
+
+/// One recorded point-in-time of a branch manifest (a `branch_history` row).
+/// Every non-dedup manifest mutation appends one; the CAS blobs behind a
+/// recorded version are never collected by branch ops, so any listed version is
+/// restorable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BranchVersionRecord {
+    /// 1-based per-`(principal, handle)` version, monotone (1 = oldest retained).
+    pub version: u32,
+    /// The server-derived manifest hash at this version (display only — never an input).
+    pub branch_ref: [u8; 16],
+    /// Sidecar wall-clock at record time (ms since epoch); advisory, never identity.
+    pub recorded_unix_ms: u64,
+    /// `"baseline" | "create" | "snapshot" | "advance" | "restore"`.
+    pub cause: String,
+    /// Manifest size at this version.
+    pub item_count: u32,
+}
+
+/// The branch point-in-time history seam behind `ListBranchVersions` /
+/// `RestoreBranch`. A `None` seam on the service ⇒ the two RPCs return
+/// `unimplemented` (the [`crate::script_admin::ScriptAdmin`] posture).
+///
+/// History is an append-only, bounded-FIFO sidecar beside the branch row:
+/// - **Restore APPENDS** — a restore records a NEW version whose items are the
+///   historical items; history is never rewound, so "restore forward" always
+///   works. Restoring to the current state is a dedup no-op (nothing recorded).
+/// - **History survives `DeleteBranch`** — the row unbinds, the versions stay;
+///   restore then recreates the branch from its recorded past ("recreate
+///   without losing state").
+/// - **History starts at the first mutation after upgrade** — a pre-existing
+///   branch's first non-dedup mutation seeds a `"baseline"` version from the
+///   stored row, so the first post-upgrade edit is always undoable.
+pub trait BranchHistory: Send + Sync {
+    /// List `(principal, handle)`'s recorded versions NEWEST-FIRST, paged.
+    /// `after_version` is an exclusive DESCENDING cursor (`None` = the newest
+    /// page). Returns `None` — uniformly — for an absent branch, a not-owned
+    /// branch, or a branch with no recorded history (no existence oracle).
+    ///
+    /// # Errors
+    /// A host read failure ([`GatewayError::Internal`]).
+    fn list_versions(
+        &self,
+        principal: &str,
+        handle: &str,
+        limit: usize,
+        after_version: Option<u32>,
+    ) -> Result<Option<(Vec<BranchVersionRecord>, bool)>, GatewayError>;
+
+    /// Restore `(principal, handle)` to the state recorded at `version` by
+    /// APPENDING a new version whose items are the historical items. The current
+    /// row's `parent_handle`/`description` are preserved (restore re-points
+    /// items, it does not re-fork); if the row was deleted, it is recreated from
+    /// the historical row. Returns `(manifest, new_version, deduplicated)` —
+    /// `deduplicated == true` iff the branch already matched (`new_version` 0,
+    /// nothing recorded).
+    ///
+    /// # Errors
+    /// [`GatewayError::NotFound`] — uniformly — for an unknown branch, a
+    /// not-owned branch, or an unknown version; [`GatewayError::InvalidArgument`]
+    /// if any historical item no longer resolves in the content store
+    /// (fail-closed — a manifest never points at an unresolvable blob); a host
+    /// write failure ([`GatewayError::Internal`]).
+    fn restore(
+        &self,
+        principal: &str,
+        handle: &str,
+        version: u32,
+    ) -> Result<(BranchManifest, u32, bool), GatewayError>;
+}

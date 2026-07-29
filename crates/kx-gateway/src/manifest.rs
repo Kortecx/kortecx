@@ -17,7 +17,9 @@
 
 use std::collections::BTreeMap;
 
-use kx_gateway_core::{ScaffoldLane, MANIFEST_MARKER_PATH};
+use kx_gateway_core::ScaffoldLane;
+#[cfg(test)]
+use kx_gateway_core::MANIFEST_MARKER_PATH;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -540,8 +542,12 @@ pub(crate) fn decode_manifest(bytes: &[u8]) -> Result<Vec<ManifestFile>, Manifes
                 max: MAX_MANIFEST_ROLE_BYTES,
             });
         }
-        // The marker is reserved (an internal artifact, never a planned file).
-        if f.path == MANIFEST_MARKER_PATH || !is_safe_manifest_path(&f.path) {
+        // The WHOLE `.kortecx/` namespace is reserved, not just the marker path:
+        // the guidance file is server-authored (a plan naming it would get it
+        // MODEL-authored), and the namespace holds machine state a plan must
+        // never claim. Fail-closed on untrusted plan output — a refusing plan
+        // falls back to the lane's own floor, which is the honest degrade.
+        if f.path.starts_with(".kortecx/") || !is_safe_manifest_path(&f.path) {
             return Err(ManifestError::InvalidPath { path: f.path });
         }
         if !seen.insert(f.path.clone()) {
@@ -741,14 +747,26 @@ mod tests {
             decode_manifest(abs.as_bytes()),
             Err(ManifestError::InvalidPath { .. })
         ));
-        // The reserved marker path.
-        let marker = format!(
-            "{{\"manifest\":{{\"version\":1,\"files\":[{{\"path\":\"{MANIFEST_MARKER_PATH}\",\"role\":\"r\"}}]}}}}"
-        );
-        assert!(matches!(
-            decode_manifest(marker.as_bytes()),
-            Err(ManifestError::InvalidPath { .. })
-        ));
+        // The reserved marker path — and the WHOLE `.kortecx/` namespace with it.
+        // A plan naming `.kortecx/agents.md` would get the server-authored
+        // guidance file MODEL-authored; a plan naming any other `.kortecx/` path
+        // is claiming machine state. All refused, fail-closed.
+        for reserved in [
+            MANIFEST_MARKER_PATH,
+            ".kortecx/agents.md",
+            ".kortecx/state.json",
+        ] {
+            let plan = format!(
+                "{{\"manifest\":{{\"version\":1,\"files\":[{{\"path\":\"{reserved}\",\"role\":\"r\"}}]}}}}"
+            );
+            assert!(
+                matches!(
+                    decode_manifest(plan.as_bytes()),
+                    Err(ManifestError::InvalidPath { .. })
+                ),
+                "{reserved} must be refused"
+            );
+        }
         // Duplicate path.
         let dup = "{\"manifest\":{\"version\":1,\"files\":[{\"path\":\"a.txt\",\"role\":\"r\"},\
                    {\"path\":\"a.txt\",\"role\":\"r2\"}]}}";
@@ -1094,6 +1112,7 @@ components from ./components/\"},\
             &[],
             false,
             &[],
+            None,
         )
     }
 }

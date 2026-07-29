@@ -112,10 +112,11 @@ pub use apps_manifest::{AppCapability, AppManifest, AppManifestView};
 pub use apps_run::{AppAuthor, AppRunError};
 pub use apps_view::{
     app_dataset_scoped_name, app_digest_of, AppCatalog, AppRecord, APP_DATASET_SCOPE_DOMAIN,
-    APP_DIGEST_DOMAIN, MAX_APP_ENVELOPE_BYTES,
+    APP_DIGEST_DOMAIN, APP_LIFECYCLE_DRAFT, MAX_APP_ENVELOPE_BYTES,
 };
 pub use branches_view::{
-    BranchItemRecord, BranchManifest, BranchStore, MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
+    BranchHistory, BranchItemRecord, BranchManifest, BranchStore, BranchVersionRecord,
+    MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
 };
 pub use bundles_view::{
     BundleItemRecord, BundleManifest, BundleStore, MAX_BUNDLE_DESCRIPTION_BYTES,
@@ -148,9 +149,9 @@ pub use scaffold::{
     authoring_prompt, body_is_empty, codified_consumed_path, codified_path_allowed,
     codified_source_path, derive_phase, distill_module_api, split_done_pending, strip_code_fence,
     try_committed_body, AppScaffolder, ScaffoldFile, ScaffoldLane, ScaffoldPhase, ScaffoldStatus,
-    ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE, APP_SCAFFOLD_WRITE_RECIPE_HANDLE,
-    CODIFIED_CONSUMED_PATHS, CODIFIED_SOURCE_EXTS, CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH,
-    MANIFEST_MARKER_PATH, SKELETON,
+    ScaffoldStep, AGENTS_GUIDANCE_PATH, APP_MANIFEST_PLAN_RECIPE_HANDLE,
+    APP_SCAFFOLD_WRITE_RECIPE_HANDLE, CODIFIED_CONSUMED_PATHS, CODIFIED_SOURCE_EXTS,
+    CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH, MANIFEST_MARKER_PATH, SKELETON,
 };
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays

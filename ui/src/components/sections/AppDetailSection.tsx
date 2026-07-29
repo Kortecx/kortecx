@@ -30,7 +30,7 @@ import { toUiError } from "../../kx/errors";
 import { useAppBranch, useAppFileContent, useSaveFile } from "../../kx/use-app-files";
 import { useApp, useExportAppBundle, useSaveApp } from "../../kx/use-apps";
 import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
-import { useScaffoldStatus } from "../../kx/use-scaffold-app";
+import { useScaffoldApp, useScaffoldStatus } from "../../kx/use-scaffold-app";
 import { buildFileTree } from "../../lib/file-tree";
 import { inferLanguageFromPath } from "../../lib/monaco/infer-language";
 import { loadFlag, persistFlag } from "../../lib/ui-flags";
@@ -38,6 +38,7 @@ import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppChatEditDrawer } from "../apps/AppChatEditDrawer";
+import { AppHistoryDrawer } from "../apps/AppHistoryDrawer";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { AppTriggersStrip } from "../apps/AppTriggersStrip";
 import { ConnectionsRail } from "../apps/ConnectionsRail";
@@ -173,6 +174,7 @@ export function AppDetailSection({
 
   const [runOpen, setRunOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [filesCollapsed, setFilesCollapsed] = useState<boolean>(() => loadFlag(FILES_RAIL_KEY));
   const toggleFiles = () =>
     setFilesCollapsed((v) => {
@@ -187,8 +189,28 @@ export function AppDetailSection({
   // whether this page shows progress or a file tree. The query stops polling by itself on a
   // terminal phase, so an App scaffolded long ago costs one read and nothing after it.
   const scaffoldStatus = useScaffoldStatus(tab === "files" ? handle : null, tab === "files");
-  const scaffolding =
-    scaffoldStatus.data?.phase === "planning" || scaffoldStatus.data?.phase === "writing";
+  const phase = scaffoldStatus.data?.phase;
+  const scaffolding = phase === "planning" || phase === "writing";
+  // The panel must SURVIVE the terminal transition it exists to report. Gating the
+  // mount on the live phases alone unmounted it in the same render pass the poll
+  // returned done/failed — so "Project ready", the failure notice, and the
+  // done-invalidation effect were all structurally unreachable. The latch keeps it
+  // mounted through the terminal state until the user dismisses; a failed scaffold
+  // with files still pending shows its notice even when found cold (post-restart,
+  // never active in this mount), which is where the Resume affordance lives.
+  const [sawActive, setSawActive] = useState(false);
+  const [dismissedDone, setDismissedDone] = useState(false);
+  useEffect(() => {
+    if (scaffolding) {
+      setSawActive(true);
+      setDismissedDone(false);
+    }
+  }, [scaffolding]);
+  const failedIncomplete =
+    phase === "failed" && (scaffoldStatus.data?.filesPending?.length ?? 0) > 0;
+  const terminal = phase === "done" || phase === "failed";
+  const showScaffold = scaffolding || failedIncomplete || (sawActive && terminal && !dismissedDone);
+  const resumeScaffold = useScaffoldApp();
   const items = branch.data?.items ?? [];
   const tree = useMemo(
     () => buildFileTree(items.map((it) => ({ path: it.path, contentRef: it.contentRef }))),
@@ -240,6 +262,16 @@ export function AppDetailSection({
             onClick={() => setChatOpen(true)}
           >
             <Icon name="chat" size={18} />
+          </button>
+          <button
+            type="button"
+            className="iconbtn"
+            data-testid="app-detail-history"
+            title="Project history — every recorded change, restorable in place"
+            aria-label="Project history"
+            onClick={() => setHistoryOpen(true)}
+          >
+            <Icon name="history" size={18} />
           </button>
           {hosted ? (
             // A hosted App has no blueprint, so RunApp refuses it by construction
@@ -325,12 +357,17 @@ export function AppDetailSection({
         ) : (
           <EmptyState title="Loading integrations…" />
         )
-      ) : scaffolding ? (
+      ) : showScaffold ? (
         // The scaffold runs SERVER-side and the chat surface routes here the moment the App is
         // created, so this page — not a form that has already closed — is where an author
-        // watches their project get written. Terminal phases fall through to the file tree
-        // below, which is the real artifact once there is one.
-        <ScaffoldProgress branchHandle={handle} appHandle={handle} />
+        // watches their project get written, sees it finish (or fail, with a real Resume),
+        // and only then dismisses to the file tree — the real artifact once there is one.
+        <ScaffoldProgress
+          branchHandle={handle}
+          appHandle={handle}
+          onResume={() => resumeScaffold.mutate({ handle })}
+          onDone={() => setDismissedDone(true)}
+        />
       ) : branch.isLoading ? (
         <EmptyState title="Loading project…" />
       ) : branch.isError ? (
@@ -349,6 +386,15 @@ export function AppDetailSection({
           <aside className="app-detail__tree" data-testid="app-files-sidebar">
             <div className="app-detail__tree-head">
               <span className="app-detail__tree-title">Files</span>
+              {items.some((it) => it.path === ".kortecx/agents.md") ? (
+                <span
+                  className="chip chip--tag"
+                  data-testid="app-guidance-chip"
+                  title="Guidance attached — .kortecx/agents.md steers scaffolds and runs of this app. Edit it like any file."
+                >
+                  guidance
+                </span>
+              ) : null}
               <button
                 type="button"
                 className="iconbtn iconbtn--sm app-detail__tree-toggle"
@@ -396,6 +442,15 @@ export function AppDetailSection({
           that green-lights a structurally impossible run is worse than no preflight. */}
       {runOpen && !hosted ? (
         <AppRunDrawer handle={handle} onClose={() => setRunOpen(false)} />
+      ) : null}
+      {historyOpen ? (
+        <AppHistoryDrawer
+          handle={handle}
+          locked={locked}
+          scaffolding={scaffolding}
+          hosted={hosted}
+          onClose={() => setHistoryOpen(false)}
+        />
       ) : null}
       {chatOpen ? (
         <AppChatEditDrawer handle={handle} locked={locked} onClose={() => setChatOpen(false)} />
@@ -495,13 +550,17 @@ function FilePane({
       animate="show"
     >
       <div className="app-file__head">
-        <code className="mono app-file__path" title={path}>
-          {path}
-        </code>
-        {/* The selected file's content ref. It used to sit on every tree ROW, where a
-            180px rail left the filename ~6 characters; here there is width for both,
-            and only the file you are actually looking at needs its hash. */}
-        {contentRef ? <DigestChip hex={contentRef} label={path} /> : null}
+        {/* Path + digest as ONE identity cluster: with `space-between` spreading
+            three children, the chip used to float mid-header anchored to nothing. */}
+        <span className="app-file__ident">
+          <code className="mono app-file__path" title={path}>
+            {path}
+          </code>
+          {/* The selected file's content ref. It used to sit on every tree ROW, where a
+              180px rail left the filename ~6 characters; here there is width for both,
+              and only the file you are actually looking at needs its hash. */}
+          {contentRef ? <DigestChip hex={contentRef} label={path} /> : null}
+        </span>
         {locked ? (
           <span className="muted app-file__locked" data-testid="app-locked-notice" role="note">
             This App is locked — edits are refused. Unlock it from this App's header to edit.

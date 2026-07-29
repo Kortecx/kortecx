@@ -40,6 +40,13 @@ pub const APP_MANIFEST_PLAN_RECIPE_HANDLE: &str = "kx/recipes/app-manifest-plan"
 /// file-progress set (an internal marker, never a "project file").
 pub const MANIFEST_MARKER_PATH: &str = ".kortecx/manifest.json";
 
+/// The project's GUIDANCE file — `.kortecx/agents.md`. Server-authored as a terse
+/// starter at scaffold start (only if absent, so user edits always win), user-edited
+/// in the IDE like any branch file, and consumed twice: capped prompt text steering
+/// every scaffold write, and a `guidance:` context-rail item on every run
+/// (`.kortecx/*.md` rides the rail; the `.json` machine state never does).
+pub const AGENTS_GUIDANCE_PATH: &str = ".kortecx/agents.md";
+
 /// One fixed skeleton file: a stable path + the authoring role the model fills.
 pub struct ScaffoldFile {
     /// The manifest path (stable — the deterministic e2e asserts exactly these).
@@ -232,11 +239,15 @@ pub trait AppScaffolder: Send + Sync {
     /// `branch_handle` toward `goal`. `envelope_json` is the app's opaque canonical
     /// envelope (the host parses the framework from it — gateway-core keeps app bytes
     /// opaque). The static config files are template-owned (written to disk by the
-    /// hosted-app supervisor), so only the authored files are scaffolded here. Default
-    /// impl: `Unsupported` (a scaffolder that cannot author a model file).
+    /// hosted-app supervisor), so only the authored files are scaffolded here.
+    /// `app_handle` mirrors [`AppScaffolder::start`]: the host clears the App's
+    /// draft lifecycle at Done, and the branch handle is only conventionally the
+    /// same. Default impl: `Unsupported` (a scaffolder that cannot author a model
+    /// file).
     fn start_hosted(
         &self,
         _principal: &str,
+        _app_handle: &str,
         _branch_handle: &str,
         _envelope_json: &[u8],
         _goal: &str,
@@ -249,6 +260,22 @@ pub trait AppScaffolder: Send + Sync {
     /// The current scaffold status for a branch (caller-scoped via the host's
     /// branch store).
     fn status(&self, principal: &str, branch_handle: &str) -> Result<ScaffoldStatus, GatewayError>;
+
+    /// True iff a scaffold task IS LIVE on `branch_handle` in THIS process
+    /// (`Planning`/`Writing` in the host's in-memory tracker) — the gate a
+    /// mutation like `RestoreBranch` consults before moving the manifest out
+    /// from under an active write loop. Deliberately NOT derived from
+    /// [`Self::status`]: its manifest fallback reads pending paths as `Writing`
+    /// forever after a restart, which would refuse restores on a branch nothing
+    /// is writing. Default `false` — a scaffolder that does not track liveness
+    /// never blocks a restore.
+    fn is_scaffold_active(
+        &self,
+        _principal: &str,
+        _branch_handle: &str,
+    ) -> Result<bool, GatewayError> {
+        Ok(false)
+    }
 }
 
 /// The outcome of one single-shot terminal-commit check (the host's await loop
@@ -842,6 +869,7 @@ pub fn distill_module_api(path: &str, body: &[u8]) -> Option<String> {
 /// the committed answer IS the file body verbatim (reasoning is stripped by the
 /// recipe), so the directive asks for ONLY the body — no commentary, no fences.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 pub fn authoring_prompt(
     path: &str,
     role: &str,
@@ -850,12 +878,23 @@ pub fn authoring_prompt(
     all_paths: &[&str],
     has_siblings: bool,
     sibling_apis: &[(String, String)],
+    guidance: Option<&str>,
 ) -> String {
     let siblings = if has_siblings {
         "The attached context shows the most recent sibling files already written; keep this file \
          consistent with them. "
     } else {
         ""
+    };
+    // Project guidance (`.kortecx/agents.md`) rides as PROMPT TEXT, never as a
+    // context ref — it must not widen the bounded sibling-BODY window (the
+    // per-decode batch guard). Absent ⇒ the prompt is byte-identical to what it
+    // has always been (the stability pin in this module's tests).
+    let guidance = match guidance {
+        Some(g) if !g.trim().is_empty() => {
+            format!("Project guidance (from .kortecx/agents.md) — follow it:\n{g}\n\n")
+        }
+        _ => String::new(),
     };
     match lane {
         // Hosted (Experience) lane — a real, SEPARATED framework project.
@@ -893,6 +932,7 @@ pub fn authoring_prompt(
             format!(
                 "You are authoring one file of {label}.\n\
                  App goal: {goal}\n\n\
+                 {guidance}\
                  Write the COMPLETE, production-quality contents of the file `{path}` — {role}. \
                  {tree}{apis}{siblings}\
                  Return ONLY the file body — no commentary, no explanation, and no markdown code \
@@ -907,6 +947,7 @@ pub fn authoring_prompt(
                 "You are authoring the `{path}` of a durable, governed agentic application — \
                  a file the RUNTIME PARSES, not documentation.\n\
                  App goal: {goal}\n\n\
+                 {guidance}\
                  {shape}\n\
                  Return ONLY that JSON object — no commentary, no explanation, and no markdown \
                  code fences. A file the runtime cannot parse leaves the app with nothing to run.",
@@ -918,6 +959,7 @@ pub fn authoring_prompt(
         ScaffoldLane::Contextual | ScaffoldLane::Codified => format!(
             "You are scaffolding files for a durable, governed agentic application.\n\
              App goal: {goal}\n\n\
+             {guidance}\
              Write the COMPLETE contents of the file `{path}` — {role}. {siblings}\
              Return ONLY the file body — no commentary, no explanation, and no markdown code fences.",
         ),
@@ -1086,6 +1128,7 @@ mod tests {
             &[],
             false,
             &[],
+            None,
         );
         assert!(p.contains("summarize PDFs"));
         assert!(p.contains("README.md"));
@@ -1100,8 +1143,61 @@ mod tests {
             &[],
             true,
             &[],
+            None,
         );
         assert!(p2.contains("sibling files")); // siblings included once prior files exist
+    }
+
+    #[test]
+    fn authoring_prompt_carries_guidance_when_present_and_is_byte_identical_when_absent() {
+        // The stability pin is load-bearing: an app with NO `.kortecx/agents.md`
+        // must author exactly the prompt it always did (scaffold-prompt stability
+        // across the upgrade), and every lane must carry the guidance when it exists.
+        for lane in [
+            ScaffoldLane::Contextual,
+            ScaffoldLane::Codified,
+            ScaffoldLane::Hosted("vite_react"),
+        ] {
+            let absent =
+                authoring_prompt("README.md", "the readme", "g", lane, &[], false, &[], None);
+            let empty = authoring_prompt(
+                "README.md",
+                "the readme",
+                "g",
+                lane,
+                &[],
+                false,
+                &[],
+                Some("  "),
+            );
+            assert_eq!(absent, empty, "blank guidance is the same as none");
+            assert!(!absent.contains("Project guidance"));
+            let with = authoring_prompt(
+                "README.md",
+                "the readme",
+                "g",
+                lane,
+                &[],
+                false,
+                &[],
+                Some("Always answer in one sentence."),
+            );
+            assert!(with.contains("Project guidance (from .kortecx/agents.md)"));
+            assert!(with.contains("Always answer in one sentence."));
+        }
+        // The runtime-parsed codified files carry it too — guidance may legitimately
+        // constrain the workflow the model plans.
+        let wf = authoring_prompt(
+            CODIFIED_WORKFLOW_PATH,
+            "the workflow",
+            "g",
+            ScaffoldLane::Codified,
+            &[],
+            false,
+            &[],
+            Some("Use at most two steps."),
+        );
+        assert!(wf.contains("Use at most two steps."));
     }
 
     #[test]
@@ -1117,6 +1213,7 @@ mod tests {
             &all,
             false,
             &[],
+            None,
         );
         assert!(p.contains("React"));
         assert!(p.contains("src/components/Card.tsx")); // the full set is in the prompt
@@ -1150,6 +1247,7 @@ mod tests {
             ],
             true,
             &apis,
+            None,
         );
         assert!(p.contains("expose exactly these APIs"));
         assert!(p.contains("increment, decrement, reset"));
@@ -1163,6 +1261,7 @@ mod tests {
             &[],
             true,
             &apis,
+            None,
         );
         assert!(!sched.contains("expose exactly these APIs"));
     }
@@ -1462,6 +1561,7 @@ mod tests {
             &[],
             false,
             &[],
+            None,
         );
         assert!(wf.contains("RUNTIME PARSES"), "{wf}");
         assert!(wf.contains("\"steps\""), "names the shape it must emit");
@@ -1478,6 +1578,7 @@ mod tests {
             &[],
             false,
             &[],
+            None,
         );
         let contextual = authoring_prompt(
             "reference/policy.md",
@@ -1487,13 +1588,15 @@ mod tests {
             &[],
             false,
             &[],
+            None,
         );
         assert_eq!(note, contextual);
     }
 
     #[test]
     fn tools_and_workflow_get_different_shapes() {
-        let mk = |p: &str| authoring_prompt(p, "r", "g", ScaffoldLane::Codified, &[], false, &[]);
+        let mk =
+            |p: &str| authoring_prompt(p, "r", "g", ScaffoldLane::Codified, &[], false, &[], None);
         let tools = mk(CODIFIED_TOOLS_PATH);
         assert!(tools.contains("id → version map"), "{tools}");
         // The prompt must say the grant is a REQUEST, or a model reasonably assumes naming a

@@ -6,7 +6,7 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 660 KiB raw (675,840 B — the value enforced below; keep this line in
+ * Budget: 673 KiB raw (689,152 B — the value enforced below; keep this line in
  * lock-step with it, and with the step name in ci.yml, or the doc becomes the
  * third place that disagrees). Override with KX_UI_EAGER_BUDGET_BYTES for
  * emergencies — a deliberate, reviewed override, never a silent default bump.
@@ -68,6 +68,16 @@
  *     previous 680,960 B budget, yet main's CI is green — so the local toolchain measures a
  *     few KiB heavier than CI's (both are node 22; CI resolves a later patch). The DELTA is
  *     the trustworthy half of the measurement; the absolute is not comparable across hosts.
+ *   - 670 KiB → 673 KiB (branch point-in-time history + the create route): the eager SDK
+ *     client gains listBranchVersions / restoreBranch, the `BranchVersion` /
+ *     `RestoreResult` models, the regenerated descriptor for the four new messages, and
+ *     `AppSummary.lifecycle` (the draft badge field, carried on the summary so ONE
+ *     listApps paints every badge) — all riding the eager `common.js` like every entry
+ *     above. The `/apps/create` route REGISTRATION (createRoute + validateSearch; the
+ *     screen itself is lazy) adds ~700 B via router.tsx. Measured A/B with the SDK
+ *     rebuilt from main for the baseline (same protocol as the script-primitive entry):
+ *     main 684,952 B → SDK growth 687,338 B → + the route module 688,063 B
+ *     (+3,111 B eager total); bumped to the next KiB boundary above the measured value.
  *
  * Exit 1 over budget. The printed table doubles as the measurement evidence blob.
  */
@@ -87,7 +97,7 @@ const DIST = join(UI_ROOT, "dist");
 // `deriveApp` mapping additions, and the SDK client is eager on every route. Adding a
 // per-step contract axis buys that; bumping here — in the PR that spends it — is the same move
 // #375, #363, #362, #358 and #304 each made.
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 686_080);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 689_152);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

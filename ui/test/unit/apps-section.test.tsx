@@ -1,8 +1,8 @@
 /**
- * POC-4/POC-5a Apps section — the catalog plus the agentic "New App" entry. Apps
- * render as cards with Run · Open · Inspect; an honest empty state when none.
- * POC-5a flips the don't-fake-gaps stance: a "New App" button NOW exists and toggles the
- * inline NewAppForm (the agentic scaffold). The catalog itself stays read-only.
+ * POC-4/POC-5a Apps section — the catalog HOME. Apps render as cards with Run · Open ·
+ * Inspect; an honest empty state when none. "New App" navigates to the dedicated
+ * `/apps/create` screen (the compose surface's own pins live in apps-create.test.tsx);
+ * a DRAFT app (scaffold incomplete) carries a badge and offers Resume instead of Run.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -26,6 +26,7 @@ let APPS: Array<{
   tags: string[];
   stepCount: number;
   locked: boolean;
+  lifecycle?: string;
 }> = [];
 
 vi.mock("../../src/kx/use-apps", () => ({
@@ -58,8 +59,9 @@ vi.mock("@kortecx/sdk/web", () => ({
   minimalAppEnvelope: () => ({ schema: "kortecx.app/v1" }),
 }));
 
+const navigateSpy = vi.fn();
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => navigateSpy,
   // A minimal <Link> stand-in: render an anchor, dropping router-only props.
   Link: ({ children, to, params, search, ...rest }: Record<string, unknown>) => (
     <a {...(rest as Record<string, unknown>)}>{children as never}</a>
@@ -71,6 +73,7 @@ import { AppsSection } from "../../src/components/sections/AppsSection";
 afterEach(() => {
   APPS = [];
   mutate.mockReset();
+  navigateSpy.mockReset();
 });
 
 describe("Apps section (catalog + POC-5a New App)", () => {
@@ -103,36 +106,49 @@ describe("Apps section (catalog + POC-5a New App)", () => {
     expect(screen.getByTestId("app-duplicate-apps/local/echo")).toBeInTheDocument();
   });
 
-  it("POC-5a: the New App button EXISTS (flipped from POC-4)", () => {
+  it("New App navigates to the dedicated create screen (HOME/CREATE split)", () => {
     APPS = [];
     render(<AppsSection />);
-    expect(screen.getByTestId("new-app")).toBeInTheDocument();
-    // The form is collapsed until the button is clicked.
+    const btn = screen.getByTestId("new-app");
+    expect(btn).toBeInTheDocument();
+    // No inline form on the catalog any more — create is its own page.
     expect(screen.queryByTestId("new-app-form")).toBeNull();
+    fireEvent.click(btn);
+    expect(navigateSpy).toHaveBeenCalledWith(expect.objectContaining({ to: "/apps/create" }));
   });
 
-  it("clicking New App reveals ONE prompt box with the selectors on it", () => {
-    // The surface is a prompt, not a form: one input, the kind selector, and — because the
-    // scheduled lane is the default — the authoring-mode selector beside it. There is no name
-    // field yet, because there is nothing to name until a design comes back.
+  it("New App from the Hosted tab preselects the hosted lane", () => {
     APPS = [];
-    render(<AppsSection />);
+    render(<AppsSection section="hosted" />);
     fireEvent.click(screen.getByTestId("new-app"));
-    expect(screen.getByTestId("new-app-form")).toBeInTheDocument();
-    expect(screen.getByTestId("new-app-prompt")).toBeInTheDocument();
-    expect(screen.getByTestId("new-app-kind")).toBeInTheDocument();
-    expect(screen.getByTestId("new-app-mode")).toBeInTheDocument();
-    expect(screen.getByTestId("new-app-derive")).toBeInTheDocument();
-    expect(screen.queryByTestId("new-app-name")).toBeNull();
+    expect(navigateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/apps/create", search: { kind: "hosted" } }),
+    );
   });
 
-  it("the design button stays disabled until there is a prompt", () => {
-    APPS = [];
+  it("a DRAFT app carries the badge and offers Resume instead of Run", () => {
+    APPS = [
+      {
+        handle: "apps/local/half",
+        appRef: "aa".repeat(16),
+        name: "Half Built",
+        version: "1",
+        description: "",
+        tags: [],
+        stepCount: 1,
+        locked: false,
+        lifecycle: "draft",
+      },
+    ];
     render(<AppsSection />);
-    fireEvent.click(screen.getByTestId("new-app"));
-    expect(screen.getByTestId("new-app-derive")).toBeDisabled();
-    fireEvent.change(screen.getByTestId("new-app-prompt"), { target: { value: "triage email" } });
-    expect(screen.getByTestId("new-app-derive")).not.toBeDisabled();
+    expect(screen.getByTestId("app-draft-apps/local/half")).toBeInTheDocument();
+    // Running a half-scaffolded app is a dishonest offer — Resume replaces it.
+    expect(screen.queryByTestId("app-run-apps/local/half")).toBeNull();
+    fireEvent.click(screen.getByTestId("app-resume-apps/local/half"));
+    // Resume re-fires the scaffold and goes to the App page to watch it.
+    expect(navigateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/apps/$handle", params: { handle: "apps/local/half" } }),
+    );
   });
 
   it("shows the lock-state icon on a locked App", () => {

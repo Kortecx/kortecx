@@ -113,6 +113,50 @@ class AdvanceResult:
 
 
 @dataclass(frozen=True)
+class BranchVersion:
+    """One recorded point-in-time of a branch manifest. Every non-dedup mutation
+    (create / snapshot / advance / restore) appends a version; the CAS blobs
+    behind a recorded version are never collected by branch ops, so any listed
+    version is restorable."""
+
+    version: int  # 1-based per-handle version, monotone (1 = oldest retained)
+    branch_ref: str  # server-derived manifest hash at this version, as hex (display only)
+    recorded_unix_ms: int  # sidecar wall-clock at record time; advisory
+    cause: str  # "baseline" | "create" | "snapshot" | "advance" | "restore"
+    item_count: int  # manifest size at this version
+
+    @classmethod
+    def from_proto(cls, v: "_g.BranchVersion") -> "BranchVersion":
+        return cls(
+            version=v.version,
+            branch_ref=hexids.encode(v.branch_ref),
+            recorded_unix_ms=v.recorded_unix_ms,
+            cause=v.cause,
+            item_count=v.item_count,
+        )
+
+
+@dataclass(frozen=True)
+class RestoreResult:
+    """The outcome of a ``RestoreBranch`` — restore APPENDS a new version whose
+    items are the historical items (history is never rewound; a restore is itself
+    history). ``deduplicated`` is True iff the branch already matched the requested
+    version (no-op, nothing recorded, ``new_version`` = 0)."""
+
+    branch: Branch  # the manifest after the restore
+    new_version: int  # the version the restore recorded (0 when deduplicated)
+    deduplicated: bool
+
+    @classmethod
+    def from_proto(cls, r: "_g.RestoreBranchResponse") -> "RestoreResult":
+        return cls(
+            branch=Branch.from_proto(r.branch),
+            new_version=r.new_version,
+            deduplicated=r.deduplicated,
+        )
+
+
+@dataclass(frozen=True)
 class EditProposal:
     """POC-5d: the PROPOSE half of an agentic branch edit — the model's proposed new
     body for a file plus its current body, WITHOUT having advanced the branch. The

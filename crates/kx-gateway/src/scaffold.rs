@@ -48,7 +48,7 @@ use kx_gateway_core::{
     try_committed_body, AppCatalog, AppScaffolder, BinderError, BranchManifest, BranchStore,
     ContentReader, ContentWriter, GatewayError as CoreError, HostedFileSource, JournalReader,
     LockStore, RecipeBinder, RunSubmitter, ScaffoldFile, ScaffoldLane, ScaffoldPhase,
-    ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
+    ScaffoldStatus, ScaffoldStep, AGENTS_GUIDANCE_PATH, APP_MANIFEST_PLAN_RECIPE_HANDLE,
     APP_SCAFFOLD_WRITE_RECIPE_HANDLE, CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH,
     MANIFEST_MARKER_PATH, SKELETON,
 };
@@ -121,6 +121,38 @@ const SIBLING_CONTEXT_MAX: usize = 2;
 /// lane that wrote exactly 5 files before. The planner is asked for 2-6; this is the
 /// fail-closed ceiling if it ignores that.
 const MAX_SCHEDULED_EXTRA_FILES: usize = 8;
+
+/// How many BYTES of `.kortecx/agents.md` ride each authoring prompt as guidance
+/// text. Small and TRUNCATING (char-boundary safe) where the run-time rail
+/// REFUSES over budget: scaffold guidance is advisory steering, the rail is
+/// identity-bearing context — the asymmetry is deliberate. Prompt text, never a
+/// context ref, so it can never widen the bounded sibling-BODY window
+/// ([`SIBLING_CONTEXT_MAX`], the `n_batch` guard).
+const AGENTS_GUIDANCE_PROMPT_MAX: usize = 2048;
+
+/// The deterministic `.kortecx/agents.md` starter body (no model step). Terse on
+/// purpose: it rides every run's context rail, so every byte here is budget the
+/// project's own files could have used.
+fn agents_starter(goal: &str, files: &[&str]) -> String {
+    let mut out = String::with_capacity(256 + files.len() * 24);
+    out.push_str("# Agent guidance\n\n");
+    out.push_str("Goal: ");
+    out.push_str(goal.trim());
+    out.push_str(
+        "\n\nEdit this file to steer the agents that write and run this app — \
+                  style, constraints, and what matters most. It is read when project \
+                  files are authored and on every run.\n",
+    );
+    if !files.is_empty() {
+        out.push_str("\nProject files:\n");
+        for f in files {
+            out.push_str("- ");
+            out.push_str(f);
+            out.push('\n');
+        }
+    }
+    out
+}
 
 /// POC-6: the HOSTED lane's graceful fallback when manifest planning is unavailable
 /// (no served model / a decode failure) — the framework template's model-AUTHORED files
@@ -221,11 +253,66 @@ pub(crate) struct HostScaffolder {
     /// Deliberately NOT stored in `Progress`: `set()` replaces that struct wholesale on
     /// every phase change, so a field there would be erased by the first transition.
     lane_fallback: Arc<Mutex<HashMap<String, Vec<String>>>>,
-    /// The App catalog, for the CODIFIED fold-back only: once the project is written, the
-    /// configuration the model authored is read back and saved onto the App. `None` on a
-    /// serve with no catalog wired — the scaffold still writes every file, it just cannot
-    /// promote what it wrote (and says so).
+    /// The App catalog: the CODIFIED fold-back (once the project is written, the
+    /// configuration the model authored is read back and saved onto the App) AND the
+    /// draft-lifecycle clear at Done. `None` on a serve with no catalog wired — the
+    /// scaffold still writes every file, it just cannot promote what it wrote (and
+    /// says so), and the draft badge simply never clears itself.
     catalog: Option<Arc<dyn AppCatalog>>,
+    /// The durable mirror of `tracker` (a `scaffold_state` row in apps.db). Every
+    /// `set`/`set_writing` writes through it, so a FAILED scaffold still reads
+    /// `failed` (with its reason) after a serve restart, and a live-phase row with
+    /// no in-process task reads as interrupted. `None` ⇒ tracker-only (the
+    /// pre-durability behaviour, kept for fixtures that wire no store).
+    state: Option<Arc<dyn crate::apps::ScaffoldStateStore>>,
+}
+
+/// The durable string form of a [`ScaffoldPhase`] (the `scaffold_state.phase`
+/// column). Total both ways; an unknown stored string reads as `None`.
+fn phase_str(phase: ScaffoldPhase) -> &'static str {
+    match phase {
+        ScaffoldPhase::Planning => "planning",
+        ScaffoldPhase::Writing => "writing",
+        ScaffoldPhase::Done => "done",
+        ScaffoldPhase::Failed => "failed",
+    }
+}
+
+fn phase_from_str(s: &str) -> Option<ScaffoldPhase> {
+    match s {
+        "planning" => Some(ScaffoldPhase::Planning),
+        "writing" => Some(ScaffoldPhase::Writing),
+        "done" => Some(ScaffoldPhase::Done),
+        "failed" => Some(ScaffoldPhase::Failed),
+        _ => None,
+    }
+}
+
+/// The phase `status()` reports when NO live task tracks this branch, given the
+/// durable `scaffold_state` row (if any) and the manifest-derived guess.
+///
+/// - A durable `failed` keeps its reason across restarts (the manifest fallback
+///   used to read a failed scaffold as `Writing` forever, with an empty detail).
+/// - A durable LIVE phase (`planning`/`writing`) with no live task is a scaffold
+///   a dead serve was driving — report it `Failed` with an honest "interrupted"
+///   detail; the committed plan marker makes the resume deterministic.
+/// - `done` / no row / an unknown stored string: the manifest-derived guess was
+///   always honest here.
+///
+/// Pure so the restart behaviour is testable without a serve.
+fn recover_phase(
+    durable: Option<(String, String)>,
+    derived: ScaffoldPhase,
+) -> (ScaffoldPhase, String) {
+    match durable.and_then(|(p, d)| phase_from_str(&p).map(|p| (p, d))) {
+        Some((ScaffoldPhase::Failed, detail)) => (ScaffoldPhase::Failed, detail),
+        Some((ScaffoldPhase::Planning | ScaffoldPhase::Writing, _)) => (
+            ScaffoldPhase::Failed,
+            "the scaffold was interrupted by a serve restart — resume to finish the remaining files"
+                .to_string(),
+        ),
+        _ => (derived, String::new()),
+    }
 }
 
 impl HostScaffolder {
@@ -243,6 +330,7 @@ impl HostScaffolder {
         branches: Arc<dyn BranchStore>,
         locks: Option<Arc<dyn LockStore>>,
         catalog: Option<Arc<dyn AppCatalog>>,
+        state: Option<Arc<dyn crate::apps::ScaffoldStateStore>>,
     ) -> Self {
         Self {
             binder,
@@ -255,6 +343,7 @@ impl HostScaffolder {
             tracker: Arc::new(Mutex::new(HashMap::new())),
             lane_fallback: Arc::new(Mutex::new(HashMap::new())),
             catalog,
+            state,
         }
     }
 
@@ -293,7 +382,7 @@ impl HostScaffolder {
         }
     }
 
-    fn set(&self, branch: &str, phase: ScaffoldPhase, detail: &str) {
+    fn set(&self, principal: &str, branch: &str, phase: ScaffoldPhase, detail: &str) {
         if let Ok(mut t) = self.tracker.lock() {
             t.insert(
                 branch.to_string(),
@@ -306,14 +395,29 @@ impl HostScaffolder {
                 },
             );
         }
+        self.mirror(principal, branch, phase, detail);
+    }
+
+    /// Write the phase through to the durable `scaffold_state` row. Advisory —
+    /// a failure is logged, never fatal (the tracker remains this process's
+    /// truth; durability only affects what a RESTARTED serve reports).
+    fn mirror(&self, principal: &str, branch: &str, phase: ScaffoldPhase, detail: &str) {
+        if let Some(state) = self.state.as_ref() {
+            if let Err(e) = state.record_scaffold_state(principal, branch, phase_str(phase), detail)
+            {
+                tracing::warn!(branch = %branch, error = %e, "scaffold state not persisted");
+            }
+        }
     }
 
     /// POC-6: record the file currently being authored + the live token-stream ids
     /// (the write/plan mote streams via the broker keyed by `mote_id`; the browser
     /// gates on `instance_id`). Called once the run + terminal mote are known, so
     /// `GetScaffoldStatus` can hand the browser the `(instance, mote)` pair.
+    #[allow(clippy::too_many_arguments)]
     fn set_writing(
         &self,
+        principal: &str,
         branch: &str,
         phase: ScaffoldPhase,
         path: &str,
@@ -332,6 +436,9 @@ impl HostScaffolder {
                 },
             );
         }
+        // The stream ids are process-lifetime values (a restarted serve cannot
+        // resume the stream) — only the phase + path are worth surviving.
+        self.mirror(principal, branch, phase, path);
     }
 
     /// Poll the read-only projection until the terminal mote commits a non-empty
@@ -379,13 +486,80 @@ impl HostScaffolder {
             .run_inner(&principal, &app_handle, &branch, &goal, mode)
             .await
         {
-            Ok(()) => self.set(&branch, ScaffoldPhase::Done, ""),
+            Ok(()) => {
+                self.set(&principal, &branch, ScaffoldPhase::Done, "");
+                self.clear_draft(&principal, &app_handle);
+            }
             Err(e) => {
                 let detail = format!("{e}");
                 tracing::warn!(branch = %branch, error = %detail, "App scaffold failed");
-                self.set(&branch, ScaffoldPhase::Failed, &detail);
+                self.set(&principal, &branch, ScaffoldPhase::Failed, &detail);
             }
         }
+    }
+
+    /// Clear the App's draft lifecycle at scaffold Done. Advisory — a failure is
+    /// logged (the badge stays until the next successful resume), never fatal.
+    fn clear_draft(&self, principal: &str, app_handle: &str) {
+        if let Some(catalog) = self.catalog.as_ref() {
+            if let Err(e) = catalog.set_lifecycle(principal, app_handle, "") {
+                tracing::warn!(app = %app_handle, error = %e, "draft lifecycle not cleared");
+            }
+        }
+    }
+
+    /// Write the server-authored `.kortecx/agents.md` STARTER into the branch —
+    /// only if absent, so a resume (or the user's own edits) always wins. The
+    /// same put+advance mechanics as the manifest marker; advisory (a failure is
+    /// logged, never fatal). Deterministic — no model step, no decode cost.
+    fn persist_agents_starter(&self, principal: &str, branch: &str, goal: &str, files: &[&str]) {
+        match self.branches.get(principal, branch) {
+            Ok(Some(m)) if m.items.iter().any(|it| it.path == AGENTS_GUIDANCE_PATH) => return,
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(branch = %branch, error = %e, "agents.md probe failed");
+                return;
+            }
+        }
+        let body = agents_starter(goal, files);
+        match self.writer.put(body.as_bytes()) {
+            Ok((r, _existed)) => {
+                if let Err(e) = self
+                    .branches
+                    .advance(principal, branch, AGENTS_GUIDANCE_PATH, r)
+                {
+                    tracing::warn!(branch = %branch, error = %e, "failed to persist agents.md starter");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(branch = %branch, error = %e, "failed to store agents.md starter");
+            }
+        }
+    }
+
+    /// Read the project's `.kortecx/agents.md` guidance, capped to
+    /// [`AGENTS_GUIDANCE_PROMPT_MAX`] bytes of prompt text (char-boundary safe).
+    /// `None` when absent/unreadable — a scaffold never fails over guidance.
+    ///
+    /// Truncation is acceptable HERE (advisory steering of an authoring prompt)
+    /// where the run-time rail REFUSES over budget (identity-bearing context) —
+    /// the two consumers deliberately differ.
+    fn read_guidance(&self, principal: &str, branch: &str) -> Option<String> {
+        let manifest = self.branches.get(principal, branch).ok()??;
+        let item = manifest
+            .items
+            .iter()
+            .find(|it| it.path == AGENTS_GUIDANCE_PATH)?;
+        let body = self
+            .content
+            .get(&ContentRef::from_bytes(item.content_ref))?;
+        let text = String::from_utf8_lossy(&body);
+        let mut end = text.len().min(AGENTS_GUIDANCE_PROMPT_MAX);
+        while end < text.len() && !text.is_char_boundary(end) {
+            end += 1;
+        }
+        let capped = &text[..end.min(text.len())];
+        (!capped.trim().is_empty()).then(|| capped.to_string())
     }
 
     async fn run_inner(
@@ -410,6 +584,11 @@ impl HostScaffolder {
             .resolve_manifest_scheduled(principal, branch, goal, mode)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        // Guidance: seed the starter (only if absent — a resume's edited guidance
+        // wins), THEN read it back, so even the first file is steered and an
+        // edit made between interrupt and resume steers the remaining files.
+        self.persist_agents_starter(principal, branch, goal, &all_paths);
+        let guidance = self.read_guidance(principal, branch);
         let mut prior: Vec<(String, String)> = Vec::new();
         for file in &files {
             // POC-5b: a lock applied before/during the scaffold halts it cleanly.
@@ -435,7 +614,7 @@ impl HostScaffolder {
                 continue;
             }
 
-            self.set(branch, ScaffoldPhase::Writing, &file.path);
+            self.set(principal, branch, ScaffoldPhase::Writing, &file.path);
             // The SCHEDULED authoring directive for every file, including the planner's
             // extras — they are notes for an automation, not source for a web project. The
             // codified lane differs only for the two files the runtime parses, which get a
@@ -450,6 +629,7 @@ impl HostScaffolder {
                     scheduled_lane(mode),
                     &all_paths,
                     &prior,
+                    guidance.as_deref(),
                 )
                 .await?;
             self.branches
@@ -510,6 +690,7 @@ impl HostScaffolder {
                 // Say so on the wire instead of leaving `detail` empty — a five-file app
                 // is otherwise indistinguishable from a planner that chose to add nothing.
                 self.set(
+                    principal,
                     branch,
                     ScaffoldPhase::Planning,
                     "planning unavailable — writing the base set only",
@@ -695,6 +876,7 @@ impl HostScaffolder {
         // Stream the planner's decode into the same live surface (the marker path,
         // so the browser highlights it as JSON — "watch it plan").
         self.set_writing(
+            principal,
             branch,
             ScaffoldPhase::Planning,
             MANIFEST_MARKER_PATH,
@@ -834,16 +1016,26 @@ impl HostScaffolder {
     /// Drive a HOSTED-app scaffold to terminal: author the framework template's
     /// model-authored files (the visible page + README) into the branch. The static
     /// config files are template-owned (the supervisor writes them to disk).
-    async fn run_hosted(self, principal: String, branch: String, framework: String, goal: String) {
+    async fn run_hosted(
+        self,
+        principal: String,
+        app_handle: String,
+        branch: String,
+        framework: String,
+        goal: String,
+    ) {
         match self
             .run_hosted_inner(&principal, &branch, &framework, &goal)
             .await
         {
-            Ok(()) => self.set(&branch, ScaffoldPhase::Done, ""),
+            Ok(()) => {
+                self.set(&principal, &branch, ScaffoldPhase::Done, "");
+                self.clear_draft(&principal, &app_handle);
+            }
             Err(e) => {
                 let detail = format!("{e}");
                 tracing::warn!(branch = %branch, error = %detail, "hosted-app scaffold failed");
-                self.set(&branch, ScaffoldPhase::Failed, &detail);
+                self.set(&principal, &branch, ScaffoldPhase::Failed, &detail);
             }
         }
     }
@@ -884,6 +1076,10 @@ impl HostScaffolder {
             .resolve_manifest_hosted(principal, branch, framework, goal)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        // Guidance: seed the starter (only if absent), then read it back — the
+        // same order as the scheduled lane, for the same two reasons.
+        self.persist_agents_starter(principal, branch, goal, &all_paths);
+        let guidance = self.read_guidance(principal, branch);
         // Author the framework ENTRY last. The entry (`src/App.tsx`, `app/page.tsx`, …) is the
         // file that IMPORTS and MOUNTS every child, so authoring it after its children is what
         // lets each child's distilled export/prop API reach the entry's authoring prompt — a
@@ -919,7 +1115,7 @@ impl HostScaffolder {
                 ));
                 continue;
             }
-            self.set(branch, ScaffoldPhase::Writing, &file.path);
+            self.set(principal, branch, ScaffoldPhase::Writing, &file.path);
             let body_ref = self
                 .write_one(
                     principal,
@@ -930,6 +1126,7 @@ impl HostScaffolder {
                     ScaffoldLane::Hosted(framework),
                     &all_paths,
                     &prior,
+                    guidance.as_deref(),
                 )
                 .await?;
             self.branches
@@ -982,6 +1179,7 @@ impl HostScaffolder {
     /// the prompt is DATA only. `path`/`role` come from either the fixed
     /// skeleton, the hosted template, or a dynamically-planned manifest file.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     async fn write_one(
         &self,
         principal: &str,
@@ -992,6 +1190,7 @@ impl HostScaffolder {
         lane: ScaffoldLane<'_>,
         all_paths: &[&str],
         prior: &[(String, String)],
+        guidance: Option<&str>,
     ) -> Result<[u8; 32], CoreError> {
         // Bound the sibling BODY context to the most RECENT files. A dynamic project can
         // hold many files, and the write mote assembles every context ref's BODY into
@@ -1030,6 +1229,7 @@ impl HostScaffolder {
             all_paths,
             !ctx.is_empty(),
             &sibling_apis,
+            guidance,
         );
         let args = serde_json::to_vec(&serde_json::json!({ "prompt": prompt }))
             .map_err(|e| CoreError::Internal(format!("scaffold args: {e}")))?;
@@ -1064,6 +1264,7 @@ impl HostScaffolder {
         // POC-6: surface the run instance + write mote so `GetScaffoldStatus` hands
         // the browser the `(instance, mote)` pair to stream this file's tokens.
         self.set_writing(
+            principal,
             branch,
             ScaffoldPhase::Writing,
             path,
@@ -1131,7 +1332,7 @@ impl AppScaffolder for HostScaffolder {
             branch_handle,
             SKELETON.iter().map(|f| f.path.to_string()).collect(),
         );
-        self.set(branch_handle, ScaffoldPhase::Planning, "");
+        self.set(principal, branch_handle, ScaffoldPhase::Planning, "");
         // Spawn the background loop and return immediately (the RPC is non-blocking).
         let driver = self.clone();
         let (p, a, b, g) = (
@@ -1149,6 +1350,7 @@ impl AppScaffolder for HostScaffolder {
     fn start_hosted(
         &self,
         principal: &str,
+        app_handle: &str,
         branch_handle: &str,
         envelope_json: &[u8],
         goal: &str,
@@ -1175,16 +1377,25 @@ impl AppScaffolder for HostScaffolder {
                 .map(|f| f.path.to_string())
                 .collect(),
         );
-        self.set(branch_handle, ScaffoldPhase::Planning, "");
+        self.set(principal, branch_handle, ScaffoldPhase::Planning, "");
         let driver = self.clone();
-        let (p, b, f, g) = (
+        let (principal_owned, app_owned, branch_owned, framework_owned, goal_owned) = (
             principal.to_string(),
+            app_handle.to_string(),
             branch_handle.to_string(),
             framework.to_string(),
             goal.to_string(),
         );
         tokio::spawn(async move {
-            driver.run_hosted(p, b, f, g).await;
+            driver
+                .run_hosted(
+                    principal_owned,
+                    app_owned,
+                    branch_owned,
+                    framework_owned,
+                    goal_owned,
+                )
+                .await;
         });
         Ok(resumed)
     }
@@ -1214,26 +1425,31 @@ impl AppScaffolder for HostScaffolder {
             })
             .unwrap_or_else(|| SKELETON.iter().map(|f| f.path.to_string()).collect());
         let (files_done, files_pending) = split_done_pending(&planned, &manifest_paths);
-        let (phase, detail, writing_path, writing_instance_id, writing_mote_id) = match self
+        let live = self
             .tracker
             .lock()
             .ok()
-            .and_then(|t| t.get(branch_handle).cloned())
+            .and_then(|t| t.get(branch_handle).cloned());
+        let (phase, detail, writing_path, writing_instance_id, writing_mote_id) = if let Some(p) =
+            live
         {
-            Some(p) => (
+            (
                 p.phase,
                 p.detail,
                 p.writing_path,
                 p.writing_instance_id,
                 p.writing_mote_id,
-            ),
-            None => (
-                derive_phase(&files_done, &files_pending),
-                String::new(),
-                None,
-                None,
-                None,
-            ),
+            )
+        } else {
+            // No live task in THIS process: consult the durable mirror before
+            // the manifest guess (see `recover_phase` for the decision table).
+            let durable = self
+                .state
+                .as_ref()
+                .and_then(|s| s.read_scaffold_state(principal, branch_handle).ok())
+                .flatten();
+            let (phase, detail) = recover_phase(durable, derive_phase(&files_done, &files_pending));
+            (phase, detail, None, None, None)
         };
         Ok(ScaffoldStatus {
             phase,
@@ -1244,6 +1460,19 @@ impl AppScaffolder for HostScaffolder {
             writing_instance_id,
             writing_mote_id,
         })
+    }
+
+    fn is_scaffold_active(&self, _principal: &str, branch_handle: &str) -> Result<bool, CoreError> {
+        // The LIVE-task probe (the RestoreBranch gate): only the in-process
+        // tracker counts. `status()`'s manifest fallback deliberately does NOT —
+        // after a restart it reads pending paths as `Writing` forever, and a
+        // restore on a branch nothing is writing must not be refused.
+        Ok(self
+            .tracker
+            .lock()
+            .ok()
+            .and_then(|t| t.get(branch_handle).cloned())
+            .is_some_and(|p| matches!(p.phase, ScaffoldPhase::Planning | ScaffoldPhase::Writing)))
     }
 }
 
@@ -1256,6 +1485,84 @@ mod tests {
             path: path.to_string(),
             role: "a role".into(),
         }
+    }
+
+    // ---- the agents.md starter (deterministic, server-authored) ------------
+
+    #[test]
+    fn agents_starter_names_the_goal_and_planned_files_and_stays_terse() {
+        let body = agents_starter("summarize the changelog", &["README.md", "skills/main.md"]);
+        assert!(body.starts_with("# Agent guidance"));
+        assert!(body.contains("Goal: summarize the changelog"));
+        assert!(body.contains("- README.md"));
+        assert!(body.contains("- skills/main.md"));
+        assert!(body.contains("Edit this file"));
+        // Terse on purpose: the starter rides every run's 12 KiB rail budget.
+        assert!(
+            body.len() < 1024,
+            "starter must stay well under 1 KiB: {}",
+            body.len()
+        );
+        // Deterministic — no clock, no randomness.
+        assert_eq!(
+            body,
+            agents_starter("summarize the changelog", &["README.md", "skills/main.md"])
+        );
+    }
+
+    // ---- restart recovery (the durable scaffold_state fallback) ------------
+
+    #[test]
+    fn a_failed_scaffold_reads_failed_after_restart_with_its_reason() {
+        // THE defect this table exists for: the manifest fallback read a failed
+        // scaffold as Writing forever with an empty detail once the tracker died.
+        let (phase, detail) = recover_phase(
+            Some(("failed".into(), "step timed out".into())),
+            ScaffoldPhase::Writing,
+        );
+        assert!(matches!(phase, ScaffoldPhase::Failed));
+        assert_eq!(detail, "step timed out");
+    }
+
+    #[test]
+    fn a_live_phase_with_no_live_task_reads_interrupted() {
+        // A crash can never record its own failure — a durable planning/writing
+        // row with no in-process task IS the crash evidence.
+        for stored in ["planning", "writing"] {
+            let (phase, detail) = recover_phase(
+                Some((stored.into(), "src/App.tsx".into())),
+                ScaffoldPhase::Writing,
+            );
+            assert!(matches!(phase, ScaffoldPhase::Failed), "{stored}");
+            assert!(detail.contains("interrupted"), "{stored}");
+            assert!(detail.contains("resume"), "{stored}");
+        }
+    }
+
+    #[test]
+    fn done_no_row_and_garbage_all_fall_through_to_the_manifest_guess() {
+        for durable in [
+            None,
+            Some(("done".to_string(), String::new())),
+            Some(("garbage-phase".to_string(), "x".to_string())),
+        ] {
+            let (phase, detail) = recover_phase(durable, ScaffoldPhase::Done);
+            assert!(matches!(phase, ScaffoldPhase::Done));
+            assert!(detail.is_empty());
+        }
+    }
+
+    #[test]
+    fn phase_strings_round_trip() {
+        for p in [
+            ScaffoldPhase::Planning,
+            ScaffoldPhase::Writing,
+            ScaffoldPhase::Done,
+            ScaffoldPhase::Failed,
+        ] {
+            assert_eq!(phase_from_str(phase_str(p)), Some(p));
+        }
+        assert_eq!(phase_from_str("unknown"), None);
     }
 
     #[test]

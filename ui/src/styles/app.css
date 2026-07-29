@@ -846,10 +846,25 @@ button:disabled {
   border-radius: 6px;
   padding: 0.35rem;
   margin: 0;
+  /* The bare `button` rule is the PRIMARY action's styling — gradient, accent
+   * glow, and a flex-start pin. Every class that is not that button has to
+   * undo it, and an icon button that keeps the glow wears the call-to-action's
+   * halo: in the App card head the four real buttons glowed while the two
+   * STATUS glyphs (an open padlock, a Cloud-only share) did not, so the only
+   * visual difference in that row said nothing about what was clickable. */
+  box-shadow: none;
+  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+/* A destructive icon action reads as destructive on hover, the same way the
+ * kebab's Delete item does — an unmarked glyph beside Duplicate is too easy to
+ * hit for an action that cascades. */
+.iconbtn--danger:hover {
+  color: var(--error);
+  border-color: var(--error);
 }
 .iconbtn:hover {
   color: var(--fg);
@@ -2388,6 +2403,15 @@ select {
   gap: 0.4rem;
   margin: 0.4rem 0;
 }
+/* A text input in a chip-row (the Integrations endpoint/credential pair): with no
+ * width it sits at the UA's size=20 intrinsic (~11rem), which clips its own
+ * placeholder mid-glyph — the accepted formats are never legible. Flex to the row's
+ * width instead; min-width lets it shrink on a narrow rail without overflowing.
+ * Scoped to `.input` so a chip-row's checkboxes/number fields keep their size. */
+.chip-row input.input {
+  flex: 1 1 15rem;
+  min-width: 0;
+}
 .chip--active {
   border-color: var(--accent);
   color: var(--accent);
@@ -3073,6 +3097,19 @@ select {
   text-decoration: none;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* An App card carries the most controls of any card (run · schedule · lock · share ·
+ * download · kebab), and the cluster never shrinks — so in a three-up grid the NAME
+ * was left ~120px and a two-word title like "Daily Digest" wrapped. Give the name a
+ * readable floor and let the CLUSTER drop to its own right-aligned line instead:
+ * every affordance stays visible, and the name gets a full line to itself. Scoped to
+ * the Apps catalog — the other card grids carry two controls and already fit. */
+.card-grid[data-testid="apps-catalog"] .card-grid__head {
+  flex-wrap: wrap;
+  row-gap: 0.35rem;
+}
+.card-grid[data-testid="apps-catalog"] .card-grid__title {
+  flex: 1 1 14ch;
 }
 /* Clamp a long display NAME to two lines. Slice 2.5 truncated the handle; the name was
    left unbounded, so "hello world app with form to collect user information and submit
@@ -3918,6 +3955,10 @@ button.card-grid__title:hover {
 .btn-primary {
   display: inline-flex;
   align-items: center;
+  /* `.btn-ghost` resets these; this never did, so in every header and dialog
+   * footer the PRIMARY button sat 6px lower than the secondary beside it. */
+  margin: 0;
+  align-self: center;
   gap: 0.35rem;
   padding: 0.36rem 0.72rem;
   border: 1px solid var(--primary-h);
@@ -4172,6 +4213,33 @@ button.card-grid__title:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
+/* The zoom / fit controls ship with a hardcoded white tile and a dark glyph. The
+ * tile survived into dark theme while the glyph inherited the near-white page
+ * colour, leaving white-on-white buttons — the minus was invisible outright.
+ * Paint both from tokens so the control is legible in either theme. */
+.react-flow__controls-button {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+.react-flow__controls-button:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+/* The library's default node fill and viewport mask are a fixed light grey that
+ * belongs to neither theme: on the review canvas the map read as three blank
+ * placeholder blocks — a loading skeleton, not a map of the workflow. Paint the
+ * nodes in the accent that marks a step everywhere else, and dim the off-viewport
+ * area with the same scrim the drawers use. */
+.dag-minimap .react-flow__minimap-node {
+  fill: var(--accent);
+  stroke: var(--border-md);
+}
+.dag-minimap .react-flow__minimap-mask {
+  fill: var(--scrim-color);
+}
 
 /* ---- DAG node-detail drawer (overlay; no layout thrash) ---- */
 .node-drawer__scrim {
@@ -4211,6 +4279,33 @@ button.card-grid__title:hover {
   margin: 0;
   font-size: 1.05rem;
 }
+/* A FAILURE dialog must not be mistakable for the success one — same card, same
+ * title weight, same accent primary was exactly the complaint. */
+.dialog-card--danger {
+  border-left: 3px solid var(--danger, #c03500);
+}
+.dialog-card--danger .dialog-card__title {
+  color: var(--danger, #c03500);
+}
+/* The raw server error, collapsed: precise for whoever needs it, out of the way
+ * for everyone else. */
+.dialog-card__tech {
+  font-size: 0.75rem;
+}
+.dialog-card__tech summary {
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+.dialog-card__tech code {
+  display: block;
+  margin-top: 0.3rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-2);
+  word-break: break-word;
+}
 .dialog-card__label {
   font-size: 0.8rem;
   font-weight: 600;
@@ -4221,6 +4316,27 @@ button.card-grid__title:hover {
   justify-content: flex-end;
   gap: 0.5rem;
   margin-top: 0.35rem;
+}
+/* The review footer: Cancel · Start over · Create app. It used
+ * `.register-tool-form__row`, a TWO-column grid (1fr 0.4fr) built for a two-button
+ * row — so the third button wrapped to a second row and the footer rendered as a
+ * staircase. A footer is a row: the ways out on the left, the commit on the right,
+ * matching every dialog in the console. */
+.new-app-form__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+.new-app-form__actions [data-testid="new-app-approve"] {
+  order: 3;
+  margin-left: auto;
+}
+.new-app-form__actions [data-testid="new-app-start-over"] {
+  order: 2;
+}
+.new-app-form__actions [data-testid="new-app-cancel"] {
+  order: 1;
 }
 .node-drawer {
   position: absolute;
@@ -4268,6 +4384,18 @@ button.card-grid__title:hover {
    * mode — too faint for a full-page overlay); dark-on-both is the scrim convention. */
   background: rgba(10, 12, 16, 0.42);
 }
+/* A confirm NESTED inside an overlay drawer (the history drawer's restore dialog).
+ * The drawer sits at the overlay z (50), so scrim 49 paints UNDER it — the page
+ * dims while the drawer stays lit with its buttons apparently live. The nested
+ * pair ladders one step higher: scrim above the drawer, card above the scrim.
+ * Additive — a drawer's OWN scrim keeps the base --overlay z, since it must not
+ * dim the drawer it belongs to. */
+.node-drawer__scrim--above-drawer {
+  z-index: 51;
+}
+.dialog-center--above-drawer {
+  z-index: 52;
+}
 .node-drawer__head {
   display: flex;
   align-items: center;
@@ -4276,6 +4404,11 @@ button.card-grid__title:hover {
 }
 .node-drawer__id {
   font-size: 0.95rem;
+}
+/* A plain-text drawer heading (History etc.) beside the action cluster. */
+.node-drawer__title {
+  font-size: 0.95rem;
+  font-weight: 700;
 }
 /* Right-aligned action cluster in a drawer head (Open / Open-in-new-tab / Close). */
 .node-drawer__head-actions {
@@ -4807,7 +4940,9 @@ button.card-grid__title:hover {
 /* Step / edge config drawer fields (reuses .node-drawer) */
 .builder-field {
   display: block;
-  margin: 0.6rem 0;
+  /* Flex column ⇒ no margin collapse: adjacent fields stack BOTH margins, and a
+   * one-chip-row axis ballooned to ~90px of mostly air. */
+  margin: 0.35rem 0;
 }
 .builder-field__label {
   display: block;
@@ -4936,6 +5071,24 @@ button.card-grid__title:hover {
   padding: 0.05rem 0.4rem;
   font-size: 0.7rem;
 }
+/* A created-but-scaffold-incomplete App (lifecycle 'draft'): the badge the catalog
+ * paints from ONE ListApps. Accent-toned so it reads as "needs your attention",
+ * token-only ⇒ both themes. */
+.chip--draft {
+  flex-direction: row;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* In the catalog TABLE the chip follows the name inline (the card head is a
+ * gapped flex row; a table cell is not) — give it its own breathing room. */
+.linkbtn + .chip--draft {
+  margin-left: 0.4rem;
+}
 
 /* T-FEAT1 — the model's `<think>` reasoning as a collapsed disclosure above the
  * answer (display-only; the answer always renders below). */
@@ -5000,6 +5153,24 @@ button.card-grid__title:hover {
   flex-direction: column;
   gap: 0.5rem;
 }
+/* The form's labelled groups (Framework, App name, the review's Skills/Tools
+ * rails): a fieldset with NO rule ships the UA's groove border, default
+ * padding and 2px inline margins — a stray sunken box amid flat cards.
+ * Reset to the app's flat vocabulary; the legend is the visible label. */
+.new-app-form__rail {
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+.new-app-form__rail legend {
+  padding: 0;
+  margin-bottom: 0.25rem;
+  font-size: 0.8rem;
+}
+.new-app-form__rail input[type="text"] {
+  width: 100%;
+}
 /* Top-RIGHT: kind first, then — only for a scheduled app — the authoring mode to its right.
    `flex-end` is what puts them at the right; `wrap` is what keeps them from overflowing the
    card on a narrow viewport instead of clipping the second selector. */
@@ -5008,7 +5179,10 @@ button.card-grid__title:hover {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.4rem;
+  /* Wider than the gap WITHIN a segmented control — the two selectors are
+   * independent axes (kind, authoring mode); at 0.4rem they read as one
+   * four-button control. */
+  gap: 1rem;
 }
 .new-app-prompt__input {
   width: 100%;
@@ -5024,15 +5198,35 @@ button.card-grid__title:hover {
   gap: 0.75rem;
   flex-wrap: wrap;
 }
+/* Attach files as a DESIGNED control: the native file input's UA chrome
+ * ("Choose Files · No file chosen", Title-Case) sat raw in the middle of the
+ * card. The label is the visible button; the input is visually hidden but
+ * keeps focus (so :focus-within can show it) and the chosen files already
+ * render as removable chips below. */
 .new-app-prompt__attach {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  min-width: 0;
+  position: relative;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.new-app-prompt__attach:hover {
+  background: var(--bg-input);
+}
+.new-app-prompt__attach:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .new-app-prompt__attach input[type="file"] {
-  max-width: 14rem;
-  font-size: 0.8rem;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
 }
 /* The hosted lane's review surface: the planned project files. */
 .new-app-files {
@@ -5322,6 +5516,11 @@ button.card-grid__title:hover {
   padding: 0.28rem 0.4rem;
   border: none;
   background: transparent;
+  /* The base `button` carries the primary action's accent GLOW. Resetting border
+   * and background but not the shadow left every row in the tree wearing the
+   * call-to-action's halo: the pane read as a stack of buttons, depth was
+   * invisible, and the selected file could not stand out from its siblings. */
+  box-shadow: none;
   color: var(--fg);
   text-align: left;
   cursor: pointer;
@@ -5359,6 +5558,14 @@ button.card-grid__title:hover {
   justify-content: space-between;
   gap: 0.6rem;
   margin-bottom: 0.5rem;
+}
+/* Path + digest chip as one left-anchored cluster (the head is space-between;
+ * an unwrapped middle child would float centered, anchored to nothing). */
+.app-file__ident {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
 }
 .app-file__path {
   font-size: 0.85rem;
@@ -5610,6 +5817,22 @@ button.card-grid__title:hover {
   flex-direction: column;
   gap: 0.6rem;
 }
+/* Prose, not a label. The enclosing `.node-drawer__section` is a small-caps LABEL
+ * context, so an un-reset sentence renders as "THIS APP TAKES NO INPUTS." —
+ * shouting, with a full stop inside it. (Third child of this section to need the
+ * reset; `.run-preflight` and `.app-run-drawer__approval` carry the same one.) */
+.app-run-drawer__noinputs p {
+  font-size: 0.85rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* The App HANDLE is a case-sensitive identifier — uppercasing it shows the reader
+ * a string that is not the one they would type. Always render it verbatim. */
+.node-drawer__section > code.mono {
+  font-size: 0.78rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
 
 /* The HITL "require approval" toggle lives in a `.node-drawer__section` — a small-caps LABEL
  * context (uppercase, letter-spaced, dim) — so without a reset it reads as a section HEADER,
@@ -5725,7 +5948,19 @@ button.card-grid__title:hover {
   font-weight: 600;
   color: var(--fg-muted);
 }
+/* `display: flex` on a `&lt;td&gt;` takes the cell OUT of table layout, so its
+ * border-bottom lands at its own content height instead of the row's: every
+ * divider in the catalog table was broken into two segments ~20px apart. The
+ * cell stays a table-cell; the flex row lives in a wrapper inside it. */
 .apps-table .app-row__actions {
+  text-align: right;
+}
+/* The ACTIONS header sits over right-aligned buttons — align it with its column's
+ * content like every other header (Actions is always the last column). */
+.apps-table th:last-child {
+  text-align: right;
+}
+.apps-table .app-row__actions-inner {
   display: flex;
   gap: 0.3rem;
   align-items: center;
@@ -5820,4 +6055,74 @@ button.card-grid__title:hover {
 }
 .builder--embedded .builder-canvas {
   height: 380px;
+}
+
+/* The App project-history drawer: a version list (newest-first), each row a
+   recorded point-in-time with its cause chip, timestamp, size and restore
+   affordance. Token-only ⇒ both themes + AA by construction. */
+.app-history__list {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app-history__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "meta action" "detail action";
+  gap: 0.1rem 0.6rem;
+  align-items: center;
+  padding: 0.55rem 0.1rem;
+  border-bottom: 1px solid var(--border);
+}
+.app-history__meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.app-history__cause {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.app-history__cause--restore {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.app-history__when {
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+.app-history__detail {
+  grid-area: detail;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+.app-history__delta {
+  color: var(--text-3);
+}
+.app-history__ref {
+  font-size: 0.72rem;
+  color: var(--text-3);
+}
+.app-history__restore,
+.app-history__current {
+  grid-area: action;
+}
+.app-history__current {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
 }

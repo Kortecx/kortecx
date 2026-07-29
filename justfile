@@ -895,9 +895,11 @@ eval-real:
 # the gitignored `docs/benchmarks/`; the committed per-engine baseline is the fail-closed
 # ratchet.
 #
-# COVERAGE: the suite spans twelve families (`tool` · `react` · `reach` · `swarm` ·
+# COVERAGE: the suite spans thirteen families (`tool` · `react` · `reach` · `swarm` ·
 # `script` · `http` · `failure` · `menu` · `long` · `adversarial` · `irrelevance` ·
-# `memory`); the family table in docs/site/docs/evaluation.md is the authoritative
+# `memory` · `scaffold` — the last scaffolds a REAL app live and runs it, so budget
+# roughly 10-30 extra minutes per engine); the family table in
+# docs/site/docs/evaluation.md is the authoritative
 # description — this header stopped hand-keeping a third copy after the five-family
 # version of it silently rotted. Several `tool`/`script` tasks are multi-hop, because a
 # single-tool task cannot tell you whether the loop carries an observation into the NEXT

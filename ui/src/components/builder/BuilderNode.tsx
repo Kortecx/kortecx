@@ -23,9 +23,10 @@ function BuilderNodeImpl({ data, selected }: NodeProps<BuilderFlowNode>) {
   const { step } = data;
   const tone = step.kind === "model" ? "model" : step.kind === "tool" ? "tool" : "pure";
   const kindLabel = step.kind === "model" ? "Agent" : step.kind === "tool" ? "Tool" : "Pure";
-  const needsConfig =
-    (step.kind === "model" && step.modelId.trim() === "") ||
-    (step.kind === "tool" && step.toolId.trim() === "");
+  // Only a tool step can genuinely need config: a tool with no id cannot run.
+  // An EMPTY model id is the documented default, not an error — the server
+  // binds the served model (or the App's model_route) at run.
+  const needsConfig = step.kind === "tool" && step.toolId.trim() === "";
   return (
     <div
       className={`dag-node builder-node builder-node--${tone}${selected ? " builder-node--selected" : ""}`}
@@ -44,9 +45,12 @@ function BuilderNodeImpl({ data, selected }: NodeProps<BuilderFlowNode>) {
       </div>
       {step.kind === "model" ? (
         <div className="builder-node__row">
-          {needsConfig ? (
-            <span className="builder-node__hint" data-testid="builder-node-needs-config">
-              pick a model
+          {step.modelId.trim() === "" ? (
+            <span
+              className="builder-node__model muted"
+              title="No model pinned — the server binds the served model (or the App's model route) when the app runs"
+            >
+              served model at run
             </span>
           ) : (
             <span className="builder-node__model mono" title={step.modelId}>

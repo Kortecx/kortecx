@@ -1,18 +1,18 @@
 /**
- * The App KIND/MODE axes as the catalog surfaces them.
+ * The App KIND/MODE axes as the create surface authors them.
  *
  * Two behaviours, both of which used to be wrong in a way that looked like nothing was
  * wrong:
  *
- * 1. Authoring a HOSTED app from the Scheduled tab left the catalog on Scheduled. The app
- *    was created correctly, but landed in the section the user was not looking at — which
- *    reads as the kind selection being dropped by the scaffold transition. The form now
- *    reports the kind it actually SAVED under, and the catalog follows it.
+ * 1. Authoring a HOSTED app from the Scheduled tab used to leave the catalog on
+ *    Scheduled — created correctly, but invisible. The form now reports the kind it
+ *    actually SAVED under in its launch outcome, and the create screen's terminal
+ *    dialog routes home by it.
  * 2. A scheduled app's authoring MODE (contextual vs codified) had no surface at all.
  *
- * Its own file rather than an addition to `apps-section.test.tsx`: proving (1) needs the
+ * Its own file rather than an addition to `apps-create.test.tsx`: proving (1) needs the
  * save mutation to genuinely SUCCEED, so `@kortecx/sdk/web` has to be a working builder
- * stub rather than that file's inert one.
+ * stub rather than that file's inert one. The mode CHIP tests still render the catalog.
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -160,18 +160,26 @@ vi.mock("../../src/components/sections/BlueprintBuilderSection", () => ({
 }));
 
 import { AppsSection, modeHint, modeLabel } from "../../src/components/sections/AppsSection";
+import { NewAppForm } from "../../src/components/sections/NewAppForm";
+
+const onLaunched = vi.fn();
 
 afterEach(() => {
   APPS = [];
   scaffoldMutate.mockClear();
   deriveMutate.mockClear();
+  onLaunched.mockClear();
   modeCalls.length = 0;
   DESIGN = design();
 });
 
-/** Drive the chat surface from "New App" to a reviewable design. */
+/** Mount the create form directly (it lives on /apps/create now, not the catalog). */
+function mountForm(initialKind: "scheduled" | "hosted" = "scheduled") {
+  return render(<NewAppForm initialKind={initialKind} onClose={vi.fn()} onLaunched={onLaunched} />);
+}
+
+/** Drive the mounted form to a reviewable design. */
 function derive(promptText = "summarize the changelog"): void {
-  fireEvent.click(screen.getByTestId("new-app"));
   fireEvent.change(screen.getByTestId("new-app-prompt"), { target: { value: promptText } });
   fireEvent.click(screen.getByTestId("new-app-derive"));
 }
@@ -221,12 +229,12 @@ describe("the authoring-mode chip", () => {
   });
 });
 
-describe("the catalog follows the kind an App was authored as", () => {
-  it("switches to Hosted when a hosted app is authored from the Scheduled tab", async () => {
-    const onSection = vi.fn();
-    render(<AppsSection section="scheduled" onSection={onSection} />);
-
-    fireEvent.click(screen.getByTestId("new-app"));
+describe("the launch outcome carries the kind an App was actually authored as", () => {
+  it("reports HOSTED when a hosted app is authored from a scheduled-initial form", async () => {
+    // THE REGRESSION, one layer down: the form's kind toggle is its OWN state, so
+    // authoring a hosted app from the Scheduled tab must report "hosted" — the create
+    // screen's terminal dialog routes home by this, or the new app lands invisible.
+    mountForm("scheduled");
     fireEvent.click(screen.getByTestId("new-app-kind-hosted"));
     fireEvent.change(screen.getByTestId("new-app-prompt"), {
       target: { value: "a landing page" },
@@ -234,19 +242,23 @@ describe("the catalog follows the kind an App was authored as", () => {
     fireEvent.click(screen.getByTestId("new-app-derive"));
     fireEvent.click(screen.getByTestId("new-app-approve"));
 
-    // THE REGRESSION: without this the catalog stayed on Scheduled and the new hosted app
-    // was invisible — created, but filtered out of the only section on screen.
-    await waitFor(() => expect(onSection).toHaveBeenCalledWith("hosted"));
+    await waitFor(() =>
+      expect(onLaunched).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "hosted", handle: "apps/local/my-app" }),
+      ),
+    );
   });
 
-  it("leaves the section alone when the authored kind already matches", async () => {
-    const onSection = vi.fn();
-    render(<AppsSection section="scheduled" onSection={onSection} />);
-
+  it("reports the matching kind (and a null launch error on a clean launch)", async () => {
+    mountForm("scheduled");
     derive("summarize");
     fireEvent.click(screen.getByTestId("new-app-approve"));
 
-    await waitFor(() => expect(onSection).toHaveBeenCalledWith("scheduled"));
+    await waitFor(() =>
+      expect(onLaunched).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "scheduled", launchError: null }),
+      ),
+    );
   });
 });
 
@@ -254,8 +266,7 @@ describe("the authoring-mode toggle", () => {
   it("DEFAULTS TO CODIFIED and switches to Contextual", () => {
     // The default flipped with the chat surface: what a scheduled app should produce is a real
     // project the runtime is orchestrated from, and contextual is now the deliberate choice.
-    render(<AppsSection section="scheduled" />);
-    fireEvent.click(screen.getByTestId("new-app"));
+    mountForm("scheduled");
     expect(screen.getByTestId("new-app-mode-codified")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("new-app-mode-contextual")).toHaveAttribute("aria-pressed", "false");
     // The lede follows the mode: the two produce genuinely different things, and a surface
@@ -273,15 +284,14 @@ describe("the authoring-mode toggle", () => {
     // keeps its canonical bytes (and its app_ref) identical to every app authored before the
     // field existed. Asserting only the codified half would pass on a builder that always
     // wrote a mode.
-    const { unmount } = render(<AppsSection section="scheduled" />);
+    const { unmount } = mountForm("scheduled");
     derive("reconcile payouts");
     fireEvent.click(screen.getByTestId("new-app-approve"));
     await waitFor(() => expect(modeCalls).toEqual(["codified"]));
 
     unmount();
     modeCalls.length = 0;
-    render(<AppsSection section="scheduled" />);
-    fireEvent.click(screen.getByTestId("new-app"));
+    mountForm("scheduled");
     fireEvent.click(screen.getByTestId("new-app-mode-contextual"));
     fireEvent.change(screen.getByTestId("new-app-prompt"), { target: { value: "reconcile" } });
     fireEvent.click(screen.getByTestId("new-app-derive"));
@@ -291,15 +301,14 @@ describe("the authoring-mode toggle", () => {
   });
 
   it("is not offered on the hosted lane", () => {
-    render(<AppsSection section="hosted" />);
-    fireEvent.click(screen.getByTestId("new-app"));
+    mountForm("hosted");
     expect(screen.queryByTestId("new-app-mode")).toBeNull();
   });
 });
 
 describe("the chat surface derives before it creates", () => {
   it("creates NOTHING until the design is approved", () => {
-    render(<AppsSection section="scheduled" />);
+    mountForm("scheduled");
     derive();
     // The design is on screen and reviewable...
     expect(screen.getByTestId("new-app-review")).toBeTruthy();
@@ -311,8 +320,7 @@ describe("the chat surface derives before it creates", () => {
   });
 
   it("passes the kind and mode the selectors are on to the derive", () => {
-    render(<AppsSection section="scheduled" />);
-    fireEvent.click(screen.getByTestId("new-app"));
+    mountForm("scheduled");
     fireEvent.click(screen.getByTestId("new-app-mode-contextual"));
     fireEvent.change(screen.getByTestId("new-app-prompt"), { target: { value: "triage email" } });
     fireEvent.click(screen.getByTestId("new-app-derive"));
@@ -325,13 +333,13 @@ describe("the chat surface derives before it creates", () => {
 
   it("shows what the design did NOT get, rather than leaving it to be discovered at run", () => {
     DESIGN = design({ notices: ["not attached — outside what this account can fire: gmail/send"] });
-    render(<AppsSection section="scheduled" />);
+    mountForm("scheduled");
     derive();
     expect(screen.getByTestId("new-app-notices").textContent).toContain("gmail/send");
   });
 
   it("start over discards the design and returns to the prompt", () => {
-    render(<AppsSection section="scheduled" />);
+    mountForm("scheduled");
     derive();
     fireEvent.click(screen.getByTestId("new-app-start-over"));
     expect(screen.queryByTestId("new-app-review")).toBeNull();
@@ -340,8 +348,7 @@ describe("the chat surface derives before it creates", () => {
 
   it("a hosted design reviews its FILE PLAN, not a workflow", () => {
     DESIGN = design({ files: [{ path: "src/App.tsx", role: "the root component" }] });
-    render(<AppsSection section="hosted" />);
-    fireEvent.click(screen.getByTestId("new-app"));
+    mountForm("hosted");
     fireEvent.change(screen.getByTestId("new-app-prompt"), { target: { value: "a timer" } });
     fireEvent.click(screen.getByTestId("new-app-derive"));
     expect(screen.getByTestId("new-app-files")).toBeTruthy();

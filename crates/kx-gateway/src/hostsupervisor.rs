@@ -40,7 +40,6 @@ use kx_gateway_core::{
     HostedStatus, MANIFEST_MARKER_PATH,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 
 /// The `@kortecx/sdk` version THIS gateway serves from its own scoped registry, when it
 /// carries one.
@@ -79,6 +78,10 @@ struct RunningApp {
     state: HostedState,
     /// The supervised server child (`kill_on_drop`). Taken + killed on stop.
     child: Option<tokio::process::Child>,
+    /// The child's process GROUP (it spawns with `process_group(0)`, so pgid ==
+    /// its pid). Stop kills the GROUP: `npm run dev` forks the real server as a
+    /// grandchild that `start_kill` (direct-child SIGKILL) never reached.
+    pgid: Option<i32>,
     port: u16,
     framework: String,
     /// Which lane this app is being served on (echoed in the status so a client never
@@ -93,10 +96,22 @@ struct RunningApp {
 }
 
 impl RunningApp {
+    /// Kill the server's whole process TREE: the group first (reaching the
+    /// grandchild that owns the port), then the direct child (belt and braces).
+    fn kill_tree(&mut self) {
+        if let Some(pgid) = self.pgid.take() {
+            crate::hosted_sandbox::kill_group(pgid);
+        }
+        if let Some(mut child) = self.child.take() {
+            let _ = child.start_kill();
+        }
+    }
+
     fn new(framework: String) -> Self {
         Self {
             state: HostedState::Stopped,
             child: None,
+            pgid: None,
             port: 0,
             framework,
             serve_mode: HostedServeMode::default(),
@@ -169,6 +184,8 @@ pub(crate) struct HostedSupervisor {
     /// this app starts serving and removed when it stops, so the gateway allows a page's
     /// cross-origin calls exactly while its app is up.
     hosted_origins: Arc<crate::app_tokens::HostedOrigins>,
+    /// How this serve isolates hosted children (resolved once at serve start).
+    policy: crate::hosted_sandbox::SandboxPolicy,
 }
 
 impl HostedSupervisor {
@@ -185,6 +202,7 @@ impl HostedSupervisor {
         hosted_origins: Arc<crate::app_tokens::HostedOrigins>,
         gateway_endpoint: String,
         console_endpoint: String,
+        policy: crate::hosted_sandbox::SandboxPolicy,
     ) -> Self {
         Self {
             data_root: data_root.join("hosted"),
@@ -196,6 +214,7 @@ impl HostedSupervisor {
             hosted_origins,
             gateway_endpoint,
             console_endpoint,
+            policy,
         }
     }
 
@@ -280,11 +299,9 @@ impl HostedAppSupervisor for HostedSupervisor {
             if busy && !rebuild {
                 return Ok(app.snapshot(handle));
             }
-            // Restart: kill any prior child, bump the generation (superseding any prior
-            // background task), and reset to Materializing.
-            if let Some(mut child) = app.child.take() {
-                let _ = child.start_kill();
-            }
+            // Restart: kill any prior server TREE, bump the generation (superseding any
+            // prior background task), and reset to Materializing.
+            app.kill_tree();
             app.generation = app.generation.wrapping_add(1);
             app.state = HostedState::Materializing;
             app.detail = String::new();
@@ -319,6 +336,7 @@ impl HostedAppSupervisor for HostedSupervisor {
             gateway_endpoint: self.gateway_endpoint.clone(),
             console_endpoint: self.console_endpoint.clone(),
             hosted_origins: Arc::clone(&self.hosted_origins),
+            policy: self.policy.clone(),
         };
         tokio::spawn(run_lifecycle(ctx));
 
@@ -346,9 +364,7 @@ impl HostedAppSupervisor for HostedSupervisor {
                 app.state,
                 HostedState::Running | HostedState::Starting | HostedState::Installing
             );
-        if let Some(mut child) = app.child.take() {
-            let _ = child.start_kill();
-        }
+        app.kill_tree();
         // The page's origin stops being allowed the moment the app stops.
         if app.port != 0 {
             self.hosted_origins.remove(app.port);
@@ -427,6 +443,9 @@ struct LifecycleCtx {
     console_endpoint: String,
     /// The live-origin set to add/remove this app's port from as it starts/stops serving.
     hosted_origins: Arc<crate::app_tokens::HostedOrigins>,
+    /// The serve's isolation policy (env hygiene + group-kill always; the
+    /// platform sandbox for the dev server where the platform can hold it).
+    policy: crate::hosted_sandbox::SandboxPolicy,
 }
 
 /// Set the app state IFF this task's generation is still current. Returns `false` when a
@@ -459,6 +478,15 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
         let Ok(app) = ctx.ra.lock() else { return };
         Arc::clone(&app.logs)
     };
+
+    // FAIL-CLOSED before any work: an operator who demanded a sandbox this
+    // platform cannot provide gets a refusal, never a silent unconfined serve.
+    if let crate::hosted_sandbox::SandboxMode::Refuse { .. } = &ctx.policy.mode {
+        advance(&ctx, HostedState::Failed, &ctx.policy.posture());
+        return;
+    }
+    // The isolation stance, next to the npm output it governs.
+    crate::hosted_sandbox::log_posture(&logs, &ctx.policy);
 
     let production = ctx.plan.serve_mode == HostedServeMode::Production;
 
@@ -531,16 +559,22 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
             return;
         }
     };
+    // With `process_group(0)` the child IS its group leader: pgid == pid.
+    let pgid = child.id().and_then(|pid| i32::try_from(pid).ok());
     {
         // Store the child + port (respecting the generation guard).
         let Ok(mut app) = ctx.ra.lock() else { return };
         if app.generation != ctx.generation {
-            // Superseded — kill the just-spawned child and bail.
+            // Superseded — kill the just-spawned tree and bail.
+            if let Some(pgid) = pgid {
+                crate::hosted_sandbox::kill_group(pgid);
+            }
             let mut child = child;
             let _ = child.start_kill();
             return;
         }
         app.child = Some(child);
+        app.pgid = pgid;
         app.port = port;
     }
     // The app is now serving on `port` — allow its page's cross-origin calls to the gateway.
@@ -558,12 +592,15 @@ async fn run_lifecycle(ctx: LifecycleCtx) {
 fn finish_readiness(ctx: &LifecycleCtx, port: u16, production: bool, outcome: Readiness) {
     match outcome {
         Readiness::Ready => {
-            let detail = if production {
+            // The detail carries the ISOLATION posture — the one honest place a
+            // status reader learns whether this serve is confined.
+            let lane = if production {
                 "running (production build)"
             } else {
                 "running"
             };
-            advance(ctx, HostedState::Running, detail);
+            let detail = format!("{lane} — {}", ctx.policy.posture());
+            advance(ctx, HostedState::Running, &detail);
         }
         // The child is already gone — nothing to kill, and the exit status plus its own last
         // words are the only useful thing we can say.
@@ -583,9 +620,7 @@ fn finish_readiness(ctx: &LifecycleCtx, port: u16, production: bool, outcome: Re
                 "server did not become ready in time",
             );
             if let Ok(mut app) = ctx.ra.lock() {
-                if let Some(mut child) = app.child.take() {
-                    let _ = child.start_kill();
-                }
+                app.kill_tree();
             }
             ctx.hosted_origins.remove(port);
         }
@@ -760,7 +795,7 @@ async fn install(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Res
     } else {
         split_cmd(&ctx.plan.install_cmd)
     };
-    run_capture(&prog, &args, &ctx.plan.workdir, logs).await
+    run_capture(&ctx.policy, &prog, &args, &ctx.plan.workdir, logs).await
 }
 
 /// `npm run build` — the production lane only. A build is a one-shot command, so it
@@ -779,7 +814,7 @@ async fn build(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> Resul
     } else {
         split_cmd(&ctx.plan.build_cmd)
     };
-    run_capture(&prog, &args, &ctx.plan.workdir, logs).await
+    run_capture(&ctx.policy, &prog, &args, &ctx.plan.workdir, logs).await
 }
 
 /// How many trailing `tsc` lines to fold into the `Failed` detail when the type-check gate
@@ -813,9 +848,16 @@ async fn type_check(ctx: &LifecycleCtx, logs: &Arc<Mutex<VecDeque<String>>>) -> 
         return Ok(());
     };
     log_line(logs, "$ tsc --noEmit".into());
-    let output = Command::new(&tsc)
-        .arg("--noEmit")
-        .current_dir(&ctx.plan.workdir)
+    // Hygiene only (tsc reads the project, needs no net): cleared env + group.
+    let mut cmd = crate::hosted_sandbox::wrap_spawn(
+        &ctx.policy,
+        &tsc.to_string_lossy(),
+        &["--noEmit".to_string()],
+        &ctx.plan.workdir,
+        false,
+    )
+    .map_err(|e| format!("cannot run tsc: {e}"))?;
+    let output = cmd
         .output()
         .await
         .map_err(|e| format!("cannot run tsc: {e}"))?;
@@ -912,10 +954,12 @@ fn spawn_server(
         (prog, args)
     };
     log_line(logs, format!("$ {prog} {}", args.join(" ")));
-    let mut cmd = Command::new(&prog);
-    cmd.args(&args)
-        .current_dir(&ctx.plan.workdir)
-        .stdout(Stdio::piped())
+    // The one spawn assembler: cleared env + minimal allowlist, its own process
+    // group, and — under an enforcing policy — the platform sandbox around the
+    // LONG-LIVED server (workdir RW, node roots exec, loopback only).
+    let mut cmd =
+        crate::hosted_sandbox::wrap_spawn(&ctx.policy, &prog, &args, &ctx.plan.workdir, true)?;
+    cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut child = cmd
@@ -945,23 +989,34 @@ where
 }
 
 async fn run_capture(
+    policy: &crate::hosted_sandbox::SandboxPolicy,
     prog: &str,
     args: &[String],
     workdir: &Path,
     logs: &Arc<Mutex<VecDeque<String>>>,
 ) -> Result<(), String> {
     log_line(logs, format!("$ {prog} {}", args.join(" ")));
+    // Env hygiene + its own process group, but NOT the sandbox: install/build
+    // need registry egress this platform cannot confine per-host, and widening
+    // to the whole network would exceed anything the app declared. The gateway's
+    // environment (which can carry secrets) still never reaches npm.
+    let mut cmd = crate::hosted_sandbox::wrap_spawn(policy, prog, args, workdir, false)?;
     // Bound the whole command. `READINESS_TIMEOUT` covered only the dev server accepting a
     // connection, so a hung `npm install` (a stalled registry, a lockfile fight) sat in the
     // `installing` state FOREVER — the one hosted state a user could not escape without
-    // killing the gateway. A one-shot command that overruns is killed and fails loudly, which
-    // is the state the whole readiness machine exists to reach.
-    let run = Command::new(prog)
-        .args(args)
-        .current_dir(workdir)
-        .kill_on_drop(true)
-        .output();
-    let Ok(res) = tokio::time::timeout(COMMAND_TIMEOUT, run).await else {
+    // killing the gateway. A one-shot command that overruns is killed — the whole GROUP,
+    // reaching any workers npm forked — and fails loudly.
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("cannot run {prog:?}: {e}"))?;
+    let pgid = child.id().and_then(|pid| i32::try_from(pid).ok());
+    let Ok(res) = tokio::time::timeout(COMMAND_TIMEOUT, child.wait_with_output()).await else {
+        if let Some(pgid) = pgid {
+            crate::hosted_sandbox::kill_group(pgid);
+        }
         let secs = COMMAND_TIMEOUT.as_secs();
         log_line(logs, format!("$ {prog}: timed out after {secs}s — killed"));
         return Err(format!(
@@ -1085,7 +1140,7 @@ mod tests {
         let workdir = tempfile::tempdir().unwrap();
         let content = Arc::new(InMemoryContentStore::default());
         let branches =
-            Arc::new(BranchesDb::open(dbdir.path(), Arc::clone(&content), None).unwrap());
+            Arc::new(BranchesDb::open(dbdir.path(), Arc::clone(&content), None, 256).unwrap());
         std::mem::forget(dbdir); // keep the sqlite file alive for the test
         branches
             .create("alice", "apps/local/x", None, "test branch")
@@ -1111,6 +1166,7 @@ mod tests {
             gateway_endpoint: "http://127.0.0.1:50151".into(),
             console_endpoint: "http://127.0.0.1:8888".into(),
             hosted_origins: crate::app_tokens::HostedOrigins::new(),
+            policy: crate::hosted_sandbox::SandboxPolicy::resolve_from("off", "", Ok(())),
         };
         Fixture {
             ctx,

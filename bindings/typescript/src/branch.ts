@@ -15,7 +15,9 @@ import type {
   AdvanceBranchResponse as PbAdvanceBranchResponse,
   Branch as PbBranch,
   BranchItem as PbBranchItem,
+  BranchVersion as PbBranchVersion,
   CreateBranchResponse as PbCreateBranchResponse,
+  RestoreBranchResponse as PbRestoreBranchResponse,
   SnapshotIntoResponse as PbSnapshotIntoResponse,
 } from "./gen/kortecx/v1/gateway_pb.js";
 import { encode } from "./hexids.js";
@@ -146,6 +148,72 @@ export class AdvanceResult {
       handle: this.handle,
       deduplicated: this.deduplicated,
       items: this.items.map((i) => i.toJSON()),
+    };
+  }
+}
+
+/** One recorded point-in-time of a branch manifest. Every non-dedup mutation
+ * (create / snapshot / advance / restore) appends a version; the CAS blobs
+ * behind a recorded version are never collected by branch ops, so any listed
+ * version is restorable. */
+export class BranchVersion {
+  constructor(
+    /** 1-based per-handle version, monotone (1 = oldest retained). */
+    readonly version: number,
+    /** The server-derived manifest hash at this version, as hex (display only). */
+    readonly branchRef: string,
+    /** Sidecar wall-clock at record time (ms since epoch); advisory. */
+    readonly recordedUnixMs: number,
+    /** "baseline" | "create" | "snapshot" | "advance" | "restore". */
+    readonly cause: string,
+    /** Manifest size at this version. */
+    readonly itemCount: number,
+  ) {}
+
+  static fromProto(v: PbBranchVersion): BranchVersion {
+    return new BranchVersion(
+      v.version,
+      encode(v.branchRef),
+      Number(v.recordedUnixMs),
+      v.cause,
+      v.itemCount,
+    );
+  }
+
+  toJSON() {
+    return {
+      version: this.version,
+      branch_ref: this.branchRef,
+      recorded_unix_ms: this.recordedUnixMs,
+      cause: this.cause,
+      item_count: this.itemCount,
+    };
+  }
+}
+
+/** The outcome of a `RestoreBranch` — restore APPENDS a new version whose items
+ * are the historical items (history is never rewound; a restore is itself
+ * history). `deduplicated` is true iff the branch already matched the requested
+ * version (no-op, nothing recorded, `newVersion` = 0). */
+export class RestoreResult {
+  constructor(
+    readonly branch: Branch,
+    readonly newVersion: number,
+    readonly deduplicated: boolean,
+  ) {}
+
+  static fromProto(r: PbRestoreBranchResponse): RestoreResult {
+    if (r.branch === undefined) {
+      throw new Error("RestoreBranch: response carried no branch");
+    }
+    return new RestoreResult(Branch.fromProto(r.branch), r.newVersion, r.deduplicated);
+  }
+
+  toJSON() {
+    return {
+      branch: this.branch.toJSON(),
+      new_version: this.newVersion,
+      deduplicated: this.deduplicated,
     };
   }
 }

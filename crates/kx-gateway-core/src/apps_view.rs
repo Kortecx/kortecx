@@ -191,7 +191,15 @@ pub struct AppRecord {
     /// and always empty for an Experience App, which has no such axis. Display + routing
     /// only; never identity-bearing.
     pub mode: String,
+    /// Advisory catalog lifecycle: `""` (active) or `"draft"` (created but its project
+    /// scaffold has not completed — resume or discard). Set by the scaffold path, NOT by
+    /// `save` (a re-save must never silently clear it — see [`AppCatalog::set_lifecycle`]).
+    /// Display + routing only; never identity-bearing, never enforcement.
+    pub lifecycle: String,
 }
+
+/// The [`AppRecord::lifecycle`] value marking a created-but-scaffold-incomplete App.
+pub const APP_LIFECYCLE_DRAFT: &str = "draft";
 
 /// The App-catalog store seam: save / enumerate / fetch a caller's App envelopes.
 /// Opaque envelope bytes cross the seam; identity + summary are host-derived. A
@@ -267,6 +275,28 @@ pub trait AppCatalog: Send + Sync {
         Err(GatewayError::FailedPrecondition(
             "this App catalog does not support delete",
         ))
+    }
+
+    /// Set `(principal, handle)`'s advisory lifecycle (`""` active /
+    /// [`APP_LIFECYCLE_DRAFT`]). Written by the SCAFFOLD path (draft at start,
+    /// cleared at done) — never by `save`, whose upsert must PRESERVE the stored
+    /// value so a rename/fold-back re-save cannot silently clear a draft badge.
+    /// Returns `true` iff a row existed and was updated (`false` uniformly for
+    /// absent OR not-owned — the `get` posture).
+    ///
+    /// DEFAULTED to `Ok(false)` so an impl that predates this method (or a test
+    /// fake) keeps compiling and degrades to "no draft tracking" — the badge
+    /// simply never appears; nothing false is ever claimed. ⚠ The REAL store must
+    /// override this and assert so in its own test module (a defaulted method a
+    /// real impl silently inherits is how DeleteApp shipped broken).
+    fn set_lifecycle(
+        &self,
+        principal: &str,
+        handle: &str,
+        lifecycle: &str,
+    ) -> Result<bool, GatewayError> {
+        let _ = (principal, handle, lifecycle);
+        Ok(false)
     }
 }
 
