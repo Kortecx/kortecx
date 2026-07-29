@@ -1870,6 +1870,9 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // What one run PRODUCES — advisory, and the line the composition menu renders so
         // another App can pick this one on purpose. Empty ⇒ an App authored before the field.
         delivers: r.delivers,
+        // Catalog lifecycle ("" active / "draft" scaffold-incomplete) — advisory,
+        // display/routing only. Populated once the catalog carries the column.
+        lifecycle: String::new(),
     }
 }
 
@@ -5014,6 +5017,24 @@ impl KxGateway for GatewayService {
                 found: false,
             },
         }))
+    }
+
+    async fn list_branch_versions(
+        &self,
+        _request: Request<proto::ListBranchVersionsRequest>,
+    ) -> Result<Response<proto::ListBranchVersionsResponse>, Status> {
+        Err(Status::unimplemented(
+            "ListBranchVersions: no branch history store wired on this server",
+        ))
+    }
+
+    async fn restore_branch(
+        &self,
+        _request: Request<proto::RestoreBranchRequest>,
+    ) -> Result<Response<proto::RestoreBranchResponse>, Status> {
+        Err(Status::unimplemented(
+            "RestoreBranch: no branch history store wired on this server",
+        ))
     }
 
     async fn lock_app(

@@ -111,6 +111,10 @@ class AppSummary:
     # registry. "" on an App authored before the field, or an older server.
     delivers: str = ""
     locked: bool = False  # POC-5b: the App's project branch is locked (edits refused)
+    # Catalog lifecycle: "" (active) or "draft" (created but its project scaffold has
+    # not completed — resume the scaffold or discard the App). Advisory, display/
+    # routing only; "" on an old row/server ⇒ active.
+    lifecycle: str = ""
 
     @classmethod
     def from_proto(cls, s: "_g.AppSummary") -> "AppSummary":
@@ -124,6 +128,7 @@ class AppSummary:
             tags=list(s.tags),
             step_count=s.step_count,
             locked=s.locked,
+            lifecycle=s.lifecycle,
         )
 
 

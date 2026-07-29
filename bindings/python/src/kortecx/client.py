@@ -50,7 +50,15 @@ from .apps import (
     content_refs,
 )
 from .apps import default_handle as _default_app_handle
-from .branch import AdvanceResult, Branch, CreateBranchResult, EditProposal, SnapshotResult
+from .branch import (
+    AdvanceResult,
+    Branch,
+    BranchVersion,
+    CreateBranchResult,
+    EditProposal,
+    RestoreResult,
+    SnapshotResult,
+)
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
@@ -1612,6 +1620,41 @@ class KxClient:
             )
         )
         return AdvanceResult.from_proto(resp)
+
+    def list_branch_versions(
+        self,
+        handle: str,
+        *,
+        limit: int = 0,
+        after: int = 0,
+    ) -> Optional[List[BranchVersion]]:
+        """List a branch's recorded point-in-time versions, newest-first, or
+        ``None`` if the branch is not found / not owned / has no history (uniform —
+        no cross-party existence oracle). ``after`` is an exclusive DESCENDING
+        cursor (return versions strictly older); 0 = the newest page."""
+        resp = self._call(
+            lambda: self._stub.ListBranchVersions(
+                _g.ListBranchVersionsRequest(handle=handle, limit=limit, after_version=after),
+                metadata=self._md,
+            )
+        )
+        if not resp.found:
+            return None
+        return [BranchVersion.from_proto(v) for v in resp.versions]
+
+    def restore_branch(self, handle: str, version: int) -> RestoreResult:
+        """Restore branch ``handle`` to the state recorded at ``version``. Restore
+        APPENDS a new version whose items are the historical items — history is
+        never rewound, and you can always restore forward again. Raises
+        ``KxFailedPrecondition`` while the branch is locked or a scaffold is
+        writing it, ``KxNotFound`` (uniform) for an unknown branch/version."""
+        resp = self._call(
+            lambda: self._stub.RestoreBranch(
+                _g.RestoreBranchRequest(handle=handle, version=version),
+                metadata=self._md,
+            )
+        )
+        return RestoreResult.from_proto(resp)
 
     def edit_branch_propose(
         self,

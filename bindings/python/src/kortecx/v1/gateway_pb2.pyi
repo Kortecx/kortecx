@@ -1475,7 +1475,7 @@ class SetActiveModelResponse(_message.Message):
     def __init__(self, active_model_id: _Optional[str] = ...) -> None: ...
 
 class AppSummary(_message.Message):
-    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked", "kind", "mode", "delivers")
+    __slots__ = ("handle", "app_ref", "name", "version", "description", "tags", "step_count", "locked", "kind", "mode", "delivers", "lifecycle")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
     APP_REF_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -1487,6 +1487,7 @@ class AppSummary(_message.Message):
     KIND_FIELD_NUMBER: _ClassVar[int]
     MODE_FIELD_NUMBER: _ClassVar[int]
     DELIVERS_FIELD_NUMBER: _ClassVar[int]
+    LIFECYCLE_FIELD_NUMBER: _ClassVar[int]
     handle: str
     app_ref: bytes
     name: str
@@ -1498,7 +1499,8 @@ class AppSummary(_message.Message):
     kind: str
     mode: str
     delivers: str
-    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ..., kind: _Optional[str] = ..., mode: _Optional[str] = ..., delivers: _Optional[str] = ...) -> None: ...
+    lifecycle: str
+    def __init__(self, handle: _Optional[str] = ..., app_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., locked: bool = ..., kind: _Optional[str] = ..., mode: _Optional[str] = ..., delivers: _Optional[str] = ..., lifecycle: _Optional[str] = ...) -> None: ...
 
 class SaveAppRequest(_message.Message):
     __slots__ = ("handle", "envelope_json", "source_digest")
@@ -2853,6 +2855,58 @@ class GetBranchContentResponse(_message.Message):
     payload: bytes
     found: bool
     def __init__(self, payload: _Optional[bytes] = ..., found: bool = ...) -> None: ...
+
+class BranchVersion(_message.Message):
+    __slots__ = ("version", "branch_ref", "recorded_unix_ms", "cause", "item_count")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    BRANCH_REF_FIELD_NUMBER: _ClassVar[int]
+    RECORDED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    CAUSE_FIELD_NUMBER: _ClassVar[int]
+    ITEM_COUNT_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    branch_ref: bytes
+    recorded_unix_ms: int
+    cause: str
+    item_count: int
+    def __init__(self, version: _Optional[int] = ..., branch_ref: _Optional[bytes] = ..., recorded_unix_ms: _Optional[int] = ..., cause: _Optional[str] = ..., item_count: _Optional[int] = ...) -> None: ...
+
+class ListBranchVersionsRequest(_message.Message):
+    __slots__ = ("handle", "limit", "after_version")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_VERSION_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    limit: int
+    after_version: int
+    def __init__(self, handle: _Optional[str] = ..., limit: _Optional[int] = ..., after_version: _Optional[int] = ...) -> None: ...
+
+class ListBranchVersionsResponse(_message.Message):
+    __slots__ = ("versions", "has_more", "found")
+    VERSIONS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    versions: _containers.RepeatedCompositeFieldContainer[BranchVersion]
+    has_more: bool
+    found: bool
+    def __init__(self, versions: _Optional[_Iterable[_Union[BranchVersion, _Mapping]]] = ..., has_more: bool = ..., found: bool = ...) -> None: ...
+
+class RestoreBranchRequest(_message.Message):
+    __slots__ = ("handle", "version")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    version: int
+    def __init__(self, handle: _Optional[str] = ..., version: _Optional[int] = ...) -> None: ...
+
+class RestoreBranchResponse(_message.Message):
+    __slots__ = ("branch", "new_version", "deduplicated")
+    BRANCH_FIELD_NUMBER: _ClassVar[int]
+    NEW_VERSION_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    branch: Branch
+    new_version: int
+    deduplicated: bool
+    def __init__(self, branch: _Optional[_Union[Branch, _Mapping]] = ..., new_version: _Optional[int] = ..., deduplicated: bool = ...) -> None: ...
 
 class GetServerInfoRequest(_message.Message):
     __slots__ = ()

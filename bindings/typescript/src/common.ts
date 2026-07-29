@@ -213,7 +213,9 @@ export {
   AdvanceResult,
   Branch,
   BranchItem,
+  BranchVersion,
   CreateBranchResult,
+  RestoreResult,
   SnapshotResult,
 } from "./branch.js";
 export { ModelLifecycleResult, ModelSummary, PullStatus } from "./models.js";

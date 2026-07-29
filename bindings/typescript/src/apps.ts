@@ -155,6 +155,12 @@ export class AppSummary {
      * registry. `""` on an App that never said, or an older server.
      */
     readonly delivers: string = "",
+    /**
+     * Catalog lifecycle: `""` (active) or `"draft"` (created but its project scaffold
+     * has not completed — resume the scaffold or discard the App). Advisory,
+     * display/routing only; `""` on an old row/server ⇒ active.
+     */
+    readonly lifecycle: string = "",
   ) {}
 
   static fromProto(s: PbAppSummary): AppSummary {
@@ -170,6 +176,7 @@ export class AppSummary {
       s.kind,
       s.mode,
       s.delivers,
+      s.lifecycle,
     );
   }
 }

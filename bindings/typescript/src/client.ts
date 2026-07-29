@@ -29,7 +29,14 @@ import {
   hostedAppStatusFromProto,
   scaffoldPhaseName,
 } from "./apps.js";
-import { AdvanceResult, Branch, CreateBranchResult, SnapshotResult } from "./branch.js";
+import {
+  AdvanceResult,
+  Branch,
+  BranchVersion,
+  CreateBranchResult,
+  RestoreResult,
+  SnapshotResult,
+} from "./branch.js";
 import { CaptureRecord, type CaptureRecordPage } from "./capture.js";
 import { Chain } from "./chains.js";
 import type { DagSpecJson, DagSpecStep } from "./chains.js";
@@ -1428,6 +1435,38 @@ export abstract class KxClientBase {
       this.grpc.advanceBranch({ handle, path, contentRef: asBytes(contentRef, REF_LEN) }),
     );
     return AdvanceResult.fromProto(resp);
+  }
+
+  /**
+   * List a branch's recorded point-in-time versions, newest-first, or `null` if
+   * the branch is not found / not owned / has no history (uniform — no
+   * cross-party existence oracle). `opts.after` is an exclusive DESCENDING
+   * cursor (return versions strictly older); omit it for the newest page.
+   */
+  async listBranchVersions(
+    handle: string,
+    opts: { limit?: number; after?: number } = {},
+  ): Promise<BranchVersion[] | null> {
+    const resp = await rpc(
+      this.grpc.listBranchVersions({
+        handle,
+        limit: opts.limit ?? 0,
+        afterVersion: opts.after ?? 0,
+      }),
+    );
+    return resp.found ? resp.versions.map((v) => BranchVersion.fromProto(v)) : null;
+  }
+
+  /**
+   * Restore branch `handle` to the state recorded at `version`. Restore APPENDS
+   * a new version whose items are the historical items — history is never
+   * rewound, and you can always restore forward again. Rejects
+   * FAILED_PRECONDITION while the branch is locked or a scaffold is writing it,
+   * NOT_FOUND (uniform) for an unknown branch/version.
+   */
+  async restoreBranch(handle: string, version: number): Promise<RestoreResult> {
+    const resp = await rpc(this.grpc.restoreBranch({ handle, version }));
+    return RestoreResult.fromProto(resp);
   }
 
   /**

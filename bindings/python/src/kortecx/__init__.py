@@ -40,8 +40,10 @@ from .branch import (
     AdvanceResult,
     Branch,
     BranchItem,
+    BranchVersion,
     CreateBranchResult,
     EditProposal,
+    RestoreResult,
     SnapshotResult,
 )
 from .capture import CaptureRecord, CaptureRecordPage
@@ -316,9 +318,11 @@ __all__ = [
     "PutContextBundleResult",
     "Branch",
     "BranchItem",
+    "BranchVersion",
     "CreateBranchResult",
     "SnapshotResult",
     "AdvanceResult",
+    "RestoreResult",
     "EditProposal",
     "ModelSummary",
     "PullStatus",
