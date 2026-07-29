@@ -4954,6 +4954,11 @@ button.card-grid__title:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
+/* In the catalog TABLE the chip follows the name inline (the card head is a
+ * gapped flex row; a table cell is not) — give it its own breathing room. */
+.linkbtn + .chip--draft {
+  margin-left: 0.4rem;
+}
 
 /* T-FEAT1 — the model's `<think>` reasoning as a collapsed disclosure above the
  * answer (display-only; the answer always renders below). */

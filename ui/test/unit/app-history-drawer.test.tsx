@@ -118,6 +118,33 @@ describe("AppHistoryDrawer", () => {
     expect(restoreMutate.mock.calls[0]?.[0]).toEqual({ handle: "apps/local/demo", version: 2 });
   });
 
+  it("a successful restore shows the recorded notice, and hosted adds the restart offer", () => {
+    restoreMutate.mockImplementation((_vars: unknown, opts?: { onSuccess?: () => void }) =>
+      opts?.onSuccess?.(),
+    );
+    VERSIONS = versions3();
+    mount({ hosted: true });
+    fireEvent.click(screen.getByTestId("app-history-restore-2"));
+    // Hosted honesty in the confirm copy: the live server keeps serving old files.
+    expect(screen.getByTestId("app-history-confirm").textContent).toContain("restart");
+    fireEvent.click(screen.getByTestId("app-history-confirm-restore"));
+    const notice = screen.getByTestId("app-history-restored");
+    expect(notice.textContent).toContain("version 2");
+    expect(screen.getByTestId("hosted-restart-stub")).toBeInTheDocument();
+  });
+
+  it("Escape closes the confirm first, then the drawer", () => {
+    const onClose = vi.fn();
+    VERSIONS = versions3();
+    mount({ onClose });
+    fireEvent.click(screen.getByTestId("app-history-restore-2"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("app-history-confirm")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("a locked App refuses up front: notice shown, restore disabled", () => {
     VERSIONS = versions3();
     mount({ locked: true });

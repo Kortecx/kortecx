@@ -78,6 +78,11 @@ vi.mock("../../src/components/sections/NewAppForm", () => ({
           onLaunched({ handle: "apps/local/x", kind: "scheduled", launchError: "no served model" })
         }
       />
+      <button
+        type="button"
+        data-testid="stub-launch-hosted"
+        onClick={() => onLaunched({ handle: "apps/local/h", kind: "hosted", launchError: null })}
+      />
     </div>
   ),
 }));
@@ -153,6 +158,35 @@ describe("CreateAppScreen", () => {
       { handle: "apps/local/x" },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
+  });
+
+  it("a HOSTED app's Done routes home to the Hosted section (the kind-follow)", () => {
+    render(<CreateAppScreen />);
+    PHASE = "done";
+    fireEvent.click(screen.getByTestId("stub-launch-hosted"));
+    fireEvent.click(screen.getByTestId("app-create-result-done"));
+    expect(navigateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/apps", search: { section: "hosted" } }),
+    );
+  });
+
+  it("Resume's success re-arms the scaffold view (back to watching)", () => {
+    resumeMutate.mockImplementation((_vars: unknown, opts?: { onSuccess?: () => void }) =>
+      opts?.onSuccess?.(),
+    );
+    render(<CreateAppScreen />);
+    fireEvent.click(screen.getByTestId("stub-launch-fail"));
+    fireEvent.click(screen.getByTestId("app-create-result-resume"));
+    // The launch error cleared ⇒ the live scaffold view replaces the failure note.
+    expect(screen.getByTestId("scaffold-progress-stub")).toBeInTheDocument();
+    expect(screen.queryByTestId("apps-create-launch-failed")).toBeNull();
+  });
+
+  it("Escape on a launch-failure result closes it and returns home", () => {
+    render(<CreateAppScreen />);
+    fireEvent.click(screen.getByTestId("stub-launch-fail"));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(navigateSpy).toHaveBeenCalledWith(expect.objectContaining({ to: "/apps" }));
   });
 });
 

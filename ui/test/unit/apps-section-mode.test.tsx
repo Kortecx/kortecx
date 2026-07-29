@@ -175,9 +175,7 @@ afterEach(() => {
 
 /** Mount the create form directly (it lives on /apps/create now, not the catalog). */
 function mountForm(initialKind: "scheduled" | "hosted" = "scheduled") {
-  return render(
-    <NewAppForm initialKind={initialKind} onClose={vi.fn()} onLaunched={onLaunched} />,
-  );
+  return render(<NewAppForm initialKind={initialKind} onClose={vi.fn()} onLaunched={onLaunched} />);
 }
 
 /** Drive the mounted form to a reviewable design. */

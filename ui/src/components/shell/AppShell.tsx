@@ -1,5 +1,5 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
-import { AnimatePresence, m } from "framer-motion";
+import { AnimatePresence, m, useReducedMotion } from "framer-motion";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { ApprovalsProvider } from "../../app/approvals-context";
 import { pageFade } from "../../app/motion";
@@ -20,6 +20,16 @@ const DEVTOOLS_KEY = "kortecx.ui.devtools";
 /** The animated route outlet (shared by the gate and the full shell). */
 function RouteOutlet() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const reducedMotion = useReducedMotion();
+  // Under prefers-reduced-motion the route transition is SKIPPED entirely, not
+  // just softened: the slide/fade is decorative, and an exit animation is a
+  // real hazard beyond a11y — its completion is rAF-driven, so a throttled
+  // renderer (a backgrounded/headless tab) can defer the swap for SECONDS and
+  // then remount the route mid-interaction, discarding in-progress form state.
+  // The e2e suite runs with reduced motion for exactly that determinism.
+  if (reducedMotion) {
+    return <Outlet />;
+  }
   return (
     <AnimatePresence mode="wait">
       <m.div

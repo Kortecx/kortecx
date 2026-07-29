@@ -11,6 +11,13 @@ export async function connectConsole(
   gw: Gateway,
   opts: { wsEndpoint?: string } = {},
 ): Promise<void> {
+  // Reduced motion, deliberately (applied here because the config-level `use`
+  // option demonstrably does not reach these pages): the shell SKIPS its route
+  // transition under prefers-reduced-motion (AppShell.RouteOutlet). An exit
+  // animation's completion is rAF-driven, and a headless/throttled renderer can
+  // defer it for seconds and then REMOUNT the route mid-test, discarding
+  // in-progress form state — a nondeterministic ~5-in-6 flake on an idle page.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/connect");
   await page.getByLabel(/gateway endpoint/i).fill(gw.endpoint);
   if (opts.wsEndpoint) {
