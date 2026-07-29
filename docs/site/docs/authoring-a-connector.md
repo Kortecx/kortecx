@@ -195,6 +195,6 @@ use kx_extension_sdk::prelude::*;
 
 ## OSS / Cloud line
 
-OSS dials local + first-party connectors (one App at a time). Multi-tenant connector
+OSS dials local + first-party connectors. Multi-tenant connector
 registries, a connector marketplace, and a hardened secrets vault are Cloud concerns
 (D129).
