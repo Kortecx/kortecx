@@ -1089,6 +1089,158 @@ async fn an_http_step_naming_a_private_host_by_name_is_refused() {
     );
 }
 
+/// A PATH-ROUTED http fixture for the conditional pair: pressure readings and
+/// gate orders, each answer derivable only by dialing its route.
+fn spawn_routed_fixture() -> (u16, std::thread::JoinHandle<()>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        for stream in listener.incoming().take(8) {
+            let Ok(mut s) = stream else { continue };
+            let mut buf = [0u8; 2048];
+            let n = s.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let body = if req.starts_with("GET /high") {
+                r#"{"reading":87}"#
+            } else if req.starts_with("GET /low") {
+                r#"{"reading":12}"#
+            } else if req.starts_with("GET /open") {
+                r#"{"order":"SLUICE-OPEN-9"}"#
+            } else if req.starts_with("GET /shut") {
+                r#"{"order":"SLUICE-SHUT-2"}"#
+            } else {
+                r#"{"error":"no such route"}"#
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = s.write_all(resp.as_bytes());
+        }
+    });
+    (port, handle)
+}
+
+/// The sluice workflow: http(source) → conditional(":87"?) →Control→ two http
+/// arms (open/shut, skip-guarded) → first_non_skip join. The PAIR is the
+/// oracle: a predicate that never reads its parent emits the same token on
+/// both runs and fails exactly one of them; a conditional that ran BOTH arms
+/// fails the join outright (two non-skip parents).
+fn sluice_envelope(name: &str, port: u16, source_path: &str) -> Vec<u8> {
+    let base = format!("http://127.0.0.1:{port}");
+    let blueprint = serde_json::json!({
+        "seed": 0,
+        "steps": [
+            { "kind": "http", "args": { "url": format!("{base}/{source_path}") } },
+            { "kind": "conditional", "params": {
+                "kx.cond.predicate": "{\"op\":\"contains\",\"value\":\":87\"}"
+            } },
+            { "kind": "http", "args": { "url": format!("{base}/open") },
+              "params": { "kx.cond.skip_guard": "true", "kx.cond.arm": "then" } },
+            { "kind": "http", "args": { "url": format!("{base}/shut") },
+              "params": { "kx.cond.skip_guard": "true", "kx.cond.arm": "else" } },
+            { "kind": "pure", "params": { "kx.cond.join": "first_non_skip" } }
+        ],
+        "edges": [
+            { "parent": 0, "child": 1, "data": true },
+            { "parent": 1, "child": 2, "data": false },
+            { "parent": 1, "child": 3, "data": false },
+            { "parent": 2, "child": 4, "data": true },
+            { "parent": 3, "child": 4, "data": true }
+        ]
+    });
+    kx_app::WorkflowEnvelope::new(name, blueprint)
+        .to_canonical_json()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_conditional_takes_the_right_arm_in_both_directions() {
+    let (port, _fixture) = spawn_routed_fixture();
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    for (handle, source, must, must_not) in [
+        (
+            "team/wf/sluice-high",
+            "high",
+            "SLUICE-OPEN-9",
+            "SLUICE-SHUT-2",
+        ),
+        (
+            "team/wf/sluice-low",
+            "low",
+            "SLUICE-SHUT-2",
+            "SLUICE-OPEN-9",
+        ),
+    ] {
+        c.save_workflow(with_bearer(
+            save_req(handle, sluice_envelope(source, port, source), ""),
+            "tok-alice",
+        ))
+        .await
+        .unwrap();
+        let run = c
+            .run_workflow(with_bearer(
+                proto::RunWorkflowRequest {
+                    handle: handle.into(),
+                    args: Vec::new(),
+                    require_approval: false,
+                },
+                "tok-alice",
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        await_mote_committed(&mut c, "tok-alice", &run.instance_id, &run.terminal_mote_id).await;
+        // Read THE terminal's committed bytes (the join's verbatim carry of the
+        // surviving arm's http observation).
+        let view = c
+            .get_projection(with_bearer(
+                proto::GetProjectionRequest {
+                    instance_id: run.instance_id.clone(),
+                    at_seq: None,
+                },
+                "tok-alice",
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        let terminal = view
+            .motes
+            .iter()
+            .find(|m| m.mote_id == run.terminal_mote_id)
+            .expect("terminal in projection");
+        let r = terminal.result_ref.clone().expect("committed result");
+        let body = String::from_utf8_lossy(
+            &c.get_content(with_bearer(
+                proto::GetContentRequest {
+                    instance_id: run.instance_id.clone(),
+                    content_ref: r,
+                },
+                "tok-alice",
+            ))
+            .await
+            .unwrap()
+            .into_inner()
+            .payload,
+        )
+        .into_owned();
+        assert!(
+            body.contains(must),
+            "{source}: the join must carry the TAKEN arm's token, got: {body}"
+        );
+        assert!(
+            !body.contains(must_not),
+            "{source}: the UNTAKEN arm's token leaked into the join: {body}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn oversized_envelope_is_refused_at_the_boundary() {
     let dir = tempfile::TempDir::new().unwrap();

@@ -284,6 +284,10 @@ impl StepSpec {
             // The durable wait step: a PURE step whose identity-bearing
             // `params["kx.wait.delay_ms"]` the coordinator parks/arms/fires on.
             "wait" => proto::WorkflowStepKind::Wait,
+            // The typed data-driven branch: a PURE step whose identity-bearing
+            // `params["kx.cond.predicate"]` the executor evaluates over its
+            // single Data parent's committed output.
+            "conditional" => proto::WorkflowStepKind::Conditional,
             "exec" => {
                 return Err(BlueprintError::new(
                     "step kind `exec` is reserved (a registered body is not yet runnable); \
@@ -315,6 +319,10 @@ impl StepSpec {
             ),
             proto::WorkflowStepKind::Wait if has_model || has_tool || has_args => Some(
                 "a `wait` step carries only params[\"kx.wait.delay_ms\"] (no model / tool / args)",
+            ),
+            proto::WorkflowStepKind::Conditional if has_model || has_tool || has_args => Some(
+                "a `conditional` step carries only params[\"kx.cond.predicate\"] \
+                 (no model / tool / args)",
             ),
             _ => None,
         };

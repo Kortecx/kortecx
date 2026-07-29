@@ -1600,6 +1600,9 @@ fn agentic_chain_salt(motes: &[(kx_mote::Mote, kx_warrant::WarrantSpec)]) -> Vec
 // `Status` is large; boxing it would force every caller (the RPC handlers) to unbox —
 // the same crate-wide rationale as the streaming seams above.
 #[allow(clippy::result_large_err)]
+// The step-kind sugar arms (http/wait/conditional) grew this past the budget;
+// each arm is one kind's whole refusal contract, read in one place.
+#[allow(clippy::too_many_lines)]
 pub fn author_steps_from_proto(
     steps: Vec<proto::WorkflowStep>,
     edges: Vec<proto::WorkflowEdge>,
@@ -1651,13 +1654,26 @@ pub fn author_steps_from_proto(
                 AuthorStepKind::Pure
             }
             Ok(proto::WorkflowStepKind::Conditional) => {
-                return Err(Status::invalid_argument(
-                    "CONDITIONAL steps are not yet authorable on this serve",
-                ));
+                // A conditional is a PURE step whose identity-bearing predicate
+                // the executor evaluates over its single Data parent. PRESENCE
+                // is checked here (gateway-core deliberately carries no JSON
+                // dep — its library boundary); the HOST binder validates the
+                // predicate's shape and refuses a conditional that could never
+                // decide, before any Mote exists.
+                if !s.params.contains_key(kx_mote::COND_PREDICATE_KEY) {
+                    return Err(Status::invalid_argument(format!(
+                        "a CONDITIONAL step requires params[{:?}] = {{\"op\": \
+                         \"equals\"|\"contains\"|\"json_path_eq\", \"value\": <text>, \
+                         \"path\": <required for json_path_eq>, \"negate\"?: bool}}",
+                        kx_mote::COND_PREDICATE_KEY
+                    )));
+                }
+                AuthorStepKind::Pure
             }
             _ => {
                 return Err(Status::invalid_argument(
-                    "WorkflowStep.kind must be PURE, MODEL, EXEC, TOOL, HTTP, or WAIT",
+                    "WorkflowStep.kind must be PURE, MODEL, EXEC, TOOL, HTTP, WAIT, or \
+                     CONDITIONAL",
                 ));
             }
         };
@@ -1700,6 +1716,35 @@ pub fn author_steps_from_proto(
         Ok(proto::WorkflowExecutionMode::Dynamic) => AuthorExecutionMode::Dynamic,
         _ => AuthorExecutionMode::Frozen,
     };
+    // The SKIP-leak refusal: a step inside a conditional arm (skip-guard-marked)
+    // may feed ONLY other guard-marked steps or the selecting join — the one
+    // path by which the canonical SKIP sentinel could reach a step that would
+    // read it as ordinary data. Refused at authoring, where the author can fix
+    // the graph, instead of surfacing at run as plausible-looking garbage.
+    for e in &out_edges {
+        let (Some(parent), Some(child)) = (
+            out_steps.get(e.parent as usize),
+            out_steps.get(e.child as usize),
+        ) else {
+            continue; // out-of-range edges are the compiler's refusal
+        };
+        let parent_guarded = parent.params.contains_key(kx_mote::SKIP_GUARD_KEY);
+        if !parent_guarded || !e.data {
+            continue;
+        }
+        let child_ok = child.params.contains_key(kx_mote::SKIP_GUARD_KEY)
+            || child.params.contains_key(kx_mote::JOIN_SELECT_KEY);
+        if !child_ok {
+            return Err(Status::invalid_argument(format!(
+                "step {} is inside a conditional arm but feeds step {}, which is neither \
+                 in an arm nor a join — route arm outputs through a \
+                 {:?} = \"first_non_skip\" join",
+                e.parent,
+                e.child,
+                kx_mote::JOIN_SELECT_KEY
+            )));
+        }
+    }
     Ok((out_steps, out_edges, mode))
 }
 

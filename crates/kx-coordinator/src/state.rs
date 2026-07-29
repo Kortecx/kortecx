@@ -792,6 +792,12 @@ fn lease_ready(
             if is_wait_step(mote) {
                 continue;
             }
+            // v17: a conditional-arm step leases ONLY once its gate resolved
+            // positively (the taken arm); the untaken arm is skip-committed by
+            // the settle pass, never run.
+            if is_skip_guard(mote) && !skip_guard_cleared(mote, projection, store) {
+                continue;
+            }
             // RC4c-2b: HOLD a grounded chat-rag/vision-rag answer until its durable
             // rerank settles (the suppression gate) — it is edge-free + ready-at-submit,
             // so without this it would dispatch on the base order before the rerank.
@@ -1159,6 +1165,96 @@ fn is_wait_step(mote: &Mote) -> bool {
             .def
             .config_subset
             .contains_key(&ConfigKey(WAIT_DELAY_MS_KEY.to_string()))
+}
+
+/// v17: `true` iff `mote` is inside a conditional ARM (a skip-guard-marked
+/// step). Held from lease until its gate resolves POSITIVELY; the settle pass
+/// (`settle_skip_guards`) synthesizes the canonical SKIP `Committed` for the
+/// untaken arm — readiness itself stays the standing all-parents-committed
+/// rule, untouched.
+fn is_skip_guard(mote: &Mote) -> bool {
+    mote.def
+        .config_subset
+        .contains_key(&ConfigKey(kx_mote::SKIP_GUARD_KEY.to_string()))
+}
+
+/// The canonical SKIP sentinel's content ref (a pure constant — every skip
+/// commits the SAME content-addressed bytes).
+fn skip_sentinel_ref() -> ContentRef {
+    ContentRef::of(kx_mote::COND_SKIP_SENTINEL)
+}
+
+/// v17 (read-only, lease-time): `true` iff a skip-guard-marked READY mote may
+/// actually lease — its gate resolved POSITIVELY. Within `lease_ready` every
+/// DAG parent is already Committed (the ready-set rule), so this only decides
+/// run-vs-await-skip:
+/// - a parent committed the SKIP sentinel ⇒ NOT cleared (the settle pass will
+///   skip-commit this guard in turn — propagation);
+/// - an ARM ENTRY (carries the arm label): the Control-parent conditional's
+///   committed selection must MATCH this arm; a mismatch/unreadable selection
+///   holds (the settle pass owns the skip-commit / the dead-letter).
+fn skip_guard_cleared(mote: &Mote, projection: &Projection, store: Option<&SharedStore>) -> bool {
+    match skip_guard_verdict(mote, projection, store) {
+        GuardVerdict::Run => true,
+        GuardVerdict::Skip | GuardVerdict::Undecided => false,
+    }
+}
+
+/// The three-way outcome of reading a guard's gate from COMMITTED FACTS alone.
+enum GuardVerdict {
+    /// The taken arm / a live interior guard — lease and run it.
+    Run,
+    /// The untaken arm (a mismatched selection or a SKIP parent) — the settle
+    /// pass skip-commits it.
+    Skip,
+    /// The selection is not yet readable — hold, re-check next drain.
+    Undecided,
+}
+
+/// v17: decide a guard's fate from its parents' COMMITTED BYTES — deliberately
+/// never from `dispatch.defs` (a committed parent's def is evicted at commit,
+/// and a decision that needed it would wedge forever right after the
+/// conditional commits — the exact bug this replaced). The conditional's
+/// verdict is recognized by its canonical `{"selected":"..."}` shape, which
+/// only `run_conditional` mints; the SKIP sentinel is its own distinguished
+/// ref. Within a READY guard every parent is already Committed.
+fn skip_guard_verdict(
+    mote: &Mote,
+    projection: &Projection,
+    store: Option<&SharedStore>,
+) -> GuardVerdict {
+    let skip_ref = skip_sentinel_ref();
+    for p in &mote.parents {
+        if projection.result_ref_of(&p.parent_id) == Some(skip_ref) {
+            return GuardVerdict::Skip; // propagation: a skipped parent skips us
+        }
+    }
+    let Some(arm) = mote
+        .def
+        .config_subset
+        .get(&ConfigKey(kx_mote::COND_ARM_KEY.to_string()))
+    else {
+        return GuardVerdict::Run; // interior guard, no skip parents ⇒ runs
+    };
+    let Some(store) = store else {
+        return GuardVerdict::Undecided; // cannot read the selection — hold
+    };
+    let wanted = format!("\"selected\":\"{}\"", String::from_utf8_lossy(&arm.0));
+    for p in &mote.parents {
+        let Some(r) = projection.result_ref_of(&p.parent_id) else {
+            continue;
+        };
+        let Ok(bytes) = store.get(&r) else { continue };
+        let text = String::from_utf8_lossy(&bytes);
+        if text.starts_with("{\"selected\":\"") {
+            return if text.contains(&wanted) {
+                GuardVerdict::Run
+            } else {
+                GuardVerdict::Skip
+            };
+        }
+    }
+    GuardVerdict::Undecided // no readable verdict yet — hold (fail-safe)
 }
 
 /// PR-6b-2: derive a standalone authored `tool()` node's `(args_bytes, net_scope,
@@ -1827,6 +1923,11 @@ struct Dispatch {
     /// JOURNAL is the truth — this set is a cursor over it, never a second
     /// source (losing it re-derives from the fold).
     armed_timers: BTreeMap<MoteId, (u64, u8, u32)>,
+    /// v17 — the admitted skip-guard-marked steps ([`is_skip_guard`]) awaiting
+    /// their conditional's verdict. The settle pass either skip-commits (the
+    /// untaken arm) or releases the park (the taken arm leases normally).
+    /// In-memory only; a recovery re-submit re-parks (the parked_waits posture).
+    parked_guards: BTreeMap<MoteId, [u8; INSTANCE_ID_LEN]>,
 }
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
@@ -1853,6 +1954,7 @@ fn core_loop<J: Journal>(
         parked_launches: BTreeMap::new(),
         parked_waits: BTreeMap::new(),
         armed_timers: BTreeMap::new(),
+        parked_guards: BTreeMap::new(),
     };
     // PR-2c-2: re-derive the live re-plan chain from committed facts (re-materialize
     // committed round shapers' children, re-insert the in-flight round shaper, and
@@ -2496,6 +2598,9 @@ fn submit_and_capture<J: Journal>(
     // the eventual fire-commit) but PARKED — `settle_wait_steps` journals its
     // timer once its DAG parents commit; `fire_due_timers` commits it.
     let wait_park = (!react_seed && is_wait_step(&mote)).then_some(mote.id);
+    // v17: a conditional-arm step is admitted but tracked for the skip-guard
+    // settle (`settle_skip_guards` skip-commits the untaken arm's steps).
+    let guard_park = (!react_seed && is_skip_guard(&mote)).then_some(mote.id);
 
     // Admit through the hosted scheduler (verbatim — the P2 thesis test).
     let warrant_for_capture = warrant.clone();
@@ -2524,6 +2629,13 @@ fn submit_and_capture<J: Journal>(
     if let Some(wait_id) = wait_park {
         if !matches!(projection.state_of(&wait_id), MoteState::Committed) {
             dispatch.parked_waits.insert(wait_id, instance_id);
+        }
+    }
+    // v17: park a skip-guard-marked arm step (re-park on a duplicate re-submit
+    // too — the settle pass is idempotent over already-terminal subjects).
+    if let Some(guard_id) = guard_park {
+        if !matches!(projection.state_of(&guard_id), MoteState::Committed) {
+            dispatch.parked_guards.insert(guard_id, instance_id);
         }
     }
     if !outcome.duplicate {
@@ -3428,6 +3540,140 @@ fn settle_wait_steps<J: Journal>(
     }
 }
 
+/// v17: skip-commit the UNTAKEN arm's steps + release the taken arm's parks.
+/// For each parked skip-guard whose DAG parents have all committed: a parent
+/// that committed the SKIP sentinel propagates the skip; an ARM ENTRY whose
+/// conditional selected the OTHER arm skip-commits; the TAKEN arm's guard is
+/// simply un-parked (the lease-time `skip_guard_cleared` releases it in the
+/// same drain). Readiness stays the standing all-parents-committed rule —
+/// every join parent genuinely commits (real bytes or the sentinel).
+fn settle_skip_guards<J: Journal>(
+    journal: &J,
+    store: Option<&SharedStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+) {
+    if dispatch.parked_guards.is_empty() {
+        return;
+    }
+
+    let parked: Vec<MoteId> = dispatch.parked_guards.keys().copied().collect();
+    for guard_id in parked {
+        let Some((guard_mote, guard_warrant)) = dispatch.defs.get(&guard_id).cloned() else {
+            dispatch.parked_guards.remove(&guard_id);
+            continue;
+        };
+        if projection.state_of(&guard_id) != MoteState::Pending {
+            dispatch.parked_guards.remove(&guard_id);
+            continue;
+        }
+        // Not decidable until every DAG parent commits; a terminally-failed
+        // parent dead-letters the guard (the parked-wait posture).
+        let mut all_committed = true;
+        let mut parent_terminally_failed = false;
+        for p in &guard_mote.parents {
+            match projection.state_of(&p.parent_id) {
+                MoteState::Committed => {}
+                MoteState::Failed | MoteState::Inconsistent | MoteState::Repudiated => {
+                    parent_terminally_failed = true;
+                    all_committed = false;
+                    break;
+                }
+                _ => all_committed = false,
+            }
+        }
+        if parent_terminally_failed {
+            dead_letter_parked_wait(journal, projection, folded_through, dispatch, guard_id);
+            dispatch.parked_guards.remove(&guard_id);
+            continue;
+        }
+        if !all_committed {
+            continue;
+        }
+        // Decide from COMMITTED FACTS alone (never dispatch.defs — a committed
+        // parent's def is already evicted): SKIP parents propagate; an entry
+        // whose conditional selected the other arm skips; the taken arm is
+        // released to lease; an unreadable verdict re-checks next drain.
+        match skip_guard_verdict(&guard_mote, projection, store) {
+            GuardVerdict::Run => {
+                dispatch.parked_guards.remove(&guard_id);
+                continue;
+            }
+            GuardVerdict::Undecided => continue,
+            GuardVerdict::Skip => {}
+        }
+        // Skip-commit: the canonical sentinel, minted into the store once
+        // (content-addressed — every skip is the SAME ref, which is what the
+        // join + the propagation check key on).
+        let Some(store) = store else { continue };
+        let result_ref = match store.put(kx_mote::COND_SKIP_SENTINEL) {
+            Ok(r) => r,
+            Err(error) => {
+                tracing::warn!(%error, guard = ?guard_id, "skip sentinel store write failed — retried next drain");
+                continue;
+            }
+        };
+        synth_commit_subject(
+            journal,
+            projection,
+            folded_through,
+            dispatch,
+            &guard_mote,
+            &guard_warrant,
+            result_ref,
+            "conditional arm skipped",
+        );
+        dispatch.parked_guards.remove(&guard_id);
+    }
+}
+
+/// v17: synthesize a parked subject's own `Committed` on the sole-writer
+/// thread (the `commit_agentic_launch` shape) — the wait fire and the arm skip
+/// share it. `idempotency_key = MoteId` ⇒ the journal's dedup fence makes a
+/// double synth structurally impossible.
+#[allow(clippy::too_many_arguments)]
+fn synth_commit_subject<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    mote: &Mote,
+    warrant: &WarrantSpec,
+    result_ref: ContentRef,
+    what: &str,
+) {
+    let parents: SmallVec<[kx_journal::ParentEntry; 4]> = mote
+        .parents
+        .iter()
+        .map(kx_journal::ParentEntry::from_parent_ref)
+        .collect();
+    let entry = JournalEntry::Committed {
+        mote_id: mote.id,
+        idempotency_key: *mote.id.as_bytes(),
+        seq: 0,
+        nondeterminism: mote.def.nd_class,
+        result_ref,
+        parents,
+        warrant_ref: warrant_ref_of(warrant),
+        mote_def_hash: mote.def.hash(),
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                *folded_through = seq;
+            }
+            dispatch.submitted.remove(&mote.id);
+            dispatch.defs.remove(&mote.id);
+            dispatch.armed_timers.remove(&mote.id);
+            dispatch.tracker.resolve_committed(mote.id);
+            tracing::info!(subject = ?mote.id, "{what} — frozen DAG advanced");
+        }
+        Err(error) => tracing::error!(%error, "failed to append synthesized Committed ({what})"),
+    }
+}
+
 /// v17: fail-closed dead-letter a parked wait step (malformed delay / a
 /// terminally-failed parent). Mirrors `dead_letter_agentic_launch`.
 fn dead_letter_parked_wait<J: Journal>(
@@ -3581,6 +3827,9 @@ fn run_settle_passes<J: Journal>(
     // v17: arm any parent-satisfied wait step, then fire the due ones — both
     // idempotent, both zero-cost for a timer-free serve.
     settle_wait_steps(journal, projection, folded_through, dispatch, clock);
+    // v17: settle conditional arms — skip-commit the untaken side, release the
+    // taken side. Zero-cost for a conditional-free serve.
+    settle_skip_guards(journal, store, projection, folded_through, dispatch);
     fire_due_timers(
         journal,
         store,

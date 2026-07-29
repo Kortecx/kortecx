@@ -200,6 +200,12 @@ mod app_run;
 // llama.cpp-specific bits inside are additionally `inference`-gated.
 #[cfg(feature = "serve-engine")]
 mod model_exec;
+// The deterministic workflow-step executor (conditional / join-after-arms) —
+// ALWAYS wired on the embedded worker, model or none: the outermost route +
+// the worker's single ContextSink, teeing deliveries into the model router's
+// own F-7 map when one exists.
+#[cfg(feature = "embedded-worker")]
+mod det_exec;
 // The host-owned routing backend (one InferenceBackend + lifecycle over N serve
 // engines — llama.cpp and/or Ollama). FFI-free; rides `serve-engine`.
 #[cfg(feature = "serve-engine")]

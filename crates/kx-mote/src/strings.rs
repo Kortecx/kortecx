@@ -186,6 +186,39 @@ pub const TOOL_ARGS_KEY: &str = "kx.tool.args";
 /// moves no existing digest (no prior Mote carries it).
 pub const WAIT_DELAY_MS_KEY: &str = "kx.wait.delay_ms";
 
+/// The CONDITIONAL step marker: `config_subset[COND_PREDICATE_KEY]` carries a
+/// canonical-JSON `{op, value, path?, negate?}` predicate (identity-bearing)
+/// evaluated over the step's SINGLE Data parent's committed output; the step
+/// commits `{"selected":"then"|"else"}`. A model-JUDGED branch is NOT this —
+/// that is a MODEL step feeding a conditional.
+pub const COND_PREDICATE_KEY: &str = "kx.cond.predicate";
+
+/// Marks a conditional ARM's ENTRY step with the arm it belongs to
+/// (`"then"` / `"else"`). The coordinator's skip-guard settle reads the
+/// Control-parent conditional's committed selection: a mismatch synthesizes
+/// the step's `Committed` with the canonical SKIP sentinel instead of running
+/// it — the untaken arm collapses honestly, without touching the readiness
+/// rule.
+pub const COND_ARM_KEY: &str = "kx.cond.arm";
+
+/// Marks EVERY step inside a conditional arm (entries carry [`COND_ARM_KEY`]
+/// too). A guard-marked step is held from lease until its gate resolves
+/// positively; a guard whose parent committed the SKIP sentinel skip-commits
+/// in turn (propagation). Authoring REFUSES an edge from a guard-marked step
+/// to a non-guard, non-join consumer — SKIP bytes can never leak into a step
+/// that would read them as data.
+pub const SKIP_GUARD_KEY: &str = "kx.cond.skip_guard";
+
+/// The join-after-arms marker: `"first_non_skip"` commits the single non-SKIP
+/// parent's bytes verbatim (0 or 2+ survivors fail closed — a conditional that
+/// ran both arms is a bug, never a silent pick).
+pub const JOIN_SELECT_KEY: &str = "kx.cond.join";
+
+/// The canonical SKIP sentinel bytes an untaken arm's steps commit — a
+/// distinguished fact ("this step was skipped by its conditional"), never
+/// fabricated step output. Content-addressed: every skip commits the SAME ref.
+pub const COND_SKIP_SENTINEL: &[u8] = b"kx-workflow/skip/v1";
+
 /// PR-7: the `config_subset` key under which the bind layer injects a run's
 /// attached context-bundle items (canonical-encoded by
 /// [`crate::encode_context_items`]). Present ONLY on an ENTRY Mote of a run that

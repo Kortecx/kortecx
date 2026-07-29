@@ -683,6 +683,19 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let context_sink: Option<Arc<dyn kx_worker::ContextSink>> = None;
     #[cfg(not(feature = "serve-engine"))]
     let serve_model: Option<kx_mote::ModelId> = None;
+    // v17: deterministic workflow steps (conditional / join-after-arms) execute
+    // on EVERY build — "deterministic steps never hold the model" is only true
+    // if they never need the model executor to exist. The det wrapper is the
+    // OUTERMOST route + the worker's single ContextSink; deliveries TEE into
+    // the model router's own F-7 map when one is wired, so both layers see the
+    // identical parent context.
+    let det = Arc::new(crate::det_exec::DeterministicStepExecutor::new(
+        executor,
+        (*content).clone(),
+        context_sink.clone(),
+    ));
+    let executor: Arc<dyn MoteExecutor> = det.clone();
+    let context_sink: Option<Arc<dyn kx_worker::ContextSink>> = Some(det);
     // Batch C: the OUTERMOST executor wrapper — every leased mote (echo /
     // real-exec / model / shaper / react turn / critic) gets a wall-clock row.
     // Structurally fail-open: the wrapper returns the inner result verbatim on

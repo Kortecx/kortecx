@@ -2427,6 +2427,9 @@ impl HostWorkflowAuthor {
     }
 
     /// Map one authored step → a `kx_workflow::StepDef`, server-assigning `logic_ref`.
+    // The conditional-predicate authoring gate tipped this over the budget; the
+    // per-kind arms share locals and read top-to-bottom.
+    #[allow(clippy::too_many_lines)]
     fn step_def(&self, index: usize, s: &AuthorStep) -> Result<StepDef, BinderError> {
         let base = &self.lib.blueprint_base;
         let cap = ToolName("blueprint".into());
@@ -2434,6 +2437,34 @@ impl HostWorkflowAuthor {
             // PURE: a deterministic transform; its identity comes from a content
             // sentinel over (index, params), so distinct steps get distinct ids.
             AuthorStepKind::Pure => {
+                // The HOST half of conditional validation (gateway-core checks
+                // presence only — it carries no JSON dep): the identity-bearing
+                // predicate must be a well-formed {op, value, path?, negate?}
+                // or the step is refused before any Mote exists.
+                if let Some(raw) = s.params.get(kx_mote::COND_PREDICATE_KEY) {
+                    let parsed: Option<serde_json::Value> = serde_json::from_slice(raw).ok();
+                    let ok = parsed.as_ref().is_some_and(|p| {
+                        let op = p.get("op").and_then(serde_json::Value::as_str);
+                        let has_value =
+                            p.get("value").and_then(serde_json::Value::as_str).is_some();
+                        let has_path = p.get("path").and_then(serde_json::Value::as_str).is_some();
+                        has_value
+                            && match op {
+                                Some("equals" | "contains") => true,
+                                Some("json_path_eq") => has_path,
+                                _ => false,
+                            }
+                    });
+                    if !ok {
+                        return Err(BinderError::InvalidArgs(format!(
+                            "conditional predicate malformed: params[{:?}] must be \
+                             {{\"op\": \"equals\"|\"contains\"|\"json_path_eq\", \
+                             \"value\": <text>, \"path\": <required for json_path_eq>, \
+                             \"negate\"?: bool}}",
+                            kx_mote::COND_PREDICATE_KEY
+                        )));
+                    }
+                }
                 let mut buf = Vec::with_capacity(64);
                 buf.extend_from_slice(b"kx-blueprint/pure/v1");
                 buf.extend_from_slice(&(index as u64).to_le_bytes());
