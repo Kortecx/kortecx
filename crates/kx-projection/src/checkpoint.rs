@@ -54,7 +54,7 @@ use smallvec::SmallVec;
 
 use crate::state::{
     ApprovalRecord, CommittedInfo, DeclaredInfo, MoteInfo, ReRankRoundRecord, ReactRoundRecord,
-    ReplanRoundRecord, RunRegistration, RunResolvedVersions, State,
+    ReplanRoundRecord, RunRegistration, RunResolvedVersions, State, TimerRecord,
 };
 
 /// The on-disk format version. Bump on **any** change to the envelope layout or
@@ -141,7 +141,17 @@ use crate::state::{
 /// re-fold from the v16 journal). It does NOT touch the canonical PRODUCT digest
 /// `7d22d4bd`, which folds only `Committed` Motes (`digest_projection`), never the
 /// checkpoint. A rerank-free run carries an empty `rerank_rounds` Vec.
-pub const CURRENT_FORMAT_VERSION: u16 = 10;
+///
+/// `11` (v17 timers): `CheckpointState` gained a top-level `timers` Vec (the
+/// coordinator-owned `TimerArmed` facts — a workflow `wait` step's delay / a
+/// per-step retry backoff). Like v9/v10, the new top-level Vec shifts the
+/// bincoded bytes + `state_content_digest()` of EVERY state (an empty state now
+/// serialises a length-0 `timers` Vec) — a deliberate, VERSION-LOCAL
+/// checkpoint-format change (a stale v10 sidecar is rejected → full re-fold
+/// from the v17 journal). It does NOT touch the canonical PRODUCT digest
+/// `7d22d4bd`, which folds only `Committed` Motes (`digest_projection`), never
+/// the checkpoint. A timer-free run carries an empty `timers` Vec.
+pub const CURRENT_FORMAT_VERSION: u16 = 11;
 
 /// Payload codec tag. `0` = canonical-bincode (LE + fixed-int, the house
 /// [`kx_mote::canonical_config`]). Reserved for a future rkyv zero-copy payload
@@ -512,6 +522,9 @@ struct CheckpointState {
     /// RC4c-2 — the LLM listwise rerank facts. A top-level Vec (v9→v10): a
     /// rerank-free state serialises a length-0 Vec.
     rerank_rounds: Vec<ReRankRoundRecordDto>,
+    /// v17 — the coordinator-owned timer facts. A top-level Vec (v10→v11): a
+    /// timer-free state serialises a length-0 Vec.
+    timers: Vec<TimerRecordDto>,
 }
 
 // Mirrors `MoteInfo`'s flags 1:1 — same `struct_excessive_bools` allow.
@@ -628,6 +641,18 @@ struct ApprovalRecordDto {
     seq: u64,
 }
 
+/// Serializable mirror of [`crate::state::TimerRecord`] (v17).
+#[derive(Serialize, Deserialize)]
+struct TimerRecordDto {
+    instance_id: [u8; INSTANCE_ID_LEN],
+    subject_mote_id: MoteId,
+    purpose: u8,
+    attempt: u32,
+    fire_at_unix_ms: u64,
+    anchor_ref: ContentRef,
+    seq: u64,
+}
+
 /// Serializable mirror of [`ReRankRoundRecord`] (RC4c-2). `kx_journal::ReRankOutcome`
 /// is serde-derived for exactly this DTO (the `ReactBranch` precedent); the journal's
 /// canonical on-disk encoding stays the hand-rolled tag.
@@ -671,6 +696,7 @@ impl From<&State> for CheckpointState {
             // re-derives it, so the format change is the `approvals` Vec only.
             approval_index: _,
             rerank_rounds,
+            timers,
         } = state;
         Self {
             motes: motes
@@ -694,6 +720,7 @@ impl From<&State> for CheckpointState {
                 .iter()
                 .map(ReRankRoundRecordDto::from)
                 .collect(),
+            timers: timers.iter().map(TimerRecordDto::from).collect(),
         }
     }
 }
@@ -887,6 +914,52 @@ impl From<&ApprovalRecord> for ApprovalRecordDto {
     }
 }
 
+impl From<&TimerRecord> for TimerRecordDto {
+    fn from(t: &TimerRecord) -> Self {
+        let TimerRecord {
+            instance_id,
+            subject_mote_id,
+            purpose,
+            attempt,
+            fire_at_unix_ms,
+            anchor_ref,
+            seq,
+        } = t;
+        Self {
+            instance_id: *instance_id,
+            subject_mote_id: *subject_mote_id,
+            purpose: *purpose,
+            attempt: *attempt,
+            fire_at_unix_ms: *fire_at_unix_ms,
+            anchor_ref: *anchor_ref,
+            seq: *seq,
+        }
+    }
+}
+
+impl From<TimerRecordDto> for TimerRecord {
+    fn from(dto: TimerRecordDto) -> Self {
+        let TimerRecordDto {
+            instance_id,
+            subject_mote_id,
+            purpose,
+            attempt,
+            fire_at_unix_ms,
+            anchor_ref,
+            seq,
+        } = dto;
+        TimerRecord {
+            instance_id,
+            subject_mote_id,
+            purpose,
+            attempt,
+            fire_at_unix_ms,
+            anchor_ref,
+            seq,
+        }
+    }
+}
+
 impl From<&ReRankRoundRecord> for ReRankRoundRecordDto {
     fn from(r: &ReRankRoundRecord) -> Self {
         let ReRankRoundRecord {
@@ -933,6 +1006,7 @@ impl TryFrom<CheckpointState> for State {
             react_rounds,
             approvals,
             rerank_rounds,
+            timers,
         } = dto;
         let mut decoded_motes = BTreeMap::new();
         for (id, mi) in motes {
@@ -964,6 +1038,7 @@ impl TryFrom<CheckpointState> for State {
                 .into_iter()
                 .map(ReRankRoundRecord::from)
                 .collect(),
+            timers: timers.into_iter().map(TimerRecord::from).collect(),
         };
         // PR-2d-2: RE-DERIVE the react index/turn-set from the deserialized
         // facts — the same shape the fold maintains incrementally, so both
@@ -1427,17 +1502,17 @@ mod tests {
     /// written by the previous binary is REFUSED (decode error → full-fold self-heal),
     /// never misread.
     #[test]
-    fn format_version_is_v10_and_v9_blobs_are_refused() {
-        assert_eq!(CURRENT_FORMAT_VERSION, 10);
+    fn format_version_is_v11_and_v10_blobs_are_refused() {
+        assert_eq!(CURRENT_FORMAT_VERSION, 11);
         let mut bytes = FoldCheckpoint::from_state(&sample_state()).to_bytes();
-        // Stamp the envelope version back to v9 (bytes 0..2, LE u16).
-        bytes[0..2].copy_from_slice(&9u16.to_le_bytes());
+        // Stamp the envelope version back to v10 (bytes 0..2, LE u16).
+        bytes[0..2].copy_from_slice(&10u16.to_le_bytes());
         assert!(matches!(
             FoldCheckpoint::from_bytes(&bytes),
-            // The version is part of the digest preimage, so a re-stamped v9
+            // The version is part of the digest preimage, so a re-stamped v10
             // envelope fails as UnsupportedVersion or DigestMismatch — both are
             // fail-safe discards (full fold).
-            Err(CheckpointError::UnsupportedVersion { got: 9 } | CheckpointError::DigestMismatch)
+            Err(CheckpointError::UnsupportedVersion { got: 10 } | CheckpointError::DigestMismatch)
         ));
     }
 

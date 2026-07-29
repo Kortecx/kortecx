@@ -281,6 +281,30 @@ pub struct ApprovalRecord {
     pub seq: u64,
 }
 
+/// v17 — one folded `TimerArmed` fact: the durable arming record of a
+/// coordinator-owned timer (a workflow `wait` step's delay, purpose 0, or a
+/// per-step retry backoff, purpose 1). The settle/recover passes read these to
+/// re-arm timers whose subject has not yet committed — at the JOURNALED
+/// `fire_at_unix_ms`, never a recomputed one. Surfaced by
+/// [`crate::Projection::timers`] / [`crate::Projection::timers_of`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimerRecord {
+    /// The registered run identity (run-salt) the timer belongs to.
+    pub instance_id: [u8; kx_journal::INSTANCE_ID_LEN],
+    /// The Mote the fire commits (the parked wait step / the retry launch).
+    pub subject_mote_id: MoteId,
+    /// `0` = WaitStep, `1` = RetryBackoff (decode fails closed on others).
+    pub purpose: u8,
+    /// The attempt a backoff schedules (purpose 1); `0` for a wait step.
+    pub attempt: u32,
+    /// The absolute fire instant (unix ms), journaled at arm time.
+    pub fire_at_unix_ms: u64,
+    /// The canonical `(Mote, WarrantSpec)` anchor bytes' content ref.
+    pub anchor_ref: ContentRef,
+    /// The entry's journal seq (audit/order).
+    pub seq: u64,
+}
+
 /// PR-9b-2b: the DERIVED nested per-CHAIN react index — `instance_id → step_salt →
 /// indices into `react_rounds``. The inner `Option<[u8;32]>` disjoins an agentic
 /// step's private chain (`Some(launch MoteId)`) from the run-level chain (`None`)
@@ -368,6 +392,14 @@ pub(crate) struct State {
     /// bounded fact per retrieval, so the coordinator filters this Vec by
     /// `instance_id` directly.
     pub(crate) rerank_rounds: Vec<ReRankRoundRecord>,
+    /// v17 — coordinator-owned timer facts (a `wait` step's delay / a retry
+    /// backoff), appended as each `TimerArmed` entry folds. Off-DAG; O(1) per
+    /// append. The settle/recover passes read it to re-arm pending timers at
+    /// the JOURNALED fire instant; never an identity/scheduling/digest input.
+    /// Emptiness is the zero-cost sentinel for timer-free runs (and the demo).
+    /// No derived index: a run arms a bounded handful of timers, so the
+    /// coordinator filters this Vec by `instance_id` / subject directly.
+    pub(crate) timers: Vec<TimerRecord>,
 }
 
 impl State {

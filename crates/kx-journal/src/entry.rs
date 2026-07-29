@@ -259,7 +259,18 @@ use smallvec::SmallVec;
 /// loudly (`verify_schema_version`). The product identity digest is invariant (the
 /// PURE-8-mote demo never writes a `ReRankRound`; it is off-DAG metadata, never an
 /// identity input).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 16;
+///
+/// v17 adds the brand-new `TimerArmed` kind (12) — the durable arming record of a
+/// coordinator-owned timer (a workflow `wait` step's delay, or a per-step retry
+/// backoff). The FIRE is deliberately NOT a new kind: firing IS the subject
+/// Mote's ordinary `Committed` entry, so "a re-arm can never re-fire" reduces to
+/// the dedup fence the journal already enforces on kind 1. A v16 → v17 migration
+/// is a PURE pass-through: no v16 journal can contain a kind-12 body, and every
+/// existing kind (0..=11) is byte-identical. The product identity digest is
+/// invariant (the PURE-8-mote demo never arms a timer; `TimerArmed` is off-DAG
+/// metadata folded into a side-table, never an identity input — the `Approval`
+/// law).
+pub const JOURNAL_SCHEMA_VERSION: u16 = 17;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -403,6 +414,18 @@ pub const KIND_APPROVAL: u8 = 10;
 /// `{1, 2, 4}`) and is NEVER folded into any digest. See
 /// [`JournalEntry::ReRankRound`] + [`ReRankOutcome`].
 pub const KIND_RERANK_ROUND: u8 = 11;
+/// `TimerArmed` entry-kind byte (NEW in v17).
+///
+/// The durable arming record of a coordinator-owned timer: a workflow `wait`
+/// step's delay (purpose 0) or a per-step retry backoff (purpose 1). Recovery
+/// re-arms IN MEMORY from this fact at the journaled `fire_at_unix_ms` — it
+/// never appends a second record — and firing IS the subject Mote's ordinary
+/// `Committed` entry, so the at-most-one-Committed dedup fence is the
+/// exactly-once guarantee. The header `mote_id` slot carries the SUBJECT
+/// Mote's id; the `idempotency_key` slot is the all-zero sentinel (kind 12
+/// does not dedup-by-key — the index stays `{1, 2, 4}`); NEVER folded into
+/// any digest (a side-table fold, the `Approval` law).
+pub const KIND_TIMER_ARMED: u8 = 12;
 
 /// Hard cap on the number of candidates a single [`JournalEntry::ReRankRound`]
 /// reranks — a `DoS`/size bound on the recorded permutation (mirrors
@@ -1553,6 +1576,58 @@ pub enum JournalEntry {
         /// Journal-assigned sequence (0 until appended).
         seq: u64,
     },
+
+    /// The durable arming record of a coordinator-owned timer (v17, kind 12) —
+    /// a workflow `wait` step's delay, or a per-step retry backoff.
+    ///
+    /// **Why a journal fact and not a sidecar:** the timer sits INSIDE a run —
+    /// downstream readiness depends on whether the subject Mote committed, so a
+    /// cold re-fold must see everything that decides that from the journal
+    /// ALONE. A sidecar row that could be lost independently would either
+    /// re-fire (a double-commit attempt) or never fire (a wedged run).
+    ///
+    /// **Why there is no `TimerFired` kind:** firing IS the subject Mote's
+    /// ordinary `Committed` entry, and the journal already enforces at most one
+    /// `Committed` per idempotency key — so "a re-arm can never re-fire" is an
+    /// invariant the journal enforces, not a flag anything has to remember to
+    /// check.
+    ///
+    /// **Recovery contract:** a subject that is NOT yet `Committed`/`Failed`
+    /// re-arms in memory at the JOURNALED `fire_at_unix_ms` (never recomputed —
+    /// wall clocks move, the recorded instant is the truth); one already
+    /// expired while the serve was down fires immediately, once. `anchor_ref`
+    /// points at the canonical `(Mote, WarrantSpec)` anchor bytes in the
+    /// content store (the `write_react_anchor` posture) so recovery rebuilds
+    /// the subject byte-identically without the in-memory dispatch table.
+    ///
+    /// **Metadata, never identity** — never folded into `MoteId`/any digest;
+    /// the projection folds it as a `last_seq`-advance plus a `timers`
+    /// side-table record (the `Approval` law). Does NOT dedup-by-key (all-zero
+    /// sentinel; the coordinator's settle pass consults the folded side-table
+    /// before arming, and recovery never re-appends).
+    TimerArmed {
+        /// The registered run identity (the run-salt). Keys every settle/
+        /// recover query in the shared serve journal.
+        instance_id: [u8; INSTANCE_ID_LEN],
+        /// The Mote this timer commits when it fires (also the header `mote_id`
+        /// slot): the parked wait step, or the retry LAUNCH whose next attempt
+        /// the backoff schedules.
+        subject_mote_id: MoteId,
+        /// What the fire does: `0` = WaitStep (synthesize the subject's
+        /// `Committed`), `1` = RetryBackoff (mint the subject launch's next
+        /// attempt). Anything else is a decode error (fail-closed).
+        purpose: u8,
+        /// The attempt this backoff schedules (purpose 1); `0` for a wait step.
+        attempt: u32,
+        /// The absolute instant the timer fires (unix ms). Journaled at arm
+        /// time; recovery re-arms at THIS instant, never a recomputed one.
+        fire_at_unix_ms: u64,
+        /// `ContentRef` of the canonical `(Mote, WarrantSpec)` anchor bytes —
+        /// recovery's byte-identical rebuild source for the subject.
+        anchor_ref: ContentRef,
+        /// Journal-assigned sequence (0 until appended).
+        seq: u64,
+    },
 }
 
 /// The all-zero sentinel returned as the dedupe key of a `RunRegistered` entry,
@@ -1607,7 +1682,8 @@ impl JournalEntry {
             | Self::ReplanRound { seq, .. }
             | Self::ReactRound { seq, .. }
             | Self::Approval { seq, .. }
-            | Self::ReRankRound { seq, .. } => *seq,
+            | Self::ReRankRound { seq, .. }
+            | Self::TimerArmed { seq, .. } => *seq,
         }
     }
 
@@ -1639,7 +1715,8 @@ impl JournalEntry {
             | Self::ReplanRound { .. }
             | Self::ReactRound { .. }
             | Self::Approval { .. }
-            | Self::ReRankRound { .. } => &ZERO_IDEMPOTENCY_KEY,
+            | Self::ReRankRound { .. }
+            | Self::TimerArmed { .. } => &ZERO_IDEMPOTENCY_KEY,
         }
     }
 
@@ -1671,6 +1748,11 @@ impl JournalEntry {
             // The header slot IS the rerank Mote's (run-salted) id — recovery uses
             // it to look up the rerank Mote's `state_of`.
             Self::ReRankRound { rerank_mote_id, .. } => *rerank_mote_id,
+            // The header slot IS the timer's SUBJECT Mote id — recovery uses it
+            // to decide re-arm (not yet Committed/Failed) vs drop.
+            Self::TimerArmed {
+                subject_mote_id, ..
+            } => *subject_mote_id,
         }
     }
 
@@ -1690,6 +1772,7 @@ impl JournalEntry {
             Self::ReactRound { .. } => KIND_REACT_ROUND,
             Self::Approval { .. } => KIND_APPROVAL,
             Self::ReRankRound { .. } => KIND_RERANK_ROUND,
+            Self::TimerArmed { .. } => KIND_TIMER_ARMED,
         }
     }
 }
@@ -2031,6 +2114,14 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             seq,
             ..
         } => (*rerank_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
+        // v17: the header `mote_id` slot carries the timer's SUBJECT Mote id
+        // directly; all-zero idempotency key (kind 12 does not dedup), 0 nd (a
+        // timer-arming fact is not a Mote).
+        JournalEntry::TimerArmed {
+            subject_mote_id,
+            seq,
+            ..
+        } => (*subject_mote_id, ZERO_IDEMPOTENCY_KEY, *seq, 0),
     };
     out.extend_from_slice(mote_id_for_header.as_bytes());
     out.extend_from_slice(&idempotency_key);
@@ -2348,6 +2439,24 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
             if out.len() > MAX_ENTRY_LEN {
                 return Err(EncodeError::ReRankRoundTooLarge { got: out.len() });
             }
+        }
+        JournalEntry::TimerArmed {
+            instance_id,
+            purpose,
+            attempt,
+            fire_at_unix_ms,
+            anchor_ref,
+            ..
+        } => {
+            // v17: body = instance_id(16) ‖ purpose(u8) ‖ attempt(u32 LE) ‖
+            // fire_at_unix_ms(u64 LE) ‖ anchor_ref(32) — fixed 61 bytes. The
+            // header `mote_id` slot carries the SUBJECT Mote's id (read
+            // directly on decode, like ReactRound).
+            out.extend_from_slice(instance_id);
+            out.push(*purpose);
+            out.extend_from_slice(&attempt.to_le_bytes());
+            out.extend_from_slice(&fire_at_unix_ms.to_le_bytes());
+            out.extend_from_slice(anchor_ref.as_bytes());
         }
         JournalEntry::Approval {
             instance_id,
@@ -3047,6 +3156,43 @@ pub fn decode_entry_with_def_hash(
                 request_id,
                 awaiting_mote_id,
                 state,
+                seq,
+            })
+        }
+        KIND_TIMER_ARMED => {
+            // v17: fixed 61-byte body = instance_id(16) ‖ purpose(u8) ‖
+            // attempt(u32 LE) ‖ fire_at_unix_ms(u64 LE) ‖ anchor_ref(32). The
+            // header `mote_id` slot IS the SUBJECT Mote's id (read directly,
+            // like ReactRound). Exact-length: trailing bytes are rejected.
+            const TIMER_ARMED_BODY_LEN: usize = INSTANCE_ID_LEN + 1 + 4 + 8 + 32;
+            if body.len() != TIMER_ARMED_BODY_LEN {
+                return Err(DecodeError::BodyTooShort {
+                    kind,
+                    got: body.len(),
+                    expected: TIMER_ARMED_BODY_LEN,
+                });
+            }
+            let subject_mote_id = mote_id;
+            let mut cursor = 0usize;
+            let mut instance_id = [0u8; INSTANCE_ID_LEN];
+            instance_id.copy_from_slice(&body[cursor..cursor + INSTANCE_ID_LEN]);
+            cursor += INSTANCE_ID_LEN;
+            let purpose = read_u8(body, &mut cursor, kind)?;
+            // Fail-closed on an unknown purpose: a future purpose byte must be
+            // a schema rev, never something an old binary silently mis-fires.
+            if purpose > 1 {
+                return Err(DecodeError::UnknownKind(kind));
+            }
+            let attempt = read_u32(body, &mut cursor, kind)?;
+            let fire_at_unix_ms = read_u64(body, &mut cursor, kind)?;
+            let anchor_ref = ContentRef::from_bytes(read_array32(body, &mut cursor, kind)?);
+            Ok(JournalEntry::TimerArmed {
+                instance_id,
+                subject_mote_id,
+                purpose,
+                attempt,
+                fire_at_unix_ms,
+                anchor_ref,
                 seq,
             })
         }
@@ -3831,6 +3977,59 @@ mod tests {
             // codec round-trip (the header mote_id slot rebuilds rerank_mote_id)
             assert_eq!(decode_entry(&encode_entry(&e).unwrap()).unwrap(), e);
         }
+    }
+
+    /// v17: `TimerArmed` codec round-trip + the off-DAG invariants (mirrors
+    /// ReactRound/Approval/ReRankRound), for both purposes; an unknown purpose
+    /// byte and a wrong-length body are fail-closed.
+    #[test]
+    fn timer_armed_roundtrip_and_offdag_invariants() {
+        let subject_mote_id = MoteId::from_bytes([0x6b; 32]);
+        let instance_id = [0x4d; INSTANCE_ID_LEN];
+        for (purpose, attempt) in [(0u8, 0u32), (1u8, 3u32)] {
+            let e = JournalEntry::TimerArmed {
+                instance_id,
+                subject_mote_id,
+                purpose,
+                attempt,
+                fire_at_unix_ms: 1_753_000_000_123,
+                anchor_ref: ContentRef::from_bytes([0x77; 32]),
+                seq: 9,
+            };
+            // off-DAG invariants: kind 12, all-zero dedupe key, the header
+            // mote_id slot carries the SUBJECT.
+            assert_eq!(e.kind(), KIND_TIMER_ARMED);
+            assert_eq!(e.idempotency_key(), &[0u8; 32]);
+            assert_eq!(e.mote_id(), subject_mote_id);
+            // codec round-trip (the journaled fire instant survives verbatim —
+            // recovery re-arms at THIS value, never a recomputed one).
+            assert_eq!(decode_entry(&encode_entry(&e).unwrap()).unwrap(), e);
+        }
+        // Fail-closed: an unknown purpose byte refuses (a future purpose must
+        // be a schema rev, never something an old binary silently mis-fires).
+        let good = JournalEntry::TimerArmed {
+            instance_id,
+            subject_mote_id,
+            purpose: 0,
+            attempt: 0,
+            fire_at_unix_ms: 1,
+            anchor_ref: ContentRef::from_bytes([0x77; 32]),
+            seq: 1,
+        };
+        let bytes = encode_entry(&good).unwrap();
+        let mut bad_purpose = bytes.clone();
+        // Body starts at HEADER_LEN + 1 (kind byte precedes? — locate the purpose
+        // byte relative to the END: purpose sits 45 bytes before the end
+        // (attempt 4 + fire_at 8 + anchor 32 follow, purpose itself is 1).
+        let purpose_at = bad_purpose.len() - 44 - 1;
+        bad_purpose[purpose_at] = 0x7f;
+        assert!(decode_entry(&bad_purpose).is_err());
+        // Fail-closed: a trailing byte / truncated body refuses.
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(decode_entry(&trailing).is_err());
+        let truncated = &bytes[..bytes.len() - 1];
+        assert!(decode_entry(truncated).is_err());
     }
 
     /// v16 (RC4c-2): a `ReRankRound` body with an unknown outcome tag is
