@@ -22,11 +22,11 @@
 //! stays cloud scope; nothing here pretends otherwise.
 //!
 //! FAIL-CLOSED posture (`KX_HOSTED_SANDBOX`):
-//! - `on`     ⇒ enforce; a platform that cannot confine REFUSES hosted start.
-//! - unset    ⇒ enforce where the probe says the platform can hold it; elsewhere
-//!              run unconfined and SAY SO in the status detail + startup log —
-//!              never claim confinement that is not enforced.
-//! - `off`    ⇒ run unconfined, loudly (the operator's explicit call).
+//! - `on` ⇒ enforce; a platform that cannot confine REFUSES hosted start.
+//! - unset ⇒ enforce where the probe says the platform can hold it; elsewhere
+//!   run unconfined and SAY SO in the status detail + startup log — never claim
+//!   confinement that is not enforced.
+//! - `off` ⇒ run unconfined, loudly (the operator's explicit call).
 
 use std::collections::VecDeque;
 use std::fmt::Write as _;
@@ -86,7 +86,7 @@ impl SandboxPolicy {
                 reason: "sandbox off by operator (KX_HOSTED_SANDBOX=off)".into(),
             },
             ("on", Err(reason)) => SandboxMode::Refuse { reason },
-            ("on", Ok(())) | ("", Ok(())) => SandboxMode::Enforce,
+            ("on" | "", Ok(())) => SandboxMode::Enforce,
             ("", Err(reason)) => SandboxMode::Off {
                 reason: format!("hosted isolation is not enforceable on this platform: {reason}"),
             },

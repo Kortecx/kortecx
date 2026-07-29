@@ -1378,7 +1378,7 @@ impl AppScaffolder for HostScaffolder {
         );
         self.set(principal, branch_handle, ScaffoldPhase::Planning, "");
         let driver = self.clone();
-        let (p, a, b, f, g) = (
+        let (principal_owned, app_owned, branch_owned, framework_owned, goal_owned) = (
             principal.to_string(),
             app_handle.to_string(),
             branch_handle.to_string(),
@@ -1386,7 +1386,15 @@ impl AppScaffolder for HostScaffolder {
             goal.to_string(),
         );
         tokio::spawn(async move {
-            driver.run_hosted(p, a, b, f, g).await;
+            driver
+                .run_hosted(
+                    principal_owned,
+                    app_owned,
+                    branch_owned,
+                    framework_owned,
+                    goal_owned,
+                )
+                .await;
         });
         Ok(resumed)
     }
@@ -1416,22 +1424,23 @@ impl AppScaffolder for HostScaffolder {
             })
             .unwrap_or_else(|| SKELETON.iter().map(|f| f.path.to_string()).collect());
         let (files_done, files_pending) = split_done_pending(&planned, &manifest_paths);
-        let (phase, detail, writing_path, writing_instance_id, writing_mote_id) = match self
+        let live = self
             .tracker
             .lock()
             .ok()
-            .and_then(|t| t.get(branch_handle).cloned())
-        {
-            Some(p) => (
-                p.phase,
-                p.detail,
-                p.writing_path,
-                p.writing_instance_id,
-                p.writing_mote_id,
-            ),
-            // No live task in THIS process: consult the durable mirror before the
-            // manifest guess (see `recover_phase` for the full decision table).
-            None => {
+            .and_then(|t| t.get(branch_handle).cloned());
+        let (phase, detail, writing_path, writing_instance_id, writing_mote_id) =
+            if let Some(p) = live {
+                (
+                    p.phase,
+                    p.detail,
+                    p.writing_path,
+                    p.writing_instance_id,
+                    p.writing_mote_id,
+                )
+            } else {
+                // No live task in THIS process: consult the durable mirror before
+                // the manifest guess (see `recover_phase` for the decision table).
                 let durable = self
                     .state
                     .as_ref()
@@ -1440,8 +1449,7 @@ impl AppScaffolder for HostScaffolder {
                 let (phase, detail) =
                     recover_phase(durable, derive_phase(&files_done, &files_pending));
                 (phase, detail, None, None, None)
-            }
-        };
+            };
         Ok(ScaffoldStatus {
             phase,
             files_done,

@@ -1887,7 +1887,9 @@ mod tests {
             .expect("task_success scored");
         match &success.value {
             kx_eval::ScoreValue::Gate { per_mille } => assert_eq!(*per_mille, 0),
-            other => panic!("task_success must be a gate, got {other:?}"),
+            other @ kx_eval::ScoreValue::Spike { .. } => {
+                panic!("task_success must be a gate, got {other:?}")
+            }
         }
     }
 
