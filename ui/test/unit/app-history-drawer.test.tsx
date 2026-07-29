@@ -104,7 +104,11 @@ describe("AppHistoryDrawer", () => {
     expect(screen.getByTestId("app-history-current")).toBeInTheDocument();
     expect(screen.queryByTestId("app-history-restore-3")).toBeNull();
     expect(screen.getByTestId("app-history-restore-2")).toBeEnabled();
-    expect(screen.getByText("create")).toBeInTheDocument();
+    // The READER's word, not the branch store's: `advance` is the store's verb for
+    // a write, and rendering it verbatim asked the reader to know that.
+    expect(screen.getByText("Created")).toBeInTheDocument();
+    expect(screen.getAllByText("Edited")).toHaveLength(2);
+    expect(screen.queryByText("advance")).toBeNull();
   });
 
   it("restore walks the confirm dialog and fires the mutation with the version", () => {
