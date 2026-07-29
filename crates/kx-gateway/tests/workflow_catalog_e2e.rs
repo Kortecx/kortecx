@@ -667,6 +667,204 @@ async fn run_workflow_error_shapes_are_honest() {
     );
 }
 
+/// A workflow whose terminal is a DURABLE WAIT: `pure → wait(delay_ms)`. The
+/// wait is a pure step carrying the identity-bearing delay key — the
+/// coordinator parks it, journals a `TimerArmed` once the parent commits, and
+/// fires by synthesizing the wait's own `Committed` (pass-through of the
+/// parent's result).
+fn wait_envelope(name: &str, delay_ms: u64) -> Vec<u8> {
+    let blueprint = serde_json::json!({
+        "seed": 0,
+        "steps": [
+            { "kind": "pure", "prompt": "" },
+            { "kind": "pure", "params": { "kx.wait.delay_ms": delay_ms.to_string() } }
+        ],
+        "edges": [ { "parent": 0, "child": 1, "data": true } ]
+    });
+    kx_app::WorkflowEnvelope::new(name, blueprint)
+        .to_canonical_json()
+        .unwrap()
+}
+
+/// Poll until the mote is committed; return the instant it was FIRST observed
+/// committed (None on timeout).
+async fn first_committed_at(
+    c: &mut KxGatewayClient<Channel>,
+    token: &str,
+    instance_id: &[u8],
+    mote_id: &[u8],
+    timeout_ms: u64,
+) -> Option<std::time::Instant> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    while std::time::Instant::now() < deadline {
+        let view = c
+            .get_projection(with_bearer(
+                proto::GetProjectionRequest {
+                    instance_id: instance_id.to_vec(),
+                    at_seq: None,
+                },
+                token,
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        if view.motes.iter().any(|m| {
+            m.mote_id == mote_id && m.state == proto::MoteSnapshotState::Committed as i32
+        }) {
+            return Some(std::time::Instant::now());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    }
+    None
+}
+
+#[tokio::test]
+async fn a_durable_wait_holds_the_run_then_fires_once() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    c.save_workflow(with_bearer(
+        save_req("team/wf/hold", wait_envelope("hold", 1500), ""),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let started = std::time::Instant::now();
+    let run = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/hold".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    // The wait HOLDS: the terminal must not commit before the delay elapses.
+    assert!(
+        first_committed_at(&mut c, "tok-alice", &run.instance_id, &run.terminal_mote_id, 600)
+            .await
+            .is_none(),
+        "the wait committed before its delay — it did not hold"
+    );
+    // …and FIRES: committed within a generous settle budget, after ≥ delay.
+    let fired = first_committed_at(
+        &mut c,
+        "tok-alice",
+        &run.instance_id,
+        &run.terminal_mote_id,
+        15_000,
+    )
+    .await
+    .expect("the wait must fire after its delay");
+    let held = fired.duration_since(started);
+    assert!(
+        held >= std::time::Duration::from_millis(1500),
+        "fired after {held:?} — before the declared delay"
+    );
+}
+
+#[tokio::test]
+async fn a_restart_re_arms_the_journaled_timer_and_never_re_fires() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let delay_ms: u64 = 4_000;
+
+    // Serve A: save + run; the timer arms; the serve dies BEFORE it fires.
+    let started;
+    let (instance_id, terminal_mote_id);
+    {
+        let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+            .await
+            .unwrap();
+        let mut c = client(running.local_addr()).await;
+        c.save_workflow(with_bearer(
+            save_req("team/wf/survive", wait_envelope("survive", delay_ms), ""),
+            "tok-alice",
+        ))
+        .await
+        .unwrap();
+        started = std::time::Instant::now();
+        let run = c
+            .run_workflow(with_bearer(
+                proto::RunWorkflowRequest {
+                    handle: "team/wf/survive".into(),
+                    args: Vec::new(),
+                    require_approval: false,
+                },
+                "tok-alice",
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        instance_id = run.instance_id.clone();
+        terminal_mote_id = run.terminal_mote_id.clone();
+        // Give the arm a moment (the parent pure step commits + the settle pass
+        // journals TimerArmed), and pin that the wait has NOT fired.
+        assert!(
+            first_committed_at(&mut c, "tok-alice", &instance_id, &terminal_mote_id, 900)
+                .await
+                .is_none(),
+            "the wait fired before the kill — the restart proof is vacuous"
+        );
+        running.shutdown().await.unwrap();
+    }
+
+    // Serve B, SAME state dir (that reuse IS the proof): the journal carries the
+    // armed timer; the run rehydrates through the idempotent re-submit (the same
+    // RunWorkflow yields byte-identical MoteIds — the L-207 replay semantics);
+    // the settle pass re-arms IN MEMORY from the folded fact at the JOURNALED
+    // instant and appends nothing.
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+    let rerun = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/survive".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        rerun.terminal_mote_id, terminal_mote_id,
+        "the re-submit resolves to the SAME run (byte-identical MoteIds)"
+    );
+    let fired = first_committed_at(
+        &mut c,
+        "tok-alice",
+        &rerun.instance_id,
+        &terminal_mote_id,
+        20_000,
+    )
+    .await
+    .expect("the re-armed timer must fire after the restart");
+    let held = fired.duration_since(started);
+    // Fires at (roughly) the ORIGINAL journaled instant: at least the declared
+    // delay from the FIRST run's start…
+    assert!(
+        held >= std::time::Duration::from_millis(delay_ms),
+        "fired after only {held:?} — before the journaled instant"
+    );
+    // …and well under a DOUBLE hold: a re-arm that restarted the clock (or a
+    // second fire re-holding) would land past 2×delay. The margin below 2×
+    // covers serve boot + polling slack while still refuting a re-hold.
+    assert!(
+        held < std::time::Duration::from_millis(2 * delay_ms),
+        "fired after {held:?} — the restart re-held the delay instead of \
+         re-arming at the journaled instant"
+    );
+}
+
 #[tokio::test]
 async fn oversized_envelope_is_refused_at_the_boundary() {
     let dir = tempfile::TempDir::new().unwrap();

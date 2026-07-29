@@ -148,7 +148,9 @@ pub use promotion::{ContentStoreVerdicts, SharedContentVerdicts, VerdictLookup};
 pub use register::RegisterMote;
 pub use run_metadata::{fold_run_metadata, RunMetadata, RunMetadataFold, RunRecord};
 pub use snapshot::Snapshot;
-pub use state::{ReRankRoundRecord, ReactRoundRecord, ReplanRoundRecord, RunResolvedVersions, TimerRecord};
+pub use state::{
+    ReRankRoundRecord, ReactRoundRecord, ReplanRoundRecord, RunResolvedVersions, TimerRecord,
+};
 
 #[cfg(test)]
 mod tests;

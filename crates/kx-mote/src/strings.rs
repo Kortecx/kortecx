@@ -175,6 +175,17 @@ pub const REACT_UNCONSTRAINED_KEY: &str = "unconstrained";
 /// digest (no prior Mote carries this key).
 pub const TOOL_ARGS_KEY: &str = "kx.tool.args";
 
+/// The DURABLE-WAIT step marker: `config_subset[WAIT_DELAY_MS_KEY]` carries the
+/// step's delay in milliseconds as canonical-JSON integer text (identity-bearing
+/// — part of the `MoteId`, stamped pre-compile by the gateway binder). The
+/// coordinator PARKS a Pure mote carrying this key (never leased), journals a
+/// `TimerArmed` fact once its parents commit, and fires by synthesizing the
+/// mote's own `Committed` — so a restart re-arms from the journal at the
+/// recorded instant and can never re-fire (the at-most-one-Committed fence).
+/// Every Mote without the key leases exactly as before — adding the constant
+/// moves no existing digest (no prior Mote carries it).
+pub const WAIT_DELAY_MS_KEY: &str = "kx.wait.delay_ms";
+
 /// PR-7: the `config_subset` key under which the bind layer injects a run's
 /// attached context-bundle items (canonical-encoded by
 /// [`crate::encode_context_items`]). Present ONLY on an ENTRY Mote of a run that

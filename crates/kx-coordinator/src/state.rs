@@ -29,7 +29,7 @@ use kx_mote::{
     ConfigKey, EdgeKind, EffectPattern, ModelId, Mote, MoteDef, MoteId, NdClass, ToolName,
     ToolVersion, CONTEXT_ITEMS_KEY, IMAGE_REF_KEY, PROMPT_KEY, REACT_INSTRUCTION_KEY,
     REACT_MAX_TOOL_CALLS_KEY, REACT_MAX_TURNS_KEY, REACT_REQUIRE_APPROVAL_KEY, REACT_TURN_KEY,
-    RERANK_CANDIDATES_KEY, RERANK_TURN_KEY, TOOL_ARGS_KEY,
+    RERANK_CANDIDATES_KEY, RERANK_TURN_KEY, TOOL_ARGS_KEY, WAIT_DELAY_MS_KEY,
 };
 use kx_projection::{
     MoteState, Projection, ReRankRoundRecord, ReactRoundRecord, RegisterMote, ReplanRoundRecord,
@@ -787,6 +787,11 @@ fn lease_ready(
             if is_agentic_launch(mote) {
                 continue;
             }
+            // v17: a durable-wait step is never leased — the coordinator itself
+            // commits it when its journaled timer fires (`fire_due_timers`).
+            if is_wait_step(mote) {
+                continue;
+            }
             // RC4c-2b: HOLD a grounded chat-rag/vision-rag answer until its durable
             // rerank settles (the suppression gate) — it is edge-free + ready-at-submit,
             // so without this it would dispatch on the base order before the rerank.
@@ -1135,6 +1140,25 @@ fn is_agentic_launch(mote: &Mote) -> bool {
             .def
             .config_subset
             .contains_key(&ConfigKey(TOOL_ARGS_KEY.to_string()))
+}
+
+/// v17: `true` iff `mote` is a DURABLE-WAIT step — a Pure mote carrying the
+/// identity-bearing `WAIT_DELAY_MS_KEY`. The coordinator PARKS it (never
+/// leased), journals a `TimerArmed` once its DAG parents commit, and fires by
+/// synthesizing the mote's own `Committed` (`fire_due_timers`).
+///
+/// Provably DISJOINT from every other parked/routed shape: an agentic launch
+/// requires a non-empty `tool_contract` + `PROMPT_KEY` (a wait has neither
+/// obligation and is `Pure`, not `ReadOnlyNondet`); an authored `tool()` node
+/// carries `TOOL_ARGS_KEY`; a plain PURE transform carries no wait key. PURE
+/// (no projection arg): the mote SHAPE alone is decisive, so the submit park
+/// and the readiness scan key on the same predicate.
+fn is_wait_step(mote: &Mote) -> bool {
+    mote.nd_class() == NdClass::Pure
+        && mote
+            .def
+            .config_subset
+            .contains_key(&ConfigKey(WAIT_DELAY_MS_KEY.to_string()))
 }
 
 /// PR-6b-2: derive a standalone authored `tool()` node's `(args_bytes, net_scope,
@@ -1748,6 +1772,19 @@ struct Dispatch {
     /// repopulated on a recovery re-submit (the `defs`/`tracker` precedent); the
     /// skip-if-already-anchored guard prevents a double anchor.
     parked_launches: BTreeMap<MoteId, [u8; INSTANCE_ID_LEN]>,
+    /// v17 — the admitted-but-PARKED durable-wait steps ([`is_wait_step`]),
+    /// mapped to their run's `instance_id` (the `parked_launches` posture:
+    /// populated at submit, dropped once the durable `TimerArmed` is written —
+    /// the journal fact is then the marker; a recovery re-submit re-parks and
+    /// the settle pass re-arms IN MEMORY from the folded fact, appending
+    /// nothing).
+    parked_waits: BTreeMap<MoteId, [u8; INSTANCE_ID_LEN]>,
+    /// v17 — the in-memory pending-timer set: subject → (fire_at_unix_ms,
+    /// purpose, attempt). Populated at arm and at recovery (from the folded
+    /// `timers` side-table); drained by `fire_due_timers` on each settle. The
+    /// JOURNAL is the truth — this set is a cursor over it, never a second
+    /// source (losing it re-derives from the fold).
+    armed_timers: BTreeMap<MoteId, (u64, u8, u32)>,
 }
 
 /// The owner-thread loop. Recovers the projection from the journal, then services
@@ -1772,6 +1809,8 @@ fn core_loop<J: Journal>(
         defs: BTreeMap::new(),
         tracker: LeaseTracker::default(),
         parked_launches: BTreeMap::new(),
+        parked_waits: BTreeMap::new(),
+        armed_timers: BTreeMap::new(),
     };
     // PR-2c-2: re-derive the live re-plan chain from committed facts (re-materialize
     // committed round shapers' children, re-insert the in-flight round shaper, and
@@ -1819,6 +1858,32 @@ fn core_loop<J: Journal>(
         &mut react_cache,
         tool_registry,
     );
+    // v17: the FOURTH recovery routine — re-arm every folded timer whose subject
+    // has not yet reached a terminal state, at the JOURNALED fire instant (never
+    // recomputed). IN MEMORY only: recovery never appends a second `TimerArmed`,
+    // and one that expired while the serve was down fires on the first drain —
+    // late, exactly once (the subject's Committed dedup fence). The subject's
+    // def rehydrates via the run's idempotent re-submit; a due timer without a
+    // def simply waits for it. A no-op for a timer-free journal.
+    let pending_timers: Vec<(MoteId, u64, u8, u32)> = projection
+        .timers()
+        .iter()
+        .filter(|t| {
+            !matches!(
+                projection.state_of(&t.subject_mote_id),
+                MoteState::Committed
+                    | MoteState::Failed
+                    | MoteState::Inconsistent
+                    | MoteState::Repudiated
+            )
+        })
+        .map(|t| (t.subject_mote_id, t.fire_at_unix_ms, t.purpose, t.attempt))
+        .collect();
+    for (subject, fire_at, purpose, attempt) in pending_timers {
+        dispatch
+            .armed_timers
+            .insert(subject, (fire_at, purpose, attempt));
+    }
 
     while let Some(first) = inbox.blocking_recv() {
         // Drain everything immediately available (up to MAX_DRAIN) so consecutive
@@ -1891,6 +1956,7 @@ fn core_loop<J: Journal>(
             &mut dispatch,
             &mut react_cache,
             tool_registry,
+            clock,
         );
     }
 }
@@ -2267,7 +2333,7 @@ fn register_run<J: Journal>(
 /// Submit a Mote and, on a fresh submit of a registered run, capture its
 /// resolved versions (M1.2). Extracted from `handle_command`'s Submit arm to
 /// keep that function within the line budget.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn submit_and_capture<J: Journal>(
     journal: &J,
     store: Option<&SharedStore>,
@@ -2384,6 +2450,10 @@ fn submit_and_capture<J: Journal>(
     // `handle_submit` consumes `mote`. The react seed-swap path is never a launch
     // (the swapped turn-0 carries an empty `tool_contract`).
     let launch_park = (!react_seed && is_agentic_launch(&mote)).then_some(mote.id);
+    // v17: a durable-wait step is admitted (its def lands in `dispatch.defs` for
+    // the eventual fire-commit) but PARKED — `settle_wait_steps` journals its
+    // timer once its DAG parents commit; `fire_due_timers` commits it.
+    let wait_park = (!react_seed && is_wait_step(&mote)).then_some(mote.id);
 
     // Admit through the hosted scheduler (verbatim — the P2 thesis test).
     let warrant_for_capture = warrant.clone();
@@ -2403,6 +2473,16 @@ fn submit_and_capture<J: Journal>(
     // re-submit is already parked / anchored — the idempotency guard handles it).
     if let (Some(launch_id), false) = (launch_park, outcome.duplicate) {
         dispatch.parked_launches.insert(launch_id, instance_id);
+    }
+    // v17: park a freshly-admitted wait step keyed to its run. A duplicate
+    // re-submit (recovery rehydration) re-parks TOO — unlike a launch, the wait
+    // has no durable per-chain anchor guard; the settle pass's folded-timer
+    // check is what makes the re-park arm-idempotent (it re-arms in memory at
+    // the JOURNALED instant and appends nothing).
+    if let Some(wait_id) = wait_park {
+        if !matches!(projection.state_of(&wait_id), MoteState::Committed) {
+            dispatch.parked_waits.insert(wait_id, instance_id);
+        }
     }
     if !outcome.duplicate {
         if let ToolResolution::Resolved(_) = resolution {
@@ -3193,6 +3273,257 @@ fn materialize_react_tool(
 /// zero cost when its feature is unused. Extracted so `core_loop` stays under the line
 /// budget (a pure refactor — same call order as the inline block it replaced).
 #[allow(clippy::too_many_arguments)]
+/// v17: journal a `TimerArmed` for every PARKED wait step whose DAG parents
+/// have all committed. Idempotent by the FOLDED-timer check: a recovery
+/// re-submit re-parks, this pass finds the already-journaled fact, re-arms IN
+/// MEMORY at the JOURNALED instant, and appends nothing — a re-arm can never
+/// become a second timer. A malformed delay dead-letters fail-closed (it can
+/// never fire honestly); a terminally-failed parent dead-letters exactly as an
+/// agentic launch's does (the park would otherwise leak forever). Gated O(1)
+/// on the parked set being non-empty.
+fn settle_wait_steps<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    clock: &dyn Clock,
+) {
+    if dispatch.parked_waits.is_empty() {
+        return;
+    }
+    let parked: Vec<(MoteId, [u8; INSTANCE_ID_LEN])> = dispatch
+        .parked_waits
+        .iter()
+        .map(|(id, instance)| (*id, *instance))
+        .collect();
+    for (wait_id, instance_id) in parked {
+        let Some((wait_mote, _)) = dispatch.defs.get(&wait_id).cloned() else {
+            dispatch.parked_waits.remove(&wait_id); // def gone — drop the stale park
+            continue;
+        };
+        if projection.state_of(&wait_id) != MoteState::Pending {
+            dispatch.parked_waits.remove(&wait_id);
+            continue;
+        }
+        // Already journaled (a recovery re-park / a prior drain's arm): re-arm
+        // in memory at the JOURNALED instant — never a second append.
+        if let Some(rec) = projection
+            .timers()
+            .iter()
+            .find(|t| t.subject_mote_id == wait_id)
+        {
+            dispatch
+                .armed_timers
+                .insert(wait_id, (rec.fire_at_unix_ms, rec.purpose, rec.attempt));
+            dispatch.parked_waits.remove(&wait_id);
+            continue;
+        }
+        // Ready when EVERY declared DAG parent commits; a terminally-failed
+        // parent dead-letters the wait (the settle_agentic_launches posture).
+        let mut all_committed = true;
+        let mut parent_terminally_failed = false;
+        for p in &wait_mote.parents {
+            match projection.state_of(&p.parent_id) {
+                MoteState::Committed => {}
+                MoteState::Failed | MoteState::Inconsistent | MoteState::Repudiated => {
+                    parent_terminally_failed = true;
+                    all_committed = false;
+                    break;
+                }
+                _ => all_committed = false,
+            }
+        }
+        if parent_terminally_failed {
+            dead_letter_parked_wait(journal, projection, folded_through, dispatch, wait_id);
+            continue;
+        }
+        if !all_committed {
+            continue; // re-check next drain
+        }
+        // Parse the identity-bearing delay. Malformed ⇒ dead-letter fail-closed
+        // (unreachable through the binder, which validates at authoring — this
+        // is the hand-authored-envelope residual).
+        let delay_ms = wait_mote
+            .def
+            .config_subset
+            .get(&ConfigKey(WAIT_DELAY_MS_KEY.to_string()))
+            .and_then(|v| std::str::from_utf8(&v.0).ok())
+            .and_then(|s| s.parse::<u64>().ok());
+        let Some(delay_ms) = delay_ms else {
+            tracing::warn!(wait = ?wait_id, "wait step carries a malformed delay — dead-lettered");
+            dead_letter_parked_wait(journal, projection, folded_through, dispatch, wait_id);
+            continue;
+        };
+        let fire_at_unix_ms = clock.now_ms().saturating_add(delay_ms);
+        let entry = JournalEntry::TimerArmed {
+            instance_id,
+            subject_mote_id: wait_id,
+            purpose: 0,
+            attempt: 0,
+            fire_at_unix_ms,
+            // The persisted DEF blob's address (persist_def stored it at
+            // submit): enough to display/audit the subject; the full (mote,
+            // warrant) rebuild after a restart rides the run's idempotent
+            // re-submit, which is the one recovery mechanism for every step.
+            anchor_ref: ContentRef::from_bytes(wait_mote.def.hash().0),
+            seq: 0,
+        };
+        match journal.append(entry) {
+            Ok(durable) => {
+                let seq = durable.seq();
+                if seq > *folded_through && projection.fold(&durable).is_ok() {
+                    *folded_through = seq;
+                }
+                dispatch
+                    .armed_timers
+                    .insert(wait_id, (fire_at_unix_ms, 0, 0));
+                dispatch.parked_waits.remove(&wait_id);
+                tracing::info!(wait = ?wait_id, fire_at_unix_ms, "durable wait armed");
+            }
+            // Leave parked — the next drain retries the arm.
+            Err(error) => tracing::error!(%error, "failed to append TimerArmed"),
+        }
+    }
+}
+
+/// v17: fail-closed dead-letter a parked wait step (malformed delay / a
+/// terminally-failed parent). Mirrors `dead_letter_agentic_launch`.
+fn dead_letter_parked_wait<J: Journal>(
+    journal: &J,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    wait_id: MoteId,
+) {
+    let entry = JournalEntry::Failed {
+        mote_id: wait_id,
+        idempotency_key: *wait_id.as_bytes(),
+        seq: 0,
+        reason_class: FailureReason::DeadLettered,
+        reporter_id: COORDINATOR_REPORTER_ID,
+    };
+    match journal.append(entry) {
+        Ok(durable) => {
+            let seq = durable.seq();
+            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                *folded_through = seq;
+            }
+            dispatch.submitted.remove(&wait_id);
+            dispatch.defs.remove(&wait_id);
+            dispatch.parked_waits.remove(&wait_id);
+            dispatch.armed_timers.remove(&wait_id);
+            dispatch.tracker.resolve_committed(wait_id);
+            tracing::warn!(wait = ?wait_id, "wait step dead-lettered");
+        }
+        Err(error) => tracing::error!(%error, "failed to append wait Failed"),
+    }
+}
+
+/// v17: commit every DUE wait timer — firing IS the subject's ordinary
+/// `Committed` (idempotency_key = MoteId, so the journal's dedup fence makes a
+/// double fire structurally impossible). The committed output is the lone Data
+/// parent's `result_ref` VERBATIM (pure pass-through — the wait holds time, it
+/// mints no data); a rootless/fan-in wait commits a canonical
+/// `{"waited_ms": N}` descriptor minted into the store at fire time. A due
+/// timer whose def is not yet rehydrated (restart before the run's re-submit)
+/// stays armed and fires on a later drain — late, never twice.
+fn fire_due_timers<J: Journal>(
+    journal: &J,
+    store: Option<&SharedStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    now_ms: u64,
+) {
+    if dispatch.armed_timers.is_empty() {
+        return;
+    }
+    let due: Vec<MoteId> = dispatch
+        .armed_timers
+        .iter()
+        // Purpose 1 (retry backoff) is consumed by its own settle pass.
+        .filter(|(_, (fire_at, purpose, _))| *purpose == 0 && *fire_at <= now_ms)
+        .map(|(id, _)| *id)
+        .collect();
+    for wait_id in due {
+        if projection.state_of(&wait_id) != MoteState::Pending {
+            dispatch.armed_timers.remove(&wait_id); // spent (or terminal) — drop
+            continue;
+        }
+        let Some((wait_mote, wait_warrant)) = dispatch.defs.get(&wait_id).cloned() else {
+            continue; // not yet rehydrated — fires on a later drain, once
+        };
+        let data_parents: Vec<MoteId> = wait_mote
+            .parents
+            .iter()
+            .filter(|p| p.edge.kind == EdgeKind::Data)
+            .map(|p| p.parent_id)
+            .collect();
+        let result_ref = if data_parents.len() == 1 {
+            projection.result_ref_of(&data_parents[0])
+        } else {
+            None
+        };
+        let result_ref = if let Some(r) = result_ref {
+            r
+        } else {
+            {
+                // Rootless / fan-in wait: mint the canonical descriptor.
+                let Some(store) = store else {
+                    tracing::warn!(wait = ?wait_id, "due wait has no store to mint its output — deferred");
+                    continue;
+                };
+                let delay = wait_mote
+                    .def
+                    .config_subset
+                    .get(&ConfigKey(WAIT_DELAY_MS_KEY.to_string()))
+                    .and_then(|v| std::str::from_utf8(&v.0).ok())
+                    .unwrap_or("0");
+                let bytes = format!("{{\"waited_ms\":{delay}}}").into_bytes();
+                match store.put(&bytes) {
+                    Ok(r) => r,
+                    Err(error) => {
+                        tracing::warn!(%error, wait = ?wait_id, "wait output store write failed — deferred");
+                        continue;
+                    }
+                }
+            }
+        };
+        let parents: SmallVec<[kx_journal::ParentEntry; 4]> = wait_mote
+            .parents
+            .iter()
+            .map(kx_journal::ParentEntry::from_parent_ref)
+            .collect();
+        let entry = JournalEntry::Committed {
+            mote_id: wait_mote.id,
+            idempotency_key: *wait_mote.id.as_bytes(),
+            seq: 0,
+            nondeterminism: wait_mote.def.nd_class,
+            result_ref,
+            parents,
+            warrant_ref: warrant_ref_of(&wait_warrant),
+            mote_def_hash: wait_mote.def.hash(),
+        };
+        match journal.append(entry) {
+            Ok(durable) => {
+                let seq = durable.seq();
+                if seq > *folded_through && projection.fold(&durable).is_ok() {
+                    *folded_through = seq;
+                }
+                dispatch.submitted.remove(&wait_id);
+                dispatch.defs.remove(&wait_id);
+                dispatch.armed_timers.remove(&wait_id);
+                dispatch.tracker.resolve_committed(wait_id);
+                tracing::info!(wait = ?wait_id, "durable wait fired — frozen DAG advanced");
+            }
+            Err(error) => tracing::error!(%error, "failed to append wait Committed"),
+        }
+    }
+}
+
+// v17: the wait settle + timer fire pushed the seam count past the lint budget;
+// every param is the drain loop's own state, threaded once per drain.
+#[allow(clippy::too_many_arguments)]
 fn run_settle_passes<J: Journal>(
     journal: &J,
     store: Option<&SharedStore>,
@@ -3201,9 +3532,21 @@ fn run_settle_passes<J: Journal>(
     dispatch: &mut Dispatch,
     react_cache: &mut ReactSettleCache,
     tool_registry: &dyn ToolRegistry,
+    clock: &dyn Clock,
 ) {
     settle_replan_rounds(journal, store, projection, folded_through, dispatch);
     settle_agentic_launches(journal, store, projection, folded_through, dispatch);
+    // v17: arm any parent-satisfied wait step, then fire the due ones — both
+    // idempotent, both zero-cost for a timer-free serve.
+    settle_wait_steps(journal, projection, folded_through, dispatch, clock);
+    fire_due_timers(
+        journal,
+        store,
+        projection,
+        folded_through,
+        dispatch,
+        clock.now_ms(),
+    );
     // RC4c-2b: freeze any COMMITTED rerank BEFORE the react settle, so the react-rag
     // gate sees the frozen outcome and advances in the SAME drain (mirrors the
     // agentic-launch pass running before the react settle). Zero-cost when idle.

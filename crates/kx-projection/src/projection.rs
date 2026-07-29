@@ -571,6 +571,10 @@ impl Projection {
     /// **metadata, never identity**: no scheduling/identity/digest decision reads
     /// it (`DigestSealed` in particular is invisible to the run-identity product
     /// digest, which folds only `Committed` Motes).
+    // v17 tipped the arm count over the budget; each arm is a self-contained
+    // append (the ReactRound/Approval arms are already extracted — the rest
+    // read better in one place).
+    #[allow(clippy::too_many_lines)]
     fn fold_run_metadata(&mut self, entry: &JournalEntry) {
         match entry {
             JournalEntry::RunRegistered {
