@@ -138,9 +138,11 @@ fn agents_starter(goal: &str, files: &[&str]) -> String {
     out.push_str("# Agent guidance\n\n");
     out.push_str("Goal: ");
     out.push_str(goal.trim());
-    out.push_str("\n\nEdit this file to steer the agents that write and run this app — \
+    out.push_str(
+        "\n\nEdit this file to steer the agents that write and run this app — \
                   style, constraints, and what matters most. It is read when project \
-                  files are authored and on every run.\n");
+                  files are authored and on every run.\n",
+    );
     if !files.is_empty() {
         out.push_str("\nProject files:\n");
         for f in files {
@@ -401,8 +403,7 @@ impl HostScaffolder {
     /// truth; durability only affects what a RESTARTED serve reports).
     fn mirror(&self, principal: &str, branch: &str, phase: ScaffoldPhase, detail: &str) {
         if let Some(state) = self.state.as_ref() {
-            if let Err(e) =
-                state.record_scaffold_state(principal, branch, phase_str(phase), detail)
+            if let Err(e) = state.record_scaffold_state(principal, branch, phase_str(phase), detail)
             {
                 tracing::warn!(branch = %branch, error = %e, "scaffold state not persisted");
             }
@@ -1429,27 +1430,27 @@ impl AppScaffolder for HostScaffolder {
             .lock()
             .ok()
             .and_then(|t| t.get(branch_handle).cloned());
-        let (phase, detail, writing_path, writing_instance_id, writing_mote_id) =
-            if let Some(p) = live {
-                (
-                    p.phase,
-                    p.detail,
-                    p.writing_path,
-                    p.writing_instance_id,
-                    p.writing_mote_id,
-                )
-            } else {
-                // No live task in THIS process: consult the durable mirror before
-                // the manifest guess (see `recover_phase` for the decision table).
-                let durable = self
-                    .state
-                    .as_ref()
-                    .and_then(|s| s.read_scaffold_state(principal, branch_handle).ok())
-                    .flatten();
-                let (phase, detail) =
-                    recover_phase(durable, derive_phase(&files_done, &files_pending));
-                (phase, detail, None, None, None)
-            };
+        let (phase, detail, writing_path, writing_instance_id, writing_mote_id) = if let Some(p) =
+            live
+        {
+            (
+                p.phase,
+                p.detail,
+                p.writing_path,
+                p.writing_instance_id,
+                p.writing_mote_id,
+            )
+        } else {
+            // No live task in THIS process: consult the durable mirror before
+            // the manifest guess (see `recover_phase` for the decision table).
+            let durable = self
+                .state
+                .as_ref()
+                .and_then(|s| s.read_scaffold_state(principal, branch_handle).ok())
+                .flatten();
+            let (phase, detail) = recover_phase(durable, derive_phase(&files_done, &files_pending));
+            (phase, detail, None, None, None)
+        };
         Ok(ScaffoldStatus {
             phase,
             files_done,
@@ -1461,11 +1462,7 @@ impl AppScaffolder for HostScaffolder {
         })
     }
 
-    fn is_scaffold_active(
-        &self,
-        _principal: &str,
-        branch_handle: &str,
-    ) -> Result<bool, CoreError> {
+    fn is_scaffold_active(&self, _principal: &str, branch_handle: &str) -> Result<bool, CoreError> {
         // The LIVE-task probe (the RestoreBranch gate): only the in-process
         // tracker counts. `status()`'s manifest fallback deliberately does NOT —
         // after a restart it reads pending paths as `Writing` forever, and a
@@ -1475,9 +1472,7 @@ impl AppScaffolder for HostScaffolder {
             .lock()
             .ok()
             .and_then(|t| t.get(branch_handle).cloned())
-            .is_some_and(|p| {
-                matches!(p.phase, ScaffoldPhase::Planning | ScaffoldPhase::Writing)
-            }))
+            .is_some_and(|p| matches!(p.phase, ScaffoldPhase::Planning | ScaffoldPhase::Writing)))
     }
 }
 
@@ -1496,17 +1491,18 @@ mod tests {
 
     #[test]
     fn agents_starter_names_the_goal_and_planned_files_and_stays_terse() {
-        let body = agents_starter(
-            "summarize the changelog",
-            &["README.md", "skills/main.md"],
-        );
+        let body = agents_starter("summarize the changelog", &["README.md", "skills/main.md"]);
         assert!(body.starts_with("# Agent guidance"));
         assert!(body.contains("Goal: summarize the changelog"));
         assert!(body.contains("- README.md"));
         assert!(body.contains("- skills/main.md"));
         assert!(body.contains("Edit this file"));
         // Terse on purpose: the starter rides every run's 12 KiB rail budget.
-        assert!(body.len() < 1024, "starter must stay well under 1 KiB: {}", body.len());
+        assert!(
+            body.len() < 1024,
+            "starter must stay well under 1 KiB: {}",
+            body.len()
+        );
         // Deterministic — no clock, no randomness.
         assert_eq!(
             body,

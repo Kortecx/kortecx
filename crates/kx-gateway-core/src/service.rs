@@ -5208,7 +5208,11 @@ impl KxGateway for GatewayService {
         // fails to LAUNCH still leaves an honest draft, and the host clears the
         // flag when the scaffold reaches Done. Advisory-only (display/routing);
         // a store that predates the column degrades to no badge (`Ok(false)`).
-        apps.set_lifecycle(&principal, &req.handle, crate::apps_view::APP_LIFECYCLE_DRAFT)?;
+        apps.set_lifecycle(
+            &principal,
+            &req.handle,
+            crate::apps_view::APP_LIFECYCLE_DRAFT,
+        )?;
         // D213: a hosted (experience) app scaffolds its framework template's authored
         // files (page + README) into the branch — the static config is template-owned
         // (written to disk by the supervisor). The host parses the framework from the

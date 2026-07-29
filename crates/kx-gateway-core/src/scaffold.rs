@@ -1158,9 +1158,18 @@ mod tests {
             ScaffoldLane::Codified,
             ScaffoldLane::Hosted("vite_react"),
         ] {
-            let absent = authoring_prompt("README.md", "the readme", "g", lane, &[], false, &[], None);
-            let empty =
-                authoring_prompt("README.md", "the readme", "g", lane, &[], false, &[], Some("  "));
+            let absent =
+                authoring_prompt("README.md", "the readme", "g", lane, &[], false, &[], None);
+            let empty = authoring_prompt(
+                "README.md",
+                "the readme",
+                "g",
+                lane,
+                &[],
+                false,
+                &[],
+                Some("  "),
+            );
             assert_eq!(absent, empty, "blank guidance is the same as none");
             assert!(!absent.contains("Project guidance"));
             let with = authoring_prompt(
@@ -1586,7 +1595,8 @@ mod tests {
 
     #[test]
     fn tools_and_workflow_get_different_shapes() {
-        let mk = |p: &str| authoring_prompt(p, "r", "g", ScaffoldLane::Codified, &[], false, &[], None);
+        let mk =
+            |p: &str| authoring_prompt(p, "r", "g", ScaffoldLane::Codified, &[], false, &[], None);
         let tools = mk(CODIFIED_TOOLS_PATH);
         assert!(tools.contains("id → version map"), "{tools}");
         // The prompt must say the grant is a REQUEST, or a model reasonably assumes naming a

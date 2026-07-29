@@ -357,10 +357,11 @@ async fn stop_kills_the_whole_process_tree() {
         .trim()
         .parse()
         .unwrap();
-    let alive = |pid: i32| {
-        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok()
-    };
-    assert!(alive(child_pid), "the grandchild is alive while the app runs");
+    let alive = |pid: i32| nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None).is_ok();
+    assert!(
+        alive(child_pid),
+        "the grandchild is alive while the app runs"
+    );
 
     c.stop_hosted_app(proto::StopHostedAppRequest {
         handle: handle.into(),

@@ -113,7 +113,9 @@ impl SandboxPolicy {
             SandboxMode::Enforce => "sandboxed (platform sandbox, deny-default)".into(),
             SandboxMode::Off { reason } => format!("UNSANDBOXED — {reason}"),
             SandboxMode::Refuse { reason } => {
-                format!("hosted start refused — {reason}; set KX_HOSTED_SANDBOX=off to run unconfined")
+                format!(
+                    "hosted start refused — {reason}; set KX_HOSTED_SANDBOX=off to run unconfined"
+                )
             }
         }
     }
@@ -321,7 +323,10 @@ fn push_subpath(profile: &mut String, op: &str, path: &Path) {
 /// The rolling posture line every hosted status carries — pushed into the app's
 /// log ring at start so a reviewer sees the isolation stance next to the npm
 /// output it governs.
-pub(crate) fn log_posture(logs: &std::sync::Arc<std::sync::Mutex<VecDeque<String>>>, policy: &SandboxPolicy) {
+pub(crate) fn log_posture(
+    logs: &std::sync::Arc<std::sync::Mutex<VecDeque<String>>>,
+    policy: &SandboxPolicy,
+) {
     if let Ok(mut l) = logs.lock() {
         l.push_back(format!("[isolation] {}", policy.posture()));
     }
@@ -369,7 +374,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = wrap_spawn(&policy, "npm", &[], dir.path(), true).unwrap_err();
         assert!(err.contains("platform cannot confine"));
-        assert!(err.contains("KX_HOSTED_SANDBOX=off"), "names the remedy: {err}");
+        assert!(
+            err.contains("KX_HOSTED_SANDBOX=off"),
+            "names the remedy: {err}"
+        );
     }
 
     #[test]
@@ -388,9 +396,18 @@ mod tests {
             "node_modules/.bin shims are execed inside the workdir"
         );
         assert!(p.contains("(allow process-exec (subpath \"/usr/bin\"))"));
-        assert!(p.contains("(allow process-fork)"), "dev servers fork — a stated grant");
-        assert!(p.contains("network-inbound (local ip \"localhost:*\")"), "the server LISTENS");
-        assert!(!p.contains("(allow network-outbound (remote ip \"*"), "no open egress, ever");
+        assert!(
+            p.contains("(allow process-fork)"),
+            "dev servers fork — a stated grant"
+        );
+        assert!(
+            p.contains("network-inbound (local ip \"localhost:*\")"),
+            "the server LISTENS"
+        );
+        assert!(
+            !p.contains("(allow network-outbound (remote ip \"*"),
+            "no open egress, ever"
+        );
         assert!(!p.contains("(allow network*)"), "no blanket network");
     }
 
@@ -413,7 +430,10 @@ mod tests {
             .collect();
         let mut sorted = keys.clone();
         sorted.sort();
-        assert_eq!(sorted, vec!["HOME", "LANG", "PATH", "TMPDIR", "npm_config_cache"]);
+        assert_eq!(
+            sorted,
+            vec!["HOME", "LANG", "PATH", "TMPDIR", "npm_config_cache"]
+        );
         // The workdir-scoped homes were created.
         assert!(dir.path().join(".kx-home").is_dir());
         assert!(dir.path().join(".kx-npm-cache").is_dir());

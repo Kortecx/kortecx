@@ -430,7 +430,8 @@ impl<S: ContentStore> BranchesDb<S> {
                 other => Err(other),
             })
             .map_err(|e| CoreError::Internal(format!("branches dedup probe: {e}")))?;
-        let deduplicated = existing.as_ref().map(|(r, _, _, _)| r.as_slice()) == Some(&branch_ref[..]);
+        let deduplicated =
+            existing.as_ref().map(|(r, _, _, _)| r.as_slice()) == Some(&branch_ref[..]);
         let mut recorded = None;
         if !deduplicated {
             // Baseline seed: a row that predates the history table gets its
@@ -449,8 +450,15 @@ impl<S: ContentStore> BranchesDb<S> {
                     let n = old_ref.len().min(16);
                     old16[..n].copy_from_slice(&old_ref[..n]);
                     Self::append_history(
-                        conn, principal, handle, &old16, old_parent, old_desc, old_items,
-                        "baseline", history_max,
+                        conn,
+                        principal,
+                        handle,
+                        &old16,
+                        old_parent,
+                        old_desc,
+                        old_items,
+                        "baseline",
+                        history_max,
                     )?;
                 }
             }
@@ -847,7 +855,10 @@ impl<S: ContentStore + Send + Sync + 'static> kx_gateway_core::BranchHistory for
         // blobs are immutable and branch ops never collect them, so a recorded
         // version SHOULD always resolve — refuse loudly if an operator GC'd blobs.
         for it in &items {
-            if !self.content.contains(&kx_content::ContentRef(it.content_ref)) {
+            if !self
+                .content
+                .contains(&kx_content::ContentRef(it.content_ref))
+            {
                 return Err(CoreError::InvalidArgument(
                     "a recorded item no longer resolves in the content store; this version cannot be restored",
                 ));
@@ -1281,7 +1292,8 @@ mod tests {
     #[test]
     fn restore_appends_the_historical_items_and_preserves_current_metadata() {
         let db = db_with_root(None);
-        db.create("alice", "apps/local/a", None, "the project").unwrap();
+        db.create("alice", "apps/local/a", None, "the project")
+            .unwrap();
         let v1 = db.content.put(b"version one").unwrap();
         db.advance("alice", "apps/local/a", "doc.md", v1.0).unwrap();
         let v2 = db.content.put(b"version two").unwrap();
@@ -1292,7 +1304,10 @@ mod tests {
         assert!(!dedup);
         assert_eq!(new_version, 4, "restore APPENDS — history is never rewound");
         assert_eq!(m.items.len(), 1);
-        assert_eq!(m.items[0].content_ref, v1.0, "the historical body is current again");
+        assert_eq!(
+            m.items[0].content_ref, v1.0,
+            "the historical body is current again"
+        );
         assert_eq!(m.description, "the project", "current metadata preserved");
         // The pre-restore state (v2) is still restorable — restore forward works.
         let (fwd, _, _) = db.restore("alice", "apps/local/a", 3).unwrap();
@@ -1338,7 +1353,8 @@ mod tests {
         // "Recreate without losing state": DeleteBranch unbinds the row; the
         // versions (and the CAS blobs) stay, so restore brings the project back.
         let db = db_with_root(None);
-        db.create("alice", "apps/local/a", None, "kept desc").unwrap();
+        db.create("alice", "apps/local/a", None, "kept desc")
+            .unwrap();
         let r = db.content.put(b"the work").unwrap();
         db.advance("alice", "apps/local/a", "work.md", r.0).unwrap();
         assert!(db.delete("alice", "apps/local/a").unwrap());
@@ -1369,7 +1385,11 @@ mod tests {
             .unwrap();
         assert!(!has_more);
         let nums: Vec<u32> = versions.iter().map(|v| v.version).collect();
-        assert_eq!(nums, vec![6, 5, 4], "newest kept, oldest pruned, numbering monotone");
+        assert_eq!(
+            nums,
+            vec![6, 5, 4],
+            "newest kept, oldest pruned, numbering monotone"
+        );
     }
 
     #[test]
@@ -1422,9 +1442,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let content = Arc::new(InMemoryContentStore::default());
         let pre = db_at(dir.path(), Arc::clone(&content), 256);
-        pre.create("alice", "apps/local/a", None, "pre-upgrade").unwrap();
+        pre.create("alice", "apps/local/a", None, "pre-upgrade")
+            .unwrap();
         let old = content.put(b"the pre-upgrade body").unwrap();
-        pre.advance("alice", "apps/local/a", "old.md", old.0).unwrap();
+        pre.advance("alice", "apps/local/a", "old.md", old.0)
+            .unwrap();
         drop(pre);
         {
             let raw = Connection::open(dir.path().join("branches.db")).unwrap();
@@ -1439,7 +1461,8 @@ mod tests {
             "a pre-history row honestly reports no history yet"
         );
         let new = content.put(b"the first post-upgrade edit").unwrap();
-        db.advance("alice", "apps/local/a", "new.md", new.0).unwrap();
+        db.advance("alice", "apps/local/a", "new.md", new.0)
+            .unwrap();
 
         let (versions, _) = db
             .list_versions("alice", "apps/local/a", 10, None)
@@ -1448,7 +1471,10 @@ mod tests {
         assert_eq!(versions.len(), 2, "baseline + the mutation");
         assert_eq!(versions[1].cause, "baseline");
         assert_eq!(versions[1].version, 1);
-        assert_eq!(versions[1].item_count, 1, "the pre-upgrade state, restorable");
+        assert_eq!(
+            versions[1].item_count, 1,
+            "the pre-upgrade state, restorable"
+        );
         // And the baseline is genuinely restorable: back to just old.md.
         let (m, _, _) = db.restore("alice", "apps/local/a", 1).unwrap();
         assert_eq!(m.items.len(), 1);

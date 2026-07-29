@@ -40,5 +40,8 @@ fn a_parent_canary_never_reaches_the_child_but_an_explicit_env_does() {
         "the connection's DECLARED env must reach it: {text}"
     );
     // The substrate allowlist keeps interpreters bootable (HOME survives).
-    assert!(!text.contains("home=none"), "substrate vars survive: {text}");
+    assert!(
+        !text.contains("home=none"),
+        "substrate vars survive: {text}"
+    );
 }

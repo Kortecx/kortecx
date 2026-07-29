@@ -3876,8 +3876,14 @@ mod tests {
         for mode in [AppMode::Contextual, AppMode::Codified] {
             assert!(is_project_rail_path(".kortecx/agents.md", mode), "{mode:?}");
             assert!(is_project_rail_path(".kortecx/notes.md", mode), "{mode:?}");
-            assert!(!is_project_rail_path(".kortecx/manifest.json", mode), "{mode:?}");
-            assert!(!is_project_rail_path(".kortecx/state.json", mode), "{mode:?}");
+            assert!(
+                !is_project_rail_path(".kortecx/manifest.json", mode),
+                "{mode:?}"
+            );
+            assert!(
+                !is_project_rail_path(".kortecx/state.json", mode),
+                "{mode:?}"
+            );
         }
     }
 

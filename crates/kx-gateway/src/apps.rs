@@ -659,7 +659,8 @@ mod tests {
     fn lifecycle_set_and_clear_round_trip_on_the_real_store() {
         let dir = tmp_dir();
         let db = AppsDb::open(&dir).unwrap();
-        db.save("alice", "team/apps/a", &envelope("a"), None).unwrap();
+        db.save("alice", "team/apps/a", &envelope("a"), None)
+            .unwrap();
         assert!(db.set_lifecycle("alice", "team/apps/a", "draft").unwrap());
         let (rec, _) = db.get("alice", "team/apps/a").unwrap().unwrap();
         assert_eq!(rec.lifecycle, "draft");
@@ -667,7 +668,9 @@ mod tests {
         let (rec, _) = db.get("alice", "team/apps/a").unwrap().unwrap();
         assert_eq!(rec.lifecycle, "");
         // Absent / not-owned: uniform false (no oracle), nothing written.
-        assert!(!db.set_lifecycle("alice", "team/apps/missing", "draft").unwrap());
+        assert!(!db
+            .set_lifecycle("alice", "team/apps/missing", "draft")
+            .unwrap());
         assert!(!db.set_lifecycle("bob", "team/apps/a", "draft").unwrap());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -679,7 +682,8 @@ mod tests {
     fn a_plain_resave_preserves_lifecycle() {
         let dir = tmp_dir();
         let db = AppsDb::open(&dir).unwrap();
-        db.save("alice", "team/apps/a", &envelope("a"), None).unwrap();
+        db.save("alice", "team/apps/a", &envelope("a"), None)
+            .unwrap();
         db.set_lifecycle("alice", "team/apps/a", "draft").unwrap();
         // Re-save with a DIFFERENT envelope (a rename) — the draft must survive.
         let (rec, dedup) = db
@@ -690,7 +694,9 @@ mod tests {
         let (stored, _) = db.get("alice", "team/apps/a").unwrap().unwrap();
         assert_eq!(stored.lifecycle, "draft");
         // A brand-new save starts active.
-        let (fresh, _) = db.save("alice", "team/apps/b", &envelope("b"), None).unwrap();
+        let (fresh, _) = db
+            .save("alice", "team/apps/b", &envelope("b"), None)
+            .unwrap();
         assert_eq!(fresh.lifecycle, "");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -712,8 +718,14 @@ mod tests {
         assert_eq!(phase, "failed");
         assert_eq!(detail, "step timed out");
         // Caller-scoped + absent: uniform None.
-        assert!(db.read_scaffold_state("bob", "team/apps/a").unwrap().is_none());
-        assert!(db.read_scaffold_state("alice", "team/apps/x").unwrap().is_none());
+        assert!(db
+            .read_scaffold_state("bob", "team/apps/a")
+            .unwrap()
+            .is_none());
+        assert!(db
+            .read_scaffold_state("alice", "team/apps/x")
+            .unwrap()
+            .is_none());
         // Upsert semantics: the latest write wins.
         db.record_scaffold_state("alice", "team/apps/a", "done", "")
             .unwrap();

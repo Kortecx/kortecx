@@ -729,16 +729,19 @@ async fn provision_scaffold_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
         .flat_map(|t| t.expect.answer_must_contain.iter().cloned())
         .collect();
 
-    let recipes: std::collections::BTreeSet<String> = match c
-        .list_recipes(proto::ListRecipesRequest {})
-        .await
-    {
-        Ok(r) => r.into_inner().recipes.into_iter().map(|x| x.handle).collect(),
-        Err(e) => {
-            eprintln!("eval-bench: scaffold fixtures NOT ready — list_recipes: {e}");
-            return false;
-        }
-    };
+    let recipes: std::collections::BTreeSet<String> =
+        match c.list_recipes(proto::ListRecipesRequest {}).await {
+            Ok(r) => r
+                .into_inner()
+                .recipes
+                .into_iter()
+                .map(|x| x.handle)
+                .collect(),
+            Err(e) => {
+                eprintln!("eval-bench: scaffold fixtures NOT ready — list_recipes: {e}");
+                return false;
+            }
+        };
     for needed in [
         kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE,
         kx_gateway_core::APP_MANIFEST_PLAN_RECIPE_HANDLE,
@@ -750,8 +753,16 @@ async fn provision_scaffold_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
     }
 
     for (name, handle, mode) in [
-        ("kx-bench-scaffold-contextual", BENCH_SCAFFOLD_CONTEXTUAL_HANDLE, ""),
-        ("kx-bench-scaffold-codified", BENCH_SCAFFOLD_CODIFIED_HANDLE, "codified"),
+        (
+            "kx-bench-scaffold-contextual",
+            BENCH_SCAFFOLD_CONTEXTUAL_HANDLE,
+            "",
+        ),
+        (
+            "kx-bench-scaffold-codified",
+            BENCH_SCAFFOLD_CODIFIED_HANDLE,
+            "codified",
+        ),
     ] {
         let envelope = scaffold_app_envelope(name, handle, mode);
         if let Err(e) = c
@@ -777,7 +788,10 @@ async fn provision_scaffold_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
                 return false;
             }
         };
-        assert!(stored.found, "the saved scaffold fixture {handle} reads back");
+        assert!(
+            stored.found,
+            "the saved scaffold fixture {handle} reads back"
+        );
         let stored_text = String::from_utf8_lossy(&stored.envelope_json).into_owned();
         assert!(
             stored_text.contains(&format!("\"branch_handle\":\"{handle}\"")),

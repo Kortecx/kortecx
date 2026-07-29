@@ -1110,9 +1110,16 @@ pub async fn drive_scaffolded_app(
         duration_ms: 0,
         files_done: 0,
     };
-    let fail = |task: &GoldenTask, reason: &str, mut record: ScaffoldRecord, started: std::time::Instant| {
+    let fail = |task: &GoldenTask,
+                reason: &str,
+                mut record: ScaffoldRecord,
+                started: std::time::Instant| {
         record.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        (scaffold_failure_transcript(task, reason), Vec::new(), record)
+        (
+            scaffold_failure_transcript(task, reason),
+            Vec::new(),
+            record,
+        )
     };
 
     if let Err(e) = client
@@ -1181,8 +1188,14 @@ pub async fn drive_scaffolded_app(
         Ok(r) => r.into_inner(),
         Err(e) => return fail(task, &format!("run_app: {e}"), record, started),
     };
-    match settle_and_fold_react(client, run.instance_id, run.react_chain_salt, task, settle_timeout)
-        .await
+    match settle_and_fold_react(
+        client,
+        run.instance_id,
+        run.react_chain_salt,
+        task,
+        settle_timeout,
+    )
+    .await
     {
         Ok((transcript, terminal)) => (transcript, terminal, record),
         Err(e) => fail(task, &format!("run fold: {e}"), record, started),
