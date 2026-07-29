@@ -846,10 +846,25 @@ button:disabled {
   border-radius: 6px;
   padding: 0.35rem;
   margin: 0;
+  /* The bare `button` rule is the PRIMARY action's styling — gradient, accent
+   * glow, and a flex-start pin. Every class that is not that button has to
+   * undo it, and an icon button that keeps the glow wears the call-to-action's
+   * halo: in the App card head the four real buttons glowed while the two
+   * STATUS glyphs (an open padlock, a Cloud-only share) did not, so the only
+   * visual difference in that row said nothing about what was clickable. */
+  box-shadow: none;
+  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+}
+/* A destructive icon action reads as destructive on hover, the same way the
+ * kebab's Delete item does — an unmarked glyph beside Duplicate is too easy to
+ * hit for an action that cascades. */
+.iconbtn--danger:hover {
+  color: var(--error);
+  border-color: var(--error);
 }
 .iconbtn:hover {
   color: var(--fg);
@@ -3931,6 +3946,10 @@ button.card-grid__title:hover {
 .btn-primary {
   display: inline-flex;
   align-items: center;
+  /* `.btn-ghost` resets these; this never did, so in every header and dialog
+   * footer the PRIMARY button sat 6px lower than the secondary beside it. */
+  margin: 0;
+  align-self: center;
   gap: 0.35rem;
   padding: 0.36rem 0.72rem;
   border: 1px solid var(--primary-h);
@@ -5830,7 +5849,14 @@ button.card-grid__title:hover {
   font-weight: 600;
   color: var(--fg-muted);
 }
+/* `display: flex` on a `&lt;td&gt;` takes the cell OUT of table layout, so its
+ * border-bottom lands at its own content height instead of the row's: every
+ * divider in the catalog table was broken into two segments ~20px apart. The
+ * cell stays a table-cell; the flex row lives in a wrapper inside it. */
 .apps-table .app-row__actions {
+  text-align: right;
+}
+.apps-table .app-row__actions-inner {
   display: flex;
   gap: 0.3rem;
   align-items: center;

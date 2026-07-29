@@ -292,7 +292,10 @@ export function AppsSection({
           detail={
             hosted
               ? "Create a hosted web app with New App — the runtime scaffolds a React / Next.js project and serves it on a local port."
-              : "Author an automation app with `kx app save <file>`, the `app()` SDK builder, or New App — then run it on a trigger or in a workflow."
+              : // No markdown pass runs over this string, so backticks rendered as
+                // literal backticks on the page. Plain prose, since the surface it
+                // lands on is plain text.
+                "Author an automation app with the kx CLI, the SDK's app() builder, or New App — then run it on a trigger or in a workflow."
           }
         />
       ) : null}
@@ -364,6 +367,7 @@ export function AppsSection({
               onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
               onDownload={download}
               onDuplicate={setDuplicating}
+              onDelete={setDeleting}
             />
           )}
         </>
@@ -671,6 +675,7 @@ function AppsTable({
   onOpen,
   onDownload,
   onDuplicate,
+  onDelete,
 }: {
   apps: AppSummary[];
   hosted: boolean;
@@ -681,6 +686,7 @@ function AppsTable({
   onOpen: (handle: string) => void;
   onDownload: (handle: string) => void;
   onDuplicate: (handle: string) => void;
+  onDelete: (handle: string) => void;
 }) {
   return (
     <table className="trail-table apps-table" data-testid="apps-table">
@@ -730,70 +736,85 @@ function AppsTable({
               </td>
             ) : null}
             <td className="app-row__actions">
-              {a.lifecycle === "draft" ? (
-                <button
-                  type="button"
-                  className="iconbtn"
-                  data-testid={`app-resume-${a.handle}`}
-                  title="Resume the scaffold — only the missing files are written"
-                  aria-label="Resume scaffold"
-                  onClick={() => onResume(a.handle)}
-                >
-                  <Icon name="refresh" size={16} />
-                </button>
-              ) : hosted ? (
-                <HostedRunButton handle={a.handle} />
-              ) : (
-                <>
+              <div className="app-row__actions-inner">
+                {a.lifecycle === "draft" ? (
                   <button
                     type="button"
                     className="iconbtn"
-                    data-testid={`app-run-${a.handle}`}
-                    title="Run this App"
-                    aria-label="Run"
-                    onClick={() => onRun(a.handle)}
+                    data-testid={`app-resume-${a.handle}`}
+                    title="Resume the scaffold — only the missing files are written"
+                    aria-label="Resume scaffold"
+                    onClick={() => onResume(a.handle)}
                   >
-                    <Icon name="play" size={16} />
+                    <Icon name="refresh" size={16} />
                   </button>
-                  <ScheduleButton
-                    appHandle={a.handle}
-                    triggerClassName="iconbtn"
-                    iconOnly
-                    testId={`app-schedule-${a.handle}`}
-                  />
-                </>
-              )}
-              <button
-                type="button"
-                className="iconbtn"
-                data-testid={`app-open-${a.handle}`}
-                title="Open project"
-                aria-label="Open project"
-                onClick={() => onOpen(a.handle)}
-              >
-                <Icon name="artifacts" size={15} />
-              </button>
-              <button
-                type="button"
-                className="iconbtn"
-                data-testid={`app-download-${a.handle}`}
-                disabled={downloadPending}
-                title="Download a portable .kxapp bundle"
-                aria-label="Download bundle"
-                onClick={() => onDownload(a.handle)}
-              >
-                <Icon name="download" size={16} />
-              </button>
-              <button
-                type="button"
-                className="iconbtn"
-                data-testid={`app-duplicate-${a.handle}`}
-                title="Duplicate locally"
-                aria-label="Duplicate"
-                onClick={() => onDuplicate(a.handle)}
-              >
-                <Icon name="copy" size={15} />
-              </button>
+                ) : hosted ? (
+                  <HostedRunButton handle={a.handle} />
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="iconbtn"
+                      data-testid={`app-run-${a.handle}`}
+                      title="Run this App"
+                      aria-label="Run"
+                      onClick={() => onRun(a.handle)}
+                    >
+                      <Icon name="play" size={16} />
+                    </button>
+                    <ScheduleButton
+                      appHandle={a.handle}
+                      triggerClassName="iconbtn"
+                      iconOnly
+                      testId={`app-schedule-${a.handle}`}
+                    />
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="iconbtn"
+                  data-testid={`app-open-${a.handle}`}
+                  title="Open project"
+                  aria-label="Open project"
+                  onClick={() => onOpen(a.handle)}
+                >
+                  <Icon name="artifacts" size={15} />
+                </button>
+                <button
+                  type="button"
+                  className="iconbtn"
+                  data-testid={`app-download-${a.handle}`}
+                  disabled={downloadPending}
+                  title="Download a portable .kxapp bundle"
+                  aria-label="Download bundle"
+                  onClick={() => onDownload(a.handle)}
+                >
+                  <Icon name="download" size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="iconbtn"
+                  data-testid={`app-duplicate-${a.handle}`}
+                  title="Duplicate locally"
+                  aria-label="Duplicate"
+                  onClick={() => onDuplicate(a.handle)}
+                >
+                  <Icon name="copy" size={15} />
+                </button>
+                {/* Delete lives ONLY behind the card's kebab, so switching to the
+                    table silently removed it: a control that presents itself as a
+                    display choice was changing what the catalog can do. */}
+                <button
+                  type="button"
+                  className="iconbtn iconbtn--danger"
+                  data-testid={`app-delete-${a.handle}`}
+                  title="Delete this App (asks for confirmation - it also releases its triggers and server)"
+                  aria-label="Delete"
+                  onClick={() => onDelete(a.handle)}
+                >
+                  <Icon name="stop" size={15} />
+                </button>
+              </div>
             </td>
           </tr>
         ))}
