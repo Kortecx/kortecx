@@ -146,11 +146,14 @@ pub(crate) fn app_project_rail_bytes() -> usize {
 
 /// Defensive upper bound for branch-history retention (a per-handle FIFO of full
 /// manifest snapshots — 10k × a large `items_json` is real disk).
+#[cfg(feature = "embedded-worker")]
 const MAX_BRANCH_HISTORY: usize = 10_000;
 
 /// The per-handle branch point-in-time history retention (`KX_BRANCH_HISTORY_MAX`).
 /// Resolved ONCE at serve start and passed into the store's constructor — never a
-/// per-call env read (tests inject the value directly).
+/// per-call env read (tests inject the value directly). Gated with the `branches`
+/// store it configures (the gateway-only build has no branch sidecar to bound).
+#[cfg(feature = "embedded-worker")]
 pub(crate) fn branch_history_max() -> usize {
     parse_cap(
         std::env::var("KX_BRANCH_HISTORY_MAX").ok().as_deref(),
