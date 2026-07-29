@@ -87,6 +87,11 @@ mod bundles;
 // the kx-app leaf type); off-journal, off-digest, rebuildable-to-empty (like
 // bundles, no broker dep — kx_content::ContentRef::of derives app_ref).
 mod apps;
+// Stores a caller's kortecx.workflow/v1 envelopes (the durable Workflow entity) —
+// the apps.db posture verbatim: canonicalized + summary-derived via the kx-app
+// leaf type, off-journal, off-digest, rebuildable-to-empty; workflow_ref is
+// domain-separated from app_ref so the two catalogs can never collide.
+mod workflows;
 // The skills.db sidecar (the SkillCatalog seam) — ListSkills / GetSkillForm /
 // AddSkill / RemoveSkill. Stores a caller's kortecx.skill/v1 manifests (validated
 // fail-closed + canonicalized via the kx-skill leaf type — authority deny-keys,

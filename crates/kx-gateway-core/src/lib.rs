@@ -105,6 +105,7 @@ mod toolscout_view;
 mod trigger_admin;
 mod uploads;
 mod view;
+mod workflows_view;
 mod writer;
 
 pub use alerts_view::{AlertEntry, AlertView};
@@ -113,6 +114,10 @@ pub use apps_run::{AppAuthor, AppRunError};
 pub use apps_view::{
     app_dataset_scoped_name, app_digest_of, AppCatalog, AppRecord, APP_DATASET_SCOPE_DOMAIN,
     APP_DIGEST_DOMAIN, APP_LIFECYCLE_DRAFT, MAX_APP_ENVELOPE_BYTES,
+};
+pub use workflows_view::{
+    workflow_digest_of, WorkflowCatalog, WorkflowRecord, WORKFLOW_DIGEST_DOMAIN,
+    WORKFLOW_LIFECYCLE_DRAFT,
 };
 pub use branches_view::{
     BranchHistory, BranchItemRecord, BranchManifest, BranchStore, BranchVersionRecord,

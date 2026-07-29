@@ -1201,6 +1201,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // the SaveApp/ListApps/GetApp RPCs. Off-journal, off-digest, rebuildable-to-empty
     // (no broker dep — app_ref is a pure content hash, the bundles.db posture).
     let apps_db = Arc::new(crate::apps::AppsDb::open(&catalog_dir)?);
+    // The Workflow catalog (workflows.db) — caller-scoped kortecx.workflow/v1
+    // envelopes for the SaveWorkflow/ListWorkflows/GetWorkflow/DeleteWorkflow
+    // RPCs. The apps.db posture verbatim: off-journal, off-digest,
+    // rebuildable-to-empty; workflow_ref is a pure content hash.
+    let workflows_db = Arc::new(crate::workflows::WorkflowsDb::open(&catalog_dir)?);
     // The skill catalog (skills.db) — caller-scoped kortecx.skill/v1
     // manifests for the ListSkills/GetSkillForm/AddSkill/RemoveSkill RPCs.
     // Off-journal, off-digest, rebuildable-to-empty (skill_ref is a pure content
@@ -1844,6 +1849,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_run_inputs_store(run_inputs_db)
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db.clone())
+        .with_workflow_catalog(workflows_db.clone())
         .with_skill_catalog(skills_db.clone())
         .with_branches_store(branches_db.clone())
         .with_branch_history(branches_db.clone())

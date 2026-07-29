@@ -820,6 +820,13 @@ pub struct GatewayService {
     /// Caller-scoped, off-journal, off-digest, rebuildable-to-empty. The envelope
     /// carries NO authority (the host validates it); `app run` re-resolves warrants.
     apps: Option<Arc<dyn crate::apps_view::AppCatalog>>,
+    /// The optional Workflow-catalog store seam (the host injects a
+    /// `workflows.db`-backed sidecar). `None` ⇒ the workflow catalog RPCs return
+    /// `unimplemented`. Same wall as the App catalog: caller-scoped,
+    /// off-journal, off-digest, rebuildable-to-empty; the envelope carries NO
+    /// authority (`RunWorkflow` re-resolves every warrant from the caller's
+    /// own grants).
+    workflows: Option<Arc<dyn crate::workflows_view::WorkflowCatalog>>,
     /// The optional skill-catalog store seam (the host injects a
     /// `skills.db`-backed sidecar). `None` ⇒ the 4 skill RPCs return
     /// `unimplemented`. Caller-scoped, off-journal, off-digest, rebuildable-to-
@@ -952,6 +959,7 @@ impl GatewayService {
             branches: None,
             branch_history: None,
             apps: None,
+            workflows: None,
             skills: None,
             app_runner: None,
             proposer: None,
@@ -1420,6 +1428,18 @@ impl GatewayService {
         self
     }
 
+    /// Wire the Workflow-catalog store (the host's `workflows.db` sidecar).
+    /// Without it the workflow catalog RPCs (`SaveWorkflow`/`ListWorkflows`/
+    /// `GetWorkflow`/`DeleteWorkflow`) return `unimplemented`.
+    #[must_use]
+    pub fn with_workflow_catalog(
+        mut self,
+        workflows: Arc<dyn crate::workflows_view::WorkflowCatalog>,
+    ) -> Self {
+        self.workflows = Some(workflows);
+        self
+    }
+
     /// Wire the skill-catalog store (the host's `skills.db` sidecar).
     /// Without it the four skill RPCs (`ListSkills`/`GetSkillForm`/`AddSkill`/
     /// `RemoveSkill`) return `unimplemented`.
@@ -1868,6 +1888,23 @@ fn manifest_to_proto(m: crate::BundleManifest) -> proto::ContextBundle {
 }
 
 /// POC-4: map a host `AppRecord` (envelope-derived summary) to the wire view.
+fn workflow_record_to_proto(r: crate::WorkflowRecord) -> proto::WorkflowSummary {
+    proto::WorkflowSummary {
+        handle: r.handle,
+        workflow_ref: r.workflow_ref.to_vec(),
+        name: r.name,
+        version: r.version,
+        description: r.description,
+        tags: r.tags,
+        step_count: r.step_count,
+        // What one run PRODUCES — advisory (the AppSummary.delivers posture).
+        delivers: r.delivers,
+        // Catalog lifecycle ("" active / "draft") — advisory, display/routing +
+        // trigger-registration refusal only. ONE ListWorkflows paints every badge.
+        lifecycle: r.lifecycle,
+    }
+}
+
 fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
     proto::AppSummary {
         handle: r.handle,
@@ -5122,45 +5159,208 @@ impl KxGateway for GatewayService {
         }
         let (manifest, new_version, deduplicated) =
             history.restore(&principal, &req.handle, req.version)?;
+        // Workflow-catalog resync: when this handle names a stored WORKFLOW, the
+        // restored definition manifest is the new truth and the catalog row must
+        // follow it — otherwise Get/Run serve the pre-restore definition while
+        // the history says otherwise. Best-effort AFTER the restore recorded
+        // (the restore itself must never fail on the resync half); the response
+        // reports the outcome honestly and the resync is idempotent (a repeated
+        // restore or the next save heals a miss). Lifecycle + lineage carry
+        // through from the existing row unchanged.
+        let mut workflow_resynced = false;
+        if !deduplicated {
+            if let Some(workflows) = self.workflows.as_ref() {
+                if let Ok(Some((row, _))) = workflows.get(&principal, &req.handle) {
+                    let restored_bytes = manifest
+                        .items
+                        .iter()
+                        .find(|it| it.path == "workflow.json")
+                        .and_then(|it| {
+                            self.content
+                                .get(&kx_content::ContentRef::from_bytes(it.content_ref))
+                        });
+                    if let Some(bytes) = restored_bytes {
+                        workflow_resynced = workflows
+                            .save(
+                                &principal,
+                                &req.handle,
+                                &bytes,
+                                row.source_digest.as_deref(),
+                                &row.lifecycle,
+                            )
+                            .is_ok();
+                    }
+                    if !workflow_resynced {
+                        tracing::warn!(
+                            "branch restore for workflow {} recorded, but the catalog row \
+                             was not re-synced (missing/unreadable workflow.json item)",
+                            req.handle
+                        );
+                    }
+                }
+            }
+        }
         Ok(Response::new(proto::RestoreBranchResponse {
             branch: Some(branch_to_proto(manifest)),
             new_version,
             deduplicated,
-            // The workflows tranche wires the catalog resync here; until then
-            // the restore honestly reports that no workflow row was touched.
-            workflow_resynced: false,
+            workflow_resynced,
         }))
     }
 
-    // The durable Workflow entity. Stubbed at the proto tranche: each returns
-    // the seam-absent posture until the workflows catalog + runner land (the
-    // RunApp-without-seam precedent). Kept as five explicit bodies so the
-    // tranche compiles green with ZERO behavior change.
+    // ----- the durable Workflow entity (workflows.db; the SaveApp posture) -----
+
     async fn save_workflow(
         &self,
-        _request: Request<proto::SaveWorkflowRequest>,
+        request: Request<proto::SaveWorkflowRequest>,
     ) -> Result<Response<proto::SaveWorkflowResponse>, Status> {
-        Err(Status::unimplemented(
-            "SaveWorkflow: no workflow catalog wired",
-        ))
+        let workflows = self.workflows.as_ref().ok_or_else(|| {
+            Status::unimplemented("SaveWorkflow: no workflow catalog wired (workflows.db absent)")
+        })?;
+        // SERVER-DERIVED identity: workflows are scoped to the auth-resolved party.
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.handle) {
+            return Err(Status::invalid_argument(
+                "handle must be a 'namespace/collection/name' AssetPath ([a-z0-9._-] segments)",
+            ));
+        }
+        if req.envelope_json.is_empty() {
+            return Err(Status::invalid_argument("envelope_json must not be empty"));
+        }
+        if req.envelope_json.len() > crate::MAX_APP_ENVELOPE_BYTES {
+            return Err(Status::invalid_argument(
+                "workflow envelope exceeds the server cap (1 MiB)",
+            ));
+        }
+        // Lifecycle is CALLER-STATED (a workflow has no scaffold loop — the save
+        // IS the authoring act); only the two documented values are accepted.
+        if !matches!(
+            req.lifecycle.as_str(),
+            "" | crate::workflows_view::WORKFLOW_LIFECYCLE_DRAFT
+        ) {
+            return Err(Status::invalid_argument(
+                "lifecycle must be \"\" (active) or \"draft\"",
+            ));
+        }
+        if !req.source_digest.is_empty() && req.source_digest.len() != 32 {
+            return Err(Status::invalid_argument(
+                "source_digest, when set, must be a 32-byte workflow_digest",
+            ));
+        }
+        // Cross-catalog handle refusal: branches, locks and branch HISTORY are all
+        // keyed (principal, handle) with no entity axis — a workflow sharing an
+        // App's handle would silently share that App's project branch, its lock,
+        // and its point-in-time history. Refusing at the NEW entity's save breaks
+        // nothing existing; SaveApp stays untouched.
+        if let Some(apps) = self.apps.as_ref() {
+            if apps.get(&principal, &req.handle)?.is_some() {
+                return Err(Status::invalid_argument(
+                    "this handle names an App; pick a distinct workflow handle \
+                     (branches, locks, and history are handle-keyed)",
+                ));
+            }
+        }
+        let source_digest = (!req.source_digest.is_empty()).then_some(req.source_digest.as_slice());
+        let (record, deduplicated) = workflows.save(
+            &principal,
+            &req.handle,
+            &req.envelope_json,
+            source_digest,
+            &req.lifecycle,
+        )?;
+        // Definition point-in-time history: record the canonical bytes as a
+        // one-item branch at the WORKFLOW handle, so ListBranchVersions /
+        // RestoreBranch work for workflows with NO new mechanism (the branch +
+        // history sidecars are entity-agnostic by construction). Best-effort —
+        // a serve without the branch/content seams still saves; history simply
+        // does not record (the AppCatalog degrade posture). The branch layer
+        // dedups an unchanged ref, so a dedup save appends no history row.
+        if let (Some(writer), Some(branches)) = (self.content_writer.as_ref(), self.branches.as_ref())
+        {
+            let history_result: Result<(), crate::error::GatewayError> = (|| {
+                // The CANONICAL stored bytes (not the client's), read back from
+                // the catalog: gateway-core cannot canonicalize (the envelope
+                // type lives host-side) and identity must never depend on
+                // client byte order.
+                let Some((_, canonical)) = workflows.get(&principal, &req.handle)? else {
+                    return Ok(());
+                };
+                let (ref32, _) = writer.put(&canonical)?;
+                branches.create(&principal, &req.handle, None, "workflow definition history")?;
+                branches.advance(&principal, &req.handle, "workflow.json", ref32)?;
+                Ok(())
+            })();
+            if let Err(e) = history_result {
+                tracing::warn!("workflow definition history not recorded for {}: {e}", req.handle);
+            }
+        }
+        Ok(Response::new(proto::SaveWorkflowResponse {
+            workflow_ref: record.workflow_ref.to_vec(),
+            handle: record.handle,
+            deduplicated,
+        }))
     }
 
     async fn list_workflows(
         &self,
-        _request: Request<proto::ListWorkflowsRequest>,
+        request: Request<proto::ListWorkflowsRequest>,
     ) -> Result<Response<proto::ListWorkflowsResponse>, Status> {
-        Err(Status::unimplemented(
-            "ListWorkflows: no workflow catalog wired",
-        ))
+        let workflows = self.workflows.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListWorkflows: no workflow catalog wired (workflows.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100
+        } else {
+            (req.limit as usize).min(256)
+        };
+        let after = if req.after_handle.is_empty() {
+            None
+        } else {
+            Some(req.after_handle.as_str())
+        };
+        let (records, has_more) = workflows.list(&principal, limit, after)?;
+        Ok(Response::new(proto::ListWorkflowsResponse {
+            workflows: records.into_iter().map(workflow_record_to_proto).collect(),
+            has_more,
+        }))
     }
 
     async fn get_workflow(
         &self,
-        _request: Request<proto::GetWorkflowRequest>,
+        request: Request<proto::GetWorkflowRequest>,
     ) -> Result<Response<proto::GetWorkflowResponse>, Status> {
-        Err(Status::unimplemented(
-            "GetWorkflow: no workflow catalog wired",
-        ))
+        let workflows = self.workflows.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetWorkflow: no workflow catalog wired (workflows.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
+        match workflows.get(&principal, &req.handle)? {
+            Some((record, envelope_json)) => {
+                let source_digest = record.source_digest.clone().unwrap_or_default();
+                let summary = workflow_record_to_proto(record);
+                // Handle-free portable identity over the canonical stored bytes.
+                let workflow_digest =
+                    crate::workflows_view::workflow_digest_of(&envelope_json).to_vec();
+                Ok(Response::new(proto::GetWorkflowResponse {
+                    found: true,
+                    envelope_json,
+                    summary: Some(summary),
+                    workflow_digest,
+                    source_digest,
+                }))
+            }
+            None => Ok(Response::new(proto::GetWorkflowResponse {
+                found: false,
+                envelope_json: Vec::new(),
+                summary: None,
+                workflow_digest: Vec::new(),
+                source_digest: Vec::new(),
+            })),
+        }
     }
 
     async fn run_workflow(
@@ -5174,11 +5374,59 @@ impl KxGateway for GatewayService {
 
     async fn delete_workflow(
         &self,
-        _request: Request<proto::DeleteWorkflowRequest>,
+        request: Request<proto::DeleteWorkflowRequest>,
     ) -> Result<Response<proto::DeleteWorkflowResponse>, Status> {
-        Err(Status::unimplemented(
-            "DeleteWorkflow: no workflow catalog wired",
-        ))
+        let workflows = self.workflows.as_ref().ok_or_else(|| {
+            Status::unimplemented(
+                "DeleteWorkflow: no workflow catalog wired (workflows.db absent)",
+            )
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.handle.trim().is_empty() {
+            return Err(Status::invalid_argument("handle is required"));
+        }
+        // Uniform absent/not-owned: read first so the cascade only ever runs for
+        // a row this caller genuinely owns (the DeleteApp posture, verbatim).
+        if workflows.get(&principal, &req.handle)?.is_none() {
+            return Ok(Response::new(proto::DeleteWorkflowResponse::default()));
+        }
+        // ORDER: THE ROW FIRST, then everything that merely REFERENCES it — the
+        // DeleteApp row-first lesson (a cascade-first failure destroys a live
+        // entity's references; row-first turns every later failure into a
+        // reported, retryable cleanup).
+        let removed = workflows.delete(&principal, &req.handle)?;
+        if !removed {
+            return Ok(Response::new(proto::DeleteWorkflowResponse::default()));
+        }
+        // 1. Triggers. No workflow-targeted trigger can exist until the trigger
+        //    seam learns the workflow target (its registration refuses the shape
+        //    today), so this reports an honest 0; the seam's cascade lands with
+        //    that tranche.
+        let triggers_removed = 0;
+        // 2. The lock row — LockApp is keyed by branch handle, and the workflow's
+        //    definition branch shares its handle; a re-created workflow must not
+        //    inherit a lock nobody set.
+        let lock_cleared = match self.locks.as_ref() {
+            Some(l) => {
+                l.is_locked(&principal, &req.handle).unwrap_or(false)
+                    && l.unlock(&principal, &req.handle).unwrap_or(false)
+            }
+            None => false,
+        };
+        // 3. The definition branch BINDING — row only: the content-addressed
+        //    blobs AND the branch HISTORY stay (delete + restore is the
+        //    "recreate without losing state" path, exactly as for Apps).
+        let branch_unbound = match self.branches.as_ref() {
+            Some(b) => b.delete(&principal, &req.handle).unwrap_or(false),
+            None => false,
+        };
+        Ok(Response::new(proto::DeleteWorkflowResponse {
+            removed,
+            branch_unbound,
+            lock_cleared,
+            triggers_removed,
+        }))
     }
 
     async fn lock_app(
