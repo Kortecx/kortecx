@@ -798,6 +798,11 @@ fn lease_ready(
             if is_skip_guard(mote) && !skip_guard_cleared(mote, projection, store) {
                 continue;
             }
+            // v17: a failure-policied LAUNCH is never leased — its coordinator-
+            // minted attempts (policy markers stripped) lease in its place.
+            if is_policied_step(mote) {
+                continue;
+            }
             // RC4c-2b: HOLD a grounded chat-rag/vision-rag answer until its durable
             // rerank settles (the suppression gate) — it is edge-free + ready-at-submit,
             // so without this it would dispatch on the base order before the rerank.
@@ -1923,6 +1928,10 @@ struct Dispatch {
     /// JOURNAL is the truth — this set is a cursor over it, never a second
     /// source (losing it re-derives from the fold).
     armed_timers: BTreeMap<MoteId, (u64, u8, u32)>,
+    /// v17 — the admitted FAILURE-POLICIED launches ([`is_policied_step`])
+    /// whose attempts the settle pass mints/probes. In-memory only; a recovery
+    /// re-submit re-parks (the parked_waits posture).
+    parked_policied: BTreeMap<MoteId, [u8; INSTANCE_ID_LEN]>,
     /// v17 — the admitted skip-guard-marked steps ([`is_skip_guard`]) awaiting
     /// their conditional's verdict. The settle pass either skip-commits (the
     /// untaken arm) or releases the park (the taken arm leases normally).
@@ -1955,6 +1964,7 @@ fn core_loop<J: Journal>(
         parked_waits: BTreeMap::new(),
         armed_timers: BTreeMap::new(),
         parked_guards: BTreeMap::new(),
+        parked_policied: BTreeMap::new(),
     };
     // PR-2c-2: re-derive the live re-plan chain from committed facts (re-materialize
     // committed round shapers' children, re-insert the in-flight round shaper, and
@@ -2601,6 +2611,9 @@ fn submit_and_capture<J: Journal>(
     // v17: a conditional-arm step is admitted but tracked for the skip-guard
     // settle (`settle_skip_guards` skip-commits the untaken arm's steps).
     let guard_park = (!react_seed && is_skip_guard(&mote)).then_some(mote.id);
+    // v17: a failure-policied step is admitted but never leased directly — the
+    // settle pass mints its attempts and synthesizes its commit.
+    let policied_park = (!react_seed && is_policied_step(&mote)).then_some(mote.id);
 
     // Admit through the hosted scheduler (verbatim — the P2 thesis test).
     let warrant_for_capture = warrant.clone();
@@ -2636,6 +2649,12 @@ fn submit_and_capture<J: Journal>(
     if let Some(guard_id) = guard_park {
         if !matches!(projection.state_of(&guard_id), MoteState::Committed) {
             dispatch.parked_guards.insert(guard_id, instance_id);
+        }
+    }
+    // v17: park a failure-policied launch (same re-park idempotence).
+    if let Some(policied_id) = policied_park {
+        if !matches!(projection.state_of(&policied_id), MoteState::Committed) {
+            dispatch.parked_policied.insert(policied_id, instance_id);
         }
     }
     if !outcome.duplicate {
@@ -3540,6 +3559,275 @@ fn settle_wait_steps<J: Journal>(
     }
 }
 
+/// v17: `true` iff `mote` is a FAILURE-POLICIED launch — a step carrying the
+/// identity-bearing policy marker. Never leased directly: the coordinator
+/// mints ATTEMPTS (fresh identities ⇒ fresh idempotency tokens ⇒ genuine
+/// re-attempts of staged effects) and synthesizes the launch's own Committed
+/// from the first attempt that lands. An ATTEMPT carries the marker STRIPPED,
+/// so it can never match this predicate (the tightness contract).
+fn is_policied_step(mote: &Mote) -> bool {
+    mote.def
+        .config_subset
+        .contains_key(&ConfigKey(kx_mote::FAILURE_MODE_KEY.to_string()))
+}
+
+/// The pure attempt derivation: the launch's def MINUS the policy markers PLUS
+/// the 1-based attempt ordinal — a replay-stable identity (probe-able after a
+/// crash without any in-memory state).
+fn attempt_mote(launch: &Mote, attempt: u32) -> Mote {
+    let mut def = launch.def.clone();
+    for key in [
+        kx_mote::FAILURE_MODE_KEY,
+        kx_mote::RETRY_MAX_KEY,
+        kx_mote::RETRY_BACKOFF_MS_KEY,
+    ] {
+        def.config_subset.remove(&ConfigKey(key.to_string()));
+    }
+    def.config_subset.insert(
+        ConfigKey(kx_mote::ATTEMPT_KEY.to_string()),
+        kx_mote::ConfigVal(attempt.to_string().into_bytes()),
+    );
+    // Edge-free (the materialize_react_turn posture): immediately leasable; the
+    // launch's declared DAG edges stay on the LAUNCH, whose synthesized commit
+    // is what releases downstream.
+    Mote::new(
+        def,
+        launch.input_data_id,
+        launch.graph_position.clone(),
+        SmallVec::new(),
+    )
+}
+
+/// Read a config integer (canonical-JSON text) with a default.
+fn config_u64(mote: &Mote, key: &str, default: u64) -> u64 {
+    mote.def
+        .config_subset
+        .get(&ConfigKey(key.to_string()))
+        .and_then(|v| std::str::from_utf8(&v.0).ok())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+/// v17: mint + admit attempt `n` of a policied launch (idempotent — repeat
+/// calls re-register the same identity, which register/insert treat as no-ops).
+fn mint_attempt(
+    projection: &mut Projection,
+    dispatch: &mut Dispatch,
+    store: Option<&SharedStore>,
+    launch_mote: &Mote,
+    launch_warrant: &WarrantSpec,
+    attempt: u32,
+) {
+    let a = attempt_mote(launch_mote, attempt);
+    materialize_react_turn(
+        projection,
+        dispatch,
+        store,
+        &a,
+        warrant_ref_of(launch_warrant),
+        launch_warrant.clone(),
+    );
+    tracing::info!(launch = ?launch_mote.id, attempt, "policied step attempt minted");
+}
+
+/// v17: drive every parked FAILURE-POLICIED launch — mint attempt 1 when the
+/// DAG parents commit, synthesize the launch's Committed from the first
+/// attempt that lands, arm a DURABLE backoff timer (the wait step's TimerArmed,
+/// purpose 1) between failed attempts, and on exhaustion either dead-letter
+/// (`retry`) or commit the canonical FAILED placeholder (`continue`) so
+/// downstream joins release and read the failure as a fact. Attempt state is
+/// probed from identities alone (pure functions of the launch def), so a
+/// recovery re-park resumes exactly where the journal says it was.
+#[allow(clippy::too_many_lines)]
+fn settle_policied_steps<J: Journal>(
+    journal: &J,
+    store: Option<&SharedStore>,
+    projection: &mut Projection,
+    folded_through: &mut u64,
+    dispatch: &mut Dispatch,
+    clock: &dyn Clock,
+) {
+    if dispatch.parked_policied.is_empty() {
+        return;
+    }
+    let parked: Vec<(MoteId, [u8; INSTANCE_ID_LEN])> = dispatch
+        .parked_policied
+        .iter()
+        .map(|(id, i)| (*id, *i))
+        .collect();
+    for (launch_id, instance_id) in parked {
+        let Some((launch_mote, launch_warrant)) = dispatch.defs.get(&launch_id).cloned() else {
+            dispatch.parked_policied.remove(&launch_id);
+            continue;
+        };
+        if projection.state_of(&launch_id) != MoteState::Pending {
+            dispatch.parked_policied.remove(&launch_id);
+            continue;
+        }
+        // Gate on the launch's DAG parents exactly as a wait step does.
+        let mut all_committed = true;
+        let mut parent_terminally_failed = false;
+        for p in &launch_mote.parents {
+            match projection.state_of(&p.parent_id) {
+                MoteState::Committed => {}
+                MoteState::Failed | MoteState::Inconsistent | MoteState::Repudiated => {
+                    parent_terminally_failed = true;
+                    all_committed = false;
+                    break;
+                }
+                _ => all_committed = false,
+            }
+        }
+        if parent_terminally_failed {
+            dead_letter_parked_wait(journal, projection, folded_through, dispatch, launch_id);
+            dispatch.parked_policied.remove(&launch_id);
+            continue;
+        }
+        if !all_committed {
+            continue;
+        }
+        let mode = launch_mote
+            .def
+            .config_subset
+            .get(&ConfigKey(kx_mote::FAILURE_MODE_KEY.to_string()))
+            .map(|v| String::from_utf8_lossy(&v.0).into_owned())
+            .unwrap_or_default();
+        if mode != "retry" && mode != "continue" {
+            tracing::warn!(launch = ?launch_id, %mode, "unknown failure mode — dead-lettered");
+            dead_letter_parked_wait(journal, projection, folded_through, dispatch, launch_id);
+            dispatch.parked_policied.remove(&launch_id);
+            continue;
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let max_attempts = config_u64(&launch_mote, kx_mote::RETRY_MAX_KEY, 3).clamp(1, 16) as u32;
+        let backoff_ms = config_u64(&launch_mote, kx_mote::RETRY_BACKOFF_MS_KEY, 1000);
+        // Walk the replay-stable attempt ladder from committed facts. Each
+        // iteration decides ONLY its own attempt: a Failed attempt hands the
+        // walk to the NEXT ordinal (whose iteration mints / waits / reads its
+        // landing) — never re-deciding a spent rung (the bug this replaced
+        // re-armed attempt n+1's already-consumed timer forever and never
+        // probed the attempt it had minted).
+        let mut settled = false;
+        for n in 1..=max_attempts {
+            let a = attempt_mote(&launch_mote, n);
+            match projection.state_of(&a.id) {
+                MoteState::Committed => {
+                    // First landed attempt wins: the launch commits its result.
+                    if let Some(result_ref) = projection.result_ref_of(&a.id) {
+                        synth_commit_subject(
+                            journal,
+                            projection,
+                            folded_through,
+                            dispatch,
+                            &launch_mote,
+                            &launch_warrant,
+                            result_ref,
+                            "policied step attempt landed",
+                        );
+                        dispatch.parked_policied.remove(&launch_id);
+                    }
+                    settled = true;
+                    break;
+                }
+                // A spent rung: the NEXT iteration owns what happens.
+                MoteState::Failed | MoteState::Inconsistent | MoteState::Repudiated => {}
+                _ => {
+                    // Not yet terminal. In-flight if it was ever minted (this
+                    // process or a prior one — a journal fact or a live def).
+                    let minted = dispatch.submitted.contains(&a.id)
+                        || dispatch.defs.contains_key(&a.id)
+                        || projection.result_ref_of(&a.id).is_some();
+                    if minted {
+                        settled = true;
+                        break;
+                    }
+                    if n == 1 {
+                        // No backoff before the first attempt.
+                        mint_attempt(
+                            projection,
+                            dispatch,
+                            store,
+                            &launch_mote,
+                            &launch_warrant,
+                            1,
+                        );
+                        settled = true;
+                        break;
+                    }
+                    // n ≥ 2: the DURABLE backoff owns this mint. A folded
+                    // timer re-arms in memory (appending nothing) and
+                    // `fire_due_timers` mints when due; else arm it now.
+                    if let Some(rec) = projection.timers().iter().find(|t| {
+                        t.subject_mote_id == launch_id && t.purpose == 1 && t.attempt == n
+                    }) {
+                        dispatch
+                            .armed_timers
+                            .insert(launch_id, (rec.fire_at_unix_ms, 1, n));
+                        settled = true;
+                        break;
+                    }
+                    let fire_at = clock
+                        .now_ms()
+                        .saturating_add(backoff_ms.saturating_mul(1 << (n - 2)));
+                    let entry = JournalEntry::TimerArmed {
+                        instance_id,
+                        subject_mote_id: launch_id,
+                        purpose: 1,
+                        attempt: n,
+                        fire_at_unix_ms: fire_at,
+                        anchor_ref: ContentRef::from_bytes(launch_mote.def.hash().0),
+                        seq: 0,
+                    };
+                    match journal.append(entry) {
+                        Ok(durable) => {
+                            let seq = durable.seq();
+                            if seq > *folded_through && projection.fold(&durable).is_ok() {
+                                *folded_through = seq;
+                            }
+                            dispatch.armed_timers.insert(launch_id, (fire_at, 1, n));
+                            tracing::info!(launch = ?launch_id, attempt = n, fire_at, "retry backoff armed");
+                        }
+                        Err(error) => tracing::error!(%error, "failed to append retry TimerArmed"),
+                    }
+                    settled = true;
+                    break;
+                }
+            }
+        }
+        if settled {
+            continue;
+        }
+        // Exhausted: every attempt terminally failed.
+        #[allow(clippy::comparison_chain)]
+        if mode == "continue" {
+            {
+                let Some(store) = store else { continue };
+                let result_ref = match store.put(kx_mote::CONTINUE_FAILED_SENTINEL) {
+                    Ok(r) => r,
+                    Err(error) => {
+                        tracing::warn!(%error, launch = ?launch_id, "continue sentinel write failed — retried next drain");
+                        continue;
+                    }
+                };
+                synth_commit_subject(
+                    journal,
+                    projection,
+                    folded_through,
+                    dispatch,
+                    &launch_mote,
+                    &launch_warrant,
+                    result_ref,
+                    "policied step exhausted — continuing past the failure",
+                );
+                dispatch.parked_policied.remove(&launch_id);
+            }
+        } else {
+            dead_letter_parked_wait(journal, projection, folded_through, dispatch, launch_id);
+            dispatch.parked_policied.remove(&launch_id);
+        }
+    }
+}
+
 /// v17: skip-commit the UNTAKEN arm's steps + release the taken arm's parks.
 /// For each parked skip-guard whose DAG parents have all committed: a parent
 /// that committed the SKIP sentinel propagates the skip; an ARM ENTRY whose
@@ -3715,6 +4003,7 @@ fn dead_letter_parked_wait<J: Journal>(
 /// `{"waited_ms": N}` descriptor minted into the store at fire time. A due
 /// timer whose def is not yet rehydrated (restart before the run's re-submit)
 /// stays armed and fires on a later drain — late, never twice.
+#[allow(clippy::too_many_lines)] // purpose-0 fires + purpose-1 attempt mints share the due scan.
 fn fire_due_timers<J: Journal>(
     journal: &J,
     store: Option<&SharedStore>,
@@ -3726,12 +4015,35 @@ fn fire_due_timers<J: Journal>(
     if dispatch.armed_timers.is_empty() {
         return;
     }
-    let due: Vec<MoteId> = dispatch
+    let due: Vec<(MoteId, u8, u32)> = dispatch
         .armed_timers
         .iter()
-        // Purpose 1 (retry backoff) is consumed by its own settle pass.
-        .filter(|(_, (fire_at, purpose, _))| *purpose == 0 && *fire_at <= now_ms)
-        .map(|(id, _)| *id)
+        .filter(|(_, (fire_at, _, _))| *fire_at <= now_ms)
+        .map(|(id, (_, purpose, attempt))| (*id, *purpose, *attempt))
+        .collect();
+    // Purpose 1 (retry backoff): the fire MINTS the next attempt of the still-
+    // pending launch — never a commit (that is the attempt's own job).
+    for (launch_id, _, attempt) in due.iter().filter(|(_, p, _)| *p == 1) {
+        dispatch.armed_timers.remove(launch_id);
+        if projection.state_of(launch_id) != MoteState::Pending {
+            continue; // launch already settled — the backoff is moot
+        }
+        let Some((launch_mote, launch_warrant)) = dispatch.defs.get(launch_id).cloned() else {
+            continue; // not yet rehydrated — the settle re-arms from the fold
+        };
+        mint_attempt(
+            projection,
+            dispatch,
+            store,
+            &launch_mote,
+            &launch_warrant,
+            *attempt,
+        );
+    }
+    let due: Vec<MoteId> = due
+        .into_iter()
+        .filter(|(_, p, _)| *p == 0)
+        .map(|(id, _, _)| id)
         .collect();
     for wait_id in due {
         if projection.state_of(&wait_id) != MoteState::Pending {
@@ -3830,6 +4142,9 @@ fn run_settle_passes<J: Journal>(
     // v17: settle conditional arms — skip-commit the untaken side, release the
     // taken side. Zero-cost for a conditional-free serve.
     settle_skip_guards(journal, store, projection, folded_through, dispatch);
+    // v17: drive failure-policied launches (mint/probe attempts, durable
+    // backoff, exhaustion). Zero-cost for a policy-free serve.
+    settle_policied_steps(journal, store, projection, folded_through, dispatch, clock);
     fire_due_timers(
         journal,
         store,

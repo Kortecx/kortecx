@@ -550,7 +550,7 @@ const MAX_COMPOSED_STEPS: usize = 64;
 /// rather than by a check someone has to remember to write.
 pub(crate) struct Prepared {
     /// The blueprint with the App-only bindings taken off and every fold applied.
-    dag: DagSpec,
+    pub(crate) dag: DagSpec,
     /// The App's RUN-WIDE context rail — lands on every DAG root at author.
     context_items: Vec<ContextItemRef>,
     /// What this App bound to individual steps (context items + secret scopes).
@@ -898,6 +898,63 @@ fn per_step_secret_scopes(
 
 /// `true` when a blueprint step is a MODEL step (mirrors `kx_blueprint`'s
 /// `resolve_kind` inference: an explicit `kind`, else model fields ⇒ model).
+/// Sequence SAME-ROUTE model steps with `Control(non_cascade)` order edges so
+/// a parallel group can never thrash the local model singleton — deterministic
+/// steps are untouched (they never dispatch the model backend at all).
+///
+/// **WORKFLOW-path only, deliberately**: called by the workflow runner between
+/// prepare and compose, NEVER inside the shared `prepare_env` — an existing
+/// App's re-run must stay byte-identical (`MoteId`s included; the dedup-onto-
+/// prior-computation property depends on it), and workflows are a new entity
+/// with no prior runs to preserve. The added edge is identity-bearing by
+/// design (a sequenced workflow is honestly a different DAG).
+///
+/// Cycle-safe: an edge `i → j` is added only when NO path exists between the
+/// pair in either direction (a path `j ⇝ i` would make the addition a cycle
+/// the compiler then refuses; a path `i ⇝ j` makes it redundant). Groups are
+/// chained in authored order (deterministic; the MoteId does not depend on map
+/// iteration). `non_cascade` keeps repudiation uncoupled: order is not lineage.
+pub(crate) fn sequence_same_route_model_steps(dag: &mut DagSpec) {
+    use std::collections::{BTreeMap, VecDeque};
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, s) in dag.steps.iter().enumerate() {
+        if is_model_step(s) {
+            groups.entry(s.model_id.clone()).or_default().push(i);
+        }
+    }
+    let reachable = |edges: &[kx_blueprint::EdgeSpec], from: usize, to: usize| -> bool {
+        let mut queue = VecDeque::from([from]);
+        let mut seen = vec![false; dag.steps.len()];
+        while let Some(n) = queue.pop_front() {
+            if n == to {
+                return true;
+            }
+            for e in edges {
+                if e.parent as usize == n && !seen[e.child as usize] {
+                    seen[e.child as usize] = true;
+                    queue.push_back(e.child as usize);
+                }
+            }
+        }
+        false
+    };
+    for indices in groups.values() {
+        for pair in indices.windows(2) {
+            let (i, j) = (pair[0], pair[1]);
+            if reachable(&dag.edges, i, j) || reachable(&dag.edges, j, i) {
+                continue; // already ordered (or ordering would cycle) — leave it
+            }
+            dag.edges.push(kx_blueprint::EdgeSpec {
+                parent: u32::try_from(i).unwrap_or(u32::MAX),
+                child: u32::try_from(j).unwrap_or(u32::MAX),
+                edge: "control".to_string(),
+                non_cascade: true,
+            });
+            tracing::debug!(from = i, to = j, "same-route model steps sequenced");
+        }
+    }
+}
+
 fn is_model_step(s: &StepSpec) -> bool {
     match s.kind.as_deref() {
         Some(k) => k == "model",
@@ -2071,6 +2128,51 @@ mod tests {
     fn model_step(prompt: &str) -> StepSpec {
         serde_json::from_value(serde_json::json!({ "kind": "model", "prompt": prompt }))
             .expect("a StepSpec")
+    }
+
+    /// The sequencing rider's golden pin: same-route model steps in a parallel
+    /// group gain exactly ONE `control non_cascade` order edge per consecutive
+    /// pair; a different route and a deterministic step are untouched; an
+    /// authored path in EITHER direction suppresses the addition (never a
+    /// redundant edge, never a cycle the compiler would then refuse).
+    #[test]
+    fn same_route_model_steps_are_sequenced_cycle_safely() {
+        let dag_json = serde_json::json!({
+            "seed": 0,
+            "steps": [
+                { "kind": "model", "prompt": "a", "model_id": "gemma" },
+                { "kind": "model", "prompt": "b", "model_id": "gemma" },
+                { "kind": "model", "prompt": "c", "model_id": "other" },
+                { "kind": "pure", "params": { "x": "y" } }
+            ],
+            "edges": []
+        });
+        let mut dag: DagSpec = serde_json::from_value(dag_json).expect("a DagSpec");
+        sequence_same_route_model_steps(&mut dag);
+        assert_eq!(dag.edges.len(), 1, "exactly one order edge added");
+        let e = &dag.edges[0];
+        assert_eq!((e.parent, e.child), (0, 1), "gemma steps chained in order");
+        assert_eq!(e.edge, "control");
+        assert!(
+            e.non_cascade,
+            "order is not lineage — repudiation uncoupled"
+        );
+        // Idempotent: a second pass sees the path and adds nothing.
+        sequence_same_route_model_steps(&mut dag);
+        assert_eq!(dag.edges.len(), 1);
+
+        // An authored REVERSE path suppresses the addition (a cycle otherwise).
+        let dag_json = serde_json::json!({
+            "seed": 0,
+            "steps": [
+                { "kind": "model", "prompt": "a", "model_id": "gemma" },
+                { "kind": "model", "prompt": "b", "model_id": "gemma" }
+            ],
+            "edges": [ { "parent": 1, "child": 0 } ]
+        });
+        let mut dag: DagSpec = serde_json::from_value(dag_json).expect("a DagSpec");
+        sequence_same_route_model_steps(&mut dag);
+        assert_eq!(dag.edges.len(), 1, "no edge added against an authored path");
     }
 
     fn pure_step() -> StepSpec {

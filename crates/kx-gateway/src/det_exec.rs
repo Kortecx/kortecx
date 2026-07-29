@@ -110,6 +110,67 @@ impl DeterministicStepExecutor {
                 .is_some_and(|v| v.0 == b"first_non_skip")
     }
 
+    /// True iff `mote` is a k-of-n QUORUM join (`kx.join.quorum` = k).
+    fn is_join_quorum(mote: &Mote) -> bool {
+        mote.nd_class() == NdClass::Pure
+            && mote
+                .def
+                .config_subset
+                .contains_key(&kx_mote::ConfigKey(kx_mote::JOIN_QUORUM_KEY.to_string()))
+    }
+
+    /// The k-of-n VALUE rule: commit a canonical aggregate of the NON-SENTINEL
+    /// parents' outputs when at least `k` survive; fail closed otherwise.
+    /// Honest caveat, by design: TIMING is still all-parents-committed (the
+    /// standing readiness rule); only the SUCCESS CRITERION is k-of-n.
+    fn run_join_quorum(&self, mote: &Mote) -> Result<MoteExecutionResult, MoteExecutorError> {
+        let k: usize = mote
+            .def
+            .config_subset
+            .get(&kx_mote::ConfigKey(kx_mote::JOIN_QUORUM_KEY.to_string()))
+            .and_then(|v| std::str::from_utf8(&v.0).ok())
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(|| internal("quorum join carries a malformed k"))?;
+        let skip_ref = ContentRef::of(kx_mote::COND_SKIP_SENTINEL);
+        let failed_ref = ContentRef::of(kx_mote::CONTINUE_FAILED_SENTINEL);
+        let parents = self.parent_ctx.take(mote.id).unwrap_or_default();
+        let total = parents.len();
+        let mut outputs: Vec<String> = Vec::new();
+        for (id, r) in &parents {
+            if *r == skip_ref || *r == failed_ref {
+                continue;
+            }
+            let bytes = self
+                .store
+                .get(r)
+                .map_err(|e| internal(&format!("read quorum voter {id:?}: {e}")))?;
+            outputs.push(String::from_utf8_lossy(&bytes).into_owned());
+        }
+        if outputs.len() < k {
+            return Err(internal(&format!(
+                "quorum join requires {k} surviving parents, got {} of {total}",
+                outputs.len()
+            )));
+        }
+        let aggregate = serde_json::json!({
+            "quorum": k,
+            "survivors": outputs.len(),
+            "of": total,
+            "outputs": outputs,
+        });
+        let out =
+            serde_json::to_vec(&aggregate).map_err(|e| internal(&format!("quorum encode: {e}")))?;
+        let result_ref = self
+            .store
+            .put(&out)
+            .map_err(|e| internal(&format!("content store put (quorum): {e}")))?;
+        Ok(MoteExecutionResult {
+            result_ref,
+            started_at_epoch_ms: 0,
+            finished_at_epoch_ms: 0,
+        })
+    }
+
     /// Evaluate the typed predicate over the step's SINGLE Data parent's
     /// committed bytes and commit the selection (`{"selected":"then"|"else"}`
     /// — canonical, byte-stable; a replay re-derives the identical decision).
@@ -206,17 +267,22 @@ impl DeterministicStepExecutor {
         })
     }
 
-    /// Commit the SINGLE non-SKIP parent's bytes VERBATIM (content-addressed —
-    /// the same ref). 0 or 2+ survivors fail closed: a conditional that ran
-    /// both arms (or neither) is a bug the join refuses to paper over.
+    /// Commit the SINGLE surviving parent's bytes VERBATIM (content-addressed —
+    /// the same ref). A survivor is a parent that committed REAL output —
+    /// neither the conditional SKIP sentinel nor the continue-policy FAILED
+    /// placeholder. 0 or 2+ survivors fail closed: a conditional that ran both
+    /// arms (or neither) is a bug the join refuses to paper over.
     fn run_join_select(&self, mote: &Mote) -> Result<MoteExecutionResult, MoteExecutorError> {
         let skip_ref = ContentRef::of(kx_mote::COND_SKIP_SENTINEL);
+        let failed_ref = ContentRef::of(kx_mote::CONTINUE_FAILED_SENTINEL);
         let parents = self.parent_ctx.take(mote.id).unwrap_or_default();
         if parents.is_empty() {
             return Err(internal("join(first_non_skip) has no committed parents"));
         }
-        let survivors: Vec<&(MoteId, ContentRef)> =
-            parents.iter().filter(|(_, r)| *r != skip_ref).collect();
+        let survivors: Vec<&(MoteId, ContentRef)> = parents
+            .iter()
+            .filter(|(_, r)| *r != skip_ref && *r != failed_ref)
+            .collect();
         let [(winner_id, winner_ref)] = survivors.as_slice() else {
             return Err(internal(&format!(
                 "join(first_non_skip) requires exactly ONE non-skip parent, got {} of {}",
@@ -252,6 +318,9 @@ impl MoteExecutor for DeterministicStepExecutor {
         }
         if Self::is_join_select(mote) {
             return self.run_join_select(mote);
+        }
+        if Self::is_join_quorum(mote) {
+            return self.run_join_quorum(mote);
         }
         self.inner.run(mote, warrant, env)
     }

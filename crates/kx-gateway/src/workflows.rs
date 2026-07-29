@@ -125,6 +125,11 @@ impl AppAuthor for HostWorkflowRunner {
             .inner
             .prepare_env(party, env, handle, args, require_approval)
             .await?;
+        // (2b) Same-route model steps are SEQUENCED (Control non_cascade order
+        // edges) so a parallel group never thrashes the local model singleton.
+        // Workflow-path only: an existing App's re-run must stay byte-identical,
+        // and a workflow is a new entity with no prior runs to preserve.
+        crate::app_run::sequence_same_route_model_steps(&mut prepared.dag);
         // (3) Composed APP steps resolve through the D198 seam; the chain seeds
         //     with the workflow handle so a cycle refusal names the whole path.
         let mut chain = vec![handle.to_string()];

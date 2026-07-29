@@ -219,6 +219,42 @@ pub const JOIN_SELECT_KEY: &str = "kx.cond.join";
 /// fabricated step output. Content-addressed: every skip commits the SAME ref.
 pub const COND_SKIP_SENTINEL: &[u8] = b"kx-workflow/skip/v1";
 
+/// The per-step FAILURE-POLICY mode marker (identity-bearing): `"retry"` (the
+/// step becomes a coordinator-driven launch whose attempts are fresh
+/// identities — fresh idempotency tokens, genuine re-attempts of staged
+/// effects) or `"continue"` (an exhausted/failed step commits the canonical
+/// FAILED placeholder so downstream joins release and read the failure as a
+/// fact). Absent ⇒ fail-fast, byte-identical to today.
+pub const FAILURE_MODE_KEY: &str = "kx.step.failure_mode";
+
+/// Retry budget: the maximum ATTEMPTS (canonical-JSON integer text; identity-
+/// bearing). `retry` without it defaults to 3 server-side at authoring.
+pub const RETRY_MAX_KEY: &str = "kx.step.retry_max";
+
+/// Retry backoff base in milliseconds (doubles per attempt; identity-bearing).
+/// Defaults to 1000 at authoring. The backoff timer is the SAME durable
+/// `TimerArmed` fact a wait step uses (purpose 1) — it survives restart.
+pub const RETRY_BACKOFF_MS_KEY: &str = "kx.step.retry_backoff_ms";
+
+/// Marks a coordinator-minted ATTEMPT of a policied launch (value = the
+/// 1-based attempt ordinal as canonical-JSON integer text). Part of the
+/// attempt's identity — each retry is a NEW Mote by construction.
+pub const ATTEMPT_KEY: &str = "kx.step.attempt";
+
+/// The canonical FAILED placeholder bytes a `continue`-policied step commits
+/// when its attempts are exhausted — a distinguished fact ("this step failed
+/// and the workflow chose to continue"), never fabricated output.
+/// Content-addressed: every such failure commits the SAME ref, which is what
+/// sentinel-aware joins key on.
+pub const CONTINUE_FAILED_SENTINEL: &[u8] = b"kx-workflow/failed/v1";
+
+/// The k-of-n VALUE-rule join marker: `config_subset[JOIN_QUORUM_KEY]` carries
+/// `k` (canonical-JSON integer text). The join commits a canonical aggregate
+/// of its NON-SENTINEL parents' outputs when at least `k` survive, else fails
+/// closed. TIMING is still all-parents-committed (the standing readiness
+/// rule); only the SUCCESS CRITERION is k-of-n.
+pub const JOIN_QUORUM_KEY: &str = "kx.join.quorum";
+
 /// PR-7: the `config_subset` key under which the bind layer injects a run's
 /// attached context-bundle items (canonical-encoded by
 /// [`crate::encode_context_items`]). Present ONLY on an ENTRY Mote of a run that

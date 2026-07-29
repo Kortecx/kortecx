@@ -1096,24 +1096,51 @@ fn spawn_routed_fixture() -> (u16, std::thread::JoinHandle<()>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let handle = std::thread::spawn(move || {
-        for stream in listener.incoming().take(8) {
+        let first_key: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+        for stream in listener.incoming().take(16) {
             let Ok(mut s) = stream else { continue };
             let mut buf = [0u8; 2048];
             let n = s.read(&mut buf).unwrap_or(0);
             let req = String::from_utf8_lossy(&buf[..n]).to_string();
-            let body = if req.starts_with("GET /high") {
-                r#"{"reading":87}"#
+            let (status, body) = if req.starts_with("GET /high") {
+                ("200 OK", r#"{"reading":87}"#)
             } else if req.starts_with("GET /low") {
-                r#"{"reading":12}"#
+                ("200 OK", r#"{"reading":12}"#)
             } else if req.starts_with("GET /open") {
-                r#"{"order":"SLUICE-OPEN-9"}"#
+                ("200 OK", r#"{"order":"SLUICE-OPEN-9"}"#)
             } else if req.starts_with("GET /shut") {
-                r#"{"order":"SLUICE-SHUT-2"}"#
+                ("200 OK", r#"{"order":"SLUICE-SHUT-2"}"#)
+            } else if req.starts_with("POST /flaky") {
+                // IDENTITY-keyed flake: every dial carrying the FIRST-seen
+                // Idempotency-Key is refused forever (so the worker's
+                // same-identity at-least-once redispatch can never succeed);
+                // any OTHER key answers. The token is therefore underivable
+                // unless the retry ladder minted a FRESH attempt identity —
+                // the fresh-token-fresh-attempt claim, proven by the fixture.
+                let key = req
+                    .lines()
+                    .find(|l| l.to_ascii_lowercase().starts_with("idempotency-key:"))
+                    .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
+                    .unwrap_or_default();
+                let mut first = first_key.lock().unwrap();
+                if first.is_none() {
+                    *first = Some(key.clone());
+                }
+                if first.as_deref() == Some(key.as_str()) {
+                    (
+                        "503 Service Unavailable",
+                        r#"{"error":"depot refuses this key"}"#,
+                    )
+                } else {
+                    ("200 OK", r#"{"code":"EMBER-RELAY-19"}"#)
+                }
+            } else if req.starts_with("GET /dead") {
+                ("503 Service Unavailable", r#"{"error":"permanently down"}"#)
             } else {
-                r#"{"error":"no such route"}"#
+                ("200 OK", r#"{"error":"no such route"}"#)
             };
             let resp = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             );
             let _ = s.write_all(resp.as_bytes());
@@ -1143,11 +1170,11 @@ fn sluice_envelope(name: &str, port: u16, source_path: &str) -> Vec<u8> {
             { "kind": "pure", "params": { "kx.cond.join": "first_non_skip" } }
         ],
         "edges": [
-            { "parent": 0, "child": 1, "data": true },
-            { "parent": 1, "child": 2, "data": false },
-            { "parent": 1, "child": 3, "data": false },
-            { "parent": 2, "child": 4, "data": true },
-            { "parent": 3, "child": 4, "data": true }
+            { "parent": 0, "child": 1 },
+            { "parent": 1, "child": 2, "edge": "control" },
+            { "parent": 1, "child": 3, "edge": "control" },
+            { "parent": 2, "child": 4 },
+            { "parent": 3, "child": 4 }
         ]
     });
     kx_app::WorkflowEnvelope::new(name, blueprint)
@@ -1239,6 +1266,194 @@ async fn a_conditional_takes_the_right_arm_in_both_directions() {
             "{source}: the UNTAKEN arm's token leaked into the join: {body}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_retry_policy_re_attempts_a_flaky_step_with_a_fresh_identity() {
+    let (port, _fixture) = spawn_routed_fixture();
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // ONE http POST under retry policy — the terminal IS the policied launch,
+    // whose commit the coordinator synthesizes from the first landed attempt.
+    // The fixture refuses EVERY dial carrying the first-seen Idempotency-Key,
+    // so the worker's same-identity at-least-once redispatch can never
+    // succeed: the token is underivable unless the ladder minted a FRESH
+    // attempt identity (fresh idempotency token — the design's core claim),
+    // after the DURABLE backoff.
+    let started = std::time::Instant::now();
+    let blueprint = serde_json::json!({
+        "seed": 0,
+        "steps": [
+            { "kind": "http",
+              "args": { "url": format!("http://127.0.0.1:{port}/flaky"),
+                        "method": "POST", "body": "{}" },
+              "params": {
+                  "kx.step.failure_mode": "retry",
+                  "kx.step.retry_max": "3",
+                  "kx.step.retry_backoff_ms": "500"
+              } }
+        ]
+    });
+    let env = kx_app::WorkflowEnvelope::new("flaky", blueprint);
+    c.save_workflow(with_bearer(
+        save_req("team/wf/flaky", env.to_canonical_json().unwrap(), ""),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let run = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/flaky".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    await_mote_committed(&mut c, "tok-alice", &run.instance_id, &run.terminal_mote_id).await;
+    let view = c
+        .get_projection(with_bearer(
+            proto::GetProjectionRequest {
+                instance_id: run.instance_id.clone(),
+                at_seq: None,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let terminal = view
+        .motes
+        .iter()
+        .find(|m| m.mote_id == run.terminal_mote_id)
+        .unwrap();
+    let body = String::from_utf8_lossy(
+        &c.get_content(with_bearer(
+            proto::GetContentRequest {
+                instance_id: run.instance_id.clone(),
+                content_ref: terminal.result_ref.clone().unwrap(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .payload,
+    )
+    .into_owned();
+    assert!(
+        body.contains("EMBER-RELAY-19"),
+        "the launch must commit the FRESH attempt's answer, got: {body}"
+    );
+    // The failed first attempt is an honest fact in the SAME run's journal.
+    assert!(
+        view.motes
+            .iter()
+            .any(|m| m.state == proto::MoteSnapshotState::Failed as i32),
+        "attempt 1's terminal failure must be visible, never papered over"
+    );
+    // The DURABLE backoff actually held between the attempts.
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(500),
+        "the retry must wait its backoff, elapsed {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn a_continue_policy_commits_the_failure_as_a_fact_and_the_quorum_proceeds() {
+    let (port, _fixture) = spawn_routed_fixture();
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // A parallel pair — one healthy dial, one PERMANENTLY dead endpoint under
+    // continue policy — joined by a 1-of-2 quorum. The run completes; the
+    // aggregate carries the survivor and says honestly that one of two made it.
+    let blueprint = serde_json::json!({
+        "seed": 0,
+        "steps": [
+            { "kind": "http", "args": { "url": format!("http://127.0.0.1:{port}/open") } },
+            { "kind": "http",
+              "args": { "url": format!("http://127.0.0.1:{port}/dead") },
+              "params": {
+                  "kx.step.failure_mode": "continue",
+                  "kx.step.retry_max": "1"
+              } },
+            { "kind": "pure", "params": { "kx.join.quorum": "1" } }
+        ],
+        "edges": [
+            { "parent": 0, "child": 2 },
+            { "parent": 1, "child": 2 }
+        ]
+    });
+    let env = kx_app::WorkflowEnvelope::new("quorum", blueprint);
+    c.save_workflow(with_bearer(
+        save_req("team/wf/quorum", env.to_canonical_json().unwrap(), ""),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let run = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/quorum".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    await_mote_committed(&mut c, "tok-alice", &run.instance_id, &run.terminal_mote_id).await;
+    let view = c
+        .get_projection(with_bearer(
+            proto::GetProjectionRequest {
+                instance_id: run.instance_id.clone(),
+                at_seq: None,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let terminal = view
+        .motes
+        .iter()
+        .find(|m| m.mote_id == run.terminal_mote_id)
+        .unwrap();
+    let body = String::from_utf8_lossy(
+        &c.get_content(with_bearer(
+            proto::GetContentRequest {
+                instance_id: run.instance_id.clone(),
+                content_ref: terminal.result_ref.clone().unwrap(),
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .payload,
+    )
+    .into_owned();
+    assert!(
+        body.contains("SLUICE-OPEN-9"),
+        "the quorum aggregate carries the survivor, got: {body}"
+    );
+    assert!(
+        body.contains("\"survivors\":1") && body.contains("\"of\":2"),
+        "the aggregate says honestly that one of two made it, got: {body}"
+    );
 }
 
 #[tokio::test]
