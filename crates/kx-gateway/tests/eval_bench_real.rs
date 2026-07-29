@@ -710,8 +710,8 @@ fn scaffold_app_envelope(name: &str, handle: &str, mode: &str) -> Vec<u8> {
 
 /// Provision the `scaffold` family's fixtures and read them back.
 ///
-/// MACHINERY (the L-206 posture: absent machinery must refuse the capture, never
-/// let the family 0 out as a model failure): the two scaffold recipes must be
+/// MACHINERY (absent machinery must refuse the capture, never let the family 0
+/// out as a model failure): the two scaffold recipes must be
 /// provisioned on this serve. CAPABILITY stays with the tasks themselves — a
 /// scaffold that RUNS and fails scores 0 through the family gate.
 ///
@@ -1659,7 +1659,8 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         eprintln!("eval-bench: post-suite phases SKIPPED (KX_BENCH_ONLY diagnostic run)");
     }
 
-    // The scaffold-family attribution (the L-206 sentinel + D247 spikes): the
+    // The scaffold-family attribution (the completion sentinel + the committed
+    // per-task spikes): the
     // completion sentinel says BY NAME whether every live scaffold reached done —
     // a 0 family gate alone cannot distinguish "the scaffold never finished" from
     // "the run answered wrong" — and the per-task duration/file counts ride as
