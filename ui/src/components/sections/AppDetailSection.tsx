@@ -30,7 +30,7 @@ import { toUiError } from "../../kx/errors";
 import { useAppBranch, useAppFileContent, useSaveFile } from "../../kx/use-app-files";
 import { useApp, useExportAppBundle, useSaveApp } from "../../kx/use-apps";
 import { useAdvanceBranch, useEditBranchPropose } from "../../kx/use-branches";
-import { useScaffoldStatus } from "../../kx/use-scaffold-app";
+import { useScaffoldApp, useScaffoldStatus } from "../../kx/use-scaffold-app";
 import { buildFileTree } from "../../lib/file-tree";
 import { inferLanguageFromPath } from "../../lib/monaco/infer-language";
 import { loadFlag, persistFlag } from "../../lib/ui-flags";
@@ -189,8 +189,28 @@ export function AppDetailSection({
   // whether this page shows progress or a file tree. The query stops polling by itself on a
   // terminal phase, so an App scaffolded long ago costs one read and nothing after it.
   const scaffoldStatus = useScaffoldStatus(tab === "files" ? handle : null, tab === "files");
-  const scaffolding =
-    scaffoldStatus.data?.phase === "planning" || scaffoldStatus.data?.phase === "writing";
+  const phase = scaffoldStatus.data?.phase;
+  const scaffolding = phase === "planning" || phase === "writing";
+  // The panel must SURVIVE the terminal transition it exists to report. Gating the
+  // mount on the live phases alone unmounted it in the same render pass the poll
+  // returned done/failed — so "Project ready", the failure notice, and the
+  // done-invalidation effect were all structurally unreachable. The latch keeps it
+  // mounted through the terminal state until the user dismisses; a failed scaffold
+  // with files still pending shows its notice even when found cold (post-restart,
+  // never active in this mount), which is where the Resume affordance lives.
+  const [sawActive, setSawActive] = useState(false);
+  const [dismissedDone, setDismissedDone] = useState(false);
+  useEffect(() => {
+    if (scaffolding) {
+      setSawActive(true);
+      setDismissedDone(false);
+    }
+  }, [scaffolding]);
+  const failedIncomplete =
+    phase === "failed" && (scaffoldStatus.data?.filesPending?.length ?? 0) > 0;
+  const terminal = phase === "done" || phase === "failed";
+  const showScaffold = scaffolding || failedIncomplete || (sawActive && terminal && !dismissedDone);
+  const resumeScaffold = useScaffoldApp();
   const items = branch.data?.items ?? [];
   const tree = useMemo(
     () => buildFileTree(items.map((it) => ({ path: it.path, contentRef: it.contentRef }))),
@@ -337,12 +357,17 @@ export function AppDetailSection({
         ) : (
           <EmptyState title="Loading integrations…" />
         )
-      ) : scaffolding ? (
+      ) : showScaffold ? (
         // The scaffold runs SERVER-side and the chat surface routes here the moment the App is
         // created, so this page — not a form that has already closed — is where an author
-        // watches their project get written. Terminal phases fall through to the file tree
-        // below, which is the real artifact once there is one.
-        <ScaffoldProgress branchHandle={handle} appHandle={handle} />
+        // watches their project get written, sees it finish (or fail, with a real Resume),
+        // and only then dismisses to the file tree — the real artifact once there is one.
+        <ScaffoldProgress
+          branchHandle={handle}
+          appHandle={handle}
+          onResume={() => resumeScaffold.mutate({ handle })}
+          onDone={() => setDismissedDone(true)}
+        />
       ) : branch.isLoading ? (
         <EmptyState title="Loading project…" />
       ) : branch.isError ? (

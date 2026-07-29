@@ -3,6 +3,7 @@ import { rootRoute } from "./routes/__root";
 import { activityRoute } from "./routes/activity";
 import { appDetailRoute } from "./routes/app-detail";
 import { appsRoute } from "./routes/apps";
+import { appsCreateRoute } from "./routes/apps-create";
 import { artifactsRoute } from "./routes/artifacts";
 import { blueprintsNewRoute } from "./routes/blueprints-new";
 import { branchesRoute } from "./routes/branches";
@@ -30,6 +31,9 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
   chatRoute,
   appsRoute,
+  // Registered before the dynamic sibling; the static segment outranks
+  // `/apps/$handle` in TanStack's route ranking either way.
+  appsCreateRoute,
   appDetailRoute,
   runsRoute,
   runDetailRedirectRoute,

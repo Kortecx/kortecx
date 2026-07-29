@@ -6,7 +6,7 @@ import { defineConfig } from "vitest/config";
 // (5173) / preview (4173) ports are pinned + strict so the gateway's deny-by-default
 // `--cors-origin` allowlist can name them exactly (a flaky CORS mismatch otherwise).
 // The EAGER vendor split (cache-stable, machine-checkable via modulepreload links
-// in dist/index.html — the eager set `scripts/check-bundle-size.mjs` gates ≤672 KiB).
+// in dist/index.html — the eager set `scripts/check-bundle-size.mjs` gates ≤673 KiB).
 // An explicit ALLOWLIST, never a catch-all `node_modules → vendor`: a catch-all
 // would hoist @xyflow/dagre (which must stay inside the lazy MoteDag chunk) and
 // framer-motion (whose animation engine must stay in the dynamic motion-features

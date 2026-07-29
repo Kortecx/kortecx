@@ -4941,6 +4941,19 @@ button.card-grid__title:hover {
   padding: 0.05rem 0.4rem;
   font-size: 0.7rem;
 }
+/* A created-but-scaffold-incomplete App (lifecycle 'draft'): the badge the catalog
+ * paints from ONE ListApps. Accent-toned so it reads as "needs your attention",
+ * token-only ⇒ both themes. */
+.chip--draft {
+  flex-direction: row;
+  padding: 0.05rem 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  border-color: var(--accent);
+}
 
 /* T-FEAT1 — the model's `<think>` reasoning as a collapsed disclosure above the
  * answer (display-only; the answer always renders below). */

@@ -34,11 +34,20 @@ const EDITOR_HEIGHT = 460;
 export function ScaffoldProgress({
   branchHandle,
   appHandle,
+  onResume,
+  onDone,
 }: {
   /** The App's project branch handle to poll (== the App handle by convention). */
   branchHandle: string;
   /** The App handle to navigate to on completion. */
   appHandle: string;
+  /** Renders a real Resume button in the failed notice (re-fires the scaffold;
+   *  the committed plan marker makes the resume deterministic). */
+  onResume?: () => void;
+  /** When provided, the done CTA DISMISSES to the caller's own surface (the App
+   *  page hosting this panel) instead of navigating to it — navigating to the
+   *  page you are already on is a no-op that reads as a dead button. */
+  onDone?: () => void;
 }) {
   const navigate = useNavigate();
   const invalidate = useInvalidateOnScaffoldDone();
@@ -164,11 +173,23 @@ export function ScaffoldProgress({
       )}
 
       {derived.failed ? (
-        <p className="field-error" data-testid="scaffold-failed" role="alert">
-          The scaffold did not finish:{" "}
-          {data.detail || "the agent stopped without writing every file."} The files written so far
-          are kept above — re-run "New App" to resume.
-        </p>
+        <div className="scaffold-progress__failed">
+          <p className="field-error" data-testid="scaffold-failed" role="alert">
+            The scaffold did not finish:{" "}
+            {data.detail || "the agent stopped without writing every file."} The files written so
+            far are kept above{onResume ? "" : " — resume from the app's page to finish"}.
+          </p>
+          {onResume ? (
+            <button
+              type="button"
+              className="btn-primary"
+              data-testid="scaffold-resume"
+              onClick={onResume}
+            >
+              Resume
+            </button>
+          ) : null}
+        </div>
       ) : null}
 
       {derived.complete ? (
@@ -180,9 +201,13 @@ export function ScaffoldProgress({
             type="button"
             className="btn-primary"
             data-testid="scaffold-open"
-            onClick={() => void navigate({ to: "/apps/$handle", params: { handle: appHandle } })}
+            onClick={() =>
+              onDone
+                ? onDone()
+                : void navigate({ to: "/apps/$handle", params: { handle: appHandle } })
+            }
           >
-            Open App
+            {onDone ? "Browse the project" : "Open App"}
           </button>
         </div>
       ) : null}

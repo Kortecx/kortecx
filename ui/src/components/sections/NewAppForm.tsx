@@ -14,8 +14,9 @@
  *  2. **review** — `DeriveApp` returns a design and NOTHING has been persisted. A scheduled
  *     design lands on the builder canvas as an editable graph; a hosted design lands as its
  *     planned file list.
- *  3. **approve** — only now does `SaveApp` + `ScaffoldApp` run, and the browser routes to the
- *     App's own page, where the scaffold streams in.
+ *  3. **approve** — only now does `SaveApp` + `ScaffoldApp` run. The form then hands the
+ *     launch outcome to its hosting screen (`/apps/create`), which shows the scaffold
+ *     streaming in and the terminal create result.
  *
  * **The graph is the whole create surface.** Tools, skills, integrations and grounding all
  * attach to the NODE that uses them, in the step drawer — there are no capability rails
@@ -33,7 +34,7 @@
 
 import { type AppDerivation, app, defaultHandle, flow } from "@kortecx/sdk/web";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { type FormEvent, Suspense, lazy, useCallback, useMemo, useState } from "react";
 import { fadeUp } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
@@ -111,19 +112,31 @@ function resolvedFramework(
 /** A successfully derived design (the `derived: true` arm), for brevity below. */
 type Design = Extract<AppDerivation, { derived: true }>;
 
+/** What "Create" actually did: the App that now exists + how its scaffold LAUNCH went. */
+export interface AppLaunchOutcome {
+  /** The saved App's handle (the App is real regardless of the launch outcome). */
+  readonly handle: string;
+  /** The kind the App was actually SAVED as (the form's own toggle, not the caller's). */
+  readonly kind: NewAppKind;
+  /** The scaffold-LAUNCH failure, if any — the App is saved and marked a draft;
+   *  `null` = the scaffold is running server-side (watch it via GetScaffoldStatus). */
+  readonly launchError: string | null;
+}
+
 export function NewAppForm({
   onClose,
   initialKind = "scheduled",
-  onKindAuthored,
+  onLaunched,
 }: {
   onClose: () => void;
   initialKind?: NewAppKind;
-  /** Called with the kind the App was actually SAVED as, so the catalog can follow it. */
-  onKindAuthored?: (kind: NewAppKind) => void;
+  /** Called once SaveApp succeeded and the scaffold launch SETTLED (either way).
+   *  The hosting screen owns everything after this — progress, the terminal
+   *  result, and navigation. The form itself never navigates. */
+  onLaunched: (outcome: AppLaunchOutcome) => void;
 }) {
   const { client, endpoint } = useConnection();
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const scaffold = useScaffoldApp();
   const derive = useDeriveApp();
   const datasets = useDatasets();
@@ -332,18 +345,20 @@ export function NewAppForm({
     const authoredKind = kind;
     create.mutate(undefined, {
       onSuccess: (appHandle) => {
-        onKindAuthored?.(authoredKind);
-        // Route to the App's OWN page and let the scaffold stream in there. The scaffold runs
-        // server-side and outlives this panel, so watching it inside a form that is about to
-        // close was always the wrong place for it. `onSettled`, not `onSuccess`: a scaffold that
-        // could not START still leaves a real, saved App, and stranding the author on a closed
-        // form with no way to reach it would be the worse failure.
+        // Hand the outcome to the hosting screen and let the scaffold stream THERE.
+        // The scaffold runs server-side and outlives this form. `onSettled`, not
+        // `onSuccess`: a scaffold that could not START still leaves a real, saved
+        // App (marked a draft by the server), and the screen's terminal result is
+        // where that failure — with its resume/discard affordances — is shown.
         scaffold.mutate(
           { handle: appHandle, goal: prompt.trim() },
           {
-            onSettled: () => {
-              onClose();
-              void navigate({ to: "/apps/$handle", params: { handle: appHandle } });
+            onSettled: (_launch, launchError) => {
+              onLaunched({
+                handle: appHandle,
+                kind: authoredKind,
+                launchError: launchError ? toUiError(launchError).message : null,
+              });
             },
           },
         );
@@ -353,7 +368,6 @@ export function NewAppForm({
 
   const deriveErr = derive.error ? toUiError(derive.error) : null;
   const createErr = create.error ? toUiError(create.error) : null;
-  const scaffoldErr = scaffold.error ? toUiError(scaffold.error) : null;
   const refusal = derive.data && !derive.data.derived ? derive.data.reason : null;
 
   const lede = useMemo(() => {
@@ -688,11 +702,6 @@ export function NewAppForm({
       {createErr ? (
         <p className="field-error" data-testid="new-app-save-error" role="alert">
           {createErr.message}
-        </p>
-      ) : null}
-      {scaffoldErr ? (
-        <p className="field-error" data-testid="new-app-scaffold-error" role="alert">
-          {scaffoldErr.message}
         </p>
       ) : null}
     </GlowCard>

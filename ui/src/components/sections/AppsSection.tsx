@@ -12,6 +12,7 @@ import {
   useExportAppBundle,
   useImportApp,
 } from "../../kx/use-apps";
+import { useScaffoldApp } from "../../kx/use-scaffold-app";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
@@ -24,7 +25,6 @@ import {
 } from "../apps/HostedControls";
 import { Icon } from "../shell/Icon";
 import { Popover } from "../shell/Popover";
-import { NewAppForm } from "./NewAppForm";
 import { ScheduleButton } from "./ScheduleButton";
 
 /**
@@ -100,8 +100,8 @@ export function AppsSection({
   const deleteApp = useDeleteApp();
   const [summaryFor, setSummaryFor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [duplicating, setDuplicating] = useState<string | null>(null);
+  const resumeScaffold = useScaffoldApp();
   const [notice, setNotice] = useState<string | null>(null);
   const [runHandle, setRunHandle] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -115,6 +115,13 @@ export function AppsSection({
   // empty prompt — a wrong run for every parameterized App.
   function run(handle: string): void {
     setRunHandle(handle);
+  }
+
+  // Resume a DRAFT's scaffold, then go watch it on the App's own page. The committed
+  // plan marker makes the resume deterministic — only the missing files are written.
+  function resumeDraft(handle: string): void {
+    resumeScaffold.mutate({ handle });
+    void navigate({ to: "/apps/$handle", params: { handle } });
   }
 
   // Download: export the App as a portable .kxapp bundle (envelope + content closure)
@@ -231,10 +238,14 @@ export function AppsSection({
             type="button"
             className="btn-primary"
             data-testid="new-app"
-            aria-expanded={creating}
-            onClick={() => setCreating((c) => !c)}
+            onClick={() =>
+              void navigate({
+                to: "/apps/create",
+                search: section === "hosted" ? { kind: "hosted" as const } : {},
+              })
+            }
           >
-            {creating ? "Close" : "New App"}
+            New App
           </button>
         </div>
       </div>
@@ -264,18 +275,6 @@ export function AppsSection({
       ) : null}
       {exportBundle.error ? (
         <ErrorNotice error={toUiError(exportBundle.error)} onRetry={() => exportBundle.reset()} />
-      ) : null}
-
-      {creating ? (
-        <NewAppForm
-          onClose={() => setCreating(false)}
-          initialKind={section}
-          // Follow the kind the App was actually authored as. The form's kind toggle is its
-          // OWN state, so authoring a hosted app from the Scheduled tab used to leave the
-          // catalog on Scheduled — the new app was real, but in the section the user was not
-          // looking at, which reads as the kind selection being dropped by the scaffold.
-          onKindAuthored={(authored) => onSection?.(authored)}
-        />
       ) : null}
 
       {isLoading ? <EmptyState title="Loading apps…" /> : null}
@@ -345,6 +344,7 @@ export function AppsSection({
                   hosted={hosted}
                   downloadPending={exportBundle.isPending}
                   onRun={run}
+                  onResume={resumeDraft}
                   onView={setSummaryFor}
                   onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
                   onDownload={download}
@@ -359,6 +359,7 @@ export function AppsSection({
               hosted={hosted}
               downloadPending={exportBundle.isPending}
               onRun={run}
+              onResume={resumeDraft}
               onView={setSummaryFor}
               onOpen={(handle) => void navigate({ to: "/apps/$handle", params: { handle } })}
               onDownload={download}
@@ -411,6 +412,7 @@ function AppCard({
   hosted,
   downloadPending,
   onRun,
+  onResume,
   onView,
   onOpen,
   onDownload,
@@ -421,12 +423,14 @@ function AppCard({
   hosted: boolean;
   downloadPending: boolean;
   onRun: (handle: string) => void;
+  onResume: (handle: string) => void;
   onView: (handle: string) => void;
   onOpen: (handle: string) => void;
   onDownload: (handle: string) => void;
   onDuplicate: (handle: string) => void;
   onDelete: (handle: string) => void;
 }) {
+  const draft = app.lifecycle === "draft";
   return (
     <m.article
       variants={fadeUp}
@@ -445,8 +449,31 @@ function AppCard({
           {app.name}
         </button>
         <span className="chip chip--tag">v{app.version}</span>
+        {draft ? (
+          <span
+            className="chip chip--draft"
+            data-testid={`app-draft-${app.handle}`}
+            title="This app's project scaffold has not completed — resume to finish it, or delete the draft"
+          >
+            Draft
+          </span>
+        ) : null}
         <div className="card-grid__head-actions">
-          {hosted ? (
+          {draft ? (
+            // A half-scaffolded app can't honestly offer Run/Schedule (scheduled) or a
+            // live server (hosted) — Resume is the one action that moves it forward.
+            // Delete stays reachable via the kebab.
+            <button
+              type="button"
+              className="iconbtn"
+              data-testid={`app-resume-${app.handle}`}
+              title="Resume the scaffold — only the missing files are written"
+              aria-label="Resume scaffold"
+              onClick={() => onResume(app.handle)}
+            >
+              <Icon name="refresh" size={16} />
+            </button>
+          ) : hosted ? (
             // Hosted cards carry only the live status pill + Run-in-tab; lock/share/
             // download don't apply to a served web app (a hosted app isn't lockable and
             // its .kxapp bundle omits the project tree today), so they'd only crowd the
@@ -639,6 +666,7 @@ function AppsTable({
   hosted,
   downloadPending,
   onRun,
+  onResume,
   onView,
   onOpen,
   onDownload,
@@ -648,6 +676,7 @@ function AppsTable({
   hosted: boolean;
   downloadPending: boolean;
   onRun: (handle: string) => void;
+  onResume: (handle: string) => void;
   onView: (handle: string) => void;
   onOpen: (handle: string) => void;
   onDownload: (handle: string) => void;
@@ -677,6 +706,15 @@ function AppsTable({
               >
                 {a.name}
               </button>
+              {a.lifecycle === "draft" ? (
+                <span
+                  className="chip chip--draft"
+                  data-testid={`app-draft-${a.handle}`}
+                  title="This app's project scaffold has not completed — resume to finish it"
+                >
+                  Draft
+                </span>
+              ) : null}
               <div>
                 <code className="mono muted mono-trunc" title={a.handle}>
                   {a.handle}
@@ -692,7 +730,18 @@ function AppsTable({
               </td>
             ) : null}
             <td className="app-row__actions">
-              {hosted ? (
+              {a.lifecycle === "draft" ? (
+                <button
+                  type="button"
+                  className="iconbtn"
+                  data-testid={`app-resume-${a.handle}`}
+                  title="Resume the scaffold — only the missing files are written"
+                  aria-label="Resume scaffold"
+                  onClick={() => onResume(a.handle)}
+                >
+                  <Icon name="refresh" size={16} />
+                </button>
+              ) : hosted ? (
                 <HostedRunButton handle={a.handle} />
               ) : (
                 <>

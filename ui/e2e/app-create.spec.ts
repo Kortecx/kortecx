@@ -1,15 +1,17 @@
 /**
- * The Apps CHAT SURFACE — derive, review, then approve.
+ * The Apps create journey — its own `/apps/create` page: derive, review, approve,
+ * then a TERMINAL create result.
  *
- * Proves the surface authors BOTH lanes from one prompt box, and that the ordering inverted:
- * nothing is created until the design is approved. The hosted lane reviews its FILE PLAN (a
- * hosted app has no DAG), the scheduled lane reviews a workflow, and the handle-collision
- * block still guards the upsert.
+ * Proves the HOME/CREATE split ("New App" navigates, the catalog carries no inline
+ * form), that nothing is created until the design is approved, and that the journey
+ * ends in an honest terminal dialog: on this model-free gateway the scaffold cannot
+ * LAUNCH, so approving lands the FAILURE result — the app is saved, the dialog says
+ * what happened and offers resume/discard/close — instead of silently dropping the
+ * author on the App page mid-nothing.
  *
  * Model-free by stubbing the ONE inference RPC (`DeriveApp`) — the same net `nl-propose`
  * uses. Everything after the design is real: `SaveApp` hits the actual gateway, so the app
- * that lands in the Hosted section is genuinely saved. The scaffold, which needs a served
- * model, is skipped gracefully.
+ * that lands in the Hosted section is genuinely saved.
  */
 
 import { expect, test } from "@playwright/test";
@@ -39,9 +41,11 @@ test("new app: a hosted (experience) app is authored and lands in the Hosted sec
     files: [{ path: "src/App.svelte", role: "the root component" }],
   });
 
-  // ONE prompt box. From the Scheduled section it opens on the scheduled kind, and the
-  // authoring-mode selector sits beside the kind selector.
+  // The HOME/CREATE split: "New App" NAVIGATES to the dedicated create page (no
+  // inline form on the catalog). From the Scheduled section it opens on the
+  // scheduled kind, and the authoring-mode selector sits beside the kind selector.
   await page.getByTestId("new-app").click();
+  await expect(page).toHaveURL(/\/apps\/create/);
   await expect(page.getByTestId("new-app-form")).toBeVisible();
   await expect(page.getByTestId("new-app-kind-scheduled")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("new-app-mode")).toBeVisible();
@@ -73,19 +77,21 @@ test("new app: a hosted (experience) app is authored and lands in the Hosted sec
   // The design proposed the name; it is editable before anything exists.
   await expect(page.getByTestId("new-app-name")).toHaveValue("My Site");
 
-  // Only NOW is the app created — and the browser follows it to its OWN page, which is where
-  // the scaffold streams in. (Here the scaffold has no model and fails; the App is real
-  // regardless, so the route still happens — stranding the author on a closed form with no way
-  // to reach the App they just made would be the worse failure.)
+  // Only NOW is the app created. On this model-free gateway the scaffold cannot
+  // LAUNCH — the journey ends in the TERMINAL create-result dialog, honestly
+  // reporting the failure with resume/discard/close, and the App is real regardless.
   await page.getByTestId("new-app-approve").click();
-  await expect(page.getByTestId("new-app-form")).toHaveCount(0, { timeout: 15_000 });
-  // The handle contains slashes, so the route param arrives percent-encoded.
-  await expect(page).toHaveURL(new RegExp(`/apps/${encodeURIComponent(handle)}$`), {
-    timeout: 15_000,
-  });
+  const result = page.getByTestId("app-create-result");
+  await expect(result).toBeVisible({ timeout: 15_000 });
+  await expect(result).toHaveAttribute("data-outcome", "failed");
+  await expect(result).toContainText("The app is saved");
+  await expect(page.getByTestId("app-create-result-resume")).toBeVisible();
+  await expect(page.getByTestId("app-create-result-discard")).toBeVisible();
 
-  // And it is filed under Hosted, with its live status pill + Run.
-  await gotoViaPalette(page, "apps");
+  // Close keeps the app and returns to the catalog HOME — filed under Hosted,
+  // with its live status pill + Run.
+  await page.getByTestId("app-create-result-close").click();
+  await expect(page).toHaveURL(/\/apps(\?|$)/, { timeout: 15_000 });
   await page.getByTestId("apps-section-hosted").click();
   await expect(page.getByTestId(`app-card-${handle}`)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId(`hosted-status-${handle}`)).toBeVisible();
@@ -111,9 +117,11 @@ test("new app: a name that collides with an existing App is blocked, not overwri
   await page.getByTestId("new-app-derive").click();
   await expect(page.getByTestId("new-app-review")).toBeVisible({ timeout: 15_000 });
   await page.getByTestId("new-app-approve").click();
-  await expect(page.getByTestId("new-app-form")).toHaveCount(0, { timeout: 15_000 });
-  // Creating routes to the App's own page; come back to the catalog for the second one.
-  await gotoViaPalette(page, "apps");
+  // Model-free ⇒ the scaffold launch fails; the terminal dialog reports it and
+  // Close returns to the catalog for the second create.
+  await expect(page.getByTestId("app-create-result")).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId("app-create-result-close").click();
+  await expect(page).toHaveURL(/\/apps(\?|$)/, { timeout: 15_000 });
   await page.getByTestId("apps-section-hosted").click();
   await expect(page.getByTestId(`app-card-${handle}`)).toBeVisible({ timeout: 15_000 });
 
