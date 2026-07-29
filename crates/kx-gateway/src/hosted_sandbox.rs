@@ -40,6 +40,10 @@ pub(crate) const HOSTED_SANDBOX_ENV: &str = "KX_HOSTED_SANDBOX";
 /// granted read+exec inside the sandbox, for toolchains outside the defaults.
 pub(crate) const HOSTED_EXEC_ROOTS_ENV: &str = "KX_HOSTED_EXEC_ROOTS";
 
+/// The shell selector `/bin/sh` opens before it will run anything. Denying it
+/// produces `Error opening /private/var/select/sh` and an unusable shell.
+const SHELL_SELECTOR: &str = "/private/var/select";
+
 /// How this serve isolates hosted children. Resolved ONCE at serve start (env +
 /// probe), then a plain value — tests inject it directly, no env races.
 #[derive(Clone, Debug)]
@@ -131,6 +135,13 @@ fn exec_roots(extra: &str) -> Vec<PathBuf> {
     for prog in ["node", "npm"] {
         if let Some(p) = which(prog) {
             if let Some(dir) = p.parent() {
+                // The INSTALL PREFIX, not just `bin`: `npm` is a symlink into
+                // `<prefix>/lib/node_modules/npm`, and it requires its own
+                // library tree from there. A bin-only grant loads the launcher
+                // and then dies with `Cannot find module '../lib/cli.js'`.
+                // Reading the toolchain you are already permitted to EXECUTE is
+                // not a widening — it is the same tree, resolved.
+                push_canonical(&mut roots, dir.parent().unwrap_or(dir));
                 push_canonical(&mut roots, dir);
             }
         }
@@ -288,12 +299,30 @@ fn dev_server_profile(workdir: &Path, exec_roots: &[PathBuf]) -> Result<String, 
         push_subpath(&mut p, "process-exec", root);
         push_subpath(&mut p, "file-read*", root);
     }
+    // The selector `/bin/sh` opens before it will run anything — denying it
+    // yields `Error opening /private/var/select/sh` and an unusable shell, which
+    // npm needs for every lifecycle script. (Same grant, same reason, as the
+    // script sandbox.)
+    push_subpath(&mut p, "file-read*", Path::new(SHELL_SELECTOR));
     // Shells for npm lifecycle scripts, and the workdir's own .bin shims.
     for dir in ["/bin", "/usr/bin"] {
         push_subpath(&mut p, "process-exec", Path::new(dir));
         push_subpath(&mut p, "file-read*", Path::new(dir));
     }
-    push_subpath(&mut p, "process-exec", &spec_workdir_path(&spec));
+    let workdir = spec_workdir_path(&spec);
+    push_subpath(&mut p, "process-exec", &workdir);
+    // Node resolves its main module to a REAL path before running it, and that
+    // walk `lstat`s every component ABOVE the workdir — none of which any grant
+    // above names. Without this the dev server dies at startup with a bare
+    // `EPERM: lstat '/Users'` and never binds. Granted as `literal`, one path
+    // each: stat-ing a directory is not reading what is under it. (The script
+    // sandbox carries the same rule for the same reason — one failure mode, one
+    // remedy.)
+    for dir in [&[workdir][..], exec_roots].concat() {
+        for ancestor in ancestors_of(&dir) {
+            push_literal(&mut p, "file-read-metadata", &ancestor);
+        }
+    }
     // Loopback both ways: the dev server LISTENS locally; nothing else.
     p.push_str("(allow network-outbound (remote ip \"localhost:*\"))\n");
     p.push_str("(allow network-inbound (local ip \"localhost:*\"))\n");
@@ -313,11 +342,35 @@ fn spec_workdir_path(spec: &kx_warrant::WarrantSpec) -> PathBuf {
 }
 
 fn push_subpath(profile: &mut String, op: &str, path: &Path) {
-    let escaped = path
-        .to_string_lossy()
+    let _ = writeln!(profile, "(allow {op} (subpath \"{}\"))", escape(path));
+}
+
+/// One exact path, never its subtree — what a metadata grant should be.
+fn push_literal(profile: &mut String, op: &str, path: &Path) {
+    let _ = writeln!(profile, "(allow {op} (literal \"{}\"))", escape(path));
+}
+
+fn escape(path: &Path) -> String {
+    path.to_string_lossy()
         .replace('\\', "\\\\")
-        .replace('"', "\\\"");
-    let _ = writeln!(profile, "(allow {op} (subpath \"{escaped}\"))");
+        .replace('"', "\\\"")
+}
+
+/// Every directory above `path`, excluding the filesystem root — the components
+/// a `realpath` walk stats on its way down. The root is excluded deliberately:
+/// it needs no grant, and naming it would put a rule about `/` in a profile
+/// whose whole point is that nothing is granted by default.
+fn ancestors_of(path: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut current = path.parent();
+    while let Some(dir) = current {
+        if dir.parent().is_none() {
+            break;
+        }
+        out.push(dir.to_path_buf());
+        current = dir.parent();
+    }
+    out
 }
 
 /// The rolling posture line every hosted status carries — pushed into the app's
@@ -409,6 +462,37 @@ mod tests {
             "no open egress, ever"
         );
         assert!(!p.contains("(allow network*)"), "no blanket network");
+
+        // Every ancestor of the workdir is stat-able — a `realpath` walk touches
+        // each one, and without this node dies resolving its own main module
+        // (`EPERM: lstat '/Users'`) before it ever binds a port. Found live: the
+        // fixture binary the e2e runs needs no module resolution, so only a REAL
+        // dev server exercises this path.
+        for ancestor in ancestors_of(&canonical_workdir) {
+            let a = ancestor.to_string_lossy();
+            assert!(
+                p.contains(&format!("(allow file-read-metadata (literal \"{a}\"))")),
+                "the path walk down to the workdir stats {a}"
+            );
+            assert!(
+                !p.contains(&format!("(allow file-read* (subpath \"{a}\"))")),
+                "stat-ing {a} must not become permission to READ what is under it"
+            );
+        }
+    }
+
+    #[test]
+    fn ancestors_stop_short_of_the_filesystem_root() {
+        let got = ancestors_of(Path::new("/a/b/c/d"));
+        assert_eq!(
+            got,
+            vec![
+                PathBuf::from("/a/b/c"),
+                PathBuf::from("/a/b"),
+                PathBuf::from("/a")
+            ],
+            "`/` needs no grant, and naming it in a deny-default profile reads as a hole"
+        );
     }
 
     #[test]
