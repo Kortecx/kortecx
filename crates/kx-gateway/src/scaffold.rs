@@ -48,7 +48,7 @@ use kx_gateway_core::{
     try_committed_body, AppCatalog, AppScaffolder, BinderError, BranchManifest, BranchStore,
     ContentReader, ContentWriter, GatewayError as CoreError, HostedFileSource, JournalReader,
     LockStore, RecipeBinder, RunSubmitter, ScaffoldFile, ScaffoldLane, ScaffoldPhase,
-    ScaffoldStatus, ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE,
+    ScaffoldStatus, ScaffoldStep, AGENTS_GUIDANCE_PATH, APP_MANIFEST_PLAN_RECIPE_HANDLE,
     APP_SCAFFOLD_WRITE_RECIPE_HANDLE, CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH,
     MANIFEST_MARKER_PATH, SKELETON,
 };
@@ -121,6 +121,36 @@ const SIBLING_CONTEXT_MAX: usize = 2;
 /// lane that wrote exactly 5 files before. The planner is asked for 2-6; this is the
 /// fail-closed ceiling if it ignores that.
 const MAX_SCHEDULED_EXTRA_FILES: usize = 8;
+
+/// How many BYTES of `.kortecx/agents.md` ride each authoring prompt as guidance
+/// text. Small and TRUNCATING (char-boundary safe) where the run-time rail
+/// REFUSES over budget: scaffold guidance is advisory steering, the rail is
+/// identity-bearing context — the asymmetry is deliberate. Prompt text, never a
+/// context ref, so it can never widen the bounded sibling-BODY window
+/// ([`SIBLING_CONTEXT_MAX`], the `n_batch` guard).
+const AGENTS_GUIDANCE_PROMPT_MAX: usize = 2048;
+
+/// The deterministic `.kortecx/agents.md` starter body (no model step). Terse on
+/// purpose: it rides every run's context rail, so every byte here is budget the
+/// project's own files could have used.
+fn agents_starter(goal: &str, files: &[&str]) -> String {
+    let mut out = String::with_capacity(256 + files.len() * 24);
+    out.push_str("# Agent guidance\n\n");
+    out.push_str("Goal: ");
+    out.push_str(goal.trim());
+    out.push_str("\n\nEdit this file to steer the agents that write and run this app — \
+                  style, constraints, and what matters most. It is read when project \
+                  files are authored and on every run.\n");
+    if !files.is_empty() {
+        out.push_str("\nProject files:\n");
+        for f in files {
+            out.push_str("- ");
+            out.push_str(f);
+            out.push('\n');
+        }
+    }
+    out
+}
 
 /// POC-6: the HOSTED lane's graceful fallback when manifest planning is unavailable
 /// (no served model / a decode failure) — the framework template's model-AUTHORED files
@@ -477,6 +507,60 @@ impl HostScaffolder {
         }
     }
 
+    /// Write the server-authored `.kortecx/agents.md` STARTER into the branch —
+    /// only if absent, so a resume (or the user's own edits) always wins. The
+    /// same put+advance mechanics as the manifest marker; advisory (a failure is
+    /// logged, never fatal). Deterministic — no model step, no decode cost.
+    fn persist_agents_starter(&self, principal: &str, branch: &str, goal: &str, files: &[&str]) {
+        match self.branches.get(principal, branch) {
+            Ok(Some(m)) if m.items.iter().any(|it| it.path == AGENTS_GUIDANCE_PATH) => return,
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(branch = %branch, error = %e, "agents.md probe failed");
+                return;
+            }
+        }
+        let body = agents_starter(goal, files);
+        match self.writer.put(body.as_bytes()) {
+            Ok((r, _existed)) => {
+                if let Err(e) = self
+                    .branches
+                    .advance(principal, branch, AGENTS_GUIDANCE_PATH, r)
+                {
+                    tracing::warn!(branch = %branch, error = %e, "failed to persist agents.md starter");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(branch = %branch, error = %e, "failed to store agents.md starter");
+            }
+        }
+    }
+
+    /// Read the project's `.kortecx/agents.md` guidance, capped to
+    /// [`AGENTS_GUIDANCE_PROMPT_MAX`] bytes of prompt text (char-boundary safe).
+    /// `None` when absent/unreadable — a scaffold never fails over guidance.
+    ///
+    /// Truncation is acceptable HERE (advisory steering of an authoring prompt)
+    /// where the run-time rail REFUSES over budget (identity-bearing context) —
+    /// the two consumers deliberately differ.
+    fn read_guidance(&self, principal: &str, branch: &str) -> Option<String> {
+        let manifest = self.branches.get(principal, branch).ok()??;
+        let item = manifest
+            .items
+            .iter()
+            .find(|it| it.path == AGENTS_GUIDANCE_PATH)?;
+        let body = self
+            .content
+            .get(&ContentRef::from_bytes(item.content_ref))?;
+        let text = String::from_utf8_lossy(&body);
+        let mut end = text.len().min(AGENTS_GUIDANCE_PROMPT_MAX);
+        while end < text.len() && !text.is_char_boundary(end) {
+            end += 1;
+        }
+        let capped = &text[..end.min(text.len())];
+        (!capped.trim().is_empty()).then(|| capped.to_string())
+    }
+
     async fn run_inner(
         &self,
         principal: &str,
@@ -499,6 +583,11 @@ impl HostScaffolder {
             .resolve_manifest_scheduled(principal, branch, goal, mode)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        // Guidance: seed the starter (only if absent — a resume's edited guidance
+        // wins), THEN read it back, so even the first file is steered and an
+        // edit made between interrupt and resume steers the remaining files.
+        self.persist_agents_starter(principal, branch, goal, &all_paths);
+        let guidance = self.read_guidance(principal, branch);
         let mut prior: Vec<(String, String)> = Vec::new();
         for file in &files {
             // POC-5b: a lock applied before/during the scaffold halts it cleanly.
@@ -539,6 +628,7 @@ impl HostScaffolder {
                     scheduled_lane(mode),
                     &all_paths,
                     &prior,
+                    guidance.as_deref(),
                 )
                 .await?;
             self.branches
@@ -985,6 +1075,10 @@ impl HostScaffolder {
             .resolve_manifest_hosted(principal, branch, framework, goal)
             .await;
         let all_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        // Guidance: seed the starter (only if absent), then read it back — the
+        // same order as the scheduled lane, for the same two reasons.
+        self.persist_agents_starter(principal, branch, goal, &all_paths);
+        let guidance = self.read_guidance(principal, branch);
         // Author the framework ENTRY last. The entry (`src/App.tsx`, `app/page.tsx`, …) is the
         // file that IMPORTS and MOUNTS every child, so authoring it after its children is what
         // lets each child's distilled export/prop API reach the entry's authoring prompt — a
@@ -1031,6 +1125,7 @@ impl HostScaffolder {
                     ScaffoldLane::Hosted(framework),
                     &all_paths,
                     &prior,
+                    guidance.as_deref(),
                 )
                 .await?;
             self.branches
@@ -1083,6 +1178,7 @@ impl HostScaffolder {
     /// the prompt is DATA only. `path`/`role` come from either the fixed
     /// skeleton, the hosted template, or a dynamically-planned manifest file.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     async fn write_one(
         &self,
         principal: &str,
@@ -1093,6 +1189,7 @@ impl HostScaffolder {
         lane: ScaffoldLane<'_>,
         all_paths: &[&str],
         prior: &[(String, String)],
+        guidance: Option<&str>,
     ) -> Result<[u8; 32], CoreError> {
         // Bound the sibling BODY context to the most RECENT files. A dynamic project can
         // hold many files, and the write mote assembles every context ref's BODY into
@@ -1131,6 +1228,7 @@ impl HostScaffolder {
             all_paths,
             !ctx.is_empty(),
             &sibling_apis,
+            guidance,
         );
         let args = serde_json::to_vec(&serde_json::json!({ "prompt": prompt }))
             .map_err(|e| CoreError::Internal(format!("scaffold args: {e}")))?;
@@ -1384,6 +1482,28 @@ mod tests {
             path: path.to_string(),
             role: "a role".into(),
         }
+    }
+
+    // ---- the agents.md starter (deterministic, server-authored) ------------
+
+    #[test]
+    fn agents_starter_names_the_goal_and_planned_files_and_stays_terse() {
+        let body = agents_starter(
+            "summarize the changelog",
+            &["README.md", "skills/main.md"],
+        );
+        assert!(body.starts_with("# Agent guidance"));
+        assert!(body.contains("Goal: summarize the changelog"));
+        assert!(body.contains("- README.md"));
+        assert!(body.contains("- skills/main.md"));
+        assert!(body.contains("Edit this file"));
+        // Terse on purpose: the starter rides every run's 12 KiB rail budget.
+        assert!(body.len() < 1024, "starter must stay well under 1 KiB: {}", body.len());
+        // Deterministic — no clock, no randomness.
+        assert_eq!(
+            body,
+            agents_starter("summarize the changelog", &["README.md", "skills/main.md"])
+        );
     }
 
     // ---- restart recovery (the durable scaffold_state fallback) ------------

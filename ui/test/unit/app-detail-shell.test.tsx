@@ -7,7 +7,7 @@
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -85,9 +85,12 @@ vi.mock("../../src/kx/use-triggers", () => ({
   useTestTrigger: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null }),
   useFireTrigger: () => ({ mutate: vi.fn(), isPending: false, data: undefined, error: null }),
 }));
+let BRANCH_ITEMS: Array<{ path: string; contentRef: string }> = [
+  { path: "README.md", contentRef: "ab".repeat(32) },
+];
 vi.mock("../../src/kx/use-app-files", () => ({
   useAppBranch: () => ({
-    data: { items: [{ path: "README.md", contentRef: "ab".repeat(32) }] },
+    data: { items: BRANCH_ITEMS },
     isLoading: false,
     isError: false,
     error: null,
@@ -181,6 +184,7 @@ afterEach(() => {
   KIND = "";
   PHASE = "done";
   PENDING = [];
+  BRANCH_ITEMS = [{ path: "README.md", contentRef: "ab".repeat(32) }];
   saveFile.mockReset();
   proposeMutate.mockReset();
   resumeScaffold.mockReset();
@@ -352,5 +356,17 @@ describe("App IDE shell (POC-5d)", () => {
     PENDING = [];
     render(<AppDetailSection handle="apps/local/echo" />);
     expect(screen.queryByTestId("scaffold-progress-stub")).toBeNull();
+  });
+
+  it("shows the guidance chip iff the branch holds .kortecx/agents.md", () => {
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.queryByTestId("app-guidance-chip")).toBeNull();
+    cleanup();
+    BRANCH_ITEMS = [
+      { path: "README.md", contentRef: "ab".repeat(32) },
+      { path: ".kortecx/agents.md", contentRef: "cd".repeat(32) },
+    ];
+    render(<AppDetailSection handle="apps/local/echo" />);
+    expect(screen.getByTestId("app-guidance-chip")).toBeInTheDocument();
   });
 });

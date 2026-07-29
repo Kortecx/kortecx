@@ -151,7 +151,7 @@ pub use scaffold::{
     try_committed_body, AppScaffolder, ScaffoldFile, ScaffoldLane, ScaffoldPhase, ScaffoldStatus,
     ScaffoldStep, APP_MANIFEST_PLAN_RECIPE_HANDLE, APP_SCAFFOLD_WRITE_RECIPE_HANDLE,
     CODIFIED_CONSUMED_PATHS, CODIFIED_SOURCE_EXTS, CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH,
-    MANIFEST_MARKER_PATH, SKELETON,
+    AGENTS_GUIDANCE_PATH, MANIFEST_MARKER_PATH, SKELETON,
 };
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays

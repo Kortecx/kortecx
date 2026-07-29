@@ -386,6 +386,15 @@ export function AppDetailSection({
           <aside className="app-detail__tree" data-testid="app-files-sidebar">
             <div className="app-detail__tree-head">
               <span className="app-detail__tree-title">Files</span>
+              {items.some((it) => it.path === ".kortecx/agents.md") ? (
+                <span
+                  className="chip chip--tag"
+                  data-testid="app-guidance-chip"
+                  title="Guidance attached — .kortecx/agents.md steers scaffolds and runs of this app. Edit it like any file."
+                >
+                  guidance
+                </span>
+              ) : null}
               <button
                 type="button"
                 className="iconbtn iconbtn--sm app-detail__tree-toggle"
