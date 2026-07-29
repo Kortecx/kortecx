@@ -408,6 +408,119 @@ export function AppsSection({
   );
 }
 
+/** The kebab menu both catalog views share — every action LABELLED, so the card
+ *  and the table expose an identical set instead of the table improvising a
+ *  bare-glyph cluster. `downloadInMenu` is off where Download already sits in the
+ *  card's head (a scheduled card), so no view offers the same action twice. */
+function AppActionsMenu({
+  handle,
+  downloadPending,
+  downloadInMenu,
+  onView,
+  onOpen,
+  onDownload,
+  onDuplicate,
+  onDelete,
+}: {
+  handle: string;
+  downloadPending: boolean;
+  downloadInMenu: boolean;
+  onView: (handle: string) => void;
+  onOpen: (handle: string) => void;
+  onDownload: (handle: string) => void;
+  onDuplicate: (handle: string) => void;
+  onDelete: (handle: string) => void;
+}) {
+  return (
+    <Popover
+      trigger={<Icon name="menu" size={16} />}
+      triggerClassName="iconbtn"
+      triggerLabel="App actions"
+      triggerTestId={`app-menu-${handle}`}
+      align="right"
+      direction="down"
+      menuTestId={`app-menu-panel-${handle}`}
+    >
+      {(close) => (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            className="popover__item"
+            data-testid={`app-view-${handle}`}
+            onClick={() => {
+              close();
+              onView(handle);
+            }}
+          >
+            <Icon name="recipes" size={15} />
+            <span>View details</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="popover__item"
+            data-testid={`app-open-${handle}`}
+            onClick={() => {
+              close();
+              onOpen(handle);
+            }}
+          >
+            {/* A distinct glyph from Run: Open browses the App's file tree / IDE,
+                it does not launch anything (the hosted Run keeps external-link). */}
+            <Icon name="artifacts" size={15} />
+            <span>Open project</span>
+          </button>
+          {downloadInMenu ? (
+            <button
+              type="button"
+              role="menuitem"
+              className="popover__item"
+              data-testid={`app-download-${handle}`}
+              disabled={downloadPending}
+              onClick={() => {
+                close();
+                onDownload(handle);
+              }}
+            >
+              <Icon name="download" size={15} />
+              <span>Download bundle</span>
+            </button>
+          ) : null}
+          <button
+            type="button"
+            role="menuitem"
+            className="popover__item"
+            data-testid={`app-duplicate-${handle}`}
+            title="Duplicate this App locally under a new name"
+            onClick={() => {
+              close();
+              onDuplicate(handle);
+            }}
+          >
+            <Icon name="copy" size={15} />
+            <span>Duplicate</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="popover__item popover__item--danger"
+            data-testid={`app-delete-${handle}`}
+            title="Delete this App (asks for confirmation — it also releases its triggers and server)"
+            onClick={() => {
+              close();
+              onDelete(handle);
+            }}
+          >
+            <Icon name="stop" size={15} />
+            <span>Delete…</span>
+          </button>
+        </>
+      )}
+    </Popover>
+  );
+}
+
 /** One App in the catalog — name + version with a top-right action cluster (▶ Run,
  *  lock state, honest-disabled Share, download, and a kebab for view/open/duplicate),
  *  then the description, step/tag chips, and the raw handle. */
@@ -469,13 +582,16 @@ function AppCard({
             // Delete stays reachable via the kebab.
             <button
               type="button"
-              className="iconbtn"
+              className="btn-ghost"
               data-testid={`app-resume-${app.handle}`}
               title="Resume the scaffold — only the missing files are written"
-              aria-label="Resume scaffold"
               onClick={() => onResume(app.handle)}
             >
-              <Icon name="refresh" size={16} />
+              {/* Labelled, not a bare circular arrow — the same glyph means
+                  "re-poll" elsewhere in the console, and Resume is the action
+                  the failure dialog directs the user to. */}
+              <Icon name="refresh" size={14} />
+              Resume
             </button>
           ) : hosted ? (
             // Hosted cards carry only the live status pill + Run-in-tab; lock/share/
@@ -539,92 +655,16 @@ function AppCard({
               </button>
             </>
           )}
-          <Popover
-            trigger={<Icon name="menu" size={16} />}
-            triggerClassName="iconbtn"
-            triggerLabel="App actions"
-            triggerTestId={`app-menu-${app.handle}`}
-            align="right"
-            direction="down"
-            menuTestId={`app-menu-panel-${app.handle}`}
-          >
-            {(close) => (
-              <>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="popover__item"
-                  data-testid={`app-view-${app.handle}`}
-                  onClick={() => {
-                    close();
-                    onView(app.handle);
-                  }}
-                >
-                  <Icon name="recipes" size={15} />
-                  <span>View details</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="popover__item"
-                  data-testid={`app-open-${app.handle}`}
-                  onClick={() => {
-                    close();
-                    onOpen(app.handle);
-                  }}
-                >
-                  {/* A distinct glyph from Run: Open browses the App's file tree / IDE,
-                      it does not launch anything (the hosted Run keeps external-link). */}
-                  <Icon name="artifacts" size={15} />
-                  <span>Open project</span>
-                </button>
-                {hosted ? (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="popover__item"
-                    data-testid={`app-download-${app.handle}`}
-                    disabled={downloadPending}
-                    onClick={() => {
-                      close();
-                      onDownload(app.handle);
-                    }}
-                  >
-                    <Icon name="download" size={15} />
-                    <span>Download bundle</span>
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="popover__item"
-                  data-testid={`app-duplicate-${app.handle}`}
-                  title="Duplicate this App locally under a new name"
-                  onClick={() => {
-                    close();
-                    onDuplicate(app.handle);
-                  }}
-                >
-                  <Icon name="copy" size={15} />
-                  <span>Duplicate</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="popover__item popover__item--danger"
-                  data-testid={`app-delete-${app.handle}`}
-                  title="Delete this App (asks for confirmation — it also releases its triggers and server)"
-                  onClick={() => {
-                    close();
-                    onDelete(app.handle);
-                  }}
-                >
-                  <Icon name="stop" size={15} />
-                  <span>Delete…</span>
-                </button>
-              </>
-            )}
-          </Popover>
+          <AppActionsMenu
+            handle={app.handle}
+            downloadPending={downloadPending}
+            downloadInMenu={hosted}
+            onView={onView}
+            onOpen={onOpen}
+            onDownload={onDownload}
+            onDuplicate={onDuplicate}
+            onDelete={onDelete}
+          />
         </div>
       </div>
 
@@ -694,7 +734,9 @@ function AppsTable({
         <tr>
           <th>Name</th>
           <th>Version</th>
-          <th>Steps</th>
+          {/* A hosted app has no blueprint steps (the card shows what it IS
+              instead) — a column that can only ever hold an em dash is noise. */}
+          {hosted ? null : <th>Steps</th>}
           <th>Tags</th>
           {hosted ? <th>Status</th> : null}
           <th>Actions</th>
@@ -728,11 +770,13 @@ function AppsTable({
               </div>
             </td>
             <td>v{a.version}</td>
-            <td>{hosted ? "—" : a.stepCount}</td>
+            {hosted ? null : <td>{a.stepCount}</td>}
             <td>{a.tags.join(", ") || "—"}</td>
             {hosted ? (
               <td>
-                <HostedStatusPill handle={a.handle} />
+                {/* A draft's project was never written, so it has no runtime
+                    state — "stopped" would read as "runnable, currently off". */}
+                {a.lifecycle === "draft" ? "—" : <HostedStatusPill handle={a.handle} />}
               </td>
             ) : null}
             <td className="app-row__actions">
@@ -740,13 +784,13 @@ function AppsTable({
                 {a.lifecycle === "draft" ? (
                   <button
                     type="button"
-                    className="iconbtn"
+                    className="btn-ghost"
                     data-testid={`app-resume-${a.handle}`}
                     title="Resume the scaffold — only the missing files are written"
-                    aria-label="Resume scaffold"
                     onClick={() => onResume(a.handle)}
                   >
-                    <Icon name="refresh" size={16} />
+                    <Icon name="refresh" size={14} />
+                    Resume
                   </button>
                 ) : hosted ? (
                   <HostedRunButton handle={a.handle} />
@@ -770,50 +814,20 @@ function AppsTable({
                     />
                   </>
                 )}
-                <button
-                  type="button"
-                  className="iconbtn"
-                  data-testid={`app-open-${a.handle}`}
-                  title="Open project"
-                  aria-label="Open project"
-                  onClick={() => onOpen(a.handle)}
-                >
-                  <Icon name="artifacts" size={15} />
-                </button>
-                <button
-                  type="button"
-                  className="iconbtn"
-                  data-testid={`app-download-${a.handle}`}
-                  disabled={downloadPending}
-                  title="Download a portable .kxapp bundle"
-                  aria-label="Download bundle"
-                  onClick={() => onDownload(a.handle)}
-                >
-                  <Icon name="download" size={16} />
-                </button>
-                <button
-                  type="button"
-                  className="iconbtn"
-                  data-testid={`app-duplicate-${a.handle}`}
-                  title="Duplicate locally"
-                  aria-label="Duplicate"
-                  onClick={() => onDuplicate(a.handle)}
-                >
-                  <Icon name="copy" size={15} />
-                </button>
-                {/* Delete lives ONLY behind the card's kebab, so switching to the
-                    table silently removed it: a control that presents itself as a
-                    display choice was changing what the catalog can do. */}
-                <button
-                  type="button"
-                  className="iconbtn iconbtn--danger"
-                  data-testid={`app-delete-${a.handle}`}
-                  title="Delete this App (asks for confirmation - it also releases its triggers and server)"
-                  aria-label="Delete"
-                  onClick={() => onDelete(a.handle)}
-                >
-                  <Icon name="stop" size={15} />
-                </button>
+                {/* The rest of the actions ride the SAME labelled kebab as the
+                    card, so both views expose an identical action set — the
+                    table's previous bare-glyph cluster improvised its own
+                    (and its Delete was a `stop` glyph, easily read as "stop"). */}
+                <AppActionsMenu
+                  handle={a.handle}
+                  downloadPending={downloadPending}
+                  downloadInMenu
+                  onView={onView}
+                  onOpen={onOpen}
+                  onDownload={onDownload}
+                  onDuplicate={onDuplicate}
+                  onDelete={onDelete}
+                />
               </div>
             </td>
           </tr>

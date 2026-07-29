@@ -86,9 +86,9 @@ export function SkillsRail({
     <div className="skills-rail" data-testid="app-skills-rail">
       <h3>Skills</h3>
       <p className="muted">
-        Attached skills are available to the App (instructions + tool <em>wishes</em>; granted only
-        at run, <code className="mono">wish ∩ grants ∩ fireable</code>). Each binds to the step(s)
-        that use it — edit which on the canvas (Lineage → Edit structure).
+        Attached skills are available to the App (instructions + tool <em>wishes</em>; at run the
+        server grants only what the skill asks for, you have granted, and this serve can fire). Each
+        binds to the step(s) that use it — edit which on the canvas (Lineage → Edit structure).
         {locked ? " App is locked — unlock to change skills." : ""}
       </p>
       <SkillsPicker

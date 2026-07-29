@@ -44,6 +44,24 @@ const LINEAGE_NODE_W = 248;
  *  through its own descenders and the model id was cut off at the card edge. */
 const LINEAGE_NODE_H = 152;
 
+/** Each card's REAL height: the proven worst case minus the conditional rows this view
+ *  does not render (row text height + the column gap that disappears with it, from the
+ *  `.lineage-node__*` CSS). Subtracting only ABSENT rows can never re-clip the worst
+ *  case the 152px was measured against — a sparse step just stops being 70% air. */
+function lineageNodeHeight(view: LineageStepView): number {
+  let h = LINEAGE_NODE_H;
+  if (view.model === null) {
+    h -= 17; // 0.68rem model line + 0.25rem gap
+  }
+  if (view.tools.length === 0) {
+    h -= 20; // chip row (text + padding + border) + gap
+  }
+  if (view.budget === null && view.reasoning === "") {
+    h -= 16; // 0.62rem meta line + gap
+  }
+  return h;
+}
+
 /** One node card: the step's derived title plus what it binds, requests, and is budgeted
  *  for. Every row past the title is conditional — a blueprint step may carry almost
  *  nothing, and the card degrades to its ordinal rather than inventing content. */
@@ -51,8 +69,20 @@ function LineageNode({ view }: { view: LineageStepView }) {
   return (
     <>
       <span className="lineage-node__head">
-        <span className="lineage-node__kind">
-          {view.ordinal} · {view.kind}
+        {/* The builder's vocabulary (Agent / Tool / Pure), never the raw
+            step-kind enum; "Pure" gets its meaning in the tooltip. */}
+        <span
+          className="lineage-node__kind"
+          title={
+            view.kind === "model"
+              ? "An agent step — a model call"
+              : view.kind === "tool"
+                ? "A tool step — one tool call"
+                : "A pure step — a deterministic transform; no model, no tool"
+          }
+        >
+          {view.ordinal} ·{" "}
+          {view.kind === "model" ? "Agent" : view.kind === "tool" ? "Tool" : "Pure"}
         </span>
         {view.isEntry ? (
           <span
@@ -113,6 +143,8 @@ function LineageNode({ view }: { view: LineageStepView }) {
 
 /** A clean static diagram: dagre-positioned node cards + SVG connectors, read-only. */
 function LineageDiagram({ graph, modelRoute }: { graph: BuilderGraph; modelRoute: string }) {
+  const views = useMemo(() => lineageStepViews(graph, modelRoute), [graph, modelRoute]);
+  const heights = useMemo(() => new Map(views.map((v) => [v.id, lineageNodeHeight(v)])), [views]);
   const positions = useMemo(
     () =>
       layoutGraph(
@@ -124,11 +156,11 @@ function LineageDiagram({ graph, modelRoute }: { graph: BuilderGraph; modelRoute
           edgeKind: e.edge === "control" ? "control" : "data",
           nonCascade: false,
         })),
-        { nodeW: LINEAGE_NODE_W, nodeH: LINEAGE_NODE_H },
+        { nodeW: LINEAGE_NODE_W, nodeH: LINEAGE_NODE_H, nodeHeights: heights },
       ),
-    [graph],
+    [graph, heights],
   );
-  const views = useMemo(() => lineageStepViews(graph, modelRoute), [graph, modelRoute]);
+  const heightOf = (id: string): number => heights.get(id) ?? LINEAGE_NODE_H;
   const nodes = views.map((view) => ({
     view,
     pos: positions.get(view.id) ?? { x: 16, y: 16 },
@@ -137,7 +169,7 @@ function LineageDiagram({ graph, modelRoute }: { graph: BuilderGraph; modelRoute
     Math.max(LINEAGE_NODE_W, ...nodes.map((n) => n.pos.x + LINEAGE_NODE_W)) + 16,
   );
   const height = Math.ceil(
-    Math.max(LINEAGE_NODE_H, ...nodes.map((n) => n.pos.y + LINEAGE_NODE_H)) + 16,
+    Math.max(LINEAGE_NODE_H, ...nodes.map((n) => n.pos.y + heightOf(n.view.id))) + 16,
   );
 
   return (
@@ -172,7 +204,7 @@ function LineageDiagram({ graph, modelRoute }: { graph: BuilderGraph; modelRoute
               return null;
             }
             const x1 = s.x + LINEAGE_NODE_W / 2;
-            const y1 = s.y + LINEAGE_NODE_H;
+            const y1 = s.y + heightOf(e.source);
             const x2 = t.x + LINEAGE_NODE_W / 2;
             const y2 = t.y;
             const my = (y1 + y2) / 2;
@@ -194,7 +226,7 @@ function LineageDiagram({ graph, modelRoute }: { graph: BuilderGraph; modelRoute
             data-kind={view.kind}
             data-entry={view.isEntry ? "true" : undefined}
             data-testid={`lineage-node-${view.id}`}
-            style={{ left: pos.x, top: pos.y, width: LINEAGE_NODE_W, height: LINEAGE_NODE_H }}
+            style={{ left: pos.x, top: pos.y, width: LINEAGE_NODE_W, height: heightOf(view.id) }}
           >
             <LineageNode view={view} />
           </div>

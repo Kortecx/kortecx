@@ -550,13 +550,17 @@ function FilePane({
       animate="show"
     >
       <div className="app-file__head">
-        <code className="mono app-file__path" title={path}>
-          {path}
-        </code>
-        {/* The selected file's content ref. It used to sit on every tree ROW, where a
-            180px rail left the filename ~6 characters; here there is width for both,
-            and only the file you are actually looking at needs its hash. */}
-        {contentRef ? <DigestChip hex={contentRef} label={path} /> : null}
+        {/* Path + digest as ONE identity cluster: with `space-between` spreading
+            three children, the chip used to float mid-header anchored to nothing. */}
+        <span className="app-file__ident">
+          <code className="mono app-file__path" title={path}>
+            {path}
+          </code>
+          {/* The selected file's content ref. It used to sit on every tree ROW, where a
+              180px rail left the filename ~6 characters; here there is width for both,
+              and only the file you are actually looking at needs its hash. */}
+          {contentRef ? <DigestChip hex={contentRef} label={path} /> : null}
+        </span>
         {locked ? (
           <span className="muted app-file__locked" data-testid="app-locked-notice" role="note">
             This App is locked — edits are refused. Unlock it from this App's header to edit.

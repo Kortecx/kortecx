@@ -121,6 +121,20 @@ export function CreateAppScreen({ initialKind = "scheduled" }: { initialKind?: N
   );
 }
 
+/** Plain language for the failure classes the server is known to emit. The dialog's
+ *  primary line is ALWAYS plain speech; the raw server text (RPC method name and all)
+ *  stays available — but collapsed — under "Technical detail". `null` ⇒ no specific
+ *  translation; the caller falls back to a generic plain sentence. */
+function translateScaffoldFailure(raw: string): string | null {
+  if (raw.includes("no scaffold orchestrator")) {
+    return (
+      "This serve can't scaffold projects — it isn't running a served model, so there is " +
+      "nothing to design the files with. Restart the serve with a model, then resume."
+    );
+  }
+  return null;
+}
+
 /** The terminal create-result dialog (the DeleteAppDialog recipe). */
 function CreateResultDialog({
   outcome,
@@ -173,7 +187,7 @@ function CreateResultDialog({
       />
       <div className="dialog-center dialog-center--overlay">
         <m.div
-          className="dialog-card"
+          className={failed ? "dialog-card dialog-card--danger" : "dialog-card"}
           data-testid="app-create-result"
           data-outcome={failed ? "failed" : "done"}
           // biome-ignore lint/a11y/useSemanticElements: a native <dialog> can't ride framer-motion; modal semantics via role+aria-label (the DeleteAppDialog precedent)
@@ -185,10 +199,23 @@ function CreateResultDialog({
         >
           {failed ? (
             <>
-              <h2 className="dialog-card__title">The scaffold didn't finish</h2>
+              {/* "couldn't start" vs "didn't finish" tracks launchFailed — the page
+                  behind this dialog says which one happened, and they must agree. */}
+              <h2 className="dialog-card__title">
+                {launchFailed ? "The scaffold couldn't start" : "The scaffold didn't finish"}
+              </h2>
               <p className="dialog-card__label" data-testid="app-create-result-detail">
-                {failDetail ?? "The scaffold stopped before writing every file."}
+                {(failDetail === null ? null : translateScaffoldFailure(failDetail)) ??
+                  (launchFailed
+                    ? "The project scaffold could not start on this serve."
+                    : "The scaffold stopped before writing every file.")}
               </p>
+              {failDetail !== null ? (
+                <details className="dialog-card__tech" data-testid="app-create-result-tech">
+                  <summary>Technical detail</summary>
+                  <code className="mono">{failDetail}</code>
+                </details>
+              ) : null}
               {launchFailed ? (
                 <p className="dialog-card__label">
                   The app is saved. Resume the scaffold to build its project, or discard the app.

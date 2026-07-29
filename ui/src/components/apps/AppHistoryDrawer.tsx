@@ -227,11 +227,11 @@ export function AppHistoryDrawer({
         <>
           <button
             type="button"
-            className="node-drawer__scrim node-drawer__scrim--overlay"
+            className="node-drawer__scrim node-drawer__scrim--overlay node-drawer__scrim--above-drawer"
             aria-label="Cancel restore"
             onClick={() => setConfirming(null)}
           />
-          <div className="dialog-center dialog-center--overlay">
+          <div className="dialog-center dialog-center--overlay dialog-center--above-drawer">
             <m.div
               className="dialog-card"
               data-testid="app-history-confirm"

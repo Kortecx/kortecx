@@ -132,7 +132,12 @@ describe("CreateAppScreen", () => {
     fireEvent.click(screen.getByTestId("stub-launch-ok"));
     const dialog = screen.getByTestId("app-create-result");
     expect(dialog).toHaveAttribute("data-outcome", "failed");
-    expect(screen.getByTestId("app-create-result-detail").textContent).toContain("step timed out");
+    // The primary line is plain speech — the raw server text never leads, but it
+    // SURVIVES, collapsed under the technical-detail disclosure.
+    expect(screen.getByTestId("app-create-result-detail").textContent).toContain(
+      "stopped before writing",
+    );
+    expect(screen.getByTestId("app-create-result-tech").textContent).toContain("step timed out");
     expect(dialog.textContent).toContain("draft");
     fireEvent.click(screen.getByTestId("app-create-result-resume"));
     expect(resumeMutate).toHaveBeenCalledWith(
@@ -146,7 +151,10 @@ describe("CreateAppScreen", () => {
     fireEvent.click(screen.getByTestId("stub-launch-fail"));
     const dialog = screen.getByTestId("app-create-result");
     expect(dialog).toHaveAttribute("data-outcome", "failed");
-    expect(screen.getByTestId("app-create-result-detail").textContent).toContain("no served model");
+    // Launch-failed gets the "couldn't start" story (matching the page behind the
+    // dialog); the raw server error rides the collapsed disclosure, never the lede.
+    expect(screen.getByTestId("app-create-result-detail").textContent).toContain("could not start");
+    expect(screen.getByTestId("app-create-result-tech").textContent).toContain("no served model");
     expect(screen.queryByTestId("scaffold-progress-stub")).toBeNull();
   });
 

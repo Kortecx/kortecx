@@ -133,7 +133,9 @@ export function ScaffoldProgress({
         <code className="mono scaffold-progress__handle mono-trunc" title={appHandle}>
           {appHandle}
         </code>
-        {following ? (
+        {derived.rows.length === 0 ? null : following ? (
+          // Only once a file EXISTS to follow — during planning no file is being
+          // written, and this line would contradict the heading beside it.
           <span className="muted scaffold-progress__follow" data-testid="scaffold-following">
             Following the file being written
           </span>

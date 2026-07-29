@@ -24,7 +24,6 @@ const FIXED_OPTIONS = {
   fontSize: 13,
   lineNumbersMinChars: 3,
   folding: false,
-  renderLineHighlight: "line",
   scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
   overviewRulerLanes: 0,
   wordWrap: "on",
@@ -96,7 +95,10 @@ export default function MonacoEditorImpl({
           ...FIXED_OPTIONS,
           readOnly,
           domReadOnly: readOnly,
-          lineNumbers: readOnly ? "on" : "on",
+          lineNumbers: "on",
+          // A read-only view has no caret, so a current-line band is a selection
+          // the reader never made — permanently parked on line 1.
+          renderLineHighlight: readOnly ? "none" : "line",
           placeholder,
         }}
       />

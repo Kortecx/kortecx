@@ -373,7 +373,7 @@ export function NewAppForm({
   const lede = useMemo(() => {
     if (reviewing) {
       return kind === "hosted"
-        ? "Review the project before it exists. Nothing has been created yet — edit the file plan and the app's details, then create it."
+        ? "Review the project before it exists. Nothing has been created yet — remove any planned files you don't want, name the app, then create it."
         : "Review the workflow before it exists. Nothing has been created yet — open any step to change what it does and what it may use: its tools, skills, integrations and grounding all live on the step. Then create the app.";
     }
     if (kind === "hosted") {
@@ -477,6 +477,37 @@ export function NewAppForm({
               aria-label="Describe the app"
               disabled={busy}
             />
+            {/* BEFORE the foot: the framework changes what "Design the app"
+                submits, so it must come before the control that submits — an
+                input the reader meets after the button is an input they set
+                by going back. */}
+            {kind === "hosted" ? (
+              <fieldset
+                className="new-app-form__rail"
+                aria-label="Framework"
+                data-testid="new-app-framework"
+              >
+                <legend className="muted">Framework</legend>
+                <div className="chips">
+                  {HOSTED_FRAMEWORKS.map((fw) => {
+                    const on = framework === fw.value;
+                    return (
+                      <button
+                        key={fw.value}
+                        type="button"
+                        className={on ? "chip chip--active" : "chip"}
+                        aria-pressed={on}
+                        data-testid={`new-app-framework-${fw.value}`}
+                        onClick={() => setFramework(fw.value)}
+                        disabled={busy}
+                      >
+                        {fw.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            ) : null}
             <div className="new-app-prompt__foot">
               <label
                 className="new-app-prompt__attach"
@@ -530,34 +561,6 @@ export function NewAppForm({
             ) : null}
           </div>
 
-          {kind === "hosted" ? (
-            <fieldset
-              className="new-app-form__rail"
-              aria-label="Framework"
-              data-testid="new-app-framework"
-            >
-              <legend className="muted">Framework</legend>
-              <div className="chips">
-                {HOSTED_FRAMEWORKS.map((fw) => {
-                  const on = framework === fw.value;
-                  return (
-                    <button
-                      key={fw.value}
-                      type="button"
-                      className={on ? "chip chip--active" : "chip"}
-                      aria-pressed={on}
-                      data-testid={`new-app-framework-${fw.value}`}
-                      onClick={() => setFramework(fw.value)}
-                      disabled={busy}
-                    >
-                      {fw.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-          ) : null}
-
           {refusal !== null ? (
             <p className="field-error" data-testid="new-app-derive-rejected" role="alert">
               {refusal}
@@ -591,18 +594,23 @@ export function NewAppForm({
             </ul>
           ) : null}
 
-          <input
-            type="text"
-            data-testid="new-app-name"
-            placeholder="App name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            aria-label="App name"
-            maxLength={80}
-            disabled={busy || create.isPending}
-            aria-invalid={collision !== null}
-            aria-describedby={collision !== null ? "new-app-name-collision" : undefined}
-          />
+          {/* A visible label, like the sibling fieldsets — a placeholder is the
+              field's only sighted affordance and it vanishes on the first keystroke. */}
+          <fieldset className="new-app-form__rail">
+            <legend className="muted">App name</legend>
+            <input
+              type="text"
+              data-testid="new-app-name"
+              placeholder="e.g. Morning triage"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              aria-label="App name"
+              maxLength={80}
+              disabled={busy || create.isPending}
+              aria-invalid={collision !== null}
+              aria-describedby={collision !== null ? "new-app-name-collision" : undefined}
+            />
+          </fieldset>
           {collision !== null ? (
             <p
               id="new-app-name-collision"

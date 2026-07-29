@@ -24,6 +24,11 @@ export const NODE_H = 72;
 export interface NodeBox {
   readonly nodeW?: number;
   readonly nodeH?: number;
+  /** Per-node height overrides (falls back to `nodeH`). A surface whose cards
+   *  grow row-by-row with their content (the App Lineage diagram) passes each
+   *  card's real height, so dagre ranks against the boxes it actually renders
+   *  instead of reserving the worst case for every node. */
+  readonly nodeHeights?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -42,8 +47,9 @@ export function layoutGraph(
   g.setGraph({ rankdir: "TB", nodesep: 44, ranksep: 64, marginx: 16, marginy: 16 });
   g.setDefaultEdgeLabel(() => ({}));
 
+  const heightOf = (id: string): number => box.nodeHeights?.get(id) ?? nodeH;
   for (const id of nodeIds) {
-    g.setNode(id, { width: nodeW, height: nodeH });
+    g.setNode(id, { width: nodeW, height: heightOf(id) });
   }
   for (const e of edges) {
     // Defensive: buildEdges already drops dangling, but never edge to a missing node.
@@ -59,7 +65,7 @@ export function layoutGraph(
     const n = g.node(id);
     positions.set(id, {
       x: (n?.x ?? 0) - nodeW / 2,
-      y: (n?.y ?? 0) - nodeH / 2,
+      y: (n?.y ?? 0) - heightOf(id) / 2,
     });
   }
   return positions;

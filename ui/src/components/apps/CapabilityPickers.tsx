@@ -23,6 +23,7 @@
  */
 
 import type { Skill } from "@kortecx/sdk/web";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useListMcpServers } from "../../kx/use-connections";
 import { useListSkills } from "../../kx/use-skills";
@@ -44,6 +45,7 @@ function CapabilityChips({
   attached,
   attachable,
   emptyNote,
+  catalogEmptyNote,
   notWiredNote,
   attachedTestId,
   attachableTestId,
@@ -58,6 +60,10 @@ function CapabilityChips({
   /** The catalog remainder, or `null` when the catalog is NOT WIRED on this gateway. */
   readonly attachable: readonly CapabilityChip[] | null;
   readonly emptyNote: string;
+  /** Shown INSTEAD of `emptyNote` when nothing is attached AND the catalog has
+   *  nothing to attach — the one state where the picker would otherwise dead-end
+   *  with no control and no hint of where the catalog gets populated. */
+  readonly catalogEmptyNote?: React.ReactNode;
   readonly notWiredNote: string;
   readonly attachedTestId: string;
   readonly attachableTestId: string;
@@ -73,7 +79,11 @@ function CapabilityChips({
     <>
       <div className="chip-row" data-testid={attachedTestId}>
         {attached.length === 0 ? (
-          <span className="muted">{emptyNote}</span>
+          <span className="muted">
+            {attachable !== null && attachable.length === 0 && catalogEmptyNote !== undefined
+              ? catalogEmptyNote
+              : emptyNote}
+          </span>
         ) : (
           attached.map((c) => (
             <button
@@ -189,6 +199,15 @@ export function SkillsPicker({
               }))
       }
       emptyNote="No skills attached."
+      catalogEmptyNote={
+        <>
+          No skills in the catalog yet — add them in{" "}
+          <Link to="/tools" search={{ tab: "skills" }} className="linkbtn">
+            Tools → Skills
+          </Link>
+          .
+        </>
+      }
       notWiredNote="Skill catalog not available on this gateway."
       attachedTestId={`${groupTestId}-attached`}
       attachableTestId={`${groupTestId}-attachable`}
@@ -252,6 +271,15 @@ export function ToolsPicker({
                 }))
         }
         emptyNote="No tools attached."
+        catalogEmptyNote={
+          <>
+            No MCP tools registered on this serve yet — register them in{" "}
+            <Link to="/tools" className="linkbtn">
+              Tools
+            </Link>
+            .
+          </>
+        }
         notWiredNote="Tools registry not available on this gateway."
         attachedTestId={`${groupTestId}-attached`}
         attachableTestId={`${groupTestId}-attachable`}
