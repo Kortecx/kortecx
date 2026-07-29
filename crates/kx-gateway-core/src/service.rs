@@ -838,6 +838,11 @@ pub struct GatewayService {
     /// back to the legacy `GetApp` → `SubmitWorkflow` path. Server-minted warrants;
     /// connection/secret resolution is caller-scoped, off-journal, off-digest.
     app_runner: Option<Arc<dyn crate::apps_run::AppAuthor>>,
+    /// The optional WORKFLOW-run seam (the host injects a `workflows.db` +
+    /// shared-App-author backed resolver). `None` ⇒ `RunWorkflow` returns
+    /// `unimplemented`. Same wall as `app_runner`: server-minted warrants,
+    /// caller-scoped resolution, off-journal, off-digest.
+    workflow_runner: Option<Arc<dyn crate::apps_run::AppAuthor>>,
     /// The optional NL→DAG workflow-proposer seam (D209.3 / — the host injects a
     /// served-model + vetted-role-catalog backed proposer). `None` ⇒ `ProposeWorkflow`
     /// returns `unimplemented` (no served model). Validate-only: runs the model once and
@@ -962,6 +967,7 @@ impl GatewayService {
             workflows: None,
             skills: None,
             app_runner: None,
+            workflow_runner: None,
             proposer: None,
             deriver: None,
             app_manifest: None,
@@ -1458,6 +1464,14 @@ impl GatewayService {
     #[must_use]
     pub fn with_app_runner(mut self, runner: Arc<dyn crate::apps_run::AppAuthor>) -> Self {
         self.app_runner = Some(runner);
+        self
+    }
+
+    /// Wire the WORKFLOW-run seam (the host's workflow-pointer → run resolver).
+    /// Without it `RunWorkflow` returns `unimplemented`.
+    #[must_use]
+    pub fn with_workflow_runner(mut self, runner: Arc<dyn crate::apps_run::AppAuthor>) -> Self {
+        self.workflow_runner = Some(runner);
         self
     }
 
@@ -5365,11 +5379,99 @@ impl KxGateway for GatewayService {
 
     async fn run_workflow(
         &self,
-        _request: Request<proto::RunWorkflowRequest>,
+        request: Request<proto::RunWorkflowRequest>,
     ) -> Result<Response<proto::RunHandle>, Status> {
-        Err(Status::unimplemented(
-            "RunWorkflow: no workflow runner wired",
-        ))
+        // Run a caller-owned stored workflow SERVER-SIDE: the exact RunApp
+        // posture over the workflow catalog (server-minted warrants; the
+        // envelope carries no authority). `None` seam ⇒ `unimplemented`.
+        let runner = self.workflow_runner.as_ref().ok_or_else(|| {
+            Status::unimplemented("RunWorkflow: no workflow-run seam wired on this gateway")
+        })?;
+        // SERVER-DERIVED identity: the party the auth interceptor resolved.
+        // (No hosted-page CallerAppScope leg here: a page's envelope declares
+        // runnable APPS — `references.apps` — and nothing else; a page-minted
+        // token therefore has no workflow ceiling to check and simply runs
+        // nothing through this RPC.)
+        let party = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        if request.extensions().get::<CallerAppScope>().is_some() {
+            return Err(Status::permission_denied(
+                "a hosted app page may not run workflows (its envelope declares \
+                 runnable apps only)",
+            ));
+        }
+        let req = request.into_inner();
+        let bound = runner
+            .author_app(&party, &req.handle, &req.args, req.require_approval)
+            .await
+            .map_err(|e| match e {
+                crate::apps_run::AppRunError::NotAuthorized => {
+                    Status::permission_denied("not authorized")
+                }
+                crate::apps_run::AppRunError::InvalidArgs(detail) => {
+                    Status::invalid_argument(detail)
+                }
+                crate::apps_run::AppRunError::MissingIntegration(name) => {
+                    Status::failed_precondition(format!(
+                        "missing integration: {name} (register it with `kx connections add`)"
+                    ))
+                }
+                // The composed thing IS an App (a workflow's app-steps resolve
+                // saved Apps through the shared seam) — the error names it so.
+                crate::apps_run::AppRunError::UncomposableApp { handle, reason } => {
+                    Status::failed_precondition(format!(
+                        "workflow step composes app {handle:?}, which cannot be composed: {reason}"
+                    ))
+                }
+                crate::apps_run::AppRunError::UnservedModelRoute(route) => {
+                    Status::failed_precondition(format!(
+                        "model route {route:?} is not served here (start `kx serve` with a \
+                         matching model, or clear the workflow's model route)"
+                    ))
+                }
+                crate::apps_run::AppRunError::Internal(detail) => Status::internal(detail),
+            })?;
+
+        // The SAME fireable-grant backstop as RunApp/Invoke/SubmitWorkflow.
+        let fireable = self.fireable_grants();
+        for (_, warrant) in &bound.motes {
+            if let Some(grant) = warrant
+                .tool_grants
+                .iter()
+                .find(|g| !fireable.contains(&(g.tool_id.0.clone(), g.tool_version.0.clone())))
+            {
+                return Err(Status::failed_precondition(format!(
+                    "workflow step grants tool {}@{} but this serve registered no such capability",
+                    grant.tool_id.0, grant.tool_version.0
+                )));
+            }
+        }
+
+        // The SAME propose-proxy: register first, then submit each compiled Mote.
+        let instance_id = self
+            .submitter
+            .register_run(bound.recipe_fingerprint)
+            .await
+            .map_err(submit_status)?;
+        let react_chain_salt = agentic_chain_salt(&bound.motes);
+        // The run anchor — populated for EVERY submission shape (D239).
+        let terminal_mote_id = bound.terminal_mote_id.as_bytes().to_vec();
+        for (mote, warrant) in bound.motes {
+            self.submitter
+                .submit_mote(mote, warrant, false, false)
+                .await
+                .map_err(submit_status)?;
+        }
+
+        Ok(Response::new(proto::RunHandle {
+            instance_id: instance_id.to_vec(),
+            recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
+            react_chain_salt,
+            terminal_mote_id,
+        }))
     }
 
     async fn delete_workflow(

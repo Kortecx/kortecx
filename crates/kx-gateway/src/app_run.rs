@@ -548,7 +548,7 @@ const MAX_COMPOSED_STEPS: usize = 64;
 /// The unit composition joins. Each side is prepared under its OWN envelope and only then
 /// spliced, which is what makes "the caller cannot widen the callee" true by construction
 /// rather than by a check someone has to remember to write.
-struct Prepared {
+pub(crate) struct Prepared {
     /// The blueprint with the App-only bindings taken off and every fold applied.
     dag: DagSpec,
     /// The App's RUN-WIDE context rail — lands on every DAG root at author.
@@ -1407,7 +1407,32 @@ impl HostAppAuthor {
             .ok_or(AppRunError::NotAuthorized)?;
         let env = AppEnvelope::from_json_slice(&envelope_bytes)
             .map_err(|e| AppRunError::Internal(format!("stored envelope invalid: {e}")))?;
+        self.prepare_env(party, env, handle, args, require_approval)
+            .await
+    }
 
+    /// Prepare an ALREADY-READ envelope — steps (1b) onward of `prepare_app`,
+    /// extracted verbatim (a pure extraction; behavior and bytes unchanged).
+    ///
+    /// Split out so the WORKFLOW run path can enter the exact same preparation
+    /// pipeline with a converted `kortecx.workflow/v1` envelope: everything
+    /// downstream of the catalog read — the context rail, connection/secret
+    /// resolution, lowering, per-step binds, model-route pinning, HITL
+    /// stamping, the composition declarations — is envelope-shaped, not
+    /// catalog-shaped. `handle` is display-only here (refusal texts).
+    //
+    // A single linear resolve→lower→fold pipeline (context rail + skills + RAG + HITL); the
+    // steps read top-to-bottom and share local state, so splitting would only scatter it
+    // (the rationale the pre-extraction prepare_app carried, unchanged).
+    #[allow(clippy::too_many_lines)]
+    pub(crate) async fn prepare_env(
+        &self,
+        party: &str,
+        env: AppEnvelope,
+        handle: &str,
+        args: &[u8],
+        require_approval: bool,
+    ) -> Result<Prepared, AppRunError> {
         // (1b) T-RUNAPP-CONTEXT-RAIL: resolve the App's declarative knowledge rail
         //      (context/prompts/rules/memory + steering context refs) into labeled
         //      context items BEFORE the blueprint is consumed. Skills (3b) extend this
@@ -1724,8 +1749,31 @@ impl HostAppAuthor {
         let mut me = self
             .prepare_app(party, handle, args, require_approval)
             .await?;
+        self.resolve_composes(&mut me, party, handle, require_approval, depth, chain)
+            .await?;
+        Ok(me)
+    }
+
+    /// Resolve `me`'s declared composition rail in place — the callee loop of
+    /// `compose_app`, extracted verbatim (a pure extraction; behavior and bytes
+    /// unchanged, including the no-composes early return that skips the
+    /// root-pinning entirely).
+    ///
+    /// Split out so the WORKFLOW run path can compose SAVED APPS through the
+    /// exact D198 seam: callees always resolve from the App catalog
+    /// (`prepare_app`), whatever entity the root graph came from. `handle` is
+    /// the CALLER's name, display-only (the composition log line).
+    pub(crate) async fn resolve_composes(
+        &self,
+        me: &mut Prepared,
+        party: &str,
+        handle: &str,
+        require_approval: bool,
+        depth: usize,
+        chain: &mut Vec<String>,
+    ) -> Result<(), AppRunError> {
         if me.composes.iter().all(|(_, targets)| targets.is_empty()) {
-            return Ok(me);
+            return Ok(());
         }
         if depth >= MAX_APP_COMPOSE_DEPTH {
             return Err(AppRunError::InvalidArgs(format!(
@@ -1736,7 +1784,7 @@ impl HostAppAuthor {
         // The caller's own rail is pinned to the caller's own roots BEFORE the first splice,
         // while those roots are still known — a composing step that was a root stops being
         // one the moment it gains the callee's terminal as a parent.
-        pin_run_wide_items_to_roots(&mut me);
+        pin_run_wide_items_to_roots(me);
 
         // Declaration order, then step order: deterministic, so the composed graph (and
         // therefore every `MoteId` in it) does not depend on map iteration.
@@ -1809,9 +1857,9 @@ impl HostAppAuthor {
                 consumers = targets.len(),
                 "composing an app into a run"
             );
-            splice_callee(&mut me, callee, &targets);
+            splice_callee(me, callee, &targets);
         }
-        Ok(me)
+        Ok(())
     }
 }
 
@@ -1831,6 +1879,20 @@ impl AppAuthor for HostAppAuthor {
         let composed = self
             .compose_app(party, handle, args, require_approval, 0, &mut chain)
             .await?;
+        self.author_prepared(party, composed).await
+    }
+}
+
+impl HostAppAuthor {
+    /// Lower + author a fully-resolved [`Prepared`] graph — the tail of
+    /// `author_app`, extracted verbatim (a pure extraction; behavior and bytes
+    /// unchanged). Split out so the WORKFLOW run path shares the one canonical
+    /// lowering (`to_request`) + server-side authoring pipeline.
+    pub(crate) async fn author_prepared(
+        &self,
+        party: &str,
+        composed: Prepared,
+    ) -> Result<BoundRecipe, AppRunError> {
         let Prepared {
             dag,
             context_items,

@@ -476,6 +476,197 @@ async fn delete_cascades_row_first_and_history_survives_for_recreate() {
     assert!(!del2.removed);
 }
 
+/// Poll `GetProjection` until `mote_id` is `Committed` (the terminal-anchor
+/// discipline: assert on THE mote the RunHandle named, never on counts).
+async fn await_mote_committed(
+    c: &mut KxGatewayClient<Channel>,
+    token: &str,
+    instance_id: &[u8],
+    mote_id: &[u8],
+) {
+    for _ in 0..200 {
+        let view = c
+            .get_projection(with_bearer(
+                proto::GetProjectionRequest {
+                    instance_id: instance_id.to_vec(),
+                    at_seq: None,
+                },
+                token,
+            ))
+            .await
+            .unwrap()
+            .into_inner();
+        if let Some(m) = view.motes.iter().find(|m| {
+            m.mote_id == mote_id && m.state == proto::MoteSnapshotState::Committed as i32
+        }) {
+            assert!(
+                m.result_ref.is_some(),
+                "a committed terminal carries a result_ref"
+            );
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the workflow's terminal mote never reached Committed");
+}
+
+#[tokio::test]
+async fn run_workflow_runs_a_pure_chain_to_its_terminal_anchor() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    c.save_workflow(with_bearer(
+        save_req("team/wf/chain", wf_envelope("chain"), ""),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let run = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/chain".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    // The D239 anchor contract: terminal_mote_id populated for EVERY shape;
+    // react_chain_salt only for the exactly-one-agentic-step shape (this pure
+    // chain has none, so the salt is EMPTY by construction).
+    assert_eq!(run.instance_id.len(), 16);
+    assert_eq!(run.terminal_mote_id.len(), 32, "the run anchor is populated");
+    assert!(
+        run.react_chain_salt.is_empty(),
+        "a pure DAG has no agentic chain key"
+    );
+    // The run settles: THE terminal the handle named commits (never a count).
+    await_mote_committed(&mut c, "tok-alice", &run.instance_id, &run.terminal_mote_id).await;
+
+    // A draft is RUNNABLE (lifecycle is advisory, never run enforcement) — the
+    // refusal surface for drafts is trigger REGISTRATION, not the run path.
+    c.save_workflow(with_bearer(
+        save_req("team/wf/draftrun", wf_envelope("draftrun"), "draft"),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let run = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/draftrun".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(run.terminal_mote_id.len(), 32);
+}
+
+#[tokio::test]
+async fn run_workflow_error_shapes_are_honest() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let running = start(common::gateway_config(&dir, false, two_party_tokens()))
+        .await
+        .unwrap();
+    let mut c = client(running.local_addr()).await;
+
+    // Absent handle (and not-owned alike): uniform permission_denied — the
+    // NotAuthorized posture, no existence oracle.
+    let err = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/ghost".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::PermissionDenied);
+
+    // An unserved model route REFUSES at submit — never silently degrades to a
+    // different model (the wish ∩ served-catalog contract).
+    let mut env = kx_app::WorkflowEnvelope::new(
+        "routed",
+        serde_json::json!({
+            "seed": 0,
+            "steps": [ { "kind": "model", "prompt": "hello" } ]
+        }),
+    );
+    env.steering_config.model.model_route = "no-such-model".into();
+    c.save_workflow(with_bearer(
+        save_req("team/wf/routed", env.to_canonical_json().unwrap(), ""),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let err = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/routed".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(
+        err.message().contains("model route"),
+        "names the route problem, got: {}",
+        err.message()
+    );
+
+    // A step composing an UNDECLARED app is refused with the workflow-worded
+    // composition error (the one axis that never degrades gracefully — a
+    // silently-dropped sub-graph would look like the workflow working).
+    let undeclared = kx_app::WorkflowEnvelope::new(
+        "composer",
+        serde_json::json!({
+            "seed": 0,
+            "steps": [ { "kind": "model", "prompt": "use it", "apps": ["team/apps/ghost"] } ]
+        }),
+    );
+    c.save_workflow(with_bearer(
+        save_req(
+            "team/wf/composer",
+            undeclared.to_canonical_json().unwrap(),
+            "",
+        ),
+        "tok-alice",
+    ))
+    .await
+    .unwrap();
+    let err = c
+        .run_workflow(with_bearer(
+            proto::RunWorkflowRequest {
+                handle: "team/wf/composer".into(),
+                args: Vec::new(),
+                require_approval: false,
+            },
+            "tok-alice",
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::FailedPrecondition);
+    assert!(
+        err.message().contains("workflow step composes app"),
+        "the refusal speaks workflow, got: {}",
+        err.message()
+    );
+}
+
 #[tokio::test]
 async fn oversized_envelope_is_refused_at_the_boundary() {
     let dir = tempfile::TempDir::new().unwrap();

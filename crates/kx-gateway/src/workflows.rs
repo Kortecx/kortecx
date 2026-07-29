@@ -22,12 +22,13 @@
 //! not-owned; no cross-party existence oracle.
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use kx_gateway_core::GatewayError as CoreError;
-use kx_gateway_core::{WorkflowCatalog, WorkflowRecord};
+use kx_gateway_core::{AppAuthor, AppRunError, BoundRecipe, WorkflowCatalog, WorkflowRecord};
 use rusqlite::{params, Connection};
 
+use crate::app_run::HostAppAuthor;
 use crate::error::GatewayError;
 
 /// Bump on any table-shape change. Unknown/missing version ⇒ recreate EMPTY
@@ -70,6 +71,69 @@ pub(crate) fn workflow_ref_of(handle: &str, canonical: &[u8]) -> [u8; 16] {
 /// connection: workflow authoring is interactive-rate, never contended.
 pub(crate) struct WorkflowsDb {
     conn: Mutex<Connection>,
+}
+
+/// The workflow-pointer → run resolver behind `RunWorkflow`: a THIN wrapper
+/// over the SAME [`HostAppAuthor`] the App path uses — one preparation /
+/// composition / authoring pipeline, entered with the stored
+/// `kortecx.workflow/v1` envelope's lossless Functional-App view.
+///
+/// Identity discipline: the conversion happens ONLY here, at author time.
+/// `workflow_ref` / `workflow_digest` are computed over the WORKFLOW canonical
+/// bytes at save; nothing downstream of this seam ever derives identity from
+/// the converted form. Wishes-never-grants holds by construction — every
+/// warrant is still minted inside the shared author from the party's own
+/// grants, and the envelope carries no authority.
+///
+/// A workflow's `app`-composing steps resolve SAVED APPS through the exact
+/// D198 seam (cycle guard, depth ceiling, step ceiling) — callees always come
+/// from the App catalog, whatever entity the root graph came from.
+pub(crate) struct HostWorkflowRunner {
+    inner: Arc<HostAppAuthor>,
+    workflows: Arc<WorkflowsDb>,
+}
+
+impl HostWorkflowRunner {
+    pub(crate) fn new(inner: Arc<HostAppAuthor>, workflows: Arc<WorkflowsDb>) -> Self {
+        Self { inner, workflows }
+    }
+}
+
+#[tonic::async_trait]
+impl AppAuthor for HostWorkflowRunner {
+    async fn author_app(
+        &self,
+        party: &str,
+        handle: &str,
+        args: &[u8],
+        require_approval: bool,
+    ) -> Result<BoundRecipe, AppRunError> {
+        // (1) Read the validated stored WORKFLOW envelope (uniform not-found so
+        //     an unauthorized caller learns nothing about what exists).
+        let (_, envelope_bytes) = self
+            .workflows
+            .get(party, handle)
+            .map_err(|e| AppRunError::Internal(format!("workflows.db read: {e}")))?
+            .ok_or(AppRunError::NotAuthorized)?;
+        let wf = kx_app::WorkflowEnvelope::from_json_slice(&envelope_bytes)
+            .map_err(|e| AppRunError::Internal(format!("stored workflow envelope invalid: {e}")))?;
+        // (2) The lossless Functional-App view enters the SHARED pipeline:
+        //     context rail, connection/secret resolution, canonical lowering,
+        //     per-step binds, model-route wish ∩ served catalog, HITL stamping.
+        let env = wf.into_app_envelope();
+        let mut prepared = self
+            .inner
+            .prepare_env(party, env, handle, args, require_approval)
+            .await?;
+        // (3) Composed APP steps resolve through the D198 seam; the chain seeds
+        //     with the workflow handle so a cycle refusal names the whole path.
+        let mut chain = vec![handle.to_string()];
+        self.inner
+            .resolve_composes(&mut prepared, party, handle, require_approval, 0, &mut chain)
+            .await?;
+        // (4) One canonical lowering + server-side authoring (wishes ∩ grants).
+        self.inner.author_prepared(party, prepared).await
+    }
 }
 
 impl WorkflowsDb {
