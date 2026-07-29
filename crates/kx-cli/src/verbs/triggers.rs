@@ -60,8 +60,13 @@ pub struct AddSpec {
     /// The `kx/recipes/...` handle the event Invokes (`""` ⇒ App target).
     pub recipe_handle: String,
     /// T-APP-TRIGGER-TARGET: the saved App handle the event runs via `RunApp` (`""` ⇒
-    /// recipe target). Exactly one of `recipe_handle` / `app_handle` is set.
+    /// recipe target). Exactly one of `recipe_handle` / `app_handle` /
+    /// `workflow_handle` is set.
     pub app_handle: String,
+    /// The saved workflow handle the event runs via `RunWorkflow` (`""` ⇒ not a
+    /// workflow target). The server refuses an un-owned workflow or a draft at
+    /// registration.
+    pub workflow_handle: String,
     /// The proto [`proto::TriggerAuth`] discriminant (default `none`).
     pub auth: i32,
     /// SecretRef NAME of the HMAC/bearer secret (never the value).
@@ -125,6 +130,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<TriggersArgs, Cli
     let mut kind: Option<String> = None;
     let mut recipe: Option<String> = None;
     let mut app: Option<String> = None;
+    let mut workflow: Option<String> = None;
     let mut auth: Option<String> = None;
     let mut secret_ref = String::new();
     let mut schedule = String::new();
@@ -144,6 +150,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<TriggersArgs, Cli
             "--kind" => kind = Some(next_value(&mut args, "--kind")?),
             "--recipe" => recipe = Some(next_value(&mut args, "--recipe")?),
             "--app" => app = Some(next_value(&mut args, "--app")?),
+            "--workflow" => workflow = Some(next_value(&mut args, "--workflow")?),
             "--auth" => auth = Some(next_value(&mut args, "--auth")?),
             "--secret-ref" => secret_ref = next_value(&mut args, "--secret-ref")?,
             // `--schedule` and `--cron` are aliases: interval seconds ("300") OR a
@@ -171,12 +178,17 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<TriggersArgs, Cli
                 CliError::Usage("triggers add requires --kind <webhook|cron|grpc>".into())
             })?;
             let kind = parse_kind(&kind_str)?;
-            // T-APP-TRIGGER-TARGET: EXACTLY ONE of --recipe | --app.
+            // EXACTLY ONE of --recipe | --app | --workflow.
             let recipe_handle = recipe.filter(|s| !s.is_empty()).unwrap_or_default();
             let app_handle = app.filter(|s| !s.is_empty()).unwrap_or_default();
-            if recipe_handle.is_empty() == app_handle.is_empty() {
+            let workflow_handle = workflow.filter(|s| !s.is_empty()).unwrap_or_default();
+            let set = usize::from(!recipe_handle.is_empty())
+                + usize::from(!app_handle.is_empty())
+                + usize::from(!workflow_handle.is_empty());
+            if set != 1 {
                 return Err(CliError::Usage(
-                    "triggers add requires exactly one of --recipe <handle> | --app <handle>"
+                    "triggers add requires exactly one of --recipe <handle> | --app <handle> \
+                     | --workflow <handle>"
                         .into(),
                 ));
             }
@@ -190,6 +202,7 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<TriggersArgs, Cli
                 kind,
                 recipe_handle,
                 app_handle,
+                workflow_handle,
                 auth,
                 auth_secret_ref: secret_ref,
                 schedule_spec: schedule,
@@ -237,15 +250,13 @@ pub async fn execute(args: TriggersArgs) -> Result<(), CliError> {
                 kind: spec.kind,
                 recipe_handle: spec.recipe_handle,
                 app_handle: spec.app_handle,
+                workflow_handle: spec.workflow_handle,
                 auth: spec.auth,
                 auth_secret_ref: spec.auth_secret_ref,
                 schedule_spec: spec.schedule_spec,
                 timezone: spec.timezone,
                 enabled: spec.enabled,
                 require_approval: spec.require_approval,
-                // The workflow target arrives with the trigger tranche's
-                // `--workflow` flag; until then the CLI registers recipe|app only.
-                workflow_handle: String::new(),
             };
             let resp = client
                 .register_trigger(resolved.request(req)?)

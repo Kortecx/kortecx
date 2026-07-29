@@ -1090,19 +1090,33 @@ pub async fn execute(args: AppArgs) -> Result<(), CliError> {
                 // serve shares ONE journal, so its instance_id is CONSTANT across App runs.
                 // An AGENTIC App (skills or `reach = inherit_principal` fold tools onto the
                 // entry step ⇒ a ReAct chain whose settled answer has no statically-known
-                // terminal Mote) MUST scope its wait to THIS run's react chain via
-                // `react_chain_salt` — else `await_any_result` surfaces a stale/foreign
-                // committed Mote (the launch turn, or a prior App's terminal). Mirrors the
-                // `kx chat --tools` scoping. A non-agentic App keeps instance-scoped waiting
-                // (the RunHandle carries no terminal Mote id to scope by).
+                // terminal Mote) scopes its wait to THIS run's react chain via
+                // `react_chain_salt` (mirrors the `kx chat --tools` scoping). Every other
+                // shape waits on THIS run's own terminal — `RunHandle.terminal_mote_id`
+                // is populated for every submission shape (the run-anchor field), so the
+                // first-committed-Mote fallback is only ever an OLD-SERVER degrade, never
+                // the default (on a busy shared journal "first committed" is some other
+                // submission's result wearing this run's return type — the sibling
+                // verbs/agent.rs discipline, adopted here).
                 let outcome = if submitted.react_chain_salt.is_empty() {
-                    wait::await_any_result(
-                        &mut client,
-                        &resolved,
-                        submitted.instance_id,
-                        Duration::from_secs(timeout_secs),
-                    )
-                    .await?
+                    if submitted.terminal_mote_id.is_empty() {
+                        wait::await_any_result(
+                            &mut client,
+                            &resolved,
+                            submitted.instance_id,
+                            Duration::from_secs(timeout_secs),
+                        )
+                        .await?
+                    } else {
+                        wait::await_result(
+                            &mut client,
+                            &resolved,
+                            submitted.instance_id,
+                            submitted.terminal_mote_id,
+                            Duration::from_secs(timeout_secs),
+                        )
+                        .await?
+                    }
                 } else {
                     wait::await_react_result(
                         &mut client,

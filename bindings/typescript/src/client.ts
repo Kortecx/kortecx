@@ -1187,8 +1187,21 @@ export abstract class KxClientBase {
         // returned the salt. Both anchors are named here and asserted in app.test.ts.
         return new Run(this, h.instanceId, h.terminalMoteId, h.recipeFingerprint, h.reactChainSalt);
       }
-      const outcome = await pollAny(this.grpc, h.instanceId, opts.timeoutMs ?? 120_000);
-      return this._finish(outcome);
+      // wait:true settles through the SAME three-way dispatch `Run.wait()` uses
+      // (salt ⇒ the react chain; terminal ⇒ THIS run's own sink; neither ⇒ the
+      // old-server first-committed fallback). The prior code polled the first
+      // committed Mote in the SHARED journal — on a busy serve that is some
+      // OTHER submission's result wearing this run's return type. Constructing
+      // the Run (ctor is POSITIONAL: client, instance, TERMINAL, fingerprint,
+      // SALT) keeps one dispatch, not two.
+      const run = new Run(
+        this,
+        h.instanceId,
+        h.terminalMoteId,
+        h.recipeFingerprint,
+        h.reactChainSalt,
+      );
+      return await run.wait({ timeoutMs: opts.timeoutMs ?? 120_000 });
     } catch (e) {
       if (e instanceof KxUnimplemented) {
         if (hasArgs) {
@@ -1467,6 +1480,133 @@ export abstract class KxClientBase {
   async restoreBranch(handle: string, version: number): Promise<RestoreResult> {
     const resp = await rpc(this.grpc.restoreBranch({ handle, version }));
     return RestoreResult.fromProto(resp);
+  }
+
+  /**
+   * Save (upsert) a durable Workflow — a `kortecx.workflow/v1` envelope bound
+   * to `handle` in the caller's own catalog. The server re-canonicalizes and
+   * derives `workflowRef`; the envelope carries NO authority (RunWorkflow
+   * re-resolves every warrant from the caller's own grants). `lifecycle` is
+   * caller-stated: `""` (active, the default) or `"draft"`.
+   */
+  async saveWorkflow(
+    envelope: unknown,
+    opts: { handle?: string; sourceDigest?: Uint8Array; lifecycle?: "" | "draft" } = {},
+  ): Promise<{ workflowRef: string; handle: string; deduplicated: boolean }> {
+    const name = String((envelope as Record<string, unknown>)?.name ?? "workflow");
+    const handle = opts.handle ?? defaultHandle(name);
+    const envelopeJson = new TextEncoder().encode(canonicalJson(envelope));
+    const resp = await rpc(
+      this.grpc.saveWorkflow({
+        handle,
+        envelopeJson,
+        sourceDigest: opts.sourceDigest ?? new Uint8Array(),
+        lifecycle: opts.lifecycle ?? "",
+      }),
+    );
+    return { workflowRef: encode(resp.workflowRef), handle: resp.handle, deduplicated: resp.deduplicated };
+  }
+
+  /** List the caller's Workflow catalog (deterministic handle order). */
+  async listWorkflows(): Promise<
+    {
+      handle: string;
+      workflowRef: string;
+      name: string;
+      version: string;
+      description: string;
+      tags: string[];
+      stepCount: number;
+      delivers: string;
+      lifecycle: string;
+    }[]
+  > {
+    const resp = await rpc(this.grpc.listWorkflows({ limit: 0, afterHandle: "" }));
+    return resp.workflows.map((w) => ({
+      handle: w.handle,
+      workflowRef: encode(w.workflowRef),
+      name: w.name,
+      version: w.version,
+      description: w.description,
+      tags: w.tags,
+      stepCount: w.stepCount,
+      delivers: w.delivers,
+      lifecycle: w.lifecycle,
+    }));
+  }
+
+  /**
+   * Fetch one Workflow by handle, or `null` if not found / not owned (uniform
+   * — no cross-party existence oracle). `envelope` is the parsed canonical
+   * stored JSON; `workflowDigest` is the handle-free portable identity (hex).
+   */
+  async getWorkflow(handle: string): Promise<{
+    envelope: unknown;
+    workflowDigest: string;
+    lifecycle: string;
+    stepCount: number;
+  } | null> {
+    const resp = await rpc(this.grpc.getWorkflow({ handle }));
+    if (!resp.found) return null;
+    return {
+      envelope: JSON.parse(new TextDecoder().decode(resp.envelopeJson)),
+      workflowDigest: encode(resp.workflowDigest),
+      lifecycle: resp.summary?.lifecycle ?? "",
+      stepCount: resp.summary?.stepCount ?? 0,
+    };
+  }
+
+  /**
+   * Run a stored Workflow SERVER-SIDE (the RunApp posture: server-built
+   * warrants; the envelope carries no authority). `wait: false` returns a
+   * `Run` anchored to THIS submission (`terminalMoteId` + `reactChainSalt`);
+   * `wait: true` settles through the same three-way dispatch `Run.wait()`
+   * uses — correct from day one on this path.
+   */
+  async runWorkflow(
+    handle: string,
+    opts: {
+      wait?: boolean;
+      timeoutMs?: number;
+      args?: Record<string, string>;
+      requireApproval?: boolean;
+    } = {},
+  ): Promise<Run | Result> {
+    const hasArgs = opts.args !== undefined && Object.keys(opts.args).length > 0;
+    const argsBytes = hasArgs
+      ? new TextEncoder().encode(JSON.stringify(opts.args))
+      : new Uint8Array(0);
+    const h = await rpc(
+      this.grpc.runWorkflow({
+        handle,
+        args: argsBytes,
+        requireApproval: opts.requireApproval ?? false,
+      }),
+    );
+    const run = new Run(this, h.instanceId, h.terminalMoteId, h.recipeFingerprint, h.reactChainSalt);
+    if (!opts.wait) return run;
+    return await run.wait({ timeoutMs: opts.timeoutMs ?? 120_000 });
+  }
+
+  /**
+   * Delete a stored Workflow + its dependents (row first, then triggers, then
+   * the definition-branch BINDING — blobs and HISTORY stay, so delete +
+   * restore recreates without losing state). `removed: false` uniformly for
+   * absent / not-owned.
+   */
+  async deleteWorkflow(handle: string): Promise<{
+    removed: boolean;
+    branchUnbound: boolean;
+    lockCleared: boolean;
+    triggersRemoved: number;
+  }> {
+    const resp = await rpc(this.grpc.deleteWorkflow({ handle }));
+    return {
+      removed: resp.removed,
+      branchUnbound: resp.branchUnbound,
+      lockCleared: resp.lockCleared,
+      triggersRemoved: resp.triggersRemoved,
+    };
   }
 
   /**
@@ -2375,6 +2515,7 @@ export abstract class KxClientBase {
         kind: triggerKindToProto(input.kind),
         recipeHandle: input.recipeHandle ?? "",
         appHandle: input.appHandle ?? "",
+        workflowHandle: input.workflowHandle ?? "",
         auth: triggerAuthToProto(input.auth ?? "none"),
         authSecretRef: input.authSecretRef ?? "",
         scheduleSpec: input.scheduleSpec ?? "",
