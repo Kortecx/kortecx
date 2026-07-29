@@ -691,6 +691,34 @@
         "ideal_turns": 2,
         "ideal_tool_calls": 1
       }
+    },
+    {
+      "id": "scaffold-contextual-runs",
+      "family": "scaffold",
+      "description": "Generated-app reach, contextual lane: the app's project is scaffolded LIVE on this serve (the model plans and authors the files), then the app is RUN. The activation code rides ONLY the scaffold goal \u2014 never the run prompt or the stored envelope \u2014 so the answer is underivable unless the generated project actually reached the run's context. A scaffold that fails scores 0 here and is named by the scaffold_completed@attempts sentinel.",
+      "instruction": "Create a mission status reporting app. Its activation code is QUILL-7319 \u2014 record that code prominently in the project's documentation and prompts so every run can report it.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "QUILL-7319"
+        ],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "scaffold-codified-runs",
+      "family": "scaffold",
+      "description": "Generated-app reach, codified lane: the model authors the configuration and code the runtime orchestrates from (workflow.json/tools.json plus project files), then the app is RUN. Same canary discipline as the contextual task; the codified rail additionally carries the authored source and configuration into the run.",
+      "instruction": "Create a changelog digest app. Its release channel token is LATTICE-4482 \u2014 record that token prominently in the project's documentation and configuration so every run can report it.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "LATTICE-4482"
+        ],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      }
     }
   ]
 }

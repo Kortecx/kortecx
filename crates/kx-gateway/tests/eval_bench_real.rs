@@ -33,7 +33,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use kx_gateway::eval_bench::score_live_suite;
+use kx_gateway::eval_bench::{
+    score_live_suite, BENCH_SCAFFOLD_CODIFIED_HANDLE, BENCH_SCAFFOLD_CONTEXTUAL_HANDLE,
+    SCAFFOLD_RUN_PROMPT,
+};
 use kx_gateway::{start, REACT_AUTO_RECIPE_HANDLE, REACT_RECIPE_HANDLE};
 use kx_proto::proto;
 use kx_proto::proto::kx_gateway_client::KxGatewayClient;
@@ -678,6 +681,121 @@ async fn provision_reach_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
     true
 }
 
+/// One `scaffold`-family fixture App: CANARY-FREE by construction (the canary
+/// rides only the task instruction, which becomes the scaffold GOAL). The
+/// pieces that make the family measure anything at all:
+/// - `branch_handle` set to the App's own handle — `project_rail_items` keys off
+///   it, and an envelope without it yields an EMPTY rail: the run could never
+///   see the generated project and every capture would read as model failure;
+/// - ONE model step with the shared canary-free run prompt;
+/// - `reach: inherit_principal` — a TOOL-GRANTED step is what makes the run an
+///   agentic (ReAct) chain the fold can settle on.
+fn scaffold_app_envelope(name: &str, handle: &str, mode: &str) -> Vec<u8> {
+    let mut env = serde_json::json!({
+        "schema": "kortecx.app/v1",
+        "version": "1",
+        "name": name,
+        "branch_handle": handle,
+        "blueprint": { "steps": [ { "kind": "model", "prompt": SCAFFOLD_RUN_PROMPT } ] },
+        "steering_config": {
+            "tools": { "reach": "inherit_principal" },
+            "guards": { "max_turns": 8, "max_tool_calls": 6 }
+        }
+    });
+    if mode == "codified" {
+        env["mode"] = serde_json::json!("codified");
+    }
+    serde_json::to_vec(&env).expect("the scaffold fixture envelope encodes")
+}
+
+/// Provision the `scaffold` family's fixtures and read them back.
+///
+/// MACHINERY (the L-206 posture: absent machinery must refuse the capture, never
+/// let the family 0 out as a model failure): the two scaffold recipes must be
+/// provisioned on this serve. CAPABILITY stays with the tasks themselves — a
+/// scaffold that RUNS and fails scores 0 through the family gate.
+///
+/// Read-backs kill the two fake-green shapes cheaply: the stored envelope must
+/// carry the branch handle (an empty rail measures nothing, forever) and must
+/// NOT carry any task canary (a leaked canary would let the run answer without
+/// the generated project ever reaching it).
+async fn provision_scaffold_fixtures(c: &mut KxGatewayClient<Channel>) -> bool {
+    let corpus = kx_eval::load_bench_v1().expect("bench-v1 corpus loads");
+    let canaries: Vec<String> = corpus
+        .suite
+        .tasks
+        .iter()
+        .filter(|t| t.family == "scaffold")
+        .flat_map(|t| t.expect.answer_must_contain.iter().cloned())
+        .collect();
+
+    let recipes: std::collections::BTreeSet<String> = match c
+        .list_recipes(proto::ListRecipesRequest {})
+        .await
+    {
+        Ok(r) => r.into_inner().recipes.into_iter().map(|x| x.handle).collect(),
+        Err(e) => {
+            eprintln!("eval-bench: scaffold fixtures NOT ready — list_recipes: {e}");
+            return false;
+        }
+    };
+    for needed in [
+        kx_gateway_core::APP_SCAFFOLD_WRITE_RECIPE_HANDLE,
+        kx_gateway_core::APP_MANIFEST_PLAN_RECIPE_HANDLE,
+    ] {
+        if !recipes.contains(needed) {
+            eprintln!("eval-bench: scaffold fixtures NOT ready — recipe {needed:?} unprovisioned");
+            return false;
+        }
+    }
+
+    for (name, handle, mode) in [
+        ("kx-bench-scaffold-contextual", BENCH_SCAFFOLD_CONTEXTUAL_HANDLE, ""),
+        ("kx-bench-scaffold-codified", BENCH_SCAFFOLD_CODIFIED_HANDLE, "codified"),
+    ] {
+        let envelope = scaffold_app_envelope(name, handle, mode);
+        if let Err(e) = c
+            .save_app(proto::SaveAppRequest {
+                handle: handle.to_string(),
+                envelope_json: envelope,
+                source_digest: Vec::new(),
+            })
+            .await
+        {
+            eprintln!("eval-bench: scaffold fixtures NOT ready — save {handle}: {e}");
+            return false;
+        }
+        let stored = match c
+            .get_app(proto::GetAppRequest {
+                handle: handle.to_string(),
+            })
+            .await
+        {
+            Ok(r) => r.into_inner(),
+            Err(e) => {
+                eprintln!("eval-bench: scaffold fixtures NOT ready — get {handle}: {e}");
+                return false;
+            }
+        };
+        assert!(stored.found, "the saved scaffold fixture {handle} reads back");
+        let stored_text = String::from_utf8_lossy(&stored.envelope_json).into_owned();
+        assert!(
+            stored_text.contains(&format!("\"branch_handle\":\"{handle}\"")),
+            "{handle}: the stored envelope must carry its branch handle — an empty \
+             project rail measures nothing, forever"
+        );
+        for canary in &canaries {
+            assert!(
+                !stored_text.contains(canary.as_str()),
+                "{handle}: the stored envelope leaks the canary {canary:?} — the family \
+                 would score without the generated project ever reaching the run"
+            );
+        }
+    }
+    eprintln!("eval-bench: scaffold fixtures ready — 2 canary-free Apps + both scaffold recipes");
+    true
+}
+
 /// Nearest-rank percentile over an ALREADY-SORTED sample (the same rule
 /// `eval_bench::latency_spikes` uses — one rule, so two spikes never disagree on what a
 /// p95 is).
@@ -1224,11 +1342,15 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // model failure.
     let reach_ready = provision_reach_fixtures(&mut c).await;
 
+    // The `scaffold` family's canary-free fixture Apps + the scaffold-recipe
+    // machinery probe (a serve that cannot scaffold must refuse the capture).
+    let scaffold_ready = provision_scaffold_fixtures(&mut c).await;
+
     let corpus = kx_eval::load_bench_v1().expect("bench-v1 corpus loads");
     eprintln!(
         "eval-bench: scoring {} live task(s) on [{env_label}] (capable={capable}, \
          reach_fixtures={reach_ready}, http_tool={http_ready}, flaky_tools={flaky_ready}, \
-         tool_deadline={TOOL_DEADLINE_SECS}s)",
+         scaffold_fixtures={scaffold_ready}, tool_deadline={TOOL_DEADLINE_SECS}s)",
         corpus.suite.tasks.len()
     );
 
@@ -1258,7 +1380,7 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // the `failure` and `menu` families ran against tools that were never registered, and
     // a baseline captured from that would ratchet the whole corpus against a subset while
     // reading as full coverage forever after.
-    let complete = outcome.is_complete() && reach_ready && flaky_ready;
+    let complete = outcome.is_complete() && reach_ready && flaky_ready && scaffold_ready;
     if !complete {
         eprintln!("eval-bench: ⚠ INCOMPLETE COVERAGE — this run does NOT cover the whole corpus");
     }
@@ -1521,6 +1643,45 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     let diagnostic_filter = std::env::var("KX_BENCH_ONLY").is_ok();
     if diagnostic_filter {
         eprintln!("eval-bench: post-suite phases SKIPPED (KX_BENCH_ONLY diagnostic run)");
+    }
+
+    // The scaffold-family attribution (the L-206 sentinel + D247 spikes): the
+    // completion sentinel says BY NAME whether every live scaffold reached done —
+    // a 0 family gate alone cannot distinguish "the scaffold never finished" from
+    // "the run answered wrong" — and the per-task duration/file counts ride as
+    // committed, never-compared spikes. Gate only on an unfiltered run (a
+    // diagnostic subset would misread the denominator); the spikes ride whenever
+    // a scaffold actually drove.
+    if !diagnostic_filter {
+        let scaffold_total = corpus
+            .suite
+            .tasks
+            .iter()
+            .filter(|t| t.family == "scaffold")
+            .count();
+        if scaffold_total > 0 {
+            let done = outcome.scaffolds.iter().filter(|r| r.completed).count();
+            report.gates.push(kx_eval::GateValue {
+                id: "scaffold_completed@attempts".to_string(),
+                per_mille: u32::try_from(done * 1000 / scaffold_total).unwrap_or(0),
+            });
+        }
+    }
+    for r in &outcome.scaffolds {
+        eprintln!(
+            "eval-bench: scaffold {} — completed={} files={} in {}ms",
+            r.task_id, r.completed, r.files_done, r.duration_ms
+        );
+        report.spikes.push(kx_eval::SpikeMetric {
+            id: format!("scaffold_ms@{}", r.task_id),
+            value: r.duration_ms as f64,
+            unit: "ms".to_string(),
+        });
+        report.spikes.push(kx_eval::SpikeMetric {
+            id: format!("scaffold_files@{}", r.task_id),
+            value: r.files_done as f64,
+            unit: "files".to_string(),
+        });
     }
 
     // The RPC latency probes (model-free; the main serve is still up). The docs

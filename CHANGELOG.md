@@ -8,6 +8,30 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Apps: a create journey with a terminal result, drafts you can act on,
+  point-in-time project restore, real hosted isolation, a per-project guidance
+  file — and a benchmark family that scaffolds a REAL app live and runs it.**
+  `/apps` is HOME and `/apps/create` is the whole create journey (compose →
+  live scaffold → an honest terminal dialog; a failed scaffold leaves a DRAFT
+  with resume/discard, durable across restarts via a `scaffold_state` mirror —
+  a failed scaffold used to read as `Writing` forever after a restart, and the
+  App page's "Project ready"/failure states were structurally unreachable).
+  Branches record every non-dedup mutation in an append-only, bounded history
+  (`ListBranchVersions`/`RestoreBranch` — restore APPENDS, survives delete, and
+  the App page grows a History drawer). Hosted apps run their dev server under
+  the platform sandbox where the platform can hold it (macOS `sandbox-exec`,
+  deny-default, workdir-RW + loopback-only; `KX_HOSTED_SANDBOX=on` fail-closed
+  refuses elsewhere), every hosted and MCP stdio child gets a CLEARED
+  environment with a minimal allowlist, and stop kills the whole process
+  GROUP — the vite/next grandchild included. `.kortecx/agents.md` (seeded at
+  scaffold, user-editable) steers every scaffold write and rides every run's
+  context rail first, under a `guidance:` label. `bench-v1` grows the
+  `scaffold` family (34 tasks): a LIVE model-authored scaffold followed by a
+  run whose canary answer is underivable unless the generated project reached
+  the run, with a `scaffold_completed@attempts` sentinel and per-task
+  duration/file Spikes. (kx-proto 0.14.0, kx-gateway, kx-gateway-core, kx-mcp,
+  kx-eval, ui, both SDKs)
+
 - **The benchmark grows its industry legend: two new families, order-sensitive and
   retrieval-side scorers, a reliability gate, and a cost/latency record.** `bench-v1`
   spans twelve families and 32 tasks: an `irrelevance` family (BFCL-style relevance

@@ -192,6 +192,7 @@ mod tests {
                 "menu",
                 "react",
                 "reach",
+                "scaffold",
                 "script",
                 "swarm",
                 "tool"
@@ -214,6 +215,7 @@ mod tests {
             "adversarial",
             "irrelevance",
             "memory",
+            "scaffold",
         ] {
             assert!(
                 c.suite.tasks.iter().any(|t| t.family == f),
@@ -259,6 +261,52 @@ mod tests {
                 t.id
             );
             assert_ne!(t.family, "trials", "the sentinel scope is reserved");
+            assert_ne!(
+                t.family, "attempts",
+                "the scaffold-completion sentinel scope is reserved"
+            );
+        }
+    }
+
+    /// The `scaffold` family's canary discipline: the fact the answer must carry
+    /// rides ONLY the task instruction (which becomes the SCAFFOLD goal — the run
+    /// itself is driven with empty args off the stored, canary-free envelope). A
+    /// canary that also appeared anywhere else in the corpus would let the run
+    /// answer without the generated project ever reaching it.
+    #[test]
+    fn scaffold_canaries_ride_only_their_own_scaffold_goal() {
+        let c = load_bench_v1().expect("bench-v1 suite parses");
+        for t in c.suite.tasks.iter().filter(|t| t.family == "scaffold") {
+            assert!(
+                !t.expect.answer_must_contain.is_empty(),
+                "{}: a scaffold task is canary-scored",
+                t.id
+            );
+            for canary in &t.expect.answer_must_contain {
+                assert!(
+                    t.instruction.contains(canary),
+                    "{}: the canary {canary:?} must ride the scaffold goal",
+                    t.id
+                );
+                for other in &c.suite.tasks {
+                    if other.id != t.id {
+                        assert!(
+                            !other.instruction.contains(canary),
+                            "{}: canary {canary:?} leaks into task {}",
+                            t.id,
+                            other.id
+                        );
+                    }
+                }
+            }
+            // The run consumes the GENERATED project, not tools — the tool scorers
+            // must stay honestly N/A, and the family must never join the
+            // tools-required list above.
+            assert!(
+                t.expect.expected_tools.is_empty(),
+                "{}: no expected tools on a scaffold task",
+                t.id
+            );
         }
     }
 
