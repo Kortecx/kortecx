@@ -144,6 +144,22 @@ pub(crate) fn app_project_rail_bytes() -> usize {
     )
 }
 
+/// Defensive upper bound for branch-history retention (a per-handle FIFO of full
+/// manifest snapshots — 10k × a large `items_json` is real disk).
+const MAX_BRANCH_HISTORY: usize = 10_000;
+
+/// The per-handle branch point-in-time history retention (`KX_BRANCH_HISTORY_MAX`).
+/// Resolved ONCE at serve start and passed into the store's constructor — never a
+/// per-call env read (tests inject the value directly).
+pub(crate) fn branch_history_max() -> usize {
+    parse_cap(
+        std::env::var("KX_BRANCH_HISTORY_MAX").ok().as_deref(),
+        crate::branches::DEFAULT_BRANCH_HISTORY_MAX,
+        1,
+        MAX_BRANCH_HISTORY,
+    )
+}
+
 /// The agentic-edit / scaffold-write input-token budget (`KX_SERVE_EDIT_MAX_INPUT_TOKENS`).
 pub(crate) fn edit_max_input_tokens() -> u32 {
     parse_cap_u32(

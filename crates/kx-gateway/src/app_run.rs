@@ -3749,7 +3749,7 @@ mod tests {
         use kx_content::ContentStore as _;
         let dir = tempfile::tempdir().unwrap();
         let content = std::sync::Arc::new(InMemoryContentStore::default());
-        let db = crate::branches::BranchesDb::open(dir.path(), content.clone(), None).unwrap();
+        let db = crate::branches::BranchesDb::open(dir.path(), content.clone(), None, 256).unwrap();
         std::mem::forget(dir); // keep the sqlite file alive for the test
         db.create("alice@acme", "apps/local/proj", None, "project")
             .unwrap();

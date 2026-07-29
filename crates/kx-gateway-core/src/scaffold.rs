@@ -249,6 +249,22 @@ pub trait AppScaffolder: Send + Sync {
     /// The current scaffold status for a branch (caller-scoped via the host's
     /// branch store).
     fn status(&self, principal: &str, branch_handle: &str) -> Result<ScaffoldStatus, GatewayError>;
+
+    /// True iff a scaffold task IS LIVE on `branch_handle` in THIS process
+    /// (`Planning`/`Writing` in the host's in-memory tracker) — the gate a
+    /// mutation like `RestoreBranch` consults before moving the manifest out
+    /// from under an active write loop. Deliberately NOT derived from
+    /// [`Self::status`]: its manifest fallback reads pending paths as `Writing`
+    /// forever after a restart, which would refuse restores on a branch nothing
+    /// is writing. Default `false` — a scaffolder that does not track liveness
+    /// never blocks a restore.
+    fn is_scaffold_active(
+        &self,
+        _principal: &str,
+        _branch_handle: &str,
+    ) -> Result<bool, GatewayError> {
+        Ok(false)
+    }
 }
 
 /// The outcome of one single-shot terminal-commit check (the host's await loop

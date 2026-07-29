@@ -1085,7 +1085,7 @@ mod tests {
         let workdir = tempfile::tempdir().unwrap();
         let content = Arc::new(InMemoryContentStore::default());
         let branches =
-            Arc::new(BranchesDb::open(dbdir.path(), Arc::clone(&content), None).unwrap());
+            Arc::new(BranchesDb::open(dbdir.path(), Arc::clone(&content), None, 256).unwrap());
         std::mem::forget(dbdir); // keep the sqlite file alive for the test
         branches
             .create("alice", "apps/local/x", None, "test branch")

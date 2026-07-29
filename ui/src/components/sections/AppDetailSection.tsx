@@ -38,6 +38,7 @@ import { DigestChip } from "../DigestChip";
 import { EmptyState } from "../EmptyState";
 import { ErrorNotice } from "../ErrorNotice";
 import { AppChatEditDrawer } from "../apps/AppChatEditDrawer";
+import { AppHistoryDrawer } from "../apps/AppHistoryDrawer";
 import { AppRunDrawer } from "../apps/AppRunDrawer";
 import { AppTriggersStrip } from "../apps/AppTriggersStrip";
 import { ConnectionsRail } from "../apps/ConnectionsRail";
@@ -173,6 +174,7 @@ export function AppDetailSection({
 
   const [runOpen, setRunOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [filesCollapsed, setFilesCollapsed] = useState<boolean>(() => loadFlag(FILES_RAIL_KEY));
   const toggleFiles = () =>
     setFilesCollapsed((v) => {
@@ -240,6 +242,16 @@ export function AppDetailSection({
             onClick={() => setChatOpen(true)}
           >
             <Icon name="chat" size={18} />
+          </button>
+          <button
+            type="button"
+            className="iconbtn"
+            data-testid="app-detail-history"
+            title="Project history — every recorded change, restorable in place"
+            aria-label="Project history"
+            onClick={() => setHistoryOpen(true)}
+          >
+            <Icon name="history" size={18} />
           </button>
           {hosted ? (
             // A hosted App has no blueprint, so RunApp refuses it by construction
@@ -396,6 +408,15 @@ export function AppDetailSection({
           that green-lights a structurally impossible run is worse than no preflight. */}
       {runOpen && !hosted ? (
         <AppRunDrawer handle={handle} onClose={() => setRunOpen(false)} />
+      ) : null}
+      {historyOpen ? (
+        <AppHistoryDrawer
+          handle={handle}
+          locked={locked}
+          scaffolding={scaffolding}
+          hosted={hosted}
+          onClose={() => setHistoryOpen(false)}
+        />
       ) : null}
       {chatOpen ? (
         <AppChatEditDrawer handle={handle} locked={locked} onClose={() => setChatOpen(false)} />

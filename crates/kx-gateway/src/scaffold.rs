@@ -1245,6 +1245,25 @@ impl AppScaffolder for HostScaffolder {
             writing_mote_id,
         })
     }
+
+    fn is_scaffold_active(
+        &self,
+        _principal: &str,
+        branch_handle: &str,
+    ) -> Result<bool, CoreError> {
+        // The LIVE-task probe (the RestoreBranch gate): only the in-process
+        // tracker counts. `status()`'s manifest fallback deliberately does NOT —
+        // after a restart it reads pending paths as `Writing` forever, and a
+        // restore on a branch nothing is writing must not be refused.
+        Ok(self
+            .tracker
+            .lock()
+            .ok()
+            .and_then(|t| t.get(branch_handle).cloned())
+            .is_some_and(|p| {
+                matches!(p.phase, ScaffoldPhase::Planning | ScaffoldPhase::Writing)
+            }))
+    }
 }
 
 #[cfg(test)]

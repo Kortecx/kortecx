@@ -1217,6 +1217,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         &catalog_dir,
         content.clone(),
         fs_list_root.clone(),
+        crate::env_caps::branch_history_max(),
     )?);
     // (3e) T3.7 / POC-1: the Datasets data-plane (RAG) view, behind the opt-in `hnsw`
     //      feature — a durable SQLite store + a rebuilt-on-open HNSW ANN index under
@@ -1834,6 +1835,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_apps_catalog(apps_db.clone())
         .with_skill_catalog(skills_db.clone())
         .with_branches_store(branches_db.clone())
+        .with_branch_history(branches_db.clone())
         .with_lock_store(locks_db)
         .with_tool_admin(Arc::new(crate::tools::HostToolRegistry::new(
             tool_registry.clone(),

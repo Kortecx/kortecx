@@ -76,6 +76,9 @@ export const queryKeys = {
    *  keyed by its content ref — content-addressed ⇒ immutable (cache forever). */
   contextItemBody: (endpoint: string, contentRef: string) =>
     ["kx", endpoint, "context-item-body", contentRef] as const,
+  /** One branch's recorded point-in-time versions (`ListBranchVersions`), newest-first. */
+  branchVersions: (endpoint: string, handle: string) =>
+    ["kx", endpoint, "branch-versions", handle] as const,
   /** This party's D155 branches (`ListBranches`) — content-addressed file branches.
    *  Caller-scoped; `branchRef` is server-derived. */
   branches: (endpoint: string) => ["kx", endpoint, "branches"] as const,

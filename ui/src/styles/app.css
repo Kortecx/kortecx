@@ -4277,6 +4277,11 @@ button.card-grid__title:hover {
 .node-drawer__id {
   font-size: 0.95rem;
 }
+/* A plain-text drawer heading (History etc.) beside the action cluster. */
+.node-drawer__title {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
 /* Right-aligned action cluster in a drawer head (Open / Open-in-new-tab / Close). */
 .node-drawer__head-actions {
   display: flex;
@@ -5820,4 +5825,74 @@ button.card-grid__title:hover {
 }
 .builder--embedded .builder-canvas {
   height: 380px;
+}
+
+/* The App project-history drawer: a version list (newest-first), each row a
+   recorded point-in-time with its cause chip, timestamp, size and restore
+   affordance. Token-only ⇒ both themes + AA by construction. */
+.app-history__list {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app-history__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "meta action" "detail action";
+  gap: 0.1rem 0.6rem;
+  align-items: center;
+  padding: 0.55rem 0.1rem;
+  border-bottom: 1px solid var(--line);
+}
+.app-history__meta {
+  grid-area: meta;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.app-history__cause {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--text-2);
+}
+.app-history__cause--restore {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.app-history__when {
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+.app-history__detail {
+  grid-area: detail;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+.app-history__delta {
+  color: var(--text-3);
+}
+.app-history__ref {
+  font-size: 0.72rem;
+  color: var(--text-3);
+}
+.app-history__restore,
+.app-history__current {
+  grid-area: action;
+}
+.app-history__current {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
 }

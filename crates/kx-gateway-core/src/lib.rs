@@ -115,7 +115,8 @@ pub use apps_view::{
     APP_DIGEST_DOMAIN, MAX_APP_ENVELOPE_BYTES,
 };
 pub use branches_view::{
-    BranchItemRecord, BranchManifest, BranchStore, MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
+    BranchHistory, BranchItemRecord, BranchManifest, BranchStore, BranchVersionRecord,
+    MAX_BRANCH_DESCRIPTION_BYTES, MAX_SNAPSHOT_PATHS,
 };
 pub use bundles_view::{
     BundleItemRecord, BundleManifest, BundleStore, MAX_BUNDLE_DESCRIPTION_BYTES,
