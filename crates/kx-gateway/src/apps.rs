@@ -50,10 +50,44 @@ CREATE TABLE IF NOT EXISTS apps (
     source_digest BLOB,            -- OPTIONAL 32B lineage hint (import/clone source app_digest); NULL = authored-here. Off-identity/off-journal/off-digest.
     kind          TEXT NOT NULL DEFAULT '', -- D213 lane ('functional'/'experience'); '' = functional (old row). Display/routing only, off-identity.
     mode          TEXT NOT NULL DEFAULT '', -- authoring mode ('contextual'/'codified'); '' = contextual (old row). Display/routing only, off-identity.
+    lifecycle     TEXT NOT NULL DEFAULT '', -- catalog lifecycle ('' active / 'draft' scaffold-incomplete); written by the scaffold path, PRESERVED by save. Display/routing only, off-identity.
     PRIMARY KEY (principal, handle)
+);
+CREATE TABLE IF NOT EXISTS scaffold_state (
+    principal     TEXT NOT NULL,   -- server-resolved caller party (scope)
+    branch_handle TEXT NOT NULL,   -- the project branch the scaffold writes
+    phase         TEXT NOT NULL,   -- 'planning'|'writing'|'done'|'failed' (advisory mirror of the tracker)
+    detail        TEXT NOT NULL,   -- the failure/progress detail worth surviving a restart
+    updated_at    INTEGER NOT NULL,-- unix ms; advisory
+    PRIMARY KEY (principal, branch_handle)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
 ";
+
+/// The durable mirror of the scaffolder's in-memory phase tracker (a
+/// `scaffold_state` row in `apps.db`). Purely advisory — never journaled, never
+/// identity-bearing; its whole job is that a FAILED scaffold still reads
+/// `failed` (with its reason) after a serve restart instead of `Writing`
+/// forever, and that a `planning`/`writing` row with NO live task reads as
+/// interrupted. Host-local by design (both impl and consumer live in this
+/// crate); rebuild-to-empty costs only the badge, never the project.
+pub(crate) trait ScaffoldStateStore: Send + Sync {
+    /// Upsert `(principal, branch_handle)`'s durable phase + detail.
+    fn record_scaffold_state(
+        &self,
+        principal: &str,
+        branch_handle: &str,
+        phase: &str,
+        detail: &str,
+    ) -> Result<(), CoreError>;
+
+    /// Read the durable `(phase, detail)`, if any.
+    fn read_scaffold_state(
+        &self,
+        principal: &str,
+        branch_handle: &str,
+    ) -> Result<Option<(String, String)>, CoreError>;
+}
 
 /// `app_ref = blake3("kx-app\0" ‖ handle ‖ 0 ‖ canonical_envelope)[..16]`.
 fn app_ref_of(handle: &str, canonical: &[u8]) -> [u8; 16] {
@@ -97,8 +131,12 @@ impl AppsDb {
             Ok(None) | Err(_) => true,
         };
         if fresh_or_stale {
-            conn.execute_batch("DROP TABLE IF EXISTS apps; DROP TABLE IF EXISTS meta;")
-                .map_err(|e| GatewayError::Catalog(format!("apps rebuild: {e}")))?;
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS apps; \
+                 DROP TABLE IF EXISTS scaffold_state; \
+                 DROP TABLE IF EXISTS meta;",
+            )
+            .map_err(|e| GatewayError::Catalog(format!("apps rebuild: {e}")))?;
         }
         conn.execute_batch(SCHEMA)
             .map_err(|e| GatewayError::Catalog(format!("apps schema: {e}")))?;
@@ -121,6 +159,10 @@ impl AppsDb {
             (
                 "delivers",
                 "ALTER TABLE apps ADD COLUMN delivers TEXT NOT NULL DEFAULT ''",
+            ),
+            (
+                "lifecycle",
+                "ALTER TABLE apps ADD COLUMN lifecycle TEXT NOT NULL DEFAULT ''",
             ),
         ] {
             Self::ensure_column(&conn, column, decl)
@@ -204,6 +246,7 @@ impl AppsDb {
             source_digest: r.get("source_digest")?,
             kind: r.get("kind")?,
             mode: r.get("mode")?,
+            lifecycle: r.get("lifecycle")?,
         })
     }
 }
@@ -231,12 +274,16 @@ impl AppCatalog for AppsDb {
             .conn
             .lock()
             .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
-        // Dedup signal: an identical canonical envelope already bound to (principal, handle).
-        let existing: Option<Vec<u8>> = conn
+        // Dedup signal + the stored lifecycle: `INSERT OR REPLACE` writes exactly
+        // what it is passed, so a plain re-save (rename, codified fold-back)
+        // would silently CLEAR a draft badge unless the stored value is read
+        // back and re-written — the `source_digest` clobber lesson, applied
+        // preemptively. Lifecycle is the scaffold path's to change, never save's.
+        let existing: Option<(Vec<u8>, String)> = conn
             .query_row(
-                "SELECT app_ref FROM apps WHERE principal = ?1 AND handle = ?2",
+                "SELECT app_ref, lifecycle FROM apps WHERE principal = ?1 AND handle = ?2",
                 params![principal, handle],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .map(Some)
             .or_else(|e| match e {
@@ -244,14 +291,15 @@ impl AppCatalog for AppsDb {
                 other => Err(other),
             })
             .map_err(|e| CoreError::Internal(format!("apps dedup probe: {e}")))?;
-        let deduplicated = existing.as_deref() == Some(&app_ref[..]);
+        let deduplicated = existing.as_ref().map(|(r, _)| r.as_slice()) == Some(&app_ref[..]);
+        let lifecycle = existing.map(|(_, l)| l).unwrap_or_default();
         let source_digest = source_digest.map(<[u8]>::to_vec);
         let kind = summary.kind.as_str().to_string();
         let mode = summary.mode.as_str().to_string();
         conn.execute(
             "INSERT OR REPLACE INTO apps(principal, handle, app_ref, name, version, description, \
-             delivers, tags_json, step_count, envelope_json, source_digest, kind, mode) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             delivers, tags_json, step_count, envelope_json, source_digest, kind, mode, lifecycle) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 principal,
                 handle,
@@ -266,6 +314,7 @@ impl AppCatalog for AppsDb {
                 source_digest,
                 kind.clone(),
                 mode.clone(),
+                lifecycle.clone(),
             ],
         )
         .map_err(|e| CoreError::Internal(format!("apps upsert: {e}")))?;
@@ -282,6 +331,7 @@ impl AppCatalog for AppsDb {
                 source_digest,
                 kind,
                 mode,
+                lifecycle,
             },
             deduplicated,
         ))
@@ -301,7 +351,7 @@ impl AppCatalog for AppsDb {
         let mut stmt = conn
             .prepare(
                 "SELECT handle, app_ref, name, version, description, delivers, tags_json, \
-                 step_count, source_digest, kind, mode \
+                 step_count, source_digest, kind, mode, lifecycle \
                  FROM apps WHERE principal = ?1 AND handle > ?2 ORDER BY handle ASC LIMIT ?3",
             )
             .map_err(|e| CoreError::Internal(format!("apps list prepare: {e}")))?;
@@ -329,7 +379,7 @@ impl AppCatalog for AppsDb {
             .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
         conn.query_row(
             "SELECT handle, app_ref, name, version, description, delivers, tags_json, step_count, \
-             envelope_json, source_digest, kind, mode \
+             envelope_json, source_digest, kind, mode, lifecycle \
              FROM apps WHERE principal = ?1 AND handle = ?2",
             params![principal, handle],
             |r| {
@@ -360,6 +410,74 @@ impl AppCatalog for AppsDb {
             )
             .map_err(|e| CoreError::Internal(format!("apps delete: {e}")))?;
         Ok(n > 0)
+    }
+
+    fn set_lifecycle(
+        &self,
+        principal: &str,
+        handle: &str,
+        lifecycle: &str,
+    ) -> Result<bool, CoreError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
+        // A plain column UPDATE — never touches the envelope/app_ref, so it can
+        // never move identity. Caller-scoped in SQL (the `delete` posture).
+        let n = conn
+            .execute(
+                "UPDATE apps SET lifecycle = ?3 WHERE principal = ?1 AND handle = ?2",
+                params![principal, handle, lifecycle],
+            )
+            .map_err(|e| CoreError::Internal(format!("apps lifecycle: {e}")))?;
+        Ok(n > 0)
+    }
+}
+
+impl ScaffoldStateStore for AppsDb {
+    fn record_scaffold_state(
+        &self,
+        principal: &str,
+        branch_handle: &str,
+        phase: &str,
+        detail: &str,
+    ) -> Result<(), CoreError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+            .unwrap_or(0);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO scaffold_state(principal, branch_handle, phase, detail, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![principal, branch_handle, phase, detail, now],
+        )
+        .map_err(|e| CoreError::Internal(format!("scaffold state record: {e}")))?;
+        Ok(())
+    }
+
+    fn read_scaffold_state(
+        &self,
+        principal: &str,
+        branch_handle: &str,
+    ) -> Result<Option<(String, String)>, CoreError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CoreError::Internal("apps lock poisoned".into()))?;
+        conn.query_row(
+            "SELECT phase, detail FROM scaffold_state WHERE principal = ?1 AND branch_handle = ?2",
+            params![principal, branch_handle],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .map(Some)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(CoreError::Internal(format!("scaffold state read: {other}"))),
+        })
     }
 }
 
@@ -526,6 +644,84 @@ mod tests {
             .unwrap();
         let (got, _) = db.get("alice", "team/apps/new").unwrap().unwrap();
         assert_eq!(got.source_digest.as_deref(), Some(&sd[..]));
+        // Legacy rows read the migrated lifecycle as "" (active) — no false drafts.
+        let (apps, _) = db.list("alice", 100, None).unwrap();
+        assert!(apps.iter().all(|a| a.lifecycle.is_empty()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- draft lifecycle + durable scaffold state --------------------------
+
+    /// THE defaulted-trait-method guard (the DeleteApp lesson): the REAL store
+    /// must override `set_lifecycle` — this test is against `AppsDb`, never a
+    /// fake, and would fail with the default's `Ok(false)`.
+    #[test]
+    fn lifecycle_set_and_clear_round_trip_on_the_real_store() {
+        let dir = tmp_dir();
+        let db = AppsDb::open(&dir).unwrap();
+        db.save("alice", "team/apps/a", &envelope("a"), None).unwrap();
+        assert!(db.set_lifecycle("alice", "team/apps/a", "draft").unwrap());
+        let (rec, _) = db.get("alice", "team/apps/a").unwrap().unwrap();
+        assert_eq!(rec.lifecycle, "draft");
+        assert!(db.set_lifecycle("alice", "team/apps/a", "").unwrap());
+        let (rec, _) = db.get("alice", "team/apps/a").unwrap().unwrap();
+        assert_eq!(rec.lifecycle, "");
+        // Absent / not-owned: uniform false (no oracle), nothing written.
+        assert!(!db.set_lifecycle("alice", "team/apps/missing", "draft").unwrap());
+        assert!(!db.set_lifecycle("bob", "team/apps/a", "draft").unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `INSERT OR REPLACE` writes exactly what it is passed — a plain re-save
+    /// (rename, codified fold-back) must PRESERVE the stored lifecycle, or every
+    /// mid-scaffold envelope write silently clears the draft badge.
+    #[test]
+    fn a_plain_resave_preserves_lifecycle() {
+        let dir = tmp_dir();
+        let db = AppsDb::open(&dir).unwrap();
+        db.save("alice", "team/apps/a", &envelope("a"), None).unwrap();
+        db.set_lifecycle("alice", "team/apps/a", "draft").unwrap();
+        // Re-save with a DIFFERENT envelope (a rename) — the draft must survive.
+        let (rec, dedup) = db
+            .save("alice", "team/apps/a", &envelope("a-renamed"), None)
+            .unwrap();
+        assert!(!dedup);
+        assert_eq!(rec.lifecycle, "draft", "save must never clear a draft");
+        let (stored, _) = db.get("alice", "team/apps/a").unwrap().unwrap();
+        assert_eq!(stored.lifecycle, "draft");
+        // A brand-new save starts active.
+        let (fresh, _) = db.save("alice", "team/apps/b", &envelope("b"), None).unwrap();
+        assert_eq!(fresh.lifecycle, "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scaffold_state_survives_a_reopen_with_its_terminal_detail() {
+        let dir = tmp_dir();
+        {
+            let db = AppsDb::open(&dir).unwrap();
+            db.record_scaffold_state("alice", "team/apps/a", "failed", "step timed out")
+                .unwrap();
+        }
+        // The deterministic form of "a failed scaffold reads failed after restart".
+        let db = AppsDb::open(&dir).unwrap();
+        let (phase, detail) = db
+            .read_scaffold_state("alice", "team/apps/a")
+            .unwrap()
+            .expect("the row survives the reopen");
+        assert_eq!(phase, "failed");
+        assert_eq!(detail, "step timed out");
+        // Caller-scoped + absent: uniform None.
+        assert!(db.read_scaffold_state("bob", "team/apps/a").unwrap().is_none());
+        assert!(db.read_scaffold_state("alice", "team/apps/x").unwrap().is_none());
+        // Upsert semantics: the latest write wins.
+        db.record_scaffold_state("alice", "team/apps/a", "done", "")
+            .unwrap();
+        let (phase, _) = db
+            .read_scaffold_state("alice", "team/apps/a")
+            .unwrap()
+            .unwrap();
+        assert_eq!(phase, "done");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -112,7 +112,7 @@ pub use apps_manifest::{AppCapability, AppManifest, AppManifestView};
 pub use apps_run::{AppAuthor, AppRunError};
 pub use apps_view::{
     app_dataset_scoped_name, app_digest_of, AppCatalog, AppRecord, APP_DATASET_SCOPE_DOMAIN,
-    APP_DIGEST_DOMAIN, MAX_APP_ENVELOPE_BYTES,
+    APP_DIGEST_DOMAIN, APP_LIFECYCLE_DRAFT, MAX_APP_ENVELOPE_BYTES,
 };
 pub use branches_view::{
     BranchHistory, BranchItemRecord, BranchManifest, BranchStore, BranchVersionRecord,

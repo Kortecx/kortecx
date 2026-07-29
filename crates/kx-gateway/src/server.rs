@@ -1753,6 +1753,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
             // The CODIFIED lane folds the configuration it authored back onto the App, so
             // the orchestrator needs the same catalog the service is wired with.
             Some(apps_db.clone() as Arc<dyn kx_gateway_core::AppCatalog>),
+            // The durable phase mirror (a scaffold_state row in apps.db): a failed
+            // scaffold keeps its reason across a serve restart, and an interrupted
+            // one reads as interrupted instead of Writing forever.
+            Some(apps_db.clone() as Arc<dyn crate::apps::ScaffoldStateStore>),
         )))
     } else {
         None

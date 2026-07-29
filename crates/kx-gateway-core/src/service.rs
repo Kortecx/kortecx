@@ -1890,8 +1890,8 @@ fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
         // another App can pick this one on purpose. Empty ⇒ an App authored before the field.
         delivers: r.delivers,
         // Catalog lifecycle ("" active / "draft" scaffold-incomplete) — advisory,
-        // display/routing only. Populated once the catalog carries the column.
-        lifecycle: String::new(),
+        // display/routing only. ONE ListApps paints every badge (no N+1 status reads).
+        lifecycle: r.lifecycle,
     }
 }
 
@@ -5204,12 +5204,17 @@ impl KxGateway for GatewayService {
         } else {
             req.instruction.clone()
         };
+        // Mark the App a DRAFT before the background loop spawns: a scaffold that
+        // fails to LAUNCH still leaves an honest draft, and the host clears the
+        // flag when the scaffold reaches Done. Advisory-only (display/routing);
+        // a store that predates the column degrades to no badge (`Ok(false)`).
+        apps.set_lifecycle(&principal, &req.handle, crate::apps_view::APP_LIFECYCLE_DRAFT)?;
         // D213: a hosted (experience) app scaffolds its framework template's authored
         // files (page + README) into the branch — the static config is template-owned
         // (written to disk by the supervisor). The host parses the framework from the
         // opaque envelope bytes (gateway-core keeps app bytes opaque).
         let resumed = if record.kind == "experience" {
-            scaffolder.start_hosted(&principal, &branch_handle, &envelope, &goal)?
+            scaffolder.start_hosted(&principal, &req.handle, &branch_handle, &envelope, &goal)?
         } else {
             // The host driver creates/resumes the branch + spawns the background loop and
             // returns immediately (progress via GetScaffoldStatus + GetBranch). The envelope

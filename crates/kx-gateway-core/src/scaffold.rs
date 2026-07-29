@@ -232,11 +232,15 @@ pub trait AppScaffolder: Send + Sync {
     /// `branch_handle` toward `goal`. `envelope_json` is the app's opaque canonical
     /// envelope (the host parses the framework from it — gateway-core keeps app bytes
     /// opaque). The static config files are template-owned (written to disk by the
-    /// hosted-app supervisor), so only the authored files are scaffolded here. Default
-    /// impl: `Unsupported` (a scaffolder that cannot author a model file).
+    /// hosted-app supervisor), so only the authored files are scaffolded here.
+    /// `app_handle` mirrors [`AppScaffolder::start`]: the host clears the App's
+    /// draft lifecycle at Done, and the branch handle is only conventionally the
+    /// same. Default impl: `Unsupported` (a scaffolder that cannot author a model
+    /// file).
     fn start_hosted(
         &self,
         _principal: &str,
+        _app_handle: &str,
         _branch_handle: &str,
         _envelope_json: &[u8],
         _goal: &str,
