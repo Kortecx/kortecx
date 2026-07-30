@@ -2,10 +2,10 @@
 //! the [`WorkflowCatalog`] seam — `SaveWorkflow` / `ListWorkflows` /
 //! `GetWorkflow` / `DeleteWorkflow` (+ the restore-resync `set_lifecycle`).
 //!
-//! ## Rebuildable-to-EMPTY (the `apps.db` posture, verbatim)
+//! ## Authored work — preserved across an upgrade, never wiped by one
 //! A workflow envelope references content-store blobs + registry ids; it is NOT
 //! derivable from the journal. On corruption or a schema-version drift this
-//! ledger recreates EMPTY — the only loss is the catalog index, and re-saving
+//! ledger is renamed aside and re-imported (a corrupt FILE still recreates empty), and re-saving
 //! the same envelope restores the SAME `workflow_ref` (content-addressed).
 //! Never journaled, never a `MoteId` input, never a digest input.
 //!
@@ -36,9 +36,9 @@ use rusqlite::{params, Connection};
 use crate::app_run::HostAppAuthor;
 use crate::error::GatewayError;
 
-/// Bump on any table-shape change. Unknown/missing version ⇒ recreate EMPTY
-/// (workflows are not journal-derivable, so there is no rebuild — re-save).
-/// Additive columns NEVER bump this — they go through [`WorkflowsDb::ensure_column`].
+/// Bump on any table-shape change. A corrupt/foreign FILE recreates empty; a version
+/// BUMP renames the catalog aside and re-imports what still fits, and a DOWNGRADE is
+/// refused — this store holds authored work (`crate::sidecar`).
 const SCHEMA_VERSION: i64 = 1;
 
 const SCHEMA: &str = "
@@ -161,48 +161,27 @@ impl AppAuthor for HostWorkflowRunner {
 }
 
 impl WorkflowsDb {
-    /// Open (or create) `workflows.db` under `dir`. A corrupt/foreign file or a
-    /// `schema_version` drift recreates the catalog EMPTY (module doc).
+    /// Open (or create) `workflows.db` under `dir`. A corrupt/foreign file recreates
+    /// the catalog empty; a schema bump PRESERVES it — renamed aside and re-imported,
+    /// and a downgrade is refused (module doc).
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
     pub(crate) fn open(dir: &Path) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("workflows dir: {e}")))?;
-        let db_path = dir.join("workflows.db");
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("workflows.db-wal"));
-            let _ = std::fs::remove_file(dir.join("workflows.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("workflows reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch("DROP TABLE IF EXISTS workflows; DROP TABLE IF EXISTS meta;")
-                .map_err(|e| GatewayError::Catalog(format!("workflows rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("workflows schema: {e}")))?;
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("workflows meta init: {e}")))?;
+        // A saved workflow is authored work — a schema bump renames the catalog aside
+        // and re-imports what still fits rather than dropping it, and a DOWNGRADE is
+        // refused outright. See `crate::sidecar` for the policy and why it is one place.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "workflows.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["workflows", "meta"],
+            crate::sidecar::Durability::UserAuthored,
+        )?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
-    }
-
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        Ok(conn)
     }
 
     /// Idempotently add one additive column, given its `ALTER TABLE` declaration.
@@ -224,19 +203,6 @@ impl WorkflowsDb {
             conn.execute(decl, [])?;
         }
         Ok(())
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })
     }
 
     /// Build a [`WorkflowRecord`] from a row, reading every column BY NAME
@@ -622,8 +588,50 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// **A saved workflow survives a schema bump.**
+    ///
+    /// This test used to be `schema_drift_rebuilds_empty` and asserted the opposite —
+    /// that a version mismatch dropped every stored workflow. That behaviour is why the
+    /// schema version was frozen at 1 and every column addition had to route around it:
+    /// bumping it would have deleted authored work on the next boot. Now the catalog is
+    /// renamed aside and its rows are re-imported by column intersection.
     #[test]
-    fn schema_drift_rebuilds_empty() {
+    fn an_upgrade_preserves_saved_workflows_and_keeps_a_backup() {
+        let dir = tmp_dir();
+        {
+            let db = WorkflowsDb::open(&dir).unwrap();
+            db.save("alice", "team/wf/x", &envelope("x"), None, "")
+                .unwrap();
+        }
+        // Pretend the file on disk was written by an OLDER binary.
+        {
+            let conn = Connection::open(dir.join("workflows.db")).unwrap();
+            conn.execute("UPDATE meta SET value = 0 WHERE key = 'schema_version'", [])
+                .unwrap();
+        }
+
+        let db = WorkflowsDb::open(&dir).unwrap();
+        let (wfs, _) = db.list("alice", 100, None).unwrap();
+        assert_eq!(
+            wfs.len(),
+            1,
+            "an upgrade must PRESERVE authored workflows, not drop them"
+        );
+        assert_eq!(wfs[0].handle, "team/wf/x");
+        assert!(
+            dir.join("workflows.db.v0.bak").exists(),
+            "the pre-upgrade catalog is preserved on disk, not deleted"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A DOWNGRADE refuses rather than wiping.
+    ///
+    /// An older binary cannot know what a newer schema meant, so there is no honest
+    /// migration — and silently emptying the catalog to make the boot succeed is the
+    /// failure mode this whole policy exists to remove.
+    #[test]
+    fn a_downgrade_is_refused_and_destroys_nothing() {
         let dir = tmp_dir();
         {
             let db = WorkflowsDb::open(&dir).unwrap();
@@ -638,9 +646,53 @@ mod tests {
             )
             .unwrap();
         }
+
+        let err = WorkflowsDb::open(&dir)
+            .err()
+            .expect("a catalog written by a NEWER binary must be refused, not emptied");
+        assert!(
+            err.to_string().contains("NEWER"),
+            "the refusal names the cause: {err}"
+        );
+
+        // Nothing was moved aside and nothing was dropped — the row is still there for
+        // the correct binary to read.
+        assert!(!dir.join("workflows.db.v999.bak").exists());
+        let conn = Connection::open(dir.join("workflows.db")).unwrap();
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM workflows", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1, "the refused open left the authored row intact");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The import moves what the two schemas share, and is not fooled into moving the
+    /// old `schema_version` back (which would make every subsequent boot re-upgrade).
+    #[test]
+    fn an_upgrade_import_keeps_the_new_schema_version() {
+        let dir = tmp_dir();
+        {
+            let db = WorkflowsDb::open(&dir).unwrap();
+            db.save("alice", "team/wf/x", &envelope("x"), None, "")
+                .unwrap();
+            let conn = db.conn.lock().unwrap();
+            conn.execute("UPDATE meta SET value = 0 WHERE key = 'schema_version'", [])
+                .unwrap();
+        }
         let db = WorkflowsDb::open(&dir).unwrap();
-        let (wfs, _) = db.list("alice", 100, None).unwrap();
-        assert!(wfs.is_empty(), "schema drift must rebuild empty");
+        let conn = db.conn.lock().unwrap();
+        let v: i64 = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            v, SCHEMA_VERSION,
+            "the upgraded catalog records the CURRENT version"
+        );
+        drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

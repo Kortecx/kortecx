@@ -100,6 +100,40 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Changed
 
+- **Upgrading no longer costs you your work: a schema bump preserves what you authored,
+  a downgrade refuses instead of wiping, and `kx migrate` finally exists.** Every SQLite
+  sidecar under `--catalog-dir` used to end its open the same way — on a `schema_version`
+  mismatch, `DROP TABLE` and start empty. For derived caches that is free; for the stores
+  holding **apps, workflows, branches (and their restore history), triggers, skills and
+  secret names** it meant a version bump silently deleted authored work on the next boot.
+  It was not hypothetical: `apps.db` had its schema version frozen at 1 with a comment
+  explaining that bumping it *"would drop saved apps"*, so the destructive open was being
+  routed around rather than fixed — which froze the schema too. One policy now decides,
+  in one place: a store holding authored work is **renamed aside** to
+  `<name>.db.v<N>.bak` and its rows re-imported by column intersection, a **downgrade is
+  REFUSED** (an older binary cannot know what a newer schema meant, and emptying the file
+  to make the boot succeed is not an acceptable answer), and a derived cache still
+  rebuilds empty exactly as before. A corrupt or foreign file still recreates empty in
+  both cases — there is nothing readable to preserve.
+
+  **`kx migrate --journal <path>`** brings a journal written by an older kortecx up to
+  the current schema. `migrate_and_verify` had shipped since M2.x-E and was reachable
+  only from a crate that already depended on the journal, so in practice an upgrade meant
+  `kx serve` refusing to start with a bare schema-version mismatch and no remedy named —
+  and the obvious workaround for a dead-end error is to delete the journal, which
+  destroys the run. The rewrite is verified rather than trusted: both journals are folded
+  and the migration is refused unless their committed-facts digests are byte-identical,
+  so an upgrade can never quietly change what your runs produced. The original is
+  preserved beside the migrated one; `--out` writes elsewhere and leaves the source
+  untouched; `--dry-run` reports and writes nothing. The boot refusal now names the
+  remedy, and names it only when it applies — a journal from a *newer* binary is told
+  there is no downgrade rather than sent to a migration that cannot help it.
+
+  Two guards keep this from decaying: a source-level assertion that every sidecar routes
+  through the one policy and that the six authored-work stores are classified as such
+  (reclassifying one is now a visible edit, not a silent default), and a CI check that a
+  PR touching a `*_SCHEMA_VERSION` constant also touches a migration site and this file.
+
 - **A recipe's identity now covers the authority it runs under, so changing a served
   model, a granted tool set or a decode budget no longer fails the serve boot of an
   existing install.** A recipe body is stored under what it compiles to

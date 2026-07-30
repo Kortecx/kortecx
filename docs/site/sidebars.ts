@@ -56,6 +56,7 @@ const sidebars: SidebarsConfig = {
         "observability",
         "evaluation",
         "settings",
+        "upgrading",
       ],
     },
     {

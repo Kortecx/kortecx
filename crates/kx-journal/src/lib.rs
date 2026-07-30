@@ -112,7 +112,9 @@ pub use crate::in_memory::InMemoryJournal;
 pub use crate::migration::{
     migrate_entry, MIN_SUPPORTED_SCHEMA_VERSION, V5_ABSENT_IDEMPOTENCY_CLASS,
 };
-pub use crate::sqlite::{migrate_to, MigrationReport, ReplayJournal, SqliteJournal};
+pub use crate::sqlite::{
+    journal_schema_version, migrate_to, MigrationReport, ReplayJournal, SqliteJournal,
+};
 pub use crate::watch::{JournalSubscription, JournalWatch, JournalWatchClosed, WatchableJournal};
 
 mod entry;
@@ -130,13 +132,47 @@ use kx_mote::{MoteDefHash, MoteId};
 // JournalError
 // ---------------------------------------------------------------------------
 
+/// The actionable half of a [`JournalError::SchemaVersionMismatch`] message.
+///
+/// Three genuinely different situations hide behind one mismatch, and they have three
+/// different remedies — telling an operator "mismatch" without saying which one they are
+/// in leaves them to guess, and one of the guesses (delete the journal) loses the run.
+fn migration_hint(found: u16, expected: u16) -> String {
+    if found > expected {
+        return format!(
+            " — this journal was written by a NEWER kortecx. There is no downgrade: an \
+             older binary cannot know what schema v{found} meant. Run the newer version."
+        );
+    }
+    if found < crate::migration::MIN_SUPPORTED_SCHEMA_VERSION {
+        return format!(
+            " — schema v{found} is older than the oldest version this binary can migrate \
+             (v{}). Upgrade in steps through an intermediate release.",
+            crate::migration::MIN_SUPPORTED_SCHEMA_VERSION
+        );
+    }
+    " — run `kx migrate --journal <path>` to upgrade it (the rewrite is digest-verified \
+     and the original is preserved)"
+        .to_string()
+}
+
 /// Errors raised by [`Journal`] operations.
 #[derive(Debug, thiserror::Error)]
 pub enum JournalError {
     /// The journal file's `schema_version` does not match this binary's. Refused
     /// loudly per `journal-entry.md` §10 — the reader does not attempt to decode
     /// entries with a mismatched schema.
-    #[error("schema version mismatch: file has {found}, this binary expects {expected}")]
+    ///
+    /// The message NAMES THE REMEDY. This error is what an operator meets when they
+    /// upgrade kortecx and `kx serve` will not start, and for a long time it said only
+    /// what was wrong: the supported migration existed but was a library function with
+    /// no user-reachable surface, so "schema version mismatch" was a dead end rather
+    /// than an instruction. `kx migrate` is that surface; a refusal that does not point
+    /// at it is only half a refusal.
+    #[error(
+        "schema version mismatch: file has {found}, this binary expects {expected}{}",
+        migration_hint(*found, *expected)
+    )]
     SchemaVersionMismatch {
         /// Version the binary supports.
         expected: u16,

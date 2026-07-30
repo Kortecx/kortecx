@@ -85,6 +85,10 @@ mod bundles;
 // POC-4: the apps.db sidecar (the AppCatalog seam) — SaveApp / ListApps / GetApp.
 // Stores a caller's kortecx.app/v1 envelopes (canonicalized + summary-derived via
 // the kx-app leaf type); off-journal, off-digest, rebuildable-to-empty (like
+// The ONE upgrade policy for every SQLite sidecar: a store holding authored work is
+// renamed aside and re-imported on a schema bump (and REFUSES a downgrade) instead of
+// being dropped; a derived cache still rebuilds empty.
+mod sidecar;
 // bundles, no broker dep — kx_content::ContentRef::of derives app_ref).
 mod apps;
 // Stores a caller's kortecx.workflow/v1 envelopes (the durable Workflow entity) —

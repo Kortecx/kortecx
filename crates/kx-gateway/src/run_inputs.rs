@@ -56,62 +56,20 @@ impl RunInputsDb {
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
     pub(crate) fn open(dir: &Path) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("run_inputs dir: {e}")))?;
-        let db_path = dir.join("run_inputs.db");
-        // A non-SQLite file fails even the pragma — delete + recreate (the rows
-        // are convenience capture; the run itself lives in the journal).
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("run_inputs.db-wal"));
-            let _ = std::fs::remove_file(dir.join("run_inputs.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("run_inputs reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS run_inputs;
-                 DROP TABLE IF EXISTS meta;",
-            )
-            .map_err(|e| GatewayError::Catalog(format!("run_inputs rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("run_inputs schema: {e}")))?;
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("run_inputs meta init: {e}")))?;
+        // Convenience capture of a run's inputs so a rerun can prefill them; the run
+        // itself lives in the journal, which is the truth. Nothing here was authored,
+        // so a bump may rebuild empty — the `Cache` arm is byte-identical to what this
+        // function did before `crate::sidecar` centralized the policy.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "run_inputs.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["run_inputs", "meta"],
+            crate::sidecar::Durability::Cache,
+        )?;
         Ok(Self {
             conn: Mutex::new(conn),
-        })
-    }
-
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;",
-        )?;
-        Ok(conn)
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
         })
     }
 }

@@ -24,6 +24,7 @@ pub mod health;
 pub mod info;
 pub mod invoke;
 pub mod memory;
+pub mod migrate;
 pub mod models;
 pub mod mote;
 pub mod new;

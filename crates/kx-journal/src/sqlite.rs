@@ -547,6 +547,22 @@ fn vec_to_mote_def_hash(v: Option<Vec<u8>>) -> MoteDefHash {
     }
 }
 
+/// Read a journal file's on-disk `schema_version` WITHOUT opening it strictly.
+///
+/// [`SqliteJournal::open`] refuses a version mismatch, which is correct for anything that
+/// intends to append — but it means the refusal cannot say *which* version it found, and
+/// a caller that wants to decide whether a migration is needed has nowhere to ask. This
+/// is that question, answered without a refusal: `kx migrate` uses it to distinguish
+/// "already current" from "upgrade" from "written by a newer binary", and serve-boot uses
+/// it to name the remedy instead of only the problem.
+///
+/// # Errors
+/// [`JournalError`] if the file cannot be opened or carries no readable version row.
+pub fn journal_schema_version(path: impl AsRef<std::path::Path>) -> Result<u16, JournalError> {
+    let conn = Connection::open(path.as_ref())?;
+    read_schema_version(&conn)
+}
+
 /// Read the on-disk `schema_version` (LE u16) from the `metadata` table without
 /// comparing it to this binary's — the migration entry points need the value, not
 /// a refusal. (The strict `SqliteJournal::verify_schema_version` is unchanged.)

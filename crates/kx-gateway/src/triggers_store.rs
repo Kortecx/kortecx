@@ -12,11 +12,12 @@
 //!
 //! ## Off-journal / off-digest (the connections.db posture)
 //! The OS keychain holds no run state here; everything is off the journal + the
-//! canonical projection digest. On a corrupt file / schema-version drift the sidecar
-//! recreates EMPTY — the only loss is the registered triggers (re-register to
-//! restore) + the dedup window (a replayed event within the lost window could
-//! re-fire). A FUTURE schema bump that must preserve registered triggers has to add
-//! a forward-migration here (v1 has no prior version to migrate from).
+//! canonical projection digest. A **corrupt/foreign file** still recreates EMPTY —
+//! there is nothing readable to preserve. A **schema-version bump** does NOT: a
+//! registered trigger is authored work, so the catalog is renamed aside and its rows
+//! re-imported by column intersection, and a DOWNGRADE is refused rather than wiped
+//! (`crate::sidecar`). This matters more here than elsewhere: a dropped trigger does
+//! not surface as an error, it surfaces as a schedule that quietly stops firing.
 //!
 //! `trigger_id` is server-derived (`blake3("kx-trigger\0" ‖ name)[..16]`), so
 //! re-registering the same name is idempotent; the client never forges it. The auth
@@ -30,7 +31,9 @@ use rusqlite::{params, Connection};
 
 use crate::error::GatewayError;
 
-/// Bump on any table-shape change. Unknown/missing ⇒ recreate EMPTY (module doc).
+/// Bump on any table-shape change. A corrupt/foreign FILE recreates empty; a version
+/// BUMP renames the store aside and re-imports registered triggers, and a DOWNGRADE is
+/// refused (module doc + `crate::sidecar`).
 /// v2 (T-APP-TRIGGER-TARGET): + `app_handle` (App target), `timezone` (5-field cron
 /// tz), `require_approval` (per-trigger HITL). Off-journal ⇒ the bump rebuilds the
 /// sidecar EMPTY (re-register after upgrade); the canonical projection digest is
@@ -123,42 +126,25 @@ pub(crate) struct TriggersDb {
 }
 
 impl TriggersDb {
-    /// Open (or create) `triggers.db` under `dir`. A corrupt file / schema drift
-    /// recreates EMPTY (module doc).
+    /// Open (or create) `triggers.db` under `dir`. A corrupt file recreates empty; a
+    /// schema bump preserves registered triggers (module doc).
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
     pub(crate) fn open(dir: &Path) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("triggers dir: {e}")))?;
-        let db_path = dir.join("triggers.db");
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("triggers.db-wal"));
-            let _ = std::fs::remove_file(dir.join("triggers.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("triggers reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS triggers;
-                 DROP TABLE IF EXISTS trigger_fires;
-                 DROP TABLE IF EXISTS meta;",
-            )
-            .map_err(|e| GatewayError::Catalog(format!("triggers rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("triggers schema: {e}")))?;
-        // Additive columns migrate an existing v2 file in place WITHOUT a version
-        // bump (the apps.db ensure_column discipline — a bump would silently drop
-        // every registered trigger; old binaries ignore unknown columns because
-        // every statement names its columns).
+        // A registered trigger is authored work — and losing one is worse than losing a
+        // row, because the schedule stops firing SILENTLY. Renamed aside and re-imported
+        // on a bump; a downgrade refuses. See `crate::sidecar`.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "triggers.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["triggers", "trigger_fires", "meta"],
+            crate::sidecar::Durability::UserAuthored,
+        )?;
+        // Additive columns still migrate in place (cheaper than a rename-aside cycle;
+        // old binaries ignore unknown columns because every statement names its own).
         for (column, decl) in [
             (
                 "workflow_handle",
@@ -176,11 +162,6 @@ impl TriggersDb {
             Self::ensure_column(&conn, column, decl)
                 .map_err(|e| GatewayError::Catalog(format!("triggers migrate {column}: {e}")))?;
         }
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("triggers meta init: {e}")))?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -198,28 +179,6 @@ impl TriggersDb {
             conn.execute(decl, [])?;
         }
         Ok(())
-    }
-
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;",
-        )?;
-        Ok(conn)
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })
     }
 
     /// Register (or replace) a trigger by name. `created_unix_ms` is preserved across

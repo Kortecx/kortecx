@@ -91,6 +91,8 @@ usage: kx <command> [args]
     kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
     kx eval run [--tolerance <per_mille>] | score <INSTANCE_ID>   (RC1/D172 — golden gate + per-run quality)
+    kx migrate --journal <path> [--out <path>] [--dry-run] [--json]
+                                                 (bring a journal written by an older kortecx up to this binary's schema, digest-verified)
 
     --endpoint defaults to http://127.0.0.1:50151
 
@@ -188,6 +190,8 @@ pub enum Cli {
     Cost(verbs::cost::CostArgs),
     /// Agentic evaluation (RC1/D172 — `kx eval run` golden gate · `kx eval score <ID>`).
     Eval(verbs::eval::EvalArgs),
+    /// `migrate` — offline journal schema migration (local; no gateway).
+    Migrate(verbs::migrate::MigrateArgs),
 }
 
 impl Cli {
@@ -257,6 +261,7 @@ impl Cli {
             Some("approvals") => Ok(Cli::Approvals(verbs::approvals::parse(args)?)),
             Some("cost") => Ok(Cli::Cost(verbs::cost::parse(args)?)),
             Some("eval") => Ok(Cli::Eval(verbs::eval::parse(args)?)),
+            Some("migrate") => Ok(Cli::Migrate(verbs::migrate::parse(args)?)),
             Some(other) => Err(CliError::Usage(format!(
                 "unknown command {other:?} (try `kx --help`)"
             ))),
@@ -344,6 +349,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Approvals(a) => verbs::approvals::execute(a).await,
         Cli::Cost(a) => verbs::cost::execute(a).await,
         Cli::Eval(a) => verbs::eval::execute(a).await,
+        Cli::Migrate(a) => verbs::migrate::execute(&a),
     }
 }
 
@@ -486,7 +492,22 @@ fn inject_data_dir_defaults(mut rest: Vec<String>) -> Result<Vec<String>, CliErr
     rest.push(content.to_string_lossy().into_owned());
     rest.push("--catalog-dir".to_string());
     rest.push(catalog.to_string_lossy().into_owned());
+    stamp_state_dir(&base);
     Ok(rest)
+}
+
+/// The state dir's version stamp: `<base>/kortecx-version` naming the release that
+/// last opened it.
+///
+/// Advisory and best-effort — nothing reads it to make a decision, and it must never
+/// be able to fail a boot. Its job is diagnostic: when an upgrade goes wrong, the first
+/// question is always "what wrote this directory?", and until now the only answers came
+/// from per-file schema versions that say what SHAPE the data is in, not which release
+/// produced it. A stamp turns a support conversation from archaeology into reading one
+/// line. Rewritten on every start, so it names the LAST binary to open the dir.
+fn stamp_state_dir(base: &std::path::Path) {
+    let stamp = format!("{} {}\n", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    let _ = std::fs::write(base.join("kortecx-version"), stamp);
 }
 
 /// Fail closed: `kx serve` must pick an explicit auth posture — we NEVER inject
@@ -1007,6 +1028,18 @@ kx eval score <INSTANCE_ID> [--json] [client flags]
   counts as a regression. `score` reads a live run's expectation-free quality summary
   (terminal reached, turns / tool-calls, budget burn, rejections) via the ScoreRun
   gateway RPC."
+            .into(),
+        "migrate" => "\
+kx migrate --journal <path> [--out <path>] [--dry-run] [--json]
+  Bring a journal written by an OLDER kortecx up to this binary's schema version.
+  Run this when `kx serve` refuses to start with a schema-version mismatch.
+  The rewrite is verified, not trusted: both the old and the new journal are folded
+  and the migration is REFUSED unless their committed-facts digests are byte-identical,
+  so an upgrade can never quietly change what your runs produced.
+  By default the migration happens in place and the original is preserved beside it as
+  <name>.v<N>.bak; --out writes elsewhere and leaves the source untouched. --dry-run
+  reports the versions and writes nothing. A journal written by a NEWER kortecx is
+  refused (there is no honest downgrade) — run the newer binary instead."
             .into(),
         other => format!("no help for {other:?}; try `kx --help`"),
     }

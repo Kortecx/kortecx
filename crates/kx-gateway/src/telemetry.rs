@@ -157,38 +157,21 @@ impl TelemetryLedger {
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
     pub(crate) fn open(dir: &Path) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("telemetry dir: {e}")))?;
-        let db_path = dir.join("telemetry.db");
-        // A non-SQLite file fails even the pragma; delete + recreate (the
-        // capture.rs corrupt-file posture — this sidecar holds no truth).
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("telemetry.db-wal"));
-            let _ = std::fs::remove_file(dir.join("telemetry.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("telemetry reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS exec_metrics;
-                 DROP TABLE IF EXISTS commits;
-                 DROP TABLE IF EXISTS run_meta;
-                 DROP TABLE IF EXISTS meta;",
-            )
-            .map_err(|e| GatewayError::Catalog(format!("telemetry rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("telemetry schema: {e}")))?;
+        // Execution exhaust: every row is derived from the journal, which still exists.
+        // Nothing here was authored, so a schema bump may rebuild it empty — the `Cache`
+        // arm is byte-identical to what this function did before `crate::sidecar`
+        // centralized the policy.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "telemetry.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["exec_metrics", "commits", "run_meta", "meta"],
+            crate::sidecar::Durability::Cache,
+        )?;
         conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1), ('last_seq', 0)",
-            params![SCHEMA_VERSION],
+            "INSERT OR IGNORE INTO meta(key, value) VALUES ('last_seq', 0)",
+            params![],
         )
         .map_err(|e| GatewayError::Catalog(format!("telemetry meta init: {e}")))?;
         let (tx, rx) = std::sync::mpsc::sync_channel(EVENT_QUEUE);
@@ -196,28 +179,6 @@ impl TelemetryLedger {
             conn: Mutex::new(conn),
             rx: Mutex::new(rx),
             tx,
-        })
-    }
-
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;",
-        )?;
-        Ok(conn)
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
         })
     }
 

@@ -1,14 +1,16 @@
 //! The POC-4 App-catalog sidecar: `apps.db` under `--catalog-dir`, backing the
 //! [`AppCatalog`] seam — `SaveApp` / `ListApps` / `GetApp`.
 //!
-//! ## Rebuildable-to-EMPTY (the `bundles.db` posture)
-//! An App envelope references content-store blobs + registry ids; it is NOT
-//! derivable from the journal. Truth (the referenced blobs + the registries) lives
-//! elsewhere, so on corruption or a schema-version drift this ledger recreates
-//! EMPTY — the only loss is the catalog index, and re-saving the same envelope
-//! restores the SAME `app_ref` (content-addressed). Never journaled, never a
-//! `MoteId` input, never a digest input — dropping the file cannot move the
-//! canonical projection digest.
+//! ## Authored work — preserved across an upgrade, never wiped by one
+//! An App envelope references content-store blobs + registry ids; it is NOT derivable
+//! from the journal. A corrupt/foreign FILE still recreates empty (nothing readable to
+//! preserve), but a schema-version BUMP does not: the catalog is renamed aside and its
+//! rows re-imported, and a downgrade is refused (`crate::sidecar`). This module used to
+//! say "rebuildable-to-EMPTY", which was true and was the problem — it is why
+//! `SCHEMA_VERSION` sat frozen at 1 while every new column went through
+//! `ensure_column`, because bumping it would have deleted saved Apps.
+//! Still never journaled, never a `MoteId` input, never a digest input — nothing here
+//! can move the canonical projection digest.
 //!
 //! ## Server-derived id
 //! `app_ref = blake3("kx-app\0" ‖ handle ‖ 0 ‖ canonical(envelope))[..16]` via
@@ -31,8 +33,9 @@ use rusqlite::{params, Connection};
 
 use crate::error::GatewayError;
 
-/// Bump on any table-shape change. Unknown/missing version ⇒ recreate EMPTY
-/// (apps are not journal-derivable, so there is no rebuild — re-save).
+/// Bump on any table-shape change. A corrupt/foreign FILE recreates empty; a version
+/// BUMP renames the catalog aside and re-imports what still fits, and a DOWNGRADE is
+/// refused — this store holds authored work (`crate::sidecar`).
 const SCHEMA_VERSION: i64 = 1;
 
 const SCHEMA: &str = "
@@ -110,41 +113,26 @@ pub(crate) struct AppsDb {
 }
 
 impl AppsDb {
-    /// Open (or create) `apps.db` under `dir`. A corrupt/foreign file or a
-    /// `schema_version` drift recreates the catalog EMPTY (module doc).
+    /// Open (or create) `apps.db` under `dir`. A corrupt/foreign file recreates the
+    /// catalog empty; a schema bump preserves it (module doc).
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
     pub(crate) fn open(dir: &Path) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("apps dir: {e}")))?;
-        let db_path = dir.join("apps.db");
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("apps.db-wal"));
-            let _ = std::fs::remove_file(dir.join("apps.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("apps reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS apps; \
-                 DROP TABLE IF EXISTS scaffold_state; \
-                 DROP TABLE IF EXISTS meta;",
-            )
-            .map_err(|e| GatewayError::Catalog(format!("apps rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("apps schema: {e}")))?;
-        // Additive lineage column — migrate an existing v1 catalog in place WITHOUT a
-        // version bump (a bump would drop saved apps). Old binaries ignore the unknown
-        // column (named-column SELECT/INSERT).
+        // A saved App is authored work — on a schema bump the catalog is renamed aside
+        // and its rows re-imported, and a DOWNGRADE is refused. See `crate::sidecar`.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "apps.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["apps", "scaffold_state", "meta"],
+            crate::sidecar::Durability::UserAuthored,
+        )?;
+        // Additive columns still migrate IN PLACE without a version bump: they are
+        // cheaper than a rename-aside cycle and old binaries ignore an unknown column
+        // (every SELECT/INSERT names its columns). The version bump is now survivable
+        // either way — this is an optimization, no longer a workaround.
         for (column, decl) in [
             (
                 "source_digest",
@@ -170,28 +158,18 @@ impl AppsDb {
             Self::ensure_column(&conn, column, decl)
                 .map_err(|e| GatewayError::Catalog(format!("apps migrate {column}: {e}")))?;
         }
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("apps meta init: {e}")))?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
     }
 
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        Ok(conn)
-    }
-
     /// Idempotently add one additive column, given its `ALTER TABLE` declaration.
     ///
     /// A no-op when already present: a fresh catalog gets every column from [`SCHEMA`], an
-    /// existing one gets the missing ones here. Always additive and NEVER a `SCHEMA_VERSION`
-    /// bump — a bump would drop saved apps, and old binaries ignore an unknown column because
-    /// every SELECT/INSERT names its columns explicitly.
+    /// existing one gets the missing ones here. Additive and version-bump-free because that
+    /// is cheaper than a rename-aside cycle, not because a bump is unsurvivable — it no
+    /// longer is (`crate::sidecar`). Old binaries ignore an unknown column because every
+    /// SELECT/INSERT names its columns explicitly.
     ///
     /// One helper rather than one per column: the probe is subtle enough (`table_info` yields
     /// the name at index 1, and the statement must be dropped before the `ALTER`) that three
@@ -207,19 +185,6 @@ impl AppsDb {
             conn.execute(decl, [])?;
         }
         Ok(())
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
-        })
     }
 
     /// Build an [`AppRecord`] from a row, reading every column BY NAME.
@@ -739,15 +704,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// **A saved App survives a schema bump.**
+    ///
+    /// Formerly `schema_drift_rebuilds_empty`, which asserted the opposite. That
+    /// behaviour is why `SCHEMA_VERSION` was frozen at 1 and every column addition had to
+    /// route around it through `ensure_column` — the comment on that path said so
+    /// outright: *"a bump would drop saved apps."* Holding a version frozen to avoid
+    /// deleting a user's work also freezes the schema, so the fix is to make the bump
+    /// survivable rather than to keep avoiding it.
     #[test]
-    fn schema_drift_rebuilds_empty() {
+    fn an_upgrade_preserves_saved_apps_and_keeps_a_backup() {
         let dir = tmp_dir();
         {
             let db = AppsDb::open(&dir).unwrap();
             db.save("alice", "team/apps/x", &envelope("x"), None)
                 .unwrap();
         }
-        // Corrupt the meta version → reopen recreates EMPTY (rebuildable-to-empty).
+        // Pretend the file on disk was written by an OLDER binary.
+        {
+            let conn = Connection::open(dir.join("apps.db")).unwrap();
+            conn.execute("UPDATE meta SET value = 0 WHERE key = 'schema_version'", [])
+                .unwrap();
+        }
+        let db = AppsDb::open(&dir).unwrap();
+        let (apps, _) = db.list("alice", 100, None).unwrap();
+        assert_eq!(apps.len(), 1, "an upgrade must PRESERVE saved apps");
+        assert_eq!(apps[0].handle, "team/apps/x");
+        assert!(
+            dir.join("apps.db.v0.bak").exists(),
+            "the pre-upgrade catalog is preserved on disk, not deleted"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A DOWNGRADE refuses rather than emptying the catalog.
+    #[test]
+    fn a_downgrade_is_refused_and_destroys_nothing() {
+        let dir = tmp_dir();
+        {
+            let db = AppsDb::open(&dir).unwrap();
+            db.save("alice", "team/apps/x", &envelope("x"), None)
+                .unwrap();
+        }
         {
             let conn = Connection::open(dir.join("apps.db")).unwrap();
             conn.execute(
@@ -756,9 +754,18 @@ mod tests {
             )
             .unwrap();
         }
-        let db = AppsDb::open(&dir).unwrap();
-        let (apps, _) = db.list("alice", 100, None).unwrap();
-        assert!(apps.is_empty(), "schema drift must rebuild empty");
+        let err = AppsDb::open(&dir)
+            .err()
+            .expect("a catalog written by a NEWER binary must be refused, not emptied");
+        assert!(
+            err.to_string().contains("NEWER"),
+            "the refusal names the cause: {err}"
+        );
+        let conn = Connection::open(dir.join("apps.db")).unwrap();
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM apps", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1, "the refused open left the authored row intact");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

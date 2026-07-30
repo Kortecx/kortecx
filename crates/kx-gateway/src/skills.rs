@@ -2,13 +2,13 @@
 //! the [`SkillCatalog`] seam — `ListSkills` / `GetSkillForm` / `AddSkill` /
 //! `RemoveSkill`.
 //!
-//! ## Rebuildable-to-EMPTY (the `apps.db` posture)
+//! ## Authored work — preserved across an upgrade, never wiped by one
 //! A skill references a content-store blob (`instructions_ref`) + registry ids;
 //! it is NOT derivable from the journal. Truth (the blob + the registries) lives
-//! elsewhere, so on corruption or a schema-version drift this ledger recreates
-//! EMPTY — the only loss is the catalog index, and re-adding the same pack
-//! restores the SAME `skill_ref` (content-addressed). Never journaled, never a
-//! `MoteId` input, never a digest input.
+//! elsewhere. A corrupt FILE still recreates empty; a schema-version BUMP renames the
+//! ledger aside and re-imports it, and a downgrade is refused (`crate::sidecar`).
+//! Re-adding the same pack restores the SAME `skill_ref` (content-addressed). Never
+//! journaled, never a `MoteId` input, never a digest input.
 //!
 //! ## Server-derived id
 //! `skill_ref = blake3("kx-skill\0" ‖ name ‖ 0 ‖ canonical(manifest))[..16]` via
@@ -38,8 +38,9 @@ use rusqlite::{params, Connection};
 
 use crate::error::GatewayError;
 
-/// Bump on any table-shape change. Unknown/missing version ⇒ recreate EMPTY
-/// (skills are not journal-derivable, so there is no rebuild — re-add).
+/// Bump on any table-shape change. A corrupt/foreign FILE recreates empty; a version
+/// BUMP renames the catalog aside and re-imports what still fits, and a DOWNGRADE is
+/// refused — this store holds authored work (`crate::sidecar`).
 const SCHEMA_VERSION: i64 = 1;
 
 const SCHEMA: &str = "
@@ -88,60 +89,23 @@ pub(crate) struct SkillsDb {
 }
 
 impl SkillsDb {
-    /// Open (or create) `skills.db` under `dir`. A corrupt/foreign file or a
-    /// `schema_version` drift recreates the catalog EMPTY (module doc).
+    /// Open (or create) `skills.db` under `dir`. A corrupt/foreign file recreates the
+    /// catalog empty; a schema bump preserves it (module doc).
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
     pub(crate) fn open(dir: &Path) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("skills dir: {e}")))?;
-        let db_path = dir.join("skills.db");
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("skills.db-wal"));
-            let _ = std::fs::remove_file(dir.join("skills.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("skills reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch("DROP TABLE IF EXISTS skills; DROP TABLE IF EXISTS meta;")
-                .map_err(|e| GatewayError::Catalog(format!("skills rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("skills schema: {e}")))?;
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("skills meta init: {e}")))?;
+        // A skill attached to an App is authored work. See `crate::sidecar`.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "skills.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["skills", "meta"],
+            crate::sidecar::Durability::UserAuthored,
+        )?;
         Ok(Self {
             conn: Mutex::new(conn),
-        })
-    }
-
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        Ok(conn)
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
         })
     }
 
@@ -447,8 +411,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// An attached skill survives a schema bump (formerly `schema_drift_rebuilds_empty`,
+    /// which asserted the opposite — see `crate::sidecar`).
     #[test]
-    fn schema_drift_rebuilds_empty() {
+    fn an_upgrade_preserves_attached_skills() {
+        let dir = tmp_dir();
+        {
+            let db = SkillsDb::open(&dir).unwrap();
+            db.add("alice", &pack_manifest("x"), Some(added(b"b")))
+                .unwrap();
+        }
+        {
+            let conn = Connection::open(dir.join("skills.db")).unwrap();
+            conn.execute("UPDATE meta SET value = 0 WHERE key = 'schema_version'", [])
+                .unwrap();
+        }
+        let db = SkillsDb::open(&dir).unwrap();
+        let (rows, _) = db.list("alice", 100, None).unwrap();
+        assert_eq!(rows.len(), 1, "an upgrade must PRESERVE attached skills");
+        assert!(dir.join("skills.db.v0.bak").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A downgrade refuses rather than wiping.
+    #[test]
+    fn a_downgrade_is_refused() {
         let dir = tmp_dir();
         {
             let db = SkillsDb::open(&dir).unwrap();
@@ -463,9 +450,10 @@ mod tests {
             )
             .unwrap();
         }
-        let db = SkillsDb::open(&dir).unwrap();
-        let (rows, _) = db.list("alice", 100, None).unwrap();
-        assert!(rows.is_empty(), "schema drift must rebuild empty");
+        let err = SkillsDb::open(&dir)
+            .err()
+            .expect("a catalog written by a NEWER binary must be refused, not emptied");
+        assert!(err.to_string().contains("NEWER"), "names the cause: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

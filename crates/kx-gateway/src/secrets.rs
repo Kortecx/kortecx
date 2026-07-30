@@ -144,9 +144,11 @@ fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Bump on any table-shape change. Unknown/missing ⇒ recreate EMPTY. The index is a
-/// NAME convenience cache (resolution reads the keychain directly), so a rebuild loses
-/// only enumeration of names stored by an older binary — `put` re-indexes on next write.
+/// Bump on any table-shape change. A corrupt/foreign file recreates EMPTY; a version
+/// bump renames the index aside and re-imports it, and a downgrade refuses
+/// (`crate::sidecar`). Resolution never depended on this file — it reads the keychain
+/// directly — but enumeration does, and an index that silently empties reports "you
+/// have no secrets", which is a worse answer than an error.
 const INDEX_SCHEMA_VERSION: i64 = 1;
 
 const INDEX_SCHEMA: &str = "
@@ -180,61 +182,21 @@ impl KeychainSecretAdmin {
         dir: &Path,
         backend: Arc<dyn KeychainBackend>,
     ) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("secret_index dir: {e}")))?;
-        let db_path = dir.join("secret_index.db");
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("secret_index.db-wal"));
-            let _ = std::fs::remove_file(dir.join("secret_index.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("secret_index reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != INDEX_SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS secret_names;
-                 DROP TABLE IF EXISTS meta;",
-            )
-            .map_err(|e| GatewayError::Catalog(format!("secret_index rebuild: {e}")))?;
-        }
-        conn.execute_batch(INDEX_SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("secret_index schema: {e}")))?;
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
-            params![INDEX_SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("secret_index meta init: {e}")))?;
+        // NAMES only — no value has ever been in this file. Still user-authored: losing
+        // the index does not lose a credential (the keychain holds those), but it does
+        // lose the operator's view of WHICH names exist, and an enumeration that silently
+        // empties reads as "you have no secrets". See `crate::sidecar`.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "secret_index.db",
+            INDEX_SCHEMA_VERSION,
+            INDEX_SCHEMA,
+            &["secret_names", "meta"],
+            crate::sidecar::Durability::UserAuthored,
+        )?;
         Ok(Self {
             backend,
             index: Mutex::new(conn),
-        })
-    }
-
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;",
-        )?;
-        Ok(conn)
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
         })
     }
 }
