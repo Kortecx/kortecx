@@ -34,6 +34,7 @@ pub mod recipe;
 pub mod replan;
 pub mod rerank;
 pub mod runs;
+pub mod scripts;
 pub mod secrets;
 pub mod signatures;
 pub mod skills;
@@ -41,6 +42,7 @@ pub mod swarm;
 pub mod telemetry;
 pub mod tools;
 pub mod triggers;
+pub mod workflow;
 
 use std::io::Write;
 use std::path::Path;

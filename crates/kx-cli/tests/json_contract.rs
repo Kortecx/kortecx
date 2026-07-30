@@ -57,6 +57,10 @@ const JSON_DOCUMENT_VERBS: &[&[&str]] = &[
     &["capture", "list"],
     &["approvals", "list"],
     &["signatures", "list"],
+    // The durable Workflow entity and the script registry: both wired
+    // unconditionally in server.rs, so both answer on a default-feature serve.
+    &["workflow", "list"],
+    &["scripts", "list"],
 ];
 
 /// The observability read verbs succeed only when the gateway build carries the

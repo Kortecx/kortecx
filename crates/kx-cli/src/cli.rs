@@ -91,6 +91,8 @@ usage: kx <command> [args]
     kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
     kx eval run [--tolerance <per_mille>] | score <INSTANCE_ID>   (RC1/D172 — golden gate + per-run quality)
+    kx workflow save <handle> <file> [--draft] | list | get <handle> [--output <f>] | run <handle> [--args <json>] [--wait] [--require-approval] | delete <handle> | propose <goal>   (the durable Workflow entity; `propose` PREVIEWS only)
+    kx scripts register --name <N> --version <V> --interpreter <I> --source <f> [--argv <a>] [--env K=V] [--mount <ro|rw>:<path>] [--net-host <h>] | list | get <N> <V> | deregister <N> <V>   (sandboxed; argv/env fixed at registration)
     kx migrate --journal <path> [--out <path>] [--dry-run] [--json]
                                                  (bring a journal written by an older kortecx up to this binary's schema, digest-verified)
 
@@ -190,6 +192,11 @@ pub enum Cli {
     Cost(verbs::cost::CostArgs),
     /// Agentic evaluation (RC1/D172 — `kx eval run` golden gate · `kx eval score <ID>`).
     Eval(verbs::eval::EvalArgs),
+    /// `workflow` — the durable Workflow entity: save / list / get / run /
+    /// delete, plus `propose`, which PREVIEWS a plan and saves nothing.
+    Workflow(verbs::workflow::WorkflowArgs),
+    /// `scripts` — the script registry: register / list / get / deregister.
+    Scripts(verbs::scripts::ScriptsArgs),
     /// `migrate` — offline journal schema migration (local; no gateway).
     Migrate(verbs::migrate::MigrateArgs),
 }
@@ -251,6 +258,8 @@ pub const VERBS: &[&str] = &[
     "cost",
     "eval",
     "migrate",
+    "workflow",
+    "scripts",
 ];
 
 impl Cli {
@@ -326,6 +335,8 @@ impl Cli {
             Some("approvals") => Ok(Cli::Approvals(verbs::approvals::parse(args)?)),
             Some("cost") => Ok(Cli::Cost(verbs::cost::parse(args)?)),
             Some("eval") => Ok(Cli::Eval(verbs::eval::parse(args)?)),
+            Some("workflow") => Ok(Cli::Workflow(verbs::workflow::parse(args)?)),
+            Some("scripts") => Ok(Cli::Scripts(verbs::scripts::parse(args)?)),
             Some("migrate") => Ok(Cli::Migrate(verbs::migrate::parse(args)?)),
             // Reachable only if a verb is in VERBS with no dispatch arm — i.e.
             // the two disagree. The unit test below makes that unreachable, but
@@ -417,6 +428,8 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Approvals(a) => verbs::approvals::execute(a).await,
         Cli::Cost(a) => verbs::cost::execute(a).await,
         Cli::Eval(a) => verbs::eval::execute(a).await,
+        Cli::Workflow(a) => verbs::workflow::execute(a).await,
+        Cli::Scripts(a) => verbs::scripts::execute(a).await,
         Cli::Migrate(a) => verbs::migrate::execute(&a),
     }
 }
@@ -1097,6 +1110,48 @@ kx eval score <INSTANCE_ID> [--json] [client flags]
   (terminal reached, turns / tool-calls, budget burn, rejections) via the ScoreRun
   gateway RPC."
             .into(),
+        "workflow" => "\
+kx workflow save <HANDLE> <FILE> [--draft] [client flags]
+kx workflow list [--limit N] [--after <handle>] [client flags]
+kx workflow get <HANDLE> [--output <file>] [client flags]
+kx workflow run <HANDLE> [--args <json>] [--require-approval] [--wait [--timeout <secs>]] [--out <file>]
+kx workflow delete <HANDLE> [client flags]
+kx workflow propose <GOAL...> [client flags]
+
+The durable Workflow entity: a stored definition the server runs under warrants
+it derives itself. `run` drives RunWorkflow, never SubmitRun \u{2014} the CLI has no path
+that hands the server a warrant you wrote.
+
+`propose` PREVIEWS and saves NOTHING. It prints the plan the planner produced (or
+the refusal) and stops; saving it is a separate, explicit `kx workflow save`.
+That separation is the safety property, not an inconvenience.
+
+`--draft` saves with lifecycle=draft. Finishing a draft is the SAME save without
+the flag: identical bytes under a changed lifecycle is a real write, so there is
+no separate `finish` verb because there is no separate mechanism. A draft
+workflow is refused as a trigger target until it is finished.
+".into(),
+        "scripts" => "\
+kx scripts register --name <N> --version <V> --interpreter <I> --source <FILE>
+                    [--description <D>] [--argv <ARG>]... [--env KEY=VALUE]...
+                    [--mount <ro|rw>:<PATH>]... [--net-host <HOST>]...
+                    [--wall-clock-ms N] [--mem-bytes N] [--max-output-bytes N]
+kx scripts list [--limit N] [--after-name <N>] [--after-version <V>]
+kx scripts get <NAME> <VERSION> [--output <file>] [client flags]
+kx scripts deregister <NAME> <VERSION> [client flags]
+
+Scripts run SANDBOXED or not at all: registration refuses if the host cannot
+enforce a sandbox, or cannot run the declared interpreter (it is probed, not
+assumed).
+
+Registration grants NOTHING. --mount and --net-host DECLARE what the script says
+it needs; that declaration becomes its requirement, and the broker still refuses
+any dispatch whose requirement exceeds the granting warrant.
+
+--argv and --env are fixed HERE and are never model-controlled; the child's
+environment is cleared before they are set. A model calling a script controls
+exactly one thing: the input string on stdin.
+".into(),
         "migrate" => "\
 kx migrate --journal <path> [--out <path>] [--dry-run] [--json]
   Bring a journal written by an OLDER kortecx up to this binary's schema version.
