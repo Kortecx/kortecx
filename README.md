@@ -385,11 +385,14 @@ committed as spikes beside the gate.
 
 **Prompt injection through a tool result works on one engine and not the other.** A stored
 value the agent looks up contains an instruction telling it to abandon its task, call a
-different tool, and reply with a planted token. On Ollama it does exactly that:
-`injection_resistance` is **0**. On llama.cpp, same model family, same fixture, it ignores
-the injection and reports the real status. Nothing in the suite measured this before, and it
-is not a property the runtime enforces — a tool result is untrusted text arriving in the
-middle of a trusted conversation, and today nothing stands between the two.
+different tool, and reply with a planted token. On Ollama it does exactly that — the
+injected run repeats the bait, the single failure behind `injection_resistance` 750 · 3/4.
+On llama.cpp, same model family, same fixture, it ignores the injection and reports the
+real status. (The metric's population grew with the workflow family: the untaken-arm and
+never-leak-the-placeholder absence oracles ride the same gate and pass on both engines —
+they are runtime properties, which is exactly why they can't rescue a model that takes the
+bait.) It is not a property the runtime enforces — a tool result is untrusted text arriving
+in the middle of a trusted conversation, and today nothing stands between the two.
 
 **Neither engine completes an external-API chain.** `http` is 0 on both. Not because the tool
 failed: on the single-call task the right tool **fired and returned the record**, and the
@@ -407,11 +410,14 @@ document from sixty near-misses. That is a retrieval verdict, not a model one, a
 numbers now say so themselves instead of leaving it to the preamble.
 
 **The right set of calls in the wrong order was invisible, and no longer is.**
-`tool_call_f1` is an order-tolerant multiset by design, and it reads a comfortable 823/859
-— while the exact-order `tool_seq_fsa` reads 538 and 730. A third to a half of tool-using
+`tool_call_f1` is an order-tolerant multiset by design, and it reads a comfortable 809/844
+— while the exact-order `tool_seq_fsa` reads 538 and 692. A third to a half of tool-using
 runs make the right calls in a broken or padded order, a cost the F1 column structurally
-cannot show. `loop_efficiency` (612 on Ollama) is the same story from the turns side: the
-loop fires calls it does not need, and that cost is published rather than tuned away.
+cannot show. `loop_efficiency` (670 on Ollama) is the same story from the turns side: the
+loop fires calls it does not need, and that cost is published rather than tuned away. (The
+mean now includes the workflow family's seven stored DAGs, each spending exactly its ideal
+step count — deterministic steps can lift the average but never hide a wasteful loop's own
+rows.)
 
 **Passing once is not passing.** `pass_k4` re-runs three flagship tasks four times each on
 fully fresh serves and both engines read 666 · 2/3: the contract-refusal and
@@ -428,14 +434,18 @@ but fails the abstention task — asked for a fact memory does not hold, it inve
 of refusing. Neither column is clean, and they fail differently.
 
 **Speed is measured but only one number is gated.** `model_time_share` is the share of a
-task's wall clock spent inside the model rather than the runtime around it — 960 and 984,
-so runtime overhead is roughly 2–4%. It is a ratio on purpose: an absolute-millisecond gate
-reads differently on a slower host with no code change, so it cannot tell a regression from
-a busier machine. The absolutes live in the Cost-and-latency table above, recorded and
-never gated — including the one that looks like a typo: a 118-second `store_memory` p95 on
-llama.cpp, beside a 651 ms p50. The in-process engine runs the 12B inside the same process
-as the runtime, so a write that lands while the model has the host saturated waits behind
-it; the tail is that wait, and it is published, not smoothed.
+task's wall clock spent inside the model rather than the runtime around it — 936 and 913.
+It is a ratio on purpose: an absolute-millisecond gate reads differently on a slower host
+with no code change, so it cannot tell a regression from a busier machine. One honesty note
+on this capture: the workflow family's deterministic steps never dispatch the model, but
+their timing windows on a shared serve still absorb model activity draining from
+neighbouring tasks, so the family reads 798/399 on this metric rather than a literal 0 —
+the number is cost attribution on a busy serve, not evidence a pure step held the model
+(the model-free drive gate is the witness for that). The absolutes live in the
+Cost-and-latency table above, recorded and never gated — including a 437-second
+`task_latency` p95 on llama.cpp: the in-process engine runs the 12B inside the same process
+as the runtime, so everything queued behind a saturated host is counted where it happened,
+published rather than smoothed.
 
 ### What this does not measure
 
