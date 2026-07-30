@@ -22,12 +22,17 @@
 //! not-owned; no cross-party existence oracle.
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+#[cfg(feature = "mcp-gateway")]
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use kx_gateway_core::GatewayError as CoreError;
-use kx_gateway_core::{AppAuthor, AppRunError, BoundRecipe, WorkflowCatalog, WorkflowRecord};
+#[cfg(feature = "mcp-gateway")]
+use kx_gateway_core::{AppAuthor, AppRunError, BoundRecipe};
+use kx_gateway_core::{WorkflowCatalog, WorkflowRecord};
 use rusqlite::{params, Connection};
 
+#[cfg(feature = "mcp-gateway")]
 use crate::app_run::HostAppAuthor;
 use crate::error::GatewayError;
 
@@ -88,17 +93,24 @@ pub(crate) struct WorkflowsDb {
 /// A workflow's `app`-composing steps resolve SAVED APPS through the exact
 /// D198 seam (cycle guard, depth ceiling, step ceiling) — callees always come
 /// from the App catalog, whatever entity the root graph came from.
+///
+/// `mcp-gateway`-gated with [`HostAppAuthor`] itself: the STORE above stays
+/// available on every build (the apps.db posture), only the run path needs the
+/// author pipeline.
+#[cfg(feature = "mcp-gateway")]
 pub(crate) struct HostWorkflowRunner {
     inner: Arc<HostAppAuthor>,
     workflows: Arc<WorkflowsDb>,
 }
 
+#[cfg(feature = "mcp-gateway")]
 impl HostWorkflowRunner {
     pub(crate) fn new(inner: Arc<HostAppAuthor>, workflows: Arc<WorkflowsDb>) -> Self {
         Self { inner, workflows }
     }
 }
 
+#[cfg(feature = "mcp-gateway")]
 #[tonic::async_trait]
 impl AppAuthor for HostWorkflowRunner {
     async fn author_app(
