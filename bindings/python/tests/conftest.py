@@ -48,7 +48,17 @@ def _find_or_build_kx() -> str:
         # register on this serve" — every script test then fails on a refusal
         # that is correct behaviour for a serve with no shim. It is not optional
         # for the SDK suite; it is the same trap `just eval-bench` documents.
-        ["cargo", "build", "--release", "-p", "kx-cli", "-p", "kx-script-runner", "--features", "hnsw"],
+        [
+            "cargo",
+            "build",
+            "--release",
+            "-p",
+            "kx-cli",
+            "-p",
+            "kx-script-runner",
+            "--features",
+            "hnsw",
+        ],
         cwd=REPO_ROOT,
         check=True,
     )
