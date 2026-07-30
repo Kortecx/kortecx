@@ -53,6 +53,9 @@ mod apps_view;
 mod branches_view;
 mod bundles_view;
 mod capture_view;
+/// The ControlSurface: what each `KxGateway` RPC is (domain, read vs mutate,
+/// required authority), hand-authored against the generated RPC index.
+pub mod control_surface;
 mod datasets;
 mod error;
 mod eval;
