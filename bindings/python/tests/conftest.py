@@ -43,7 +43,12 @@ def _find_or_build_kx() -> str:
     # data-plane (RAG) — still pure-Rust (kx-dataset-hnsw + rusqlite, no llama.cpp) — so
     # the contract tests can exercise the client-vector ingest/query path.
     subprocess.run(
-        ["cargo", "build", "--release", "-p", "kx-cli", "--features", "hnsw"],
+        # kx-script-runner is the SANDBOX SHIM. Without it beside the binary,
+        # `provision_shim` finds nothing and the serve logs "scripts will not
+        # register on this serve" — every script test then fails on a refusal
+        # that is correct behaviour for a serve with no shim. It is not optional
+        # for the SDK suite; it is the same trap `just eval-bench` documents.
+        ["cargo", "build", "--release", "-p", "kx-cli", "-p", "kx-script-runner", "--features", "hnsw"],
         cwd=REPO_ROOT,
         check=True,
     )

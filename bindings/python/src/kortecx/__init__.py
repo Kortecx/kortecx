@@ -109,6 +109,7 @@ from .flow import (
     team,
 )
 from .grants import AssetGrants, GrantView
+from .hosted_apps import HostedAppStatus
 from .memory import (
     DecayCandidate,
     DecayReport,
@@ -138,6 +139,7 @@ from .rerank import ReRankTurn, ReRankTurnPage
 from .run import AsyncRun, Result, Run
 from .run_agent import run_agent, run_agent_async
 from .runs import RunInputs, RunPage, RunSummary
+from .scripts import RegisteredScript, RegisteredScriptsPage, ScriptWithSource
 from .secrets import SecretName, SecretNamesPage
 from .server_info import ServerInfo
 from .skills import AddSkillResult, SkillForm, SkillSummary, SkillWish
@@ -319,6 +321,10 @@ __all__ = [
     "Branch",
     "BranchItem",
     "BranchVersion",
+    "HostedAppStatus",
+    "RegisteredScript",
+    "RegisteredScriptsPage",
+    "ScriptWithSource",
     "CreateBranchResult",
     "SnapshotResult",
     "AdvanceResult",
