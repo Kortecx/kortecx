@@ -71,7 +71,118 @@ pub mod proto {
     tonic::include_proto!("kortecx.v1");
 }
 
+/// The `KxGateway` RPC index, generated from the compiled `FileDescriptorSet`.
+///
+/// This is the MACHINE-KNOWN half of the ControlSurface: the set of RPCs, their
+/// request/response types, and whether they stream. It carries no judgement —
+/// which domain an RPC belongs to, whether it reads or mutates, and what
+/// authority it demands are hand-authored in `kx_gateway_core::control_surface`,
+/// because a descriptor cannot know them.
+///
+/// [`GatewayRpc`] is deliberately not `#[non_exhaustive]`. Adding an RPC to the
+/// `.proto` makes every exhaustive `match` over it fail to compile, which is the
+/// mechanism that stops a new capability from being silently unreachable.
+pub mod control {
+    // Generated code is exempt from the workspace lint policy, exactly as `proto`
+    // above is. `match_same_arms` in particular fires hard here by construction:
+    // a 115-arm table mapping most RPCs to the same answer is the POINT — the
+    // arms are exhaustive on purpose so a new RPC cannot be silently omitted, and
+    // collapsing them into a wildcard would destroy that guarantee.
+    #![allow(
+        missing_docs,
+        unreachable_pub,
+        clippy::all,
+        clippy::pedantic,
+        clippy::nursery
+    )]
+    #![allow(rustdoc::all)]
+    include!(concat!(env!("OUT_DIR"), "/control_index.rs"));
+}
+
+pub use control::GatewayRpc;
+
 mod convert;
 mod error;
 
 pub use error::ConvertError;
+
+#[cfg(test)]
+mod control_index_tests {
+    use super::GatewayRpc;
+    use std::collections::BTreeSet;
+
+    /// The generated index must agree with an INDEPENDENT reading of the `.proto`.
+    ///
+    /// Two derivations of one fact: the build script decodes protoc's descriptor,
+    /// this test scrapes the service block with a plain text scan. A build-script
+    /// bug that silently drops an RPC cannot satisfy both.
+    #[test]
+    fn the_generated_index_agrees_with_an_independent_read_of_the_proto() {
+        let src = include_str!("../proto/kortecx/v1/gateway.proto");
+        let start = src
+            .find("service KxGateway")
+            .expect("gateway.proto declares service KxGateway");
+        let body = &src[start..];
+        let end = body.find("\n}").expect("the service block closes");
+        let body = &body[..end];
+
+        let scraped: BTreeSet<&str> = body
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("rpc "))
+            .filter_map(|rest| rest.split('(').next())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let generated: BTreeSet<&str> = GatewayRpc::ALL.iter().map(|r| r.as_str()).collect();
+
+        assert_eq!(
+            scraped,
+            generated,
+            "the generated RPC index and the .proto text disagree — \
+             only in .proto: {:?}; only generated: {:?}",
+            scraped.difference(&generated).collect::<Vec<_>>(),
+            generated.difference(&scraped).collect::<Vec<_>>(),
+        );
+        assert!(
+            generated.len() > 100,
+            "expected the full KxGateway surface, got {} rpcs",
+            generated.len()
+        );
+    }
+
+    /// Names, request types and response types are all distinct per RPC, and the
+    /// streaming flag is carried rather than defaulted.
+    #[test]
+    fn the_index_is_well_formed() {
+        let names: BTreeSet<&str> = GatewayRpc::ALL.iter().map(|r| r.as_str()).collect();
+        assert_eq!(names.len(), GatewayRpc::ALL.len(), "rpc names are unique");
+
+        for rpc in GatewayRpc::ALL {
+            assert!(
+                rpc.request_type().starts_with("kortecx.v1."),
+                "{}: request type is fully qualified, got {:?}",
+                rpc.as_str(),
+                rpc.request_type()
+            );
+            assert!(
+                rpc.response_type().starts_with("kortecx.v1."),
+                "{}: response type is fully qualified, got {:?}",
+                rpc.as_str(),
+                rpc.response_type()
+            );
+        }
+
+        // The streaming flag must be REAL, not a constant. If every RPC reported
+        // the same value the accessor would be an elaborate way to spell `false`.
+        let streaming: Vec<&str> = GatewayRpc::ALL
+            .iter()
+            .filter(|r| r.server_streaming())
+            .map(|r| r.as_str())
+            .collect();
+        assert!(
+            !streaming.is_empty() && streaming.len() < GatewayRpc::ALL.len(),
+            "expected a proper subset to stream, got {streaming:?}"
+        );
+    }
+}

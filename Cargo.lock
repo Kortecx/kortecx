@@ -2262,6 +2262,7 @@ dependencies = [
  "kx-warrant",
  "proptest",
  "prost",
+ "prost-types",
  "protoc-bin-vendored",
  "smallvec",
  "thiserror 1.0.69",

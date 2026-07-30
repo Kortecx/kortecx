@@ -398,6 +398,10 @@ hyper-util         = { version = "0.1", features = ["tokio"] }
 http-body-util     = "0.1"
 http               = "1"
 prost              = "0.13"
+# Descriptor-set types, for kx-proto's build script only: it decodes the
+# FileDescriptorSet tonic-build emits and generates the ControlSurface RPC index
+# from it. Version-locked to prost above (tonic 0.12 pairs with prost 0.13).
+prost-types        = "0.13"
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 # Server-streaming adapter for the KxGateway `StreamEvents` RPC (M8/D120). Already
 # present transitively (tonic pulls it in) — promoting it to a direct dep adds NO
