@@ -1580,7 +1580,7 @@ message GetWorkflowResponse {
 // resolve references against the caller's own registrations, build every
 // warrant server-side, register-then-submit. Returns the same RunHandle as
 // RunApp/SubmitWorkflow — terminal_mote_id is the run anchor for EVERY shape;
-// react_chain_salt only for the exactly-one-agentic-step shape (D239).
+// react_chain_salt only for the exactly-one-agentic-step shape (the run-anchor contract).
 message RunWorkflowRequest {
   string handle           = 1;  // an existing saved workflow handle (caller-scoped)
   bytes  args             = 2;  // optional entry-arg JSON object (empty = none); merged server-side
@@ -1589,7 +1589,7 @@ message RunWorkflowRequest {
 // Delete a stored workflow + its dependents, most-recoverable last (the
 // DeleteApp cascade discipline): the catalog row is the point of no return,
 // then triggers, then the definition branch BINDING (CAS blobs + branch
-// HISTORY stay — delete+restore is the recreate path, D249.1).
+// HISTORY stay — delete+restore is the recreate path, per the append-only history contract).
 message DeleteWorkflowRequest { string handle = 1; }
 message DeleteWorkflowResponse {
   bool   removed          = 1;  // false iff absent / not owned (no existence oracle)

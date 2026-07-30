@@ -1151,7 +1151,7 @@ async fn run_and_fold(
             // The STORED path: the server reads the saved canonical envelope, lowers
             // it, and builds every warrant from the caller's grants — which is the
             // machinery under measurement. The run anchors like any other submission
-            // shape (D239) and folds by the terminal's ancestor closure.
+            // shape (the run-anchor contract) and folds by the terminal's ancestor closure.
             let run = client
                 .run_workflow(proto::RunWorkflowRequest {
                     handle: (*handle).to_string(),

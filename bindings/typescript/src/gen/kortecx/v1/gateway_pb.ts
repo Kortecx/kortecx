@@ -5916,7 +5916,7 @@ export const GetWorkflowResponseSchema: GenMessage<GetWorkflowResponse> = /*@__P
  * resolve references against the caller's own registrations, build every
  * warrant server-side, register-then-submit. Returns the same RunHandle as
  * RunApp/SubmitWorkflow — terminal_mote_id is the run anchor for EVERY shape;
- * react_chain_salt only for the exactly-one-agentic-step shape (D239).
+ * react_chain_salt only for the exactly-one-agentic-step shape (the run-anchor contract).
  *
  * @generated from message kortecx.v1.RunWorkflowRequest
  */
@@ -5954,7 +5954,7 @@ export const RunWorkflowRequestSchema: GenMessage<RunWorkflowRequest> = /*@__PUR
  * Delete a stored workflow + its dependents, most-recoverable last (the
  * DeleteApp cascade discipline): the catalog row is the point of no return,
  * then triggers, then the definition branch BINDING (CAS blobs + branch
- * HISTORY stay — delete+restore is the recreate path, D249.1).
+ * HISTORY stay — delete+restore is the recreate path, per the append-only history contract).
  *
  * @generated from message kortecx.v1.DeleteWorkflowRequest
  */

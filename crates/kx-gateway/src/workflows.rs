@@ -91,7 +91,7 @@ pub(crate) struct WorkflowsDb {
 /// grants, and the envelope carries no authority.
 ///
 /// A workflow's `app`-composing steps resolve SAVED APPS through the exact
-/// D198 seam (cycle guard, depth ceiling, step ceiling) — callees always come
+/// app-composition seam (cycle guard, depth ceiling, step ceiling) — callees always come
 /// from the App catalog, whatever entity the root graph came from.
 ///
 /// `mcp-gateway`-gated with [`HostAppAuthor`] itself: the STORE above stays
@@ -142,7 +142,7 @@ impl AppAuthor for HostWorkflowRunner {
         // Workflow-path only: an existing App's re-run must stay byte-identical,
         // and a workflow is a new entity with no prior runs to preserve.
         crate::app_run::sequence_same_route_model_steps(&mut prepared.dag);
-        // (3) Composed APP steps resolve through the D198 seam; the chain seeds
+        // (3) Composed APP steps resolve through the app-composition seam; the chain seeds
         //     with the workflow handle so a cycle refusal names the whole path.
         let mut chain = vec![handle.to_string()];
         self.inner

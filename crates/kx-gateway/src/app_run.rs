@@ -1817,7 +1817,7 @@ impl HostAppAuthor {
     /// root-pinning entirely).
     ///
     /// Split out so the WORKFLOW run path can compose SAVED APPS through the
-    /// exact D198 seam: callees always resolve from the App catalog
+    /// exact app-composition seam: callees always resolve from the App catalog
     /// (`prepare_app`), whatever entity the root graph came from. `handle` is
     /// the CALLER's name, display-only (the composition log line).
     pub(crate) async fn resolve_composes(

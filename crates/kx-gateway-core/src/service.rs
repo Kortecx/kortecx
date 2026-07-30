@@ -5548,7 +5548,7 @@ impl KxGateway for GatewayService {
             .await
             .map_err(submit_status)?;
         let react_chain_salt = agentic_chain_salt(&bound.motes);
-        // The run anchor — populated for EVERY submission shape (D239).
+        // The run anchor — populated for EVERY submission shape (the run-anchor contract).
         let terminal_mote_id = bound.terminal_mote_id.as_bytes().to_vec();
         for (mote, warrant) in bound.motes {
             self.submitter

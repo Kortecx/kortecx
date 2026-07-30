@@ -541,7 +541,7 @@ async fn run_workflow_runs_a_pure_chain_to_its_terminal_anchor() {
         .await
         .unwrap()
         .into_inner();
-    // The D239 anchor contract: terminal_mote_id populated for EVERY shape;
+    // The run-anchor contract: terminal_mote_id populated for EVERY shape;
     // react_chain_salt only for the exactly-one-agentic-step shape (this pure
     // chain has none, so the salt is EMPTY by construction).
     assert_eq!(run.instance_id.len(), 16);
