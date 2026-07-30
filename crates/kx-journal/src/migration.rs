@@ -97,8 +97,17 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v16 (current): no transform, the single source of truth for decode.
+        // v17 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v16 → v17: a PURE pass-through. The lone v16→v17 delta is the brand-new
+        // `TimerArmed` kind (12) — no v16 journal can contain a kind-12 body — so
+        // every existing kind (0..=11) is byte-identical and v16 bytes decode
+        // correctly under v17 unchanged. NOTE this arm must be EXPLICIT: when v16
+        // was current the `JOURNAL_SCHEMA_VERSION` arm above covered it, and the
+        // v17 bump silently re-pointed that arm — orphaning v16 into the fallback
+        // error until this line existed (the exhaustive ladder test below now
+        // pins the class).
+        16 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
         // v15 → v16: a PURE pass-through. The lone v15→v16 delta is the brand-new
         // `ReRankRound` kind (11) — no v15 journal can contain a kind-11 body — so
         // every existing kind (0..=10) is byte-identical and v15 bytes decode
@@ -232,6 +241,41 @@ mod tests {
     use crate::entry::{encode_entry, ReRankOutcome, ResolvedCapabilityRecord, ResolvedKindTag};
     use kx_content::ContentRef;
     use kx_mote::MoteId;
+
+    /// THE CLASS KILLER for the orphaned-version hole: every version the range
+    /// guard admits must have a ladder arm. When a bump moves
+    /// `JOURNAL_SCHEMA_VERSION` from N to N+1, the `JOURNAL_SCHEMA_VERSION =>`
+    /// arm silently stops covering N — v16 shipped exactly that way (admitted by
+    /// the guard, no arm, every read failed `SchemaVersionMismatch`). The probe
+    /// is a `Committed` entry, whose body bytes have been identical since v5
+    /// (every ladder delta added a NEW kind or transformed capability/react
+    /// bodies), so it must decode under EVERY version's arm. The range iterates
+    /// the CONSTANTS, never the ladder's own match list — a check that shares
+    /// the swept mechanism cannot catch its omissions.
+    #[test]
+    fn every_admitted_version_has_a_ladder_arm() {
+        let probe = JournalEntry::Committed {
+            mote_id: MoteId::from_bytes([10u8; 32]),
+            idempotency_key: [10u8; 32],
+            seq: 0,
+            nondeterminism: kx_mote::NdClass::Pure,
+            result_ref: ContentRef::from_bytes([110u8; 32]),
+            parents: smallvec::SmallVec::new(),
+            warrant_ref: ContentRef::from_bytes([0xaa; 32]),
+            mote_def_hash: MoteDefHash::from_bytes([20u8; 32]),
+        };
+        let bytes = encode_entry(&probe).expect("probe encodes");
+        for version in MIN_SUPPORTED_SCHEMA_VERSION..=JOURNAL_SCHEMA_VERSION {
+            let migrated = migrate_entry(&bytes, version, MoteDefHash::from_bytes([20u8; 32]))
+                .unwrap_or_else(|e| {
+                    panic!("version {version} is admitted by the range guard but fails the ladder: {e:?}")
+                });
+            assert_eq!(
+                migrated, probe,
+                "version {version} round-trips the stable probe"
+            );
+        }
+    }
 
     // Build a current-version (v6) RunVersionsResolved entry with a capability,
     // using the given idempotency class.
