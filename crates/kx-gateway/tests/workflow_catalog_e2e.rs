@@ -833,7 +833,7 @@ async fn a_restart_re_arms_the_journaled_timer_and_never_re_fires() {
 
     // Serve B, SAME state dir (that reuse IS the proof): the journal carries the
     // armed timer; the run rehydrates through the idempotent re-submit (the same
-    // RunWorkflow yields byte-identical MoteIds — the L-207 replay semantics);
+    // RunWorkflow yields byte-identical MoteIds — identical re-invoke is a replay);
     // the settle pass re-arms IN MEMORY from the folded fact at the JOURNALED
     // instant and appends nothing.
     let running = start(common::gateway_config(&dir, false, two_party_tokens()))

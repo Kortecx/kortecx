@@ -50,8 +50,8 @@ pub(crate) struct HostTriggerAdmin {
     workflow_runner: Option<Arc<dyn AppAuthor>>,
     /// The workflow catalog, for register-time kind-aware validation: the
     /// caller-owned workflow must EXIST and not be a DRAFT — refused at
-    /// registration, never a forever dead-lettering fire loop (the standing
-    /// P22-shaped hole, closed for the new target kind from day one).
+    /// registration, never a forever dead-lettering fire loop (a hole the app
+    /// target kind shipped with; closed for the new target kind from day one).
     workflow_catalog: Option<Arc<dyn WorkflowCatalog>>,
 }
 
