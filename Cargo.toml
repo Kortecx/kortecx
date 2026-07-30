@@ -155,7 +155,7 @@ chrono-tz          = "0.10"
 # `crates/` per the workspace's parent-folder layout convention.
 kx-mote              = { path = "crates/kx-mote",              version = "0.1.1" }
 kx-content           = { path = "crates/kx-content",           version = "0.2.0" }
-kx-journal           = { path = "crates/kx-journal",           version = "0.2.0" }
+kx-journal           = { path = "crates/kx-journal",           version = "0.3.0" }
 kx-projection        = { path = "crates/kx-projection",        version = "0.2.0" }
 kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.1.1" }
 kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.1.1" }
@@ -197,7 +197,7 @@ kx-coordinator       = { path = "crates/kx-coordinator",       version = "0.2.0"
 kx-worker            = { path = "crates/kx-worker",            version = "0.3.0" }
 # The single-node engine — kx-chaos reuses its topology helpers (`derive_child_motes`,
 # `demo_topology_decision`) to check child-identity determinism under a shaper death.
-kx-runtime           = { path = "crates/kx-runtime",           version = "0.1.1" }
+kx-runtime           = { path = "crates/kx-runtime",           version = "0.2.0" }
 # The workflow engine (codename Morphic, P4.1) — compiles a WorkflowDef to a
 # Mote DAG. Sits above the scheduler; emits kx-mote + kx-warrant types only.
 kx-workflow          = { path = "crates/kx-workflow",          version = "0.3.0" }

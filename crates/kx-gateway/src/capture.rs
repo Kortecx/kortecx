@@ -123,72 +123,22 @@ impl CaptureLedger {
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
     pub(crate) fn open(dir: &Path) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("capture dir: {e}")))?;
-        let db_path = dir.join("capture.db");
-        // A CORRUPT/foreign file (not a SQLite database) makes even the pragma
-        // fail with "file is not a database" — SQLite cannot drop-and-rebuild
-        // it. Capture is a rebuildable cache (the journal is truth), so we
-        // simply delete the unreadable file(s) and recreate (the next fold
-        // backfills from seq 0). A valid-but-stale-schema DB is handled below.
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("capture.db-wal"));
-            let _ = std::fs::remove_file(dir.join("capture.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("capture reopen: {e}")))?
-        };
-        // A torn/foreign sidecar (never initialized, version drift, or
-        // unreadable) ⇒ drop everything and rebuild from the journal.
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS capture_records;
-                 DROP TABLE IF EXISTS react_turns;
-                 DROP TABLE IF EXISTS run_meta;
-                 DROP TABLE IF EXISTS meta;",
-            )
-            .map_err(|e| GatewayError::Catalog(format!("capture rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("capture schema: {e}")))?;
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1), ('last_seq', 0)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("capture meta init: {e}")))?;
+        // Capture exhaust is projected from the journal, which is the truth.
+        // Nothing here was authored, so a schema bump may rebuild it empty — the
+        // `Cache` arm is byte-identical to the previous behaviour. Routed through
+        // `crate::sidecar` so the classification is DECLARED in one place and a new
+        // store cannot quietly hand-roll a destructive open.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "capture.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["capture_records", "react_turns", "run_meta", "meta"],
+            crate::sidecar::Durability::Cache,
+        )?;
         Ok(Self {
             conn: Mutex::new(conn),
             consent: CaptureConsent::actions_only(),
-        })
-    }
-
-    /// Open `capture.db` and apply the pragmas — fails on a non-SQLite file
-    /// (the corruption signal `open` recovers from by deleting + recreating).
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;",
-        )?;
-        Ok(conn)
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
         })
     }
 

@@ -1494,10 +1494,12 @@ dependencies = [
  "kx-eval",
  "kx-gateway",
  "kx-gateway-core",
+ "kx-journal",
  "kx-proto",
  "kx-runtime",
  "kx-skill",
  "kx-toolcall",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -1952,7 +1954,7 @@ dependencies = [
 
 [[package]]
 name = "kx-journal"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -2284,7 +2286,7 @@ dependencies = [
 
 [[package]]
 name = "kx-runtime"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",

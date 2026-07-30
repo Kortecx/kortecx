@@ -84,6 +84,13 @@ pub use failure_policy::FailurePolicy;
 // the runtime facade, mirroring how `CaptureSink` fronts `kx-capture`.
 pub use kx_audit::{AuditEvent, AuditSink, DispatchKind, InMemoryAuditSink, JsonlAuditSink};
 pub use migrate::migrate_and_verify;
+// Re-exported so a caller that can reach `migrate_and_verify` can also ask the two
+// questions that decide whether to CALL it — which version a journal is at, and which
+// this binary speaks — without taking its own `kx-journal` dependency. `kx migrate` is
+// the first such caller; before it existed, the migration was reachable only from a
+// crate that already depended on the journal, which is a large part of why no user
+// could invoke it.
+pub use kx_journal::{journal_schema_version, MigrationReport, JOURNAL_SCHEMA_VERSION};
 pub use snapshot_sink::SnapshotSink;
 pub use topology::{decode_topology_decision, TopologyProvider, TopologyProviderError};
 pub use workflow::DemoWorkflow;

@@ -1,6 +1,9 @@
 [package]
 name         = "kx-journal"
-version      = "0.2.0"
+# 0.2.0 -> 0.3.0: `journal_schema_version` is new public API — a caller can now ask
+# which version a file is at WITHOUT the strict open's refusal, which is what makes a
+# user-facing `kx migrate` (and a boot refusal that names it) possible at all.
+version      = "0.3.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }

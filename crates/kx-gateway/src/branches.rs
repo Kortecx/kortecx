@@ -2,11 +2,11 @@
 //! the [`BranchStore`] seam — `CreateBranch` / `SnapshotInto` manifests + the
 //! caller-scoped branch read surface.
 //!
-//! ## Rebuildable-to-EMPTY (the `bundles.db` posture)
+//! ## Authored work — preserved across an upgrade, never wiped by one
 //! A branch manifest records which content-store blobs a snapshot grouped under a
 //! `{path -> ContentRef}` handle; it is NOT derivable from the journal. Truth
 //! (the blobs) lives in the content store, so on corruption or a schema-version
-//! drift this ledger recreates EMPTY — the only loss is the manifest index, and
+//! drift this ledger is renamed aside and re-imported, and
 //! re-snapshotting the SAME files restores the SAME `branch_ref` (content-
 //! addressed). Never journaled, never a `MoteId` input, never a digest input —
 //! dropping the file cannot move the canonical projection digest (D160).
@@ -40,8 +40,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::GatewayError;
 
-/// Bump on any table-shape change. Unknown/missing version ⇒ recreate EMPTY
-/// (branches are not journal-derivable, so there is no rebuild — re-snapshot).
+/// Bump on any table-shape change. A corrupt/foreign FILE recreates empty; a version
+/// BUMP renames the catalog aside and re-imports what still fits, and a DOWNGRADE is
+/// refused — this store holds authored work (`crate::sidecar`).
 const SCHEMA_VERSION: i64 = 1;
 
 const SCHEMA: &str = "
@@ -175,8 +176,9 @@ pub(crate) struct BranchesDb<S: ContentStore> {
 
 impl<S: ContentStore> BranchesDb<S> {
     /// Open (or create) `branches.db` under `dir`, bound to the content store and
-    /// the optional operator FS root. A corrupt/foreign file or a `schema_version`
-    /// drift recreates the ledger EMPTY (module doc).
+    /// the optional operator FS root. A corrupt/foreign file recreates the ledger
+    /// empty; a schema bump PRESERVES it — renamed aside and re-imported, and a
+    /// downgrade is refused (module doc).
     ///
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
@@ -186,37 +188,17 @@ impl<S: ContentStore> BranchesDb<S> {
         fs_root: Option<PathBuf>,
         history_max: usize,
     ) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("branches dir: {e}")))?;
-        let db_path = dir.join("branches.db");
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("branches.db-wal"));
-            let _ = std::fs::remove_file(dir.join("branches.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("branches reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS branches;
-                 DROP TABLE IF EXISTS branch_history;
-                 DROP TABLE IF EXISTS meta;",
-            )
-            .map_err(|e| GatewayError::Catalog(format!("branches rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("branches schema: {e}")))?;
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("branches meta init: {e}")))?;
+        // A branch binds an asset to the content its author committed, and the history
+        // table IS the restore surface — losing either loses work no one can regenerate.
+        // Renamed aside and re-imported on a bump; a downgrade refuses. `crate::sidecar`.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "branches.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["branches", "branch_history", "meta"],
+            crate::sidecar::Durability::UserAuthored,
+        )?;
         // The history table versions independently: a history-shape change drops
         // ONLY branch_history (the branch rows stay — history is the safety net,
         // never the truth). `branches` predating the table reads as "no history
@@ -242,19 +224,6 @@ impl<S: ContentStore> BranchesDb<S> {
             max_bytes: DEFAULT_MAX_READ_BYTES,
             history_max: history_max.max(1),
         })
-    }
-
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;",
-        )?;
-        Ok(conn)
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        Self::read_meta(conn, "schema_version")
     }
 
     fn read_meta(conn: &Connection, key: &str) -> rusqlite::Result<Option<i64>> {

@@ -125,6 +125,12 @@ tokio      = { workspace = true, features = ["rt-multi-thread", "macros", "time"
 # Parse the verbs' --json output back in the E2E assertions (separate test crate
 # ⇒ a dev-dep even though it's a normal dep of the lib).
 serde_json = { workspace = true }
+# `kx migrate` E2E: build a journal at an OLDER schema version and prove the verb
+# upgrades it with the product digest intact. DEV-ONLY — `kx-cli`'s normal deps reach
+# the journal through `kx-runtime`, and the FFI wall (tests/dep_wall.rs) scans
+# `[dependencies]` + normal `cargo tree` edges, which these are not on.
+kx-journal = { workspace = true }
+rusqlite   = { workspace = true }
 
 [lints]
 workspace = true

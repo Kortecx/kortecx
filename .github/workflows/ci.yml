@@ -132,6 +132,81 @@ jobs:
           echo "frozen execution kernel + dispatch control-flow unchanged ✓"
 
   # ---------------------------------------------------------------------------
+  # schema-version-fanout — a version is a DISTRIBUTED constant.
+  #
+  # Bumping a *_SCHEMA_VERSION / FORMAT_VERSION is never a one-line change: the
+  # constant has satellites, and shipping the constant without them is how the
+  # v17 journal bump orphaned the v16 migration ladder arm — the immediately
+  # previous released version could neither replay nor migrate, and every model-free
+  # gate stayed green because each satellite was individually consistent.
+  #
+  # This does NOT try to decide whether a bump is correct; it asserts the diff
+  # ARGUED about it. Touch a version constant and the same PR must also touch a
+  # migration/ladder site and the CHANGELOG. Both are cheap to satisfy honestly and
+  # impossible to satisfy accidentally.
+  #
+  # pull_request-only (needs a base to diff); no toolchain.
+  # ---------------------------------------------------------------------------
+  schema-version-fanout:
+    name: schema-version-fanout (a bump brings its satellites)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for the base diff)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Assert a version-constant change carries its migration + changelog
+        run: |
+          set -euo pipefail
+          BASE="${{ github.base_ref || github.event.merge_group.base_ref }}"
+          BASE="${BASE#refs/heads/}"
+          git fetch --no-tags origin "$BASE"
+
+          # Added/removed lines that DECLARE a schema/format version constant. A
+          # `const X_SCHEMA_VERSION: u16 = 17;` edit matches; a mention in a comment
+          # or a use-site does not.
+          BUMPED="$(git diff --unified=0 "origin/$BASE...HEAD" -- 'crates/**/*.rs' \
+            | grep -E '^[+-]' \
+            | grep -vE '^(\+\+\+|---)' \
+            | grep -E '^[+-][[:space:]]*(pub[[:space:]]+)?(pub\([a-z]+\)[[:space:]]+)?const[[:space:]]+[A-Z_]*(SCHEMA|FORMAT)_VERSION' \
+            || true)"
+
+          if [ -z "$BUMPED" ]; then
+            echo "no schema/format version constant changed ✓"
+            exit 0
+          fi
+
+          echo "A schema/format version constant changed in this PR:"
+          echo "$BUMPED"
+          echo
+
+          FILES="$(git diff --name-only "origin/$BASE...HEAD")"
+          MISSING=""
+
+          # A migration/ladder site: the journal ladder, a sidecar upgrade policy, or
+          # a frozen-state-dir fixture. Any of them shows the bump was reasoned about.
+          if ! echo "$FILES" | grep -qE '^crates/kx-journal/src/migration\.rs$|^crates/kx-gateway/src/sidecar\.rs$|^crates/kx-runtime/src/migrate\.rs$|^crates/kx-runtime/tests/schema_evolution\.rs$|^crates/kx-journal/tests/'; then
+            MISSING="$MISSING\n  - a migration site (kx-journal/src/migration.rs, kx-gateway/src/sidecar.rs, kx-runtime/src/migrate.rs, or a schema-evolution test)"
+          fi
+          if ! echo "$FILES" | grep -qE '^CHANGELOG\.md$'; then
+            MISSING="$MISSING\n  - CHANGELOG.md (an upgrade note: what moves, and what an operator must do)"
+          fi
+
+          if [ -n "$MISSING" ]; then
+            echo "::error::A version constant is a DISTRIBUTED constant. This PR bumps one" \
+                 "without touching:$(printf "$MISSING")"
+            echo
+            echo "Every admitted version needs a ladder rung it can be migrated FROM, and"
+            echo "every bump needs an operator-facing note saying what happens to existing"
+            echo "state. If this bump genuinely needs neither, say so in the CHANGELOG and"
+            echo "this guard is satisfied."
+            exit 1
+          fi
+          echo "the version bump carries its migration + changelog ✓"
+
+  # ---------------------------------------------------------------------------
   # clippy — needs the full build graph (build scripts + bindgen output).
   # ---------------------------------------------------------------------------
   clippy:

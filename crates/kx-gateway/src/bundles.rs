@@ -137,60 +137,21 @@ impl BundlesDb {
     /// # Errors
     /// [`GatewayError::Catalog`] on an unrecoverable open/pragma failure.
     pub(crate) fn open(dir: &Path) -> Result<Self, GatewayError> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| GatewayError::Catalog(format!("bundles dir: {e}")))?;
-        let db_path = dir.join("bundles.db");
-        let conn = if let Ok(c) = Self::open_with_pragma(&db_path) {
-            c
-        } else {
-            let _ = std::fs::remove_file(&db_path);
-            let _ = std::fs::remove_file(dir.join("bundles.db-wal"));
-            let _ = std::fs::remove_file(dir.join("bundles.db-shm"));
-            Self::open_with_pragma(&db_path)
-                .map_err(|e| GatewayError::Catalog(format!("bundles reopen: {e}")))?
-        };
-        let fresh_or_stale = match Self::read_schema_version(&conn) {
-            Ok(Some(v)) => v != SCHEMA_VERSION,
-            Ok(None) | Err(_) => true,
-        };
-        if fresh_or_stale {
-            conn.execute_batch(
-                "DROP TABLE IF EXISTS bundles;
-                 DROP TABLE IF EXISTS meta;",
-            )
-            .map_err(|e| GatewayError::Catalog(format!("bundles rebuild: {e}")))?;
-        }
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| GatewayError::Catalog(format!("bundles schema: {e}")))?;
-        conn.execute(
-            "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?1)",
-            params![SCHEMA_VERSION],
-        )
-        .map_err(|e| GatewayError::Catalog(format!("bundles meta init: {e}")))?;
+        // A bundle manifest indexes content-store blobs that still exist; re-bundling the same items restores the same ref.
+        // Nothing here was authored, so a schema bump may rebuild it empty — the
+        // `Cache` arm is byte-identical to the previous behaviour. Routed through
+        // `crate::sidecar` so the classification is DECLARED in one place and a new
+        // store cannot quietly hand-roll a destructive open.
+        let conn = crate::sidecar::open_sidecar(
+            dir,
+            "bundles.db",
+            SCHEMA_VERSION,
+            SCHEMA,
+            &["bundles", "meta"],
+            crate::sidecar::Durability::Cache,
+        )?;
         Ok(Self {
             conn: Mutex::new(conn),
-        })
-    }
-
-    fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
-        let conn = Connection::open(db_path)?;
-        conn.execute_batch(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;",
-        )?;
-        Ok(conn)
-    }
-
-    fn read_schema_version(conn: &Connection) -> rusqlite::Result<Option<i64>> {
-        conn.query_row(
-            "SELECT value FROM meta WHERE key = 'schema_version'",
-            [],
-            |r| r.get(0),
-        )
-        .map(Some)
-        .or_else(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(other),
         })
     }
 

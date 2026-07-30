@@ -1,6 +1,9 @@
 [package]
 name         = "kx-runtime"
-version      = "0.1.1"
+# 0.1.1 -> 0.2.0: re-exports `journal_schema_version` / `JOURNAL_SCHEMA_VERSION` /
+# `MigrationReport` so a caller that can reach `migrate_and_verify` can also ask the
+# questions that decide whether to call it, without its own kx-journal dependency.
+version      = "0.2.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
