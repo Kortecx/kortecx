@@ -719,6 +719,115 @@
         "ideal_turns": 1,
         "ideal_tool_calls": 0
       }
+    },
+    {
+      "id": "workflow-sequential-carry",
+      "family": "workflow",
+      "description": "The stored-workflow spine: a saved definition (canonical bytes, server-built warrants) whose http step dials a credentialed endpoint \u2014 the bearer is resolved BY NAME at dispatch, and the fixture refuses a request without it \u2014 and whose terminal join carries the committed observation verbatim. The officer's name exists only in the fixture's route body, so the answer is underivable unless the runtime saved, loaded, authorized and dialed exactly what the definition declared. Every step is deterministic: this family measures the RUNTIME, never the model.",
+      "instruction": "Run the stored escort-record pipeline and report the officer on record for the vessel 'kestrel'.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "Veiko Sarn"
+        ],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "workflow-parallel-join",
+      "family": "workflow",
+      "description": "A parallel group: three http steps dial three muster endpoints concurrently and a 3-of-3 quorum join commits an aggregate that must carry every callsign. A runtime that serializes wrongly, drops a branch, or releases the join early cannot produce all three fixture-only tokens in one terminal commit.",
+      "instruction": "Run the stored muster pipeline and report every callsign in the fleet muster.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "HALYARD-11",
+          "BOWLINE-42",
+          "CLEAT-7"
+        ],
+        "ideal_turns": 4,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "workflow-conditional-high-reading",
+      "family": "workflow",
+      "description": "The conditional sluice, high direction: the source commits a reading of 87, the typed predicate routes to the open arm, the untaken arm is committed as a distinguished SKIP sentinel (never run \u2014 its endpoint is never dialed), and the first-non-skip join carries the taken arm's order. The PAIR with the low task is the oracle: a predicate that never reads its parent emits the same order on both runs and fails exactly one of them, and a conditional that ran BOTH arms leaves two survivors and fails the join outright.",
+      "instruction": "Run the stored sluice-control pipeline against the high reading and report the resulting gate order.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "WEIR-OPEN-31"
+        ],
+        "answer_must_not_contain": [
+          "WEIR-SHUT-58"
+        ],
+        "ideal_turns": 5,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "workflow-conditional-low-reading",
+      "family": "workflow",
+      "description": "The conditional sluice, low direction: the source commits a reading of 12, the predicate routes to the shut arm. See the high task \u2014 the pair is scored together as one property.",
+      "instruction": "Run the stored sluice-control pipeline against the low reading and report the resulting gate order.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "WEIR-SHUT-58"
+        ],
+        "answer_must_not_contain": [
+          "WEIR-OPEN-31"
+        ],
+        "ideal_turns": 5,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "workflow-wait-then-carry",
+      "family": "workflow",
+      "description": "A durable, journal-backed timer: the hold order is fetched and committed BEFORE a 3-second wait step, whose own commit is a verbatim pass-through of it. The workflow_wait_elapsed@timers sentinel says BY NAME that the run's wall clock actually held for the armed duration \u2014 a wait that fired immediately would still carry the token, and only the sentinel separates a real timer from a pass-through. (Surviving a restart while armed is the chaos gate's proof, not this family's.)",
+      "instruction": "Run the stored hold-then-report pipeline and report the standing gate order.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "GATE-HOLD-51"
+        ],
+        "ideal_turns": 2,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "workflow-retry-recovers",
+      "family": "workflow",
+      "description": "Per-step retry with FRESH attempt identity: the depot refuses every dial carrying the FIRST-seen Idempotency-Key forever, so the worker's same-identity at-least-once redispatch can never succeed \u2014 only a retry ladder that minted a fresh attempt (a fresh idempotency token, after a durable backoff) reads the code. The workflow_retry_attempts@retries sentinel counts the distinct keys the fixture actually saw. A runtime without per-step retry scores an honest 0. NOTE the fixture is stateful (first-key-poisoned): the task must never join the pass^k flagship set, whose trials re-drive tasks in fresh serves against one fixture lifetime.",
+      "instruction": "Run the stored depot-report pipeline and report the depot dispatch code.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "EMBER-RELAY-19"
+        ],
+        "ideal_turns": 1,
+        "ideal_tool_calls": 0
+      }
+    },
+    {
+      "id": "workflow-continue-placeholder",
+      "family": "workflow",
+      "description": "Continue-past-failure: one branch dials an endpoint that is permanently down (refuses every call) under a continue policy, the sibling succeeds, and a 1-of-2 quorum join releases on the survivor. The terminal aggregate must carry the survivor's fixture-only signal and must NOT leak the canonical failure placeholder's schema \u2014 the failed branch is recorded as a fact, never as data. A runtime without continue strands the join and scores an honest 0.",
+      "instruction": "Run the stored beacon-sweep pipeline and report the beacon signal that answered.",
+      "expect": {
+        "terminal": "answer",
+        "answer_must_contain": [
+          "LANTERN-GREEN-88"
+        ],
+        "answer_must_not_contain": [
+          "kx-workflow/failed/v1"
+        ],
+        "ideal_turns": 3,
+        "ideal_tool_calls": 0
+      }
     }
   ]
 }

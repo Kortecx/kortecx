@@ -12,6 +12,10 @@
 )]
 
 pub mod bench_http;
+// The workflow bench family's fixture + stored definitions: references the
+// `eval_bench` handle consts, which ride the `serve-engine` feature.
+#[cfg(feature = "serve-engine")]
+pub mod bench_routes;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
