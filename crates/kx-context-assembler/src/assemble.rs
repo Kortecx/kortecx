@@ -97,10 +97,24 @@ fn tool_menu_text(grant_id: &str, def: &ToolDef) -> String {
 /// call). PURE + total: type-keyed constant placeholders (`Int` → an in-range
 /// integer; `Bool` → `false`; `Enum` → the `BTreeSet`-least allowed value;
 /// `Str`/`Bytes` → a quoted placeholder), no map re-sort (declared order is the
-/// tool's identity contract), no clock/RNG. Zero required params → `{}`.
+/// tool's identity contract), no clock/RNG.
+///
+/// **All-optional schemas fall back to every param.** With a required-only filter
+/// a tool whose params are ALL optional rendered `Example: {}` — an example that
+/// teaches nothing and, worse, models a call with no arguments as the correct
+/// shape. The parameter names never reached the model at all: the `Inputs:` block
+/// above lists them, but the example is what the model copies. A tool with
+/// required params is BYTE-UNCHANGED; only the previously-degenerate case moves.
 fn example_call_json(schema: &InputSchema) -> String {
+    // Required params model the minimal valid call. When there are none, showing
+    // `{}` would teach the empty call — so show what the tool actually accepts.
+    let required_exists = schema.params.iter().any(|p| p.required);
     let mut parts: Vec<String> = Vec::new();
-    for p in schema.params.iter().filter(|p| p.required) {
+    for p in schema
+        .params
+        .iter()
+        .filter(|p| !required_exists || p.required)
+    {
         let val = match &p.ty {
             ParamType::Int { min, max } => match (min, max) {
                 (Some(lo), _) => lo.to_string(),
@@ -450,10 +464,47 @@ mod tool_menu_tests {
             }],
             deny_unknown: true,
         };
-        // `path` is OPTIONAL, so the minimal valid call has zero required keys: {}.
+        // Every param is OPTIONAL. Rendering `{}` here would teach the empty call
+        // as the correct shape and would never show the model a parameter NAME —
+        // the Inputs block lists them, but the example is what gets copied. So an
+        // all-optional schema falls back to showing what the tool accepts.
         assert_eq!(
             tool_menu_text("fs-list", &def(Some(schema))),
-            "name: fs-list\nversion: 1\nList a directory.\nInputs:\n  - path (string, optional)\nExample: {}"
+            "name: fs-list\nversion: 1\nList a directory.\nInputs:\n  - path (string, optional)\nExample: {\"path\": \"<string>\"}"
+        );
+    }
+
+    /// A schema WITH a required param is byte-unchanged by the all-optional
+    /// fallback: optionals stay omitted, so every existing menu renders exactly
+    /// as before and only the degenerate case moved.
+    #[test]
+    fn a_required_param_still_suppresses_the_optionals() {
+        let schema = InputSchema {
+            params: vec![
+                ParamSpec {
+                    name: "query".into(),
+                    ty: ParamType::Str { max_len: 4096 },
+                    required: true,
+                },
+                ParamSpec {
+                    name: "limit".into(),
+                    ty: ParamType::Int {
+                        min: Some(1),
+                        max: Some(50),
+                    },
+                    required: false,
+                },
+            ],
+            deny_unknown: true,
+        };
+        let rendered = tool_menu_text("search", &def(Some(schema)));
+        assert!(
+            rendered.ends_with("Example: {\"query\": \"<string>\"}"),
+            "the minimal valid call is required-only: {rendered}"
+        );
+        assert!(
+            !rendered.contains("\"limit\":"),
+            "an optional must not enter the example when a required one exists: {rendered}"
         );
     }
 

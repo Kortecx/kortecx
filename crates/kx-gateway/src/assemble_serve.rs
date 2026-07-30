@@ -306,10 +306,68 @@ fn label_trajectory_blocks(payloads: &[Vec<u8>], warrant: &WarrantSpec) -> Vec<S
         };
         blocks.push(format!(
             "{head}\n{}\n\n",
-            String::from_utf8_lossy(payload.as_slice())
+            render_payload(payload.as_slice())
         ));
     }
     blocks
+}
+
+/// Render an observation's bytes for the model, unwrapping the MCP envelope.
+///
+/// An MCP tool result arrives as the JSON-RPC `result` object VERBATIM — that is
+/// deliberate and must not change: those bytes are the committed effect result,
+/// content-addressed, and re-encoding them would move a `result_ref`. But it means
+/// the model is shown
+///
+/// ```text
+/// {"content":[{"type":"text","text":"the answer it actually needed"}]}
+/// ```
+///
+/// where the payload is a JSON-ESCAPED string inside an array inside an object.
+/// The model has to unwrap two levels of encoding before it can read a value it
+/// then has to quote back exactly.
+///
+/// So the unwrap happens HERE, at render, and nowhere else. Total and
+/// panic-free: anything that does not parse as the MCP `CallToolResult` shape —
+/// including every non-MCP tool's bytes — falls back to the verbatim rendering,
+/// so the change can only ever affect payloads that are unambiguously that shape.
+///
+/// Digest safety, which is NOT the usual argument: this module's own doc says its
+/// output is content-addressed, and it is — but the rendered block is delivered at
+/// dispatch through `kx_worker::ContextSink` and prepended to the prompt. It is
+/// never written into `config_subset`, so it is off the `MoteDef` and off the
+/// `MoteId`. Replay folds COMMITTED facts and does not re-derive a leaf's prompt,
+/// so already-committed runs are untouched. The one affected case is a mote in
+/// flight and uncommitted across a binary swap — the same narrow window every
+/// prompt edit has. The determinism this module promises is scoped WITHIN one
+/// binary version, not across versions.
+fn render_payload(payload: &[u8]) -> String {
+    #[derive(serde::Deserialize)]
+    struct McpContent {
+        #[serde(default)]
+        r#type: String,
+        #[serde(default)]
+        text: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct McpResult {
+        content: Vec<McpContent>,
+    }
+
+    if let Ok(r) = serde_json::from_slice::<McpResult>(payload) {
+        // Only when EVERY part is a text part: a result carrying an image or a
+        // resource is not losslessly renderable as its text, and showing a
+        // partial answer is worse than showing an honest envelope.
+        if !r.content.is_empty() && r.content.iter().all(|c| c.r#type == "text") {
+            return r
+                .content
+                .into_iter()
+                .map(|c| c.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+    }
+    String::from_utf8_lossy(payload).into_owned()
 }
 
 /// A bounded, single-line `name@version` label. Control characters (a newline most of
@@ -371,6 +429,43 @@ fn fit_trajectory_blocks(blocks: &[String], cap: usize) -> Result<String, usize>
 
 #[cfg(test)]
 mod tests {
+    /// An MCP text result is shown as its TEXT, not as its envelope.
+    #[test]
+    fn an_mcp_text_result_renders_unwrapped() {
+        let raw = br#"{"content":[{"type":"text","text":"officer: Veiko Sarn"}]}"#;
+        assert_eq!(super::render_payload(raw), "officer: Veiko Sarn");
+    }
+
+    /// Multiple text parts join, in order.
+    #[test]
+    fn multiple_text_parts_join_in_order() {
+        let raw = br#"{"content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}"#;
+        assert_eq!(super::render_payload(raw), "a\nb");
+    }
+
+    /// Anything that is not unambiguously an all-text MCP result renders VERBATIM.
+    ///
+    /// This is the property that bounds the blast radius: every non-MCP tool's
+    /// bytes, and every MCP result carrying a non-text part, are untouched. A
+    /// partial answer is worse than an honest envelope.
+    #[test]
+    fn anything_else_renders_verbatim() {
+        for raw in [
+            &br#"{"rows":[1,2,3]}"#[..],                            // a plain tool
+            &br#"{"content":[]}"#[..],                              // empty content
+            &br#"{"content":[{"type":"image","data":"..."}]}"#[..], // not text
+            &br#"{"content":[{"type":"text","text":"a"},{"type":"image"}]}"#[..], // mixed
+            &b"not json at all"[..],                                // not JSON
+        ] {
+            assert_eq!(
+                super::render_payload(raw),
+                String::from_utf8_lossy(raw),
+                "must fall back verbatim: {}",
+                String::from_utf8_lossy(raw)
+            );
+        }
+    }
+
     use super::*;
     use kx_content::ContentStore;
     use tempfile::TempDir;
