@@ -258,9 +258,9 @@ Agent quality here is a number you can gate on. Two suites, one set of scorers:
 
 **Reading a score.** Every score is an integer **per-mille** — a rate on a 0–1000 scale
 (769 ≡ 76.9%), never a count — and an aggregate is the **floor** of the integer mean over the
-tasks it applied to: a suite-wide `764 · 26/34` is floor(1000·26/34), not "764 of 1000
+tasks it applied to: a suite-wide `804 · 33/41` is floor(1000·33/41), not "804 of 1000
 calls". Resolution follows the denominator: a one-task family can only read 0 or 1000, a
-three-task family only 0 · 333 · 666 · 1000, and the 34-task suite moves in steps of ~29.
+three-task family only 0 · 333 · 666 · 1000, and the 41-task suite moves in steps of ~24.
 Where a metric is pass/fail per unit — `task_success` everywhere, `injection_resistance`,
 the exact-order `tool_seq_fsa`, `pass_k4` per flagship task, and `retrieval_success_at_8`
 per query — the exact fraction is printed beside the rate, so `666 · 2/3` means two of
@@ -275,7 +275,7 @@ evidence the tool actually ran. (Published prior art for the shape: RAGAS
 judge-scored claim coverage, which this is not.) Full definitions:
 [Evaluation](docs/site/docs/evaluation.md).
 
-**Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **34 tasks**,
+**Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **41 tasks**,
 on two different Gemma-4-12B builds — Ollama `gemma3:12b` and a llama.cpp GGUF served as
 `kx-serve:gemma-4-12b-it-q4_k_m`. They are not the same build, and the columns are not
 interchangeable. The label travels in the committed baseline, and CI holds this text to it.
@@ -300,6 +300,7 @@ exact pass count.
 | **irrelevance** | 4 | declines to fire when NOTHING on the menu applies — an email send and a live weather read no granted tool can serve — beside two look-alikes phrased the same way that a granted tool must serve, so an always-refuse policy fails | 1000 · 4/4 | 1000 · 4/4 |
 | **memory** | 2 | updates a stored fact and answers with the NEW value while the superseded row is still live, and abstains when memory holds no answer | 1000 · 2/2 | 500 · 1/2 |
 | **scaffold** | 2 | the model scaffolds the app's whole project LIVE (plans it, authors every file, 20-min budget), the app then RUNS, and the answer must carry a code that exists only inside the generated project — the contextual and codified lanes; a hosted app has no runnable blueprint, so it is out of scope here | 0 · 0/2 | 0 · 0/2 |
+| **workflow** | 7 | runs a STORED workflow definition by handle — canonical saved bytes, every warrant built server-side at run — through deterministic step kinds: a credentialed http dial, a 3-way parallel quorum join, a typed conditional whose untaken arm provably never dials, a journal-backed 3 s timer that carries its parent's bytes, a retry that recovers only via a FRESH attempt identity, and a continue policy whose failed branch commits a placeholder the join releases past; every oracle token exists only on the harness fixture, so the model is never what is being measured | 1000 · 7/7 | 1000 · 7/7 |
 
 The same rates drawn with their denominators — identical bars are not identical evidence: a
 1000 from one task is one pass, a 1000 from six tasks is six.
@@ -308,36 +309,36 @@ The same rates drawn with their denominators — identical bars are not identica
 ```mermaid
 xychart-beta horizontal
     title "task_success by family — Ollama gemma3:12b (passes/tasks)"
-    x-axis ["tool (6/6)", "react (2/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)"]
+    x-axis ["tool (6/6)", "react (2/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 666, 1000, 1000, 1000, 0, 750, 1000, 0, 500, 1000, 1000, 0]
+    bar [1000, 666, 1000, 1000, 1000, 0, 750, 1000, 0, 500, 1000, 1000, 0, 1000]
 ```
 
 <!-- bench-chart:llamacpp — data checked against baseline.llamacpp.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
 ```mermaid
 xychart-beta horizontal
     title "task_success by family — llama.cpp kx-serve:gemma-4-12b-it-q4_k_m (passes/tasks)"
-    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)", "irrelevance (4/4)", "memory (1/2)", "scaffold (0/2)"]
+    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)", "irrelevance (4/4)", "memory (1/2)", "scaffold (0/2)", "workflow (7/7)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 1000, 666, 1000, 666, 0, 750, 1000, 0, 1000, 1000, 500, 0]
+    bar [1000, 1000, 666, 1000, 666, 0, 750, 1000, 0, 1000, 1000, 500, 0, 1000]
 ```
 
 ### Suite-wide
 
 | Metric | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `task_success` | 764 · 26/34 | 735 · 25/34 |
-| `tool_call_f1` † | 823 | 859 |
-| `tool_seq_fsa` | 538 · 14/26 | 730 · 19/26 |
-| `tool_seq_psa` † | 759 | 823 |
+| `task_success` | 804 · 33/41 | 780 · 32/41 |
+| `tool_call_f1` † | 809 | 844 |
+| `tool_seq_fsa` | 538 · 14/26 | 692 · 18/26 |
+| `tool_seq_psa` † | 749 | 802 |
 | `groundedness` ‡ | 1000 | 0 |
 | `context_recall` ‡ | 1000 | 0 |
 | `memory_quality` † | 500 | 1000 |
-| `loop_efficiency` † | 612 | 906 |
-| `injection_resistance` | 0 · 0/1 | 1000 · 1/1 |
+| `loop_efficiency` † | 670 | 937 |
+| `injection_resistance` | 750 · 3/4 | 1000 · 4/4 |
 | `retrieval_success_at_8` | 1000 · 10/10 | 800 · 8/10 |
 | `pass_k4` | 666 · 2/3 | 666 · 2/3 |
-| `model_time_share` † | 960 | 984 |
+| `model_time_share` † | 936 | 913 |
 
 The pass/fail rows carry their own denominators: `tool_seq_fsa` applies to the 26 tasks
 with a gold call sequence, `pass_k4` to the three corpus-flagged flagship tasks
@@ -356,17 +357,17 @@ dollar figure — a metric whose input the runtime does not record is not publis
 
 | Spike | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `tokens_per_task_mean` | 109 tokens | 118 tokens |
-| `tokens_per_success` | 135 tokens | 151 tokens |
-| `tokens_measured_tasks` | 32 tasks | 32 tasks |
-| `task_latency_ms_p50` | 144346 ms | 129198 ms |
-| `task_latency_ms_p95` | 252483 ms | 411394 ms |
-| `store_memory_latency_ms_p50` | 476 ms | 651 ms |
-| `store_memory_latency_ms_p95` | 891 ms | 118116 ms |
-| `recall_memory_latency_ms_p50` | 382 ms | 832 ms |
-| `recall_memory_latency_ms_p95` | 741 ms | 986 ms |
-| `query_dataset_latency_ms_p50` | 288 ms | 708 ms |
-| `query_dataset_latency_ms_p95` | 427 ms | 877 ms |
+| `tokens_per_task_mean` | 130 tokens | 138 tokens |
+| `tokens_per_success` | 157 tokens | 174 tokens |
+| `tokens_measured_tasks` | 36 tasks | 34 tasks |
+| `task_latency_ms_p50` | 123504 ms | 129786 ms |
+| `task_latency_ms_p95` | 195354 ms | 436779 ms |
+| `store_memory_latency_ms_p50` | 110 ms | 869 ms |
+| `store_memory_latency_ms_p95` | 174 ms | 1222 ms |
+| `recall_memory_latency_ms_p50` | 103 ms | 895 ms |
+| `recall_memory_latency_ms_p95` | 138 ms | 1089 ms |
+| `query_dataset_latency_ms_p50` | 121 ms | 793 ms |
+| `query_dataset_latency_ms_p95` | 151 ms | 1037 ms |
 | `rpc_probe_samples` | 32 calls | 32 calls |
 
 Seven of these are worth explaining, and none of them is flattering.

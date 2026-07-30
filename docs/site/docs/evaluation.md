@@ -158,7 +158,7 @@ It is a **local** gate — never part of `just ci`, which stays model-free and f
 A committed per-engine baseline is the fail-closed ratchet, and the oracle floors are
 asserted only for a model capable enough to be worth gating on.
 
-The suite spans thirteen **families**, each exercising a different part of the runtime. A
+The suite spans fourteen **families**, each exercising a different part of the runtime. A
 family is a bucket of tasks, and its gate is the floor mean over that bucket — so the **task
 count is the denominator**, and the fraction beside each rate is the exact pass count. The
 numbers are the committed `bench-v1` baselines (`macos/aarch64`, the two builds named
@@ -179,6 +179,7 @@ above), held to this table by `check-docs`.
 | `irrelevance` | 4 | Relevance detection, BFCL-style: two requests nothing on the granted menu can serve (an email send, a live weather read) where the correct move is to fire nothing and say so — beside two near-identically-phrased look-alikes a granted tool must serve, so an always-refuse policy fails the pair. | 1000 · 4/4 | 1000 · 4/4 |
 | `memory` | 2 | LongMemEval-shaped, judge-free: a knowledge update whose superseded value stays live in the store (recall surfaces the conflict; the run must answer the NEW value), and an abstention when memory holds no answer. | 1000 · 2/2 | 500 · 1/2 |
 | `scaffold` | 2 | Generated-app reach: the model plans and authors an entire project LIVE on this serve (one task per scheduled lane — contextual and codified), the app is then RUN, and the answer must carry an activation code that exists **only** inside the generated files — underivable unless the project actually reached the run's context. | 0 · 0/2 | 0 · 0/2 |
+| `workflow` | 7 | A STORED workflow definition run by handle — canonical saved bytes, every warrant built server-side at run — through deterministic step kinds: a credentialed http dial, a three-way parallel quorum join, a typed conditional whose untaken arm commits a distinguished skip sentinel and provably never dials its endpoint (the high/low pair is scored as one property), a journal-backed 3-second timer that carries its parent's committed bytes, a flaky depot that answers only a FRESH retry identity, and a permanently-down branch under `continue` whose placeholder the join releases past. Every step is deterministic and every oracle token exists only on the harness fixture — the family measures the **runtime**, never the model. | 1000 · 7/7 | 1000 · 7/7 |
 
 Each family reports its own gate (`task_success@swarm`) beside the suite-wide one, so a
 regression in one capability is visible instead of being averaged away by the others.
