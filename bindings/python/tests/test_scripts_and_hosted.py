@@ -22,10 +22,30 @@ import subprocess
 import pytest
 
 from kortecx import KxClient
-from kortecx.errors import KxUnimplemented
+from kortecx.errors import KxFailedPrecondition, KxInvalidArgument, KxUnimplemented
 from kortecx.hosted_apps import HostedAppStatus
 
 _SOURCE = b'#!/bin/sh\nread -r line\necho "seen:$line"\n'
+
+
+def _register(kx_client, **kw):
+    """Register, or report that this host cannot confine a script.
+
+    Registration PROBES the interpreter inside the sandbox and refuses if it
+    cannot run there — there is no configuration in which a script runs
+    unconfined. On a GitHub Linux runner that probe fails (`no usable sh on this
+    host: /usr/bin/dash: body exited with non-zero status 71`), because the
+    container cannot set up the confinement bwrap needs.
+
+    That refusal is a REAL contract, not a reason to skip: a test that skips here
+    asserts nothing on the platform where the risk is highest. So the caller gets
+    ``(script_id, None)`` on a host that can confine and ``(None, error)`` on one
+    that cannot, and BOTH arms are asserted below.
+    """
+    try:
+        return kx_client.register_script(**kw), None
+    except KxFailedPrecondition as e:
+        return None, e
 
 
 def _kx(kx_bin: str, endpoint: str, *args: str) -> str:
@@ -40,15 +60,32 @@ def _kx(kx_bin: str, endpoint: str, *args: str) -> str:
 
 
 def test_registered_script_has_the_same_identity_from_both_surfaces(dev_server, kx_bin):
-    """The SDK registers; the CLI reads back. Every server-derived field agrees."""
+    """The SDK registers; the CLI reads back. Every server-derived field agrees.
+
+    On a host that cannot confine a script, the assertion instead is that
+    registration REFUSED and left nothing behind — which is the property that
+    actually matters there.
+    """
     with KxClient(dev_server.endpoint) as kx_client:
-        script_id = kx_client.register_script(
+        script_id, refusal = _register(
+            kx_client,
             name="parity-echo",
             version="1",
             interpreter="sh",
             source=_SOURCE,
             description="registered by the python sdk",
         )
+
+        if refusal is not None:
+            # A script that cannot be sandboxed does not register — and does not
+            # half-register. The refusal must name what it could not run, and the
+            # registry must be untouched.
+            assert "sh" in str(refusal), f"the refusal must name the interpreter: {refusal}"
+            assert kx_client.get_script("parity-echo", "1") is None, (
+                "a refused registration must leave NOTHING in the registry"
+            )
+            return
+
         assert len(script_id) == 32, "script_id is a 16-byte server-derived id in hex"
 
         # Read the SAME row back through the SDK...
@@ -66,10 +103,21 @@ def test_registered_script_has_the_same_identity_from_both_surfaces(dev_server, 
 
 
 def test_list_and_deregister_round_trip(dev_server):
+    """List and deregister round-trip — or, where scripts cannot be confined,
+    that an empty registry lists cleanly and deregistering nothing is not an
+    error. Both arms assert; neither is a skip."""
     with KxClient(dev_server.endpoint) as kx_client:
-        kx_client.register_script(name="parity-tidy", version="2", interpreter="sh", source=_SOURCE)
+        _, refusal = _register(
+            kx_client, name="parity-tidy", version="2", interpreter="sh", source=_SOURCE
+        )
         page = kx_client.list_scripts(limit=64)
         names = {(s.script_name, s.script_version) for s in page.scripts}
+
+        if refusal is not None:
+            assert ("parity-tidy", "2") not in names, "a refused registration is not listed"
+            assert kx_client.deregister_script("parity-tidy", "2") is False
+            return
+
         assert ("parity-tidy", "2") in names
 
         assert kx_client.deregister_script("parity-tidy", "2") is True
@@ -112,3 +160,25 @@ def test_hosted_app_status_reads_an_absent_serve_mode_as_dev():
     )
     assert s.serve_mode == "dev"
     assert s.state == "running"
+
+
+def test_a_refused_registration_leaves_nothing_behind(dev_server):
+    """A registration the host refuses must not half-register.
+
+    This exercises the refusal branch on EVERY platform, including the one where
+    the sandbox works — otherwise that branch is only ever reached on CI and
+    nobody would notice it rotting. An interpreter outside the host's closed
+    allowlist is refused for a different reason than an unusable sandbox, but the
+    property under test is the same one: refused means nothing was written.
+    """
+    with KxClient(dev_server.endpoint) as kx_client:
+        with pytest.raises((KxFailedPrecondition, KxInvalidArgument)):
+            kx_client.register_script(
+                name="not-allowlisted",
+                version="1",
+                interpreter="definitely-not-an-interpreter",
+                source=_SOURCE,
+            )
+        assert kx_client.get_script("not-allowlisted", "1") is None, (
+            "a refused registration must leave NOTHING in the registry"
+        )
