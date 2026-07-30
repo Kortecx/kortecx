@@ -1760,15 +1760,53 @@ fn seed_recipe(
         .map_err(|e| cat(e.to_string()))?;
 
     let (manifest_id, _) = bodies.publish_body(body).map_err(|e| cat(e.to_string()))?;
-    if versions.resolve(handle).is_none() {
-        versions
-            .publish(AssetVersion::root(
-                handle.clone(),
-                VersionedContent::Workflow(manifest_id),
-                owner.clone(),
-                Provenance::from_recipe(manifest_id.0),
-            ))
-            .map_err(|e| cat(e.to_string()))?;
+    // Publishing the BODY is not enough: the handle is what `bind` resolves, and it
+    // does not follow a new body on its own. Three cases, and the middle one is the
+    // reason this is not just `if resolve().is_none()`:
+    //
+    //   absent                    -> publish the root version (a fresh state dir)
+    //   present, SAME manifest    -> no-op (every normal restart)
+    //   present, DIFFERENT manifest -> publish a SUCCESSOR
+    //
+    // The third case is what an upgrade looks like now that a warrant change moves
+    // the recipe id (see `kx_workflow::Manifest::step_warrant_refs`). Before the
+    // fold, that case could not arise: a changed warrant produced the SAME id and
+    // `publish_body` refused the differing bytes, so the boot failed LOUDLY. With
+    // the fold the body now publishes cleanly under its own id — and if the handle
+    // were left pointing at the old version, the serve would come up green while
+    // binding the PREVIOUS recipe. A silent stale bind is strictly worse than the
+    // boot failure it replaced, so the handle is advanced here.
+    match versions.resolve(handle) {
+        None => {
+            versions
+                .publish(AssetVersion::root(
+                    handle.clone(),
+                    VersionedContent::Workflow(manifest_id),
+                    owner.clone(),
+                    Provenance::from_recipe(manifest_id.0),
+                ))
+                .map_err(|e| cat(e.to_string()))?;
+        }
+        Some((VersionedContent::Workflow(current), _)) if current == manifest_id => {}
+        Some((_, prior_id)) => {
+            // The ledger RE-VERIFIES `prior`/`prior_revision` against the real chain
+            // and refuses a mismatch, so the revision is read from the chain rather
+            // than tracked here.
+            let prior_revision = versions
+                .get_version(&prior_id)
+                .map(|v| v.revision())
+                .ok_or_else(|| cat("resolved version is absent from the ledger".into()))?;
+            versions
+                .publish(AssetVersion::successor(
+                    prior_id,
+                    prior_revision,
+                    handle.clone(),
+                    VersionedContent::Workflow(manifest_id),
+                    owner.clone(),
+                    Provenance::from_recipe(manifest_id.0),
+                ))
+                .map_err(|e| cat(e.to_string()))?;
+        }
     }
 
     let role = Role {
@@ -6487,33 +6525,32 @@ mod tests {
         );
     }
 
-    /// A1 arm 3, the UPGRADE hazard, pinned as a test because reasoning about it gave
-    /// the wrong answer twice.
+    /// A1 arm 3, the UPGRADE hazard — formerly a pinned REPRODUCTION, now the assertion
+    /// that it is fixed. Kept in place (rather than deleted and rewritten) so the history
+    /// of what was wrong stays attached to the test that closes it.
     ///
-    /// A recipe body is keyed by what it COMPILES to (`ManifestId`), and a step warrant
-    /// is NOT part of that identity — so changing a react warrant produces different body
-    /// BYTES under the SAME recipe id, which `publish_body` refuses as an immutability
-    /// violation. `seed_recipe` propagates that with `?`, and `open_serve` is called with
-    /// `?` at startup: on a state dir seeded by an older binary, a changed react warrant
-    /// would fail the SERVE BOOT rather than silently taking the stale value.
+    /// **What was wrong.** A recipe body is keyed by what it COMPILES to (`ManifestId`),
+    /// and a step warrant was NOT part of that identity — so changing a react warrant
+    /// produced different body BYTES under the SAME recipe id, which `publish_body`
+    /// refuses as an immutability violation. `seed_recipe` propagates that with `?`, and
+    /// `open_serve` is called with `?` at startup, so on a state dir seeded by an older
+    /// binary a changed react warrant failed the SERVE BOOT. That is why
+    /// `DEFAULT_REACT_MAX_OUTPUT_TOKENS` was pinned at 512 and its raise was an operator
+    /// opt-in: shipping a new default would have failed the boot of every existing
+    /// install. It was never only about that knob — the same conflict fired when an
+    /// operator changed the served model or the granted tool set.
     ///
-    /// **This test REPRODUCES a defect rather than asserting a fix.** It is why
-    /// `DEFAULT_REACT_MAX_OUTPUT_TOKENS` stays at 512 and the raise is an operator
-    /// opt-in: shipping a new default would fail the boot of every existing install.
+    /// **What fixed it.** `kx_workflow::Manifest` now folds each step's `warrant_ref`
+    /// into `ManifestId` (domain tag `…/v2`), so a warrant change is a genuinely
+    /// different recipe with its own id and the ledger stores it BESIDE the old one.
+    /// The immutability rule is untouched — deliberately: it is what stops a replacement
+    /// body WIDENING a recipe's authority under an unchanged id, and relaxing it was
+    /// always the wrong repair.
     ///
-    /// The defect is pre-existing and broader than this knob — the same conflict fires
-    /// when an operator changes the served model or the granted tool set on a dir seeded
-    /// by an earlier run, because none of those are part of the recipe identity either.
-    /// The immutability rule itself must NOT be relaxed to paper over it: precisely
-    /// because the recipe id does not cover the warrant, a permissive `publish_body`
-    /// would let a replacement body WIDEN a recipe's authority under an unchanged id.
-    /// The real fix is for the recipe identity to cover the step warrant (or a genuine
-    /// version-successor path) — a catalog change, out of scope for a loop PR.
-    ///
-    /// When that fix lands this test goes red and points at itself: invert it to
-    /// `.expect("boot 2 survives")` and drop the opt-in default.
+    /// Its other half is `a_warrant_change_advances_the_handle_to_the_new_recipe` — the
+    /// fold alone would turn a loud boot failure into a silent stale bind.
     #[test]
-    fn a_react_warrant_change_conflicts_on_an_already_seeded_state_dir() {
+    fn a_react_warrant_change_survives_on_an_already_seeded_state_dir() {
         let dir = tempfile::tempdir().unwrap();
         let versions = SqliteVersionLedger::open(dir.path().join("versions.db")).unwrap();
         let bodies = SqliteBodyLedger::open(dir.path().join("bodies.db")).unwrap();
@@ -6550,19 +6587,111 @@ mod tests {
         // Boot 1: a dir seeded by the older binary.
         seed(&small).expect("the first boot seeds cleanly");
         // Re-seeding the SAME warrant is idempotent — this is every normal restart, and
-        // it must stay green or the hazard below would be indistinguishable from noise.
+        // it must stay green or the assertion below would be indistinguishable from noise.
         seed(&small).expect("an unchanged re-seed is a no-op");
-        // Boot 2: the upgraded binary, one warrant field different.
-        let err = seed(&large).expect_err(
-            "KNOWN DEFECT: a changed step warrant produces different body bytes under an \
-             UNCHANGED recipe id, so the body ledger refuses it — and this is the serve's \
-             startup path, propagated with `?`. If this now succeeds, the catalog was \
-             fixed: see this test's doc comment.",
+        // Boot 2: the upgraded binary, one warrant field different. This is the line that
+        // used to be an `expect_err` on a body-ledger immutability conflict.
+        seed(&large).expect("boot 2 survives");
+
+        // The two warrants really are distinct recipes now — otherwise boot 2 could be
+        // "surviving" because the bodies collapsed to identical bytes, which would pass
+        // this test while silently running the wrong decode budget.
+        let id_of = |w: &WarrantSpec| {
+            kx_catalog::body_manifest_id(&body_of(w)).expect("the recipe body compiles")
+        };
+        assert_ne!(
+            id_of(&small),
+            id_of(&large),
+            "a warrant-only change must move the recipe identity — if these are equal the \
+             warrant fold is not reaching ManifestId and boot 2 survived for the wrong \
+             reason"
         );
+    }
+
+    /// The other half of the fix, and the failure mode it exists to prevent.
+    ///
+    /// Folding the warrant into `ManifestId` stops the boot failure by giving the new
+    /// body its own id. But `seed_recipe` used to publish a version only when the handle
+    /// resolved to NOTHING, so an upgraded binary would have published a fresh body and
+    /// left the handle pointing at the PREVIOUS one — `bind` resolves the handle, so the
+    /// serve would come up green and run the old recipe forever. That is a worse defect
+    /// than the one being fixed: it is silent.
+    ///
+    /// Mutation check: delete the `Some((_, prior_id))` successor arm in `seed_recipe`
+    /// and this test fails while its sibling above still passes.
+    #[test]
+    fn a_warrant_change_advances_the_handle_to_the_new_recipe() {
+        let dir = tempfile::tempdir().unwrap();
+        let versions = SqliteVersionLedger::open(dir.path().join("versions.db")).unwrap();
+        let bodies = SqliteBodyLedger::open(dir.path().join("bodies.db")).unwrap();
+        let grants = SqliteGrantLedger::open(dir.path().join("grants.db")).unwrap();
+        let owner = PartyId::new("owner");
+        let handle = react_handle().unwrap();
+        let model = ModelId("m".to_string());
+        let tool = (ToolName("mcp-echo/echo".into()), ToolVersion("1".into()));
+
+        let mut small = react_warrant(ExecutorClass::Bwrap, &model, &tool);
+        small.model_route.max_output_tokens = 512;
+        let mut large = small.clone();
+        large.model_route.max_output_tokens = 2_048;
+
+        let body_of = |w: &WarrantSpec| {
+            recipe_body(
+                LogicRef::from_bytes(REACT_LOGIC_REF),
+                w,
+                &[kx_mote::REACT_INSTRUCTION_KEY],
+            )
+        };
+        let seed = |w: &WarrantSpec| {
+            seed_recipe(
+                &versions,
+                &bodies,
+                &grants,
+                &owner,
+                &["p".to_string()],
+                &handle,
+                body_of(w),
+                w,
+            )
+        };
+        let resolved = || match versions.resolve(&handle) {
+            Some((VersionedContent::Workflow(id), _)) => id,
+            other => panic!("the react handle must resolve to a workflow body: {other:?}"),
+        };
+
+        seed(&small).expect("the first boot seeds cleanly");
+        let after_boot_1 = resolved();
+        assert_eq!(
+            after_boot_1,
+            kx_catalog::body_manifest_id(&body_of(&small)).unwrap(),
+            "the root version pins the recipe it was seeded from"
+        );
+
+        // An unchanged re-seed must NOT advance the handle — otherwise every restart
+        // would append a revision and the chain would grow without bound.
+        seed(&small).expect("an unchanged re-seed is a no-op");
+        assert_eq!(
+            resolved(),
+            after_boot_1,
+            "an unchanged re-seed leaves the handle exactly where it was"
+        );
+
+        seed(&large).expect("boot 2 survives");
+        let after_boot_2 = resolved();
+        assert_eq!(
+            after_boot_2,
+            kx_catalog::body_manifest_id(&body_of(&large)).unwrap(),
+            "THE STALE-BIND NEGATIVE: after a warrant change the handle must resolve to \
+             the NEW recipe. If this reads the old id, the boot stopped failing but the \
+             serve is binding the previous body — green, and wrong."
+        );
+        assert_ne!(after_boot_2, after_boot_1, "the handle actually moved");
+
+        // The prior body is retained, not replaced — the immutability rule is intact and
+        // an in-flight run pinned to the old id can still resolve it.
         assert!(
-            err.to_string().contains("immutability"),
-            "the boot fails on the body-ledger immutability conflict, not something else: \
-             {err}"
+            bodies.get_body(&after_boot_1).is_some(),
+            "the superseded recipe body is retained"
         );
     }
 

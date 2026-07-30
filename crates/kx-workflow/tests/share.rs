@@ -6,7 +6,7 @@
 use kx_content::ContentRef;
 use kx_dataset::{ContentSchema, Dataset, TypedRef};
 use kx_mote::{LogicRef, ModelId, ToolName};
-use kx_workflow::{compile, synthesis_pipeline, Manifest};
+use kx_workflow::{compile, permissive_warrant, synthesis_pipeline, transform, Manifest};
 
 fn model() -> ModelId {
     ModelId("local".into())
@@ -64,4 +64,60 @@ fn manifest_id_is_sensitive_to_seed_recipe_and_corpus() {
     let with_corpus2 =
         Manifest::recipe(&compile(&pipeline()).unwrap(), 7).with_dataset(dataset.id());
     assert_eq!(with_corpus.id(), with_corpus2.id());
+}
+
+/// The AUTHORITY axis of the recipe identity.
+///
+/// A step warrant is not part of `MoteDef`, so a warrant-only change leaves every
+/// `MoteId` untouched — this test asserts that the *recipe* identity nonetheless moves.
+/// Without it, a changed warrant produced different body bytes under an unchanged
+/// `ManifestId`, which the body ledger refuses as an immutability violation on the
+/// serve's startup path (see `kx_gateway::provision`'s
+/// `a_react_warrant_change_survives_on_an_already_seeded_state_dir`).
+#[test]
+fn manifest_id_is_sensitive_to_the_step_warrant() {
+    // Two one-step workflows identical in every respect except one warrant field —
+    // the smallest possible authority change.
+    let step_with = |max_output_tokens: u32| {
+        let mut warrant = permissive_warrant(model());
+        warrant.model_route.max_output_tokens = max_output_tokens;
+        let mut wf = kx_workflow::WorkflowDef::new(7);
+        wf.add_step(transform(
+            LogicRef::from_bytes([1; 32]),
+            model(),
+            warrant,
+            ToolName("demo".into()),
+        ));
+        wf
+    };
+    let base_def = step_with(512);
+    let widened_def = step_with(4_096);
+
+    let base = Manifest::recipe(&compile(&base_def).unwrap(), 7);
+    let widened = Manifest::recipe(&compile(&widened_def).unwrap(), 7);
+
+    // The COMPUTATION is identical — this is what makes the case subtle, and it is
+    // why the warrants had to be folded in explicitly rather than riding MoteId.
+    assert_eq!(
+        base.mote_ids, widened.mote_ids,
+        "a warrant-only change must NOT move any MoteId — two runs differing only in \
+         authority are the same computation"
+    );
+    assert_ne!(
+        base.step_warrant_refs, widened.step_warrant_refs,
+        "...but the warrant refs must differ"
+    );
+    assert_ne!(
+        base.id(),
+        widened.id(),
+        "a warrant-only change MUST move the recipe identity, or the body ledger will \
+         refuse the new bytes under the old id and fail the serve boot"
+    );
+
+    // Same warrant, same id — the fold is a function of the warrant, not of compiling twice.
+    assert_eq!(
+        Manifest::recipe(&compile(&widened_def).unwrap(), 7).id(),
+        widened.id(),
+        "the fold is deterministic"
+    );
 }

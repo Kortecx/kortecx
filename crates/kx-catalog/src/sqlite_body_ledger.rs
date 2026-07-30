@@ -13,7 +13,9 @@ use std::sync::{Mutex, RwLock};
 use kx_workflow::{ManifestId, WorkflowDef};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
-use crate::body::{body_manifest_id, BodyLedger, BodyLedgerError, BodyOutcome};
+use crate::body::{
+    body_manifest_id, body_manifest_id_v1, BodyLedger, BodyLedgerError, BodyOutcome,
+};
 use crate::signature::canonical_config;
 use crate::sqlite_util::{hash32, open_db, open_db_in_memory};
 
@@ -85,14 +87,26 @@ fn rebuild(conn: &Connection) -> Result<BTreeMap<ManifestId, WorkflowDef>, BodyL
         let (body, _): (WorkflowDef, usize) =
             bincode::serde::decode_from_slice(&b, canonical_config())
                 .map_err(|e| BodyLedgerError::Storage(format!("decode WorkflowDef: {e}")))?;
-        // Tamper-evidence: the stored body MUST compile to its stored key.
+        // Tamper-evidence: the stored body MUST compile to its stored key — under the
+        // identity scheme it was WRITTEN under. A ledger seeded by an older binary holds
+        // `…/v1` keys (no step warrant folded in); this binary publishes `…/v2`. Checking
+        // only the current scheme would fail every pre-existing row and refuse to open
+        // the ledger, which is the same class of boot failure the warrant fold exists to
+        // remove — so an admitted scheme keeps its rung and a row may match either.
+        //
+        // This is not a weaker check: a tampered body matches NEITHER derivation, and the
+        // schemes are domain-separated so a v1 id cannot alias a v2 one. Only `id` is ever
+        // published under.
         let derived = body_manifest_id(&body)?;
         if derived != key {
-            return Err(BodyLedgerError::Storage(format!(
-                "stored body for {} compiles to {} (content mismatch)",
-                key.to_hex(),
-                derived.to_hex()
-            )));
+            let legacy = body_manifest_id_v1(&body)?;
+            if legacy != key {
+                return Err(BodyLedgerError::Storage(format!(
+                    "stored body for {} compiles to {} (content mismatch)",
+                    key.to_hex(),
+                    derived.to_hex()
+                )));
+            }
         }
         map.insert(key, body);
     }

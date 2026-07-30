@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: LicenseRef-Kortecx-Sustainable-Use-1.0
 [package]
 name         = "kx-catalog"
-version      = "0.1.1"
+# 0.1.1 -> 0.2.0: `body_manifest_id` now returns the warrant-covering `…/v2` recipe
+# identity (kx-workflow 0.3.0), so the key every body is stored under moves. Additive
+# in signature — `body_manifest_id_v1` is new — but the VALUE a caller gets back for an
+# unchanged input changes, which is a behavioural break, not a patch.
+version      = "0.2.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }
