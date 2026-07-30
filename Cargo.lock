@@ -1952,7 +1952,7 @@ dependencies = [
 
 [[package]]
 name = "kx-journal"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",

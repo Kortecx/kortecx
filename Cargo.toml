@@ -155,7 +155,7 @@ chrono-tz          = "0.10"
 # `crates/` per the workspace's parent-folder layout convention.
 kx-mote              = { path = "crates/kx-mote",              version = "0.1.1" }
 kx-content           = { path = "crates/kx-content",           version = "0.2.0" }
-kx-journal           = { path = "crates/kx-journal",           version = "0.1.1" }
+kx-journal           = { path = "crates/kx-journal",           version = "0.2.0" }
 kx-projection        = { path = "crates/kx-projection",        version = "0.2.0" }
 kx-llamacpp-sys      = { path = "crates/kx-llamacpp-sys",      version = "0.1.1" }
 kx-llamacpp          = { path = "crates/kx-llamacpp",          version = "0.1.1" }
