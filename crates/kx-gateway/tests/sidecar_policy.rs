@@ -143,6 +143,8 @@ fn the_stores_holding_authored_work_are_named_and_protected() {
         "triggers_store.rs",
         "skills.rs",
         "secrets.rs",
+        // tools.db: registered tools AND every registered script.
+        "tool_store.rs",
     ];
 
     let present: BTreeSet<String> = rust_sources().iter().map(|p| file_name(p)).collect();

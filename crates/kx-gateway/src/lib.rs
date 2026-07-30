@@ -89,6 +89,7 @@ mod bundles;
 // renamed aside and re-imported on a schema bump (and REFUSES a downgrade) instead of
 // being dropped; a derived cache still rebuilds empty.
 mod sidecar;
+mod tool_store;
 // bundles, no broker dep — kx_content::ContentRef::of derives app_ref).
 mod apps;
 // Stores a caller's kortecx.workflow/v1 envelopes (the durable Workflow entity) —

@@ -4,6 +4,22 @@ All notable changes to kortecx are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). kortecx is in early
 development; interfaces may change before 1.0 — pin a commit if you build on it.
 
+### Changed
+
+- `tools.db` now opens through the sidecar upgrade policy as `UserAuthored`. It was
+  the last store holding authored work outside that policy — and it holds more than
+  tools: every registered SCRIPT lives there too, so two of the six authoring
+  domains were sitting outside the protection the other stores got. Existing
+  databases are unaffected: the old opener stamps its version in a `metadata`
+  table, the policy looks in `meta`, finds nothing, and takes the fresh-file arm
+  where every statement is `CREATE TABLE IF NOT EXISTS` — the rows are untouched
+  and the file simply gains `meta.schema_version`.
+- Sidecar stores classified `UserAuthored` now open with `synchronous = FULL`
+  rather than `NORMAL`. `NORMAL` batches fsyncs, which can lose the last
+  transactions to a power cut; that is the right trade for a cache you can rebuild
+  and the wrong one for work a user authored and cannot. Applies to all seven
+  authored stores, not just the new one.
+
 ## [Unreleased]
 
 ### Added

@@ -77,11 +77,11 @@ pub(crate) fn open_sidecar(
     // A file we cannot even open with our pragmas is corrupt or foreign. That is not a
     // version question and the previous behaviour (drop it and start over) is kept for
     // BOTH classes: there is nothing in it we could read in order to save it.
-    let mut conn = if let Ok(c) = open_with_pragma(&db_path) {
+    let mut conn = if let Ok(c) = open_with_pragma(&db_path, durability) {
         c
     } else {
         remove_db_files(&db_path);
-        open_with_pragma(&db_path)
+        open_with_pragma(&db_path, durability)
             .map_err(|e| GatewayError::Catalog(format!("{file_name} reopen: {e}")))?
     };
 
@@ -109,7 +109,7 @@ pub(crate) fn open_sidecar(
             if durability == Durability::UserAuthored {
                 drop(conn);
                 let aside = rename_aside(&db_path, found_v, file_name)?;
-                conn = open_with_pragma(&db_path).map_err(|e| {
+                conn = open_with_pragma(&db_path, durability).map_err(|e| {
                     GatewayError::Catalog(format!("{file_name} reopen after rename: {e}"))
                 })?;
                 imported_from = Some(aside);
@@ -144,9 +144,23 @@ pub(crate) fn open_sidecar(
     Ok(conn)
 }
 
-fn open_with_pragma(db_path: &Path) -> rusqlite::Result<Connection> {
+/// Open with the durability posture the store's CLASS earns.
+///
+/// `synchronous = FULL` fsyncs on every commit; `NORMAL` batches, which can lose
+/// the last transactions to a power cut while keeping the file consistent. That
+/// trade is right for a cache you can rebuild and wrong for work a user authored
+/// and cannot: losing the last App someone saved is not "rebuildable", it is data
+/// loss, and it would be a strange thing to accept in the very module whose job
+/// is to stop upgrades destroying authored work.
+fn open_with_pragma(db_path: &Path, durability: Durability) -> rusqlite::Result<Connection> {
     let conn = Connection::open(db_path)?;
-    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+    let sync = match durability {
+        Durability::UserAuthored => "FULL",
+        Durability::Cache => "NORMAL",
+    };
+    conn.execute_batch(&format!(
+        "PRAGMA journal_mode = WAL; PRAGMA synchronous = {sync};"
+    ))?;
     Ok(conn)
 }
 

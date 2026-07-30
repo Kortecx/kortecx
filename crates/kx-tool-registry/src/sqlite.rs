@@ -48,7 +48,13 @@ use crate::tool_def::{ResolvedTool, ToolDef};
 /// authoritative for its own registrations.
 pub const TOOL_REGISTRY_SCHEMA_VERSION: u16 = 1;
 
-const DDL: &str = "CREATE TABLE IF NOT EXISTS tools (
+/// The registry's table definition — the ONE place it is written.
+///
+/// Exported because the gateway routes `tools.db` through its sidecar upgrade
+/// policy and must hand that policy the same schema this crate would create.
+/// A second copy over there would be two schemas that can drift, and the drift
+/// would surface as a column the import silently cannot carry.
+pub const DDL: &str = "CREATE TABLE IF NOT EXISTS tools (
     tool_id        BLOB PRIMARY KEY,
     tool_name      TEXT NOT NULL,
     tool_version   TEXT NOT NULL,
@@ -155,6 +161,22 @@ impl SqliteToolRegistry {
     pub fn open_in_memory() -> Result<Self, RegistrationError> {
         let conn =
             open_db_in_memory(TOOL_REGISTRY_SCHEMA_VERSION, DDL).map_err(|e| store_err(&e))?;
+        Self::from_conn(conn)
+    }
+
+    /// Build a registry over a connection someone else opened.
+    ///
+    /// The gateway routes `tools.db` through its sidecar upgrade policy, which
+    /// owns the open (rename-aside on a schema bump, refuse a downgrade, the
+    /// durability pragma for an authored store). That policy lives in
+    /// `kx-gateway`, which DEPENDS on this crate — so the connection has to
+    /// arrive from outside rather than this crate reaching for it. Seeding the
+    /// builtins and rebuilding the in-memory index still happen here, because
+    /// they are this crate's invariants and no caller should have to know them.
+    ///
+    /// # Errors
+    /// [`RegistrationError::Storage`] on a SQLite / corrupt-row failure.
+    pub fn from_connection(conn: Connection) -> Result<Self, RegistrationError> {
         Self::from_conn(conn)
     }
 

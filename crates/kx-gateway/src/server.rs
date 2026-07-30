@@ -528,10 +528,9 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // SqliteToolRegistry's lookups are live DB reads, so the react path resolves
     // byte-identically to the prior in-memory `registry_with_echo`.
     let catalog_dir = resolve_catalog_dir(&cfg)?;
-    let tool_registry = Arc::new(
-        kx_tool_registry::SqliteToolRegistry::open(catalog_dir.join("tools.db"))
-            .map_err(|e| GatewayError::Config(format!("tools.db: {e}")))?,
-    );
+    // Through the sidecar upgrade policy, as UserAuthored: this store holds every
+    // registered tool AND every registered script, none of it derivable.
+    let tool_registry = Arc::new(crate::tool_store::open(&catalog_dir)?);
     #[cfg(feature = "serve-engine")]
     let coordinator = match shaper_runtime.as_ref() {
         Some(rt) => {
