@@ -3,7 +3,12 @@ name         = "kx-workflow"
 # 0.1.1 -> 0.2.0: `CompiledMote` gained the authored `step_index` (the topological
 # emission order is not authoring order, so a per-step caller decision had no addressable
 # handle). A public struct-literal break on a Cargo 0.x crate is a MINOR bump.
-version      = "0.2.0"
+# 0.2.0 -> 0.3.0: `Manifest` gained `step_warrant_refs` and `ManifestId` now folds it
+# (domain tag `…/v2`), so the recipe identity covers the authority a step runs under.
+# Two breaks in one: the public struct literal, and — louder — EVERY recipe id moves.
+# `Manifest::id_v1` is retained read-only so a body ledger written by an older binary
+# still verifies and opens.
+version      = "0.3.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }

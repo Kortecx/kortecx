@@ -163,7 +163,10 @@ pub use advertise::{
 
 // M8 (D121) — content-addressed recipe-BODY storage: turns "advertised" into
 // "servable" by resolving the executable WorkflowDef a published recipe runs.
-pub use body::{body_manifest_id, BodyLedger, BodyLedgerError, BodyOutcome, InMemoryBodyLedger};
+pub use body::{
+    body_manifest_id, body_manifest_id_v1, BodyLedger, BodyLedgerError, BodyOutcome,
+    InMemoryBodyLedger,
+};
 
 // G1 (D94) — durable SQLite backends behind the EXISTING ledger traits: catalog
 // (recipes/grants/versions/bodies) survives a process restart. Each is a second

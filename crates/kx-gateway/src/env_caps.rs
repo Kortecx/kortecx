@@ -65,24 +65,28 @@ pub(crate) const DEFAULT_PLANNER_MAX_OUTPUT_TOKENS: u32 = 1_536;
 /// model may propose are bounded by the same budget that produced them, and the schema
 /// validation + grant check remain independent authority gates.
 ///
-/// ## Why the DEFAULT is still 512
+/// ## Why the DEFAULT is 512 — and what changed
 ///
-/// Raising it is an OPERATOR OPT-IN rather than a new default, because changing a react
-/// warrant is not currently a safe upgrade. A recipe body is keyed by what it COMPILES to
-/// (`Manifest::recipe` = seed + Mote ids), and a step warrant is NOT part of that
-/// identity — so a changed warrant yields different body BYTES under the SAME recipe id,
-/// which `BodyLedger::publish_body` refuses as an immutability conflict. `seed_recipe`
-/// propagates that with `?` and `DemoLibrary::open_serve` is called with `?` at startup,
-/// so a new default would fail the SERVE BOOT of every state dir seeded by an older
-/// binary. (The immutability rule is load-bearing and must not be relaxed: because the
-/// recipe id does not cover the warrant, relaxing it would let a replacement body widen a
-/// recipe's authority under an unchanged id.)
+/// This value used to be pinned at 512 by an UPGRADE HAZARD, not by a judgement about
+/// decode budgets. A recipe body is keyed by what it compiles to (`ManifestId`), a step
+/// warrant was not part of that identity, and so a changed react warrant produced
+/// different body BYTES under the SAME recipe id — which `BodyLedger::publish_body`
+/// refuses as an immutability conflict, on `DemoLibrary::open_serve`'s startup path.
+/// Shipping a raised default would have failed the SERVE BOOT of every state dir seeded
+/// by an older binary, and the hazard was never specific to this knob: it fired for any
+/// react warrant change, including switching the served model or the granted tool set.
 ///
-/// That hazard is PRE-EXISTING and broader than this knob — it fires for any react
-/// warrant change on an existing dir, including switching the served model or the granted
-/// tool set. Pinned by `provision::tests::reseeding_a_recipe_at_a_new_budget_does_not_\
-/// break_the_boot`. Fixing it needs the recipe identity to cover the step warrant (or a
-/// real version-successor path), which is a catalog change, not a loop change.
+/// **That hazard is FIXED.** `kx_workflow::Manifest` now folds each step's `warrant_ref`
+/// into `ManifestId`, and `seed_recipe` advances the handle with a version successor —
+/// see `provision::tests::a_react_warrant_change_survives_on_an_already_seeded_state_dir`
+/// and its stale-bind sibling. The immutability rule is deliberately untouched: it is
+/// what stops a replacement body WIDENING a recipe's authority under an unchanged id.
+///
+/// So 512 is now an ordinary default that an operator may raise, and raising it is a
+/// behaviour change rather than a boot risk. It is left at 512 HERE because moving it
+/// moves measured model behaviour, which owes a dual-engine baseline recapture — that
+/// belongs with a change that is already taking a capture window, not with the identity
+/// fix, whose whole claim is that it moves no behaviour at all.
 pub(crate) const DEFAULT_REACT_MAX_OUTPUT_TOKENS: u32 = 512;
 /// Default chat-RAG top-k ceiling (the untrusted `k` is clamped to this).
 pub(crate) const DEFAULT_CHAT_RAG_MAX_K: usize = 16;

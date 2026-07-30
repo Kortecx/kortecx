@@ -56,6 +56,18 @@ pub fn body_manifest_id(body: &WorkflowDef) -> Result<ManifestId, BodyLedgerErro
     Ok(Manifest::recipe(&compiled, body.seed()).id())
 }
 
+/// The **superseded** `…/v1` recipe identity of a body — see [`Manifest::id_v1`].
+///
+/// Verification-only: it exists so a ledger written by an older binary still opens.
+/// Never a publish key.
+///
+/// # Errors
+/// [`BodyLedgerError::Uncompilable`] if the body does not compile.
+pub fn body_manifest_id_v1(body: &WorkflowDef) -> Result<ManifestId, BodyLedgerError> {
+    let compiled = compile(body).map_err(|e| BodyLedgerError::Uncompilable(e.to_string()))?;
+    Ok(Manifest::recipe(&compiled, body.seed()).id_v1())
+}
+
 /// A backend-agnostic store of executable recipe bodies, keyed by `ManifestId`.
 pub trait BodyLedger {
     /// Store a recipe body, content-verified + immutable + idempotent. Returns

@@ -100,6 +100,31 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Changed
 
+- **A recipe's identity now covers the authority it runs under, so changing a served
+  model, a granted tool set or a decode budget no longer fails the serve boot of an
+  existing install.** A recipe body is stored under what it compiles to
+  (`ManifestId`), and a step warrant was not part of that identity — so a
+  warrant-affecting change produced different body BYTES under an UNCHANGED id, which
+  the body ledger refuses as an immutability conflict. That refusal sits on the
+  serve's startup path, so an upgraded binary failed to boot against any state dir a
+  previous binary had seeded. `kx_workflow::Manifest` now folds each step's
+  `warrant_ref` into `ManifestId` (domain tag `…/v2`), and recipe seeding advances the
+  asset handle with a version successor rather than leaving it pinned to the
+  superseded body — without that half, the boot would have stopped failing and started
+  silently binding the PREVIOUS recipe. The immutability rule itself is deliberately
+  unchanged: it is what stops a replacement body widening a recipe's authority under
+  an unchanged id.
+
+  **Upgrade note.** Every recipe id moves once, by construction. No action is
+  required and no data is lost: a body ledger written by an earlier binary still
+  opens (its rows are verified against the identity scheme they were written under —
+  `Manifest::id_v1` is retained read-only for exactly this), superseded bodies are
+  retained so an in-flight run pinned to an old id still resolves, and the handle is
+  advanced to the current recipe on the next boot. A body matching NEITHER scheme is
+  still refused as tampered. The canonical projection digest is unaffected — a
+  warrant change moves no `MoteId`, because two runs differing only in authority are
+  the same computation. `kx-workflow` 0.2.0 → 0.3.0, `kx-catalog` 0.1.1 → 0.2.0.
+
 - **The release build now says what it contains: local observability is the opt-in
   `observability` feature, and the prebuilt binary excludes it.** One cargo feature
   carries the Prometheus `/metrics` listener, the `alerts.db` inbox and the

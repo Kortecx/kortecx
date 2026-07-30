@@ -200,7 +200,7 @@ kx-worker            = { path = "crates/kx-worker",            version = "0.3.0"
 kx-runtime           = { path = "crates/kx-runtime",           version = "0.1.1" }
 # The workflow engine (codename Morphic, P4.1) — compiles a WorkflowDef to a
 # Mote DAG. Sits above the scheduler; emits kx-mote + kx-warrant types only.
-kx-workflow          = { path = "crates/kx-workflow",          version = "0.2.0" }
+kx-workflow          = { path = "crates/kx-workflow",          version = "0.3.0" }
 # Deterministic document chunker (RC4a) — pure, std-only recursive character text
 # splitter; FFI-free, zero deps. Both the gateway ingest + the harness use it.
 kx-chunk             = { path = "crates/kx-chunk",             version = "0.1.0" }
@@ -272,7 +272,7 @@ kx-planner           = { path = "crates/kx-planner",           version = "0.1.1"
 # TRUTH (authoritative for WHAT recipes exist); off-journal + off the identity
 # path (composes kx-mote/kx-workflow identities, never bumps MoteDef). Depends
 # only on kx-mote/kx-workflow/kx-dataset — NEVER the journal or the frozen trio.
-kx-catalog           = { path = "crates/kx-catalog",           version = "0.1.1" }
+kx-catalog           = { path = "crates/kx-catalog",           version = "0.2.0" }
 # The W1.A5 MCP-intelligence AUTHORING SHAPE (the extension-library roadmap) —
 # TaskBundle, the content-addressed multi-tool task template that LOWERS to a
 # WorkflowDef. A thin TYPE crate (the TaskSignature precedent) so future
