@@ -1115,6 +1115,7 @@ async fn trigger_fires_connector_app_live(case: &ConnectorCase) {
         kind: proto::TriggerKind::Grpc as i32,
         recipe_handle: String::new(),
         app_handle: handle_str.clone(),
+        workflow_handle: String::new(),
         auth: proto::TriggerAuth::None as i32,
         auth_secret_ref: String::new(),
         schedule_spec: String::new(),
