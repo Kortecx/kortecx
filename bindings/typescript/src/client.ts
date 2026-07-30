@@ -1504,7 +1504,11 @@ export abstract class KxClientBase {
         lifecycle: opts.lifecycle ?? "",
       }),
     );
-    return { workflowRef: encode(resp.workflowRef), handle: resp.handle, deduplicated: resp.deduplicated };
+    return {
+      workflowRef: encode(resp.workflowRef),
+      handle: resp.handle,
+      deduplicated: resp.deduplicated,
+    };
   }
 
   /** List the caller's Workflow catalog (deterministic handle order). */
@@ -1583,7 +1587,13 @@ export abstract class KxClientBase {
         requireApproval: opts.requireApproval ?? false,
       }),
     );
-    const run = new Run(this, h.instanceId, h.terminalMoteId, h.recipeFingerprint, h.reactChainSalt);
+    const run = new Run(
+      this,
+      h.instanceId,
+      h.terminalMoteId,
+      h.recipeFingerprint,
+      h.reactChainSalt,
+    );
     if (!opts.wait) return run;
     return await run.wait({ timeoutMs: opts.timeoutMs ?? 120_000 });
   }
