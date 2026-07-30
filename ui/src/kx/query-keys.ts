@@ -54,6 +54,11 @@ export const queryKeys = {
   skillForm: (endpoint: string, name: string) => ["kx", endpoint, "skill", name] as const,
   /** One App's full envelope (`GetApp`), keyed by handle. */
   app: (endpoint: string, handle: string) => ["kx", endpoint, "app", handle] as const,
+  /** This party's durable Workflows (`ListWorkflows`) — kortecx.workflow/v1
+   *  envelopes. Caller-scoped; `workflowRef` is server-derived. */
+  workflows: (endpoint: string) => ["kx", endpoint, "workflows"] as const,
+  /** One Workflow's full envelope (`GetWorkflow`), keyed by handle. */
+  workflow: (endpoint: string, handle: string) => ["kx", endpoint, "workflow", handle] as const,
   /** One App's capability manifest (`GetAppManifest`), keyed by handle. */
   appManifest: (endpoint: string, handle: string) =>
     ["kx", endpoint, "app-manifest", handle] as const,

@@ -74,9 +74,11 @@ test("workflows: the top-right Refresh + New-workflow actions", async ({ page })
   await page.getByTestId("workflows-refresh").click();
   await expect(page.getByTestId("workflows-catalog")).toBeVisible({ timeout: 30_000 });
 
-  // New workflow opens the visual builder.
+  // New workflow opens the durable create page — the builder canvas rides
+  // it embedded, under the header form.
   await page.getByTestId("workflows-new").click();
-  await expect(page).toHaveURL(/\/blueprints\/new/);
+  await expect(page).toHaveURL(/\/workflows\/create/);
+  await expect(page.getByTestId("workflow-create-form")).toBeVisible();
   await expect(page.getByTestId("builder-canvas")).toBeVisible({ timeout: 30_000 });
 });
 

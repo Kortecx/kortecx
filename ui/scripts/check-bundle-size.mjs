@@ -6,7 +6,7 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 673 KiB raw (689,152 B — the value enforced below; keep this line in
+ * Budget: 678 KiB raw (694,272 B — the value enforced below; keep this line in
  * lock-step with it, and with the step name in ci.yml, or the doc becomes the
  * third place that disagrees). Override with KX_UI_EAGER_BUDGET_BYTES for
  * emergencies — a deliberate, reviewed override, never a silent default bump.
@@ -78,6 +78,19 @@
  *     rebuilt from main for the baseline (same protocol as the script-primitive entry):
  *     main 684,952 B → SDK growth 687,338 B → + the route module 688,063 B
  *     (+3,111 B eager total); bumped to the next KiB boundary above the measured value.
+ *   - 673 KiB → 678 KiB (2026-07-30, durable Workflows): the eager SDK client
+ *     gains saveWorkflow / listWorkflows / getWorkflow / runWorkflow / deleteWorkflow +
+ *     the regenerated proto descriptor for the ten new messages (incl. RunWorkflow's
+ *     RunHandle parity and `RegisterTriggerRequest.workflow_handle`) — riding the eager
+ *     `common.js` like every entry above (connection-context constructs the client up
+ *     front). The two new route REGISTRATIONS (`/workflows/create` + `/workflows/def/
+ *     $handle`; both screens lazy) add the usual ~600 B each via router.tsx. Measured
+ *     A/B on the feature branch with the SDK dist held constant: branch UI without the
+ *     pre-UI surface 692,971 B (the SDK tranche's growth, its bump deferred to this UI
+ *     tranche) → with it 694,167 B (+1,196 B for the routes; +5,015 B total over the
+ *     old ceiling); bumped to the next KiB boundary above the measured value. Local
+ *     toolchain measures a few KiB heavier than CI (see the NOTE above) — the delta is
+ *     the trustworthy half.
  *
  * Exit 1 over budget. The printed table doubles as the measurement evidence blob.
  */
@@ -97,7 +110,7 @@ const DIST = join(UI_ROOT, "dist");
 // `deriveApp` mapping additions, and the SDK client is eager on every route. Adding a
 // per-step contract axis buys that; bumping here — in the PR that spends it — is the same move
 // #375, #363, #362, #358 and #304 each made.
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 689_152);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 694_272);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {
