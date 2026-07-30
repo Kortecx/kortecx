@@ -1402,8 +1402,147 @@ class KxClient:
                 resp.recipe_fingerprint,
                 resp.react_chain_salt,
             )
-        outcome = _wait.poll_any(self._stub, self._md, resp.instance_id, timeout)
-        return self._finish(outcome)
+        # wait=True settles through the SAME three-way dispatch ``Run.wait()``
+        # uses (salt ⇒ the react chain; terminal ⇒ THIS run's own sink; neither
+        # ⇒ the old-server first-committed fallback). The prior code polled the
+        # first committed Mote in the SHARED journal — on a busy serve that is
+        # some OTHER submission's result wearing this run's return type.
+        run = Run(
+            self,
+            resp.instance_id,
+            resp.terminal_mote_id,
+            resp.recipe_fingerprint,
+            resp.react_chain_salt,
+        )
+        return run.wait(timeout=timeout)
+
+    def save_workflow(
+        self,
+        envelope: "Mapping[str, object]",
+        *,
+        handle: Optional[str] = None,
+        source_digest: bytes = b"",
+        lifecycle: str = "",
+    ) -> dict:
+        """Persist a ``kortecx.workflow/v1`` envelope to the caller-scoped catalog
+        (the durable Workflow entity). The server validates + canonicalizes and
+        derives ``workflow_ref``; the envelope carries NO authority (``run_workflow``
+        re-resolves every warrant from the caller's own grants). ``lifecycle`` is
+        caller-stated: ``""`` (active) or ``"draft"``. Returns
+        ``{"workflow_ref": hex, "handle": str, "deduplicated": bool}``."""
+        h = handle or _default_app_handle(str(envelope.get("name", "workflow")))
+        resp = self._call(
+            lambda: self._stub.SaveWorkflow(
+                _g.SaveWorkflowRequest(
+                    handle=h,
+                    envelope_json=canonical_json(envelope),
+                    source_digest=source_digest,
+                    lifecycle=lifecycle,
+                ),
+                metadata=self._md,
+            )
+        )
+        return {
+            "workflow_ref": hexids.encode(resp.workflow_ref),
+            "handle": resp.handle,
+            "deduplicated": resp.deduplicated,
+        }
+
+    def list_workflows(self) -> list:
+        """List the caller's Workflow catalog (deterministic handle order), as
+        plain dicts: handle / workflow_ref / name / version / description /
+        tags / step_count / delivers / lifecycle."""
+        resp = self._call(
+            lambda: self._stub.ListWorkflows(
+                _g.ListWorkflowsRequest(limit=0, after_handle=""), metadata=self._md
+            )
+        )
+        return [
+            {
+                "handle": w.handle,
+                "workflow_ref": hexids.encode(w.workflow_ref),
+                "name": w.name,
+                "version": w.version,
+                "description": w.description,
+                "tags": list(w.tags),
+                "step_count": w.step_count,
+                "delivers": w.delivers,
+                "lifecycle": w.lifecycle,
+            }
+            for w in resp.workflows
+        ]
+
+    def get_workflow(self, handle: str) -> Optional[dict]:
+        """Fetch one Workflow by handle, or ``None`` if not found / not owned
+        (uniform — no cross-party existence oracle). ``envelope`` is the parsed
+        canonical stored JSON; ``workflow_digest`` the handle-free identity (hex)."""
+        resp = self._call(
+            lambda: self._stub.GetWorkflow(_g.GetWorkflowRequest(handle=handle), metadata=self._md)
+        )
+        if not resp.found:
+            return None
+        import json as _json
+
+        return {
+            "envelope": _json.loads(bytes(resp.envelope_json).decode("utf-8")),
+            "workflow_digest": hexids.encode(resp.workflow_digest),
+            "lifecycle": resp.summary.lifecycle,
+            "step_count": resp.summary.step_count,
+        }
+
+    def run_workflow(
+        self,
+        handle: str,
+        *,
+        args: Optional[Mapping[str, str]] = None,
+        wait: bool = True,
+        timeout: float = 120.0,
+        require_approval: bool = False,
+    ):
+        """Run a stored Workflow SERVER-SIDE (the ``run_app`` posture:
+        server-built warrants; the envelope carries no authority).
+        ``wait=False`` returns a :class:`Run` anchored to THIS submission
+        (``terminal_mote_id`` + ``react_chain_salt``); ``wait=True`` settles
+        through the same three-way dispatch ``Run.wait()`` uses — correct from
+        day one on this path."""
+        args_bytes = canonical_json(dict(args)) if args else b""
+        resp = self._call(
+            lambda: self._stub.RunWorkflow(
+                _g.RunWorkflowRequest(
+                    handle=handle,
+                    args=args_bytes,
+                    require_approval=require_approval,
+                ),
+                metadata=self._md,
+            )
+        )
+        run = Run(
+            self,
+            resp.instance_id,
+            resp.terminal_mote_id,
+            resp.recipe_fingerprint,
+            resp.react_chain_salt,
+        )
+        if not wait:
+            return run
+        return run.wait(timeout=timeout)
+
+    def delete_workflow(self, handle: str) -> dict:
+        """Delete a stored Workflow + its dependents (row first, then its
+        triggers, then the definition-branch BINDING — blobs and HISTORY stay,
+        so delete + restore recreates without losing state). ``removed`` is
+        ``False`` uniformly for absent / not-owned."""
+        resp = self._call(
+            lambda: self._stub.DeleteWorkflow(
+                _g.DeleteWorkflowRequest(handle=handle), metadata=self._md
+            )
+        )
+        return {
+            "removed": resp.removed,
+            "branch_unbound": resp.branch_unbound,
+            "lock_cleared": resp.lock_cleared,
+            "triggers_removed": resp.triggers_removed,
+        }
 
     def get_app_structure(self, handle: str) -> Optional[dict]:
         """POC-5d: the App's portable blueprint (the agentic step structure the
@@ -2412,6 +2551,7 @@ class KxClient:
         kind: str = "webhook",
         recipe_handle: str = "",
         app_handle: str = "",
+        workflow_handle: str = "",
         auth: str = "none",
         auth_secret_ref: str = "",
         schedule_spec: str = "",
@@ -2420,9 +2560,10 @@ class KxClient:
         require_approval: bool = False,
     ) -> str:
         """Register a durable trigger that binds an inbound event to EITHER a published
-        recipe (``recipe_handle``) OR a saved App (``app_handle`` —
-        T-APP-TRIGGER-TARGET: the credentialed App fires unattended with its
-        connections + secret_scope resolved). Exactly one of the two is required.
+        recipe (``recipe_handle``), a saved App (``app_handle``), OR a saved
+        Workflow (``workflow_handle`` — fired through the same RunWorkflow
+        resolver; the server refuses an un-owned workflow or a draft AT
+        registration). Exactly one of the three is required.
         ``kind`` is ``"webhook"`` | ``"cron"`` | ``"grpc"`` and ``auth`` is ``"none"`` |
         ``"hmac_sha256"`` | ``"bearer"`` (an unknown string raises ``ValueError``). For a
         cron trigger, ``schedule_spec`` is interval seconds (``"300"``) OR a 5-field
@@ -2435,6 +2576,7 @@ class KxClient:
             kind=trigger_kind_to_proto(kind),
             recipe_handle=recipe_handle,
             app_handle=app_handle,
+            workflow_handle=workflow_handle,
             auth=trigger_auth_to_proto(auth),
             auth_secret_ref=auth_secret_ref,
             schedule_spec=schedule_spec,

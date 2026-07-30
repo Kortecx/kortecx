@@ -47,6 +47,12 @@ export interface MockClientImpl {
   exportAppBundle?: (...args: unknown[]) => Promise<unknown>;
   importApp?: (...args: unknown[]) => Promise<unknown>;
   cloneApp?: (...args: unknown[]) => Promise<unknown>;
+  // The durable Workflow catalog (flat on the client).
+  listWorkflows?: (...args: unknown[]) => Promise<unknown>;
+  getWorkflow?: (...args: unknown[]) => Promise<unknown>;
+  saveWorkflow?: (...args: unknown[]) => Promise<unknown>;
+  runWorkflow?: (...args: unknown[]) => Promise<unknown>;
+  deleteWorkflow?: (...args: unknown[]) => Promise<unknown>;
   // MM-3 / D110: the host secret store (`client.secrets.*`). The value is write-only.
   secretsList?: (...args: unknown[]) => Promise<unknown>;
   secretsSet?: (...args: unknown[]) => Promise<unknown>;
@@ -190,6 +196,33 @@ export function makeMockClient(impl: MockClientImpl = {}) {
   const exportAppBundle = vi.fn(impl.exportAppBundle ?? (async () => ""));
   const importApp = vi.fn(impl.importApp ?? (async () => saveAppResult));
   const cloneApp = vi.fn(impl.cloneApp ?? (async () => saveAppResult));
+  // The durable Workflow catalog. `runWorkflow`'s default is Run-shaped —
+  // it MUST carry `recipeFingerprint` or `useRunWorkflow`'s shape guard rejects it as
+  // a waited Result (the runApp precedent above).
+  const listWorkflows = vi.fn(impl.listWorkflows ?? (async () => []));
+  const getWorkflow = vi.fn(impl.getWorkflow ?? (async () => null));
+  const saveWorkflow = vi.fn(
+    impl.saveWorkflow ??
+      (async () => ({ workflowRef: "ab".repeat(16), handle: "workflow", deduplicated: false })),
+  );
+  const runWorkflow = vi.fn(
+    impl.runWorkflow ??
+      (async () => ({
+        instanceId: "ab".repeat(16),
+        reactChainSalt: "cd".repeat(16),
+        terminalMoteId: "ef".repeat(32),
+        recipeFingerprint: "12".repeat(32),
+      })),
+  );
+  const deleteWorkflow = vi.fn(
+    impl.deleteWorkflow ??
+      (async () => ({
+        removed: true,
+        branchUnbound: false,
+        lockCleared: false,
+        triggersRemoved: 0,
+      })),
+  );
   // MM-3 / D110: the host secret store namespace (`client.secrets.*`).
   const secretsList = vi.fn(impl.secretsList ?? (async () => ({ names: [], hasMore: false })));
   const secretsSet = vi.fn(impl.secretsSet ?? (async () => true));
@@ -254,6 +287,11 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     exportAppBundle,
     importApp,
     cloneApp,
+    listWorkflows,
+    getWorkflow,
+    saveWorkflow,
+    runWorkflow,
+    deleteWorkflow,
     secrets: { list: secretsList, set: secretsSet, remove: secretsRemove },
     triggers: {
       add: triggersAdd,
@@ -316,6 +354,11 @@ export function makeMockClient(impl: MockClientImpl = {}) {
     exportAppBundle,
     importApp,
     cloneApp,
+    listWorkflows,
+    getWorkflow,
+    saveWorkflow,
+    runWorkflow,
+    deleteWorkflow,
     secretsList,
     secretsSet,
     secretsRemove,

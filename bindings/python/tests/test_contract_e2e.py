@@ -385,7 +385,9 @@ def test_toolscout_lists_builtins_and_scores_exact_keyword_at_ceiling(dev_server
         manifests = kx.list_tool_manifests()
         # `text-summarize@1` was removed from the built-in set: no capability could
         # ever be registered for it, so it advertised a tool that could not dispatch.
-        assert [m.tool_id for m in manifests] == ["fs-read", "fs-write"]
+        # http@1 joined the builtin roster with the workflow http step (the
+        # deterministic credentialed dial) — the scout lists it honestly.
+        assert [m.tool_id for m in manifests] == ["fs-read", "fs-write", "http"]
         assert all(m.kind == "Builtin" for m in manifests)
         assert all(len(m.fingerprint_hash) == 64 for m in manifests)  # 32B hex
 
@@ -396,7 +398,7 @@ def test_toolscout_lists_builtins_and_scores_exact_keyword_at_ceiling(dev_server
                 language_tags=["en"],
             )
         )
-        assert len(score.ranked) == 2  # every manifest is ranked
+        assert len(score.ranked) == 3  # every manifest is ranked (fs-read, fs-write, http)
         assert score.ranked[0].tool_id == "fs-read"
         assert score.ranked[0].score_bp == 10_000  # deterministic exact-keyword hit
         assert len(score.bundle_fingerprint) == 64

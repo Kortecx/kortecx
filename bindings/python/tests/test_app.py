@@ -310,6 +310,88 @@ def test_save_list_get_run_round_trip(dev_server) -> None:
         assert result is not None
 
 
+def test_run_app_wait_settles_on_this_runs_own_terminal(dev_server) -> None:
+    """THE STATIC-SINK PIN. The old wait=True branch polled the FIRST committed
+    Mote in the SHARED journal (``poll_any``), so on a busy serve it returned
+    some OTHER submission's result wearing this run's return type. The decoy
+    below commits FIRST; a regression settles on the decoy's terminal and
+    fails the identity assertion."""
+    with KxClient(dev_server.endpoint) as client:
+        kx.app("Decoy Demo").blueprint(kx.flow().step(topic="decoy")).save(client=client)
+        decoy = client.run_app("apps/local/decoy-demo", wait=True, timeout=60.0)
+        assert decoy.ok
+
+        kx.app("Target Demo").blueprint(kx.flow().step(topic="target").step(topic="carry")).save(
+            client=client
+        )
+        # The expected anchor, from the server's own RunHandle (wait=False path).
+        started = client.run_app("apps/local/target-demo", wait=False)
+        expected = started.terminal_mote_id
+        assert expected != decoy.terminal_mote_id
+        # The idempotent re-invoke settles — and MUST settle on THIS run's sink.
+        settled = client.run_app("apps/local/target-demo", wait=True, timeout=60.0)
+        assert settled.ok
+        assert settled.terminal_mote_id == expected
+        assert settled.terminal_mote_id != decoy.terminal_mote_id
+
+
+def test_workflow_entity_round_trips(dev_server) -> None:
+    """The durable Workflow entity: save / list / get / run (anchored settle) /
+    draft-trigger refusal / delete, over a real serve."""
+    envelope = {
+        "schema": "kortecx.workflow/v1",
+        "name": "sdk-flow",
+        "version": "1",
+        "blueprint": {
+            "seed": 0,
+            "steps": [
+                {"kind": "pure", "prompt": ""},
+                {"kind": "pure", "prompt": ""},
+            ],
+            "edges": [{"parent": 0, "child": 1, "data": True}],
+        },
+    }
+    with KxClient(dev_server.endpoint) as client:
+        saved = client.save_workflow(envelope, handle="workflows/local/sdk-flow")
+        assert not saved["deduplicated"]
+        assert len(saved["workflow_ref"]) == 32
+
+        rows = client.list_workflows()
+        row = next(w for w in rows if w["handle"] == "workflows/local/sdk-flow")
+        assert row["name"] == "sdk-flow"
+        assert row["step_count"] == 2
+
+        got = client.get_workflow("workflows/local/sdk-flow")
+        assert got is not None
+        assert got["envelope"]["name"] == "sdk-flow"
+        assert len(got["workflow_digest"]) == 64
+
+        run = client.run_workflow("workflows/local/sdk-flow", wait=False)
+        expected = run.terminal_mote_id
+        settled = client.run_workflow("workflows/local/sdk-flow", wait=True, timeout=60.0)
+        assert settled.ok
+        assert settled.terminal_mote_id == expected
+
+        # A draft is refused as a trigger target AT registration.
+        client.save_workflow(
+            {**envelope, "name": "sdk-draft"},
+            handle="workflows/local/sdk-draft",
+            lifecycle="draft",
+        )
+        import pytest as _pytest
+
+        with _pytest.raises(Exception, match="draft"):
+            client.register_trigger(
+                name="sdk-draft-trigger",
+                kind="grpc",
+                workflow_handle="workflows/local/sdk-draft",
+            )
+
+        deleted = client.delete_workflow("workflows/local/sdk-flow")
+        assert deleted["removed"]
+        assert client.get_workflow("workflows/local/sdk-flow") is None
+
+
 def test_get_missing_is_none(dev_server) -> None:
     with KxClient(dev_server.endpoint) as client:
         assert client.get_app("apps/local/nope") is None

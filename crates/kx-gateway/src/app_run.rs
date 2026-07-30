@@ -548,9 +548,9 @@ const MAX_COMPOSED_STEPS: usize = 64;
 /// The unit composition joins. Each side is prepared under its OWN envelope and only then
 /// spliced, which is what makes "the caller cannot widen the callee" true by construction
 /// rather than by a check someone has to remember to write.
-struct Prepared {
+pub(crate) struct Prepared {
     /// The blueprint with the App-only bindings taken off and every fold applied.
-    dag: DagSpec,
+    pub(crate) dag: DagSpec,
     /// The App's RUN-WIDE context rail — lands on every DAG root at author.
     context_items: Vec<ContextItemRef>,
     /// What this App bound to individual steps (context items + secret scopes).
@@ -898,6 +898,63 @@ fn per_step_secret_scopes(
 
 /// `true` when a blueprint step is a MODEL step (mirrors `kx_blueprint`'s
 /// `resolve_kind` inference: an explicit `kind`, else model fields ⇒ model).
+/// Sequence SAME-ROUTE model steps with `Control(non_cascade)` order edges so
+/// a parallel group can never thrash the local model singleton — deterministic
+/// steps are untouched (they never dispatch the model backend at all).
+///
+/// **WORKFLOW-path only, deliberately**: called by the workflow runner between
+/// prepare and compose, NEVER inside the shared `prepare_env` — an existing
+/// App's re-run must stay byte-identical (`MoteId`s included; the dedup-onto-
+/// prior-computation property depends on it), and workflows are a new entity
+/// with no prior runs to preserve. The added edge is identity-bearing by
+/// design (a sequenced workflow is honestly a different DAG).
+///
+/// Cycle-safe: an edge `i → j` is added only when NO path exists between the
+/// pair in either direction (a path `j ⇝ i` would make the addition a cycle
+/// the compiler then refuses; a path `i ⇝ j` makes it redundant). Groups are
+/// chained in authored order (deterministic; the MoteId does not depend on map
+/// iteration). `non_cascade` keeps repudiation uncoupled: order is not lineage.
+pub(crate) fn sequence_same_route_model_steps(dag: &mut DagSpec) {
+    use std::collections::{BTreeMap, VecDeque};
+    let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, s) in dag.steps.iter().enumerate() {
+        if is_model_step(s) {
+            groups.entry(s.model_id.clone()).or_default().push(i);
+        }
+    }
+    let reachable = |edges: &[kx_blueprint::EdgeSpec], from: usize, to: usize| -> bool {
+        let mut queue = VecDeque::from([from]);
+        let mut seen = vec![false; dag.steps.len()];
+        while let Some(n) = queue.pop_front() {
+            if n == to {
+                return true;
+            }
+            for e in edges {
+                if e.parent as usize == n && !seen[e.child as usize] {
+                    seen[e.child as usize] = true;
+                    queue.push_back(e.child as usize);
+                }
+            }
+        }
+        false
+    };
+    for indices in groups.values() {
+        for pair in indices.windows(2) {
+            let (i, j) = (pair[0], pair[1]);
+            if reachable(&dag.edges, i, j) || reachable(&dag.edges, j, i) {
+                continue; // already ordered (or ordering would cycle) — leave it
+            }
+            dag.edges.push(kx_blueprint::EdgeSpec {
+                parent: u32::try_from(i).unwrap_or(u32::MAX),
+                child: u32::try_from(j).unwrap_or(u32::MAX),
+                edge: "control".to_string(),
+                non_cascade: true,
+            });
+            tracing::debug!(from = i, to = j, "same-route model steps sequenced");
+        }
+    }
+}
+
 fn is_model_step(s: &StepSpec) -> bool {
     match s.kind.as_deref() {
         Some(k) => k == "model",
@@ -1407,7 +1464,32 @@ impl HostAppAuthor {
             .ok_or(AppRunError::NotAuthorized)?;
         let env = AppEnvelope::from_json_slice(&envelope_bytes)
             .map_err(|e| AppRunError::Internal(format!("stored envelope invalid: {e}")))?;
+        self.prepare_env(party, env, handle, args, require_approval)
+            .await
+    }
 
+    /// Prepare an ALREADY-READ envelope — steps (1b) onward of `prepare_app`,
+    /// extracted verbatim (a pure extraction; behavior and bytes unchanged).
+    ///
+    /// Split out so the WORKFLOW run path can enter the exact same preparation
+    /// pipeline with a converted `kortecx.workflow/v1` envelope: everything
+    /// downstream of the catalog read — the context rail, connection/secret
+    /// resolution, lowering, per-step binds, model-route pinning, HITL
+    /// stamping, the composition declarations — is envelope-shaped, not
+    /// catalog-shaped. `handle` is display-only here (refusal texts).
+    //
+    // A single linear resolve→lower→fold pipeline (context rail + skills + RAG + HITL); the
+    // steps read top-to-bottom and share local state, so splitting would only scatter it
+    // (the rationale the pre-extraction prepare_app carried, unchanged).
+    #[allow(clippy::too_many_lines)]
+    pub(crate) async fn prepare_env(
+        &self,
+        party: &str,
+        env: AppEnvelope,
+        handle: &str,
+        args: &[u8],
+        require_approval: bool,
+    ) -> Result<Prepared, AppRunError> {
         // (1b) T-RUNAPP-CONTEXT-RAIL: resolve the App's declarative knowledge rail
         //      (context/prompts/rules/memory + steering context refs) into labeled
         //      context items BEFORE the blueprint is consumed. Skills (3b) extend this
@@ -1724,8 +1806,31 @@ impl HostAppAuthor {
         let mut me = self
             .prepare_app(party, handle, args, require_approval)
             .await?;
+        self.resolve_composes(&mut me, party, handle, require_approval, depth, chain)
+            .await?;
+        Ok(me)
+    }
+
+    /// Resolve `me`'s declared composition rail in place — the callee loop of
+    /// `compose_app`, extracted verbatim (a pure extraction; behavior and bytes
+    /// unchanged, including the no-composes early return that skips the
+    /// root-pinning entirely).
+    ///
+    /// Split out so the WORKFLOW run path can compose SAVED APPS through the
+    /// exact app-composition seam: callees always resolve from the App catalog
+    /// (`prepare_app`), whatever entity the root graph came from. `handle` is
+    /// the CALLER's name, display-only (the composition log line).
+    pub(crate) async fn resolve_composes(
+        &self,
+        me: &mut Prepared,
+        party: &str,
+        handle: &str,
+        require_approval: bool,
+        depth: usize,
+        chain: &mut Vec<String>,
+    ) -> Result<(), AppRunError> {
         if me.composes.iter().all(|(_, targets)| targets.is_empty()) {
-            return Ok(me);
+            return Ok(());
         }
         if depth >= MAX_APP_COMPOSE_DEPTH {
             return Err(AppRunError::InvalidArgs(format!(
@@ -1736,7 +1841,7 @@ impl HostAppAuthor {
         // The caller's own rail is pinned to the caller's own roots BEFORE the first splice,
         // while those roots are still known — a composing step that was a root stops being
         // one the moment it gains the callee's terminal as a parent.
-        pin_run_wide_items_to_roots(&mut me);
+        pin_run_wide_items_to_roots(me);
 
         // Declaration order, then step order: deterministic, so the composed graph (and
         // therefore every `MoteId` in it) does not depend on map iteration.
@@ -1809,9 +1914,9 @@ impl HostAppAuthor {
                 consumers = targets.len(),
                 "composing an app into a run"
             );
-            splice_callee(&mut me, callee, &targets);
+            splice_callee(me, callee, &targets);
         }
-        Ok(me)
+        Ok(())
     }
 }
 
@@ -1831,6 +1936,20 @@ impl AppAuthor for HostAppAuthor {
         let composed = self
             .compose_app(party, handle, args, require_approval, 0, &mut chain)
             .await?;
+        self.author_prepared(party, composed).await
+    }
+}
+
+impl HostAppAuthor {
+    /// Lower + author a fully-resolved [`Prepared`] graph — the tail of
+    /// `author_app`, extracted verbatim (a pure extraction; behavior and bytes
+    /// unchanged). Split out so the WORKFLOW run path shares the one canonical
+    /// lowering (`to_request`) + server-side authoring pipeline.
+    pub(crate) async fn author_prepared(
+        &self,
+        party: &str,
+        composed: Prepared,
+    ) -> Result<BoundRecipe, AppRunError> {
         let Prepared {
             dag,
             context_items,
@@ -2009,6 +2128,51 @@ mod tests {
     fn model_step(prompt: &str) -> StepSpec {
         serde_json::from_value(serde_json::json!({ "kind": "model", "prompt": prompt }))
             .expect("a StepSpec")
+    }
+
+    /// The sequencing rider's golden pin: same-route model steps in a parallel
+    /// group gain exactly ONE `control non_cascade` order edge per consecutive
+    /// pair; a different route and a deterministic step are untouched; an
+    /// authored path in EITHER direction suppresses the addition (never a
+    /// redundant edge, never a cycle the compiler would then refuse).
+    #[test]
+    fn same_route_model_steps_are_sequenced_cycle_safely() {
+        let dag_json = serde_json::json!({
+            "seed": 0,
+            "steps": [
+                { "kind": "model", "prompt": "a", "model_id": "gemma" },
+                { "kind": "model", "prompt": "b", "model_id": "gemma" },
+                { "kind": "model", "prompt": "c", "model_id": "other" },
+                { "kind": "pure", "params": { "x": "y" } }
+            ],
+            "edges": []
+        });
+        let mut dag: DagSpec = serde_json::from_value(dag_json).expect("a DagSpec");
+        sequence_same_route_model_steps(&mut dag);
+        assert_eq!(dag.edges.len(), 1, "exactly one order edge added");
+        let e = &dag.edges[0];
+        assert_eq!((e.parent, e.child), (0, 1), "gemma steps chained in order");
+        assert_eq!(e.edge, "control");
+        assert!(
+            e.non_cascade,
+            "order is not lineage — repudiation uncoupled"
+        );
+        // Idempotent: a second pass sees the path and adds nothing.
+        sequence_same_route_model_steps(&mut dag);
+        assert_eq!(dag.edges.len(), 1);
+
+        // An authored REVERSE path suppresses the addition (a cycle otherwise).
+        let dag_json = serde_json::json!({
+            "seed": 0,
+            "steps": [
+                { "kind": "model", "prompt": "a", "model_id": "gemma" },
+                { "kind": "model", "prompt": "b", "model_id": "gemma" }
+            ],
+            "edges": [ { "parent": 1, "child": 0 } ]
+        });
+        let mut dag: DagSpec = serde_json::from_value(dag_json).expect("a DagSpec");
+        sequence_same_route_model_steps(&mut dag);
+        assert_eq!(dag.edges.len(), 1, "no edge added against an authored path");
     }
 
     fn pure_step() -> StepSpec {

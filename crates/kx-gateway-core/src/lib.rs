@@ -105,6 +105,7 @@ mod toolscout_view;
 mod trigger_admin;
 mod uploads;
 mod view;
+mod workflows_view;
 mod writer;
 
 pub use alerts_view::{AlertEntry, AlertView};
@@ -152,6 +153,10 @@ pub use scaffold::{
     ScaffoldStep, AGENTS_GUIDANCE_PATH, APP_MANIFEST_PLAN_RECIPE_HANDLE,
     APP_SCAFFOLD_WRITE_RECIPE_HANDLE, CODIFIED_CONSUMED_PATHS, CODIFIED_SOURCE_EXTS,
     CODIFIED_TOOLS_PATH, CODIFIED_WORKFLOW_PATH, MANIFEST_MARKER_PATH, SKELETON,
+};
+pub use workflows_view::{
+    workflow_digest_of, WorkflowCatalog, WorkflowRecord, WORKFLOW_DIGEST_DOMAIN,
+    WORKFLOW_LIFECYCLE_DRAFT,
 };
 // The event-source pieces a live tailer (R5, `kx-gateway`) reuses: the one-time
 // ownership gate + the per-range frame builder. The snapshot composition stays

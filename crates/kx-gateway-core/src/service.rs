@@ -820,6 +820,13 @@ pub struct GatewayService {
     /// Caller-scoped, off-journal, off-digest, rebuildable-to-empty. The envelope
     /// carries NO authority (the host validates it); `app run` re-resolves warrants.
     apps: Option<Arc<dyn crate::apps_view::AppCatalog>>,
+    /// The optional Workflow-catalog store seam (the host injects a
+    /// `workflows.db`-backed sidecar). `None` ⇒ the workflow catalog RPCs return
+    /// `unimplemented`. Same wall as the App catalog: caller-scoped,
+    /// off-journal, off-digest, rebuildable-to-empty; the envelope carries NO
+    /// authority (`RunWorkflow` re-resolves every warrant from the caller's
+    /// own grants).
+    workflows: Option<Arc<dyn crate::workflows_view::WorkflowCatalog>>,
     /// The optional skill-catalog store seam (the host injects a
     /// `skills.db`-backed sidecar). `None` ⇒ the 4 skill RPCs return
     /// `unimplemented`. Caller-scoped, off-journal, off-digest, rebuildable-to-
@@ -831,6 +838,11 @@ pub struct GatewayService {
     /// back to the legacy `GetApp` → `SubmitWorkflow` path. Server-minted warrants;
     /// connection/secret resolution is caller-scoped, off-journal, off-digest.
     app_runner: Option<Arc<dyn crate::apps_run::AppAuthor>>,
+    /// The optional WORKFLOW-run seam (the host injects a `workflows.db` +
+    /// shared-App-author backed resolver). `None` ⇒ `RunWorkflow` returns
+    /// `unimplemented`. Same wall as `app_runner`: server-minted warrants,
+    /// caller-scoped resolution, off-journal, off-digest.
+    workflow_runner: Option<Arc<dyn crate::apps_run::AppAuthor>>,
     /// The optional NL→DAG workflow-proposer seam (D209.3 / — the host injects a
     /// served-model + vetted-role-catalog backed proposer). `None` ⇒ `ProposeWorkflow`
     /// returns `unimplemented` (no served model). Validate-only: runs the model once and
@@ -952,8 +964,10 @@ impl GatewayService {
             branches: None,
             branch_history: None,
             apps: None,
+            workflows: None,
             skills: None,
             app_runner: None,
+            workflow_runner: None,
             proposer: None,
             deriver: None,
             app_manifest: None,
@@ -1420,6 +1434,18 @@ impl GatewayService {
         self
     }
 
+    /// Wire the Workflow-catalog store (the host's `workflows.db` sidecar).
+    /// Without it the workflow catalog RPCs (`SaveWorkflow`/`ListWorkflows`/
+    /// `GetWorkflow`/`DeleteWorkflow`) return `unimplemented`.
+    #[must_use]
+    pub fn with_workflow_catalog(
+        mut self,
+        workflows: Arc<dyn crate::workflows_view::WorkflowCatalog>,
+    ) -> Self {
+        self.workflows = Some(workflows);
+        self
+    }
+
     /// Wire the skill-catalog store (the host's `skills.db` sidecar).
     /// Without it the four skill RPCs (`ListSkills`/`GetSkillForm`/`AddSkill`/
     /// `RemoveSkill`) return `unimplemented`.
@@ -1438,6 +1464,14 @@ impl GatewayService {
     #[must_use]
     pub fn with_app_runner(mut self, runner: Arc<dyn crate::apps_run::AppAuthor>) -> Self {
         self.app_runner = Some(runner);
+        self
+    }
+
+    /// Wire the WORKFLOW-run seam (the host's workflow-pointer → run resolver).
+    /// Without it `RunWorkflow` returns `unimplemented`.
+    #[must_use]
+    pub fn with_workflow_runner(mut self, runner: Arc<dyn crate::apps_run::AppAuthor>) -> Self {
+        self.workflow_runner = Some(runner);
         self
     }
 
@@ -1566,6 +1600,9 @@ fn agentic_chain_salt(motes: &[(kx_mote::Mote, kx_warrant::WarrantSpec)]) -> Vec
 // `Status` is large; boxing it would force every caller (the RPC handlers) to unbox —
 // the same crate-wide rationale as the streaming seams above.
 #[allow(clippy::result_large_err)]
+// The step-kind sugar arms (http/wait/conditional) grew this past the budget;
+// each arm is one kind's whole refusal contract, read in one place.
+#[allow(clippy::too_many_lines)]
 pub fn author_steps_from_proto(
     steps: Vec<proto::WorkflowStep>,
     edges: Vec<proto::WorkflowEdge>,
@@ -1573,14 +1610,70 @@ pub fn author_steps_from_proto(
 ) -> Result<(Vec<AuthorStep>, Vec<AuthorEdge>, AuthorExecutionMode), Status> {
     let mut out_steps: Vec<AuthorStep> = Vec::with_capacity(steps.len());
     for s in steps {
+        // HTTP is sugar over the bundled `http@1` tool: the kind FORCES the
+        // contract (a client-supplied contract on an http step is refused —
+        // one meaning per kind, no ambiguity).
+        let mut forced_contract: Option<std::collections::BTreeMap<String, String>> = None;
         let kind = match proto::WorkflowStepKind::try_from(s.kind) {
             Ok(proto::WorkflowStepKind::Pure) => AuthorStepKind::Pure,
             Ok(proto::WorkflowStepKind::Model) => AuthorStepKind::Model,
             Ok(proto::WorkflowStepKind::Exec) => AuthorStepKind::Exec,
             Ok(proto::WorkflowStepKind::Tool) => AuthorStepKind::Tool,
+            Ok(proto::WorkflowStepKind::Http) => {
+                if !s.tool_contract.is_empty() {
+                    return Err(Status::invalid_argument(
+                        "an HTTP step binds the bundled http@1 tool; it must not carry \
+                         its own tool_contract",
+                    ));
+                }
+                forced_contract = Some(
+                    [("http".to_string(), "1".to_string())]
+                        .into_iter()
+                        .collect(),
+                );
+                AuthorStepKind::Tool
+            }
+            Ok(proto::WorkflowStepKind::Wait) => {
+                // A durable wait is a PURE step whose identity-bearing delay
+                // param the coordinator parks/arms/fires on. The delay must be
+                // authored, parseable, and positive — refused HERE so a wait
+                // that could never fire honestly is never admitted.
+                let delay_ok = s
+                    .params
+                    .get(kx_mote::WAIT_DELAY_MS_KEY)
+                    .and_then(|v| std::str::from_utf8(v).ok())
+                    .and_then(|t| t.parse::<u64>().ok())
+                    .is_some_and(|ms| ms > 0);
+                if !delay_ok {
+                    return Err(Status::invalid_argument(format!(
+                        "a WAIT step requires params[{:?}] = a positive integer \
+                         millisecond delay",
+                        kx_mote::WAIT_DELAY_MS_KEY
+                    )));
+                }
+                AuthorStepKind::Pure
+            }
+            Ok(proto::WorkflowStepKind::Conditional) => {
+                // A conditional is a PURE step whose identity-bearing predicate
+                // the executor evaluates over its single Data parent. PRESENCE
+                // is checked here (gateway-core deliberately carries no JSON
+                // dep — its library boundary); the HOST binder validates the
+                // predicate's shape and refuses a conditional that could never
+                // decide, before any Mote exists.
+                if !s.params.contains_key(kx_mote::COND_PREDICATE_KEY) {
+                    return Err(Status::invalid_argument(format!(
+                        "a CONDITIONAL step requires params[{:?}] = {{\"op\": \
+                         \"equals\"|\"contains\"|\"json_path_eq\", \"value\": <text>, \
+                         \"path\": <required for json_path_eq>, \"negate\"?: bool}}",
+                        kx_mote::COND_PREDICATE_KEY
+                    )));
+                }
+                AuthorStepKind::Pure
+            }
             _ => {
                 return Err(Status::invalid_argument(
-                    "WorkflowStep.kind must be PURE, MODEL, EXEC, or TOOL",
+                    "WorkflowStep.kind must be PURE, MODEL, EXEC, TOOL, HTTP, WAIT, or \
+                     CONDITIONAL",
                 ));
             }
         };
@@ -1597,7 +1690,7 @@ pub fn author_steps_from_proto(
             model_id: s.model_id,
             prompt: s.prompt,
             body_signature_id,
-            tool_contract: s.tool_contract.into_iter().collect(),
+            tool_contract: forced_contract.unwrap_or_else(|| s.tool_contract.into_iter().collect()),
             params: s.params.into_iter().collect(),
         });
     }
@@ -1623,6 +1716,35 @@ pub fn author_steps_from_proto(
         Ok(proto::WorkflowExecutionMode::Dynamic) => AuthorExecutionMode::Dynamic,
         _ => AuthorExecutionMode::Frozen,
     };
+    // The SKIP-leak refusal: a step inside a conditional arm (skip-guard-marked)
+    // may feed ONLY other guard-marked steps or the selecting join — the one
+    // path by which the canonical SKIP sentinel could reach a step that would
+    // read it as ordinary data. Refused at authoring, where the author can fix
+    // the graph, instead of surfacing at run as plausible-looking garbage.
+    for e in &out_edges {
+        let (Some(parent), Some(child)) = (
+            out_steps.get(e.parent as usize),
+            out_steps.get(e.child as usize),
+        ) else {
+            continue; // out-of-range edges are the compiler's refusal
+        };
+        let parent_guarded = parent.params.contains_key(kx_mote::SKIP_GUARD_KEY);
+        if !parent_guarded || !e.data {
+            continue;
+        }
+        let child_ok = child.params.contains_key(kx_mote::SKIP_GUARD_KEY)
+            || child.params.contains_key(kx_mote::JOIN_SELECT_KEY);
+        if !child_ok {
+            return Err(Status::invalid_argument(format!(
+                "step {} is inside a conditional arm but feeds step {}, which is neither \
+                 in an arm nor a join — route arm outputs through a \
+                 {:?} = \"first_non_skip\" join",
+                e.parent,
+                e.child,
+                kx_mote::JOIN_SELECT_KEY
+            )));
+        }
+    }
     Ok((out_steps, out_edges, mode))
 }
 
@@ -1868,6 +1990,23 @@ fn manifest_to_proto(m: crate::BundleManifest) -> proto::ContextBundle {
 }
 
 /// POC-4: map a host `AppRecord` (envelope-derived summary) to the wire view.
+fn workflow_record_to_proto(r: crate::WorkflowRecord) -> proto::WorkflowSummary {
+    proto::WorkflowSummary {
+        handle: r.handle,
+        workflow_ref: r.workflow_ref.to_vec(),
+        name: r.name,
+        version: r.version,
+        description: r.description,
+        tags: r.tags,
+        step_count: r.step_count,
+        // What one run PRODUCES — advisory (the AppSummary.delivers posture).
+        delivers: r.delivers,
+        // Catalog lifecycle ("" active / "draft") — advisory, display/routing +
+        // trigger-registration refusal only. ONE ListWorkflows paints every badge.
+        lifecycle: r.lifecycle,
+    }
+}
+
 fn app_record_to_proto(r: crate::AppRecord) -> proto::AppSummary {
     proto::AppSummary {
         handle: r.handle,
@@ -4459,6 +4598,7 @@ impl KxGateway for GatewayService {
                 kind: kind.to_string(),
                 recipe_handle: req.recipe_handle,
                 app_handle: req.app_handle,
+                workflow_handle: req.workflow_handle,
                 auth: auth.to_string(),
                 auth_secret_ref: req.auth_secret_ref,
                 schedule_spec: req.schedule_spec,
@@ -4508,6 +4648,9 @@ impl KxGateway for GatewayService {
                     enabled: t.enabled,
                     require_approval: t.require_approval,
                     last_fire_unix_ms: t.last_fire_unix_ms,
+                    workflow_handle: t.workflow_handle,
+                    disabled_reason: t.disabled_reason,
+                    consecutive_failures: t.consecutive_failures,
                 })
                 .collect(),
             has_more,
@@ -5117,10 +5260,368 @@ impl KxGateway for GatewayService {
         }
         let (manifest, new_version, deduplicated) =
             history.restore(&principal, &req.handle, req.version)?;
+        // Workflow-catalog resync: when this handle names a stored WORKFLOW, the
+        // restored definition manifest is the new truth and the catalog row must
+        // follow it — otherwise Get/Run serve the pre-restore definition while
+        // the history says otherwise. Best-effort AFTER the restore recorded
+        // (the restore itself must never fail on the resync half); the response
+        // reports the outcome honestly and the resync is idempotent (a repeated
+        // restore or the next save heals a miss). Lifecycle + lineage carry
+        // through from the existing row unchanged.
+        let mut workflow_resynced = false;
+        if !deduplicated {
+            if let Some(workflows) = self.workflows.as_ref() {
+                if let Ok(Some((row, _))) = workflows.get(&principal, &req.handle) {
+                    let restored_bytes = manifest
+                        .items
+                        .iter()
+                        .find(|it| it.path == "workflow.json")
+                        .and_then(|it| {
+                            self.content
+                                .get(&kx_content::ContentRef::from_bytes(it.content_ref))
+                        });
+                    if let Some(bytes) = restored_bytes {
+                        workflow_resynced = workflows
+                            .save(
+                                &principal,
+                                &req.handle,
+                                &bytes,
+                                row.source_digest.as_deref(),
+                                &row.lifecycle,
+                            )
+                            .is_ok();
+                    }
+                    if !workflow_resynced {
+                        tracing::warn!(
+                            "branch restore for workflow {} recorded, but the catalog row \
+                             was not re-synced (missing/unreadable workflow.json item)",
+                            req.handle
+                        );
+                    }
+                }
+            }
+        }
         Ok(Response::new(proto::RestoreBranchResponse {
             branch: Some(branch_to_proto(manifest)),
             new_version,
             deduplicated,
+            workflow_resynced,
+        }))
+    }
+
+    // ----- the durable Workflow entity (workflows.db; the SaveApp posture) -----
+
+    async fn save_workflow(
+        &self,
+        request: Request<proto::SaveWorkflowRequest>,
+    ) -> Result<Response<proto::SaveWorkflowResponse>, Status> {
+        let workflows = self.workflows.as_ref().ok_or_else(|| {
+            Status::unimplemented("SaveWorkflow: no workflow catalog wired (workflows.db absent)")
+        })?;
+        // SERVER-DERIVED identity: workflows are scoped to the auth-resolved party.
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if !valid_bundle_handle(&req.handle) {
+            return Err(Status::invalid_argument(
+                "handle must be a 'namespace/collection/name' AssetPath ([a-z0-9._-] segments)",
+            ));
+        }
+        if req.envelope_json.is_empty() {
+            return Err(Status::invalid_argument("envelope_json must not be empty"));
+        }
+        if req.envelope_json.len() > crate::MAX_APP_ENVELOPE_BYTES {
+            return Err(Status::invalid_argument(
+                "workflow envelope exceeds the server cap (1 MiB)",
+            ));
+        }
+        // Lifecycle is CALLER-STATED (a workflow has no scaffold loop — the save
+        // IS the authoring act); only the two documented values are accepted.
+        if !matches!(
+            req.lifecycle.as_str(),
+            "" | crate::workflows_view::WORKFLOW_LIFECYCLE_DRAFT
+        ) {
+            return Err(Status::invalid_argument(
+                "lifecycle must be \"\" (active) or \"draft\"",
+            ));
+        }
+        if !req.source_digest.is_empty() && req.source_digest.len() != 32 {
+            return Err(Status::invalid_argument(
+                "source_digest, when set, must be a 32-byte workflow_digest",
+            ));
+        }
+        // Cross-catalog handle refusal: branches, locks and branch HISTORY are all
+        // keyed (principal, handle) with no entity axis — a workflow sharing an
+        // App's handle would silently share that App's project branch, its lock,
+        // and its point-in-time history. Refusing at the NEW entity's save breaks
+        // nothing existing; SaveApp stays untouched.
+        if let Some(apps) = self.apps.as_ref() {
+            if apps.get(&principal, &req.handle)?.is_some() {
+                return Err(Status::invalid_argument(
+                    "this handle names an App; pick a distinct workflow handle \
+                     (branches, locks, and history are handle-keyed)",
+                ));
+            }
+        }
+        let source_digest = (!req.source_digest.is_empty()).then_some(req.source_digest.as_slice());
+        let (record, deduplicated) = workflows.save(
+            &principal,
+            &req.handle,
+            &req.envelope_json,
+            source_digest,
+            &req.lifecycle,
+        )?;
+        // Definition point-in-time history: record the canonical bytes as a
+        // one-item branch at the WORKFLOW handle, so ListBranchVersions /
+        // RestoreBranch work for workflows with NO new mechanism (the branch +
+        // history sidecars are entity-agnostic by construction). Best-effort —
+        // a serve without the branch/content seams still saves; history simply
+        // does not record (the AppCatalog degrade posture). The branch layer
+        // dedups an unchanged ref, so a dedup save appends no history row.
+        if let (Some(writer), Some(branches)) =
+            (self.content_writer.as_ref(), self.branches.as_ref())
+        {
+            let history_result: Result<(), crate::error::GatewayError> = (|| {
+                // The CANONICAL stored bytes (not the client's), read back from
+                // the catalog: gateway-core cannot canonicalize (the envelope
+                // type lives host-side) and identity must never depend on
+                // client byte order.
+                let Some((_, canonical)) = workflows.get(&principal, &req.handle)? else {
+                    return Ok(());
+                };
+                let (ref32, _) = writer.put(&canonical)?;
+                branches.create(&principal, &req.handle, None, "workflow definition history")?;
+                branches.advance(&principal, &req.handle, "workflow.json", ref32)?;
+                Ok(())
+            })();
+            if let Err(e) = history_result {
+                tracing::warn!(
+                    "workflow definition history not recorded for {}: {e}",
+                    req.handle
+                );
+            }
+        }
+        Ok(Response::new(proto::SaveWorkflowResponse {
+            workflow_ref: record.workflow_ref.to_vec(),
+            handle: record.handle,
+            deduplicated,
+        }))
+    }
+
+    async fn list_workflows(
+        &self,
+        request: Request<proto::ListWorkflowsRequest>,
+    ) -> Result<Response<proto::ListWorkflowsResponse>, Status> {
+        let workflows = self.workflows.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListWorkflows: no workflow catalog wired (workflows.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100
+        } else {
+            (req.limit as usize).min(256)
+        };
+        let after = if req.after_handle.is_empty() {
+            None
+        } else {
+            Some(req.after_handle.as_str())
+        };
+        let (records, has_more) = workflows.list(&principal, limit, after)?;
+        Ok(Response::new(proto::ListWorkflowsResponse {
+            workflows: records.into_iter().map(workflow_record_to_proto).collect(),
+            has_more,
+        }))
+    }
+
+    async fn get_workflow(
+        &self,
+        request: Request<proto::GetWorkflowRequest>,
+    ) -> Result<Response<proto::GetWorkflowResponse>, Status> {
+        let workflows = self.workflows.as_ref().ok_or_else(|| {
+            Status::unimplemented("GetWorkflow: no workflow catalog wired (workflows.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Uniform not-found for absent OR not-owned (no cross-party existence oracle).
+        match workflows.get(&principal, &req.handle)? {
+            Some((record, envelope_json)) => {
+                let source_digest = record.source_digest.clone().unwrap_or_default();
+                let summary = workflow_record_to_proto(record);
+                // Handle-free portable identity over the canonical stored bytes.
+                let workflow_digest =
+                    crate::workflows_view::workflow_digest_of(&envelope_json).to_vec();
+                Ok(Response::new(proto::GetWorkflowResponse {
+                    found: true,
+                    envelope_json,
+                    summary: Some(summary),
+                    workflow_digest,
+                    source_digest,
+                }))
+            }
+            None => Ok(Response::new(proto::GetWorkflowResponse {
+                found: false,
+                envelope_json: Vec::new(),
+                summary: None,
+                workflow_digest: Vec::new(),
+                source_digest: Vec::new(),
+            })),
+        }
+    }
+
+    async fn run_workflow(
+        &self,
+        request: Request<proto::RunWorkflowRequest>,
+    ) -> Result<Response<proto::RunHandle>, Status> {
+        // Run a caller-owned stored workflow SERVER-SIDE: the exact RunApp
+        // posture over the workflow catalog (server-minted warrants; the
+        // envelope carries no authority). `None` seam ⇒ `unimplemented`.
+        let runner = self.workflow_runner.as_ref().ok_or_else(|| {
+            Status::unimplemented("RunWorkflow: no workflow-run seam wired on this gateway")
+        })?;
+        // SERVER-DERIVED identity: the party the auth interceptor resolved.
+        // (No hosted-page CallerAppScope leg here: a page's envelope declares
+        // runnable APPS — `references.apps` — and nothing else; a page-minted
+        // token therefore has no workflow ceiling to check and simply runs
+        // nothing through this RPC.)
+        let party = request
+            .extensions()
+            .get::<CallerParty>()
+            .map(|p| p.0.clone())
+            .ok_or_else(|| Status::unauthenticated("no resolved caller identity"))?;
+        if request.extensions().get::<CallerAppScope>().is_some() {
+            return Err(Status::permission_denied(
+                "a hosted app page may not run workflows (its envelope declares \
+                 runnable apps only)",
+            ));
+        }
+        let req = request.into_inner();
+        let bound = runner
+            .author_app(&party, &req.handle, &req.args, req.require_approval)
+            .await
+            .map_err(|e| match e {
+                crate::apps_run::AppRunError::NotAuthorized => {
+                    Status::permission_denied("not authorized")
+                }
+                crate::apps_run::AppRunError::InvalidArgs(detail) => {
+                    Status::invalid_argument(detail)
+                }
+                crate::apps_run::AppRunError::MissingIntegration(name) => {
+                    Status::failed_precondition(format!(
+                        "missing integration: {name} (register it with `kx connections add`)"
+                    ))
+                }
+                // The composed thing IS an App (a workflow's app-steps resolve
+                // saved Apps through the shared seam) — the error names it so.
+                crate::apps_run::AppRunError::UncomposableApp { handle, reason } => {
+                    Status::failed_precondition(format!(
+                        "workflow step composes app {handle:?}, which cannot be composed: {reason}"
+                    ))
+                }
+                crate::apps_run::AppRunError::UnservedModelRoute(route) => {
+                    Status::failed_precondition(format!(
+                        "model route {route:?} is not served here (start `kx serve` with a \
+                         matching model, or clear the workflow's model route)"
+                    ))
+                }
+                crate::apps_run::AppRunError::Internal(detail) => Status::internal(detail),
+            })?;
+
+        // The SAME fireable-grant backstop as RunApp/Invoke/SubmitWorkflow.
+        let fireable = self.fireable_grants();
+        for (_, warrant) in &bound.motes {
+            if let Some(grant) = warrant
+                .tool_grants
+                .iter()
+                .find(|g| !fireable.contains(&(g.tool_id.0.clone(), g.tool_version.0.clone())))
+            {
+                return Err(Status::failed_precondition(format!(
+                    "workflow step grants tool {}@{} but this serve registered no such capability",
+                    grant.tool_id.0, grant.tool_version.0
+                )));
+            }
+        }
+
+        // The SAME propose-proxy: register first, then submit each compiled Mote.
+        let instance_id = self
+            .submitter
+            .register_run(bound.recipe_fingerprint)
+            .await
+            .map_err(submit_status)?;
+        let react_chain_salt = agentic_chain_salt(&bound.motes);
+        // The run anchor — populated for EVERY submission shape (the run-anchor contract).
+        let terminal_mote_id = bound.terminal_mote_id.as_bytes().to_vec();
+        for (mote, warrant) in bound.motes {
+            self.submitter
+                .submit_mote(mote, warrant, false, false)
+                .await
+                .map_err(submit_status)?;
+        }
+
+        Ok(Response::new(proto::RunHandle {
+            instance_id: instance_id.to_vec(),
+            recipe_fingerprint: bound.recipe_fingerprint.to_vec(),
+            react_chain_salt,
+            terminal_mote_id,
+        }))
+    }
+
+    async fn delete_workflow(
+        &self,
+        request: Request<proto::DeleteWorkflowRequest>,
+    ) -> Result<Response<proto::DeleteWorkflowResponse>, Status> {
+        let workflows = self.workflows.as_ref().ok_or_else(|| {
+            Status::unimplemented("DeleteWorkflow: no workflow catalog wired (workflows.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.handle.trim().is_empty() {
+            return Err(Status::invalid_argument("handle is required"));
+        }
+        // Uniform absent/not-owned: read first so the cascade only ever runs for
+        // a row this caller genuinely owns (the DeleteApp posture, verbatim).
+        if workflows.get(&principal, &req.handle)?.is_none() {
+            return Ok(Response::new(proto::DeleteWorkflowResponse::default()));
+        }
+        // ORDER: THE ROW FIRST, then everything that merely REFERENCES it — the
+        // DeleteApp row-first lesson (a cascade-first failure destroys a live
+        // entity's references; row-first turns every later failure into a
+        // reported, retryable cleanup).
+        let removed = workflows.delete(&principal, &req.handle)?;
+        if !removed {
+            return Ok(Response::new(proto::DeleteWorkflowResponse::default()));
+        }
+        // 1. Triggers. `triggers.workflow_handle` has no FK, so an orphan is not
+        //    inert: the cron loop re-selects it every tick and RunWorkflow refuses
+        //    it (the same hazard the App cascade closes).
+        let triggers_removed = match self.trigger_admin.as_ref() {
+            Some(admin) => admin
+                .deregister_by_workflow(&principal, &req.handle)
+                .await
+                .unwrap_or(0),
+            None => 0,
+        };
+        // 2. The lock row — LockApp is keyed by branch handle, and the workflow's
+        //    definition branch shares its handle; a re-created workflow must not
+        //    inherit a lock nobody set.
+        let lock_cleared = match self.locks.as_ref() {
+            Some(l) => {
+                l.is_locked(&principal, &req.handle).unwrap_or(false)
+                    && l.unlock(&principal, &req.handle).unwrap_or(false)
+            }
+            None => false,
+        };
+        // 3. The definition branch BINDING — row only: the content-addressed
+        //    blobs AND the branch HISTORY stay (delete + restore is the
+        //    "recreate without losing state" path, exactly as for Apps).
+        let branch_unbound = match self.branches.as_ref() {
+            Some(b) => b.delete(&principal, &req.handle).unwrap_or(false),
+            None => false,
+        };
+        Ok(Response::new(proto::DeleteWorkflowResponse {
+            removed,
+            branch_unbound,
+            lock_cleared,
+            triggers_removed,
         }))
     }
 

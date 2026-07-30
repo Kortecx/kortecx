@@ -39,6 +39,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod envelope;
+mod workflow;
 
 pub use envelope::{
     canonical_json, summary_of, AppEnvelope, AppError, AppKind, AppMode, AppRef, AppSummary,
@@ -46,4 +47,8 @@ pub use envelope::{
     HostedFramework, ModelSteering, Reach, References, Replay, ReplayMode, SkillRef,
     SteeringConfig, ToolRef, ToolsSteering, APP_SCHEMA, EXPERIENCE_SCHEMA, MAX_APP_CORPUS_BYTES,
     MAX_APP_CORPUS_REFS,
+};
+pub use workflow::{
+    workflow_canonical_json, workflow_summary_of, WorkflowEnvelope, WorkflowSummary,
+    WORKFLOW_SCHEMA,
 };

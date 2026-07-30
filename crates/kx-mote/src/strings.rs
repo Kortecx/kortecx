@@ -175,6 +175,86 @@ pub const REACT_UNCONSTRAINED_KEY: &str = "unconstrained";
 /// digest (no prior Mote carries this key).
 pub const TOOL_ARGS_KEY: &str = "kx.tool.args";
 
+/// The DURABLE-WAIT step marker: `config_subset[WAIT_DELAY_MS_KEY]` carries the
+/// step's delay in milliseconds as canonical-JSON integer text (identity-bearing
+/// — part of the `MoteId`, stamped pre-compile by the gateway binder). The
+/// coordinator PARKS a Pure mote carrying this key (never leased), journals a
+/// `TimerArmed` fact once its parents commit, and fires by synthesizing the
+/// mote's own `Committed` — so a restart re-arms from the journal at the
+/// recorded instant and can never re-fire (the at-most-one-Committed fence).
+/// Every Mote without the key leases exactly as before — adding the constant
+/// moves no existing digest (no prior Mote carries it).
+pub const WAIT_DELAY_MS_KEY: &str = "kx.wait.delay_ms";
+
+/// The CONDITIONAL step marker: `config_subset[COND_PREDICATE_KEY]` carries a
+/// canonical-JSON `{op, value, path?, negate?}` predicate (identity-bearing)
+/// evaluated over the step's SINGLE Data parent's committed output; the step
+/// commits `{"selected":"then"|"else"}`. A model-JUDGED branch is NOT this —
+/// that is a MODEL step feeding a conditional.
+pub const COND_PREDICATE_KEY: &str = "kx.cond.predicate";
+
+/// Marks a conditional ARM's ENTRY step with the arm it belongs to
+/// (`"then"` / `"else"`). The coordinator's skip-guard settle reads the
+/// Control-parent conditional's committed selection: a mismatch synthesizes
+/// the step's `Committed` with the canonical SKIP sentinel instead of running
+/// it — the untaken arm collapses honestly, without touching the readiness
+/// rule.
+pub const COND_ARM_KEY: &str = "kx.cond.arm";
+
+/// Marks EVERY step inside a conditional arm (entries carry [`COND_ARM_KEY`]
+/// too). A guard-marked step is held from lease until its gate resolves
+/// positively; a guard whose parent committed the SKIP sentinel skip-commits
+/// in turn (propagation). Authoring REFUSES an edge from a guard-marked step
+/// to a non-guard, non-join consumer — SKIP bytes can never leak into a step
+/// that would read them as data.
+pub const SKIP_GUARD_KEY: &str = "kx.cond.skip_guard";
+
+/// The join-after-arms marker: `"first_non_skip"` commits the single non-SKIP
+/// parent's bytes verbatim (0 or 2+ survivors fail closed — a conditional that
+/// ran both arms is a bug, never a silent pick).
+pub const JOIN_SELECT_KEY: &str = "kx.cond.join";
+
+/// The canonical SKIP sentinel bytes an untaken arm's steps commit — a
+/// distinguished fact ("this step was skipped by its conditional"), never
+/// fabricated step output. Content-addressed: every skip commits the SAME ref.
+pub const COND_SKIP_SENTINEL: &[u8] = b"kx-workflow/skip/v1";
+
+/// The per-step FAILURE-POLICY mode marker (identity-bearing): `"retry"` (the
+/// step becomes a coordinator-driven launch whose attempts are fresh
+/// identities — fresh idempotency tokens, genuine re-attempts of staged
+/// effects) or `"continue"` (an exhausted/failed step commits the canonical
+/// FAILED placeholder so downstream joins release and read the failure as a
+/// fact). Absent ⇒ fail-fast, byte-identical to today.
+pub const FAILURE_MODE_KEY: &str = "kx.step.failure_mode";
+
+/// Retry budget: the maximum ATTEMPTS (canonical-JSON integer text; identity-
+/// bearing). `retry` without it defaults to 3 server-side at authoring.
+pub const RETRY_MAX_KEY: &str = "kx.step.retry_max";
+
+/// Retry backoff base in milliseconds (doubles per attempt; identity-bearing).
+/// Defaults to 1000 at authoring. The backoff timer is the SAME durable
+/// `TimerArmed` fact a wait step uses (purpose 1) — it survives restart.
+pub const RETRY_BACKOFF_MS_KEY: &str = "kx.step.retry_backoff_ms";
+
+/// Marks a coordinator-minted ATTEMPT of a policied launch (value = the
+/// 1-based attempt ordinal as canonical-JSON integer text). Part of the
+/// attempt's identity — each retry is a NEW Mote by construction.
+pub const ATTEMPT_KEY: &str = "kx.step.attempt";
+
+/// The canonical FAILED placeholder bytes a `continue`-policied step commits
+/// when its attempts are exhausted — a distinguished fact ("this step failed
+/// and the workflow chose to continue"), never fabricated output.
+/// Content-addressed: every such failure commits the SAME ref, which is what
+/// sentinel-aware joins key on.
+pub const CONTINUE_FAILED_SENTINEL: &[u8] = b"kx-workflow/failed/v1";
+
+/// The k-of-n VALUE-rule join marker: `config_subset[JOIN_QUORUM_KEY]` carries
+/// `k` (canonical-JSON integer text). The join commits a canonical aggregate
+/// of its NON-SENTINEL parents' outputs when at least `k` survive, else fails
+/// closed. TIMING is still all-parents-committed (the standing readiness
+/// rule); only the SUCCESS CRITERION is k-of-n.
+pub const JOIN_QUORUM_KEY: &str = "kx.join.quorum";
+
 /// PR-7: the `config_subset` key under which the bind layer injects a run's
 /// attached context-bundle items (canonical-encoded by
 /// [`crate::encode_context_items`]). Present ONLY on an ENTRY Mote of a run that

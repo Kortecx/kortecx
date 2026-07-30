@@ -25,7 +25,7 @@ async fn list_shows_builtins_then_score_ranks_and_stays_advisory() {
     let list = run_kx(argv(&["tools", "list", "--endpoint", &ep])).await;
     assert!(list.status.success(), "stderr: {}", stderr(&list));
     let list_text = stdout(&list);
-    for tool in ["fs-read@1", "fs-write@1"] {
+    for tool in ["fs-read@1", "fs-write@1", "http@1"] {
         assert!(list_text.contains(tool), "list missing {tool}: {list_text}");
     }
     assert!(
@@ -37,7 +37,7 @@ async fn list_shows_builtins_then_score_ranks_and_stays_advisory() {
     let list_json = run_kx(argv(&["tools", "list", "--endpoint", &ep, "--json"])).await;
     let v: serde_json::Value = serde_json::from_slice(&list_json.stdout).unwrap();
     let manifests = v["manifests"].as_array().unwrap();
-    assert_eq!(manifests.len(), 2);
+    assert_eq!(manifests.len(), 3);
     assert_eq!(manifests[0]["tool_id"], "fs-read");
     assert_eq!(manifests[0]["kind"], "Builtin");
     assert_eq!(
@@ -65,7 +65,7 @@ async fn list_shows_builtins_then_score_ranks_and_stays_advisory() {
     assert!(score.status.success(), "stderr: {}", stderr(&score));
     let s: serde_json::Value = serde_json::from_slice(&score.stdout).unwrap();
     let ranked = s["ranked"].as_array().unwrap();
-    assert_eq!(ranked.len(), 2, "every manifest ranked");
+    assert_eq!(ranked.len(), 3, "every manifest ranked");
     assert_eq!(ranked[0]["tool_id"], "fs-read");
     assert_eq!(ranked[0]["score_bp"], 10_000);
     assert_eq!(s["bundle_fingerprint"].as_str().unwrap().len(), 64);

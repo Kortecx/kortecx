@@ -299,6 +299,99 @@ describe("App catalog over a real serve", () => {
     expect(result).toBeDefined();
   });
 
+  it("runApp with wait:true settles on THIS run's own terminal, never the journal's first commit", async () => {
+    // THE STATIC-SINK PIN. The old wait:true branch polled the FIRST committed
+    // Mote in the SHARED journal (`pollAny`), so on a busy serve it returned
+    // some OTHER submission's result wearing this run's return type. The decoy
+    // below commits FIRST; a regression to pollAny settles on the decoy's
+    // terminal and fails the identity assertion — a test that only checked
+    // "defined" passed against the bug for a full release.
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    await app("Decoy Demo")
+      .blueprint(flow().step({ topic: "decoy" }))
+      .save({ client: kx });
+    const decoy = await kx.runApp("apps/local/decoy-demo", { wait: true, timeoutMs: 60_000 });
+    if (decoy instanceof Run) throw new Error("decoy must settle");
+    expect(decoy.ok).toBe(true);
+
+    await app("Target Demo")
+      .blueprint(flow().step({ topic: "target" }).step({ topic: "carry" }))
+      .save({ client: kx });
+    // The expected anchor, from the server's own RunHandle (wait:false path).
+    const started = await kx.runApp("apps/local/target-demo", { wait: false });
+    if (!(started instanceof Run)) throw new Error("wait:false returns a Run");
+    const expected = started.terminalMoteId;
+    expect(expected).not.toBe(decoy.terminalMoteId);
+    // The idempotent re-invoke settles — and MUST settle on THIS run's sink.
+    const settled = await kx.runApp("apps/local/target-demo", { wait: true, timeoutMs: 60_000 });
+    if (settled instanceof Run) throw new Error("wait:true must settle");
+    expect(settled.ok).toBe(true);
+    expect(settled.terminalMoteId).toBe(expected);
+    expect(settled.terminalMoteId).not.toBe(decoy.terminalMoteId);
+  });
+
+  it("the durable Workflow entity round-trips: save, list, get, run, trigger-refusal, delete", async () => {
+    const s = await devServer();
+    const kx = new KxClient(s.endpoint);
+    const envelope = {
+      schema: "kortecx.workflow/v1",
+      name: "sdk-flow",
+      version: "1",
+      blueprint: {
+        seed: 0,
+        steps: [
+          { kind: "pure", prompt: "" },
+          { kind: "pure", prompt: "" },
+        ],
+        edges: [{ parent: 0, child: 1, data: true }],
+      },
+    };
+    const saved = await kx.saveWorkflow(envelope, { handle: "workflows/local/sdk-flow" });
+    expect(saved.deduplicated).toBe(false);
+    expect(saved.workflowRef).toMatch(/^[0-9a-f]{32}$/);
+
+    const listed = await kx.listWorkflows();
+    const row = listed.find((w) => w.handle === "workflows/local/sdk-flow");
+    expect(row?.name).toBe("sdk-flow");
+    expect(row?.stepCount).toBe(2);
+
+    const got = await kx.getWorkflow("workflows/local/sdk-flow");
+    expect(got).not.toBeNull();
+    expect((got?.envelope as Record<string, unknown>).name).toBe("sdk-flow");
+    expect(got?.workflowDigest).toMatch(/^[0-9a-f]{64}$/);
+
+    // wait:false anchors; wait:true settles on the SAME terminal (correct from
+    // day one on this path — the runApp static-sink class of bug is pinned out).
+    const run = await kx.runWorkflow("workflows/local/sdk-flow", { wait: false });
+    if (!(run instanceof Run)) throw new Error("wait:false returns a Run");
+    expect(run.terminalMoteId).toMatch(/^[0-9a-f]{64}$/);
+    const settled = await kx.runWorkflow("workflows/local/sdk-flow", {
+      wait: true,
+      timeoutMs: 60_000,
+    });
+    if (settled instanceof Run) throw new Error("wait:true must settle");
+    expect(settled.ok).toBe(true);
+    expect(settled.terminalMoteId).toBe(run.terminalMoteId);
+
+    // A draft is refused as a trigger target AT registration.
+    await kx.saveWorkflow(
+      { ...envelope, name: "sdk-draft" },
+      { handle: "workflows/local/sdk-draft", lifecycle: "draft" },
+    );
+    await expect(
+      kx.registerTrigger({
+        name: "sdk-draft-trigger",
+        kind: "grpc",
+        workflowHandle: "workflows/local/sdk-draft",
+      }),
+    ).rejects.toThrow(/draft/);
+
+    const del = await kx.deleteWorkflow("workflows/local/sdk-flow");
+    expect(del.removed).toBe(true);
+    expect(await kx.getWorkflow("workflows/local/sdk-flow")).toBeNull();
+  });
+
   it("runApp with wait:false returns a Run anchored to THIS submission", async () => {
     // THE GAP THAT LET A BUG SHIP. Every runApp test above passes `wait: true`, which
     // returns a Result and never constructs a `Run` — so the no-wait branch had no

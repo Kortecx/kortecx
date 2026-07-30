@@ -552,7 +552,11 @@ impl Projection {
             | JournalEntry::Approval { .. }
             // RC4c-2: the live LLM rerank turn is the RAG chain's off-DAG sibling —
             // same never-a-digest-input law (folds into `rerank_rounds`, names no Mote).
-            | JournalEntry::ReRankRound { .. } => {
+            | JournalEntry::ReRankRound { .. }
+            // v17: a coordinator-owned timer's arming record — same off-DAG,
+            // never-a-digest-input law (folds into `timers`; the FIRE is the
+            // subject's ordinary `Committed`, which folds like any other).
+            | JournalEntry::TimerArmed { .. } => {
                 self.fold_run_metadata(entry);
             }
         }
@@ -567,6 +571,10 @@ impl Projection {
     /// **metadata, never identity**: no scheduling/identity/digest decision reads
     /// it (`DigestSealed` in particular is invisible to the run-identity product
     /// digest, which folds only `Committed` Motes).
+    // v17 tipped the arm count over the budget; each arm is a self-contained
+    // append (the ReactRound/Approval arms are already extracted — the rest
+    // read better in one place).
+    #[allow(clippy::too_many_lines)]
     fn fold_run_metadata(&mut self, entry: &JournalEntry) {
         match entry {
             JournalEntry::RunRegistered {
@@ -678,6 +686,32 @@ impl Projection {
                         outcome: outcome.clone(),
                         seq: *seq,
                     });
+                self.state.last_seq = self.state.last_seq.max(*seq);
+            }
+            // v17 (TimerArmed) — a coordinator-owned timer's arming record.
+            // Append-many; replay rebuilds the same Vec from scratch. Off-DAG:
+            // names the SUBJECT Mote but registers NO `MoteInfo` and touches NO
+            // children index — the settle/recover passes read it to re-arm at
+            // the JOURNALED fire instant; never an identity/scheduling/digest
+            // input.
+            JournalEntry::TimerArmed {
+                instance_id,
+                subject_mote_id,
+                purpose,
+                attempt,
+                fire_at_unix_ms,
+                anchor_ref,
+                seq,
+            } => {
+                self.state.timers.push(crate::state::TimerRecord {
+                    instance_id: *instance_id,
+                    subject_mote_id: *subject_mote_id,
+                    purpose: *purpose,
+                    attempt: *attempt,
+                    fire_at_unix_ms: *fire_at_unix_ms,
+                    anchor_ref: *anchor_ref,
+                    seq: *seq,
+                });
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
             _ => unreachable!("fold_run_metadata called with a non-run-metadata kind"),
@@ -1175,6 +1209,28 @@ impl Projection {
             .rerank_rounds
             .iter()
             .filter(move |r| &r.instance_id == instance_id)
+    }
+
+    /// Every folded `TimerArmed` record (v17), in fold order — the coordinator's
+    /// re-arm source at recovery and the audit view. A timer whose SUBJECT is
+    /// already `Committed`/`Failed` is spent (the fire is the subject's own
+    /// `Committed` entry; there is no separate fired fact to join against).
+    #[must_use]
+    pub fn timers(&self) -> &[crate::state::TimerRecord] {
+        &self.state.timers
+    }
+
+    /// The `TimerArmed` records of ONE run (`instance_id`), in fold order. A run
+    /// arms a bounded handful of timers, so the Vec is filtered directly (no
+    /// derived index — the `rerank_rounds_of` posture).
+    pub fn timers_of<'a>(
+        &'a self,
+        instance_id: &'a [u8; kx_journal::INSTANCE_ID_LEN],
+    ) -> impl Iterator<Item = &'a crate::state::TimerRecord> + 'a {
+        self.state
+            .timers
+            .iter()
+            .filter(move |t| &t.instance_id == instance_id)
     }
 
     /// The latest (highest-`seq`) `ReRankRound` record for one run's rerank Mote, or

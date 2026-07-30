@@ -22,7 +22,7 @@ const WORKFLOWS_TABS: ReadonlyArray<{ id: WorkflowsTab; label: string }> = [
  * The Workflows home (POC-5c / D168): the runnable workflow CATALOG — each workflow
  * as a high-level card (name · description · Run/Schedule/Share) — plus your one-time
  * RUN history and a placeholder for the reusable TEMPLATES to come. A single
- * top-right cluster holds Refresh + New workflow (the visual builder). The per-run
+ * top-right cluster holds Refresh + New workflow (the durable create screen). The per-run
  * live-DAG stays at `/workflows/$instanceId`. The frozen section id stays
  * `runs-section`; tab state rides the route's validated search.
  */
@@ -37,15 +37,16 @@ export function RunsSection({
   const qc = useQueryClient();
   const [refreshing, setRefreshing] = useState(false);
 
-  // The single Refresh action: re-pull the catalog and the run history. Only the
-  // active tab's query actually refetches (react-query invalidation); the others go
-  // stale and refresh on next mount.
+  // The single Refresh action: re-pull the catalog (built-in AND your durable
+  // workflows) and the run history. Only the active tab's query actually refetches
+  // (react-query invalidation); the others go stale and refresh on next mount.
   async function refresh(): Promise<void> {
     setRefreshing(true);
     try {
       await Promise.all([
         qc.invalidateQueries({ queryKey: queryKeys.recipes(endpoint) }),
         qc.invalidateQueries({ queryKey: queryKeys.recipeSummaries(endpoint) }),
+        qc.invalidateQueries({ queryKey: queryKeys.workflows(endpoint) }),
         qc.invalidateQueries({ queryKey: ["kx", endpoint, "runs"] }),
       ]);
     } finally {
@@ -71,7 +72,7 @@ export function RunsSection({
             <Icon name="refresh" size={15} />
             <span>{refreshing ? "Refreshing…" : "Refresh"}</span>
           </button>
-          <Link to="/blueprints/new" className="btn-primary" data-testid="workflows-new">
+          <Link to="/workflows/create" className="btn-primary" data-testid="workflows-new">
             <Icon name="plus" size={15} />
             <span>New workflow</span>
           </Link>

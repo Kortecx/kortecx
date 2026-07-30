@@ -27,11 +27,18 @@
 //! | `script`| `Invoke` `react-auto`                    | [`fold_run_transcript`]     |
 //! | `reach` | `Invoke` `react-rag`/`react-memory`, or `RunApp` | [`fold_run_transcript`] (+ observations) |
 //! | `swarm` | `SubmitWorkflow`                         | [`fold_workflow_transcript`]|
+//! | `workflow` | `RunWorkflow` (a STORED definition)   | [`fold_workflow_transcript`]|
 //!
-//! Every shape but the last settles a ReAct chain, so they share one fold. A swarm is a
-//! plain multi-step DAG — it has NO ReAct turns and its `react_chain_salt` is empty by
-//! design — so it is scoped by `RunHandle.terminal_mote_id` (the run anchor populated for
-//! EVERY shape) and folded by walking that Mote's ancestors.
+//! Every ReAct-settling shape shares one fold. A swarm is a plain multi-step DAG — it
+//! has NO ReAct turns and its `react_chain_salt` is empty by design — so it is scoped
+//! by `RunHandle.terminal_mote_id` (the run anchor populated for EVERY shape) and
+//! folded by walking that Mote's ancestors. The `workflow` family rides the same fold
+//! but through the STORED path — Save → canonical bytes → server-built warrants → Run
+//! is the machinery it exists to measure, so driving it over a raw `SubmitWorkflow`
+//! would leave that machinery unbenchmarked. Its steps are all deterministic (http /
+//! wait / conditional / joins under per-step failure policy): the family measures the
+//! RUNTIME, and `model_time_share@workflow` publishing 0 is the honest statement that
+//! deterministic steps never held the model.
 //!
 //! An unknown family is a hard error, never a silent fall-through to the react path: a
 //! task driven down the wrong shape still produces a number, and a wrong number that
@@ -66,6 +73,22 @@ pub const BENCH_REACH_APP_HANDLE: &str = "kx/bench/reach";
 pub const BENCH_SCAFFOLD_CONTEXTUAL_HANDLE: &str = "kx/bench/scaffold-contextual";
 /// The codified twin of [`BENCH_SCAFFOLD_CONTEXTUAL_HANDLE`].
 pub const BENCH_SCAFFOLD_CODIFIED_HANDLE: &str = "kx/bench/scaffold-codified";
+
+/// The `workflow` family's stored definitions, one handle per task (provisioned by
+/// the harness against its hermetic routed fixture; see `tests/common/bench_routes.rs`).
+pub const BENCH_WF_SEQUENTIAL_HANDLE: &str = "kx/bench/wf-sequential";
+/// Three concurrent http steps joined by a 3-of-3 quorum aggregate.
+pub const BENCH_WF_PARALLEL_HANDLE: &str = "kx/bench/wf-parallel";
+/// The conditional sluice, reading-high direction.
+pub const BENCH_WF_COND_HIGH_HANDLE: &str = "kx/bench/wf-cond-high";
+/// The conditional sluice, reading-low direction (the PAIR is the oracle).
+pub const BENCH_WF_COND_LOW_HANDLE: &str = "kx/bench/wf-cond-low";
+/// A journal-backed 3 s timer between a fetch and its carry.
+pub const BENCH_WF_WAIT_HANDLE: &str = "kx/bench/wf-wait";
+/// The identity-keyed flaky depot under a per-step retry policy.
+pub const BENCH_WF_RETRY_HANDLE: &str = "kx/bench/wf-retry";
+/// A permanently-down branch under `continue`, joined by a 1-of-2 quorum.
+pub const BENCH_WF_CONTINUE_HANDLE: &str = "kx/bench/wf-continue";
 
 /// The `scaffold` fixture Apps' ONE step prompt — a shared const so the harness
 /// that saves the envelope and the corpus leak test read the SAME bytes: the
@@ -168,6 +191,12 @@ pub enum Drive {
     },
     /// Submit a multi-agent fan-out/gather chain and fold from the run's terminal Mote.
     Swarm,
+    /// Run a STORED workflow definition by handle (the Save → Run path — the durable
+    /// entity's own machinery is what the family measures).
+    Workflow {
+        /// The saved workflow handle to run.
+        handle: &'static str,
+    },
 }
 
 impl Drive {
@@ -181,8 +210,12 @@ impl Drive {
             // not resolved from the recipe catalog. The scaffold drive needs the two
             // scaffold recipes, but those are a MACHINERY precondition the harness
             // folds into `complete` (scaffold_ready) — absent machinery must refuse
-            // the capture, not skip the family into a green hole.
-            Drive::App { .. } | Drive::ScaffoldedApp { .. } | Drive::Swarm => None,
+            // the capture, not skip the family into a green hole. A stored workflow's
+            // precondition (the harness saved it) folds the same way (workflow_ready).
+            Drive::App { .. }
+            | Drive::ScaffoldedApp { .. }
+            | Drive::Swarm
+            | Drive::Workflow { .. } => None,
         }
     }
 }
@@ -265,6 +298,34 @@ pub fn drive_for(task: &GoldenTask) -> Result<Drive, BenchError> {
             _ => Err(unknown()),
         },
         "swarm" => Ok(Drive::Swarm),
+        // The stored-workflow family: every task is one saved definition, driven by
+        // handle down the Save → Run path. The id→handle map is corpus-coupled — a
+        // new task needs a new stored fixture, and an id with no fixture must abort
+        // the suite rather than drive some other task's workflow.
+        "workflow" => match task.id.as_str() {
+            "workflow-sequential-carry" => Ok(Drive::Workflow {
+                handle: BENCH_WF_SEQUENTIAL_HANDLE,
+            }),
+            "workflow-parallel-join" => Ok(Drive::Workflow {
+                handle: BENCH_WF_PARALLEL_HANDLE,
+            }),
+            "workflow-conditional-high-reading" => Ok(Drive::Workflow {
+                handle: BENCH_WF_COND_HIGH_HANDLE,
+            }),
+            "workflow-conditional-low-reading" => Ok(Drive::Workflow {
+                handle: BENCH_WF_COND_LOW_HANDLE,
+            }),
+            "workflow-wait-then-carry" => Ok(Drive::Workflow {
+                handle: BENCH_WF_WAIT_HANDLE,
+            }),
+            "workflow-retry-recovers" => Ok(Drive::Workflow {
+                handle: BENCH_WF_RETRY_HANDLE,
+            }),
+            "workflow-continue-placeholder" => Ok(Drive::Workflow {
+                handle: BENCH_WF_CONTINUE_HANDLE,
+            }),
+            _ => Err(unknown()),
+        },
         _ => Err(unknown()),
     }
 }
@@ -496,6 +557,14 @@ pub struct LiveSuiteOutcome {
     /// the runtime refused, where it dead-lettered) — and a benchmark you cannot
     /// interrogate is one you end up guessing about.
     pub transcripts: Vec<Transcript>,
+    /// Harness-observed wall clock per driven task, submission → first-observed
+    /// terminal commit. This is the HARNESS's clock, not the run's: it includes the
+    /// fold's 250 ms poll grain and RPC overhead. It exists because telemetry rows
+    /// come only from motes a worker executed — a parked step (a durable wait) never
+    /// reaches a worker, so `TranscriptTiming` structurally cannot see the hold, and
+    /// the `workflow_wait_elapsed@timers` sentinel needs a clock that can (a
+    /// pass-through wait reads well under a second here; a real 3 s timer cannot).
+    pub drive_wall_ms: BTreeMap<String, u64>,
     /// What each `scaffold`-family drive actually did (one record per driven
     /// task). The harness folds these into the `scaffold_completed@attempts`
     /// sentinel + per-task duration/file spikes — the attribution a bare 0 gate
@@ -584,6 +653,7 @@ pub async fn score_live_suite(
     let mut transcripts: Vec<Transcript> = Vec::with_capacity(corpus.suite.tasks.len());
     let mut skipped: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     let mut scaffolds: Vec<ScaffoldRecord> = Vec::new();
+    let mut drive_wall_ms: BTreeMap<String, u64> = BTreeMap::new();
     let only = task_filter();
     for task in &corpus.suite.tasks {
         // A DIAGNOSTIC filter for attributing a loop change to one arm without paying for
@@ -613,6 +683,7 @@ pub async fn score_live_suite(
         // The telemetry floor for THIS task, read before it is dispatched: everything
         // the sidecar joins above it is this task's cost and no other's.
         let since_seq = telemetry_high_water(client).await;
+        let drove_at = std::time::Instant::now();
         let (mut transcript, terminal_mote) = if let Drive::ScaffoldedApp { handle } = &drive {
             // Intercepted here (not via run_and_fold) so the ScaffoldRecord lands
             // in the outcome — the sentinel/spike fold reads it.
@@ -622,6 +693,10 @@ pub async fn score_live_suite(
         } else {
             run_and_fold(client, task, &drive, settle_timeout).await?
         };
+        drive_wall_ms.insert(
+            task.id.clone(),
+            u64::try_from(drove_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+        );
         // A failed scaffold folds with NO terminal Mote — there is nothing for the
         // telemetry join to wait on, and timing honestly stays None.
         if !terminal_mote.is_empty() {
@@ -662,6 +737,7 @@ pub async fn score_live_suite(
             .collect(),
         transcripts,
         scaffolds,
+        drive_wall_ms,
     })
 }
 
@@ -1065,6 +1141,31 @@ async fn run_and_fold(
                 client,
                 handle.instance_id,
                 handle.terminal_mote_id,
+                task.id.clone(),
+                settle_timeout,
+            )
+            .await?;
+            Ok((transcript, terminal_mote))
+        }
+        Drive::Workflow { handle } => {
+            // The STORED path: the server reads the saved canonical envelope, lowers
+            // it, and builds every warrant from the caller's grants — which is the
+            // machinery under measurement. The run anchors like any other submission
+            // shape (the run-anchor contract) and folds by the terminal's ancestor closure.
+            let run = client
+                .run_workflow(proto::RunWorkflowRequest {
+                    handle: (*handle).to_string(),
+                    args: Vec::new(),
+                    require_approval: false,
+                })
+                .await
+                .map_err(|e| BenchError::Rpc("run_workflow", e))?
+                .into_inner();
+            let terminal_mote = run.terminal_mote_id.clone();
+            let transcript = fold_workflow_transcript(
+                client,
+                run.instance_id,
+                run.terminal_mote_id,
                 task.id.clone(),
                 settle_timeout,
             )
@@ -1827,6 +1928,7 @@ mod tests {
             }],
             transcripts: vec![],
             scaffolds: vec![],
+            drive_wall_ms: BTreeMap::new(),
         };
         assert!(
             !filtered.is_complete(),
@@ -1856,6 +1958,7 @@ mod tests {
             skipped: vec![],
             transcripts: vec![],
             scaffolds: vec![],
+            drive_wall_ms: BTreeMap::new(),
         };
         assert!(complete.is_complete());
         let partial = LiveSuiteOutcome {
@@ -1867,6 +1970,7 @@ mod tests {
             }],
             transcripts: vec![],
             scaffolds: vec![],
+            drive_wall_ms: BTreeMap::new(),
         };
         assert!(!partial.is_complete());
     }

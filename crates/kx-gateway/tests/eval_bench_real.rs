@@ -1360,11 +1360,25 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // machinery probe (a serve that cannot scaffold must refuse the capture).
     let scaffold_ready = provision_scaffold_fixtures(&mut c).await;
 
+    // The `workflow` family's routed fixture + its seven stored definitions.
+    // HARD-asserted like the http connector: a save that quietly failed would score
+    // seven 0s that read as the runtime failing, not the harness. The fixture must
+    // outlive the suite — the retries sentinel reads its capture log afterwards.
+    let routed = common::bench_routes::BenchRoutedServer::start();
+    let workflow_ready =
+        common::bench_routes::provision_workflow_fixtures(&mut c, &routed.base_url()).await;
+    assert!(
+        workflow_ready,
+        "the workflow fixtures must provision — without them the `workflow` family \
+         measures the save failure, not the runtime"
+    );
+
     let corpus = kx_eval::load_bench_v1().expect("bench-v1 corpus loads");
     eprintln!(
         "eval-bench: scoring {} live task(s) on [{env_label}] (capable={capable}, \
          reach_fixtures={reach_ready}, http_tool={http_ready}, flaky_tools={flaky_ready}, \
-         scaffold_fixtures={scaffold_ready}, tool_deadline={TOOL_DEADLINE_SECS}s)",
+         scaffold_fixtures={scaffold_ready}, workflow_fixtures={workflow_ready}, \
+         tool_deadline={TOOL_DEADLINE_SECS}s)",
         corpus.suite.tasks.len()
     );
 
@@ -1394,7 +1408,8 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // the `failure` and `menu` families ran against tools that were never registered, and
     // a baseline captured from that would ratchet the whole corpus against a subset while
     // reading as full coverage forever after.
-    let complete = outcome.is_complete() && reach_ready && flaky_ready && scaffold_ready;
+    let complete =
+        outcome.is_complete() && reach_ready && flaky_ready && scaffold_ready && workflow_ready;
     if !complete {
         eprintln!("eval-bench: ⚠ INCOMPLETE COVERAGE — this run does NOT cover the whole corpus");
     }
@@ -1682,6 +1697,52 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
             });
         }
     }
+    // The workflow family's two machinery sentinels (the scaffold-sentinel posture:
+    // an optional capability's absence must be attributable BY NAME, never a green
+    // hole).
+    //
+    // `workflow_wait_elapsed@timers` — the HARNESS clock (submission → first-observed
+    // terminal commit) for the wait task, ≥ its armed 3 s. Telemetry structurally
+    // cannot see the hold (a parked wait never reaches a worker, so no row), and a
+    // pass-through "wait" settles in well under a second here — the clock separates.
+    //
+    // `workflow_retry_attempts@retries` — read from the FIXTURE's own capture log:
+    // the depot refuses the first-seen Idempotency-Key forever, so recovery requires
+    // ≥ 2 DISTINCT keys and at least one answered dial. A same-identity redispatch
+    // (one key, all refused) reads 0 BY NAME.
+    if !diagnostic_filter {
+        let wait_ms = outcome
+            .drive_wall_ms
+            .get("workflow-wait-then-carry")
+            .copied()
+            .unwrap_or(0);
+        eprintln!("eval-bench: workflow wait task drive wall clock = {wait_ms}ms");
+        report.gates.push(kx_eval::GateValue {
+            id: "workflow_wait_elapsed@timers".to_string(),
+            per_mille: u32::from(wait_ms >= 3000) * 1000,
+        });
+
+        let depot: Vec<_> = routed
+            .captured()
+            .into_iter()
+            .filter(|call| call.path == "/depot")
+            .collect();
+        let distinct_keys: std::collections::BTreeSet<String> = depot
+            .iter()
+            .filter_map(|call| call.idempotency_key.clone())
+            .collect();
+        let answered = depot.iter().any(|call| !call.refused);
+        eprintln!(
+            "eval-bench: depot saw {} dial(s), {} distinct key(s), answered={answered}",
+            depot.len(),
+            distinct_keys.len()
+        );
+        report.gates.push(kx_eval::GateValue {
+            id: "workflow_retry_attempts@retries".to_string(),
+            per_mille: u32::from(distinct_keys.len() >= 2 && answered) * 1000,
+        });
+    }
+
     for r in &outcome.scaffolds {
         eprintln!(
             "eval-bench: scaffold {} — completed={} files={} in {}ms",

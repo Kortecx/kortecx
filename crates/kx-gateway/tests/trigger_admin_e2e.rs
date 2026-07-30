@@ -53,6 +53,7 @@ async fn trigger_admin_register_list_deregister_round_trips() {
             app_handle: String::new(),
             timezone: String::new(),
             require_approval: false,
+            workflow_handle: String::new(),
         })
         .await
         .expect("register")
@@ -106,6 +107,7 @@ async fn trigger_admin_register_list_deregister_round_trips() {
             app_handle: String::new(),
             timezone: String::new(),
             require_approval: false,
+            workflow_handle: String::new(),
         })
         .await
         .expect("re-register")
@@ -170,6 +172,7 @@ async fn register_trigger_rejects_unknown_kind_and_missing_fields() {
             app_handle: String::new(),
             timezone: String::new(),
             require_approval: false,
+            workflow_handle: String::new(),
         })
         .await
         .expect_err("unknown kind refused");
@@ -188,6 +191,7 @@ async fn register_trigger_rejects_unknown_kind_and_missing_fields() {
             app_handle: String::new(),
             timezone: String::new(),
             require_approval: false,
+            workflow_handle: String::new(),
         })
         .await
         .expect_err("hmac without a secret ref refused");
@@ -216,6 +220,7 @@ async fn register_app_target_cron_trigger_round_trips_view() {
             timezone: "America/New_York".to_string(),
             enabled: true,
             require_approval: true,
+            workflow_handle: String::new(),
         })
         .await
         .expect("register app-target cron trigger")
@@ -275,6 +280,7 @@ async fn register_rejects_a_hosted_experience_app_as_a_trigger_target() {
             timezone: "America/New_York".to_string(),
             enabled: true,
             require_approval: false,
+            workflow_handle: String::new(),
         })
         .await
         .expect_err("a hosted app must not be schedulable");
@@ -299,6 +305,7 @@ async fn register_rejects_both_and_neither_targets() {
         timezone: String::new(),
         enabled: true,
         require_approval: false,
+        workflow_handle: String::new(),
     };
     // Neither.
     let err = c
@@ -333,6 +340,7 @@ async fn register_cron_rejects_bad_expr_and_timezone() {
         timezone: tz.to_string(),
         enabled: true,
         require_approval: false,
+        workflow_handle: String::new(),
     };
     let err = c
         .register_trigger(mk("not a cron", ""))

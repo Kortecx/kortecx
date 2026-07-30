@@ -66,13 +66,39 @@ pub(crate) async fn serve_cron(triggers: Arc<TriggersDb>, admin: Arc<dyn Trigger
                 continue;
             }
             match admin.submit(&cfg.name, &key, "{}").await {
-                Ok(out) => tracing::info!(
-                    trigger = %cfg.name,
-                    deduped = out.deduped,
-                    "cron: fired"
-                ),
+                Ok(out) => {
+                    tracing::info!(
+                        trigger = %cfg.name,
+                        deduped = out.deduped,
+                        "cron: fired"
+                    );
+                    // A recovery clears the dead-letter counter — written only
+                    // when it was non-zero (healthy fires cost no extra write).
+                    if cfg.consecutive_failures > 0 {
+                        if let Err(error) = triggers.clear_fire_failures(&cfg.name) {
+                            tracing::warn!(%error, trigger = %cfg.name, "cron: failure-counter clear failed");
+                        }
+                    }
+                }
                 Err(error) => {
-                    tracing::warn!(%error, trigger = %cfg.name, "cron: fire failed");
+                    // The dead-letter posture: count the failure; at the
+                    // threshold the trigger is DISABLED with the recorded
+                    // reason — visible on ListTriggers — instead of retried
+                    // every poll tick forever in silence.
+                    let max = crate::env_caps::trigger_deadletter_max();
+                    match triggers.record_fire_failure(&cfg.name, &error.to_string(), max) {
+                        Ok((count, true)) => tracing::error!(
+                            %error, trigger = %cfg.name, count,
+                            "cron: fire failed — trigger AUTO-DISABLED (see ListTriggers)"
+                        ),
+                        Ok((count, false)) => tracing::warn!(
+                            %error, trigger = %cfg.name, count, "cron: fire failed"
+                        ),
+                        Err(store_err) => tracing::warn!(
+                            %error, %store_err, trigger = %cfg.name,
+                            "cron: fire failed AND the failure record failed"
+                        ),
+                    }
                 }
             }
         }

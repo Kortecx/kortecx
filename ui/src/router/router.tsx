@@ -18,8 +18,10 @@ import { runDetailRedirectRoute, runsRoute } from "./routes/runs";
 import { settingsRoute } from "./routes/settings";
 import { systemsRoute } from "./routes/systems";
 import { toolsRoute } from "./routes/tools";
+import { workflowDefRoute } from "./routes/workflow-def";
 import { workflowDetailRoute } from "./routes/workflow-detail";
 import { workflowsRoute } from "./routes/workflows";
+import { workflowsCreateRoute } from "./routes/workflows-create";
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -27,6 +29,11 @@ const routeTree = rootRoute.addChildren([
   // PR-2 (D141.1): Workflows is the one home for run telemetry; the old
   // /runs, /runs/$id, /artifacts and /activity paths are redirect stubs.
   workflowsRoute,
+  // Registered before the dynamic run-detail sibling; the static `create` and
+  // `def` segments outrank `/workflows/$instanceId` in TanStack's route ranking
+  // either way (and instance ids are hex, so neither can collide).
+  workflowsCreateRoute,
+  workflowDefRoute,
   workflowDetailRoute,
   activityRoute,
   chatRoute,

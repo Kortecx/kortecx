@@ -895,10 +895,11 @@ eval-real:
 # the gitignored `docs/benchmarks/`; the committed per-engine baseline is the fail-closed
 # ratchet.
 #
-# COVERAGE: the suite spans thirteen families (`tool` · `react` · `reach` · `swarm` ·
+# COVERAGE: the suite spans fourteen families (`tool` · `react` · `reach` · `swarm` ·
 # `script` · `http` · `failure` · `menu` · `long` · `adversarial` · `irrelevance` ·
-# `memory` · `scaffold` — the last scaffolds a REAL app live and runs it, so budget
-# roughly 10-30 extra minutes per engine); the family table in
+# `memory` · `scaffold` — which scaffolds a REAL app live and runs it, so budget
+# roughly 10-30 extra minutes per engine — · `workflow`, whose stored deterministic
+# DAGs measure the runtime itself, never the model); the family table in
 # docs/site/docs/evaluation.md is the authoritative
 # description — this header stopped hand-keeping a third copy after the five-family
 # version of it silently rotted. Several `tool`/`script` tasks are multi-hop, because a
@@ -937,6 +938,11 @@ eval-bench:
     # failure. It was implicit before (present in any tree that had run the script tests)
     # and absent in a fresh clone, which is exactly where it is hardest to spot.
     cargo build -p kx-script-runner
+    # The workflow family's model-free preflight: drives all seven stored-DAG tasks
+    # on an embedded serve and pins their exact ideal_turns BEFORE the paid capture.
+    # It is `serve-engine`-gated (a non-default feature `just ci` never compiles), so
+    # this recipe is what keeps it running.
+    cargo test -p kx-gateway --features serve-engine --test workflow_bench_drive
     # `observability` is REQUIRED here: the harness folds the GATED model_time_share
     # (and per-task timing) from the telemetry.db sidecar. Without the feature the
     # sidecar never opens, the gate stops being emitted, and the baseline comparison

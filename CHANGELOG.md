@@ -8,6 +8,50 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **Workflows become a durable entity: save, list, run, schedule and restore
+  stored definitions — with http/wait/conditional step kinds, parallel groups
+  under per-step failure policy, and a benchmark family that measures the
+  runtime itself.** `SaveWorkflow`/`ListWorkflows`/`GetWorkflow`/`RunWorkflow`/
+  `DeleteWorkflow` store a `kortecx.workflow/v1` envelope as canonical bytes
+  (wishes-never-grants: the envelope carries no authority; every warrant is
+  built server-side at run from the caller's own grants), with definition
+  history riding the append-only branch sidecar (`ListBranchVersions`/
+  `RestoreBranch` — a restore re-syncs the stored envelope) and a caller-stated
+  draft lifecycle. Step kinds: `http` is a bundled builtin dialing under the
+  egress kernel (SSRF vetting, per-call host scope, a credential resolved BY
+  NAME at dispatch, refuse-not-truncate caps; transport errors and 5xx fail the
+  effect so retry can engage, 2xx–4xx commit honestly); `wait` is a DURABLE
+  journal-backed timer (journal v17 `TimerArmed`; a serve killed mid-hold
+  re-arms at the JOURNALED instant after restart and fires exactly once —
+  proven live by a `kill -9` across an armed 60 s timer on the served Gemma
+  build); `conditional` evaluates a typed predicate over its parent's committed
+  bytes and the untaken arm commits a distinguished skip sentinel (its steps
+  provably never run — the arm's endpoint is never dialed). Parallel groups
+  join by first-non-skip or k-of-n quorum; per-step failure policy is
+  fail-fast, `retry{max,backoff}` (attempts are FRESH identities with fresh
+  idempotency tokens after a durable backoff — a same-identity redispatch can
+  never satisfy an identity-keyed refusal), or `continue` (the failure commits
+  as a canonical placeholder and the join releases). Same-route model steps are
+  sequenced by an authoring-time control edge. Triggers gain
+  `workflow_handle` with kind-aware validation at registration, and a repeated
+  fire-failure now dead-letters the trigger with the reason on `TriggerView`
+  (default 5, `KX_TRIGGER_DEADLETTER_MAX`) instead of retrying forever. The
+  console adopts the Apps surface: `/workflows/create` (embedded builder — the
+  save IS the authoring act), `/workflows/def/<handle>` with lineage, run,
+  schedule, history and delete, and one generic history drawer for every
+  entity. Both SDKs speak the workflow surface, and `runApp(wait: true)` now
+  settles on THE run it started instead of the first commit on a shared
+  journal (both SDKs; the CLI's non-agentic wait keys on the run's terminal
+  anchor too). `bench-v1` grows the `workflow` family (41 tasks, fourteen
+  families): seven stored deterministic DAGs whose oracle tokens exist only on
+  the harness fixture — sequential carry, 3-way parallel join, a conditional
+  pair scored as one property, a real 3 s durable wait, an identity-keyed retry
+  recovery, and continue-past-failure — with machinery sentinels
+  (`workflow_wait_elapsed@timers`, `workflow_retry_attempts@retries`) and a
+  model-free drive gate that pins every task's exact step count.
+  (kx-proto 0.15.0, kx-app 0.3.0, kx-journal v17, kx-projection, kx-coordinator,
+  kx-gateway, kx-gateway-core, kx-eval, kx-cli, ui, both SDKs)
+
 - **Apps: a create journey with a terminal result, drafts you can act on,
   point-in-time project restore, real hosted isolation, a per-project guidance
   file — and a benchmark family that scaffolds a REAL app live and runs it.**

@@ -13,7 +13,13 @@ name = "kx-proto"
 # 0.13.0 -> 0.14.0: branch history (BranchVersion + ListBranchVersions/RestoreBranch)
 # and `AppSummary.lifecycle`. Wire-additive (`buf breaking` clean), but the service
 # trait gains two methods and AppSummary gains a pub field ⇒ breaking-in-Rust, minor.
-version = "0.14.0"
+# 0.14.0 -> 0.15.0: the durable Workflow entity (WorkflowSummary + Save/List/Get/Run/
+# Delete), three WorkflowStepKind variants (HTTP/WAIT/CONDITIONAL), the trigger
+# workflow target + dead-letter governance fields, and RestoreBranchResponse.
+# workflow_resynced. Wire-additive (`buf breaking` clean), but the service trait
+# gains five methods, three messages gain pub fields, and a prost enum gains
+# variants ⇒ breaking-in-Rust, minor.
+version = "0.15.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }

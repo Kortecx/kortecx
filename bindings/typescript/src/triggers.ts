@@ -85,6 +85,11 @@ export interface RegisterTriggerInput {
    *  recipe target). The credentialed App fires unattended with its connections +
    *  secret_scope resolved. */
   readonly appHandle?: string;
+  /** A saved workflow handle the event runs via `RunWorkflow` (`""` ⇒ not a
+   *  workflow target). Exactly one of `recipeHandle` / `appHandle` /
+   *  `workflowHandle` is required; the server refuses an unwired seam, an
+   *  un-owned workflow, or a draft AT REGISTRATION. */
+  readonly workflowHandle?: string;
   /** Webhook auth posture (defaults to `"none"`). */
   readonly auth?: TriggerAuthInput;
   /** SecretRef NAME of the HMAC/bearer secret (never the value; defaults to none). */
@@ -130,6 +135,13 @@ export class TriggerRow {
     readonly requireApproval: boolean,
     /** Audit-only wall-clock; `0` ⇒ never fired. */
     readonly lastFireUnixMs: number,
+    /** The workflow target (`""` ⇒ not a workflow target). */
+    readonly workflowHandle: string,
+    /** `""` ⇒ healthy; non-empty ⇒ auto-disabled with this cause (the cron
+     *  dead-letter posture). */
+    readonly disabledReason: string,
+    /** Cron fire failures since the last success. */
+    readonly consecutiveFailures: number,
   ) {}
 
   static fromProto(t: PbTriggerView): TriggerRow {
@@ -146,6 +158,9 @@ export class TriggerRow {
       t.enabled,
       t.requireApproval,
       Number(t.lastFireUnixMs),
+      t.workflowHandle,
+      t.disabledReason,
+      t.consecutiveFailures,
     );
   }
 
@@ -157,6 +172,9 @@ export class TriggerRow {
       kind: this.kind,
       recipe_handle: this.recipeHandle,
       app_handle: this.appHandle,
+      workflow_handle: this.workflowHandle,
+      disabled_reason: this.disabledReason,
+      consecutive_failures: this.consecutiveFailures,
       auth: this.auth,
       auth_secret_present: this.authSecretPresent,
       schedule_spec: this.scheduleSpec,

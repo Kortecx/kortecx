@@ -584,6 +584,31 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.RestoreBranchRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RestoreBranchResponse.FromString,
                 _registered_method=True)
+        self.SaveWorkflow = channel.unary_unary(
+                '/kortecx.v1.KxGateway/SaveWorkflow',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.SaveWorkflowRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.SaveWorkflowResponse.FromString,
+                _registered_method=True)
+        self.ListWorkflows = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListWorkflows',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListWorkflowsRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListWorkflowsResponse.FromString,
+                _registered_method=True)
+        self.GetWorkflow = channel.unary_unary(
+                '/kortecx.v1.KxGateway/GetWorkflow',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.GetWorkflowRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetWorkflowResponse.FromString,
+                _registered_method=True)
+        self.RunWorkflow = channel.unary_unary(
+                '/kortecx.v1.KxGateway/RunWorkflow',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.RunWorkflowRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
+                _registered_method=True)
+        self.DeleteWorkflow = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeleteWorkflow',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -1425,6 +1450,40 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SaveWorkflow(self, request, context):
+        """The durable Workflow entity (see WorkflowSummary). Save/List/Get/
+        Delete are off-journal catalog ops over workflows.db; RunWorkflow is the
+        RunApp posture over a stored workflow (server-built warrants, same
+        RunHandle anchors). UNIMPLEMENTED on a serve without the seam.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListWorkflows(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetWorkflow(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RunWorkflow(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteWorkflow(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1977,6 +2036,31 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.RestoreBranch,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RestoreBranchRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.RestoreBranchResponse.SerializeToString,
+            ),
+            'SaveWorkflow': grpc.unary_unary_rpc_method_handler(
+                    servicer.SaveWorkflow,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.SaveWorkflowRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.SaveWorkflowResponse.SerializeToString,
+            ),
+            'ListWorkflows': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListWorkflows,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListWorkflowsRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListWorkflowsResponse.SerializeToString,
+            ),
+            'GetWorkflow': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetWorkflow,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.GetWorkflowRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.GetWorkflowResponse.SerializeToString,
+            ),
+            'RunWorkflow': grpc.unary_unary_rpc_method_handler(
+                    servicer.RunWorkflow,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.RunWorkflowRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.RunHandle.SerializeToString,
+            ),
+            'DeleteWorkflow': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteWorkflow,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -4949,6 +5033,141 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/RestoreBranch',
             kortecx_dot_v1_dot_gateway__pb2.RestoreBranchRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.RestoreBranchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SaveWorkflow(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/SaveWorkflow',
+            kortecx_dot_v1_dot_gateway__pb2.SaveWorkflowRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.SaveWorkflowResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListWorkflows(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListWorkflows',
+            kortecx_dot_v1_dot_gateway__pb2.ListWorkflowsRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListWorkflowsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetWorkflow(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/GetWorkflow',
+            kortecx_dot_v1_dot_gateway__pb2.GetWorkflowRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.GetWorkflowResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunWorkflow(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/RunWorkflow',
+            kortecx_dot_v1_dot_gateway__pb2.RunWorkflowRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.RunHandle.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteWorkflow(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeleteWorkflow',
+            kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowResponse.FromString,
             options,
             channel_credentials,
             insecure,

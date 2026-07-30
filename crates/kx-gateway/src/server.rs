@@ -376,6 +376,9 @@ type AppRunSeam = (
     // The SAME host object as `AppAuthor`, also viewed as the manifest seam (it owns
     // the envelope catalog + the policy folds), for `GetAppManifest`.
     Option<Arc<dyn kx_gateway_core::AppManifestView>>,
+    // The WORKFLOW run resolver — a thin wrapper over the SAME HostAppAuthor
+    // (one preparation pipeline), reading the workflow catalog instead of apps.db.
+    Option<Arc<dyn kx_gateway_core::AppAuthor>>,
 );
 
 // A flat, sequential wiring function: content store → coordinator → worker →
@@ -680,6 +683,19 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     let context_sink: Option<Arc<dyn kx_worker::ContextSink>> = None;
     #[cfg(not(feature = "serve-engine"))]
     let serve_model: Option<kx_mote::ModelId> = None;
+    // v17: deterministic workflow steps (conditional / join-after-arms) execute
+    // on EVERY build — "deterministic steps never hold the model" is only true
+    // if they never need the model executor to exist. The det wrapper is the
+    // OUTERMOST route + the worker's single ContextSink; deliveries TEE into
+    // the model router's own F-7 map when one is wired, so both layers see the
+    // identical parent context.
+    let det = Arc::new(crate::det_exec::DeterministicStepExecutor::new(
+        executor,
+        (*content).clone(),
+        context_sink.clone(),
+    ));
+    let executor: Arc<dyn MoteExecutor> = det.clone();
+    let context_sink: Option<Arc<dyn kx_worker::ContextSink>> = Some(det);
     // Batch C: the OUTERMOST executor wrapper — every leased mote (echo /
     // real-exec / model / shaper / react turn / critic) gets a wall-clock row.
     // Structurally fail-open: the wrapper returns the inner result verbatim on
@@ -1090,6 +1106,28 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     ) {
         tracing::warn!(%error, "RC4b: failed to seed retrieve@1 into tools.db");
     }
+    // The workflow http step: seed http@1 + register the capability over the SAME
+    // keychain→env secret chain the MCP dial uses. mcp-gateway-gated (the ureq +
+    // secret-store surface lives there); a build without it authors no http steps
+    // (the tool is absent from the registry, so authoring refuses fail-closed).
+    #[cfg(feature = "mcp-gateway")]
+    {
+        if let Err(error) = tool_registry.register_server_tool(
+            crate::http_tool::http_tool_def(),
+            kx_tool_registry::ToolProvenance::HumanAuthored {
+                author: "kx-gateway".to_string(),
+            },
+            None,
+        ) {
+            tracing::warn!(%error, "failed to seed http@1 into tools.db");
+        }
+        let http_secrets: std::sync::Arc<dyn kx_mcp::SecretStore> =
+            std::sync::Arc::new(kx_mcp::ChainedSecretStore::new(
+                std::sync::Arc::new(crate::secrets::KeyringSecretStore::os()),
+                std::sync::Arc::new(kx_mcp::EnvSecretStore),
+            ));
+        crate::http_tool::register_http_capability(&local_broker, http_secrets);
+    }
     // RC5a (durable memory): seed remember@1 + recall@1 into the durable registry so
     // DiscoverTools + the react-memory tool menu show them, exactly when memory is
     // enabled (the hnsw + serve build + KX_SERVE_MEMORY). The capabilities themselves
@@ -1201,6 +1239,11 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // the SaveApp/ListApps/GetApp RPCs. Off-journal, off-digest, rebuildable-to-empty
     // (no broker dep — app_ref is a pure content hash, the bundles.db posture).
     let apps_db = Arc::new(crate::apps::AppsDb::open(&catalog_dir)?);
+    // The Workflow catalog (workflows.db) — caller-scoped kortecx.workflow/v1
+    // envelopes for the SaveWorkflow/ListWorkflows/GetWorkflow/DeleteWorkflow
+    // RPCs. The apps.db posture verbatim: off-journal, off-digest,
+    // rebuildable-to-empty; workflow_ref is a pure content hash.
+    let workflows_db = Arc::new(crate::workflows::WorkflowsDb::open(&catalog_dir)?);
     // The skill catalog (skills.db) — caller-scoped kortecx.skill/v1
     // manifests for the ListSkills/GetSkillForm/AddSkill/RemoveSkill RPCs.
     // Off-journal, off-digest, rebuildable-to-empty (skill_ref is a pure content
@@ -1844,6 +1887,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_run_inputs_store(run_inputs_db)
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db.clone())
+        .with_workflow_catalog(workflows_db.clone())
         .with_skill_catalog(skills_db.clone())
         .with_branches_store(branches_db.clone())
         .with_branch_history(branches_db.clone())
@@ -1919,7 +1963,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     #[cfg(feature = "serve-engine")]
     let mut derive_connections: Option<Arc<kx_mcp_gateway::SqliteConnectionStore>> = None;
     #[cfg(feature = "mcp-gateway")]
-    let (app_author, app_fireable, app_manifest): AppRunSeam =
+    let (app_author, app_fireable, app_manifest, workflow_author): AppRunSeam =
         match kx_mcp_gateway::SqliteConnectionStore::open(catalog_dir.join("connections.db")) {
             Ok(conn_store) => {
                 let conn_store = Arc::new(conn_store);
@@ -1952,6 +1996,13 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                     // an App's project `.md` reaches the model at run time.
                     Some(branches_db.clone() as Arc<dyn kx_gateway_core::BranchStore>),
                 ));
+                // The WORKFLOW run resolver rides the SAME HostAppAuthor (one
+                // preparation/composition/authoring pipeline), reading workflows.db
+                // for the root envelope instead of apps.db.
+                let workflow_runner = Arc::new(crate::workflows::HostWorkflowRunner::new(
+                    app_runner.clone(),
+                    workflows_db.clone(),
+                ));
                 // ONE host object, viewed as both the run resolver (`AppAuthor`) and the
                 // capability-manifest seam (`AppManifestView`) — they share the envelope
                 // catalog + the policy folds, so the manifest agrees with the run.
@@ -1959,15 +2010,17 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                     Some(app_runner.clone() as Arc<dyn kx_gateway_core::AppAuthor>),
                     Some(fireable),
                     Some(app_runner as Arc<dyn kx_gateway_core::AppManifestView>),
+                    Some(workflow_runner as Arc<dyn kx_gateway_core::AppAuthor>),
                 )
             }
             Err(error) => {
                 tracing::warn!(%error, "G2: App-run resolver disabled (connections.db unavailable)");
-                (None, None, None)
+                (None, None, None, None)
             }
         };
     #[cfg(not(feature = "mcp-gateway"))]
-    let (app_author, app_fireable, app_manifest): AppRunSeam = (None, None, None);
+    let (app_author, app_fireable, app_manifest, workflow_author): AppRunSeam =
+        (None, None, None, None);
     // D113: wire the trigger seam (Register/List/Deregister/Submit/Test). Opens the
     // off-journal triggers.db; the HostTriggerAdmin starts runs via the SAME propose-
     // proxy the Invoke path uses (coordinator = sole journal writer; frozen trio
@@ -1987,6 +2040,8 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                 app_author.clone(),
                 app_fireable.clone(),
                 Some(apps_db.clone()),
+                workflow_author.clone(),
+                Some(workflows_db.clone()),
             ));
             gateway = gateway.with_trigger_admin(admin.clone());
             tracing::info!("D113: trigger seam wired (triggers.db)");
@@ -2130,6 +2185,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         if let Some(runner) = app_author.clone() {
             gateway = gateway.with_app_runner(runner);
             tracing::info!("G2: App-pointer run resolver wired (RunApp)");
+        }
+        // The workflow-pointer → run resolver (RunWorkflow): the SAME preparation
+        // pipeline over the workflow catalog. `None` ⇒ RunWorkflow `unimplemented`.
+        if let Some(runner) = workflow_author.clone() {
+            gateway = gateway.with_workflow_runner(runner);
+            tracing::info!("Workflow run resolver wired (RunWorkflow)");
         }
         if let Some(view) = app_manifest.clone() {
             gateway = gateway.with_app_manifest(view);

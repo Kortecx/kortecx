@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "kx-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proptest",
  "serde",
@@ -1952,7 +1952,7 @@ dependencies = [
 
 [[package]]
 name = "kx-journal"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bincode 2.0.1",
  "blake3",
@@ -2251,7 +2251,7 @@ dependencies = [
 
 [[package]]
 name = "kx-proto"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "bincode 2.0.1",
  "kx-content",

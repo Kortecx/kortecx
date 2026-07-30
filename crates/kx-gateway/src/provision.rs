@@ -2427,6 +2427,9 @@ impl HostWorkflowAuthor {
     }
 
     /// Map one authored step → a `kx_workflow::StepDef`, server-assigning `logic_ref`.
+    // The conditional-predicate authoring gate tipped this over the budget; the
+    // per-kind arms share locals and read top-to-bottom.
+    #[allow(clippy::too_many_lines)]
     fn step_def(&self, index: usize, s: &AuthorStep) -> Result<StepDef, BinderError> {
         let base = &self.lib.blueprint_base;
         let cap = ToolName("blueprint".into());
@@ -2434,6 +2437,34 @@ impl HostWorkflowAuthor {
             // PURE: a deterministic transform; its identity comes from a content
             // sentinel over (index, params), so distinct steps get distinct ids.
             AuthorStepKind::Pure => {
+                // The HOST half of conditional validation (gateway-core checks
+                // presence only — it carries no JSON dep): the identity-bearing
+                // predicate must be a well-formed {op, value, path?, negate?}
+                // or the step is refused before any Mote exists.
+                if let Some(raw) = s.params.get(kx_mote::COND_PREDICATE_KEY) {
+                    let parsed: Option<serde_json::Value> = serde_json::from_slice(raw).ok();
+                    let ok = parsed.as_ref().is_some_and(|p| {
+                        let op = p.get("op").and_then(serde_json::Value::as_str);
+                        let has_value =
+                            p.get("value").and_then(serde_json::Value::as_str).is_some();
+                        let has_path = p.get("path").and_then(serde_json::Value::as_str).is_some();
+                        has_value
+                            && match op {
+                                Some("equals" | "contains") => true,
+                                Some("json_path_eq") => has_path,
+                                _ => false,
+                            }
+                    });
+                    if !ok {
+                        return Err(BinderError::InvalidArgs(format!(
+                            "conditional predicate malformed: params[{:?}] must be \
+                             {{\"op\": \"equals\"|\"contains\"|\"json_path_eq\", \
+                             \"value\": <text>, \"path\": <required for json_path_eq>, \
+                             \"negate\"?: bool}}",
+                            kx_mote::COND_PREDICATE_KEY
+                        )));
+                    }
+                }
                 let mut buf = Vec::with_capacity(64);
                 buf.extend_from_slice(b"kx-blueprint/pure/v1");
                 buf.extend_from_slice(&(index as u64).to_le_bytes());
@@ -2618,7 +2649,28 @@ impl HostWorkflowAuthor {
         // / model_route ceilings) NARROWED to THIS tool's grant + declared net/fs.
         // `author()` widens the party ceiling with the live registry so this survives
         // the intersect; the broker precheck + coordinator D66 re-verify at fire.
-        let warrant = tool_step_warrant(base, &tool_name, &tool_version, &tdef);
+        let mut warrant = tool_step_warrant(base, &tool_name, &tool_version, &tdef);
+        // The bundled `http@1` tool's REAL requirement is PER-CALL: its ToolDef
+        // declares `NetScope::None` (a static declaration could only be wrong),
+        // and the step warrant instead grants exactly the one dial the authored
+        // args declare — the url's host, and the secret NAME if one is named.
+        // Both come from the identity-bearing args (validated above), so the
+        // grant is least-privilege by construction and replay-stable. The
+        // broker's `request ⊆ warrant` precheck + the capability's own egress
+        // vet then enforce the same facts at dispatch (one kernel, re-checked).
+        if tool_name.0 == "http" {
+            let args: &[u8] = s.params.get(TOOL_ARGS_KEY).map_or(b"{}", Vec::as_slice);
+            let (host, secret_name) = http_args_scopes(args)
+                .map_err(|e| BinderError::InvalidArgs(format!("http step args: {e}")))?;
+            let mut hosts = BTreeSet::new();
+            hosts.insert(kx_warrant::Host(host));
+            warrant.net_scope = kx_warrant::NetScope::EgressAllowlist(hosts);
+            if let Some(name) = secret_name {
+                let mut names = BTreeSet::new();
+                names.insert(kx_warrant::SecretRef(name));
+                warrant.secret_scope = kx_warrant::SecretScope::AllowList(names);
+            }
+        }
         let mut sd = tool_step(
             logic_ref,
             base.model_route.model_id.clone(),
@@ -3533,6 +3585,31 @@ pub(crate) fn react_memory_warrant(
 /// the tool's scope is SERVER-vetted (the registry), so the per-party gate is "can
 /// author at all" (`effective` resolved); the broker precheck + coordinator D66
 /// re-verify every axis at fire.
+/// Parse an http step's authored args into `(host, secret_name)` — the two
+/// facts the per-call warrant grants. Scheme-bound (`http(s)` only); a
+/// hostless/unparseable url refuses at authoring, where the author can fix it.
+fn http_args_scopes(args: &[u8]) -> Result<(String, Option<String>), String> {
+    #[derive(serde::Deserialize)]
+    struct Probe {
+        url: String,
+        #[serde(default)]
+        secret_name: Option<String>,
+    }
+    // Unknown keys are the SCHEMA's business (validated fail-closed upstream);
+    // this probe reads only the two scope-bearing facts.
+    let probe: Probe = serde_json::from_slice(args).map_err(|e| format!("not an object: {e}"))?;
+    let parsed = url::Url::parse(&probe.url).map_err(|e| format!("invalid url: {e}"))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => return Err(format!("unsupported scheme: {other}")),
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "url has no host".to_string())?
+        .to_string();
+    Ok((host, probe.secret_name))
+}
+
 fn tool_step_warrant(
     base: &WarrantSpec,
     name: &ToolName,

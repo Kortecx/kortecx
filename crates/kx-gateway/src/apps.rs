@@ -90,7 +90,9 @@ pub(crate) trait ScaffoldStateStore: Send + Sync {
 }
 
 /// `app_ref = blake3("kx-app\0" ‖ handle ‖ 0 ‖ canonical_envelope)[..16]`.
-fn app_ref_of(handle: &str, canonical: &[u8]) -> [u8; 16] {
+/// `pub(crate)` so the workflows catalog can pin cross-ENTITY domain
+/// separation (same handle + same bytes ⇒ different ids in the two catalogs).
+pub(crate) fn app_ref_of(handle: &str, canonical: &[u8]) -> [u8; 16] {
     let mut keyed = Vec::with_capacity(16 + handle.len() + canonical.len());
     keyed.extend_from_slice(b"kx-app\0");
     keyed.extend_from_slice(handle.as_bytes());

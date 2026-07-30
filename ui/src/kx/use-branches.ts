@@ -229,12 +229,24 @@ export interface RestoreBranchVars {
  * Restore a branch to a recorded version (`RestoreBranch`). Restore APPENDS a
  * new version (history is never rewound — you can always restore forward
  * again). Refused while the branch is locked or a scaffold is writing it.
- * Invalidates the version list AND the App branch manifest so the file tree
- * re-pulls the restored bodies.
+ *
+ * Always invalidates the version list + the branch inventory. What ELSE a
+ * restore stales depends on the entity living at the handle: the default is the
+ * App project-branch manifest (the file tree re-pulls the restored bodies —
+ * unchanged for every existing Apps caller); a workflow caller passes its own
+ * `invalidate` (the definition + catalog keys, since RestoreBranch re-syncs the
+ * stored envelope).
  */
-export function useRestoreBranch() {
+export function useRestoreBranch(
+  opts: {
+    /** Entity-specific query keys to invalidate on success, derived from the
+     *  restored handle. Omitted ⇒ the App branch manifest (the historical default). */
+    invalidate?: (endpoint: string, handle: string) => ReadonlyArray<readonly unknown[]>;
+  } = {},
+) {
   const { client, endpoint } = useConnection();
   const qc = useQueryClient();
+  const { invalidate } = opts;
   return useMutation<unknown, unknown, RestoreBranchVars>({
     mutationFn: async ({ handle, version }) => {
       if (!client) {
@@ -245,7 +257,10 @@ export function useRestoreBranch() {
     onSuccess: (_res, { handle }) => {
       void qc.invalidateQueries({ queryKey: queryKeys.branchVersions(endpoint, handle) });
       void qc.invalidateQueries({ queryKey: queryKeys.branches(endpoint) });
-      void qc.invalidateQueries({ queryKey: queryKeys.appBranch(endpoint, handle) });
+      const extra = invalidate?.(endpoint, handle) ?? [queryKeys.appBranch(endpoint, handle)];
+      for (const key of extra) {
+        void qc.invalidateQueries({ queryKey: key });
+      }
     },
   });
 }

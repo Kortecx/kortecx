@@ -65,6 +65,9 @@ class WorkflowStepKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     WORKFLOW_STEP_KIND_MODEL: _ClassVar[WorkflowStepKind]
     WORKFLOW_STEP_KIND_EXEC: _ClassVar[WorkflowStepKind]
     WORKFLOW_STEP_KIND_TOOL: _ClassVar[WorkflowStepKind]
+    WORKFLOW_STEP_KIND_HTTP: _ClassVar[WorkflowStepKind]
+    WORKFLOW_STEP_KIND_WAIT: _ClassVar[WorkflowStepKind]
+    WORKFLOW_STEP_KIND_CONDITIONAL: _ClassVar[WorkflowStepKind]
 
 class WorkflowExecutionMode(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -137,6 +140,9 @@ WORKFLOW_STEP_KIND_PURE: WorkflowStepKind
 WORKFLOW_STEP_KIND_MODEL: WorkflowStepKind
 WORKFLOW_STEP_KIND_EXEC: WorkflowStepKind
 WORKFLOW_STEP_KIND_TOOL: WorkflowStepKind
+WORKFLOW_STEP_KIND_HTTP: WorkflowStepKind
+WORKFLOW_STEP_KIND_WAIT: WorkflowStepKind
+WORKFLOW_STEP_KIND_CONDITIONAL: WorkflowStepKind
 WORKFLOW_EXECUTION_MODE_UNSPECIFIED: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_FROZEN: WorkflowExecutionMode
 WORKFLOW_EXECUTION_MODE_DYNAMIC: WorkflowExecutionMode
@@ -1802,6 +1808,114 @@ class UnlockAppResponse(_message.Message):
     unlocked: bool
     def __init__(self, unlocked: bool = ...) -> None: ...
 
+class WorkflowSummary(_message.Message):
+    __slots__ = ("handle", "workflow_ref", "name", "version", "description", "tags", "step_count", "delivers", "lifecycle")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOW_REF_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
+    STEP_COUNT_FIELD_NUMBER: _ClassVar[int]
+    DELIVERS_FIELD_NUMBER: _ClassVar[int]
+    LIFECYCLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    workflow_ref: bytes
+    name: str
+    version: str
+    description: str
+    tags: _containers.RepeatedScalarFieldContainer[str]
+    step_count: int
+    delivers: str
+    lifecycle: str
+    def __init__(self, handle: _Optional[str] = ..., workflow_ref: _Optional[bytes] = ..., name: _Optional[str] = ..., version: _Optional[str] = ..., description: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., step_count: _Optional[int] = ..., delivers: _Optional[str] = ..., lifecycle: _Optional[str] = ...) -> None: ...
+
+class SaveWorkflowRequest(_message.Message):
+    __slots__ = ("handle", "envelope_json", "source_digest", "lifecycle")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    ENVELOPE_JSON_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    LIFECYCLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    envelope_json: bytes
+    source_digest: bytes
+    lifecycle: str
+    def __init__(self, handle: _Optional[str] = ..., envelope_json: _Optional[bytes] = ..., source_digest: _Optional[bytes] = ..., lifecycle: _Optional[str] = ...) -> None: ...
+
+class SaveWorkflowResponse(_message.Message):
+    __slots__ = ("workflow_ref", "handle", "deduplicated")
+    WORKFLOW_REF_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    workflow_ref: bytes
+    handle: str
+    deduplicated: bool
+    def __init__(self, workflow_ref: _Optional[bytes] = ..., handle: _Optional[str] = ..., deduplicated: bool = ...) -> None: ...
+
+class ListWorkflowsRequest(_message.Message):
+    __slots__ = ("limit", "after_handle")
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    AFTER_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    after_handle: str
+    def __init__(self, limit: _Optional[int] = ..., after_handle: _Optional[str] = ...) -> None: ...
+
+class ListWorkflowsResponse(_message.Message):
+    __slots__ = ("workflows", "has_more")
+    WORKFLOWS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    workflows: _containers.RepeatedCompositeFieldContainer[WorkflowSummary]
+    has_more: bool
+    def __init__(self, workflows: _Optional[_Iterable[_Union[WorkflowSummary, _Mapping]]] = ..., has_more: bool = ...) -> None: ...
+
+class GetWorkflowRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class GetWorkflowResponse(_message.Message):
+    __slots__ = ("found", "envelope_json", "summary", "workflow_digest", "source_digest")
+    FOUND_FIELD_NUMBER: _ClassVar[int]
+    ENVELOPE_JSON_FIELD_NUMBER: _ClassVar[int]
+    SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOW_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_DIGEST_FIELD_NUMBER: _ClassVar[int]
+    found: bool
+    envelope_json: bytes
+    summary: WorkflowSummary
+    workflow_digest: bytes
+    source_digest: bytes
+    def __init__(self, found: bool = ..., envelope_json: _Optional[bytes] = ..., summary: _Optional[_Union[WorkflowSummary, _Mapping]] = ..., workflow_digest: _Optional[bytes] = ..., source_digest: _Optional[bytes] = ...) -> None: ...
+
+class RunWorkflowRequest(_message.Message):
+    __slots__ = ("handle", "args", "require_approval")
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    ARGS_FIELD_NUMBER: _ClassVar[int]
+    REQUIRE_APPROVAL_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    args: bytes
+    require_approval: bool
+    def __init__(self, handle: _Optional[str] = ..., args: _Optional[bytes] = ..., require_approval: bool = ...) -> None: ...
+
+class DeleteWorkflowRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...
+
+class DeleteWorkflowResponse(_message.Message):
+    __slots__ = ("removed", "branch_unbound", "lock_cleared", "triggers_removed")
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    BRANCH_UNBOUND_FIELD_NUMBER: _ClassVar[int]
+    LOCK_CLEARED_FIELD_NUMBER: _ClassVar[int]
+    TRIGGERS_REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    branch_unbound: bool
+    lock_cleared: bool
+    triggers_removed: int
+    def __init__(self, removed: bool = ..., branch_unbound: bool = ..., lock_cleared: bool = ..., triggers_removed: _Optional[int] = ...) -> None: ...
+
 class HostedAppStatus(_message.Message):
     __slots__ = ("handle", "state", "url", "recent_logs", "framework", "port", "detail", "serve_mode")
     HANDLE_FIELD_NUMBER: _ClassVar[int]
@@ -2899,14 +3013,16 @@ class RestoreBranchRequest(_message.Message):
     def __init__(self, handle: _Optional[str] = ..., version: _Optional[int] = ...) -> None: ...
 
 class RestoreBranchResponse(_message.Message):
-    __slots__ = ("branch", "new_version", "deduplicated")
+    __slots__ = ("branch", "new_version", "deduplicated", "workflow_resynced")
     BRANCH_FIELD_NUMBER: _ClassVar[int]
     NEW_VERSION_FIELD_NUMBER: _ClassVar[int]
     DEDUPLICATED_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOW_RESYNCED_FIELD_NUMBER: _ClassVar[int]
     branch: Branch
     new_version: int
     deduplicated: bool
-    def __init__(self, branch: _Optional[_Union[Branch, _Mapping]] = ..., new_version: _Optional[int] = ..., deduplicated: bool = ...) -> None: ...
+    workflow_resynced: bool
+    def __init__(self, branch: _Optional[_Union[Branch, _Mapping]] = ..., new_version: _Optional[int] = ..., deduplicated: bool = ..., workflow_resynced: bool = ...) -> None: ...
 
 class GetServerInfoRequest(_message.Message):
     __slots__ = ()
@@ -3021,7 +3137,7 @@ class DeleteSecretResponse(_message.Message):
     def __init__(self, removed: bool = ...) -> None: ...
 
 class RegisterTriggerRequest(_message.Message):
-    __slots__ = ("name", "kind", "recipe_handle", "auth", "auth_secret_ref", "schedule_spec", "enabled", "app_handle", "timezone", "require_approval")
+    __slots__ = ("name", "kind", "recipe_handle", "auth", "auth_secret_ref", "schedule_spec", "enabled", "app_handle", "timezone", "require_approval", "workflow_handle")
     NAME_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     RECIPE_HANDLE_FIELD_NUMBER: _ClassVar[int]
@@ -3032,6 +3148,7 @@ class RegisterTriggerRequest(_message.Message):
     APP_HANDLE_FIELD_NUMBER: _ClassVar[int]
     TIMEZONE_FIELD_NUMBER: _ClassVar[int]
     REQUIRE_APPROVAL_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOW_HANDLE_FIELD_NUMBER: _ClassVar[int]
     name: str
     kind: TriggerKind
     recipe_handle: str
@@ -3042,7 +3159,8 @@ class RegisterTriggerRequest(_message.Message):
     app_handle: str
     timezone: str
     require_approval: bool
-    def __init__(self, name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_ref: _Optional[str] = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ..., app_handle: _Optional[str] = ..., timezone: _Optional[str] = ..., require_approval: bool = ...) -> None: ...
+    workflow_handle: str
+    def __init__(self, name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_ref: _Optional[str] = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ..., app_handle: _Optional[str] = ..., timezone: _Optional[str] = ..., require_approval: bool = ..., workflow_handle: _Optional[str] = ...) -> None: ...
 
 class RegisterTriggerResponse(_message.Message):
     __slots__ = ("trigger_id",)
@@ -3059,7 +3177,7 @@ class ListTriggersRequest(_message.Message):
     def __init__(self, limit: _Optional[int] = ..., after_name: _Optional[str] = ...) -> None: ...
 
 class TriggerView(_message.Message):
-    __slots__ = ("trigger_id", "name", "kind", "recipe_handle", "auth", "auth_secret_present", "schedule_spec", "enabled", "last_fire_unix_ms", "app_handle", "timezone", "require_approval")
+    __slots__ = ("trigger_id", "name", "kind", "recipe_handle", "auth", "auth_secret_present", "schedule_spec", "enabled", "last_fire_unix_ms", "app_handle", "timezone", "require_approval", "workflow_handle", "disabled_reason", "consecutive_failures")
     TRIGGER_ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
@@ -3072,6 +3190,9 @@ class TriggerView(_message.Message):
     APP_HANDLE_FIELD_NUMBER: _ClassVar[int]
     TIMEZONE_FIELD_NUMBER: _ClassVar[int]
     REQUIRE_APPROVAL_FIELD_NUMBER: _ClassVar[int]
+    WORKFLOW_HANDLE_FIELD_NUMBER: _ClassVar[int]
+    DISABLED_REASON_FIELD_NUMBER: _ClassVar[int]
+    CONSECUTIVE_FAILURES_FIELD_NUMBER: _ClassVar[int]
     trigger_id: bytes
     name: str
     kind: TriggerKind
@@ -3084,7 +3205,10 @@ class TriggerView(_message.Message):
     app_handle: str
     timezone: str
     require_approval: bool
-    def __init__(self, trigger_id: _Optional[bytes] = ..., name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_present: bool = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ..., last_fire_unix_ms: _Optional[int] = ..., app_handle: _Optional[str] = ..., timezone: _Optional[str] = ..., require_approval: bool = ...) -> None: ...
+    workflow_handle: str
+    disabled_reason: str
+    consecutive_failures: int
+    def __init__(self, trigger_id: _Optional[bytes] = ..., name: _Optional[str] = ..., kind: _Optional[_Union[TriggerKind, str]] = ..., recipe_handle: _Optional[str] = ..., auth: _Optional[_Union[TriggerAuth, str]] = ..., auth_secret_present: bool = ..., schedule_spec: _Optional[str] = ..., enabled: bool = ..., last_fire_unix_ms: _Optional[int] = ..., app_handle: _Optional[str] = ..., timezone: _Optional[str] = ..., require_approval: bool = ..., workflow_handle: _Optional[str] = ..., disabled_reason: _Optional[str] = ..., consecutive_failures: _Optional[int] = ...) -> None: ...
 
 class ListTriggersResponse(_message.Message):
     __slots__ = ("triggers", "has_more")

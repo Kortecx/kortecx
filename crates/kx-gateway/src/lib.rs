@@ -87,6 +87,11 @@ mod bundles;
 // the kx-app leaf type); off-journal, off-digest, rebuildable-to-empty (like
 // bundles, no broker dep — kx_content::ContentRef::of derives app_ref).
 mod apps;
+// Stores a caller's kortecx.workflow/v1 envelopes (the durable Workflow entity) —
+// the apps.db posture verbatim: canonicalized + summary-derived via the kx-app
+// leaf type, off-journal, off-digest, rebuildable-to-empty; workflow_ref is
+// domain-separated from app_ref so the two catalogs can never collide.
+mod workflows;
 // The skills.db sidecar (the SkillCatalog seam) — ListSkills / GetSkillForm /
 // AddSkill / RemoveSkill. Stores a caller's kortecx.skill/v1 manifests (validated
 // fail-closed + canonicalized via the kx-skill leaf type — authority deny-keys,
@@ -155,6 +160,11 @@ mod mcp_tool;
 // (`serve-engine`) AND the dataset view (`hnsw`); off-digest, scores dropped.
 #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
 mod retrieve_tool;
+// The workflow http step's bundled `http@1` capability: a deterministic,
+// credentialed, egress-vetted dial (redirects refused, size-capped,
+// secret-by-NAME). mcp-gateway-gated — the ureq + secret-store surface.
+#[cfg(feature = "mcp-gateway")]
+mod http_tool;
 // RC5a (durable memory): the serve-side HostMemoryView (memory.db + embedder) behind
 // the opt-in `hnsw` feature — the durable, per-namespace, cross-run memory store. The
 // StoreMemory/ListMemories/RecallMemory/ForgetMemory RPCs bind to it; off-digest.
@@ -190,6 +200,12 @@ mod app_run;
 // llama.cpp-specific bits inside are additionally `inference`-gated.
 #[cfg(feature = "serve-engine")]
 mod model_exec;
+// The deterministic workflow-step executor (conditional / join-after-arms) —
+// ALWAYS wired on the embedded worker, model or none: the outermost route +
+// the worker's single ContextSink, teeing deliveries into the model router's
+// own F-7 map when one exists.
+#[cfg(feature = "embedded-worker")]
+mod det_exec;
 // The host-owned routing backend (one InferenceBackend + lifecycle over N serve
 // engines — llama.cpp and/or Ollama). FFI-free; rides `serve-engine`.
 #[cfg(feature = "serve-engine")]

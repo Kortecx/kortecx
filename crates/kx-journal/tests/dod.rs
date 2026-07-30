@@ -263,7 +263,8 @@ fn set_seq(entry: &mut JournalEntry, new_seq: u64) {
         | JournalEntry::ReplanRound { seq, .. }
         | JournalEntry::ReactRound { seq, .. }
         | JournalEntry::Approval { seq, .. }
-        | JournalEntry::ReRankRound { seq, .. } => *seq = new_seq,
+        | JournalEntry::ReRankRound { seq, .. }
+        | JournalEntry::TimerArmed { seq, .. } => *seq = new_seq,
     }
 }
 
@@ -320,8 +321,8 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
 /// the trailing `ReactRound.require_approval`, D114 HITL pre-action approval; v15→v16
 /// added the `ReRankRound` kind (11), RC4c-2 live LLM listwise rerank.)
 #[test]
-fn schema_version_is_v16() {
-    assert_eq!(JOURNAL_SCHEMA_VERSION, 16);
+fn schema_version_is_v17() {
+    assert_eq!(JOURNAL_SCHEMA_VERSION, 17);
 }
 
 /// (M2.x-E): pin the migration floor. The schema-migration ladder

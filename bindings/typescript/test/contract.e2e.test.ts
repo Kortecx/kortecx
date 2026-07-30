@@ -475,7 +475,9 @@ describe("toolscout (advisory — scores never authorize)", () => {
     const manifests = await kx.listToolManifests();
     // `text-summarize@1` was removed from the built-in set: no capability could ever
     // be registered for it, so it advertised a tool that could not dispatch.
-    expect(manifests.map((m) => m.toolId)).toEqual(["fs-read", "fs-write"]);
+    // http@1 joined the builtin roster with the workflow http step (the
+    // deterministic credentialed dial) — the scout lists it honestly.
+    expect(manifests.map((m) => m.toolId)).toEqual(["fs-read", "fs-write", "http"]);
     for (const m of manifests) {
       expect(m.kind).toBe("Builtin");
       expect(m.fingerprintHash).toHaveLength(64); // 32B hex
@@ -486,7 +488,7 @@ describe("toolscout (advisory — scores never authorize)", () => {
       languageTags: ["en"],
       tools: [{ toolId: "fs-read", toolVersion: "1" }],
     });
-    expect(score.ranked).toHaveLength(2); // every manifest is ranked
+    expect(score.ranked).toHaveLength(3); // every manifest is ranked (fs-read, fs-write, http)
     expect(score.ranked[0]?.toolId).toBe("fs-read");
     expect(score.ranked[0]?.scoreBp).toBe(10_000); // deterministic exact-keyword hit
     expect(score.bundleFingerprint).toHaveLength(64);

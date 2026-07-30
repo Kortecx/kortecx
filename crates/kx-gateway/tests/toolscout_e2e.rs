@@ -68,9 +68,14 @@ async fn list_tool_manifests_enumerates_the_builtins() {
         .filter(|(id, _)| !id.starts_with("mcp-echo"))
         .collect();
     #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
-    let expected = vec![("fs-read", "1"), ("fs-write", "1"), ("retrieve", "1")];
+    let expected = vec![
+        ("fs-read", "1"),
+        ("fs-write", "1"),
+        ("http", "1"),
+        ("retrieve", "1"),
+    ];
     #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
-    let expected = vec![("fs-read", "1"), ("fs-write", "1")];
+    let expected = vec![("fs-read", "1"), ("fs-write", "1"), ("http", "1")];
     assert_eq!(
         ids, expected,
         "the OSS builtins, in deterministic (tool_id, tool_version) order"
@@ -122,9 +127,9 @@ async fn score_task_bundle_ranks_deterministically_and_stays_advisory() {
         .filter(|r| !r.tool_id.starts_with("mcp-echo"))
         .count();
     #[cfg(all(feature = "serve-engine", feature = "hnsw"))]
-    let expected_count = 3;
+    let expected_count = 4;
     #[cfg(not(all(feature = "serve-engine", feature = "hnsw")))]
-    let expected_count = 2;
+    let expected_count = 3;
     assert_eq!(
         ranked_builtins, expected_count,
         "every registered manifest is ranked"

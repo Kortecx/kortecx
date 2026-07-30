@@ -195,7 +195,8 @@ mod tests {
                 "scaffold",
                 "script",
                 "swarm",
-                "tool"
+                "tool",
+                "workflow"
             ]
             .into_iter()
             .collect(),
@@ -216,6 +217,7 @@ mod tests {
             "irrelevance",
             "memory",
             "scaffold",
+            "workflow",
         ] {
             assert!(
                 c.suite.tasks.iter().any(|t| t.family == f),
@@ -264,6 +266,14 @@ mod tests {
             assert_ne!(
                 t.family, "attempts",
                 "the scaffold-completion sentinel scope is reserved"
+            );
+            assert_ne!(
+                t.family, "timers",
+                "the durable-wait sentinel scope is reserved"
+            );
+            assert_ne!(
+                t.family, "retries",
+                "the retry-attempts sentinel scope is reserved"
             );
         }
     }
@@ -418,5 +428,140 @@ mod tests {
             0,
             "a run that never made the second hop CANNOT satisfy the oracle"
         );
+    }
+
+    /// The `workflow` family's oracle discipline: every task runs a STORED definition
+    /// whose steps are all deterministic, so the model never touches the answer and
+    /// the tool scorers must stay honestly N/A. Its oracle tokens are FIXTURE-BORNE —
+    /// they live only in the harness fixture's route bodies, never in any task
+    /// instruction (a token in an instruction would be derivable without the run) —
+    /// and the retry task's stateful fixture bans the family from the pass^k
+    /// flagship set (a re-driven trial would find the depot already poisoned).
+    #[test]
+    fn workflow_oracles_are_fixture_borne_and_never_flagship() {
+        let c = load_bench_v1().expect("bench-v1 suite parses");
+        let tasks: Vec<_> = c
+            .suite
+            .tasks
+            .iter()
+            .filter(|t| t.family == "workflow")
+            .collect();
+        assert_eq!(tasks.len(), 7, "the workflow family is seven tasks");
+        for t in &tasks {
+            assert!(
+                t.expect.expected_tools.is_empty(),
+                "{}: a deterministic DAG has no expected tool calls",
+                t.id
+            );
+            assert_eq!(
+                t.expect.ideal_tool_calls, 0,
+                "{}: tool-call efficiency is N/A for a stored DAG",
+                t.id
+            );
+            assert!(
+                !t.expect.answer_must_contain.is_empty(),
+                "{}: a workflow task is oracle-scored",
+                t.id
+            );
+            assert!(
+                !t.flagship,
+                "{}: the workflow family is never flagship",
+                t.id
+            );
+            for canary in &t.expect.answer_must_contain {
+                for other in &c.suite.tasks {
+                    assert!(
+                        !other.instruction.contains(canary.as_str()),
+                        "{}: oracle {canary:?} must be fixture-borne, but task {} \
+                         carries it in an instruction",
+                        t.id,
+                        other.id
+                    );
+                }
+            }
+        }
+    }
+
+    /// The conditional pair's de-hollowing proof: the sluice tasks fail when BOTH arms
+    /// ran. Scored against the SHIPPED expectations (never a copy). Two layers catch a
+    /// both-arms runtime live: the first-non-skip join fails closed on two survivors
+    /// (the run dead-letters — no answer at all), and even a hypothetical aggregate
+    /// that carried both gate orders scores 0 on the `answer_must_not_contain` gate
+    /// (`injection_resistance` — the absence half of the answer oracle) on BOTH tasks.
+    /// Each task's own single-order answer scores full marks on both gates. Weakening
+    /// either expectation in `suite.json` breaks this test rather than quietly
+    /// restoring the hollowness.
+    #[test]
+    fn the_conditional_pair_fails_when_both_arms_run() {
+        use crate::scorers::{score_transcript, ScoreValue};
+        use crate::transcript::{Branch, Transcript, TurnRecord};
+
+        let c = load_bench_v1().expect("bench-v1 suite parses");
+        let task_of = |id: &str| {
+            c.suite
+                .tasks
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap_or_else(|| panic!("{id} is in the corpus"))
+        };
+        let high = task_of("workflow-conditional-high-reading");
+        let low = task_of("workflow-conditional-low-reading");
+
+        let answer_turn = TurnRecord {
+            turn: 0,
+            branch: Branch::Answer,
+            tool_id: String::new(),
+            tool_version: String::new(),
+            call_index: 0,
+            rejection_reason: String::new(),
+        };
+        let run = |task: &crate::suite::GoldenTask, answer: &str| Transcript {
+            task_id: task.id.clone(),
+            turns: vec![answer_turn.clone()],
+            final_answer: Some(answer.to_string()),
+            retrieved_docs: vec![],
+            rerank: None,
+            max_turns: 1,
+            max_tool_calls: 0,
+            timing: None,
+        };
+        let gate_of = |task: &crate::suite::GoldenTask, answer: &str, metric: &str| {
+            score_transcript(&crate::scorers::ScoreInput {
+                transcript: &run(task, answer),
+                expect: &task.expect,
+            })
+            .into_iter()
+            .find(|s| s.metric_id == metric)
+            .and_then(|s| match s.value {
+                ScoreValue::Gate { per_mille } => Some(per_mille),
+                ScoreValue::Spike { .. } => None,
+            })
+            .unwrap_or_else(|| panic!("{metric} is applicable and a gate here"))
+        };
+
+        let both_arms = r#"{"order":"WEIR-OPEN-31"} {"order":"WEIR-SHUT-58"}"#;
+        for (task, own) in [
+            (high, r#"{"order":"WEIR-OPEN-31"}"#),
+            (low, r#"{"order":"WEIR-SHUT-58"}"#),
+        ] {
+            assert_eq!(
+                gate_of(task, both_arms, "injection_resistance"),
+                0,
+                "{}: an answer carrying BOTH gate orders fails the absence gate",
+                task.id
+            );
+            assert_eq!(
+                gate_of(task, own, "task_success"),
+                1000,
+                "{}: the taken-arm-only answer satisfies the presence gate",
+                task.id
+            );
+            assert_eq!(
+                gate_of(task, own, "injection_resistance"),
+                1000,
+                "{}: the taken-arm-only answer satisfies the absence gate",
+                task.id
+            );
+        }
     }
 }

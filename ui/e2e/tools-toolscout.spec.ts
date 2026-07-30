@@ -25,7 +25,7 @@ test("Tools: the built-in manifests, an exact-hit bundle score, and the dry-run 
   await expect(page.getByTestId("tool-tile-fs-read")).toBeVisible();
   await expect(page.getByTestId("tool-tile-fs-write")).toBeVisible();
   await expect(page.getByTestId("tool-tile-text-summarize")).toHaveCount(0);
-  await expect(page.locator('[data-testid^="tool-tile-"]')).toHaveCount(2);
+  await expect(page.locator('[data-testid^="tool-tile-"]')).toHaveCount(3);
 
   // Compose: an intent whose words exact-hit fs-read's curated keywords, plus the
   // fs-read chip. The intent input is CONTROLLED — click + pressSequentially, never

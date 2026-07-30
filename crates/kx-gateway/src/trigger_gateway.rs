@@ -20,7 +20,7 @@ use kx_content::ContentRef;
 use kx_gateway_core::{
     AppAuthor, AppCatalog, AppRunError, BinderError, RecipeBinder, RegisteredToolsView,
     RunSubmitter, TriggerAdmin, TriggerAdminError, TriggerFireOutcome, TriggerRegistration,
-    TriggerView,
+    TriggerView, WorkflowCatalog, WORKFLOW_LIFECYCLE_DRAFT,
 };
 
 use crate::triggers_store::{trigger_id_of, TriggerRow, TriggersDb};
@@ -45,9 +45,20 @@ pub(crate) struct HostTriggerAdmin {
     /// not be accepted as a trigger target. `None` ⇒ the guard is skipped (the fire path
     /// still fails closed via `author_app`).
     app_catalog: Option<Arc<dyn AppCatalog>>,
+    /// The workflow-run resolver (the RunWorkflow seam). `None` ⇒ workflow-target
+    /// triggers fail closed AT REGISTER.
+    workflow_runner: Option<Arc<dyn AppAuthor>>,
+    /// The workflow catalog, for register-time kind-aware validation: the
+    /// caller-owned workflow must EXIST and not be a DRAFT — refused at
+    /// registration, never a forever dead-lettering fire loop (a hole the app
+    /// target kind shipped with; closed for the new target kind from day one).
+    workflow_catalog: Option<Arc<dyn WorkflowCatalog>>,
 }
 
 impl HostTriggerAdmin {
+    // Nine seams, all owned by the ONE admin: splitting into a builder would
+    // scatter a constructor every call site reads in one place.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         triggers: Arc<TriggersDb>,
         binder: Arc<dyn RecipeBinder>,
@@ -56,6 +67,8 @@ impl HostTriggerAdmin {
         app_author: Option<Arc<dyn AppAuthor>>,
         fireable: Option<Arc<dyn RegisteredToolsView>>,
         app_catalog: Option<Arc<dyn AppCatalog>>,
+        workflow_runner: Option<Arc<dyn AppAuthor>>,
+        workflow_catalog: Option<Arc<dyn WorkflowCatalog>>,
     ) -> Self {
         Self {
             triggers,
@@ -65,6 +78,8 @@ impl HostTriggerAdmin {
             app_author,
             fireable,
             app_catalog,
+            workflow_runner,
+            workflow_catalog,
         }
     }
 
@@ -118,17 +133,58 @@ fn app_err(e: AppRunError) -> TriggerAdminError {
     }
 }
 
+// The three-target kind-aware validation + the three-way fire routing are each
+// one refusal contract, read in one place (async_trait swallows per-fn allows,
+// so the line-budget waiver sits on the impl).
+#[allow(clippy::too_many_lines)]
 #[tonic::async_trait]
 impl TriggerAdmin for HostTriggerAdmin {
     async fn register(&self, reg: TriggerRegistration) -> Result<[u8; 16], TriggerAdminError> {
-        // T-APP-TRIGGER-TARGET: EXACTLY ONE of recipe_handle | app_handle. Both-or-neither
-        // is a clear authoring error (never a silent recipe fallback).
+        // EXACTLY ONE of recipe_handle | app_handle | workflow_handle. Anything
+        // else is a clear authoring error (never a silent recipe fallback).
         let is_app = !reg.app_handle.trim().is_empty();
         let is_recipe = !reg.recipe_handle.trim().is_empty();
-        if is_app == is_recipe {
+        let is_workflow = !reg.workflow_handle.trim().is_empty();
+        if usize::from(is_app) + usize::from(is_recipe) + usize::from(is_workflow) != 1 {
             return Err(TriggerAdminError::InvalidArgument(
-                "exactly one of recipe_handle | app_handle is required".into(),
+                "exactly one of recipe_handle | app_handle | workflow_handle is required".into(),
             ));
+        }
+        // Workflow-target KIND-AWARE validation, all at REGISTER (fail fast —
+        // the alternative is a trigger that dead-letters every fire forever):
+        // the seam must be wired, the caller-owned workflow must exist, and a
+        // draft is not schedulable.
+        if is_workflow {
+            if self.workflow_runner.is_none() {
+                return Err(TriggerAdminError::Unsupported(
+                    "workflow-target triggers require the workflow-run seam \
+                     (build --features mcp-gateway with a connections.db)"
+                        .into(),
+                ));
+            }
+            let Some(catalog) = self.workflow_catalog.as_ref() else {
+                return Err(TriggerAdminError::Unsupported(
+                    "workflow-target triggers require the workflow catalog".into(),
+                ));
+            };
+            match catalog.get(&reg.owner_party, reg.workflow_handle.trim()) {
+                Ok(Some((record, _))) => {
+                    if record.lifecycle == WORKFLOW_LIFECYCLE_DRAFT {
+                        return Err(TriggerAdminError::InvalidArgument(
+                            "a draft workflow is not schedulable; finish or discard the draft \
+                             first"
+                                .into(),
+                        ));
+                    }
+                }
+                Ok(None) => {
+                    return Err(TriggerAdminError::InvalidArgument(format!(
+                        "workflow {:?} is not in your catalog (save it first)",
+                        reg.workflow_handle.trim()
+                    )));
+                }
+                Err(e) => return Err(TriggerAdminError::Storage(e.to_string())),
+            }
         }
         // An App-target trigger needs the App-run seam (mcp-gateway + connections.db).
         // Fail FAST at register so a serve without it says so immediately, rather than
@@ -194,6 +250,9 @@ impl TriggerAdmin for HostTriggerAdmin {
             next_fire_unix_ms,
             created_unix_ms: now,
             last_fire_unix_ms: 0,
+            workflow_handle: reg.workflow_handle,
+            consecutive_failures: 0,
+            disabled_reason: String::new(),
         };
         self.triggers
             .upsert(&row)
@@ -226,6 +285,9 @@ impl TriggerAdmin for HostTriggerAdmin {
                 enabled: r.enabled,
                 require_approval: r.require_approval,
                 last_fire_unix_ms: r.last_fire_unix_ms,
+                workflow_handle: r.workflow_handle,
+                disabled_reason: r.disabled_reason,
+                consecutive_failures: r.consecutive_failures,
             })
             .collect();
         Ok((views, has_more))
@@ -244,6 +306,16 @@ impl TriggerAdmin for HostTriggerAdmin {
     ) -> Result<u32, TriggerAdminError> {
         self.triggers
             .remove_by_app(owner_party, app_handle)
+            .map_err(|e| TriggerAdminError::Storage(e.to_string()))
+    }
+
+    async fn deregister_by_workflow(
+        &self,
+        owner_party: &str,
+        workflow_handle: &str,
+    ) -> Result<u32, TriggerAdminError> {
+        self.triggers
+            .remove_by_workflow(owner_party, workflow_handle)
             .map_err(|e| TriggerAdminError::Storage(e.to_string()))
     }
 
@@ -291,7 +363,39 @@ impl TriggerAdmin for HostTriggerAdmin {
         // rail resolved, HITL posture stamped — so a credentialed App fires unattended.
         // A recipe target binds as before. Both yield a BoundRecipe fed to the identical
         // register_run + submit_mote tail below (the coordinator stays the sole writer).
-        let bound = if cfg.app_handle.is_empty() {
+        let bound = if !cfg.workflow_handle.is_empty() {
+            // A WORKFLOW target fires through the SAME RunWorkflow resolver the
+            // RPC uses (server-built warrants), with the ported fireable-grant
+            // backstop below applied identically.
+            let runner = self.workflow_runner.as_ref().ok_or_else(|| {
+                TriggerAdminError::Unsupported(
+                    "workflow-target trigger requires the workflow-run seam".into(),
+                )
+            })?;
+            let bound = runner
+                .author_app(
+                    &cfg.owner_party,
+                    &cfg.workflow_handle,
+                    &args,
+                    cfg.require_approval,
+                )
+                .await
+                .map_err(app_err)?;
+            if let Some(fireable) = self.fireable.as_ref() {
+                let registered = fireable.registered_grants();
+                for (_, warrant) in &bound.motes {
+                    if let Some(g) = warrant.tool_grants.iter().find(|g| {
+                        !registered.contains(&(g.tool_id.0.clone(), g.tool_version.0.clone()))
+                    }) {
+                        return Err(TriggerAdminError::Unsupported(format!(
+                            "workflow step grants tool {}@{} but this serve registered no such capability",
+                            g.tool_id.0, g.tool_version.0
+                        )));
+                    }
+                }
+            }
+            bound
+        } else if cfg.app_handle.is_empty() {
             self.binder
                 .bind(&cfg.owner_party, &cfg.recipe_handle, &args, &[], &[])
                 .await
