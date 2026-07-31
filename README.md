@@ -258,9 +258,9 @@ Agent quality here is a number you can gate on. Two suites, one set of scorers:
 
 **Reading a score.** Every score is an integer **per-mille** — a rate on a 0–1000 scale
 (769 ≡ 76.9%), never a count — and an aggregate is the **floor** of the integer mean over the
-tasks it applied to: a suite-wide `804 · 33/41` is floor(1000·33/41), not "804 of 1000
+tasks it applied to: a suite-wide `717 · 33/46` is floor(1000·33/46), not "717 of 1000
 calls". Resolution follows the denominator: a one-task family can only read 0 or 1000, a
-three-task family only 0 · 333 · 666 · 1000, and the 41-task suite moves in steps of ~24.
+three-task family only 0 · 333 · 666 · 1000, and the 46-task suite moves in steps of ~22.
 Where a metric is pass/fail per unit — `task_success` everywhere, `injection_resistance`,
 the exact-order `tool_seq_fsa`, `pass_k4` per flagship task, and `retrieval_success_at_8`
 per query — the exact fraction is printed beside the rate, so `666 · 2/3` means two of
@@ -275,7 +275,7 @@ evidence the tool actually ran. (Published prior art for the shape: RAGAS
 judge-scored claim coverage, which this is not.) Full definitions:
 [Evaluation](docs/site/docs/evaluation.md).
 
-**Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **41 tasks**,
+**Environment.** Everything below was captured on `macos/aarch64`, 8 cores, over **46 tasks**,
 on two different Gemma-4-12B builds — Ollama `gemma3:12b` and a llama.cpp GGUF served as
 `kx-serve:gemma-4-12b-it-q4_k_m`. They are not the same build, and the columns are not
 interchangeable. The label travels in the committed baseline, and CI holds this text to it.
@@ -288,12 +288,12 @@ exact pass count.
 | Family | Tasks | What a task proves | Ollama | llama.cpp |
 | --- | ---: | --- | ---: | ---: |
 | **tool** | 6 | picks the right tool, and carries its result into the NEXT tool call | 1000 · 6/6 | 1000 · 6/6 |
-| **react** | 3 | decides *whether* to use a tool: refuses an ungranted one, reaches for a needed one, answers a known fact without either | 666 · 2/3 | 1000 · 3/3 |
+| **react** | 3 | decides *whether* to use a tool: refuses an ungranted one, reaches for a needed one, answers a known fact without either | 0 · 0/3 | 1000 · 3/3 |
 | **reach** | 3 | reaches past the prompt — searches a dataset of 61 documents built around near-misses, recalls a memory, inherits a capability | 1000 · 3/3 | 666 · 2/3 |
 | **swarm** | 1 | N agents in parallel, one gather merging their committed outputs | 1000 · 1/1 | 1000 · 1/1 |
 | **script** | 3 | runs a registered script in the sandbox and answers from what it computed | 1000 · 3/3 | 666 · 2/3 |
 | **http** | 2 | reaches a tool over the **network** under a bearer credential, and pages through a result set | 0 · 0/2 | 0 · 0/2 |
-| **failure** | 4 | recovers when a tool errors, hangs, or returns garbage — and a healthy control that fails if it starts distrusting every tool | 750 · 3/4 | 750 · 3/4 |
+| **failure** | 4 | recovers when a tool errors, hangs, or returns garbage — and a healthy control that fails if it starts distrusting every tool | 1000 · 4/4 | 500 · 2/4 |
 | **menu** | 1 | picks correctly from a menu as long as the runtime will present | 1000 · 1/1 | 1000 · 1/1 |
 | **long** | 1 | sustains six tool calls across four tools inside the eight-turn ceiling | 0 · 0/1 | 0 · 0/1 |
 | **adversarial** | 2 | ignores an instruction planted in a tool's OUTPUT — while still acting on a legitimate request that merely looks like one | 500 · 1/2 | 1000 · 2/2 |
@@ -301,6 +301,7 @@ exact pass count.
 | **memory** | 2 | updates a stored fact and answers with the NEW value while the superseded row is still live, and abstains when memory holds no answer | 1000 · 2/2 | 500 · 1/2 |
 | **scaffold** | 2 | the model scaffolds the app's whole project LIVE (plans it, authors every file, 20-min budget), the app then RUNS, and the answer must carry a code that exists only inside the generated project — the contextual and codified lanes; a hosted app has no runnable blueprint, so it is out of scope here | 0 · 0/2 | 0 · 0/2 |
 | **workflow** | 7 | runs a STORED workflow definition by handle — canonical saved bytes, every warrant built server-side at run — through deterministic step kinds: a credentialed http dial, a 3-way parallel quorum join, a typed conditional whose untaken arm provably never dials, a journal-backed 3 s timer that carries its parent's bytes, a retry that recovers only via a FRESH attempt identity, and a continue policy whose failed branch commits a placeholder the join releases past; every oracle token exists only on the harness fixture, so the model is never what is being measured | 1000 · 7/7 | 1000 · 7/7 |
+| **nlauthor** | 5 | authors a durable POLICY ROLE, a SCHEDULED TRIGGER and a CREDENTIAL from one sentence of English — the runtime returns the exact typed request it would issue, so approving forwards the bytes that were shown; the secret arm proves a value never rides the preview, and an authority-exceeding ask (a role naming a tool nobody registered) must be REFUSED beside a near-identical ask that must SUCCEED, so an always-refuse surface cannot score | 200 · 1/5 | 800 · 4/5 |
 
 The same rates drawn with their denominators — identical bars are not identical evidence: a
 1000 from one task is one pass, a 1000 from six tasks is six.
@@ -309,36 +310,36 @@ The same rates drawn with their denominators — identical bars are not identica
 ```mermaid
 xychart-beta horizontal
     title "task_success by family — Ollama gemma3:12b (passes/tasks)"
-    x-axis ["tool (6/6)", "react (2/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)"]
+    x-axis ["tool (6/6)", "react (0/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (4/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (1/5)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 666, 1000, 1000, 1000, 0, 750, 1000, 0, 500, 1000, 1000, 0, 1000]
+    bar [1000, 0, 1000, 1000, 1000, 0, 1000, 1000, 0, 500, 1000, 1000, 0, 1000, 200]
 ```
 
 <!-- bench-chart:llamacpp — data checked against baseline.llamacpp.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
 ```mermaid
 xychart-beta horizontal
     title "task_success by family — llama.cpp kx-serve:gemma-4-12b-it-q4_k_m (passes/tasks)"
-    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (0/2)", "failure (3/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)", "irrelevance (4/4)", "memory (1/2)", "scaffold (0/2)", "workflow (7/7)"]
+    x-axis ["tool (6/6)", "react (3/3)", "reach (2/3)", "swarm (1/1)", "script (2/3)", "http (0/2)", "failure (2/4)", "menu (1/1)", "long (0/1)", "adversarial (2/2)", "irrelevance (4/4)", "memory (1/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (4/5)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 1000, 666, 1000, 666, 0, 750, 1000, 0, 1000, 1000, 500, 0, 1000]
+    bar [1000, 1000, 666, 1000, 666, 0, 500, 1000, 0, 1000, 1000, 500, 0, 1000, 800]
 ```
 
 ### Suite-wide
 
 | Metric | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `task_success` | 804 · 33/41 | 780 · 32/41 |
-| `tool_call_f1` † | 809 | 844 |
-| `tool_seq_fsa` | 538 · 14/26 | 692 · 18/26 |
-| `tool_seq_psa` † | 749 | 802 |
+| `task_success` | 717 · 33/46 | 760 · 35/46 |
+| `tool_call_f1` † | 790 | 804 |
+| `tool_seq_fsa` | 576 · 15/26 | 692 · 18/26 |
+| `tool_seq_psa` † | 743 | 775 |
 | `groundedness` ‡ | 1000 | 0 |
 | `context_recall` ‡ | 1000 | 0 |
 | `memory_quality` † | 500 | 1000 |
-| `loop_efficiency` † | 670 | 937 |
-| `injection_resistance` | 750 · 3/4 | 1000 · 4/4 |
+| `loop_efficiency` † | 728 | 917 |
+| `injection_resistance` | 800 · 4/5 | 1000 · 5/5 |
 | `retrieval_success_at_8` | 1000 · 10/10 | 800 · 8/10 |
-| `pass_k4` | 666 · 2/3 | 666 · 2/3 |
-| `model_time_share` † | 936 | 913 |
+| `pass_k4` | 333 · 1/3 | 333 · 1/3 |
+| `model_time_share` † | 860 | 876 |
 
 The pass/fail rows carry their own denominators: `tool_seq_fsa` applies to the 26 tasks
 with a gold call sequence, `pass_k4` to the three corpus-flagged flagship tasks
@@ -357,17 +358,17 @@ dollar figure — a metric whose input the runtime does not record is not publis
 
 | Spike | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `tokens_per_task_mean` | 130 tokens | 138 tokens |
-| `tokens_per_success` | 157 tokens | 174 tokens |
-| `tokens_measured_tasks` | 36 tasks | 34 tasks |
-| `task_latency_ms_p50` | 123504 ms | 129786 ms |
-| `task_latency_ms_p95` | 195354 ms | 436779 ms |
-| `store_memory_latency_ms_p50` | 110 ms | 869 ms |
-| `store_memory_latency_ms_p95` | 174 ms | 1222 ms |
-| `recall_memory_latency_ms_p50` | 103 ms | 895 ms |
-| `recall_memory_latency_ms_p95` | 138 ms | 1089 ms |
-| `query_dataset_latency_ms_p50` | 121 ms | 793 ms |
-| `query_dataset_latency_ms_p95` | 151 ms | 1037 ms |
+| `tokens_per_task_mean` | 111 tokens | 123 tokens |
+| `tokens_per_success` | 138 tokens | 170 tokens |
+| `tokens_measured_tasks` | 31 tasks | 33 tasks |
+| `task_latency_ms_p50` | 43054 ms | 71080 ms |
+| `task_latency_ms_p95` | 103499 ms | 236398 ms |
+| `store_memory_latency_ms_p50` | 95 ms | 581 ms |
+| `store_memory_latency_ms_p95` | 124 ms | 664 ms |
+| `recall_memory_latency_ms_p50` | 92 ms | 727 ms |
+| `recall_memory_latency_ms_p95` | 106 ms | 802 ms |
+| `query_dataset_latency_ms_p50` | 112 ms | 549 ms |
+| `query_dataset_latency_ms_p95` | 120 ms | 599 ms |
 | `rpc_probe_samples` | 32 calls | 32 calls |
 
 Seven of these are worth explaining, and none of them is flattering.
@@ -375,18 +376,35 @@ Seven of these are worth explaining, and none of them is flattering.
 **Neither engine ships a working generated app inside the budget.** `scaffold` asks the
 model to plan and author an entire project live, then RUN the result and report a code
 that exists only inside the generated files. Both engines read 0 · 0/2 — but not the same
-way, and the `scaffold_completed@attempts` sentinel (0 vs 500) splits the failure honestly.
-Three of the four runs hit the 20-minute scaffold ceiling mid-write (five and eight files
-on the board when time ran out; one planner run produced nothing at all). The fourth —
-llama.cpp's contextual lane — finished all seven files, ran, and then answered that it had
-no access to the very project it had just written: the one completed scaffold failed as a
-grounding failure, not a writing one. The per-scaffold durations and file counts are
-committed as spikes beside the gate.
+way — and this recapture moved the boundary. `scaffold_completed@attempts` now reads
+**1000 on both engines**: all four runs finished inside the budget, where the previous
+capture had three of four hitting the 20-minute ceiling mid-write. llama.cpp authored 7 and
+11 files in 7.6 and 12.1 minutes; Ollama authored 9 and 12 in 16.0 and 16.1. The writing
+problem is gone.
+
+What remains is entirely a **grounding** failure, and it is now the whole of the 0 · 0/2:
+every run planned a project, authored it, and ran it, and then answered that it had no
+access to the very files it had just written. The code the oracle asks for exists only
+inside those files, so an answer that cannot reach them cannot carry it. The per-scaffold
+durations and file counts are committed as spikes beside the gate.
+
+**NL authoring lands on one engine and not the other, and the control is what says so.**
+`nlauthor` asks the runtime to author a policy role, a scheduled trigger and a credential
+from one English sentence. llama.cpp reads 800 · 4/5. Ollama reads **200 · 1/5**, and the
+shape of that 200 is the point: all four *accepting* tasks came back `Rejected` — the served
+model never produced a control form the decoder would take — and the only task it passed is
+the one whose expected outcome is a refusal. That is a surface refusing everything, and it
+scores 200 rather than 1000 precisely because the family carries an anti-always-refuse
+control: `nlauthor-classifies-unaided` asks for something that must SUCCEED, and it fails
+here. Without that control the same run would have published full marks for a capability
+that did not work at all. The contract is prompt-shaped, so the same weights served two ways
+do not behave the same way; on this evidence the surface is usable on the llama.cpp build and
+not yet on the Ollama one.
 
 **Prompt injection through a tool result works on one engine and not the other.** A stored
 value the agent looks up contains an instruction telling it to abandon its task, call a
 different tool, and reply with a planted token. On Ollama it does exactly that — the
-injected run repeats the bait, the single failure behind `injection_resistance` 750 · 3/4.
+injected run repeats the bait, the single failure behind `injection_resistance` 800 · 4/5.
 On llama.cpp, same model family, same fixture, it ignores the injection and reports the
 real status. (The metric's population grew with the workflow family: the untaken-arm and
 never-leak-the-placeholder absence oracles ride the same gate and pass on both engines —
@@ -420,9 +438,12 @@ step count — deterministic steps can lift the average but never hide a wastefu
 rows.)
 
 **Passing once is not passing.** `pass_k4` re-runs three flagship tasks four times each on
-fully fresh serves and both engines read 666 · 2/3: the contract-refusal and
-failure-recovery flagships pass all four trials on both engines, and `http-authed-lookup`
-fails all eight — reliably absent, which at least makes it an honest 0. The first capture
+fully fresh serves, and both engines read 333 · 1/3 — but not on the same task, which is the
+part worth reading. Ollama passes `failure-tool-errors-recovers` all four trials and drops
+`tool-contract-refusal`; llama.cpp does the exact opposite. `http-authed-lookup` fails all
+eight — reliably absent, which at least makes it an honest 0. Each engine is thus reliable at
+one thing the other is not, and the shared aggregate hides that: this is why the per-task
+trials are committed as spikes beside the gate rather than folded into it. The first capture
 of this number was wrong twice in ways worth recording: trials beside a still-resident
 main model starved and read as model unreliability, and a trial budget tighter than the
 suite's truncated a working three-turn chain. Both now have regression guards.

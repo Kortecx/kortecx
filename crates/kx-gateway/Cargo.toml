@@ -332,6 +332,11 @@ tempfile = { workspace = true }
 tokio    = { workspace = true, features = ["time"] }
 # Portable-App bundle codec — the export→import round-trip e2e (app_catalog_e2e).
 kx-appbundle = { workspace = true }
+# The corpus + scorers, for the `nlauthor` MODEL-FREE preflight. A dev-dep rather than
+# relying on the optional `serve-engine` one: a gate that only runs under the feature it
+# is meant to protect is a gate that stops running the moment someone builds without it,
+# and this one deliberately needs no served model.
+kx-eval = { workspace = true }
 # `nix::sys::signal::raise(SIGTERM)` (a SAFE wrapper — kx-gateway is
 # `#![forbid(unsafe_code)]`) for the graceful-shutdown signal test. Unix-only,
 # test-only; stays out of the FFI-free normal closure `build-no-inference` asserts.

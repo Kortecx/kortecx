@@ -1,32 +1,32 @@
 {
   "suite_id": "bench-v1",
-  "suite_digest": "1d95b736ab996d8e16a4ea6d15ec6d4b9290d3972f10f88f2a2ebd6fbd7d14f6",
+  "suite_digest": "69a89582cbdd9854956dde312235c27ab41c3a8cb8d1951f154b5a35b0189f80",
   "env": {
     "engine": "ollama",
     "model": "gemma3:12b",
     "os": "macos",
     "arch": "aarch64",
     "cores": 8,
-    "task_count": 41,
-    "captured_unix_s": 1785383418,
-    "git_sha": "5b1987a64fbd0876ae64ef10b99493aecd089414"
+    "task_count": 46,
+    "captured_unix_s": 1785495538,
+    "git_sha": "752b2529192d0047226eb4f32de8688f1d051ade"
   },
   "gates": [
     {
       "id": "task_success",
-      "per_mille": 804
+      "per_mille": 717
     },
     {
       "id": "tool_call_f1",
-      "per_mille": 809
+      "per_mille": 790
     },
     {
       "id": "tool_seq_fsa",
-      "per_mille": 538
+      "per_mille": 576
     },
     {
       "id": "tool_seq_psa",
-      "per_mille": 749
+      "per_mille": 743
     },
     {
       "id": "groundedness",
@@ -38,7 +38,7 @@
     },
     {
       "id": "loop_efficiency",
-      "per_mille": 670
+      "per_mille": 728
     },
     {
       "id": "memory_quality",
@@ -46,11 +46,11 @@
     },
     {
       "id": "model_time_share",
-      "per_mille": 936
+      "per_mille": 860
     },
     {
       "id": "injection_resistance",
-      "per_mille": 750
+      "per_mille": 800
     },
     {
       "id": "task_success@adversarial",
@@ -74,7 +74,7 @@
     },
     {
       "id": "model_time_share@adversarial",
-      "per_mille": 996
+      "per_mille": 998
     },
     {
       "id": "injection_resistance@adversarial",
@@ -82,27 +82,27 @@
     },
     {
       "id": "task_success@failure",
-      "per_mille": 750
+      "per_mille": 1000
     },
     {
       "id": "tool_call_f1@failure",
-      "per_mille": 777
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_fsa@failure",
-      "per_mille": 333
+      "per_mille": 1000
     },
     {
       "id": "tool_seq_psa@failure",
-      "per_mille": 666
+      "per_mille": 1000
     },
     {
       "id": "loop_efficiency@failure",
-      "per_mille": 730
+      "per_mille": 794
     },
     {
       "id": "model_time_share@failure",
-      "per_mille": 905
+      "per_mille": 849
     },
     {
       "id": "task_success@http",
@@ -110,7 +110,7 @@
     },
     {
       "id": "tool_call_f1@http",
-      "per_mille": 583
+      "per_mille": 333
     },
     {
       "id": "tool_seq_fsa@http",
@@ -118,7 +118,7 @@
     },
     {
       "id": "tool_seq_psa@http",
-      "per_mille": 500
+      "per_mille": 250
     },
     {
       "id": "loop_efficiency@http",
@@ -126,7 +126,7 @@
     },
     {
       "id": "model_time_share@http",
-      "per_mille": 968
+      "per_mille": 995
     },
     {
       "id": "task_success@irrelevance",
@@ -146,11 +146,11 @@
     },
     {
       "id": "loop_efficiency@irrelevance",
-      "per_mille": 458
+      "per_mille": 466
     },
     {
       "id": "model_time_share@irrelevance",
-      "per_mille": 995
+      "per_mille": 997
     },
     {
       "id": "task_success@long",
@@ -174,7 +174,7 @@
     },
     {
       "id": "model_time_share@long",
-      "per_mille": 994
+      "per_mille": 995
     },
     {
       "id": "task_success@memory",
@@ -182,19 +182,19 @@
     },
     {
       "id": "tool_call_f1@memory",
-      "per_mille": 733
+      "per_mille": 750
     },
     {
       "id": "tool_seq_fsa@memory",
-      "per_mille": 0
+      "per_mille": 500
     },
     {
       "id": "tool_seq_psa@memory",
-      "per_mille": 583
+      "per_mille": 750
     },
     {
       "id": "loop_efficiency@memory",
-      "per_mille": 562
+      "per_mille": 791
     },
     {
       "id": "memory_quality@memory",
@@ -202,7 +202,7 @@
     },
     {
       "id": "model_time_share@memory",
-      "per_mille": 957
+      "per_mille": 980
     },
     {
       "id": "task_success@menu",
@@ -226,7 +226,19 @@
     },
     {
       "id": "model_time_share@menu",
-      "per_mille": 997
+      "per_mille": 995
+    },
+    {
+      "id": "task_success@nlauthor",
+      "per_mille": 200
+    },
+    {
+      "id": "loop_efficiency@nlauthor",
+      "per_mille": 1000
+    },
+    {
+      "id": "injection_resistance@nlauthor",
+      "per_mille": 1000
     },
     {
       "id": "task_success@reach",
@@ -234,15 +246,15 @@
     },
     {
       "id": "tool_call_f1@reach",
-      "per_mille": 1000
+      "per_mille": 722
     },
     {
       "id": "tool_seq_fsa@reach",
-      "per_mille": 1000
+      "per_mille": 333
     },
     {
       "id": "tool_seq_psa@reach",
-      "per_mille": 1000
+      "per_mille": 611
     },
     {
       "id": "groundedness@reach",
@@ -254,7 +266,7 @@
     },
     {
       "id": "loop_efficiency@reach",
-      "per_mille": 750
+      "per_mille": 541
     },
     {
       "id": "memory_quality@reach",
@@ -262,11 +274,11 @@
     },
     {
       "id": "model_time_share@reach",
-      "per_mille": 975
+      "per_mille": 994
     },
     {
       "id": "task_success@react",
-      "per_mille": 666
+      "per_mille": 0
     },
     {
       "id": "tool_call_f1@react",
@@ -282,11 +294,11 @@
     },
     {
       "id": "loop_efficiency@react",
-      "per_mille": 256
+      "per_mille": 517
     },
     {
       "id": "model_time_share@react",
-      "per_mille": 824
+      "per_mille": 991
     },
     {
       "id": "task_success@scaffold",
@@ -302,23 +314,23 @@
     },
     {
       "id": "tool_call_f1@script",
-      "per_mille": 1000
+      "per_mille": 933
     },
     {
       "id": "tool_seq_fsa@script",
-      "per_mille": 1000
+      "per_mille": 666
     },
     {
       "id": "tool_seq_psa@script",
-      "per_mille": 1000
+      "per_mille": 888
     },
     {
       "id": "loop_efficiency@script",
-      "per_mille": 779
+      "per_mille": 726
     },
     {
       "id": "model_time_share@script",
-      "per_mille": 982
+      "per_mille": 987
     },
     {
       "id": "task_success@swarm",
@@ -338,19 +350,19 @@
     },
     {
       "id": "tool_call_f1@tool",
-      "per_mille": 855
+      "per_mille": 911
     },
     {
       "id": "tool_seq_fsa@tool",
-      "per_mille": 500
+      "per_mille": 666
     },
     {
       "id": "tool_seq_psa@tool",
-      "per_mille": 777
+      "per_mille": 861
     },
     {
       "id": "loop_efficiency@tool",
-      "per_mille": 655
+      "per_mille": 696
     },
     {
       "id": "model_time_share@tool",
@@ -366,7 +378,7 @@
     },
     {
       "id": "model_time_share@workflow",
-      "per_mille": 798
+      "per_mille": 0
     },
     {
       "id": "injection_resistance@workflow",
@@ -374,7 +386,7 @@
     },
     {
       "id": "scaffold_completed@attempts",
-      "per_mille": 0
+      "per_mille": 1000
     },
     {
       "id": "workflow_wait_elapsed@timers",
@@ -394,7 +406,7 @@
     },
     {
       "id": "pass_k4",
-      "per_mille": 666
+      "per_mille": 333
     },
     {
       "id": "pass_k4@trials",
@@ -404,52 +416,52 @@
   "spikes": [
     {
       "id": "measured_tasks",
-      "value": 37.0,
-      "unit": "tasks"
-    },
-    {
-      "id": "task_latency_ms_p50",
-      "value": 123504.0,
-      "unit": "ms"
-    },
-    {
-      "id": "task_latency_ms_p95",
-      "value": 195354.0,
-      "unit": "ms"
-    },
-    {
-      "id": "task_latency_ms_max",
-      "value": 224254.0,
-      "unit": "ms"
-    },
-    {
-      "id": "suite_latency_ms_total",
-      "value": 4519478.0,
-      "unit": "ms"
-    },
-    {
-      "id": "tokens_measured_tasks",
       "value": 36.0,
       "unit": "tasks"
     },
     {
+      "id": "task_latency_ms_p50",
+      "value": 43054.0,
+      "unit": "ms"
+    },
+    {
+      "id": "task_latency_ms_p95",
+      "value": 103499.0,
+      "unit": "ms"
+    },
+    {
+      "id": "task_latency_ms_max",
+      "value": 134533.0,
+      "unit": "ms"
+    },
+    {
+      "id": "suite_latency_ms_total",
+      "value": 1718385.0,
+      "unit": "ms"
+    },
+    {
+      "id": "tokens_measured_tasks",
+      "value": 31.0,
+      "unit": "tasks"
+    },
+    {
       "id": "tokens_per_task_mean",
-      "value": 130.0,
+      "value": 111.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@tool",
-      "value": 116.0,
+      "value": 105.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@react",
-      "value": 92.0,
+      "value": 130.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@reach",
-      "value": 71.0,
+      "value": 112.0,
       "unit": "tokens"
     },
     {
@@ -459,72 +471,67 @@
     },
     {
       "id": "tokens_per_task_mean@script",
-      "value": 179.0,
+      "value": 214.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@http",
-      "value": 105.0,
+      "value": 143.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@failure",
-      "value": 116.0,
+      "value": 83.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@menu",
-      "value": 76.0,
+      "value": 71.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@long",
-      "value": 96.0,
+      "value": 127.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@adversarial",
-      "value": 92.0,
+      "value": 90.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@irrelevance",
-      "value": 92.0,
+      "value": 95.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_task_mean@memory",
-      "value": 119.0,
-      "unit": "tokens"
-    },
-    {
-      "id": "tokens_per_task_mean@workflow",
-      "value": 324.0,
+      "value": 84.0,
       "unit": "tokens"
     },
     {
       "id": "tokens_per_success",
-      "value": 157.0,
+      "value": 138.0,
       "unit": "tokens"
     },
     {
       "id": "scaffold_ms@scaffold-contextual-runs",
-      "value": 1200253.0,
+      "value": 961938.0,
       "unit": "ms"
     },
     {
       "id": "scaffold_files@scaffold-contextual-runs",
-      "value": 6.0,
+      "value": 9.0,
       "unit": "files"
     },
     {
       "id": "scaffold_ms@scaffold-codified-runs",
-      "value": 1200792.0,
+      "value": 968261.0,
       "unit": "ms"
     },
     {
       "id": "scaffold_files@scaffold-codified-runs",
-      "value": 6.0,
+      "value": 12.0,
       "unit": "files"
     },
     {
@@ -534,37 +541,37 @@
     },
     {
       "id": "store_memory_latency_ms_p50",
-      "value": 110.0,
+      "value": 95.0,
       "unit": "ms"
     },
     {
       "id": "store_memory_latency_ms_p95",
-      "value": 174.0,
+      "value": 124.0,
       "unit": "ms"
     },
     {
       "id": "recall_memory_latency_ms_p50",
-      "value": 103.0,
+      "value": 92.0,
       "unit": "ms"
     },
     {
       "id": "recall_memory_latency_ms_p95",
-      "value": 138.0,
+      "value": 106.0,
       "unit": "ms"
     },
     {
       "id": "query_dataset_latency_ms_p50",
-      "value": 121.0,
+      "value": 112.0,
       "unit": "ms"
     },
     {
       "id": "query_dataset_latency_ms_p95",
-      "value": 151.0,
+      "value": 120.0,
       "unit": "ms"
     },
     {
       "id": "pass_k4@tool-contract-refusal",
-      "value": 1000.0,
+      "value": 0.0,
       "unit": "per_mille"
     },
     {

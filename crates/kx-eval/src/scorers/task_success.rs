@@ -42,6 +42,15 @@ pub(super) fn score(input: &ScoreInput) -> ScoreOutput {
                 (false, format!("expected DeadLetter, got {terminal:?}"))
             }
         }
+        // A refusal must be a REFUSAL. Accepting a dead-letter here would let a
+        // runtime that simply fell over score as one that held a boundary.
+        ExpectedTerminal::Rejected => {
+            if terminal == Branch::Rejected {
+                (true, "refused, with a reason".to_string())
+            } else {
+                (false, format!("expected a refusal, got {terminal:?}"))
+            }
+        }
     };
     ScoreOutput::gate("task_success", if ok { PER_MILLE } else { 0 }, detail)
 }
