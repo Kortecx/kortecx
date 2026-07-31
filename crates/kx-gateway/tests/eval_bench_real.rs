@@ -1551,20 +1551,24 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // substrings: ["384"]` tells you the substring was absent and NOTHING about what the
     // model actually said, so diagnosing it means re-running the suite by hand. Bounded,
     // because an answer is model-authored text of unbounded length.
-    {
-        let failed: std::collections::BTreeSet<&str> = report
-            .per_task
-            .iter()
-            .filter(|t| {
-                t.scores.iter().any(|s| {
-                    s.metric_id == "task_success"
-                        && matches!(s.value, kx_eval::ScoreValue::Gate { per_mille: 0 })
-                })
+    // Hoisted out of the ANSWER block below because the TRAJECTORY witness needs it too:
+    // both halves of "a verdict without evidence" are keyed on the same thing — the task
+    // scored 0 — and keying one of them on the TERMINAL instead is what silently withheld
+    // the trajectory for every task that answered wrongly.
+    let failed_task_ids: std::collections::BTreeSet<&str> = report
+        .per_task
+        .iter()
+        .filter(|t| {
+            t.scores.iter().any(|s| {
+                s.metric_id == "task_success"
+                    && matches!(s.value, kx_eval::ScoreValue::Gate { per_mille: 0 })
             })
-            .map(|t| t.task_id.as_str())
-            .collect();
+        })
+        .map(|t| t.task_id.as_str())
+        .collect();
+    {
         for t in &outcome.transcripts {
-            if !failed.contains(t.task_id.as_str()) {
+            if !failed_task_ids.contains(t.task_id.as_str()) {
                 continue;
             }
             let Some(answer) = t.final_answer.as_deref() else {
@@ -1582,13 +1586,24 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
             );
         }
     }
-    // The TRAJECTORY witness for anything that did not answer. A per-task gate of 0 is a
-    // verdict without evidence; this prints what the run actually did — which tool it
-    // proposed, what the runtime refused and why, where it stopped — so a failure is
-    // diagnosable from the run that produced it instead of re-run to be understood.
+    // The TRAJECTORY witness for every FAILING task. A per-task gate of 0 is a verdict
+    // without evidence; this prints what the run actually did — which tool it proposed,
+    // what the runtime refused and why, where it stopped — so a failure is diagnosable
+    // from the run that produced it instead of re-run to be understood.
+    //
+    // It used to skip any task whose terminal was `Answer`, which withheld the evidence
+    // from the single failure mode that most needs it: a task that ANSWERED and answered
+    // WRONG. `http` (both tasks), `long` and the tool-output injection task all fail that
+    // way — the tool fired, the record came back, and the answer dropped it — so the one
+    // question worth asking ("what did it do between the result and the answer?") was the
+    // one the instrument would not report. A wrong answer's trajectory is the most
+    // informative kind, not the least.
+    //
+    // The filter is now the SCORE, not the terminal: print for anything `task_success`
+    // scored 0. A passing task still prints nothing, so a green run stays quiet.
     for t in &outcome.transcripts {
         let terminal = t.terminal_branch();
-        if terminal == kx_eval::Branch::Answer {
+        if terminal == kx_eval::Branch::Answer && !failed_task_ids.contains(t.task_id.as_str()) {
             continue;
         }
         eprintln!(
