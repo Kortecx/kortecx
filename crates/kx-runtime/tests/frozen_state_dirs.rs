@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 
 use kx_journal::{Journal, ReplayJournal, SqliteJournal, JOURNAL_SCHEMA_VERSION};
 use kx_runtime::{digest_journal, migrate_and_verify};
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/state-dirs")
@@ -55,18 +55,52 @@ fn copy_tree(src: &Path, dst: &Path) {
     std::fs::create_dir_all(dst).unwrap();
     for entry in std::fs::read_dir(src).unwrap() {
         let entry = entry.unwrap();
-        let to = dst.join(entry.file_name());
+        let name = entry.file_name();
+        // SQLite sidecars are not part of the frozen truth — they are journal state
+        // belonging to whoever had the file open. Skipping them is not just tidiness:
+        // `read_dir` returns a SNAPSHOT, and a sidecar that a reader is checkpointing
+        // away vanishes between the listing and the copy, which is a `NotFound` that
+        // has nothing to do with the fixture. `open_frozen` below stops them being
+        // created at all; this is the belt to that pair of braces.
+        let n = name.to_string_lossy();
+        if n.ends_with("-wal") || n.ends_with("-shm") || n.ends_with("-journal") {
+            continue;
+        }
+        let to = dst.join(&name);
         if entry.file_type().unwrap().is_dir() {
             copy_tree(&entry.path(), &to);
         } else {
-            std::fs::copy(entry.path(), &to).unwrap();
+            std::fs::copy(entry.path(), &to).unwrap_or_else(|e| {
+                panic!("copy {} -> {}: {e}", entry.path().display(), to.display())
+            });
         }
     }
 }
 
+/// Open a FIXTURE read-only.
+///
+/// The module doc calls the originals "read-only truth", and that is enforced here rather
+/// than merely asserted: a plain `Connection::open` is read-WRITE, so a future test that
+/// wrote — deliberately or by accident — would silently mutate the artifact these tests
+/// exist to preserve. Read-only makes that a loud error instead.
+///
+/// What this does NOT do, measured rather than assumed: it does not stop SQLite creating
+/// `-wal`/`-shm` beside the database. WAL-mode databases need the shared-memory index
+/// even for readers, so the sidecars appear either way — 14 of them across the fixture
+/// tree on a read-only run here, against 4 on a read-write one. Anyone reasoning "opened
+/// read-only, therefore the directory is untouched" is wrong, which is why it is written
+/// down.
+///
+/// Keeping the sidecars OUT OF THE COPY is `copy_tree`'s job, and that is the half that
+/// fixes the CI failure this pair was written for.
+fn open_frozen(path: &Path) -> Connection {
+    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .unwrap_or_else(|e| panic!("open {} read-only: {e}", path.display()))
+}
+
 /// The `schema_version` an old journal stamped in its own `metadata` table.
 fn journal_version(path: &Path) -> u16 {
-    let conn = Connection::open(path).unwrap();
+    let conn = open_frozen(path);
     let raw: Vec<u8> = conn
         .query_row(
             "SELECT value FROM metadata WHERE key = 'schema_version'",
@@ -78,7 +112,7 @@ fn journal_version(path: &Path) -> u16 {
 }
 
 fn table_rows(db: &Path, table: &str) -> i64 {
-    let conn = Connection::open(db).unwrap();
+    let conn = open_frozen(db);
     conn.query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |r| {
         r.get(0)
     })
@@ -175,7 +209,7 @@ fn the_released_catalog_carries_the_entities_a_user_authored() {
     assert_eq!(table_rows(&catalog.join("bundles.db"), "bundles"), 1);
 
     // The App is the one the SPEC names, not just "some row".
-    let conn = Connection::open(catalog.join("apps.db")).unwrap();
+    let conn = open_frozen(&catalog.join("apps.db"));
     let handle: String = conn
         .query_row("SELECT handle FROM apps", [], |r| r.get(0))
         .unwrap();
@@ -194,7 +228,7 @@ fn the_released_catalog_carries_the_entities_a_user_authored() {
 #[test]
 fn a_released_tools_db_really_does_use_the_metadata_table() {
     let tools = fixtures().join("v0.2.0-rc.1/catalog/tools.db");
-    let conn = Connection::open(&tools).unwrap();
+    let conn = open_frozen(&tools);
     let tables: Vec<String> = conn
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
         .unwrap()

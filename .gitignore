@@ -110,3 +110,11 @@ kx-cloud/
 # The packed SDK the gateway embeds and serves as an installable package — a BUILD
 # artifact of `just console-dist`, regenerated from bindings/typescript, never committed.
 bindings/typescript/kortecx-sdk.tgz
+
+# SQLite sidecars beside the FROZEN state-dir fixtures. Opening a WAL-mode database
+# creates `-wal`/`-shm` even for a read-only connection, so running the frozen-state-dir
+# tests leaves them in the fixture tree. They are not part of the captured truth, and a
+# `git add -A` that swept them in would corrupt the very artifact the fixtures preserve.
+crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-wal
+crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-shm
+crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-journal
