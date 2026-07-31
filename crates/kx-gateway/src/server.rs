@@ -1243,6 +1243,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // RPCs. The apps.db posture verbatim: off-journal, off-digest,
     // rebuildable-to-empty; workflow_ref is a pure content hash.
     let workflows_db = Arc::new(crate::workflows::WorkflowsDb::open(&catalog_dir)?);
+    // The durable Policy/Role registry (policies.db) — caller-scoped NAMED
+    // narrowings of tool authority for the Put/List/Delete/AssignPolicyRole
+    // RPCs. Authored work: a schema bump renames it aside and re-imports rather
+    // than dropping it, because losing a role RESTORES capability an operator
+    // meant to remove. Off-journal, off-digest; assigning intersects, never widens.
+    let policies_db = Arc::new(crate::policies::PoliciesDb::open(&catalog_dir)?);
     // The skill catalog (skills.db) — caller-scoped kortecx.skill/v1
     // manifests for the ListSkills/GetSkillForm/AddSkill/RemoveSkill RPCs.
     // Off-journal, off-digest, rebuildable-to-empty (skill_ref is a pure content
@@ -1887,6 +1893,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db.clone())
         .with_workflow_catalog(workflows_db.clone())
+        .with_policy_admin(policies_db.clone())
         .with_skill_catalog(skills_db.clone())
         .with_branches_store(branches_db.clone())
         .with_branch_history(branches_db.clone())
@@ -1994,6 +2001,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                     // T-RUNAPP-PROJECT-RAIL: the SAME branch store the scaffold + IDE write, so
                     // an App's project `.md` reaches the model at run time.
                     Some(branches_db.clone() as Arc<dyn kx_gateway_core::BranchStore>),
+                    // The SAME policy store the Put/Assign RPCs write, so a role an
+                    // operator assigns actually narrows the run. It intersects and
+                    // never widens; a serve without it resolves exactly as before.
+                    Some(policies_db.clone() as Arc<dyn kx_gateway_core::PolicyAdmin>),
                 ));
                 // The WORKFLOW run resolver rides the SAME HostAppAuthor (one
                 // preparation/composition/authoring pipeline), reading workflows.db

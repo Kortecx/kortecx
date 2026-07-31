@@ -97,6 +97,14 @@ mod apps;
 // leaf type, off-journal, off-digest, rebuildable-to-empty; workflow_ref is
 // domain-separated from app_ref so the two catalogs can never collide.
 mod workflows;
+// The policies.db sidecar (the PolicyAdmin seam) — PutPolicyRole /
+// ListPolicyRoles / DeletePolicyRole / AssignPolicyRole. Stores a caller's
+// durable Policy/Roles: NAMED, reusable NARROWINGS of tool authority. Assigning
+// a role intersects its allowlist into the party's effective tools and can never
+// widen them, which is what makes an off-journal store safe to expose as an
+// authority surface at all. Authored work, so it rides the sidecar policy as
+// UserAuthored; off-journal, off-digest.
+mod policies;
 // The skills.db sidecar (the SkillCatalog seam) — ListSkills / GetSkillForm /
 // AddSkill / RemoveSkill. Stores a caller's kortecx.skill/v1 manifests (validated
 // fail-closed + canonicalized via the kx-skill leaf type — authority deny-keys,

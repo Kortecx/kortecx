@@ -25,9 +25,10 @@
 //!   is not a convenience, it is the compatibility contract: the (no role, no
 //!   asset allowlist) case must stay byte-identical or every running install
 //!   changes behaviour on upgrade.
-//! - **Caller-scoped.** Roles live in the calling principal's scope. A
-//!   serve-wide role would be an authority a single-node operator cannot
-//!   delegate away.
+//! - **Caller-scoped to AUTHOR, party-scoped to ENFORCE.** `put` / `delete` /
+//!   `assign` live in the calling principal's scope. [`PolicyAdmin::allowlist_for`]
+//!   deliberately does not — see its own doc for why enforcement cannot be
+//!   principal-keyed.
 //! - **Off the truth path.** `policies.db` is off-journal and off-digest;
 //!   nothing here can move the canonical digest.
 //! - **Authored work.** The store opens `Durability::UserAuthored`, so a schema
@@ -128,11 +129,23 @@ pub trait PolicyAdmin: Send + Sync {
     /// keeps existing installs byte-identical. `Some(set)` is a strict
     /// allowlist, and `Some(empty)` legitimately means "nothing".
     ///
+    /// # This is the one method that is NOT principal-scoped, deliberately
+    ///
+    /// Authoring is caller-scoped: `put` / `delete` / `assign` all take the
+    /// principal who owns the registry. ENFORCEMENT cannot be, because at fire
+    /// time the runtime knows the PARTY a warrant resolves for and nothing about
+    /// who authored the role that constrains it. Keying the lookup by principal
+    /// too would mean a role only ever narrowed its own author, which is not a
+    /// policy mechanism — it is a preference.
+    ///
+    /// Single-node OSS has one operator, so the asymmetry is invisible here.
+    /// Multi-tenant identity — where "which principal's policy binds this party"
+    /// is a real question — is a CLOUD concern (D129) and is not answered here.
+    ///
     /// # Errors
     /// [`PolicyAdminError`] on a read failure.
     fn allowlist_for(
         &self,
-        principal: &str,
         party: &str,
     ) -> Result<Option<Vec<PolicyRoleToolWire>>, PolicyAdminError>;
 }
