@@ -728,6 +728,32 @@ fn chatml_with(system: &str, prompt: &str) -> String {
     )
 }
 
+/// Render `(system, user)` for the served model, falling back to hand-rolled ChatML when
+/// the engine supplies no chat template.
+///
+/// [`InferenceBackend::render_chat`] is OPTIONAL by contract: its own documentation says
+/// `None` means *"the caller should format the prompt itself (e.g. hand-rolled ChatML)"* —
+/// it does not mean "refuse". `LlamaInferenceBackend` implements it (the GGUF's embedded
+/// template); `kx_ollama::OllamaBackend` does not, so on an Ollama serve EVERY caller sees
+/// `None`.
+///
+/// The ReAct turn always fell back. `control_nl_host`, `derive_host` and `propose_host`
+/// each treated the same `None` as fatal, which made the whole authoring surface
+/// unreachable on Ollama: measured on `gemma3:12b` at suite digest `69a89582cbdd9854`,
+/// all five `nlauthor` tasks refused BEFORE generation, so the model was never called.
+/// Four call sites restating one contract is how three of them came to disagree with it;
+/// this is the single statement they now share.
+pub(crate) fn render_chat_or_chatml<B: InferenceBackend + ?Sized>(
+    backend: &B,
+    model_id: &ModelId,
+    system: &str,
+    user: &str,
+) -> String {
+    backend
+        .render_chat(model_id, system, user)
+        .unwrap_or_else(|| chatml_with(system, user))
+}
+
 /// The fixed system instruction for the opt-in LLM-JUDGE gate (T-AGENT2). It
 /// constrains the judge to a single discrete decision token — the runtime
 /// parses a Valid/Invalid VERDICT, never a similarity score; the model proposes,
@@ -1525,10 +1551,10 @@ impl<B: InferenceBackend> ModelRouterExecutor<B> {
         // precise-assistant `SERVE_SYSTEM`. Presentation only — off-MoteDef /
         // off-digest, never journaled. (See [`Self::dispatch_system_prompt`].)
         let system = Self::dispatch_system_prompt(mote);
+        // The SAME statement the three authoring paths now use. Byte-identical to the
+        // inline form it replaces; shared so the four can never disagree again.
         let format = |user: &str| -> String {
-            self.backend
-                .render_chat(&mote.def.model_id, &system, user)
-                .unwrap_or_else(|| chatml_with(&system, user))
+            render_chat_or_chatml(self.backend.as_ref(), &mote.def.model_id, &system, user)
         };
         // AGENTIC-VISION: turn 0 (and single-shot vision) carries the image INLINE in
         // `config_subset[IMAGE_REF_KEY]`; a SUCCESSOR ReAct turn carries NO inline image,

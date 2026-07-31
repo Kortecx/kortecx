@@ -258,7 +258,7 @@ Agent quality here is a number you can gate on. Two suites, one set of scorers:
 
 **Reading a score.** Every score is an integer **per-mille** — a rate on a 0–1000 scale
 (769 ≡ 76.9%), never a count — and an aggregate is the **floor** of the integer mean over the
-tasks it applied to: a suite-wide `717 · 33/46` is floor(1000·33/46), not "717 of 1000
+tasks it applied to: a suite-wide `804 · 37/46` is floor(1000·37/46), not "717 of 1000
 calls". Resolution follows the denominator: a one-task family can only read 0 or 1000, a
 three-task family only 0 · 333 · 666 · 1000, and the 46-task suite moves in steps of ~22.
 Where a metric is pass/fail per unit — `task_success` everywhere, `injection_resistance`,
@@ -301,7 +301,7 @@ exact pass count.
 | **memory** | 2 | updates a stored fact and answers with the NEW value while the superseded row is still live, and abstains when memory holds no answer | 1000 · 2/2 | 500 · 1/2 |
 | **scaffold** | 2 | the model scaffolds the app's whole project LIVE (plans it, authors every file, 20-min budget), the app then RUNS, and the answer must carry a code that exists only inside the generated project — the contextual and codified lanes; a hosted app has no runnable blueprint, so it is out of scope here | 0 · 0/2 | 0 · 0/2 |
 | **workflow** | 7 | runs a STORED workflow definition by handle — canonical saved bytes, every warrant built server-side at run — through deterministic step kinds: a credentialed http dial, a 3-way parallel quorum join, a typed conditional whose untaken arm provably never dials, a journal-backed 3 s timer that carries its parent's bytes, a retry that recovers only via a FRESH attempt identity, and a continue policy whose failed branch commits a placeholder the join releases past; every oracle token exists only on the harness fixture, so the model is never what is being measured | 1000 · 7/7 | 1000 · 7/7 |
-| **nlauthor** | 5 | authors a durable POLICY ROLE, a SCHEDULED TRIGGER and a CREDENTIAL from one sentence of English — the runtime returns the exact typed request it would issue, so approving forwards the bytes that were shown; the secret arm proves a value never rides the preview, and an authority-exceeding ask (a role naming a tool nobody registered) must be REFUSED beside a near-identical ask that must SUCCEED, so an always-refuse surface cannot score | 200 · 1/5 | 800 · 4/5 |
+| **nlauthor** | 5 | authors a durable POLICY ROLE, a SCHEDULED TRIGGER and a CREDENTIAL from one sentence of English — the runtime returns the exact typed request it would issue, so approving forwards the bytes that were shown; the secret arm proves a value never rides the preview, and an authority-exceeding ask (a role naming a tool nobody registered) must be REFUSED beside a near-identical ask that must SUCCEED, so an always-refuse surface cannot score | 1000 · 5/5 | 800 · 4/5 |
 
 The same rates drawn with their denominators — identical bars are not identical evidence: a
 1000 from one task is one pass, a 1000 from six tasks is six.
@@ -310,9 +310,9 @@ The same rates drawn with their denominators — identical bars are not identica
 ```mermaid
 xychart-beta horizontal
     title "task_success by family — Ollama gemma3:12b (passes/tasks)"
-    x-axis ["tool (6/6)", "react (0/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (4/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (1/5)"]
+    x-axis ["tool (6/6)", "react (0/3)", "reach (3/3)", "swarm (1/1)", "script (3/3)", "http (0/2)", "failure (4/4)", "menu (1/1)", "long (0/1)", "adversarial (1/2)", "irrelevance (4/4)", "memory (2/2)", "scaffold (0/2)", "workflow (7/7)", "nlauthor (5/5)"]
     y-axis "per-mille" 0 --> 1000
-    bar [1000, 0, 1000, 1000, 1000, 0, 1000, 1000, 0, 500, 1000, 1000, 0, 1000, 200]
+    bar [1000, 0, 1000, 1000, 1000, 0, 1000, 1000, 0, 500, 1000, 1000, 0, 1000, 1000]
 ```
 
 <!-- bench-chart:llamacpp — data checked against baseline.llamacpp.json by docs/site/scripts/check-docs.mjs; keep this anchor -->
@@ -328,7 +328,7 @@ xychart-beta horizontal
 
 | Metric | Ollama | llama.cpp |
 | --- | ---: | ---: |
-| `task_success` | 717 · 33/46 | 760 · 35/46 |
+| `task_success` | 804 · 37/46 | 760 · 35/46 |
 | `tool_call_f1` † | 790 | 804 |
 | `tool_seq_fsa` | 576 · 15/26 | 692 · 18/26 |
 | `tool_seq_psa` † | 743 | 775 |
@@ -339,7 +339,7 @@ xychart-beta horizontal
 | `injection_resistance` | 800 · 4/5 | 1000 · 5/5 |
 | `retrieval_success_at_8` | 1000 · 10/10 | 800 · 8/10 |
 | `pass_k4` | 333 · 1/3 | 333 · 1/3 |
-| `model_time_share` † | 860 | 876 |
+| `model_time_share` † | 863 | 876 |
 
 The pass/fail rows carry their own denominators: `tool_seq_fsa` applies to the 26 tasks
 with a gold call sequence, `pass_k4` to the three corpus-flagged flagship tasks
@@ -361,14 +361,14 @@ dollar figure — a metric whose input the runtime does not record is not publis
 | `tokens_per_task_mean` | 111 tokens | 123 tokens |
 | `tokens_per_success` | 138 tokens | 170 tokens |
 | `tokens_measured_tasks` | 31 tasks | 33 tasks |
-| `task_latency_ms_p50` | 43054 ms | 71080 ms |
-| `task_latency_ms_p95` | 103499 ms | 236398 ms |
-| `store_memory_latency_ms_p50` | 95 ms | 581 ms |
-| `store_memory_latency_ms_p95` | 124 ms | 664 ms |
-| `recall_memory_latency_ms_p50` | 92 ms | 727 ms |
-| `recall_memory_latency_ms_p95` | 106 ms | 802 ms |
-| `query_dataset_latency_ms_p50` | 112 ms | 549 ms |
-| `query_dataset_latency_ms_p95` | 120 ms | 599 ms |
+| `task_latency_ms_p50` | 53268 ms | 71080 ms |
+| `task_latency_ms_p95` | 120116 ms | 236398 ms |
+| `store_memory_latency_ms_p50` | 96 ms | 581 ms |
+| `store_memory_latency_ms_p95` | 118 ms | 664 ms |
+| `recall_memory_latency_ms_p50` | 93 ms | 727 ms |
+| `recall_memory_latency_ms_p95` | 100 ms | 802 ms |
+| `query_dataset_latency_ms_p50` | 111 ms | 549 ms |
+| `query_dataset_latency_ms_p95` | 121 ms | 599 ms |
 | `rpc_probe_samples` | 32 calls | 32 calls |
 
 Seven of these are worth explaining, and none of them is flattering.

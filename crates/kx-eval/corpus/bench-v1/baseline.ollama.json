@@ -8,13 +8,13 @@
     "arch": "aarch64",
     "cores": 8,
     "task_count": 46,
-    "captured_unix_s": 1785495538,
-    "git_sha": "752b2529192d0047226eb4f32de8688f1d051ade"
+    "captured_unix_s": 1785522057,
+    "git_sha": "5a67e7401f48b47fc278b703e88ed6a84769bf40"
   },
   "gates": [
     {
       "id": "task_success",
-      "per_mille": 717
+      "per_mille": 804
     },
     {
       "id": "tool_call_f1",
@@ -46,7 +46,7 @@
     },
     {
       "id": "model_time_share",
-      "per_mille": 860
+      "per_mille": 863
     },
     {
       "id": "injection_resistance",
@@ -102,7 +102,7 @@
     },
     {
       "id": "model_time_share@failure",
-      "per_mille": 849
+      "per_mille": 850
     },
     {
       "id": "task_success@http",
@@ -126,7 +126,7 @@
     },
     {
       "id": "model_time_share@http",
-      "per_mille": 995
+      "per_mille": 997
     },
     {
       "id": "task_success@irrelevance",
@@ -202,7 +202,7 @@
     },
     {
       "id": "model_time_share@memory",
-      "per_mille": 980
+      "per_mille": 983
     },
     {
       "id": "task_success@menu",
@@ -226,11 +226,11 @@
     },
     {
       "id": "model_time_share@menu",
-      "per_mille": 995
+      "per_mille": 996
     },
     {
       "id": "task_success@nlauthor",
-      "per_mille": 200
+      "per_mille": 1000
     },
     {
       "id": "loop_efficiency@nlauthor",
@@ -274,7 +274,7 @@
     },
     {
       "id": "model_time_share@reach",
-      "per_mille": 994
+      "per_mille": 993
     },
     {
       "id": "task_success@react",
@@ -298,7 +298,7 @@
     },
     {
       "id": "model_time_share@react",
-      "per_mille": 991
+      "per_mille": 989
     },
     {
       "id": "task_success@scaffold",
@@ -330,7 +330,7 @@
     },
     {
       "id": "model_time_share@script",
-      "per_mille": 987
+      "per_mille": 990
     },
     {
       "id": "task_success@swarm",
@@ -366,7 +366,7 @@
     },
     {
       "id": "model_time_share@tool",
-      "per_mille": 977
+      "per_mille": 989
     },
     {
       "id": "task_success@workflow",
@@ -421,22 +421,22 @@
     },
     {
       "id": "task_latency_ms_p50",
-      "value": 43054.0,
+      "value": 53268.0,
       "unit": "ms"
     },
     {
       "id": "task_latency_ms_p95",
-      "value": 103499.0,
+      "value": 120116.0,
       "unit": "ms"
     },
     {
       "id": "task_latency_ms_max",
-      "value": 134533.0,
+      "value": 134950.0,
       "unit": "ms"
     },
     {
       "id": "suite_latency_ms_total",
-      "value": 1718385.0,
+      "value": 2004535.0,
       "unit": "ms"
     },
     {
@@ -516,7 +516,7 @@
     },
     {
       "id": "scaffold_ms@scaffold-contextual-runs",
-      "value": 961938.0,
+      "value": 915726.0,
       "unit": "ms"
     },
     {
@@ -526,7 +526,7 @@
     },
     {
       "id": "scaffold_ms@scaffold-codified-runs",
-      "value": 968261.0,
+      "value": 929138.0,
       "unit": "ms"
     },
     {
@@ -541,32 +541,32 @@
     },
     {
       "id": "store_memory_latency_ms_p50",
-      "value": 95.0,
+      "value": 96.0,
       "unit": "ms"
     },
     {
       "id": "store_memory_latency_ms_p95",
-      "value": 124.0,
+      "value": 118.0,
       "unit": "ms"
     },
     {
       "id": "recall_memory_latency_ms_p50",
-      "value": 92.0,
+      "value": 93.0,
       "unit": "ms"
     },
     {
       "id": "recall_memory_latency_ms_p95",
-      "value": 106.0,
+      "value": 100.0,
       "unit": "ms"
     },
     {
       "id": "query_dataset_latency_ms_p50",
-      "value": 112.0,
+      "value": 111.0,
       "unit": "ms"
     },
     {
       "id": "query_dataset_latency_ms_p95",
-      "value": 120.0,
+      "value": 121.0,
       "unit": "ms"
     },
     {
