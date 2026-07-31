@@ -147,33 +147,9 @@ fn propose_blocking<B: InferenceBackend>(
         Err(e) => return rejected(&e.to_string()),
     };
 
-    // GATE 2 — authority. Naming is never granting: a role may only narrow to tools that
-    // are actually fireable on this serve, so a form naming a tool nobody registered is a
-    // form that would narrow to nothing without saying so.
-    if let ControlProposal::PutPolicyRole(role) = &proposal {
-        let fireable = registered.registered_grants();
-        let unknown: Vec<String> = role
-            .tools
-            .iter()
-            .filter(|t| {
-                !fireable
-                    .iter()
-                    .any(|(id, ver)| *id == t.tool_id && *ver == t.tool_version)
-            })
-            .map(|t| format!("{}@{}", t.tool_id, t.tool_version))
-            .collect();
-        if !unknown.is_empty() {
-            return rejected(&format!(
-                "this role names {} that no registered tool matches — a role NARROWS to \
-                 tools that exist, so naming one that does not would silently narrow to \
-                 nothing: {unknown:?}",
-                if unknown.len() == 1 {
-                    "a tool"
-                } else {
-                    "tools"
-                }
-            ));
-        }
+    // GATE 2 — authority.
+    if let Err(reason) = admit_role_names_only_fireable_tools(&proposal, registered) {
+        return rejected(&reason);
     }
 
     // GATE 3 — the domain's OWN register-time enforcer. The same functions the real RPCs
@@ -187,6 +163,51 @@ fn propose_blocking<B: InferenceBackend>(
         proposal: Box::new(proposal),
         summary,
     }
+}
+
+/// GATE 2 — authority. Naming is never granting: a role may only narrow to tools that are
+/// actually fireable on this serve, so a form naming a tool nobody registered is a form that
+/// would narrow to nothing without saying so.
+///
+/// Extracted from `propose_blocking` so it can be asserted WITHOUT a model. Inline, the only
+/// thing exercising it was the live `nlauthor` refusal task — and that task expects
+/// `terminal: rejected`, which any refusal satisfies. A malformed generation refused by GATE 1
+/// scored it green while this gate never ran, so the security-critical gate was the one with
+/// no test. A refusal oracle has to assert the REASON, and it can only do that where the
+/// reason is reachable.
+///
+/// Behaviour-preserving: same predicate, same message, same singular/plural.
+fn admit_role_names_only_fireable_tools(
+    proposal: &ControlProposal,
+    registered: &dyn RegisteredToolsView,
+) -> Result<(), String> {
+    let ControlProposal::PutPolicyRole(role) = proposal else {
+        return Ok(());
+    };
+    let fireable = registered.registered_grants();
+    let unknown: Vec<String> = role
+        .tools
+        .iter()
+        .filter(|t| {
+            !fireable
+                .iter()
+                .any(|(id, ver)| *id == t.tool_id && *ver == t.tool_version)
+        })
+        .map(|t| format!("{}@{}", t.tool_id, t.tool_version))
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "this role names {} that no registered tool matches — a role NARROWS to \
+         tools that exist, so naming one that does not would silently narrow to \
+         nothing: {unknown:?}",
+        if unknown.len() == 1 {
+            "a tool"
+        } else {
+            "tools"
+        }
+    ))
 }
 
 /// Run the proposal through the domain's real admission function.
@@ -278,8 +299,96 @@ fn rejected(reason: &str) -> ControlOutcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{admit_through_the_real_enforcer, summarize};
-    use kx_gateway_core::{ControlProposal, ScriptProposal, SecretProposal, ToolProposal};
+    use super::{admit_role_names_only_fireable_tools, admit_through_the_real_enforcer, summarize};
+    use kx_gateway_core::{
+        ControlProposal, PolicyRoleRow, PolicyRoleToolWire, RegisteredToolsView, ScriptProposal,
+        SecretProposal, ToolProposal,
+    };
+    use std::collections::BTreeSet;
+
+    /// A serve on which exactly `retrieve@1` is fireable.
+    struct OneFireableTool;
+    impl RegisteredToolsView for OneFireableTool {
+        fn registered_grants(&self) -> BTreeSet<(String, String)> {
+            [("retrieve".to_string(), "1".to_string())]
+                .into_iter()
+                .collect()
+        }
+    }
+
+    /// Build a role narrowing to exactly one `(id, version)` pair.
+    fn role_naming(tool_id: &str, tool_version: &str) -> ControlProposal {
+        ControlProposal::PutPolicyRole(PolicyRoleRow {
+            name: "reporting-only".into(),
+            description: String::new(),
+            tools: vec![PolicyRoleToolWire {
+                tool_id: tool_id.into(),
+                tool_version: tool_version.into(),
+            }],
+            created_unix_ms: 0,
+            updated_unix_ms: 0,
+        })
+    }
+
+    /// The authority A/B: two roles identical in EVERY field but the tool id.
+    ///
+    /// The bench family's refusal task cannot make this claim. It expects
+    /// `terminal: rejected`, which a malformed generation refused by GATE 1 also satisfies —
+    /// so it can go green with this gate never running. Varying exactly one variable is what
+    /// makes the refusal attributable, and the accepting arm is what stops a
+    /// refuse-everything implementation from scoring perfectly.
+    #[test]
+    fn a_role_naming_an_unregistered_tool_is_refused_and_one_naming_a_registered_tool_is_not() {
+        let ok =
+            admit_role_names_only_fireable_tools(&role_naming("retrieve", "1"), &OneFireableTool);
+        assert!(
+            ok.is_ok(),
+            "a role narrowing to a REGISTERED tool must pass the authority gate: {ok:?}"
+        );
+
+        let err = admit_role_names_only_fireable_tools(
+            &role_naming("definitely-not-registered", "1"),
+            &OneFireableTool,
+        )
+        .expect_err("a role naming a tool nobody registered must be refused");
+
+        // Assert the REASON, not merely that it refused: a refusal for any other cause
+        // means this boundary was never exercised.
+        assert!(
+            err.contains("definitely-not-registered@1"),
+            "the refusal must name the offending pair, got: {err}"
+        );
+        assert!(
+            err.contains("NARROWS"),
+            "the refusal must give the narrowing rationale, got: {err}"
+        );
+    }
+
+    /// The grant-set key is the PAIR. A role naming a registered id at an unregistered
+    /// version is refused — otherwise a role could reach a version nobody registered by
+    /// borrowing a known id.
+    #[test]
+    fn the_version_half_of_the_pair_is_load_bearing() {
+        let err =
+            admit_role_names_only_fireable_tools(&role_naming("retrieve", "9"), &OneFireableTool)
+                .expect_err("retrieve@9 is not registered even though retrieve@1 is");
+        assert!(err.contains("retrieve@9"), "got: {err}");
+    }
+
+    /// The gate is SCOPED to policy roles. Every other proposal shape passes it untouched
+    /// and meets its own enforcement later; widening it here would be a second, divergent
+    /// definition of admissibility.
+    #[test]
+    fn a_non_policy_proposal_passes_the_authority_gate_untouched() {
+        let tool = ControlProposal::RegisterTool(ToolProposal {
+            tool_name: "retrieve".into(),
+            tool_version: "1".into(),
+            idempotency_class: "Token".into(),
+            server_host: "api.example.com".into(),
+            ..ToolProposal::default()
+        });
+        assert!(admit_role_names_only_fireable_tools(&tool, &OneFireableTool).is_ok());
+    }
 
     /// A summary must never echo anything a proposal was reduced to avoid carrying.
     #[test]
