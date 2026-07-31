@@ -100,12 +100,10 @@ fn propose_blocking<B: InferenceBackend>(
     // `render_chat` only FORMATS the prompt through the model's OWN chat template (the
     // Gemma-4 per-arch fallback included); GENERATION is a separate `dispatch` — the exact
     // dispatch_model / judge-turn pattern. (Returning the formatted prompt would not be a plan.)
-    let Some(rendered) = backend.render_chat(model_id, PLANNER_SYSTEM, &user) else {
-        return rejected(
-            "the served model could not format the planner prompt (start `kx serve` with an \
-             inference or serve-engine build and a resolved model)",
-        );
-    };
+    // It is OPTIONAL by contract: `None` means "format it yourself", not "refuse" — refusing
+    // made ProposeWorkflow unreachable on any engine that supplies no template (Ollama).
+    let rendered =
+        crate::model_exec::render_chat_or_chatml(backend, model_id, PLANNER_SYSTEM, &user);
     // The planner's own output budget (`KX_SERVE_PLANNER_MAX_OUTPUT_TOKENS`), not a literal.
     // At the former hard-coded 512 a plan that also names per-step grants truncates mid-JSON
     // and decodes as "the model did not return a valid plan" — a budget failure wearing a
@@ -180,5 +178,113 @@ fn kind_str(kind: PlanStepKind) -> &'static str {
 fn rejected(reason: &str) -> WorkflowProposal {
     WorkflowProposal::Rejected {
         reason: reason.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::propose_blocking;
+    use kx_gateway_core::WorkflowProposal;
+    use kx_inference::{InferenceBackend, InferenceError, InferenceInput, InferenceOutput};
+    use kx_mote::{InferenceParams, ModelId};
+    use kx_warrant::{ExecutorClass, WarrantSpec};
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    /// A plan the vetted `kx-planner` path decodes and compiles: one palette role, no edges.
+    const GOLDEN_PLAN: &str = r#"{"plan":{"version":1,"steps":[{"role":"researcher","intent":"gather the source material"}],"edges":[]}}"#;
+
+    fn model() -> ModelId {
+        ModelId("test-model".into())
+    }
+
+    /// `renders` is the ONE variable: `true` is the llama.cpp shape (the GGUF's embedded
+    /// template), `false` the Ollama shape (no template — the trait default `None`). Both
+    /// arms return the SAME plan bytes, so any difference is attributable to templating.
+    struct StubBackend {
+        renders: bool,
+        reached: Mutex<bool>,
+    }
+
+    impl StubBackend {
+        fn new(renders: bool) -> Self {
+            Self {
+                renders,
+                reached: Mutex::new(false),
+            }
+        }
+        fn reached(&self) -> bool {
+            *self.reached.lock().expect("reached flag")
+        }
+    }
+
+    impl InferenceBackend for StubBackend {
+        fn dispatch(
+            &self,
+            model_id: &ModelId,
+            _input: &InferenceInput,
+            _params: &InferenceParams,
+            _warrant: &WarrantSpec,
+        ) -> Result<InferenceOutput, InferenceError> {
+            *self.reached.lock().expect("reached flag") = true;
+            Ok(InferenceOutput {
+                bytes: GOLDEN_PLAN.as_bytes().to_vec(),
+                output_tokens: 1,
+                backend_name: "test",
+                model_id: model_id.clone(),
+                elapsed: Duration::from_millis(1),
+            })
+        }
+        fn render_chat(&self, _model_id: &ModelId, system: &str, user: &str) -> Option<String> {
+            self.renders.then(|| format!("{system}\n{user}"))
+        }
+        fn supports(&self, _model_id: &ModelId) -> bool {
+            true
+        }
+        fn name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    /// The sibling of `control_nl_host`'s guard, for the SAME incident. This path is
+    /// documented as "generic over the backend so a stub can drive it in a unit test" and
+    /// had no unit test, so nothing observed that an engine without a chat template made
+    /// `ProposeWorkflow` refuse before generation — unreachable on Ollama exactly as NL
+    /// authoring and `DeriveApp` were.
+    ///
+    /// Both arms must REACH the model and produce the SAME plan: where the chat template
+    /// comes from is presentation, not admissibility.
+    #[test]
+    fn a_plan_is_proposed_whether_or_not_the_engine_renders_the_chat_template() {
+        let exec_class = ExecutorClass::Bwrap;
+        let (registry, recipes) =
+            crate::model_exec::build_authoring_role_catalog(&model(), exec_class);
+
+        for renders in [true, false] {
+            let backend = StubBackend::new(renders);
+            let outcome = propose_blocking(
+                &backend,
+                &model(),
+                exec_class,
+                registry.as_ref(),
+                recipes.as_ref(),
+                "summarise the quarterly filings",
+            );
+            assert!(
+                backend.reached(),
+                "renders={renders}: the model was never dispatched — this path refused \
+                 before generation, so no contract or prompt change could reach it"
+            );
+            match outcome {
+                WorkflowProposal::Proposed { steps, .. } => assert_eq!(
+                    steps.len(),
+                    1,
+                    "renders={renders}: the compiled plan must not depend on the template source"
+                ),
+                WorkflowProposal::Rejected { reason } => {
+                    panic!("renders={renders}: expected a proposal, got Rejected: {reason}")
+                }
+            }
+        }
     }
 }

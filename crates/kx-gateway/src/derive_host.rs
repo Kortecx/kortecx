@@ -261,13 +261,9 @@ fn derive_blocking<B: InferenceBackend>(
         ..InferenceParams::default()
     };
     let run = |system: &str, user: &str| -> Result<String, String> {
-        let Some(rendered) = backend.render_chat(model_id, system, user) else {
-            return Err(
-                "the served model could not format the design prompt (start `kx serve` \
-                        with an inference or serve-engine build and a resolved model)"
-                    .to_string(),
-            );
-        };
+        // `render_chat` is optional by contract: `None` means "format it yourself", not
+        // "refuse". Refusing made DeriveApp unreachable on any engine without a template.
+        let rendered = crate::model_exec::render_chat_or_chatml(backend, model_id, system, user);
         backend
             .dispatch(model_id, &InferenceInput::text(rendered), &params, &parent)
             .map(|out| String::from_utf8_lossy(&out.bytes).into_owned())
@@ -586,12 +582,26 @@ mod tests {
     /// where the design's capabilities are actually decided.
     struct ScriptedBackend {
         replies: Mutex<Vec<String>>,
+        /// Whether this engine supplies a chat template. The ONE variable separating the
+        /// llama.cpp shape (`Some`) from the Ollama shape (`None`, the trait default).
+        renders: bool,
     }
 
     impl ScriptedBackend {
         fn new(replies: &[&str]) -> Self {
             Self {
                 replies: Mutex::new(replies.iter().rev().map(|s| (*s).to_string()).collect()),
+                renders: true,
+            }
+        }
+
+        /// The Ollama shape: an engine that supplies NO chat template, so `render_chat`
+        /// yields the trait default `None`. Every other stub in this workspace implements
+        /// the method, which is why no test could fail for this reason.
+        fn without_chat_template(replies: &[&str]) -> Self {
+            Self {
+                replies: Mutex::new(replies.iter().rev().map(|s| (*s).to_string()).collect()),
+                renders: false,
             }
         }
     }
@@ -620,9 +630,10 @@ mod tests {
         }
 
         // The real path FORMATS through the model's own chat template; echoing is enough here
-        // (the formatting is not what this pipeline decides).
+        // (the formatting is not what this pipeline decides). `renders: false` reproduces an
+        // engine that supplies none, which the caller must handle by formatting it itself.
         fn render_chat(&self, _model_id: &ModelId, system: &str, user: &str) -> Option<String> {
-            Some(format!("{system}\n{user}"))
+            self.renders.then(|| format!("{system}\n{user}"))
         }
 
         fn supports(&self, _model_id: &ModelId) -> bool {
@@ -733,6 +744,45 @@ reports.\",\"steps\":[{\"role\":\"researcher\",\"intent\":\"Gather pricing\",\"t
 
     /// The end-to-end shape claim: a fan-out survives decode, compile AND the mapping to the
     /// wire, so two steps with no incoming edge really do reach the console as parallel.
+    /// The sibling of `control_nl_host`'s guard, for the SAME incident: an engine that
+    /// supplies no chat template made this path refuse before generation, so `DeriveApp`
+    /// was unreachable on Ollama exactly as NL authoring was. `render_chat` is optional by
+    /// contract — `None` means "format it yourself", which is what the ReAct turn always
+    /// did.
+    ///
+    /// The two arms differ in exactly ONE variable (whether the engine renders), return
+    /// the SAME reply bytes, and must produce the SAME design. A shared helper is not
+    /// enough on its own: this asserts THIS path actually uses it.
+    #[test]
+    fn a_design_is_derived_whether_or_not_the_engine_renders_the_chat_template() {
+        let templated = derived(run(&[FAN_OUT], &scheduled("scan the market"), &menu()));
+
+        let backend = ScriptedBackend::without_chat_template(&[FAN_OUT]);
+        let (registry, recipes) = catalog();
+        let untemplated = derive_blocking(
+            &backend,
+            &model(),
+            ExecutorClass::Bwrap,
+            &registry,
+            &recipes,
+            &menu(),
+            &scheduled("scan the market"),
+        );
+        let untemplated = match untemplated {
+            AppDerivation::Derived(a) => *a,
+            AppDerivation::Rejected { reason } => panic!(
+                "an engine without a chat template must still derive a design, got: {reason}"
+            ),
+        };
+
+        assert_eq!(
+            untemplated.steps.len(),
+            templated.steps.len(),
+            "the design must not depend on where the chat template came from"
+        );
+        assert_eq!(untemplated.edges, templated.edges);
+    }
+
     #[test]
     fn a_parallel_design_survives_the_whole_pipeline() {
         let app = derived(run(&[FAN_OUT], &scheduled("scan the market"), &menu()));

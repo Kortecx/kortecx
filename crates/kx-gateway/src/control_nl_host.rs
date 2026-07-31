@@ -125,12 +125,11 @@ fn propose_blocking<B: InferenceBackend>(
 
     let user = control_user_message(&input.goal, steer);
     let parent = shaper_warrant(model_id, exec_class);
-    let Some(rendered) = backend.render_chat(model_id, CONTROL_SYSTEM, &user) else {
-        return rejected(
-            "the served model could not format the control prompt (start `kx serve` with an \
-             inference or serve-engine build and a resolved model)",
-        );
-    };
+    // An engine that supplies no chat template is NOT an engine that cannot answer:
+    // `render_chat` is optional by contract and `None` means "format it yourself".
+    // Refusing here made the entire authoring surface unreachable on Ollama.
+    let rendered =
+        crate::model_exec::render_chat_or_chatml(backend, model_id, CONTROL_SYSTEM, &user);
     let params = InferenceParams {
         max_output_tokens: crate::env_caps::planner_max_output_tokens()
             .min(parent.model_route.max_output_tokens),
@@ -299,12 +298,20 @@ fn rejected(reason: &str) -> ControlOutcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{admit_role_names_only_fireable_tools, admit_through_the_real_enforcer, summarize};
-    use kx_gateway_core::{
-        ControlProposal, PolicyRoleRow, PolicyRoleToolWire, RegisteredToolsView, ScriptProposal,
-        SecretProposal, ToolProposal,
+    use super::{
+        admit_role_names_only_fireable_tools, admit_through_the_real_enforcer, propose_blocking,
+        summarize,
     };
+    use kx_gateway_core::{
+        ControlNlInput, ControlOutcome, ControlProposal, PolicyRoleRow, PolicyRoleToolWire,
+        RegisteredToolsView, ScriptProposal, SecretProposal, ToolProposal,
+    };
+    use kx_inference::{InferenceBackend, InferenceError, InferenceInput, InferenceOutput};
+    use kx_mote::{InferenceParams, ModelId};
+    use kx_warrant::{ExecutorClass, WarrantSpec};
     use std::collections::BTreeSet;
+    use std::sync::Mutex;
+    use std::time::Duration;
 
     /// A serve on which exactly `retrieve@1` is fireable.
     struct OneFireableTool;
@@ -313,6 +320,152 @@ mod tests {
             [("retrieve".to_string(), "1".to_string())]
                 .into_iter()
                 .collect()
+        }
+    }
+
+    fn model() -> ModelId {
+        ModelId("test-model".into())
+    }
+
+    /// A control form the REAL decoder accepts and every gate admits on
+    /// [`OneFireableTool`] — byte-identical in shape to the frozen golden in
+    /// `tests/nlauthor_bench_drive.rs`, which is output the served Gemma actually produced.
+    const GOLDEN_POLICY: &str = r#"{"control":{"domain":"policy","name":"reporting-only","fields":{"description":"narrows to the retrieve tool version 1","tools":["retrieve@1"]}}}"#;
+
+    /// A backend implementing ONLY the trait's required methods, so `render_chat` is the
+    /// trait DEFAULT. It pins the premise the guard below rests on: an engine may
+    /// legitimately not implement the method, and `kx_ollama::OllamaBackend` does not.
+    struct DefaultRenderBackend;
+
+    impl InferenceBackend for DefaultRenderBackend {
+        fn dispatch(
+            &self,
+            model_id: &ModelId,
+            _input: &InferenceInput,
+            _params: &InferenceParams,
+            _warrant: &WarrantSpec,
+        ) -> Result<InferenceOutput, InferenceError> {
+            Ok(InferenceOutput {
+                bytes: Vec::new(),
+                output_tokens: 0,
+                backend_name: "test",
+                model_id: model_id.clone(),
+                elapsed: Duration::from_millis(1),
+            })
+        }
+        fn supports(&self, _model_id: &ModelId) -> bool {
+            true
+        }
+        fn name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    /// The A/B backend. `renders` is the ONE variable: `true` applies a chat template
+    /// (llama.cpp's shape, via `LlamaInferenceBackend::render_chat`), `false` yields the
+    /// trait default `None` (Ollama's shape — it never implements the method). Both arms
+    /// return the SAME body, so any difference in outcome is attributable to templating
+    /// alone. `reached` records whether the model was called at all.
+    struct StubBackend {
+        renders: bool,
+        reached: Mutex<bool>,
+    }
+
+    impl StubBackend {
+        fn new(renders: bool) -> Self {
+            Self {
+                renders,
+                reached: Mutex::new(false),
+            }
+        }
+        fn reached(&self) -> bool {
+            *self.reached.lock().expect("reached flag")
+        }
+    }
+
+    impl InferenceBackend for StubBackend {
+        fn dispatch(
+            &self,
+            model_id: &ModelId,
+            _input: &InferenceInput,
+            _params: &InferenceParams,
+            _warrant: &WarrantSpec,
+        ) -> Result<InferenceOutput, InferenceError> {
+            *self.reached.lock().expect("reached flag") = true;
+            Ok(InferenceOutput {
+                bytes: GOLDEN_POLICY.as_bytes().to_vec(),
+                output_tokens: 1,
+                backend_name: "test",
+                model_id: model_id.clone(),
+                elapsed: Duration::from_millis(1),
+            })
+        }
+        fn render_chat(&self, _model_id: &ModelId, system: &str, user: &str) -> Option<String> {
+            self.renders.then(|| format!("{system}\n{user}"))
+        }
+        fn supports(&self, _model_id: &ModelId) -> bool {
+            true
+        }
+        fn name(&self) -> &'static str {
+            "test"
+        }
+    }
+
+    /// The premise, asserted rather than assumed: `render_chat` is OPTIONAL, and a backend
+    /// that does not implement it returns `None`. If this ever stops being true the guard
+    /// below is testing a condition that can no longer arise, and should be re-read.
+    #[test]
+    fn render_chat_is_optional_and_defaults_to_none() {
+        assert!(
+            DefaultRenderBackend
+                .render_chat(&model(), "system", "user")
+                .is_none(),
+            "the trait default must be None — the authoring paths' fallback exists for it"
+        );
+    }
+
+    /// **The incident.** On a serve whose engine does not implement `render_chat`, ALL FIVE
+    /// `nlauthor` tasks came back `Rejected` with "the served model could not format the
+    /// control prompt" — the model was never called. Measured on `gemma3:12b` via Ollama at
+    /// suite digest `69a89582cbdd9854`: 0 of 5 accepting tasks reached the model, while
+    /// `echo-roundtrip` scored 1000 in the same run, so the serve and the tool loop were
+    /// healthy and only this path refused.
+    ///
+    /// The trait documents `None` as *"the caller should format the prompt itself (e.g.
+    /// hand-rolled ChatML)"*. The ReAct turn does exactly that (`chatml_with`); this path
+    /// treated the same `None` as fatal. Same value, opposite treatment.
+    ///
+    /// Both arms must REACH the model — the only difference between them is where the chat
+    /// template comes from, which is presentation, not admissibility. Every other stub in
+    /// this workspace implements `render_chat`, which is why no existing test could fail
+    /// for this reason.
+    #[test]
+    fn the_model_is_reached_whether_or_not_the_engine_renders_the_chat_template() {
+        for renders in [true, false] {
+            let backend = StubBackend::new(renders);
+            let outcome = propose_blocking(
+                &backend,
+                &model(),
+                ExecutorClass::Bwrap,
+                &OneFireableTool,
+                &ControlNlInput {
+                    goal: "Create a durable role named reporting-only that narrows tool \
+                           authority to just the retrieve tool at version 1."
+                        .into(),
+                    domain: String::new(),
+                },
+            );
+            assert!(
+                backend.reached(),
+                "renders={renders}: the model was never dispatched — the path refused before \
+                 generation, so no grammar, prompt or contract change could ever affect it"
+            );
+            match outcome {
+                ControlOutcome::Proposed { .. } => {}
+                ControlOutcome::Rejected { reason } => {
+                    panic!("renders={renders}: expected a proposal, got Rejected: {reason}")
+                }
+            }
         }
     }
 
