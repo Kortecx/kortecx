@@ -6,7 +6,7 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 680 KiB raw (696,320 B — the value enforced below; keep this line in
+ * Budget: 685 KiB raw (701,440 B — the value enforced below; keep this line in
  * lock-step with it, and with the step name in ci.yml, or the doc becomes the
  * third place that disagrees). Override with KX_UI_EAGER_BUDGET_BYTES for
  * emergencies — a deliberate, reviewed override, never a silent default bump.
@@ -91,7 +91,7 @@
  *     old ceiling); bumped to the next KiB boundary above the measured value. Local
  *     toolchain measures a few KiB heavier than CI (see the NOTE above) — the delta is
  *     the trustworthy half.
- *   - 678 KiB → 680 KiB (2026-07-31, the NL authoring surface): the eager SDK
+ *   - 678 KiB → 685 KiB (2026-07-31, the NL authoring surface): the eager SDK
  *     client gains proposeControlAction / describeControlSurface / putPolicyRole /
  *     listPolicyRoles / deletePolicyRole / assignPolicyRole plus the regenerated
  *     proto descriptor for their messages — including `ControlPreview`, a oneof
@@ -100,13 +100,30 @@
  *     up front, so this rides eager `common.js` like every entry above. Plus the
  *     `use-live-invalidation` hook mounted at AppShell (no new route, no new
  *     screen — it is a subscription, not a page).
- *     Measured A/B with the SDK dist held constant, both halves built by the same
- *     local toolchain in the same session: origin/main 694,167 B → this branch
- *     695,680 B (+1,513 B eager). The three vendor chunks are BYTE-IDENTICAL
- *     across both builds (same content hashes), so the whole delta is in the
- *     entry chunk — 419,532 B → 421,045 B — which is what makes this delta
- *     trustworthy rather than a toolchain artefact. Bumped to the next KiB
- *     boundary above the measured value.
+ *     Measured A/B, both arms built by CI's OWN procedure in the same session —
+ *     `npm ci && npm run build` in bindings/typescript FIRST, then a clean
+ *     `npm ci && npm run build` in ui — because the UI takes the SDK's built dist
+ *     via a file dependency and a stale dist silently changes the number:
+ *       origin/main 694,167 B → this branch 701,397 B  (+7,230 B eager, 10‰)
+ *     The three vendor chunks are BYTE-IDENTICAL across both arms (same sizes AND
+ *     the same content hashes: vendor-react-CCeFEH2b / vendor-router-kxFVRzc4 /
+ *     vendor-query-D83rVUso), so the entire delta is in the entry chunk —
+ *     419,532 B → 426,762 B — which is what makes it a real cost rather than a
+ *     toolchain artefact. Bumped to the next KiB boundary above the measured
+ *     value: 685 KiB = 701,440 B, 43 B of headroom.
+ *
+ *     THE FIRST ATTEMPT AT THIS ENTRY WAS WRONG, and how it was wrong is the
+ *     reason the procedure above is spelled out. It recorded 695,680 B and bumped
+ *     to 680 KiB — a number measured against a STALE SDK dist, compared against a
+ *     main figure QUOTED from the entry above rather than rebuilt. Neither arm was
+ *     built the same way, so the "+1,513 B" was not a delta at all. CI measured
+ *     701,397 B and failed the gate. Rebuilt honestly, main reproduces 694,167 B
+ *     exactly — the number the previous entry recorded — and the branch reproduces
+ *     CI's 701,397 B exactly. An A/B is only an A/B when both arms are built by
+ *     the same procedure; quoting one side from history is not measuring it.
+ *
+ *     Note also that 680 KiB was never viable: main ALONE was 694,167 B against a
+ *     696,320 B ceiling — 2,153 B of headroom before this branch added anything.
  *
  * Exit 1 over budget. The printed table doubles as the measurement evidence blob.
  */
@@ -126,7 +143,7 @@ const DIST = join(UI_ROOT, "dist");
 // `deriveApp` mapping additions, and the SDK client is eager on every route. Adding a
 // per-step contract axis buys that; bumping here — in the PR that spends it — is the same move
 // #375, #363, #362, #358 and #304 each made.
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 696_320);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 701_440);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {
