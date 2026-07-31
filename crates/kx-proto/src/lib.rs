@@ -186,3 +186,216 @@ mod control_index_tests {
         );
     }
 }
+
+/// The descriptor's SECOND payoff: proving what a message CANNOT carry.
+///
+/// The generated `GatewayRpc` index proves every RPC is classified. This module
+/// uses the same `FileDescriptorSet` to prove a structural property of the NL
+/// surface — that no credential-shaped or execution-shaped field is reachable
+/// from `ControlPreview`, transitively, at any depth.
+///
+/// **Why this cannot be a code review.** `ControlPreview` is a `oneof` over the
+/// REAL request messages, so its reachable set grows whenever any of those
+/// messages grows a field — in a diff that need not mention `ControlPreview` at
+/// all. A reviewer reading the `ControlPreview` hunk would see nothing. The walk
+/// sees it, because it re-derives the reachable set from the schema every build.
+///
+/// **Why the descriptor bytes are `#[cfg(test)]`.** `build.rs` argues that the
+/// `.fds` never reaches a shipped rlib, and that argument is load-bearing for
+/// the reproducibility gate. `include_bytes!` under `cfg(test)` keeps it true.
+#[cfg(test)]
+mod control_preview_reachability {
+    use prost::Message as _;
+    use prost_types::{field_descriptor_proto::Type, DescriptorProto, FileDescriptorSet};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// The descriptor the build script emitted for THIS build.
+    const FDS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kortecx.fds"));
+
+    /// Field names that must never be reachable from a proposal.
+    ///
+    /// Two families, one rule. `value` / `secret` / `token` / `password` are
+    /// CREDENTIAL-shaped: a proposal is displayed, logged and forwarded, so a
+    /// credential reachable from one leaks by design rather than by accident.
+    /// `argv` / `env` are EXECUTION-shaped: both are fixed at registration by an
+    /// operator and documented "NEVER model-controlled", so a proposal that could
+    /// express them would hand the model the one axis it must not have.
+    ///
+    /// Matching is EXACT, not substring, and deliberately: `auth_secret_ref` and
+    /// `credential_ref` name a secret without carrying one, and a substring rule
+    /// would flag exactly the fields whose whole purpose is to be a reference.
+    /// Exactness is why [`the_preview_arms_are_pinned`] exists beside this — an
+    /// exact list cannot anticipate a future `api_key`, so a NEW ARM is what the
+    /// suite forces a human to look at.
+    const FORBIDDEN: &[&str] = &["value", "secret", "token", "password", "argv", "env"];
+
+    /// The arms `ControlPreview` is allowed to have.
+    ///
+    /// Pinned by name so adding one is a deliberate edit to this list, at which
+    /// point the walk below re-derives that arm's reachable set. This is the
+    /// half that survives the exact-match limitation above.
+    const EXPECTED_ARMS: &[&str] = &[
+        "kortecx.v1.AssignPolicyRoleRequest",
+        "kortecx.v1.ProposedScript",
+        "kortecx.v1.ProposedSecretName",
+        "kortecx.v1.PutPolicyRoleRequest",
+        "kortecx.v1.RegisterMcpServerRequest",
+        "kortecx.v1.RegisterToolRequest",
+        "kortecx.v1.RegisterTriggerRequest",
+        "kortecx.v1.SaveWorkflowRequest",
+    ];
+
+    /// Every `kortecx.v1` message in the descriptor, by fully-qualified name.
+    fn messages() -> BTreeMap<String, DescriptorProto> {
+        let set = FileDescriptorSet::decode(FDS).expect("the build script emitted a valid .fds");
+        let mut out = BTreeMap::new();
+        for file in &set.file {
+            let pkg = file.package();
+            for m in &file.message_type {
+                collect(pkg, m, &mut out);
+            }
+        }
+        out
+    }
+
+    /// Add `m` and every nested message under it.
+    fn collect(prefix: &str, m: &DescriptorProto, out: &mut BTreeMap<String, DescriptorProto>) {
+        let full = format!("{prefix}.{}", m.name());
+        for nested in &m.nested_type {
+            collect(&full, nested, out);
+        }
+        out.insert(full, m.clone());
+    }
+
+    /// `ControlPreview`'s arms, as fully-qualified message names.
+    fn preview_arms(all: &BTreeMap<String, DescriptorProto>) -> BTreeSet<String> {
+        let preview = all
+            .get("kortecx.v1.ControlPreview")
+            .expect("ControlPreview is on the wire");
+        preview
+            .field
+            .iter()
+            .filter(|f| f.r#type() == Type::Message)
+            .map(|f| f.type_name().trim_start_matches('.').to_string())
+            .collect()
+    }
+
+    /// No field named any of [`FORBIDDEN`] is reachable from `ControlPreview`.
+    ///
+    /// This is what makes "secrets ride a NAME" and "script argv/env are proposed
+    /// EMPTY" properties of the SCHEMA rather than rules the proposer has to keep
+    /// remembering. A proposal cannot carry what the wire cannot express.
+    #[test]
+    fn no_credential_or_argv_field_is_reachable_from_control_preview() {
+        let all = messages();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut queue: Vec<String> = preview_arms(&all).into_iter().collect();
+        // `(message, field)` pairs, so the failure NAMES the path rather than
+        // just asserting a boolean.
+        let mut offenders: Vec<String> = Vec::new();
+
+        while let Some(name) = queue.pop() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let Some(m) = all.get(&name) else { continue };
+            for f in &m.field {
+                if FORBIDDEN.contains(&f.name()) {
+                    offenders.push(format!("{name}.{}", f.name()));
+                }
+                if f.r#type() == Type::Message {
+                    queue.push(f.type_name().trim_start_matches('.').to_string());
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "these fields are reachable from ControlPreview and must not be — a proposal is \
+             displayed, logged and forwarded, so anything reachable from one is disclosed by \
+             design: {offenders:?}\n\n\
+             If the field is credential-shaped, give the domain a REDUCED proposal message (see \
+             ProposedSecretName). If it is execution-shaped (argv/env), the same: the point is \
+             that the wire cannot express it, not that the proposer declines to fill it in."
+        );
+
+        // Anti-vacuity: a walk that reached nothing would pass this trivially.
+        // ProposedScript is the arm the reduction exists for, so its presence is
+        // the honest floor.
+        assert!(
+            seen.contains("kortecx.v1.ProposedScript"),
+            "the walk did not reach ProposedScript — it is not actually walking"
+        );
+        assert!(
+            seen.len() >= EXPECTED_ARMS.len(),
+            "the walk reached {} messages, fewer than the {} arms",
+            seen.len(),
+            EXPECTED_ARMS.len()
+        );
+    }
+
+    /// `ControlPreview`'s arm list is exactly [`EXPECTED_ARMS`].
+    ///
+    /// The exact-match rule above cannot anticipate a field named `api_key`. This
+    /// can: a new arm fails here first, which puts a human in front of the new
+    /// message's fields before it ever ships.
+    #[test]
+    fn the_preview_arms_are_pinned() {
+        let arms = preview_arms(&messages());
+        let expected: BTreeSet<String> = EXPECTED_ARMS.iter().map(|s| (*s).to_string()).collect();
+        assert_eq!(
+            arms,
+            expected,
+            "ControlPreview's arms changed. Added: {:?}; removed: {:?}. \
+             Update EXPECTED_ARMS *after* checking the new message's fields — this list is the \
+             review trigger, not a formality.",
+            arms.difference(&expected).collect::<Vec<_>>(),
+            expected.difference(&arms).collect::<Vec<_>>(),
+        );
+    }
+
+    /// The two reduced arms are genuinely reduced: their un-reduced twins DO
+    /// carry the forbidden fields.
+    ///
+    /// Without this, the walk could pass because the reduction was unnecessary.
+    /// It asserts the reduction is load-bearing — `PutSecretRequest` really has a
+    /// `value`, `RegisterScriptRequest` really has `argv` and `env` — so the
+    /// choice to exclude them from the preview is doing work.
+    #[test]
+    fn the_unreduced_twins_are_why_the_reduction_exists() {
+        let all = messages();
+        let field_names = |msg: &str| -> BTreeSet<String> {
+            all.get(msg)
+                .unwrap_or_else(|| panic!("{msg} is on the wire"))
+                .field
+                .iter()
+                .map(|f| f.name().to_string())
+                .collect()
+        };
+
+        let secret = field_names("kortecx.v1.PutSecretRequest");
+        assert!(
+            secret.contains("value"),
+            "PutSecretRequest lost its `value` field — if the real request no longer carries a \
+             value, ProposedSecretName is dead weight and this whole reduction should be revisited"
+        );
+
+        let script = field_names("kortecx.v1.RegisterScriptRequest");
+        assert!(
+            script.contains("argv") && script.contains("env"),
+            "RegisterScriptRequest lost argv/env — same reasoning as above for ProposedScript"
+        );
+
+        // And the reduced twins do NOT carry them.
+        let proposed_secret = field_names("kortecx.v1.ProposedSecretName");
+        assert!(
+            !proposed_secret.contains("value"),
+            "ProposedSecretName grew a `value` — that is the one field it exists to not have"
+        );
+        let proposed_script = field_names("kortecx.v1.ProposedScript");
+        assert!(
+            !proposed_script.contains("argv") && !proposed_script.contains("env"),
+            "ProposedScript grew argv/env — that is what it exists to not have"
+        );
+    }
+}

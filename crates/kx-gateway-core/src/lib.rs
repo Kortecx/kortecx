@@ -53,6 +53,7 @@ mod apps_view;
 mod branches_view;
 mod bundles_view;
 mod capture_view;
+mod control_nl;
 pub mod control_surface;
 mod datasets;
 mod error;
@@ -87,6 +88,7 @@ mod model_pull;
 mod models_view;
 mod mote_def_view;
 mod mote_detail;
+mod policy_admin;
 mod propose;
 mod react;
 mod reader;
@@ -166,6 +168,10 @@ pub use workflows_view::{
 // tailer.
 pub use active_model::ActiveModelControl;
 pub use approval_admin::{ApprovalAdmin, ApprovalAdminError, PendingApprovalRow, RunCostRow};
+pub use control_nl::{
+    ConnectorProposal, ControlNlInput, ControlOutcome, ControlProposal, ControlProposer,
+    ScriptProposal, SecretProposal, ToolProposal, TriggerProposal, WorkflowSaveProposal,
+};
 pub use events::{
     check_run_ownership, frames_for_range, global_frames_for_range, seed_global_cursor,
     GlobalCursor,
@@ -180,6 +186,7 @@ pub use model_pull::{ModelPuller, PullAdmission, PullPhase, PullProgress, PullSo
 pub use models_view::{ModelCatalogView, ModelSummaryEntry};
 pub use mote_def_view::MoteDefView;
 pub use mote_detail::{MAX_CONFIG_ENTRIES, MAX_CONFIG_VALUE_BYTES, MAX_PROMPT_BYTES};
+pub use policy_admin::{PolicyAdmin, PolicyAdminError, PolicyRoleRow, PolicyRoleToolWire};
 pub use reader::{ContentReader, JournalReader, ReadOnly};
 pub use run_inputs_view::{RunInputsEntry, RunInputsRecord, RunInputsStore};
 pub use script_admin::{

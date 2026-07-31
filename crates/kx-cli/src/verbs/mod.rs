@@ -28,6 +28,7 @@ pub mod migrate;
 pub mod models;
 pub mod mote;
 pub mod new;
+pub mod policy;
 pub mod projection;
 pub mod react;
 pub mod recipe;

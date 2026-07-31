@@ -4,6 +4,33 @@ All notable changes to kortecx are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). kortecx is in early
 development; interfaces may change before 1.0 — pin a commit if you build on it.
 
+### Added
+
+- **Natural-language authoring across every authoring domain, and a durable
+  Policy/Role registry.** `ProposeControlAction` turns one sentence into the
+  EXACT typed request the runtime would issue, and returns it without writing
+  anything; a human approves, and the client calls the ordinary mutating RPC with
+  the bytes it was shown. There is no second approval mechanism and no
+  re-derivation step between what you saw and what runs.
+  `DescribeControlSurface` projects the generated ControlSurface so a client can
+  render what is authorable at all.
+
+  Two preview arms are deliberately REDUCED rather than being the real request
+  message: secrets ride `ProposedSecretName` (a value must never appear on a
+  response type) and scripts ride `ProposedScript` (argv and env are fixed by an
+  operator and are never model-controlled). Because the wire cannot express those
+  fields, a forwarded request necessarily has them empty — a property of the
+  schema rather than a rule the proposer has to keep applying, and one a
+  descriptor walk over this crate's own `FileDescriptorSet` asserts on every
+  build.
+
+  `kx policy put | list | delete | assign` manages durable roles. **A role
+  NARROWS tool authority and never grants it**: effective authority is the
+  intersection of every present leg, so assigning a role can only take capability
+  away. A party with no role assigned resolves exactly as it did before the
+  registry existed. `kx-proto` 0.15.0 → 0.16.0 (wire-additive; the service trait
+  gains six methods, so breaking-in-Rust and a minor bump).
+
 ### Changed
 
 - `tools.db` now opens through the sidecar upgrade policy as `UserAuthored`. It was

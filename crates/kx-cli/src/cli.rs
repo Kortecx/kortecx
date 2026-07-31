@@ -93,6 +93,7 @@ usage: kx <command> [args]
     kx eval run [--tolerance <per_mille>] | score <INSTANCE_ID>   (RC1/D172 — golden gate + per-run quality)
     kx workflow save <handle> <file> [--draft] | list | get <handle> [--output <f>] | run <handle> [--args <json>] [--wait] [--require-approval] | delete <handle> | propose <goal>   (the durable Workflow entity; `propose` PREVIEWS only)
     kx scripts register --name <N> --version <V> --interpreter <I> --source <f> [--argv <a>] [--env K=V] [--mount <ro|rw>:<path>] [--net-host <h>] | list | get <N> <V> | deregister <N> <V>   (sandboxed; argv/env fixed at registration)
+    kx policy put <NAME> [--description <D>] [--tool <id@ver>]... | list | delete <NAME> | assign <PARTY> <ROLE|--none>   (durable roles; a role NARROWS authority, never grants)
     kx migrate --journal <path> [--out <path>] [--dry-run] [--json]
                                                  (bring a journal written by an older kortecx up to this binary's schema, digest-verified)
 
@@ -197,6 +198,9 @@ pub enum Cli {
     Workflow(verbs::workflow::WorkflowArgs),
     /// `scripts` — the script registry: register / list / get / deregister.
     Scripts(verbs::scripts::ScriptsArgs),
+    /// `policy` — the durable Policy/Role registry: put / list / delete /
+    /// assign. A role NARROWS tool authority by intersection; it never grants.
+    Policy(verbs::policy::PolicyArgs),
     /// `migrate` — offline journal schema migration (local; no gateway).
     Migrate(verbs::migrate::MigrateArgs),
 }
@@ -260,6 +264,7 @@ pub const VERBS: &[&str] = &[
     "migrate",
     "workflow",
     "scripts",
+    "policy",
 ];
 
 impl Cli {
@@ -337,6 +342,7 @@ impl Cli {
             Some("eval") => Ok(Cli::Eval(verbs::eval::parse(args)?)),
             Some("workflow") => Ok(Cli::Workflow(verbs::workflow::parse(args)?)),
             Some("scripts") => Ok(Cli::Scripts(verbs::scripts::parse(args)?)),
+            Some("policy") => Ok(Cli::Policy(verbs::policy::parse(args)?)),
             Some("migrate") => Ok(Cli::Migrate(verbs::migrate::parse(args)?)),
             // Reachable only if a verb is in VERBS with no dispatch arm — i.e.
             // the two disagree. The unit test below makes that unreachable, but
@@ -430,6 +436,7 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Eval(a) => verbs::eval::execute(a).await,
         Cli::Workflow(a) => verbs::workflow::execute(a).await,
         Cli::Scripts(a) => verbs::scripts::execute(a).await,
+        Cli::Policy(a) => verbs::policy::execute(a).await,
         Cli::Migrate(a) => verbs::migrate::execute(&a),
     }
 }
@@ -1152,6 +1159,30 @@ any dispatch whose requirement exceeds the granting warrant.
 environment is cleared before they are set. A model calling a script controls
 exactly one thing: the input string on stdin.
 ".into(),
+        "policy" => "\
+kx policy put <NAME> [--description <D>] [--tool <tool_id@tool_version>]...
+kx policy list [--limit N]
+kx policy delete <NAME>
+kx policy assign <PARTY> <ROLE>
+kx policy assign <PARTY> --none
+
+A role NARROWS tool authority; it never grants. --tool names a tool the role
+narrows TO, and the effective authority is the INTERSECTION of every present
+leg, so assigning a role can only take capability away. Naming a tool the party
+could not fire anyway simply drops out of the intersection.
+
+That is what makes this surface safe to expose: under a granting model, anyone
+who could write a role could write themselves a capability. Under intersection,
+the worst a role can do is refuse work.
+
+An EMPTY role and NO role are different. `put <NAME>` with no --tool narrows to
+NOTHING, and a party assigned it can fire nothing. A party with no assignment is
+un-narrowed and behaves exactly as it did before any registry existed.
+
+Deleting a role WIDENS every party still assigned to it, back to un-narrowed
+authority. Refusing the delete would make a role permanent the moment it was
+used, so the delete is allowed — but it is a widening, and it says so.
+".into(),
         "migrate" => "\
 kx migrate --journal <path> [--out <path>] [--dry-run] [--json]
   Bring a journal written by an OLDER kortecx up to this binary's schema version.
@@ -1431,7 +1462,7 @@ mod tests {
             listed.difference(&arms).collect::<Vec<_>>(),
         );
         assert!(
-            listed.len() >= 42,
+            listed.len() >= 44,
             "expected the full verb table, got {}",
             listed.len()
         );
