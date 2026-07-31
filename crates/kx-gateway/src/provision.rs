@@ -4162,6 +4162,56 @@ pub(crate) fn party_tool_authority(
     }
 }
 
+/// Combine two independent per-tool narrowing legs into one.
+///
+/// There are two legs today: the grant-ledger leg ([`party_tool_authority`]) and
+/// the durable Policy/Role leg (`policies.db`). Each independently answers "does
+/// this party express a per-tool narrowing, and if so which tools?" — and each
+/// answers `None` for "expresses none".
+///
+/// # The four arms, and why each is the only defensible answer
+///
+/// | a | b | result |
+/// |---|---|---|
+/// | `Some(x)` | `Some(y)` | `Some(x ∩ y)` |
+/// | `Some(x)` | `None` | `Some(x)` |
+/// | `None` | `Some(y)` | `Some(y)` |
+/// | `None` | `None` | `None` |
+///
+/// **INTERSECT, NEVER UNION.** A union would let adding a second leg WIDEN a
+/// party past a ceiling the first leg already set — the exact inversion of what
+/// an authority mechanism is for, and it would make the policy registry an
+/// authority-minting surface: write yourself a role, gain a tool. Under
+/// intersection the worst a hostile role can do is refuse work.
+///
+/// **The one-sided arms apply the present leg ALONE — they do not fall through to
+/// unbounded.** "Only one leg expressed a narrowing" means one narrowing is in
+/// force, not none.
+///
+/// **`(None, None)` is `None`, not `Some(∅)`.** This is the arm that decides
+/// whether upgrading changes behaviour on every running install, and it is the
+/// one worth being loud about. `Some(∅)` would fail CLOSED TO NOTHING: today's
+/// seed role grants no tools to anyone, so `party_tool_authority` returns `None`
+/// on every existing deployment, and `Some(∅)` would intersect every ceiling
+/// down to empty and brick every serve. `None` preserves the documented
+/// "the per-party gate is 'can author at all'" posture verbatim — see
+/// [`party_tool_authority`]'s own note on that deliberate deviation from strict
+/// fail-closed set algebra.
+///
+/// The result is a SUBSET of every present input, which is the property a
+/// proptest pins below.
+pub(crate) fn narrow_authority(
+    a: Option<BTreeSet<(String, String)>>,
+    b: Option<BTreeSet<(String, String)>>,
+) -> Option<BTreeSet<(String, String)>> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.intersection(&y).cloned().collect()),
+        (Some(x), None) => Some(x),
+        (None, Some(y)) => Some(y),
+        (None, None) => None,
+    }
+}
+
 /// Intersect a multi-skill tool WISH into the set actually grantable on
 /// the App's entry agentic step — `wish ∩ caller-allowlist ∩ fireable ∩ registry
 /// ∩ union-compat` — returning ONLY the additions to fold into the step's
@@ -4450,6 +4500,134 @@ fn demo_warrant(exec_class: ExecutorClass) -> WarrantSpec {
         environment_ref: Some(ContentRef::from_bytes([8u8; 32])),
         executor_class: exec_class,
         ..Default::default()
+    }
+}
+
+/// Properties of [`narrow_authority`] — the combinator that decides whether the
+/// policy registry can ever WIDEN a party's authority.
+///
+/// In its own module rather than folded into the big `tests` block below: this is
+/// a security property with a proptest, and burying it in a 3,000-line test module
+/// is how it stops being read. `narrow_authority` is `pub(crate)`, so these must
+/// live in-crate.
+#[cfg(test)]
+mod narrowing_properties {
+    use super::narrow_authority;
+    use proptest::prelude::*;
+    use std::collections::BTreeSet;
+
+    type Tools = BTreeSet<(String, String)>;
+
+    fn set(items: &[(&str, &str)]) -> Tools {
+        items
+            .iter()
+            .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
+            .collect()
+    }
+
+    /// The compatibility arm, stated as its own test because it is the one that
+    /// decides whether upgrading changes behaviour on every running install.
+    ///
+    /// `(None, None)` MUST be `None`, never `Some(∅)`. Today's seed role grants no
+    /// tools to anyone, so the grant-ledger leg is `None` on every existing
+    /// deployment; `Some(∅)` would intersect every ceiling down to empty and brick
+    /// every serve on upgrade.
+    #[test]
+    fn no_leg_expressing_a_narrowing_is_byte_identical_to_today() {
+        assert_eq!(narrow_authority(None, None), None);
+        assert_ne!(
+            narrow_authority(None, None),
+            Some(Tools::new()),
+            "Some(empty) would fail CLOSED TO NOTHING and brick every existing serve"
+        );
+    }
+
+    /// One leg present applies ALONE — it does not fall through to unbounded.
+    #[test]
+    fn a_single_leg_applies_by_itself() {
+        let a = set(&[("fs.read", "1")]);
+        assert_eq!(narrow_authority(Some(a.clone()), None), Some(a.clone()));
+        assert_eq!(narrow_authority(None, Some(a.clone())), Some(a));
+    }
+
+    /// Both legs present INTERSECT.
+    #[test]
+    fn two_legs_intersect_rather_than_union() {
+        let a = set(&[("fs.read", "1"), ("http.get", "2")]);
+        let b = set(&[("http.get", "2"), ("shell.run", "3")]);
+        let got = narrow_authority(Some(a), Some(b)).unwrap();
+        assert_eq!(got, set(&[("http.get", "2")]));
+        assert!(
+            !got.contains(&("shell.run".to_string(), "3".to_string())),
+            "a union would hand the party a tool the first leg excluded — the exact \
+             inversion of what an authority mechanism is for"
+        );
+    }
+
+    /// Disjoint legs narrow to NOTHING, and that is correct: two narrowings that
+    /// agree on no tool authorize no tool.
+    #[test]
+    fn disjoint_legs_narrow_to_nothing() {
+        let got = narrow_authority(Some(set(&[("a", "1")])), Some(set(&[("b", "2")])));
+        assert_eq!(got, Some(Tools::new()));
+    }
+
+    fn arb_tools() -> impl Strategy<Value = Tools> {
+        proptest::collection::btree_set(("[a-c]{1,2}", "[1-3]"), 0..6)
+    }
+
+    fn arb_leg() -> impl Strategy<Value = Option<Tools>> {
+        proptest::option::of(arb_tools())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
+
+        /// THE load-bearing property: the result is a SUBSET of every leg that
+        /// expressed a narrowing.
+        ///
+        /// This is what "intersect, never union" means operationally, and it is
+        /// stated over arbitrary inputs rather than the four hand-picked cases
+        /// above — a union bug that only showed on a particular overlap would
+        /// pass the examples and fail here.
+        #[test]
+        fn the_result_is_a_subset_of_every_present_leg(a in arb_leg(), b in arb_leg()) {
+            let got = narrow_authority(a.clone(), b.clone());
+            match &got {
+                None => {
+                    // Only legal when NEITHER leg narrowed. If either did, dropping
+                    // to `None` would be a widening to unbounded.
+                    prop_assert!(a.is_none() && b.is_none());
+                }
+                Some(result) => {
+                    if let Some(a) = &a {
+                        prop_assert!(result.is_subset(a), "result escaped leg a");
+                    }
+                    if let Some(b) = &b {
+                        prop_assert!(result.is_subset(b), "result escaped leg b");
+                    }
+                    // At least one leg must have been present to produce a Some.
+                    prop_assert!(a.is_some() || b.is_some());
+                }
+            }
+        }
+
+        /// Order does not matter: combining is commutative, so which leg is
+        /// "first" cannot change a party's authority.
+        #[test]
+        fn combining_is_commutative(a in arb_leg(), b in arb_leg()) {
+            prop_assert_eq!(narrow_authority(a.clone(), b.clone()), narrow_authority(b, a));
+        }
+
+        /// Adding a second leg can only ever REMOVE tools, never add one. Stated
+        /// against the one-leg baseline, this is the anti-widening property in the
+        /// form an operator would phrase it.
+        #[test]
+        fn adding_a_leg_never_adds_a_tool(a in arb_tools(), b in arb_leg()) {
+            let alone = narrow_authority(Some(a.clone()), None).unwrap();
+            let combined = narrow_authority(Some(a), b).unwrap();
+            prop_assert!(combined.is_subset(&alone));
+        }
     }
 }
 

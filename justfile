@@ -21,7 +21,7 @@ check: fmt-check clippy test lease-test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test eval deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke test-connector-real test-skill registry-check
+ci: fmt-check clippy test eval deny doc ffi-link build-no-inference build-serve-engine features-guard check-descriptor-determinism check-reproducible scale-smoke test-connector-real test-skill registry-check
 
 # Run the SDK CI gates locally — the exact `sdk-python` + `sdk-typescript` jobs from ci.yml
 # (codegen-fresh, ruff+mypy / biome+tsc, and the unit/contract tests). Run before an SDK PR:
@@ -139,8 +139,18 @@ test-skill *packs:
 # The registry-consistency check — registry/index.json entries must
 # agree with the tree (skills/** ⟷ skill entries, integrations/kx-connector-*
 # ⟷ integration entries, sources exist, ledger ids real). Pure file reads.
+# Registry consistency — `registry/index.json` vs the tree.
+#
+# This recipe used to read `[ -f x ] && bash x || echo "... skipped"`, which cannot fail
+# in EITHER state: the helper was never tracked in this repo, so it always printed
+# "skipped" and returned 0 — and had it been present, a FAILING run would fall through to
+# the `||` and still return 0. A member of `ci` that cannot go red is decoration.
+#
+# Now the helper ships (whitelisted past the /scripts/*.sh ignore) and a missing one is
+# an ERROR, not a shrug: absence is the exact condition the old form disguised.
 registry-check:
-    @[ -f scripts/registry-check.sh ] && bash scripts/registry-check.sh || echo "registry-check: helper script not present — skipped"
+    @test -f scripts/registry-check.sh || { echo "registry-check: scripts/registry-check.sh is MISSING — it is part of \`just ci\`, not optional"; exit 1; }
+    @bash scripts/registry-check.sh
 
 # ============================================================================
 # Onboarding / install automation (sudo-free, opt-in)
@@ -493,6 +503,100 @@ review-serve-gemma journal="target/serve/kx.db" content="target/serve/blobs": fe
     echo "    (text + vision; review in BOTH themes; chat returns a real answer, never echo)"
     wait $SERVE_PID
 
+# A Gemma serve on DEDICATED ports, with the serving binary's identity VERIFIED.
+#
+# `review-serve-gemma` hard-codes :8888 / :50151 and kills whatever holds them. That
+# is fine for an interactive review and wrong for an automated proof: it cannot run
+# beside anything, and — worse — it cannot tell you WHICH binary answered.
+#
+# Two things this adds, both of which were missing:
+#
+#   DEDICATED PORTS. Every port is a parameter, so a proof never contends with a
+#   peer's serve or an interactive review. The lease is still taken: the GPU is
+#   singular no matter which port the gRPC listener binds.
+#
+#   A SERVING-PID IDENTITY CHECK. `GetServerInfo` carries no PID and no build id by
+#   design, and the console-embed hash catches a stale CONSOLE, not a stale SERVER
+#   with a fresh UI. So this resolves the process actually LISTENING on the gRPC
+#   port and asserts its executable is the binary we just built. A live proof that
+#   silently ran against yesterday's serve is a green result about nothing, and it
+#   is the failure mode that leaves no trace.
+serve-gemma-dedicated grpc_port="50171" ws_port="50172" console_port="8891" journal="target/proof/kx.db" content="target/proof/blobs" catalog="target/proof/catalog": fetch-gemma-model console-dist
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GRPC="http://127.0.0.1:{{grpc_port}}"
+    LABEL="${KX_LEASE_LABEL:-$(basename "$PWD")}"
+    # Rule 44: the GPU and Ollama are singular whatever ports we pick. --wait BLOCKS
+    # until a peer releases rather than racing it.
+    bash scripts/model-lease.sh acquire --label "$LABEL" --purpose "serve-gemma-dedicated" --wait
+    SERVE_PID=""
+    trap 'kill ${SERVE_PID:-} 2>/dev/null || true; bash scripts/model-lease.sh release --label "$LABEL" >/dev/null 2>&1 || true' EXIT
+    MODEL="${KX_GEMMA_MODEL_DEST:-$(pwd)/target/models/gemma-4-12b-it-q4_k_m.gguf}"
+    MMPROJ="${KX_GEMMA_MMPROJ_DEST:-$(pwd)/target/models/gemma-4-12b-it-mmproj-f16.gguf}"
+    test -f "$MODEL" || { echo " ✗ model GGUF missing: $MODEL" >&2; exit 1; }
+    test -f "$MMPROJ" || { echo " ✗ mmproj GGUF missing: $MMPROJ" >&2; exit 1; }
+    cargo build --release -p kx-cli --features inference,hnsw,console,hosted-apps --bin kx
+    KX="$(pwd)/target/release/kx"
+    # NEVER kill a holder of a dedicated port. If it is busy, a peer or a stale proof
+    # owns it, and murdering it is how one session silently breaks another's run.
+    for P in {{grpc_port}} {{ws_port}} {{console_port}}; do
+        if lsof -ti tcp:$P >/dev/null 2>&1; then
+            echo " ✗ port $P is already in use — pick different ports rather than killing the holder" >&2
+            exit 1
+        fi
+    done
+    mkdir -p "$(dirname "{{journal}}")" "{{content}}" "{{catalog}}"
+    export KX_SERVE_MODEL_GGUF="$MODEL" KX_SERVE_MMPROJ_GGUF="$MMPROJ"
+    echo " ▶ Gemma serve on DEDICATED ports (grpc {{grpc_port}} · ws {{ws_port}} · console {{console_port}})"
+    "$KX" serve --journal "{{journal}}" --content "{{content}}" --catalog-dir "{{catalog}}"         --listen 127.0.0.1:{{grpc_port}} --ws-listen 127.0.0.1:{{ws_port}}         --console-listen 127.0.0.1:{{console_port}} --dev-allow-local &
+    SERVE_PID=$!
+    for i in $(seq 1 180); do "$KX" health --endpoint "$GRPC" >/dev/null 2>&1 && break; sleep 1; done
+    "$KX" health --endpoint "$GRPC" >/dev/null 2>&1 || { echo " ✗ serve never became healthy" >&2; exit 1; }
+    just _assert-serving-identity {{grpc_port}} "$KX"
+    "$KX" models list --endpoint "$GRPC" --json       | python3 -c "import json,sys; sys.exit(0 if len(json.load(sys.stdin).get('models',[]))>=1 else 1)"       || { echo " ✗ NO MODEL: ListModels empty — chat would echo." >&2; exit 1; }
+    echo " ✓ model loaded (ListModels non-empty)"
+    PROMPT="Reply with only the digit: what is 2+2?"
+    OUT="$("$KX" invoke kx/recipes/chat --args "{\"prompt\":\"$PROMPT\"}" --wait --json --endpoint "$GRPC" \
+      | python3 -c "import json,sys; print(json.load(sys.stdin).get('result_utf8',''))" 2>/dev/null || true)"
+    [ -n "$OUT" ] || { echo " ✗ chat returned no committed result — model not answering." >&2; exit 1; }
+    case "$OUT" in *"$PROMPT"*) echo " ✗ ECHO DETECTED: chat returned the prompt verbatim." >&2; exit 1;; esac
+    echo " ✓ real non-echo Gemma completion: $(printf '%s' "$OUT" | tr '\n' ' ' | head -c 70)"
+    echo " ✅ DEDICATED GEMMA SERVE READY — $GRPC (pid $SERVE_PID)"
+    wait $SERVE_PID
+
+# Assert the process LISTENING on a gRPC port is the binary we expect.
+#
+# Separate recipe so a proof driver can re-assert identity mid-run — the risk is not
+# only "did the right binary start", it is "is the right binary still the one
+# answering". A stale orphan reports the right model while the WRONG BINARY serves,
+# and the port bind fails below the noise.
+_assert-serving-identity port expected_bin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    PID="$(lsof -ti tcp:{{port}} -sTCP:LISTEN 2>/dev/null | head -1 || true)"
+    [ -n "$PID" ] || { echo " ✗ nothing is LISTENING on :{{port}}" >&2; exit 1; }
+    # `ps -o comm=` is the EXECUTABLE path. The first draft used
+    # `lsof -p <pid> -Fn | grep -m1 '^n/'`, which returns the process's CWD —
+    # testing the guard is what caught it, and it would have compared a directory
+    # to a binary path in every real run. `lsof -a -d txt` also works but resolves
+    # symlinked interpreters differently; `comm` is what actually launched.
+    ACTUAL="$(ps -o comm= -p "$PID" 2>/dev/null || true)"
+    [ -n "$ACTUAL" ] || { echo " ✗ could not resolve the executable for pid $PID" >&2; exit 1; }
+    # Normalise both sides without requiring either to exist as a directory yet.
+    EXPECTED="{{expected_bin}}"
+    case "$EXPECTED" in /*) ;; *) EXPECTED="$(pwd)/$EXPECTED" ;; esac
+    case "$ACTUAL" in
+        "$EXPECTED") echo " ✓ serving pid $PID IS $EXPECTED" ;;
+        *)
+            echo " ✗ IDENTITY MISMATCH on :{{port}}" >&2
+            echo "     listening pid : $PID" >&2
+            echo "     its executable: $ACTUAL" >&2
+            echo "     expected      : $EXPECTED" >&2
+            echo "   A proof against the wrong binary is a green result about nothing." >&2
+            exit 1
+            ;;
+    esac
+
 # D139: build the web console's embed input — the TS SDK (the UI's file: dep)
 # then the SPA production bundle into ui/dist. The exact sequence release.yml
 # runs; needed BEFORE any `--features console` cargo build (build.rs embeds the
@@ -796,6 +900,72 @@ features-guard:
     cargo check -p kx-cli --features hnsw,serve-engine,hosted-apps
     echo " ✓ features-guard: kx-cli --features hnsw,serve-engine,hosted-apps builds (FFI-free)"
 
+# The descriptor + generated ControlSurface index must not depend on WHERE they
+# were built.
+#
+# `check-reproducible` builds twice into the SAME target dir, so it cannot see an
+# OUT_DIR leak — the path is identical in both halves. This builds kx-proto into
+# two DIFFERENT target dirs, which is the only arrangement where an absolute
+# build path embedded in `kortecx.fds` or `control_index.rs` shows up as a diff.
+#
+# Why it exists: kx-proto/build.rs ARGUES three properties (relative includes ⇒
+# repo-relative FileDescriptorProto.name; no external import ⇒ --include_imports
+# reaches nothing; the descriptor bytes never reach a shipped rlib). Those were
+# checked by hand once. An argument nothing re-runs is a comment, and the
+# ControlSurface's whole value is that the generated half cannot drift.
+check-descriptor-determinism:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    A="$(mktemp -d)"; B="$(mktemp -d)"
+    trap 'rm -rf "$A" "$B"' EXIT
+    CARGO_TARGET_DIR="$A" cargo build -p kx-proto >/dev/null
+    CARGO_TARGET_DIR="$B" cargo build -p kx-proto >/dev/null
+    fail=0
+    for artifact in kortecx.fds control_index.rs; do
+        # The build dir hash differs between target dirs, so glob for it.
+        a="$(find "$A" -name "$artifact" -type f | head -1)"
+        b="$(find "$B" -name "$artifact" -type f | head -1)"
+        if [ -z "$a" ] || [ -z "$b" ]; then
+            echo "::error::$artifact was not produced in one of the two builds" >&2
+            fail=1; continue
+        fi
+        if cmp -s "$a" "$b"; then
+            echo " ✓ $artifact is byte-identical across two CARGO_TARGET_DIRs"
+        else
+            echo "::error::$artifact DIFFERS between two build directories — something" \
+                 "in the generator embeds its own output path. The ControlSurface's" \
+                 "generated half must depend only on the .proto, never on where it was built." >&2
+            # Name the differing bytes rather than just asserting inequality.
+            cmp "$a" "$b" >&2 || true
+            fail=1
+        fi
+    done
+    # Anti-vacuity: a pass that compared nothing is not a pass. The descriptor
+    # must actually contain the service we care about, and the generated index
+    # must actually carry the RPC table.
+    a="$(find "$A" -name kortecx.fds -type f | head -1)"
+    if [ -n "$a" ] && ! grep -aq KxGateway "$a"; then
+        echo "::error::kortecx.fds does not mention KxGateway — the comparison was vacuous" >&2
+        fail=1
+    fi
+    idx="$(find "$A" -name control_index.rs -type f | head -1)"
+    if [ -n "$idx" ] && ! grep -aq "enum GatewayRpc" "$idx"; then
+        echo "::error::control_index.rs has no GatewayRpc enum — the comparison was vacuous" >&2
+        fail=1
+    fi
+    # And no absolute build path may appear in either artifact at all. This is the
+    # property build.rs argues for; here it is, asserted.
+    for artifact in kortecx.fds control_index.rs; do
+        a="$(find "$A" -name "$artifact" -type f | head -1)"
+        [ -n "$a" ] || continue
+        if grep -aqF "$A" "$a"; then
+            echo "::error::$artifact contains its own build directory path" >&2
+            fail=1
+        fi
+    done
+    [ "$fail" -eq 0 ] || exit 1
+    echo "descriptor determinism: PASS"
+
 # Byte-determinism check (I1.c). Two consecutive release builds must produce
 # bit-identical artifacts. Failure indicates the build is nondeterministic and
 # must be fixed before the affected change can merge.
@@ -943,6 +1113,13 @@ eval-bench:
     # It is `serve-engine`-gated (a non-default feature `just ci` never compiles), so
     # this recipe is what keeps it running.
     cargo test -p kx-gateway --features serve-engine --test workflow_bench_drive
+    # The nlauthor family's model-free preflight. `nlauthor` cannot be driven without a
+    # model — the model IS what it measures — so this checks everything AROUND the
+    # generation: frozen golden model output through the REAL decoder, the fold the live
+    # drive builds, and the real scorers. Unlike the workflow gate it needs no feature,
+    # because a gate that only runs under the feature it protects stops running the
+    # moment someone builds without it.
+    cargo test -p kx-gateway --test nlauthor_bench_drive
     # `observability` is REQUIRED here: the harness folds the GATED model_time_share
     # (and per-task timing) from the telemetry.db sidecar. Without the feature the
     # sidecar never opens, the gate stops being emitted, and the baseline comparison

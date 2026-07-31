@@ -197,6 +197,21 @@ pub enum Drive {
         /// The saved workflow handle to run.
         handle: &'static str,
     },
+    /// Ask the NL authoring surface to propose ONE registration form.
+    ///
+    /// Unlike every drive above, this runs NO chain: `ProposeControlAction` is
+    /// validate-only and writes no journal, so there is no terminal Mote and nothing
+    /// to fold a trajectory from. The proposal turn IS the model turn, so the
+    /// transcript is exactly one turn — `Answer` when a form was produced, `Rejected`
+    /// (carrying the reason) when the surface refused.
+    ///
+    /// That shape is not a convenience: a refusal is the family's other half, and
+    /// scoring it as anything but a settled turn would let a surface that refuses
+    /// everything look identical to one that discriminates.
+    NlAuthor {
+        /// The optional domain steer passed with the goal ("" = let the server classify).
+        steer: &'static str,
+    },
 }
 
 impl Drive {
@@ -215,7 +230,9 @@ impl Drive {
             Drive::App { .. }
             | Drive::ScaffoldedApp { .. }
             | Drive::Swarm
-            | Drive::Workflow { .. } => None,
+            | Drive::Workflow { .. }
+            // Not a run: no recipe to provision, nothing to wait on.
+            | Drive::NlAuthor { .. } => None,
         }
     }
 }
@@ -326,7 +343,108 @@ pub fn drive_for(task: &GoldenTask) -> Result<Drive, BenchError> {
             }),
             _ => Err(unknown()),
         },
+        // The NL authoring surface. Each task names the domain it expects the request
+        // to land in; "" means the server must classify it unaided, which is the
+        // harder and more honest case.
+        "nlauthor" => match task.id.as_str() {
+            // Both policy tasks steer the same way — the refusal task differs in what it
+            // ASKS FOR, not in where it is aimed, which is exactly what makes it an A/B
+            // against `nlauthor-policy-role` rather than a different experiment.
+            "nlauthor-policy-role" | "nlauthor-refuses-unregistered-tool" => {
+                Ok(Drive::NlAuthor { steer: "policy" })
+            }
+            "nlauthor-trigger-schedule" => Ok(Drive::NlAuthor { steer: "triggers" }),
+            "nlauthor-secret-name-only" => Ok(Drive::NlAuthor { steer: "secrets" }),
+            "nlauthor-classifies-unaided" => Ok(Drive::NlAuthor { steer: "" }),
+            _ => Err(unknown()),
+        },
         _ => Err(unknown()),
+    }
+}
+
+/// Drive ONE `ProposeControlAction` and synthesize its transcript.
+///
+/// ## Why a synthesized transcript is the honest shape here
+///
+/// Every other drive settles a chain and folds the turns the runtime committed. This
+/// RPC commits nothing by construction — it is `Effect::Read`, it writes no journal,
+/// and it is digest-invariant. There is no trajectory to read, so inventing a fold
+/// that pretended to read one would be the dishonest option.
+///
+/// What there IS, is exactly one model turn, and it settles one of two ways:
+///
+/// * a PREVIEW — the model produced a form that survived decode, the caller's
+///   authority, and the domain's own enforcer. That is [`Branch::Answer`], and the
+///   answer text is the preview's rendering, which is what a scorer's
+///   `answer_must_contain` can then check.
+/// * a REFUSAL — [`Branch::Rejected`] carrying the reason.
+///
+/// Scoring a refusal as `Rejected` rather than as a failed answer is the load-bearing
+/// choice: the family has tasks that MUST be refused, and if a refusal folded as
+/// "no answer" then a surface that refused everything would score identically to one
+/// that discriminates. The anti-always-refuse control in the corpus only means
+/// something because these two outcomes are distinguishable here.
+///
+/// A transport failure folds as `Rejected` too, with the status as the reason — a
+/// serve without the seam is a real answer about this build, not a harness error.
+async fn drive_nl_author(
+    client: &mut KxGatewayClient<Channel>,
+    task: &GoldenTask,
+    steer: &str,
+) -> Transcript {
+    use kx_proto::proto;
+
+    let req = proto::ProposeControlActionRequest {
+        goal: task.instruction.clone(),
+        domain: steer.to_string(),
+    };
+    let (branch, answer, reason) = match client.propose_control_action(req).await {
+        Ok(resp) => match resp.into_inner().result {
+            Some(proto::propose_control_action_response::Result::Preview(p)) => {
+                // The rendering a human would see, plus the rpc it would be forwarded
+                // to — both are things a task can legitimately assert on.
+                (
+                    Branch::Answer,
+                    Some(format!("{} :: {}", p.rpc, p.summary)),
+                    String::new(),
+                )
+            }
+            Some(proto::propose_control_action_response::Result::Rejected(r)) => {
+                (Branch::Rejected, None, r.reason)
+            }
+            None => (
+                Branch::Rejected,
+                None,
+                "the server returned neither a preview nor a refusal".to_string(),
+            ),
+        },
+        Err(status) => (
+            Branch::Rejected,
+            None,
+            format!("{}: {}", status.code(), status.message()),
+        ),
+    };
+
+    Transcript {
+        task_id: task.id.clone(),
+        turns: vec![TurnRecord {
+            turn: 0,
+            branch,
+            tool_id: String::new(),
+            tool_version: String::new(),
+            call_index: 0,
+            rejection_reason: reason,
+        }],
+        final_answer: answer,
+        retrieved_docs: Vec::new(),
+        rerank: None,
+        // The budget a proposal is measured against is ONE turn and ZERO tool calls,
+        // because that is genuinely all it gets: the surface runs the model once and
+        // has no tools to offer it. Stating the real budget rather than the suite
+        // default is what makes `loop_efficiency` mean anything here.
+        max_turns: 1,
+        max_tool_calls: 0,
+        timing: None,
     }
 }
 
@@ -583,7 +701,7 @@ impl LiveSuiteOutcome {
     }
 }
 
-/// The `missing_recipe` recorded for a task held back by [`task_filter`] rather than by
+/// The `missing_recipe` recorded for a task held back by `task_filter` rather than by
 /// an unprovisioned recipe — so a filtered run reads unmistakably as a diagnostic and can
 /// never be mistaken for missing coverage.
 pub const FILTERED_OUT: &str = "(held back by KX_BENCH_ONLY)";
@@ -684,7 +802,12 @@ pub async fn score_live_suite(
         // the sidecar joins above it is this task's cost and no other's.
         let since_seq = telemetry_high_water(client).await;
         let drove_at = std::time::Instant::now();
-        let (mut transcript, terminal_mote) = if let Drive::ScaffoldedApp { handle } = &drive {
+        let (mut transcript, terminal_mote) = if let Drive::NlAuthor { steer } = &drive {
+            // Intercepted here for the same reason ScaffoldedApp is: the fold is not
+            // "settle a chain and read its turns". There IS no chain — the proposal is
+            // validate-only — so the transcript is synthesized from the one RPC.
+            (drive_nl_author(client, task, steer).await, Vec::new())
+        } else if let Drive::ScaffoldedApp { handle } = &drive {
             // Intercepted here (not via run_and_fold) so the ScaffoldRecord lands
             // in the outcome — the sentinel/spike fold reads it.
             let (t, m, record) = drive_scaffolded_app(client, handle, task, settle_timeout).await;
@@ -1061,6 +1184,8 @@ fn timing_from_rows(rows: &[proto::MoteTelemetryRow]) -> Option<TranscriptTiming
 ///
 /// Returns the transcript beside the run's terminal Mote id (see
 /// [`settle_and_fold_react`] — the timing fold waits on it).
+#[allow(clippy::too_many_lines)] // one arm per Drive shape; merging them would hide
+                                 // which shape a task actually runs down
 async fn run_and_fold(
     client: &mut KxGatewayClient<Channel>,
     task: &GoldenTask,
@@ -1068,6 +1193,14 @@ async fn run_and_fold(
     settle_timeout: Duration,
 ) -> Result<(Transcript, Vec<u8>), BenchError> {
     match drive {
+        // NlAuthor never reaches here — the caller intercepts it, because there is no
+        // chain to settle. Reaching this arm means the interception was removed, and
+        // failing loudly is the only way that shows up as itself rather than as a
+        // mysterious empty transcript.
+        Drive::NlAuthor { .. } => Err(BenchError::UnknownFamily {
+            task_id: task.id.clone(),
+            family: "nlauthor (must be intercepted before run_and_fold)".to_string(),
+        }),
         Drive::React { handle, dataset } => {
             // A task may raise its own budget. The suite default is sized for a two-hop
             // lookup; a long-horizon chain needs more, and running everything at the

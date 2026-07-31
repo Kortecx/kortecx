@@ -250,6 +250,14 @@ export type {
 } from "./toolscout.js";
 
 // MM-3 / D110: the local OS-keychain secret store (write-only value; names-only read).
+// The ControlSurface + NL authoring surface.
+export type {
+  ControlPreview,
+  ControlProposal,
+  ControlSurfaceEntry,
+  PolicyRole,
+  PolicyRoleTool,
+} from "./control.js";
 export { SecretNameRow } from "./secrets.js";
 export type { SecretNamesPage } from "./secrets.js";
 

@@ -83,7 +83,9 @@ pub enum Domain {
     Skills,
     /// Telemetry, alerts, capture, feedback, cost.
     Observability,
-    /// Server identity and capability reporting.
+    /// Server identity, capability reporting, and the NL surface over the rest
+    /// of this table — the RPCs that belong to no single domain because they
+    /// address every one of them.
     Server,
 }
 
@@ -159,12 +161,15 @@ pub fn is_authoring(domain: Domain) -> bool {
 /// It is not a general escape hatch: `the_pending_list_has_no_dead_entries`
 /// fails the moment a listed domain gains a mutation, so the entry cannot be
 /// left behind after the work lands. Removing the last entry is the goal.
+///
+/// **It is currently EMPTY, and that is the point.** The one entry this list
+/// ever held — `Domain::Policy`, "the durable Policy/Role registry is not on
+/// the wire yet" — was removed when `PutPolicyRole` / `DeletePolicyRole` /
+/// `AssignPolicyRole` landed, because `the_pending_list_has_no_dead_entries`
+/// went red until it was. The exception did not outlive the gap it described,
+/// which is the only property that made declaring it honest.
 #[cfg(test)]
-const AUTHORING_MUTATIONS_PENDING: &[(Domain, &str)] = &[(
-    Domain::Policy,
-    "teams/grants are readable, but the durable Policy/Role registry \
-     (PutPolicyRole / DeletePolicyRole / AssignPolicyRole) is not on the wire yet",
-)];
+const AUTHORING_MUTATIONS_PENDING: &[(Domain, &str)] = &[];
 
 /// What this RPC is: its domain, whether it writes, and whose authority it needs.
 ///
@@ -282,6 +287,13 @@ pub const fn facet(rpc: GatewayRpc) -> Facet {
         GatewayRpc::ListTeams => Facet::new(D::Policy, R, CP),
         GatewayRpc::ListTeamMembers => Facet::new(D::Policy, R, CP),
         GatewayRpc::ListAssetGrants => Facet::new(D::Policy, R, CP),
+        // The durable Policy/Role registry. Caller-scoped, not operator-global:
+        // a role narrows the CALLER's own parties, and a serve-wide role would
+        // be an authority a single-node operator cannot delegate away.
+        GatewayRpc::PutPolicyRole => Facet::new(D::Policy, M, CP),
+        GatewayRpc::ListPolicyRoles => Facet::new(D::Policy, R, CP),
+        GatewayRpc::DeletePolicyRole => Facet::new(D::Policy, M, CP),
+        GatewayRpc::AssignPolicyRole => Facet::new(D::Policy, M, CP),
 
         // ---- Approvals (operator decisions over a SERVER-derived request id) --
         GatewayRpc::ListPendingApprovals => Facet::new(D::Approvals, R, OG),
@@ -345,6 +357,18 @@ pub const fn facet(rpc: GatewayRpc) -> Facet {
 
         // ---- Server -----------------------------------------------------------------
         GatewayRpc::GetServerInfo => Facet::new(D::Server, R, CP),
+        // The NL surface is classified here because it belongs to no ONE domain:
+        // `ProposeControlAction` proposes INTO whichever domain the goal names, and
+        // `DescribeControlSurface` reports across all of them. Putting either in an
+        // authoring domain would claim a membership the RPC does not have.
+        //
+        // Both are Reads, and that is the whole propose→preview→approve design: a
+        // proposal returns the typed request it WOULD issue and writes nothing, so
+        // the mutation a human approves is the ordinary domain RPC, issued by the
+        // client. If either of these ever became a Mutate, that would mean
+        // the runtime had started acting on its own behalf.
+        GatewayRpc::ProposeControlAction => Facet::new(D::Server, R, CP),
+        GatewayRpc::DescribeControlSurface => Facet::new(D::Server, R, CP),
     }
 }
 

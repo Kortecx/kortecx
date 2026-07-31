@@ -2723,6 +2723,149 @@ message RunScore {
   uint32 tool_budget_used_per_mille = 10;
 }
 
+// ===========================================================================
+// Slot 6 (D209.3) — the durable Policy/Role registry.
+//
+// A Policy/Role is a NAMED, reusable narrowing of tool authority that a party
+// can be assigned. It NARROWS and never widens: the effective authority is the
+// INTERSECTION of every present leg, so assigning a role can only take
+// capability away. A party with no role assigned resolves exactly as it does
+// today — the (no role, no asset allowlist) case is byte-identical, which is
+// what lets this land on running installs.
+//
+// Caller-scoped, off-journal, off-digest: `policies.db`, opened under the
+// sidecar upgrade policy as UserAuthored (a role a user wrote is authored work
+// and is never rebuilt empty on a schema bump). UNIMPLEMENTED without the seam.
+// ===========================================================================
+message PolicyRoleTool {
+  string tool_id      = 1;
+  string tool_version = 2;
+}
+message PolicyRole {
+  string name        = 1;                // catalog key within the caller's scope
+  string description = 2;                // free-form; NEVER parsed for enforcement
+  repeated PolicyRoleTool tools = 3;     // the allowlist this role narrows TO
+  uint64 created_unix_ms = 4;
+  uint64 updated_unix_ms = 5;
+}
+message PutPolicyRoleRequest {
+  string name        = 1;
+  string description = 2;
+  repeated PolicyRoleTool tools = 3;     // empty ⇒ a role that grants nothing (valid, and refuses everything)
+}
+message PutPolicyRoleResponse  { bool created = 1; }   // false ⇒ updated an existing role
+message ListPolicyRolesRequest { uint32 limit = 1; }   // 0 ⇒ server default
+message ListPolicyRolesResponse { repeated PolicyRole roles = 1; }
+message DeletePolicyRoleRequest  { string name = 1; }
+message DeletePolicyRoleResponse { bool removed = 1; }
+message AssignPolicyRoleRequest {
+  string party = 1;                      // the PartyId the role applies to
+  string name  = 2;                      // the role name; EMPTY ⇒ unassign
+}
+message AssignPolicyRoleResponse { bool assigned = 1; }  // false ⇒ unassigned
+
+// ===========================================================================
+// Slot 6 (D209.3) — NL AUTHORING over the ControlSurface.
+//
+// ONE proposal verb across every authoring domain: say what you want, get back
+// the EXACT typed request the runtime WOULD issue, approve it, then call that
+// ordinary mutating RPC yourself.
+//
+// APPROVAL IS CLIENT-HELD. ProposeControlAction writes NOTHING. It
+// returns a `ControlPreview` whose arms are the REAL request messages, so
+// approving is FORWARDING THE BYTES YOU WERE SHOWN — never re-deriving them
+// from a rendered summary. D114's journal-staged approval covers in-run tool
+// DISPATCHES and is deliberately NOT extended here: a second approval concept
+// is precisely what this design exists to avoid.
+//
+// TWO ARMS ARE REDUCED, and the reduction IS the security property:
+//   • secrets ride `ProposedSecretName`, because `PutSecretRequest` carries a
+//     `value` and a value must never appear on a RESPONSE type (D81);
+//   • scripts ride `ProposedScript`, because `RegisterScriptRequest` carries
+//     `argv` + `env`, both of which are fixed by an operator and NEVER
+//     model-controlled. The preview cannot EXPRESS them, so the request a
+//     client forwards necessarily has them empty. Structural, not asserted.
+// A descriptor-walk test in `kx-proto` holds the line: no field named
+// value/secret/token/password/argv/env is reachable from `ControlPreview`, and
+// the arm list itself is pinned so a new arm is a deliberate edit.
+//
+// Admissibility is per SHAPE, two gates, neither duplicated:
+// plan-shaped proposals keep `compile_plan`; registration-shaped proposals
+// decode with deny_unknown_fields, intersect against the caller's authority,
+// and then face the domain's EXISTING register-time refusal contract.
+// ===========================================================================
+message ProposeControlActionRequest {
+  string goal   = 1;                     // the natural-language ask
+  string domain = 2;                     // OPTIONAL steer: workflows|tools|connectors|secrets|scripts|triggers|policy; empty ⇒ the server classifies
+}
+
+// A secret PROPOSAL: the NAME and the scopes it would authorize, never a value.
+// `PutSecretRequest.value` is unreachable from this surface by construction.
+message ProposedSecretName {
+  string name         = 1;               // the SecretRef NAME the caller would set
+  string secret_scope = 2;               // the scope the secret would be readable under (display)
+  string net_scope    = 3;               // the egress scope it would authorize (display)
+}
+
+// A script PROPOSAL. `argv` and `env` are ABSENT BY CONSTRUCTION — they are
+// fixed at registration by an operator, so a proposal that cannot express them
+// is a proposal that cannot smuggle them. The interpreter is still validated
+// against the host's CLOSED allowlist, and still PROBED inside the sandbox, at
+// the real RegisterScript call.
+message ProposedScript {
+  string script_name    = 1;
+  string script_version = 2;
+  string description    = 3;
+  string interpreter    = 4;
+  bytes  source         = 5;
+  repeated ScriptMount fs_mounts = 6;    // the filesystem it DECLARES it needs
+  repeated string net_hosts      = 7;    // the hosts it DECLARES it needs; empty = no egress
+  uint64 wall_clock_ms    = 8;
+  uint64 mem_bytes        = 9;
+  uint64 max_output_bytes = 10;
+}
+
+// The exact typed request the runtime WOULD issue. Approving is forwarding
+// these bytes to the named RPC; there is no second derivation step.
+message ControlPreview {
+  string rpc     = 1;                    // the GatewayRpc wire name to call (e.g. "SaveWorkflow")
+  string summary = 2;                    // one-line human rendering; DISPLAY ONLY, never parsed
+  oneof request {
+    SaveWorkflowRequest      save_workflow       = 3;
+    RegisterToolRequest      register_tool       = 4;
+    RegisterMcpServerRequest register_mcp_server = 5;
+    RegisterTriggerRequest   register_trigger    = 6;
+    PutPolicyRoleRequest     put_policy_role     = 7;
+    AssignPolicyRoleRequest  assign_policy_role  = 8;
+    ProposedSecretName       proposed_secret     = 9;
+    ProposedScript           proposed_script     = 10;
+  }
+}
+message ProposeControlActionResponse {
+  oneof result {
+    ControlPreview   preview  = 1;
+    ProposalRejected rejected = 2;       // the SAME refusal message the other proposers use
+  }
+}
+
+// The ControlSurface itself, projected for a client. The wire half is
+// GENERATED from the compiled descriptor and the judgement half is the
+// hand-authored `facet` table, so this response cannot drift from either.
+message DescribeControlSurfaceRequest {
+  string domain = 1;                     // OPTIONAL filter; empty ⇒ every RPC
+  bool authoring_only = 2;               // true ⇒ only the NL authoring domains
+}
+message ControlSurfaceEntry {
+  string rpc       = 1;                  // the wire name
+  string domain    = 2;                  // workflows | tools | … | server
+  bool   mutates   = 3;                  // false ⇒ a successful call writes nothing
+  string authority = 4;                  // caller_principal | operator_global | loopback_only
+  bool   authoring = 5;                  // true ⇒ the domain is an NL authoring domain
+}
+message DescribeControlSurfaceResponse {
+  repeated ControlSurfaceEntry entries = 1;  // descriptor declaration order (deterministic)
+}
+
 service KxGateway {
   rpc SubmitRun(SubmitRunRequest) returns (RunHandle);
   rpc Invoke(InvokeRequest) returns (InvokeResponse);
@@ -3038,4 +3181,19 @@ service KxGateway {
   rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
   rpc RunWorkflow(RunWorkflowRequest) returns (RunHandle);
   rpc DeleteWorkflow(DeleteWorkflowRequest) returns (DeleteWorkflowResponse);
+
+  // The durable Policy/Role registry (see PolicyRole). Caller-scoped catalog ops
+  // over policies.db; assigning a role NARROWS a party's tool authority and can
+  // never widen it. UNIMPLEMENTED on a serve without the seam.
+  rpc PutPolicyRole(PutPolicyRoleRequest) returns (PutPolicyRoleResponse);
+  rpc ListPolicyRoles(ListPolicyRolesRequest) returns (ListPolicyRolesResponse);
+  rpc DeletePolicyRole(DeletePolicyRoleRequest) returns (DeletePolicyRoleResponse);
+  rpc AssignPolicyRole(AssignPolicyRoleRequest) returns (AssignPolicyRoleResponse);
+
+  // NL authoring (see ControlPreview). ProposeControlAction WRITES NOTHING: it
+  // returns the exact typed request the runtime would issue, for a human to
+  // approve and then forward. DescribeControlSurface projects the generated
+  // ControlSurface so a client can render what is authorable at all.
+  rpc ProposeControlAction(ProposeControlActionRequest) returns (ProposeControlActionResponse);
+  rpc DescribeControlSurface(DescribeControlSurfaceRequest) returns (DescribeControlSurfaceResponse);
 }

@@ -88,8 +88,33 @@ kx-cloud/
 # The release workflow reads this to publish the CHANGELOG section as the release
 # body, so it must be in the checkout the workflow runs against.
 !/scripts/release-notes.sh
+# The NL-authoring live proof and its detached supervisors. These SHIP: a proof that
+# lives only on the machine that ran it is a claim, not evidence — anyone should be
+# able to re-run the journey (propose -> approve -> registry, plus the refusal A/B)
+# against their own served model and get the same verdict. The supervisors carry the
+# lease discipline (per-session ports, `ollama stop` between engine arms) that a
+# hand-run sequence gets wrong.
+!/scripts/proof-nl-authoring.sh
+!/scripts/run-live-proof.sh
+!/scripts/run-bench-recapture.sh
+# `just ci` and a bare `clippy --lib` both miss a non-default feature's module AND
+# its tests, so each feature needs its own `--all-targets` clippy + `test` pair. That
+# is a standing gap in the gate, and a runner that encodes it is worth more than a
+# note somebody has to remember at the end of a long session.
+!/scripts/run-feature-gates.sh
+# A member of `just ci`. It was untracked here, so the recipe printed "skipped" and
+# returned 0 in every checkout — the ignore file was the reason the gate never ran.
+!/scripts/registry-check.sh
 /justfile.private
 
 # The packed SDK the gateway embeds and serves as an installable package — a BUILD
 # artifact of `just console-dist`, regenerated from bindings/typescript, never committed.
 bindings/typescript/kortecx-sdk.tgz
+
+# SQLite sidecars beside the FROZEN state-dir fixtures. Opening a WAL-mode database
+# creates `-wal`/`-shm` even for a read-only connection, so running the frozen-state-dir
+# tests leaves them in the fixture tree. They are not part of the captured truth, and a
+# `git add -A` that swept them in would corrupt the very artifact the fixtures preserve.
+crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-wal
+crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-shm
+crates/kx-runtime/tests/fixtures/state-dirs/**/*.db-journal

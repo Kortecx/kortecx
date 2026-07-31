@@ -1243,6 +1243,12 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     // RPCs. The apps.db posture verbatim: off-journal, off-digest,
     // rebuildable-to-empty; workflow_ref is a pure content hash.
     let workflows_db = Arc::new(crate::workflows::WorkflowsDb::open(&catalog_dir)?);
+    // The durable Policy/Role registry (policies.db) — caller-scoped NAMED
+    // narrowings of tool authority for the Put/List/Delete/AssignPolicyRole
+    // RPCs. Authored work: a schema bump renames it aside and re-imports rather
+    // than dropping it, because losing a role RESTORES capability an operator
+    // meant to remove. Off-journal, off-digest; assigning intersects, never widens.
+    let policies_db = Arc::new(crate::policies::PoliciesDb::open(&catalog_dir)?);
     // The skill catalog (skills.db) — caller-scoped kortecx.skill/v1
     // manifests for the ListSkills/GetSkillForm/AddSkill/RemoveSkill RPCs.
     // Off-journal, off-digest, rebuildable-to-empty (skill_ref is a pure content
@@ -1887,6 +1893,7 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
         .with_bundles_store(bundles_db)
         .with_apps_catalog(apps_db.clone())
         .with_workflow_catalog(workflows_db.clone())
+        .with_policy_admin(policies_db.clone())
         .with_skill_catalog(skills_db.clone())
         .with_branches_store(branches_db.clone())
         .with_branch_history(branches_db.clone())
@@ -1994,6 +2001,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                     // T-RUNAPP-PROJECT-RAIL: the SAME branch store the scaffold + IDE write, so
                     // an App's project `.md` reaches the model at run time.
                     Some(branches_db.clone() as Arc<dyn kx_gateway_core::BranchStore>),
+                    // The SAME policy store the Put/Assign RPCs write, so a role an
+                    // operator assigns actually narrows the run. It intersects and
+                    // never widens; a serve without it resolves exactly as before.
+                    Some(policies_db.clone() as Arc<dyn kx_gateway_core::PolicyAdmin>),
                 ));
                 // The WORKFLOW run resolver rides the SAME HostAppAuthor (one
                 // preparation/composition/authoring pipeline), reading workflows.db
@@ -2110,6 +2121,28 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     if let Some(proposer) = workflow_proposer {
         gateway = gateway.with_workflow_proposer(proposer);
     }
+    // NL authoring over the ControlSurface: one sentence -> the exact typed request the
+    // runtime would issue. Wired only when a model is served AND the fireable view exists,
+    // for the same reason DeriveApp is: the proposer intersects a proposed role against
+    // what is ACTUALLY fireable, so a preview can never offer a tool the register would
+    // then refuse. Validate-only (registers nothing, writes no journal) => digest-invariant.
+    #[cfg(feature = "serve-engine")]
+    {
+        // No served model, or no fireable view: ProposeControlAction stays
+        // `unimplemented` rather than previewing against authority it cannot see.
+        if let (Some(engine), Some(model_id), Some(fireable)) =
+            (model_engine.as_ref(), serve_model.as_ref(), &app_fireable)
+        {
+            gateway = gateway.with_control_proposer(Arc::new(
+                crate::control_nl_host::HostControlProposer::new(
+                    engine.clone(),
+                    model_id.clone(),
+                    default_executor_class(),
+                    fireable.clone(),
+                ),
+            ));
+        }
+    }
     // DeriveApp: one prompt -> a reviewable App design. Wired only when a model is served AND
     // the run resolver exists, because the two must agree: the deriver's capability menu is
     // built from `principal_tool_ceiling` — the SAME function RunApp intersects against — so a
@@ -2142,6 +2175,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                         // named App against, so the menu can never offer one the run would
                         // then fail to compose.
                         apps: Some(apps_db.clone() as Arc<dyn kx_gateway_core::AppCatalog>),
+                        // The SAME policy store the run's ceiling consults. The menu and
+                        // the fire must narrow by the same legs, or the design offers a
+                        // tool the run silently drops.
+                        policy: Some(policies_db.clone() as Arc<dyn kx_gateway_core::PolicyAdmin>),
                     },
                 ));
                 gateway = gateway.with_app_deriver(deriver);

@@ -29,7 +29,7 @@
 
 /// One declared filesystem mount a script wishes for. `mode` is the closed set
 /// `"ro"` | `"rw"` | `"exec"`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScriptMountWire {
     /// Absolute path.
     pub path: String,

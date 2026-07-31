@@ -853,6 +853,18 @@ pub struct GatewayService {
     /// affordance). Validate-only: it saves no envelope, creates no branch and writes no
     /// journal, so it is digest-invariant.
     deriver: Option<Arc<dyn crate::derive::AppDeriver>>,
+    /// The optional durable Policy/Role registry seam (the host injects a
+    /// `policies.db`-backed store). `None` ⇒ the four policy RPCs return
+    /// `unimplemented`. Caller-scoped, off-journal, off-digest — but AUTHORED,
+    /// so its sidecar is never rebuilt empty on a schema bump. A role NARROWS
+    /// tool authority by intersection and can never widen it.
+    policy_admin: Option<Arc<dyn crate::policy_admin::PolicyAdmin>>,
+    /// The optional NL-AUTHORING seam (`ProposeControlAction` — one sentence →
+    /// the exact typed request the runtime would issue). `None` ⇒ the RPC is
+    /// `unimplemented` (no served model). Validate-only: it registers nothing
+    /// and writes no journal, so it is digest-invariant. Approval is
+    /// CLIENT-HELD — this seam never enacts what it proposes.
+    control_proposer: Option<Arc<dyn crate::control_nl::ControlProposer>>,
     /// The optional App-manifest seam (`GetAppManifest` — the READ-ONLY capability
     /// preview). `None` ⇒ `GetAppManifest` is `unimplemented` (clients fall back to an
     /// envelope-only "needs" view). Server-authoritative + off-journal / off-digest.
@@ -970,6 +982,8 @@ impl GatewayService {
             workflow_runner: None,
             proposer: None,
             deriver: None,
+            policy_admin: None,
+            control_proposer: None,
             app_manifest: None,
             locks: None,
             scaffolder: None,
@@ -1496,6 +1510,101 @@ impl GatewayService {
         self
     }
 
+    /// Wire the durable Policy/Role registry (the host's `policies.db` sidecar).
+    /// Without it the four policy RPCs return `unimplemented`, and
+    /// `party_tool_authority` resolves exactly as it does on a serve that never
+    /// had a registry — which is the arm that keeps existing installs
+    /// byte-identical.
+    #[must_use]
+    pub fn with_policy_admin(mut self, policy: Arc<dyn crate::policy_admin::PolicyAdmin>) -> Self {
+        self.policy_admin = Some(policy);
+        self
+    }
+
+    /// Wire the NL-AUTHORING seam (`ProposeControlAction`). The host injects a
+    /// served-model backed proposer; `None` (the default) ⇒ the RPC is
+    /// `unimplemented`. Validate-only, digest-invariant, and it never enacts
+    /// what it proposes — approval is client-held.
+    #[must_use]
+    pub fn with_control_proposer(
+        mut self,
+        proposer: Arc<dyn crate::control_nl::ControlProposer>,
+    ) -> Self {
+        self.control_proposer = Some(proposer);
+        self
+    }
+
+    /// Refuse `handle` if it already names a DIFFERENT kind of entity.
+    ///
+    /// # Why any of this is necessary
+    ///
+    /// Branches, locks and branch HISTORY are all keyed `(principal, handle)`
+    /// with no entity axis. Two entities sharing a handle therefore silently
+    /// share one project branch, one lock and one point-in-time history — so
+    /// restoring one would restore the other's files, and locking one would lock
+    /// the other.
+    ///
+    /// # Why it was one-directional, and why that was worse than it looked
+    ///
+    /// The check shipped on `SaveWorkflow` alone, with a comment saying "SaveApp
+    /// stays untouched" — true, and it left the collision reachable from the
+    /// other side: save the App SECOND and nothing objects. A refusal that only
+    /// fires depending on which order two saves happen in is not a refusal, it is
+    /// a race the user loses silently.
+    ///
+    /// # What is deliberately NOT reserved
+    ///
+    /// Branch, lock and history rows are entity-agnostic BY DESIGN, and two paths
+    /// rely on it: `ScaffoldApp` creates a branch at its own App's handle, and
+    /// `save_workflow` creates one at the handle it just saved. Reserving those
+    /// would refuse both working paths and need a carve-out list on a brand-new
+    /// guard. The reservation is between the three catalogs that OWN a handle.
+    ///
+    /// A missing seam degrades OPEN, matching every other optional-catalog site:
+    /// a serve without the workflow catalog cannot have a workflow to collide
+    /// with.
+    ///
+    /// # Errors
+    /// `invalid_argument` naming the entity that already holds the handle.
+    #[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+    fn reserve_handle(
+        &self,
+        principal: &str,
+        handle: &str,
+        owner: HandleOwner,
+    ) -> Result<(), Status> {
+        let taken = |other: HandleOwner| {
+            Status::invalid_argument(format!(
+                "this handle names {}; pick a distinct {} handle \
+                 (branches, locks, and history are handle-keyed)",
+                other.noun(),
+                owner.own_noun()
+            ))
+        };
+        if owner != HandleOwner::App {
+            if let Some(apps) = self.apps.as_ref() {
+                if apps.get(principal, handle)?.is_some() {
+                    return Err(taken(HandleOwner::App));
+                }
+            }
+        }
+        if owner != HandleOwner::Workflow {
+            if let Some(workflows) = self.workflows.as_ref() {
+                if workflows.get(principal, handle)?.is_some() {
+                    return Err(taken(HandleOwner::Workflow));
+                }
+            }
+        }
+        if owner != HandleOwner::Bundle {
+            if let Some(bundles) = self.bundles.as_ref() {
+                if bundles.get(principal, handle)?.is_some() {
+                    return Err(taken(HandleOwner::Bundle));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Wire the App-manifest seam (`GetAppManifest`). Typically the SAME host object
     /// that implements `AppAuthor` (it holds the envelope catalog + the policy folds).
     #[must_use]
@@ -1829,6 +1938,274 @@ fn mcp_admin_status(err: crate::McpAdminError) -> Status {
     }
 }
 
+/// Map a [`crate::PolicyAdminError`] to a tonic `Status`.
+///
+/// `NotFound` is deliberately distinct from a silent success on assignment: a
+/// role that is not there must not read as "narrowed", because the caller would
+/// believe an authority was reduced when it was not.
+fn policy_admin_status(err: crate::PolicyAdminError) -> Status {
+    match err {
+        crate::PolicyAdminError::InvalidArgument(detail) => Status::invalid_argument(detail),
+        crate::PolicyAdminError::NotFound(detail) => Status::not_found(detail),
+        crate::PolicyAdminError::Storage(detail) => Status::internal(detail),
+    }
+}
+
+/// The fail-closed cap on how many tools one role may name.
+const MAX_POLICY_ROLE_TOOLS: usize = 256;
+
+/// `admit_script`, reachable from the equivalence test in `tests/`.
+///
+/// The function itself stays private: it is an internal seam between the RPC and
+/// the NL proposer, not API. This wrapper exists ONLY so
+/// `tests/admit_equivalence.rs` can compare it against the RPC over a real
+/// transport — which is the whole point of extracting it, and cannot be done
+/// from a unit test inside this module because the RPC needs a served client.
+///
+/// # Errors
+/// Whatever `admit_script` returns.
+#[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+pub fn admit_script_for_test(req: &proto::RegisterScriptRequest) -> Result<(), Status> {
+    admit_script(req)
+}
+
+/// `admit_registration`, reachable from the equivalence test. See
+/// [`admit_script_for_test`].
+///
+/// # Errors
+/// Whatever `admit_registration` returns.
+#[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+pub fn admit_registration_for_test(req: &proto::RegisterToolRequest) -> Result<(), Status> {
+    admit_registration(req)
+}
+
+/// Whether a `RegisterScript` request is ADMISSIBLE, independent of any host.
+///
+/// This is the prologue `register_script` used to inline, extracted verbatim so
+/// there is ONE definition of "would this registration be refused" rather than
+/// two that can drift.
+///
+/// # Why it needs a name
+///
+/// NL authoring proposes a registration and must be able to say, before a human
+/// approves anything, whether the runtime would take it. Re-stating these rules
+/// in the proposer would be a second definition of admissible — the exact drift
+/// the two-gates design exists to prevent — so the proposer decodes through THIS
+/// function, and `admit_matches_register` pins that it agrees with the real RPC.
+///
+/// # What it deliberately does NOT cover
+///
+/// The host-side half of admission is not pure and stays where it is: the
+/// interpreter is validated against the host's CLOSED allowlist and then PROBED
+/// by actually spawning it inside the sandbox, and a serve that cannot confine a
+/// script refuses there. A proposal that passes here can still be refused at
+/// registration, which is correct — the sandbox is the authority on what this
+/// host can run, and a preview must not pretend otherwise.
+///
+/// # Errors
+/// `invalid_argument` for an empty identity half, an over-cap description, an
+/// empty source, or too many argv/env/mount/host entries.
+#[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+fn admit_script(req: &proto::RegisterScriptRequest) -> Result<(), Status> {
+    if req.script_name.trim().is_empty() || req.script_version.trim().is_empty() {
+        return Err(Status::invalid_argument(
+            "script_name and script_version are required",
+        ));
+    }
+    if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
+        return Err(Status::invalid_argument("description too long"));
+    }
+    if req.source.is_empty() {
+        return Err(Status::invalid_argument("source is required"));
+    }
+    if req.argv.len() > MAX_TOOL_PARAMS
+        || req.env.len() > MAX_TOOL_PARAMS
+        || req.fs_mounts.len() > MAX_TOOL_PARAMS
+        || req.net_hosts.len() > MAX_TOOL_PARAMS
+    {
+        return Err(Status::invalid_argument(
+            "too many argv / env / fs_mounts / net_hosts entries",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether a `RegisterTool` request is ADMISSIBLE, independent of any host.
+///
+/// The `register_tool` prologue, extracted for the same reason as
+/// [`admit_script`]: the NL proposer must decode through the real enforcer, not
+/// through a restatement of it.
+///
+/// The host-side half stays put here too — `server_host` is SSRF-vetted against
+/// the operator's allowlist by `vet_registration_host` in the host seam, which
+/// needs configuration this function does not have.
+///
+/// # Errors
+/// `invalid_argument` for an empty identity half, an empty `server_host`, an
+/// over-cap description, or too many params.
+#[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+fn admit_registration(req: &proto::RegisterToolRequest) -> Result<(), Status> {
+    if req.tool_name.trim().is_empty() || req.tool_version.trim().is_empty() {
+        return Err(Status::invalid_argument(
+            "tool_name and tool_version are required",
+        ));
+    }
+    if req.server_host.trim().is_empty() {
+        return Err(Status::invalid_argument(
+            "server_host is required (the external MCP endpoint the PR-6b gateway will dial)",
+        ));
+    }
+    if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
+        return Err(Status::invalid_argument("description too long"));
+    }
+    if let Some(s) = &req.input_schema {
+        if s.params.len() > MAX_TOOL_PARAMS {
+            return Err(Status::invalid_argument("too many tool params"));
+        }
+    }
+    Ok(())
+}
+
+/// The wire token for a [`crate::control_surface::Domain`].
+///
+/// Exhaustive with NO wildcard, deliberately: a new domain must fail to compile
+/// here rather than reach the wire as a silently-wrong token. Same reasoning as
+/// `facet` itself — the failure being prevented is a mis-classification nobody
+/// would see in a behavioural test.
+const fn control_domain_token(d: crate::control_surface::Domain) -> &'static str {
+    use crate::control_surface::Domain as D;
+    match d {
+        D::Runs => "runs",
+        D::Workflows => "workflows",
+        D::Apps => "apps",
+        D::Tools => "tools",
+        D::Connectors => "connectors",
+        D::Secrets => "secrets",
+        D::Scripts => "scripts",
+        D::Triggers => "triggers",
+        D::Policy => "policy",
+        D::Approvals => "approvals",
+        D::Branches => "branches",
+        D::Context => "context",
+        D::Datasets => "datasets",
+        D::Memory => "memory",
+        D::Models => "models",
+        D::Skills => "skills",
+        D::Observability => "observability",
+        D::Server => "server",
+    }
+}
+
+/// The wire token for a [`crate::control_surface::Authority`]. Exhaustive, same
+/// reason as [`control_domain_token`].
+const fn control_authority_token(a: crate::control_surface::Authority) -> &'static str {
+    use crate::control_surface::Authority as A;
+    match a {
+        A::CallerPrincipal => "caller_principal",
+        A::OperatorGlobal => "operator_global",
+        A::LoopbackOnly => "loopback_only",
+    }
+}
+
+/// Lower a [`crate::ControlProposal`] onto the wire `ControlPreview`.
+///
+/// Each arm is the REAL request message, so approving is forwarding these exact
+/// bytes to `rpc`. The two reduced arms — secrets and scripts — are reduced in
+/// the seam type as well, so there is no field here to accidentally populate:
+/// `PutSecretRequest.value`, `RegisterScriptRequest.argv` and `.env` are simply
+/// not reachable from a proposal.
+fn control_preview_to_proto(
+    proposal: crate::ControlProposal,
+    summary: String,
+) -> proto::ControlPreview {
+    use crate::ControlProposal as P;
+    use proto::control_preview::Request as R;
+    let rpc = proposal.rpc_name().to_string();
+    let request = match proposal {
+        P::SaveWorkflow(w) => R::SaveWorkflow(proto::SaveWorkflowRequest {
+            handle: w.handle,
+            envelope_json: w.envelope_json,
+            source_digest: Vec::new(),
+            lifecycle: w.lifecycle,
+        }),
+        P::RegisterTool(t) => R::RegisterTool(proto::RegisterToolRequest {
+            tool_name: t.tool_name,
+            tool_version: t.tool_version,
+            description: t.description,
+            idempotency_class: t.idempotency_class,
+            input_schema: None,
+            server_host: t.server_host,
+            remote_name: t.remote_name,
+        }),
+        P::RegisterMcpServer(c) => R::RegisterMcpServer(proto::RegisterMcpServerRequest {
+            server_name: c.server_name,
+            transport: c.transport,
+            endpoint: c.endpoint,
+            args: c.args,
+            tls_required: c.tls_required,
+            credential_ref: c.credential_ref,
+            session_mode: c.session_mode,
+        }),
+        P::RegisterTrigger(t) => R::RegisterTrigger(proto::RegisterTriggerRequest {
+            name: t.name,
+            kind: trigger_kind_proto(&t.kind),
+            recipe_handle: t.recipe_handle,
+            auth: trigger_auth_proto(&t.auth),
+            auth_secret_ref: t.auth_secret_ref,
+            schedule_spec: t.schedule_spec,
+            enabled: t.enabled,
+            app_handle: t.app_handle,
+            timezone: t.timezone,
+            require_approval: t.require_approval,
+            workflow_handle: t.workflow_handle,
+        }),
+        P::PutPolicyRole(r) => R::PutPolicyRole(proto::PutPolicyRoleRequest {
+            name: r.name,
+            description: r.description,
+            tools: r
+                .tools
+                .into_iter()
+                .map(|t| proto::PolicyRoleTool {
+                    tool_id: t.tool_id,
+                    tool_version: t.tool_version,
+                })
+                .collect(),
+        }),
+        P::AssignPolicyRole { party, role } => {
+            R::AssignPolicyRole(proto::AssignPolicyRoleRequest { party, name: role })
+        }
+        P::PutSecret(s) => R::ProposedSecret(proto::ProposedSecretName {
+            name: s.name,
+            secret_scope: s.secret_scope,
+            net_scope: s.net_scope,
+        }),
+        P::RegisterScript(s) => R::ProposedScript(proto::ProposedScript {
+            script_name: s.script_name,
+            script_version: s.script_version,
+            description: s.description,
+            interpreter: s.interpreter,
+            source: s.source,
+            fs_mounts: s
+                .fs_mounts
+                .into_iter()
+                .map(|m| proto::ScriptMount {
+                    path: m.path,
+                    mode: m.mode,
+                })
+                .collect(),
+            net_hosts: s.net_hosts,
+            wall_clock_ms: s.wall_clock_ms,
+            mem_bytes: s.mem_bytes,
+            max_output_bytes: s.max_output_bytes,
+        }),
+    };
+    proto::ControlPreview {
+        rpc,
+        summary,
+        request: Some(request),
+    }
+}
+
 /// Map a [`crate::SecretAdminError`] (MM-3) to a tonic `Status`.
 fn secret_admin_status(err: crate::SecretAdminError) -> Status {
     match err {
@@ -1916,6 +2293,40 @@ fn valid_secret_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
+/// Which entity catalog a handle is being reserved FOR.
+///
+/// Exhaustive with no wildcard, so adding a fourth handle-owning catalog is a
+/// compile error here rather than a silent gap in the reservation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HandleOwner {
+    /// `SaveApp`.
+    App,
+    /// `SaveWorkflow`.
+    Workflow,
+    /// `PutContextBundle`.
+    Bundle,
+}
+
+impl HandleOwner {
+    /// The noun used in a refusal message.
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::App => "an App",
+            Self::Workflow => "a workflow",
+            Self::Bundle => "a context bundle",
+        }
+    }
+
+    /// The word for the handle the caller should pick instead.
+    const fn own_noun(self) -> &'static str {
+        match self {
+            Self::App => "App",
+            Self::Workflow => "workflow",
+            Self::Bundle => "bundle",
+        }
+    }
 }
 
 /// PR-7: lightweight `namespace/collection/name` handle validation for context
@@ -3146,6 +3557,9 @@ impl KxGateway for GatewayService {
                 "app envelope exceeds the server cap (1 MiB)",
             ));
         }
+        // Cross-catalog handle reservation. SaveApp reciprocates SaveWorkflow's
+        // check: without this the collision is simply order-dependent.
+        self.reserve_handle(&principal, &req.handle, HandleOwner::App)?;
         // POC-5d — a LOCKED App is fully frozen: the lock refuses an agentic in-CAS
         // FILE edit (AdvanceBranch, POC-5b) AND a STRUCTURE edit (a re-save of the
         // App envelope/blueprint from the lineage editor). One-App-one-branch ⇒ the
@@ -4060,26 +4474,8 @@ impl KxGateway for GatewayService {
             .as_ref()
             .ok_or_else(|| Status::unimplemented("RegisterScript: no script registry wired"))?;
         let req = request.into_inner();
-        if req.script_name.trim().is_empty() || req.script_version.trim().is_empty() {
-            return Err(Status::invalid_argument(
-                "script_name and script_version are required",
-            ));
-        }
-        if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
-            return Err(Status::invalid_argument("description too long"));
-        }
-        if req.source.is_empty() {
-            return Err(Status::invalid_argument("source is required"));
-        }
-        if req.argv.len() > MAX_TOOL_PARAMS
-            || req.env.len() > MAX_TOOL_PARAMS
-            || req.fs_mounts.len() > MAX_TOOL_PARAMS
-            || req.net_hosts.len() > MAX_TOOL_PARAMS
-        {
-            return Err(Status::invalid_argument(
-                "too many argv / env / fs_mounts / net_hosts entries",
-            ));
-        }
+        // The ONE admissibility statement, shared with the NL proposer.
+        admit_script(&req)?;
         let reg = crate::ScriptRegistration {
             script_name: req.script_name,
             script_version: req.script_version,
@@ -4198,25 +4594,9 @@ impl KxGateway for GatewayService {
             Status::unimplemented("RegisterTool: no tool registry wired (tools.db absent)")
         })?;
         let req = request.into_inner();
-        // Fail-closed field caps BEFORE the durable write.
-        if req.tool_name.trim().is_empty() || req.tool_version.trim().is_empty() {
-            return Err(Status::invalid_argument(
-                "tool_name and tool_version are required",
-            ));
-        }
-        if req.server_host.trim().is_empty() {
-            return Err(Status::invalid_argument(
-                "server_host is required (the external MCP endpoint the PR-6b gateway will dial)",
-            ));
-        }
-        if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
-            return Err(Status::invalid_argument("description too long"));
-        }
-        if let Some(s) = &req.input_schema {
-            if s.params.len() > MAX_TOOL_PARAMS {
-                return Err(Status::invalid_argument("too many tool params"));
-            }
-        }
+        // Fail-closed field caps BEFORE the durable write — the ONE admissibility
+        // statement, shared with the NL proposer.
+        admit_registration(&req)?;
         let reg = crate::ToolRegistration {
             tool_name: req.tool_name,
             tool_version: req.tool_version,
@@ -4241,11 +4621,6 @@ impl KxGateway for GatewayService {
             Status::unimplemented("DeregisterTool: no tool registry wired (tools.db absent)")
         })?;
         let req = request.into_inner();
-        if req.tool_name.trim().is_empty() || req.tool_version.trim().is_empty() {
-            return Err(Status::invalid_argument(
-                "tool_name and tool_version are required",
-            ));
-        }
         let removed = admin.deregister(&req.tool_name, &req.tool_version)?;
         Ok(Response::new(proto::DeregisterToolResponse { removed }))
     }
@@ -4851,6 +5226,9 @@ impl KxGateway for GatewayService {
                 "description exceeds the server cap",
             ));
         }
+        // Cross-catalog handle reservation — a bundle is the third entity keyed
+        // into the same (principal, handle) space.
+        self.reserve_handle(&principal, &req.handle, HandleOwner::Bundle)?;
         if req.items.is_empty() {
             return Err(Status::invalid_argument(
                 "a context bundle needs at least one item",
@@ -5349,19 +5727,10 @@ impl KxGateway for GatewayService {
                 "source_digest, when set, must be a 32-byte workflow_digest",
             ));
         }
-        // Cross-catalog handle refusal: branches, locks and branch HISTORY are all
-        // keyed (principal, handle) with no entity axis — a workflow sharing an
-        // App's handle would silently share that App's project branch, its lock,
-        // and its point-in-time history. Refusing at the NEW entity's save breaks
-        // nothing existing; SaveApp stays untouched.
-        if let Some(apps) = self.apps.as_ref() {
-            if apps.get(&principal, &req.handle)?.is_some() {
-                return Err(Status::invalid_argument(
-                    "this handle names an App; pick a distinct workflow handle \
-                     (branches, locks, and history are handle-keyed)",
-                ));
-            }
-        }
+        // Cross-catalog handle reservation — see `reserve_handle`. This used to
+        // check only `self.apps`, which made the refusal depend on which of two
+        // saves happened first.
+        self.reserve_handle(&principal, &req.handle, HandleOwner::Workflow)?;
         let source_digest = (!req.source_digest.is_empty()).then_some(req.source_digest.as_slice());
         let (record, deduplicated) = workflows.save(
             &principal,
@@ -5622,6 +5991,239 @@ impl KxGateway for GatewayService {
             branch_unbound,
             lock_cleared,
             triggers_removed,
+        }))
+    }
+
+    // ---- The durable Policy/Role registry -----------------------------------
+    //
+    // A role NARROWS tool authority by intersection and can never widen it, so
+    // these four RPCs are safe to expose to the caller who owns them: the worst
+    // a malicious role can do is refuse work. See `policy_admin` for why the
+    // alternative — "a role GRANTS the tools it names" — would make this an
+    // authority-minting surface.
+
+    async fn put_policy_role(
+        &self,
+        request: Request<proto::PutPolicyRoleRequest>,
+    ) -> Result<Response<proto::PutPolicyRoleResponse>, Status> {
+        let policy = self.policy_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("PutPolicyRole: no policy registry wired (policies.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        // Fail-closed field caps BEFORE the durable write.
+        if !valid_secret_name(&req.name) {
+            return Err(Status::invalid_argument(
+                "role name must be 1..=255 chars of [A-Za-z0-9_.-]",
+            ));
+        }
+        if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
+            return Err(Status::invalid_argument(
+                "description exceeds the server cap (4 KiB)",
+            ));
+        }
+        if req.tools.len() > MAX_POLICY_ROLE_TOOLS {
+            return Err(Status::invalid_argument("a role names at most 256 tools"));
+        }
+        // An empty PAIR is refused; an empty LIST is not. A role naming no tool
+        // is coherent (it refuses everything); a role naming a half-blank tool is
+        // a typo that would silently never match.
+        if req
+            .tools
+            .iter()
+            .any(|t| t.tool_id.trim().is_empty() || t.tool_version.trim().is_empty())
+        {
+            return Err(Status::invalid_argument(
+                "each tool needs both a tool_id and a tool_version",
+            ));
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+        let created = policy
+            .put(
+                &principal,
+                crate::PolicyRoleRow {
+                    name: req.name,
+                    description: req.description,
+                    tools: req
+                        .tools
+                        .into_iter()
+                        .map(|t| crate::PolicyRoleToolWire {
+                            tool_id: t.tool_id,
+                            tool_version: t.tool_version,
+                        })
+                        .collect(),
+                    created_unix_ms: now,
+                    updated_unix_ms: now,
+                },
+            )
+            .map_err(policy_admin_status)?;
+        Ok(Response::new(proto::PutPolicyRoleResponse { created }))
+    }
+
+    async fn list_policy_roles(
+        &self,
+        request: Request<proto::ListPolicyRolesRequest>,
+    ) -> Result<Response<proto::ListPolicyRolesResponse>, Status> {
+        let policy = self.policy_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("ListPolicyRoles: no policy registry wired (policies.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let limit = if req.limit == 0 {
+            100usize
+        } else {
+            (req.limit as usize).clamp(1, 256)
+        };
+        let roles = policy
+            .list(&principal, limit)
+            .map_err(policy_admin_status)?
+            .into_iter()
+            .map(|r| proto::PolicyRole {
+                name: r.name,
+                description: r.description,
+                tools: r
+                    .tools
+                    .into_iter()
+                    .map(|t| proto::PolicyRoleTool {
+                        tool_id: t.tool_id,
+                        tool_version: t.tool_version,
+                    })
+                    .collect(),
+                created_unix_ms: r.created_unix_ms,
+                updated_unix_ms: r.updated_unix_ms,
+            })
+            .collect();
+        Ok(Response::new(proto::ListPolicyRolesResponse { roles }))
+    }
+
+    async fn delete_policy_role(
+        &self,
+        request: Request<proto::DeletePolicyRoleRequest>,
+    ) -> Result<Response<proto::DeletePolicyRoleResponse>, Status> {
+        let policy = self.policy_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("DeletePolicyRole: no policy registry wired (policies.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.name.trim().is_empty() {
+            return Err(Status::invalid_argument("name is required"));
+        }
+        // Deleting a role WIDENS every party still assigned to it back to their
+        // un-narrowed authority. That is the honest outcome — refusing the delete
+        // would make a role permanent the moment it is used — and the host records
+        // it. Uniform absent/not-owned: an unknown name is `removed: false`, never
+        // an existence oracle.
+        let removed = policy
+            .delete(&principal, &req.name)
+            .map_err(policy_admin_status)?;
+        Ok(Response::new(proto::DeletePolicyRoleResponse { removed }))
+    }
+
+    async fn assign_policy_role(
+        &self,
+        request: Request<proto::AssignPolicyRoleRequest>,
+    ) -> Result<Response<proto::AssignPolicyRoleResponse>, Status> {
+        let policy = self.policy_admin.as_ref().ok_or_else(|| {
+            Status::unimplemented("AssignPolicyRole: no policy registry wired (policies.db absent)")
+        })?;
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.party.trim().is_empty() {
+            return Err(Status::invalid_argument("party is required"));
+        }
+        // An EMPTY name is the documented unassign, not a missing argument.
+        let name = if req.name.trim().is_empty() {
+            None
+        } else {
+            Some(req.name.as_str())
+        };
+        let assigned = policy
+            .assign(&principal, &req.party, name)
+            .map_err(policy_admin_status)?;
+        Ok(Response::new(proto::AssignPolicyRoleResponse { assigned }))
+    }
+
+    // ---- NL authoring --------------------------------------------------------
+
+    async fn propose_control_action(
+        &self,
+        request: Request<proto::ProposeControlActionRequest>,
+    ) -> Result<Response<proto::ProposeControlActionResponse>, Status> {
+        // One sentence → the exact typed request the runtime WOULD issue.
+        // VALIDATE ONLY: nothing is registered, no journal is written, so this
+        // cannot move the canonical digest. Approval is CLIENT-HELD —
+        // the mutation is the ordinary domain RPC, issued by the client with the
+        // bytes it was shown.
+        let proposer = self.control_proposer.clone().ok_or_else(|| {
+            Status::unimplemented(
+                "ProposeControlAction: no control proposer wired on this gateway \
+                 (needs an inference/serve-engine build with a resolved model)",
+            )
+        })?;
+        // The principal scopes every capability a proposal may reach; reading it
+        // at the RPC edge keeps the authority boundary where every other
+        // caller-scoped RPC reads it.
+        let principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        if req.goal.trim().is_empty() {
+            return Err(Status::invalid_argument("goal must not be empty"));
+        }
+        let outcome = proposer
+            .propose(
+                &principal,
+                crate::control_nl::ControlNlInput {
+                    goal: req.goal,
+                    domain: req.domain,
+                },
+            )
+            .await;
+        let result = match outcome {
+            crate::control_nl::ControlOutcome::Proposed { proposal, summary } => {
+                proto::propose_control_action_response::Result::Preview(control_preview_to_proto(
+                    *proposal, summary,
+                ))
+            }
+            crate::control_nl::ControlOutcome::Rejected { reason } => {
+                proto::propose_control_action_response::Result::Rejected(proto::ProposalRejected {
+                    reason,
+                })
+            }
+        };
+        Ok(Response::new(proto::ProposeControlActionResponse {
+            result: Some(result),
+        }))
+    }
+
+    async fn describe_control_surface(
+        &self,
+        request: Request<proto::DescribeControlSurfaceRequest>,
+    ) -> Result<Response<proto::DescribeControlSurfaceResponse>, Status> {
+        // Projected straight off the generated index and the hand-authored
+        // `facet` table, in descriptor declaration order. There is no third copy
+        // of this data to drift: if an RPC exists, it is here, because `facet` is
+        // exhaustive over a non-`#[non_exhaustive]` enum.
+        let _principal = caller_principal(&request)?;
+        let req = request.into_inner();
+        let want = req.domain.trim().to_ascii_lowercase();
+        let entries = kx_proto::control::GatewayRpc::ALL
+            .iter()
+            .map(|rpc| {
+                let f = crate::control_surface::facet(*rpc);
+                proto::ControlSurfaceEntry {
+                    rpc: rpc.as_str().to_string(),
+                    domain: control_domain_token(f.domain).to_string(),
+                    mutates: f.effect == crate::control_surface::Effect::Mutate,
+                    authority: control_authority_token(f.authority).to_string(),
+                    authoring: crate::control_surface::is_authoring(f.domain),
+                }
+            })
+            .filter(|e| want.is_empty() || e.domain == want)
+            .filter(|e| !req.authoring_only || e.authoring)
+            .collect();
+        Ok(Response::new(proto::DescribeControlSurfaceResponse {
+            entries,
         }))
     }
 

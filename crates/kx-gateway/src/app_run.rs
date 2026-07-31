@@ -153,6 +153,15 @@ pub(crate) struct HostAppAuthor {
     /// run never read. `None` on a build without the branch seam ⇒ no project rail (the
     /// digest no-op); a run is otherwise unaffected.
     branches: Option<Arc<dyn BranchStore>>,
+    /// The durable Policy/Role registry (`policies.db`) — the SECOND per-tool
+    /// narrowing leg beside the grant ledger. `None` on a serve without it
+    /// wired, which resolves exactly as before the registry existed: the
+    /// combined answer is `narrow_authority(grant_leg, None) == grant_leg`.
+    ///
+    /// It NARROWS only. Nothing here can widen a ceiling the grant ledger set,
+    /// which is what makes an off-journal sidecar admissible as an authority
+    /// input at all.
+    policy: Option<Arc<dyn kx_gateway_core::PolicyAdmin>>,
 }
 
 impl HostAppAuthor {
@@ -172,6 +181,7 @@ impl HostAppAuthor {
         content: Arc<dyn ContentPresence>,
         datasets: Option<Arc<dyn DatasetView>>,
         branches: Option<Arc<dyn BranchStore>>,
+        policy: Option<Arc<dyn kx_gateway_core::PolicyAdmin>>,
     ) -> Self {
         Self {
             apps,
@@ -183,6 +193,7 @@ impl HostAppAuthor {
             content,
             datasets,
             branches,
+            policy,
         }
     }
 
@@ -1074,8 +1085,29 @@ pub(crate) fn principal_tool_ceiling(
     party: &str,
     registered: &dyn RegisteredToolsView,
     tools: &dyn ToolRegistry,
+    policy: Option<&dyn kx_gateway_core::PolicyAdmin>,
 ) -> Result<BTreeSet<(String, String)>, BinderError> {
-    let allowlist = party_tool_authority(lib, party)?;
+    // TWO independent narrowing legs, combined by intersection and never by
+    // union (`narrow_authority`). A serve with no policy registry wired, or a
+    // party with no role assigned, contributes `None` — so the combined answer
+    // is byte-identical to the grant-ledger leg alone, which is what keeps every
+    // existing install unchanged.
+    //
+    // A policy READ FAILURE is treated as `None` rather than propagated. That is
+    // the right direction here and worth stating: this is an ADVISORY narrowing
+    // over an off-journal sidecar, and a corrupt store must not take down every
+    // run on the serve. The store itself already fails closed one level down —
+    // an unparseable allowlist decodes to EMPTY, not to permissive.
+    let policy_leg = policy.and_then(|p| {
+        p.allowlist_for(party).ok().flatten().map(|tools| {
+            tools
+                .into_iter()
+                .map(|t| (t.tool_id, t.tool_version))
+                .collect::<BTreeSet<(String, String)>>()
+        })
+    });
+    let allowlist =
+        crate::provision::narrow_authority(party_tool_authority(lib, party)?, policy_leg);
     let mut ceiling = BTreeSet::new();
     for (id, ver) in registered.registered_grants() {
         // Registry membership — author_app's `skill_union_grants` also requires it,
@@ -1629,6 +1661,7 @@ impl HostAppAuthor {
                     party,
                     self.registered.as_ref(),
                     self.tools.as_ref(),
+                    self.policy.as_deref(),
                 )
                 .map_err(map_binder_err)?,
             )
@@ -2039,6 +2072,7 @@ impl AppManifestView for HostAppAuthor {
             principal,
             self.registered.as_ref(),
             self.tools.as_ref(),
+            self.policy.as_deref(),
         ) {
             Ok(c) => c,
             Err(BinderError::NotAuthorized) => BTreeSet::new(),
@@ -2697,6 +2731,7 @@ mod tests {
             content.clone(),
             None,
             None,
+            None,
         );
         (host, content, author)
     }
@@ -2741,6 +2776,7 @@ mod tests {
             Arc::new(FixedFireable(fire)),
             content.clone(),
             datasets,
+            None,
             None,
         );
         (host, content, author)
@@ -2885,6 +2921,7 @@ mod tests {
             "alice@acme",
             host.registered.as_ref(),
             host.tools.as_ref(),
+            None,
         )
         .unwrap();
         assert_eq!(

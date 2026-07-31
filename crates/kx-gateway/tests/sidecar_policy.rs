@@ -145,6 +145,10 @@ fn the_stores_holding_authored_work_are_named_and_protected() {
         "secrets.rs",
         // tools.db: registered tools AND every registered script.
         "tool_store.rs",
+        // policies.db: durable Policy/Roles. Losing one does not lose a
+        // capability — it RESTORES capability the operator meant to remove,
+        // which is the failure direction that does not announce itself.
+        "policies.rs",
     ];
 
     let present: BTreeSet<String> = rust_sources().iter().map(|p| file_name(p)).collect();

@@ -19,7 +19,14 @@ name = "kx-proto"
 # workflow_resynced. Wire-additive (`buf breaking` clean), but the service trait
 # gains five methods, three messages gain pub fields, and a prost enum gains
 # variants ⇒ breaking-in-Rust, minor.
-version = "0.15.0"
+# 0.15.0 -> 0.16.0: the NL authoring surface (ProposeControlAction +
+# DescribeControlSurface) and the durable Policy/Role registry (Put/List/Delete/
+# Assign). Wire-additive (`buf breaking` clean), but the service trait gains SIX
+# methods ⇒ breaking-in-Rust, minor. Note the two reduced preview arms:
+# `ProposedSecretName` and `ProposedScript` exist so that no field named
+# value/argv/env is reachable from `ControlPreview` — a property the descriptor
+# walk in `src/lib.rs` asserts against this crate's own FileDescriptorSet.
+version = "0.16.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }
@@ -62,6 +69,12 @@ prost-types = { workspace = true }
 # a short connect-retry sleep while the in-process server binds.
 tokio = { workspace = true, features = ["time"] }
 proptest = { workspace = true }
+# The descriptor-walk test decodes the SAME FileDescriptorSet the build script
+# emitted, to prove no credential-shaped field is reachable from ControlPreview.
+# A DEV dependency on purpose: the descriptor bytes must not reach a shipped
+# rlib (build.rs "no host paths / never shipped" argument), and a `#[cfg(test)]`
+# `include_bytes!` keeps that true.
+prost-types = { workspace = true }
 
 [lints]
 workspace = true

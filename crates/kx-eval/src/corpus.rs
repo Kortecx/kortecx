@@ -190,6 +190,7 @@ mod tests {
                 "long",
                 "memory",
                 "menu",
+                "nlauthor",
                 "react",
                 "reach",
                 "scaffold",
@@ -218,6 +219,11 @@ mod tests {
             "memory",
             "scaffold",
             "workflow",
+            // The NL authoring surface. Deliberately NOT in the tool-required list
+            // below: a proposal fires no tools at all — the surface has none to
+            // offer it — so demanding an expected-tool would turn "correctly called
+            // nothing" into a corpus error.
+            "nlauthor",
         ] {
             assert!(
                 c.suite.tasks.iter().any(|t| t.family == f),

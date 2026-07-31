@@ -41,6 +41,29 @@ pub enum DatasetsArgs {
     Ingest(IngestArgs),
     /// `datasets query <dataset> --text …`.
     Query(QueryArgs),
+    /// `datasets discover <dataset> --text …` — the advisory fuzzy-in /
+    /// EXACT-out discovery ladder.
+    Discover(DiscoverArgs),
+}
+
+/// Parsed `datasets discover` arguments.
+///
+/// `query` answers "what does this dataset say?" and returns rendered hits;
+/// `discover` answers "which stored blobs are near this?" and returns
+/// content-addressed ids you then fetch exactly. The scores are DISPLAY-ONLY
+/// basis points — a score can surface a blob, never authorize one.
+#[derive(Debug)]
+pub struct DiscoverArgs {
+    /// The dataset NAME to search.
+    pub dataset: String,
+    /// The query text (server-embedded; needs an embedder on the serve).
+    pub text: String,
+    /// Top-k (absent ⇒ the server default; the server clamps to a sane max).
+    pub k: Option<u32>,
+    /// Retrieval mode wire value (0 = server default, 1 = dense, 2 = hybrid).
+    pub mode: i32,
+    /// Common client flags.
+    pub common: ClientCommon,
 }
 
 /// Parsed `datasets list` arguments.
@@ -97,8 +120,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<DatasetsArgs, Cli
         "list" => parse_list(args).map(DatasetsArgs::List),
         "ingest" => parse_ingest(args).map(DatasetsArgs::Ingest),
         "query" => parse_query(args).map(DatasetsArgs::Query),
+        "discover" => parse_discover(args).map(DatasetsArgs::Discover),
         other => Err(CliError::Usage(format!(
-            "unknown datasets subcommand {other:?} (expected: list | ingest | query)"
+            "unknown datasets subcommand {other:?} (expected: list | ingest | query | discover)"
         ))),
     }
 }
@@ -220,6 +244,60 @@ fn parse_query(mut args: impl Iterator<Item = String>) -> Result<QueryArgs, CliE
     })
 }
 
+fn parse_discover(mut args: impl Iterator<Item = String>) -> Result<DiscoverArgs, CliError> {
+    let mut dataset: Option<String> = None;
+    let mut text: Option<String> = None;
+    let mut k: Option<u32> = None;
+    let mut mode: i32 = proto::RetrievalMode::Unspecified as i32;
+    let mut common = ClientCommon::default();
+    while let Some(tok) = args.next() {
+        if common.try_consume(&tok, &mut args)? {
+            continue;
+        }
+        match tok.as_str() {
+            "--text" => text = Some(next_value(&mut args, "--text")?),
+            "--k" => {
+                let v = next_value(&mut args, "--k")?;
+                k = Some(v.parse::<u32>().map_err(|_| {
+                    CliError::Usage(format!("--k must be a positive integer, got {v:?}"))
+                })?);
+            }
+            "--mode" => {
+                let v = next_value(&mut args, "--mode")?;
+                mode = match v.to_ascii_lowercase().as_str() {
+                    "dense" => proto::RetrievalMode::Dense as i32,
+                    "hybrid" => proto::RetrievalMode::Hybrid as i32,
+                    other => {
+                        return Err(CliError::Usage(format!(
+                            "--mode must be dense|hybrid, got {other:?}"
+                        )))
+                    }
+                };
+            }
+            other if other.starts_with("--") => {
+                return Err(CliError::Usage(format!("unknown flag {other:?}")))
+            }
+            _ if dataset.is_none() => dataset = Some(tok),
+            _ => {
+                return Err(CliError::Usage(
+                    "datasets discover takes exactly one <dataset> argument".into(),
+                ))
+            }
+        }
+    }
+    let dataset = dataset
+        .ok_or_else(|| CliError::Usage("datasets discover requires a <dataset> name".into()))?;
+    let text =
+        text.ok_or_else(|| CliError::Usage("datasets discover requires --text <query>".into()))?;
+    Ok(DiscoverArgs {
+        dataset,
+        text,
+        k,
+        mode,
+        common,
+    })
+}
+
 /// Map a dataset RPC status to an honest CLI error — a pre-T3.7 / `hnsw`-less
 /// gateway has no dataset view and answers `Unimplemented`.
 fn map_datasets_status(status: tonic::Status) -> CliError {
@@ -241,7 +319,33 @@ pub async fn execute(args: DatasetsArgs) -> Result<(), CliError> {
         DatasetsArgs::List(a) => execute_list(a).await,
         DatasetsArgs::Ingest(a) => execute_ingest(a).await,
         DatasetsArgs::Query(a) => execute_query(a).await,
+        DatasetsArgs::Discover(a) => execute_discover(a).await,
     }
+}
+
+async fn execute_discover(args: DiscoverArgs) -> Result<(), CliError> {
+    let resolved = args.common.resolve()?;
+    let mut client = resolved.connect().await?;
+    let resp = client
+        .fuzzy_discovery(resolved.request(proto::FuzzyDiscoveryRequest {
+            dataset: args.dataset,
+            query_text: args.text,
+            // The CLIENT-VECTOR path is deliberately not exposed: a hand-supplied
+            // embedding is only meaningful against the exact model the dataset was
+            // ingested with, and a CLI flag cannot check that. The server-embed
+            // path cannot mismatch.
+            query_embedding: Vec::new(),
+            k: args.k.unwrap_or(0),
+            retrieval_mode: args.mode,
+        })?)
+        .await
+        .map_err(map_datasets_status)?
+        .into_inner();
+    println!(
+        "{}",
+        format::render_fuzzy_discovery(&resp, args.common.json)
+    );
+    Ok(())
 }
 
 async fn execute_list(args: ListArgs) -> Result<(), CliError> {

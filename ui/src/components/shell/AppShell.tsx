@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { ApprovalsProvider } from "../../app/approvals-context";
 import { pageFade } from "../../app/motion";
 import { useConnection } from "../../kx/connection-context";
+import { useLiveInvalidation } from "../../kx/use-live-invalidation";
 import { loadFlag, persistFlag } from "../../lib/ui-flags";
 import { ApprovalsDrawer } from "../apps/ApprovalsDrawer";
 import { DevToolsDock } from "../devtools";
@@ -59,6 +60,13 @@ export function AppShell() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [devtoolsOpen, setDevtoolsOpen] = useState<boolean>(() => loadFlag(DEVTOOLS_KEY));
   const connected = status === "connected";
+
+  // Mounted ABOVE the gate branch below, so the live tail drives cache
+  // invalidation on both sides of the connect gate. It is a no-op while
+  // disconnected and needs no state, so there is nothing to tear down when the
+  // gate flips — and mounting it inside one branch would silently stop
+  // invalidating the moment the shell re-rendered into the other.
+  useLiveInvalidation();
 
   const toggle = useCallback(() => {
     setCollapsed((c) => {

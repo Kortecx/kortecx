@@ -19,6 +19,14 @@ pub enum ExpectedTerminal {
     /// The run should cleanly dead-letter (e.g. a deliberate budget-exhaustion task) —
     /// the loud terminal, not a hang.
     DeadLetter,
+    /// The runtime should REFUSE, with a reason.
+    ///
+    /// Deliberately distinct from [`Self::DeadLetter`], which means the chain ran out
+    /// of road — a dispatch failure or an exhausted budget. A refusal is the opposite
+    /// kind of event: the runtime understood the request and declined it. Folding the
+    /// two together would make a deliberate boundary indistinguishable from a crash,
+    /// which is precisely the distinction a refusal oracle exists to measure.
+    Rejected,
 }
 
 /// One expected tool call, by exact `(id, version)`.

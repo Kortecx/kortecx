@@ -1382,6 +1382,49 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         corpus.suite.tasks.len()
     );
 
+    // PREFLIGHT: refuse an unprovisioned capture HERE, where the cause is still legible.
+    //
+    // Every one of these flags already folds into `complete` below, which refuses to write
+    // a baseline from a partial run. That guard was unreachable whenever `reach_ready` was
+    // false: the reach family drives `Drive::App{"kx/bench/reach"}`, and `Drive::App` is
+    // deliberately NOT skippable via `required_recipe()` — so a missing reach App is read
+    // by `run_app` as an App this party cannot see, and `apps.get -> None` returns the
+    // UNIFORM `permission_denied("not authorized")` that carries no existence oracle by
+    // design. The capture died on that, 553s in, naming neither the family nor the cause,
+    // and `complete` was never evaluated. A guard that a failure prevents from running is
+    // decoration.
+    //
+    // So the preconditions are asserted BEFORE the spend, each naming the knob that fixes
+    // it — the discipline `workflow_ready` above already had, extended to its siblings.
+    // Gated on capture mode so a diagnostic run can still explore a partial serve.
+    if std::env::var("KX_BENCH_UPDATE_BASELINE").is_ok() {
+        // `http_ready` and `workflow_ready` are already hard-asserted above; these three
+        // are the ones that were only ever consulted after the spend.
+        let mut unmet: Vec<&str> = Vec::new();
+        if !reach_ready {
+            unmet.push(
+                "reach fixtures — set KX_SERVE_EMBED_MODEL (the embed route is \
+                 `KX_SERVE_EMBED_MODEL else the primary`, and Ollama has no primary to \
+                 fall back to) and KX_SERVE_MEMORY=1",
+            );
+        }
+        if !flaky_ready {
+            unmet.push("flaky tools — the flaky-tool fixture bin did not register");
+        }
+        if !scaffold_ready {
+            unmet.push("scaffold fixtures — the serve could not scaffold");
+        }
+        assert!(
+            unmet.is_empty(),
+            "REFUSING to spend a capture that cannot cover the corpus.\n  \
+             unmet precondition(s):\n    - {}\n  \
+             A baseline captured here would be refused by the completeness guard anyway \
+             — but only after driving every task, and the reach family would abort the \
+             run first with a uniform \"not authorized\" that names nothing.",
+            unmet.join("\n    - ")
+        );
+    }
+
     // THE WITNESS: drive every bench task on the served model + score its REAL output.
     let outcome = score_live_suite(
         &mut c,
