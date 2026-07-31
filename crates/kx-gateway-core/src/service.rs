@@ -1534,6 +1534,77 @@ impl GatewayService {
         self
     }
 
+    /// Refuse `handle` if it already names a DIFFERENT kind of entity.
+    ///
+    /// # Why any of this is necessary
+    ///
+    /// Branches, locks and branch HISTORY are all keyed `(principal, handle)`
+    /// with no entity axis. Two entities sharing a handle therefore silently
+    /// share one project branch, one lock and one point-in-time history — so
+    /// restoring one would restore the other's files, and locking one would lock
+    /// the other.
+    ///
+    /// # Why it was one-directional, and why that was worse than it looked
+    ///
+    /// The check shipped on `SaveWorkflow` alone, with a comment saying "SaveApp
+    /// stays untouched" — true, and it left the collision reachable from the
+    /// other side: save the App SECOND and nothing objects. A refusal that only
+    /// fires depending on which order two saves happen in is not a refusal, it is
+    /// a race the user loses silently.
+    ///
+    /// # What is deliberately NOT reserved
+    ///
+    /// Branch, lock and history rows are entity-agnostic BY DESIGN, and two paths
+    /// rely on it: `ScaffoldApp` creates a branch at its own App's handle, and
+    /// `save_workflow` creates one at the handle it just saved. Reserving those
+    /// would refuse both working paths and need a carve-out list on a brand-new
+    /// guard. The reservation is between the three catalogs that OWN a handle.
+    ///
+    /// A missing seam degrades OPEN, matching every other optional-catalog site:
+    /// a serve without the workflow catalog cannot have a workflow to collide
+    /// with.
+    ///
+    /// # Errors
+    /// `invalid_argument` naming the entity that already holds the handle.
+    #[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+    fn reserve_handle(
+        &self,
+        principal: &str,
+        handle: &str,
+        owner: HandleOwner,
+    ) -> Result<(), Status> {
+        let taken = |other: HandleOwner| {
+            Status::invalid_argument(format!(
+                "this handle names {}; pick a distinct {} handle \
+                 (branches, locks, and history are handle-keyed)",
+                other.noun(),
+                owner.own_noun()
+            ))
+        };
+        if owner != HandleOwner::App {
+            if let Some(apps) = self.apps.as_ref() {
+                if apps.get(principal, handle)?.is_some() {
+                    return Err(taken(HandleOwner::App));
+                }
+            }
+        }
+        if owner != HandleOwner::Workflow {
+            if let Some(workflows) = self.workflows.as_ref() {
+                if workflows.get(principal, handle)?.is_some() {
+                    return Err(taken(HandleOwner::Workflow));
+                }
+            }
+        }
+        if owner != HandleOwner::Bundle {
+            if let Some(bundles) = self.bundles.as_ref() {
+                if bundles.get(principal, handle)?.is_some() {
+                    return Err(taken(HandleOwner::Bundle));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Wire the App-manifest seam (`GetAppManifest`). Typically the SAME host object
     /// that implements `AppAuthor` (it holds the envelope catalog + the policy folds).
     #[must_use]
@@ -2222,6 +2293,40 @@ fn valid_secret_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
+/// Which entity catalog a handle is being reserved FOR.
+///
+/// Exhaustive with no wildcard, so adding a fourth handle-owning catalog is a
+/// compile error here rather than a silent gap in the reservation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HandleOwner {
+    /// `SaveApp`.
+    App,
+    /// `SaveWorkflow`.
+    Workflow,
+    /// `PutContextBundle`.
+    Bundle,
+}
+
+impl HandleOwner {
+    /// The noun used in a refusal message.
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::App => "an App",
+            Self::Workflow => "a workflow",
+            Self::Bundle => "a context bundle",
+        }
+    }
+
+    /// The word for the handle the caller should pick instead.
+    const fn own_noun(self) -> &'static str {
+        match self {
+            Self::App => "App",
+            Self::Workflow => "workflow",
+            Self::Bundle => "bundle",
+        }
+    }
 }
 
 /// PR-7: lightweight `namespace/collection/name` handle validation for context
@@ -3452,6 +3557,9 @@ impl KxGateway for GatewayService {
                 "app envelope exceeds the server cap (1 MiB)",
             ));
         }
+        // Cross-catalog handle reservation. SaveApp reciprocates SaveWorkflow's
+        // check: without this the collision is simply order-dependent.
+        self.reserve_handle(&principal, &req.handle, HandleOwner::App)?;
         // POC-5d — a LOCKED App is fully frozen: the lock refuses an agentic in-CAS
         // FILE edit (AdvanceBranch, POC-5b) AND a STRUCTURE edit (a re-save of the
         // App envelope/blueprint from the lineage editor). One-App-one-branch ⇒ the
@@ -5118,6 +5226,9 @@ impl KxGateway for GatewayService {
                 "description exceeds the server cap",
             ));
         }
+        // Cross-catalog handle reservation — a bundle is the third entity keyed
+        // into the same (principal, handle) space.
+        self.reserve_handle(&principal, &req.handle, HandleOwner::Bundle)?;
         if req.items.is_empty() {
             return Err(Status::invalid_argument(
                 "a context bundle needs at least one item",
@@ -5616,19 +5727,10 @@ impl KxGateway for GatewayService {
                 "source_digest, when set, must be a 32-byte workflow_digest",
             ));
         }
-        // Cross-catalog handle refusal: branches, locks and branch HISTORY are all
-        // keyed (principal, handle) with no entity axis — a workflow sharing an
-        // App's handle would silently share that App's project branch, its lock,
-        // and its point-in-time history. Refusing at the NEW entity's save breaks
-        // nothing existing; SaveApp stays untouched.
-        if let Some(apps) = self.apps.as_ref() {
-            if apps.get(&principal, &req.handle)?.is_some() {
-                return Err(Status::invalid_argument(
-                    "this handle names an App; pick a distinct workflow handle \
-                     (branches, locks, and history are handle-keyed)",
-                ));
-            }
-        }
+        // Cross-catalog handle reservation — see `reserve_handle`. This used to
+        // check only `self.apps`, which made the refusal depend on which of two
+        // saves happened first.
+        self.reserve_handle(&principal, &req.handle, HandleOwner::Workflow)?;
         let source_digest = (!req.source_digest.is_empty()).then_some(req.source_digest.as_slice());
         let (record, deduplicated) = workflows.save(
             &principal,
