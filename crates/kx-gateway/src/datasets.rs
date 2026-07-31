@@ -737,7 +737,7 @@ impl HostDatasetView {
     /// Open (or create) the dataset store under `dir`, rebuilding every dataset's
     /// dense (HNSW) + sparse (BM25) indices SYNCHRONOUSLY from its durable rows
     /// before returning — no dataset is queryable before both arms are warm
-    /// (closes the cold-index race). Uses the default [`RagConfig`]; override with
+    /// (closes the cold-index race). Uses the default `RagConfig`; override with
     /// [`with_rag_config`](Self::with_rag_config).
     ///
     /// # Errors

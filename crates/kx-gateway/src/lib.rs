@@ -112,7 +112,7 @@ mod policies;
 // journal, digest-invariant.
 mod control_decode;
 
-/// [`control_decode::decode_control`], reachable from the bench-family preflight.
+/// `control_decode::decode_control`, reachable from the bench-family preflight.
 ///
 /// The decoder stays crate-private — it is an internal seam between the model turn and
 /// the proposal, not API. This wrapper exists so `tests/nlauthor_bench_drive.rs` can

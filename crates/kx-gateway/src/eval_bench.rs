@@ -701,7 +701,7 @@ impl LiveSuiteOutcome {
     }
 }
 
-/// The `missing_recipe` recorded for a task held back by [`task_filter`] rather than by
+/// The `missing_recipe` recorded for a task held back by `task_filter` rather than by
 /// an unprovisioned recipe — so a filtered run reads unmistakably as a diagnostic and can
 /// never be mistaken for missing coverage.
 pub const FILTERED_OUT: &str = "(held back by KX_BENCH_ONLY)";

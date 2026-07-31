@@ -97,6 +97,11 @@ kx-cloud/
 !/scripts/proof-nl-authoring.sh
 !/scripts/run-live-proof.sh
 !/scripts/run-bench-recapture.sh
+# `just ci` and a bare `clippy --lib` both miss a non-default feature's module AND
+# its tests, so each feature needs its own `--all-targets` clippy + `test` pair. That
+# is a standing gap in the gate, and a runner that encodes it is worth more than a
+# note somebody has to remember at the end of a long session.
+!/scripts/run-feature-gates.sh
 /justfile.private
 
 # The packed SDK the gateway embeds and serves as an installable package — a BUILD
