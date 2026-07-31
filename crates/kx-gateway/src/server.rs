@@ -2121,6 +2121,28 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
     if let Some(proposer) = workflow_proposer {
         gateway = gateway.with_workflow_proposer(proposer);
     }
+    // NL authoring over the ControlSurface: one sentence -> the exact typed request the
+    // runtime would issue. Wired only when a model is served AND the fireable view exists,
+    // for the same reason DeriveApp is: the proposer intersects a proposed role against
+    // what is ACTUALLY fireable, so a preview can never offer a tool the register would
+    // then refuse. Validate-only (registers nothing, writes no journal) => digest-invariant.
+    #[cfg(feature = "serve-engine")]
+    {
+        // No served model, or no fireable view: ProposeControlAction stays
+        // `unimplemented` rather than previewing against authority it cannot see.
+        if let (Some(engine), Some(model_id), Some(fireable)) =
+            (model_engine.as_ref(), serve_model.as_ref(), &app_fireable)
+        {
+            gateway = gateway.with_control_proposer(Arc::new(
+                crate::control_nl_host::HostControlProposer::new(
+                    engine.clone(),
+                    model_id.clone(),
+                    default_executor_class(),
+                    fireable.clone(),
+                ),
+            ));
+        }
+    }
     // DeriveApp: one prompt -> a reviewable App design. Wired only when a model is served AND
     // the run resolver exists, because the two must agree: the deriver's capability menu is
     // built from `principal_tool_ceiling` — the SAME function RunApp intersects against — so a
@@ -2153,6 +2175,10 @@ async fn start_impl(cfg: GatewayConfig) -> Result<RunningGateway, GatewayError> 
                         // named App against, so the menu can never offer one the run would
                         // then fail to compose.
                         apps: Some(apps_db.clone() as Arc<dyn kx_gateway_core::AppCatalog>),
+                        // The SAME policy store the run's ceiling consults. The menu and
+                        // the fire must narrow by the same legs, or the design offers a
+                        // tool the run silently drops.
+                        policy: Some(policies_db.clone() as Arc<dyn kx_gateway_core::PolicyAdmin>),
                     },
                 ));
                 gateway = gateway.with_app_deriver(deriver);

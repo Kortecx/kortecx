@@ -187,6 +187,43 @@ pub(crate) fn render_role_palette() -> String {
 }
 
 /// Build the planner's USER message for a goal: the palette + the goal. The planner CONTRACT
+/// The NL-CONTROL contract — the system prompt for the `ProposeControlAction` turn.
+///
+/// A **third sibling** of [`PLANNER_SYSTEM`] and [`DERIVE_SYSTEM`], and deliberately not a
+/// variant of either. Those two ask the model to design a computation; this one asks it to
+/// fill in ONE registration form. The model picks a domain and emits that domain's fields —
+/// it never designs steps, never names a model, and never states an authority.
+///
+/// **What the model is structurally prevented from saying.** There is no field here for a
+/// secret VALUE, for script `argv`, or for script `env`. That is not a rule the model is
+/// asked to follow — the decoder rejects unknown keys (`deny_unknown_fields`), and the wire
+/// type the proposal lowers into has no such field either. A model that tried would be
+/// refused twice before anything reached a human.
+///
+/// The example below is pinned by `control_example_decodes_through_the_real_decoder`, which
+/// decodes it with the SAME function the runtime uses and asserts `CONTROL_SYSTEM` contains
+/// it verbatim. A contract whose example does not decode teaches a shape nothing accepts.
+pub(crate) const CONTROL_SYSTEM: &str = "You turn one operator request into ONE registration form. You do not design workflows and you do not run anything: you fill in the fields for exactly one DOMAIN, and a human reviews the result before it is issued.\nPick the single best domain for the request:\n  workflows  — save a named multi-step definition\n  tools      — register an external tool the runtime may call\n  connectors — register an MCP server\n  secrets    — declare that a named credential should exist (NAME only)\n  scripts    — register a script the runtime may run sandboxed\n  triggers   — schedule or expose an existing app/recipe/workflow\n  policy     — define or assign a named role that NARROWS tool authority\nReply with EXACTLY one JSON object and NOTHING else — no prose, no code fence:\n{\"control\":{\"domain\":\"triggers\",\"name\":\"nightly-report\",\"fields\":{\"kind\":\"cron\",\"schedule_spec\":\"0 9 * * *\",\"app_handle\":\"ops/reports/daily\"}}}\nEach domain accepts ONLY these keys in `fields`; there are no others:\n  workflows  envelope_json, lifecycle\n  tools      tool_version, description, idempotency_class, server_host, remote_name\n  connectors transport, endpoint, args, tls_required, credential_ref, session_mode\n  secrets    secret_scope, net_scope\n  scripts    script_version, description, interpreter, source, net_hosts, wall_clock_ms\n  triggers   kind, auth, auth_secret_ref, schedule_spec, timezone, enabled, require_approval, recipe_handle, app_handle, workflow_handle\n  policy     description, tools, party      (tools is a list of \"tool_id@version\" strings; giving `party` ASSIGNS the named role to that party instead of defining it)\nRules: `domain` is one of the seven names above, exactly as spelled. `name` is the operator handle for the thing being registered. Use ONLY the keys listed for your chosen domain — an unrecognised key is REFUSED outright, not ignored, so omit anything you are unsure of rather than inventing a name for it. NEVER include a secret value, a password, a token, script arguments, or environment variables: those are set by an operator, not by you, and a form containing one is discarded. NEVER state a model, a permission, or an authority — a role NARROWS what a party may already do and can never grant anything new.";
+
+/// Build the NL-CONTROL user message. The contract ([`CONTROL_SYSTEM`]) rides the system
+/// channel; this is the per-request user turn.
+///
+/// `steer` is the caller's optional domain hint. It is passed as a HINT and not as an
+/// instruction to obey blindly: a caller who steers wrong should get a refusal from the
+/// admissibility gate, not a confidently-wrong form in the domain they named.
+#[must_use]
+pub(crate) fn control_user_message(goal: &str, steer: &str) -> String {
+    let steer = steer.trim();
+    if steer.is_empty() {
+        format!("REQUEST: {}", goal.trim())
+    } else {
+        format!(
+            "The operator suggests the {steer} domain.\nREQUEST: {}",
+            goal.trim()
+        )
+    }
+}
+
 /// ([`PLANNER_SYSTEM`]) rides the system channel; this is the per-request user turn.
 #[must_use]
 pub(crate) fn planner_user_message(goal: &str) -> String {
@@ -211,6 +248,108 @@ pub(crate) fn derive_user_message(prompt: &str, menu: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The example `CONTROL_SYSTEM` teaches, byte-identical to the one inside it.
+    ///
+    /// Keep it in sync with the contract; the assertion below is what makes "in sync"
+    /// checkable rather than a hope.
+    const CONTROL_EXAMPLE: &str = r#"{"control":{"domain":"triggers","name":"nightly-report","fields":{"kind":"cron","schedule_spec":"0 9 * * *","app_handle":"ops/reports/daily"}}}"#;
+
+    /// The taught example decodes through the REAL decoder, and the contract contains it.
+    ///
+    /// Three assertions, and each catches a different way this drifts:
+    /// 1. the example decodes — a contract teaching a shape nothing accepts is worse than
+    ///    no example, because the model will reproduce it faithfully and be refused;
+    /// 2. `CONTROL_SYSTEM` contains it VERBATIM — an example edited in one place and not
+    ///    the other teaches the old shape while the test passes on the new one;
+    /// 3. it decodes to the domain it claims — a syntactically valid form that lands in
+    ///    the wrong domain would satisfy (1) and (2) and still be wrong.
+    #[test]
+    fn control_example_decodes_through_the_real_decoder() {
+        let decoded = crate::control_decode::decode_control(CONTROL_EXAMPLE.as_bytes())
+            .expect("the taught example must decode via the same enforcer the runtime uses");
+        assert!(
+            matches!(
+                decoded,
+                kx_gateway_core::ControlProposal::RegisterTrigger(_)
+            ),
+            "the example claims the triggers domain and must decode into it"
+        );
+        assert!(
+            CONTROL_SYSTEM.contains(CONTROL_EXAMPLE),
+            "CONTROL_SYSTEM must teach this exact example — it has drifted from the test"
+        );
+    }
+
+    /// Every domain the contract NAMES is a domain the decoder ACCEPTS.
+    ///
+    /// The list in the prompt and the match in the decoder are two enumerations of one
+    /// fact. Without this, adding a domain to the prose while forgetting the decoder
+    /// produces a model that confidently emits forms nothing can read.
+    #[test]
+    fn every_domain_the_contract_offers_is_one_the_decoder_knows() {
+        for domain in [
+            "workflows",
+            "tools",
+            "connectors",
+            "secrets",
+            "scripts",
+            "triggers",
+            "policy",
+        ] {
+            assert!(
+                CONTROL_SYSTEM.contains(domain),
+                "{domain} is decodable but the contract never offers it"
+            );
+            let form = format!(r#"{{"control":{{"domain":"{domain}","name":"x","fields":{{}}}}}}"#);
+            assert!(
+                crate::control_decode::decode_control(form.as_bytes()).is_ok(),
+                "the contract offers {domain} but the decoder refuses it"
+            );
+        }
+    }
+
+    /// The control contract is its OWN contract, not a copy of the other two.
+    ///
+    /// The anti-unification assertion, extended to three: someone "unifying" these later
+    /// would make one prompt teach another's shape, and the model would emit a plan where
+    /// a registration form was asked for.
+    #[test]
+    fn the_three_contracts_stay_distinct() {
+        let contracts = [
+            ("PLANNER", PLANNER_SYSTEM),
+            ("DERIVE", DERIVE_SYSTEM),
+            ("CONTROL", CONTROL_SYSTEM),
+        ];
+        for (a_name, a) in contracts {
+            for (b_name, b) in contracts {
+                if a_name == b_name {
+                    continue;
+                }
+                assert!(
+                    !a.contains(b),
+                    "{a_name}_SYSTEM contains {b_name}_SYSTEM — the contracts have been unified"
+                );
+            }
+        }
+        // And the control contract does NOT teach the planner's step-ordering rule, which
+        // is the specific sentence a careless merge would carry across.
+        assert!(!CONTROL_SYSTEM.contains("Order the steps so each depends on the ones before it"));
+        // Nor does it invite a design: it asks for a form.
+        assert!(CONTROL_SYSTEM.contains("registration form"));
+    }
+
+    /// The user turn carries the steer as a HINT, and omits it cleanly when absent.
+    #[test]
+    fn the_control_user_message_carries_the_request_and_any_steer() {
+        let bare = control_user_message("  make a nightly report  ", "");
+        assert!(bare.contains("REQUEST: make a nightly report"));
+        assert!(!bare.contains("suggests"), "no steer, no steer sentence");
+
+        let steered = control_user_message("make a nightly report", "triggers");
+        assert!(steered.contains("suggests the triggers domain"));
+        assert!(steered.contains("REQUEST: make a nightly report"));
+    }
 
     /// The canonical example the planner contract teaches — its shape MUST decode through
     /// the same enforcer the runtime uses (`kx_planner::decode_plan`), and every role in it

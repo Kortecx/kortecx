@@ -74,6 +74,13 @@ pub(crate) struct CapabilitySources {
     /// The caller's App catalog — the composition registry. `None` ⇒ no Apps offered, so a
     /// serve without the App seam derives designs that call nothing, which is honest.
     pub(crate) apps: Option<Arc<dyn kx_gateway_core::AppCatalog>>,
+    /// The durable Policy/Role registry — the SECOND narrowing leg the RUN applies.
+    ///
+    /// The menu MUST see it. `principal_tool_ceiling` is deliberately the same function
+    /// here and at fire precisely so a tool the design offers can never be one the run
+    /// silently drops; passing `None` here while the runner passes the store would
+    /// reintroduce exactly that gap, one narrowing leg wide.
+    pub(crate) policy: Option<Arc<dyn kx_gateway_core::PolicyAdmin>>,
 }
 
 /// The host deriver: the served-model backend, the vetted role catalog it compiles against, and
@@ -123,6 +130,7 @@ impl HostAppDeriver {
             principal,
             self.sources.registered.as_ref(),
             self.sources.tools.as_ref(),
+            self.sources.policy.as_deref(),
         )
         .unwrap_or_default()
         .into_iter()

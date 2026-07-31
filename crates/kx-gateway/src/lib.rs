@@ -105,6 +105,29 @@ mod workflows;
 // authority surface at all. Authored work, so it rides the sidecar policy as
 // UserAuthored; off-journal, off-digest.
 mod policies;
+// The NL-CONTROL seam's host half: the strict `deny_unknown_fields` decoder for a
+// model-produced registration form, and the served-model proposer that runs it
+// through decode -> caller authority -> the domain's OWN register-time enforcer
+// before anything is previewed. Validate-only; registers nothing, writes no
+// journal, digest-invariant.
+mod control_decode;
+
+/// [`control_decode::decode_control`], reachable from the bench-family preflight.
+///
+/// The decoder stays crate-private — it is an internal seam between the model turn and
+/// the proposal, not API. This wrapper exists so `tests/nlauthor_bench_drive.rs` can
+/// decode the FROZEN GOLDEN model output through the REAL decoder. A preflight that
+/// re-implemented the parse would prove nothing about the path the runtime takes.
+///
+/// # Errors
+/// Whatever the decoder returns, rendered.
+pub fn decode_control_for_test(
+    bytes: &[u8],
+) -> Result<kx_gateway_core::ControlProposal, String> {
+    control_decode::decode_control(bytes).map_err(|e| e.to_string())
+}
+#[cfg(feature = "serve-engine")]
+mod control_nl_host;
 // The skills.db sidecar (the SkillCatalog seam) — ListSkills / GetSkillForm /
 // AddSkill / RemoveSkill. Stores a caller's kortecx.skill/v1 manifests (validated
 // fail-closed + canonicalized via the kx-skill leaf type — authority deny-keys,

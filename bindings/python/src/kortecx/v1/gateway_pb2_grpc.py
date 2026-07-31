@@ -609,6 +609,36 @@ class KxGatewayStub(object):
                 request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowRequest.SerializeToString,
                 response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowResponse.FromString,
                 _registered_method=True)
+        self.PutPolicyRole = channel.unary_unary(
+                '/kortecx.v1.KxGateway/PutPolicyRole',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.PutPolicyRoleRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.PutPolicyRoleResponse.FromString,
+                _registered_method=True)
+        self.ListPolicyRoles = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ListPolicyRoles',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ListPolicyRolesRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListPolicyRolesResponse.FromString,
+                _registered_method=True)
+        self.DeletePolicyRole = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DeletePolicyRole',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DeletePolicyRoleRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeletePolicyRoleResponse.FromString,
+                _registered_method=True)
+        self.AssignPolicyRole = channel.unary_unary(
+                '/kortecx.v1.KxGateway/AssignPolicyRole',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.AssignPolicyRoleRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.AssignPolicyRoleResponse.FromString,
+                _registered_method=True)
+        self.ProposeControlAction = channel.unary_unary(
+                '/kortecx.v1.KxGateway/ProposeControlAction',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.ProposeControlActionRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.ProposeControlActionResponse.FromString,
+                _registered_method=True)
+        self.DescribeControlSurface = channel.unary_unary(
+                '/kortecx.v1.KxGateway/DescribeControlSurface',
+                request_serializer=kortecx_dot_v1_dot_gateway__pb2.DescribeControlSurfaceRequest.SerializeToString,
+                response_deserializer=kortecx_dot_v1_dot_gateway__pb2.DescribeControlSurfaceResponse.FromString,
+                _registered_method=True)
 
 
 class KxGatewayServicer(object):
@@ -1484,6 +1514,49 @@ class KxGatewayServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PutPolicyRole(self, request, context):
+        """The durable Policy/Role registry (see PolicyRole). Caller-scoped catalog ops
+        over policies.db; assigning a role NARROWS a party's tool authority and can
+        never widen it. UNIMPLEMENTED on a serve without the seam.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListPolicyRoles(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeletePolicyRole(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AssignPolicyRole(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ProposeControlAction(self, request, context):
+        """NL authoring (see ControlPreview). ProposeControlAction WRITES NOTHING: it
+        returns the exact typed request the runtime would issue, for a human to
+        approve and then forward. DescribeControlSurface projects the generated
+        ControlSurface so a client can render what is authorable at all.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DescribeControlSurface(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_KxGatewayServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -2061,6 +2134,36 @@ def add_KxGatewayServicer_to_server(servicer, server):
                     servicer.DeleteWorkflow,
                     request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowRequest.FromString,
                     response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowResponse.SerializeToString,
+            ),
+            'PutPolicyRole': grpc.unary_unary_rpc_method_handler(
+                    servicer.PutPolicyRole,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.PutPolicyRoleRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.PutPolicyRoleResponse.SerializeToString,
+            ),
+            'ListPolicyRoles': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListPolicyRoles,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ListPolicyRolesRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ListPolicyRolesResponse.SerializeToString,
+            ),
+            'DeletePolicyRole': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeletePolicyRole,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DeletePolicyRoleRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DeletePolicyRoleResponse.SerializeToString,
+            ),
+            'AssignPolicyRole': grpc.unary_unary_rpc_method_handler(
+                    servicer.AssignPolicyRole,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.AssignPolicyRoleRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.AssignPolicyRoleResponse.SerializeToString,
+            ),
+            'ProposeControlAction': grpc.unary_unary_rpc_method_handler(
+                    servicer.ProposeControlAction,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.ProposeControlActionRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.ProposeControlActionResponse.SerializeToString,
+            ),
+            'DescribeControlSurface': grpc.unary_unary_rpc_method_handler(
+                    servicer.DescribeControlSurface,
+                    request_deserializer=kortecx_dot_v1_dot_gateway__pb2.DescribeControlSurfaceRequest.FromString,
+                    response_serializer=kortecx_dot_v1_dot_gateway__pb2.DescribeControlSurfaceResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -5168,6 +5271,168 @@ class KxGateway(object):
             '/kortecx.v1.KxGateway/DeleteWorkflow',
             kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowRequest.SerializeToString,
             kortecx_dot_v1_dot_gateway__pb2.DeleteWorkflowResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PutPolicyRole(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/PutPolicyRole',
+            kortecx_dot_v1_dot_gateway__pb2.PutPolicyRoleRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.PutPolicyRoleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListPolicyRoles(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ListPolicyRoles',
+            kortecx_dot_v1_dot_gateway__pb2.ListPolicyRolesRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ListPolicyRolesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeletePolicyRole(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DeletePolicyRole',
+            kortecx_dot_v1_dot_gateway__pb2.DeletePolicyRoleRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DeletePolicyRoleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AssignPolicyRole(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/AssignPolicyRole',
+            kortecx_dot_v1_dot_gateway__pb2.AssignPolicyRoleRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.AssignPolicyRoleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ProposeControlAction(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/ProposeControlAction',
+            kortecx_dot_v1_dot_gateway__pb2.ProposeControlActionRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.ProposeControlActionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DescribeControlSurface(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/kortecx.v1.KxGateway/DescribeControlSurface',
+            kortecx_dot_v1_dot_gateway__pb2.DescribeControlSurfaceRequest.SerializeToString,
+            kortecx_dot_v1_dot_gateway__pb2.DescribeControlSurfaceResponse.FromString,
             options,
             channel_credentials,
             insecure,

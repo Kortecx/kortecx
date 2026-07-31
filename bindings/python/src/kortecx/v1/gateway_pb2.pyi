@@ -3379,3 +3379,181 @@ class RunScore(_message.Message):
     turn_budget_used_per_mille: int
     tool_budget_used_per_mille: int
     def __init__(self, instance_id: _Optional[bytes] = ..., terminal: _Optional[str] = ..., reached_answer: bool = ..., turns_used: _Optional[int] = ..., tool_calls_used: _Optional[int] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., rejections: _Optional[int] = ..., turn_budget_used_per_mille: _Optional[int] = ..., tool_budget_used_per_mille: _Optional[int] = ...) -> None: ...
+
+class PolicyRoleTool(_message.Message):
+    __slots__ = ("tool_id", "tool_version")
+    TOOL_ID_FIELD_NUMBER: _ClassVar[int]
+    TOOL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    tool_id: str
+    tool_version: str
+    def __init__(self, tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ...) -> None: ...
+
+class PolicyRole(_message.Message):
+    __slots__ = ("name", "description", "tools", "created_unix_ms", "updated_unix_ms")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    TOOLS_FIELD_NUMBER: _ClassVar[int]
+    CREATED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    UPDATED_UNIX_MS_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    description: str
+    tools: _containers.RepeatedCompositeFieldContainer[PolicyRoleTool]
+    created_unix_ms: int
+    updated_unix_ms: int
+    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., tools: _Optional[_Iterable[_Union[PolicyRoleTool, _Mapping]]] = ..., created_unix_ms: _Optional[int] = ..., updated_unix_ms: _Optional[int] = ...) -> None: ...
+
+class PutPolicyRoleRequest(_message.Message):
+    __slots__ = ("name", "description", "tools")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    TOOLS_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    description: str
+    tools: _containers.RepeatedCompositeFieldContainer[PolicyRoleTool]
+    def __init__(self, name: _Optional[str] = ..., description: _Optional[str] = ..., tools: _Optional[_Iterable[_Union[PolicyRoleTool, _Mapping]]] = ...) -> None: ...
+
+class PutPolicyRoleResponse(_message.Message):
+    __slots__ = ("created",)
+    CREATED_FIELD_NUMBER: _ClassVar[int]
+    created: bool
+    def __init__(self, created: bool = ...) -> None: ...
+
+class ListPolicyRolesRequest(_message.Message):
+    __slots__ = ("limit",)
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    def __init__(self, limit: _Optional[int] = ...) -> None: ...
+
+class ListPolicyRolesResponse(_message.Message):
+    __slots__ = ("roles",)
+    ROLES_FIELD_NUMBER: _ClassVar[int]
+    roles: _containers.RepeatedCompositeFieldContainer[PolicyRole]
+    def __init__(self, roles: _Optional[_Iterable[_Union[PolicyRole, _Mapping]]] = ...) -> None: ...
+
+class DeletePolicyRoleRequest(_message.Message):
+    __slots__ = ("name",)
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    def __init__(self, name: _Optional[str] = ...) -> None: ...
+
+class DeletePolicyRoleResponse(_message.Message):
+    __slots__ = ("removed",)
+    REMOVED_FIELD_NUMBER: _ClassVar[int]
+    removed: bool
+    def __init__(self, removed: bool = ...) -> None: ...
+
+class AssignPolicyRoleRequest(_message.Message):
+    __slots__ = ("party", "name")
+    PARTY_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    party: str
+    name: str
+    def __init__(self, party: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
+
+class AssignPolicyRoleResponse(_message.Message):
+    __slots__ = ("assigned",)
+    ASSIGNED_FIELD_NUMBER: _ClassVar[int]
+    assigned: bool
+    def __init__(self, assigned: bool = ...) -> None: ...
+
+class ProposeControlActionRequest(_message.Message):
+    __slots__ = ("goal", "domain")
+    GOAL_FIELD_NUMBER: _ClassVar[int]
+    DOMAIN_FIELD_NUMBER: _ClassVar[int]
+    goal: str
+    domain: str
+    def __init__(self, goal: _Optional[str] = ..., domain: _Optional[str] = ...) -> None: ...
+
+class ProposedSecretName(_message.Message):
+    __slots__ = ("name", "secret_scope", "net_scope")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    SECRET_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    NET_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    secret_scope: str
+    net_scope: str
+    def __init__(self, name: _Optional[str] = ..., secret_scope: _Optional[str] = ..., net_scope: _Optional[str] = ...) -> None: ...
+
+class ProposedScript(_message.Message):
+    __slots__ = ("script_name", "script_version", "description", "interpreter", "source", "fs_mounts", "net_hosts", "wall_clock_ms", "mem_bytes", "max_output_bytes")
+    SCRIPT_NAME_FIELD_NUMBER: _ClassVar[int]
+    SCRIPT_VERSION_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    INTERPRETER_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    FS_MOUNTS_FIELD_NUMBER: _ClassVar[int]
+    NET_HOSTS_FIELD_NUMBER: _ClassVar[int]
+    WALL_CLOCK_MS_FIELD_NUMBER: _ClassVar[int]
+    MEM_BYTES_FIELD_NUMBER: _ClassVar[int]
+    MAX_OUTPUT_BYTES_FIELD_NUMBER: _ClassVar[int]
+    script_name: str
+    script_version: str
+    description: str
+    interpreter: str
+    source: bytes
+    fs_mounts: _containers.RepeatedCompositeFieldContainer[ScriptMount]
+    net_hosts: _containers.RepeatedScalarFieldContainer[str]
+    wall_clock_ms: int
+    mem_bytes: int
+    max_output_bytes: int
+    def __init__(self, script_name: _Optional[str] = ..., script_version: _Optional[str] = ..., description: _Optional[str] = ..., interpreter: _Optional[str] = ..., source: _Optional[bytes] = ..., fs_mounts: _Optional[_Iterable[_Union[ScriptMount, _Mapping]]] = ..., net_hosts: _Optional[_Iterable[str]] = ..., wall_clock_ms: _Optional[int] = ..., mem_bytes: _Optional[int] = ..., max_output_bytes: _Optional[int] = ...) -> None: ...
+
+class ControlPreview(_message.Message):
+    __slots__ = ("rpc", "summary", "save_workflow", "register_tool", "register_mcp_server", "register_trigger", "put_policy_role", "assign_policy_role", "proposed_secret", "proposed_script")
+    RPC_FIELD_NUMBER: _ClassVar[int]
+    SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    SAVE_WORKFLOW_FIELD_NUMBER: _ClassVar[int]
+    REGISTER_TOOL_FIELD_NUMBER: _ClassVar[int]
+    REGISTER_MCP_SERVER_FIELD_NUMBER: _ClassVar[int]
+    REGISTER_TRIGGER_FIELD_NUMBER: _ClassVar[int]
+    PUT_POLICY_ROLE_FIELD_NUMBER: _ClassVar[int]
+    ASSIGN_POLICY_ROLE_FIELD_NUMBER: _ClassVar[int]
+    PROPOSED_SECRET_FIELD_NUMBER: _ClassVar[int]
+    PROPOSED_SCRIPT_FIELD_NUMBER: _ClassVar[int]
+    rpc: str
+    summary: str
+    save_workflow: SaveWorkflowRequest
+    register_tool: RegisterToolRequest
+    register_mcp_server: RegisterMcpServerRequest
+    register_trigger: RegisterTriggerRequest
+    put_policy_role: PutPolicyRoleRequest
+    assign_policy_role: AssignPolicyRoleRequest
+    proposed_secret: ProposedSecretName
+    proposed_script: ProposedScript
+    def __init__(self, rpc: _Optional[str] = ..., summary: _Optional[str] = ..., save_workflow: _Optional[_Union[SaveWorkflowRequest, _Mapping]] = ..., register_tool: _Optional[_Union[RegisterToolRequest, _Mapping]] = ..., register_mcp_server: _Optional[_Union[RegisterMcpServerRequest, _Mapping]] = ..., register_trigger: _Optional[_Union[RegisterTriggerRequest, _Mapping]] = ..., put_policy_role: _Optional[_Union[PutPolicyRoleRequest, _Mapping]] = ..., assign_policy_role: _Optional[_Union[AssignPolicyRoleRequest, _Mapping]] = ..., proposed_secret: _Optional[_Union[ProposedSecretName, _Mapping]] = ..., proposed_script: _Optional[_Union[ProposedScript, _Mapping]] = ...) -> None: ...
+
+class ProposeControlActionResponse(_message.Message):
+    __slots__ = ("preview", "rejected")
+    PREVIEW_FIELD_NUMBER: _ClassVar[int]
+    REJECTED_FIELD_NUMBER: _ClassVar[int]
+    preview: ControlPreview
+    rejected: ProposalRejected
+    def __init__(self, preview: _Optional[_Union[ControlPreview, _Mapping]] = ..., rejected: _Optional[_Union[ProposalRejected, _Mapping]] = ...) -> None: ...
+
+class DescribeControlSurfaceRequest(_message.Message):
+    __slots__ = ("domain", "authoring_only")
+    DOMAIN_FIELD_NUMBER: _ClassVar[int]
+    AUTHORING_ONLY_FIELD_NUMBER: _ClassVar[int]
+    domain: str
+    authoring_only: bool
+    def __init__(self, domain: _Optional[str] = ..., authoring_only: bool = ...) -> None: ...
+
+class ControlSurfaceEntry(_message.Message):
+    __slots__ = ("rpc", "domain", "mutates", "authority", "authoring")
+    RPC_FIELD_NUMBER: _ClassVar[int]
+    DOMAIN_FIELD_NUMBER: _ClassVar[int]
+    MUTATES_FIELD_NUMBER: _ClassVar[int]
+    AUTHORITY_FIELD_NUMBER: _ClassVar[int]
+    AUTHORING_FIELD_NUMBER: _ClassVar[int]
+    rpc: str
+    domain: str
+    mutates: bool
+    authority: str
+    authoring: bool
+    def __init__(self, rpc: _Optional[str] = ..., domain: _Optional[str] = ..., mutates: bool = ..., authority: _Optional[str] = ..., authoring: bool = ...) -> None: ...
+
+class DescribeControlSurfaceResponse(_message.Message):
+    __slots__ = ("entries",)
+    ENTRIES_FIELD_NUMBER: _ClassVar[int]
+    entries: _containers.RepeatedCompositeFieldContainer[ControlSurfaceEntry]
+    def __init__(self, entries: _Optional[_Iterable[_Union[ControlSurfaceEntry, _Mapping]]] = ...) -> None: ...
