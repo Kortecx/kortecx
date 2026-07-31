@@ -139,8 +139,18 @@ test-skill *packs:
 # The registry-consistency check — registry/index.json entries must
 # agree with the tree (skills/** ⟷ skill entries, integrations/kx-connector-*
 # ⟷ integration entries, sources exist, ledger ids real). Pure file reads.
+# Registry consistency — `registry/index.json` vs the tree.
+#
+# This recipe used to read `[ -f x ] && bash x || echo "... skipped"`, which cannot fail
+# in EITHER state: the helper was never tracked in this repo, so it always printed
+# "skipped" and returned 0 — and had it been present, a FAILING run would fall through to
+# the `||` and still return 0. A member of `ci` that cannot go red is decoration.
+#
+# Now the helper ships (whitelisted past the /scripts/*.sh ignore) and a missing one is
+# an ERROR, not a shrug: absence is the exact condition the old form disguised.
 registry-check:
-    @[ -f scripts/registry-check.sh ] && bash scripts/registry-check.sh || echo "registry-check: helper script not present — skipped"
+    @test -f scripts/registry-check.sh || { echo "registry-check: scripts/registry-check.sh is MISSING — it is part of \`just ci\`, not optional"; exit 1; }
+    @bash scripts/registry-check.sh
 
 # ============================================================================
 # Onboarding / install automation (sudo-free, opt-in)

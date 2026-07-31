@@ -102,6 +102,9 @@ kx-cloud/
 # is a standing gap in the gate, and a runner that encodes it is worth more than a
 # note somebody has to remember at the end of a long session.
 !/scripts/run-feature-gates.sh
+# A member of `just ci`. It was untracked here, so the recipe printed "skipped" and
+# returned 0 in every checkout — the ignore file was the reason the gate never ran.
+!/scripts/registry-check.sh
 /justfile.private
 
 # The packed SDK the gateway embeds and serves as an installable package — a BUILD
