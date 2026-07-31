@@ -31,6 +31,15 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
   registry existed. `kx-proto` 0.15.0 → 0.16.0 (wire-additive; the service trait
   gains six methods, so breaking-in-Rust and a minor bump).
 
+- **Upgrade tests now run against state dirs released binaries actually wrote.**
+  `crates/kx-runtime/tests/fixtures/state-dirs/` holds two frozen directories
+  captured by the published `v0.1.1` (journal v8) and `v0.2.0-rc.1` (journal v16,
+  with a real App, trigger, branch and context bundle) binaries — downloaded from
+  their GitHub releases and sha256-verified against each release's own
+  `checksums.txt` before being executed. The previous only old-version fixture
+  was built by writing a current journal and downgrading it with raw SQL, which
+  can only contain what today's writer knows how to produce.
+
 ### Changed
 
 - `tools.db` now opens through the sidecar upgrade policy as `UserAuthored`. It was

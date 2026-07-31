@@ -1,0 +1,17 @@
+# Binary fixtures must never be line-ending-normalised or diffed as text.
+#
+# Git guesses text-vs-binary from content, and a SQLite file is mostly bytes that
+# look like nothing — but "mostly" is not a guarantee, and a single CRLF
+# translation inside a frozen state dir would corrupt a fixture whose entire
+# value is being byte-for-byte what a released binary wrote. Declaring it removes
+# the guess.
+#
+# `diff` is set so `git diff` reports "Binary files differ" instead of dumping
+# kilobytes of noise into a review.
+*.db     binary
+*.db-wal binary
+*.db-shm binary
+*.bak    binary
+*.kxjournal binary
+*.fds    binary
+*.gguf   binary
