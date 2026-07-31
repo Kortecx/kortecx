@@ -153,7 +153,10 @@ fn the_family_carries_both_an_acceptance_and_a_refusal() {
             ExpectedTerminal::Answer => answers += 1,
             ExpectedTerminal::Rejected => refusals += 1,
             ExpectedTerminal::DeadLetter => {
-                panic!("{}: a proposal does not dead-letter; it answers or refuses", t.id)
+                panic!(
+                    "{}: a proposal does not dead-letter; it answers or refuses",
+                    t.id
+                )
             }
         }
     }
@@ -231,7 +234,10 @@ fn the_folded_transcripts_score_the_way_the_capture_will() {
 
     // The refusal task passes ONLY on a refusal.
     let r = task("nlauthor-refuses-unregistered-tool");
-    let refused = refusal_transcript(&r.id, "this role names a tool that no registered tool matches");
+    let refused = refusal_transcript(
+        &r.id,
+        "this role names a tool that no registered tool matches",
+    );
     let scores = score_transcript(&ScoreInput {
         transcript: &refused,
         expect: &r.expect,

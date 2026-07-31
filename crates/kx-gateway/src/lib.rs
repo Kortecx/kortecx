@@ -121,9 +121,7 @@ mod control_decode;
 ///
 /// # Errors
 /// Whatever the decoder returns, rendered.
-pub fn decode_control_for_test(
-    bytes: &[u8],
-) -> Result<kx_gateway_core::ControlProposal, String> {
+pub fn decode_control_for_test(bytes: &[u8]) -> Result<kx_gateway_core::ControlProposal, String> {
     control_decode::decode_control(bytes).map_err(|e| e.to_string())
 }
 #[cfg(feature = "serve-engine")]
