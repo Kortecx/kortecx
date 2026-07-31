@@ -53,6 +53,7 @@ mod apps_view;
 mod branches_view;
 mod bundles_view;
 mod capture_view;
+pub mod control_surface;
 mod datasets;
 mod error;
 mod eval;

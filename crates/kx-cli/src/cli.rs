@@ -91,6 +91,8 @@ usage: kx <command> [args]
     kx info                                     (non-secret server config: model/dirs/ports/flags/posture)
     kx health                                   (grpc.health.v1 liveness; exit 0 iff SERVING)
     kx eval run [--tolerance <per_mille>] | score <INSTANCE_ID>   (RC1/D172 — golden gate + per-run quality)
+    kx workflow save <handle> <file> [--draft] | list | get <handle> [--output <f>] | run <handle> [--args <json>] [--wait] [--require-approval] | delete <handle> | propose <goal>   (the durable Workflow entity; `propose` PREVIEWS only)
+    kx scripts register --name <N> --version <V> --interpreter <I> --source <f> [--argv <a>] [--env K=V] [--mount <ro|rw>:<path>] [--net-host <h>] | list | get <N> <V> | deregister <N> <V>   (sandboxed; argv/env fixed at registration)
     kx migrate --journal <path> [--out <path>] [--dry-run] [--json]
                                                  (bring a journal written by an older kortecx up to this binary's schema, digest-verified)
 
@@ -190,9 +192,75 @@ pub enum Cli {
     Cost(verbs::cost::CostArgs),
     /// Agentic evaluation (RC1/D172 — `kx eval run` golden gate · `kx eval score <ID>`).
     Eval(verbs::eval::EvalArgs),
+    /// `workflow` — the durable Workflow entity: save / list / get / run /
+    /// delete, plus `propose`, which PREVIEWS a plan and saves nothing.
+    Workflow(verbs::workflow::WorkflowArgs),
+    /// `scripts` — the script registry: register / list / get / deregister.
+    Scripts(verbs::scripts::ScriptsArgs),
     /// `migrate` — offline journal schema migration (local; no gateway).
     Migrate(verbs::migrate::MigrateArgs),
 }
+
+/// Every dispatchable top-level verb, in USAGE order.
+///
+/// THE source of truth for "what verbs exist". `from_args` REJECTS anything not
+/// listed here before it reaches the match, and the discoverability guard
+/// iterates it instead of a hand-typed copy.
+///
+/// Why this exists: the guard used to walk a list retyped by hand beside the
+/// match, which meant the two could disagree — and they did. `migrate` shipped
+/// dispatchable, documented and completely unguarded, because whoever added it
+/// updated the five sites a verb needs and not the sixth nobody remembers. A
+/// verb added to the match but not here is unreachable at runtime; a verb here
+/// with no arm hits the "no dispatch arm" error below. Neither can be typed past
+/// a green build — `verbs_is_exactly_the_set_from_args_dispatches` derives the
+/// arm set from this file's own source and asserts set equality.
+pub const VERBS: &[&str] = &[
+    "run",
+    "replay",
+    "digest",
+    "serve",
+    "chat",
+    "agent",
+    "invoke",
+    "blueprint",
+    "chain",
+    "swarm",
+    "projection",
+    "runs",
+    "recipe",
+    "mote",
+    "content",
+    "events",
+    "telemetry",
+    "feedback",
+    "replan",
+    "react",
+    "rerank",
+    "capture",
+    "alerts",
+    "signatures",
+    "tools",
+    "connections",
+    "skills",
+    "new",
+    "context",
+    "app",
+    "branch",
+    "models",
+    "datasets",
+    "memory",
+    "health",
+    "info",
+    "secrets",
+    "triggers",
+    "approvals",
+    "cost",
+    "eval",
+    "migrate",
+    "workflow",
+    "scripts",
+];
 
 impl Cli {
     /// Parse `argv` (excluding the program name). An empty argv is `--help`.
@@ -206,6 +274,12 @@ impl Cli {
             None | Some("--help" | "-h") => Ok(Cli::Help(None)),
             Some("help") => Ok(Cli::Help(args.next())),
             Some("--version" | "-V") => Ok(Cli::Version),
+            // The VERBS gate. An unlisted verb is refused here rather than
+            // falling through 40-odd arms to a catch-all, so `VERBS` is load
+            // bearing at runtime and not merely documentation.
+            Some(v) if !VERBS.contains(&v) => Err(CliError::Usage(format!(
+                "unknown command {v:?} (try `kx --help`)"
+            ))),
             Some(verb @ ("run" | "replay" | "digest")) => {
                 // The engine parser doesn't know `--json`; strip it here and
                 // forward the rest with the mode re-prepended.
@@ -261,9 +335,14 @@ impl Cli {
             Some("approvals") => Ok(Cli::Approvals(verbs::approvals::parse(args)?)),
             Some("cost") => Ok(Cli::Cost(verbs::cost::parse(args)?)),
             Some("eval") => Ok(Cli::Eval(verbs::eval::parse(args)?)),
+            Some("workflow") => Ok(Cli::Workflow(verbs::workflow::parse(args)?)),
+            Some("scripts") => Ok(Cli::Scripts(verbs::scripts::parse(args)?)),
             Some("migrate") => Ok(Cli::Migrate(verbs::migrate::parse(args)?)),
+            // Reachable only if a verb is in VERBS with no dispatch arm — i.e.
+            // the two disagree. The unit test below makes that unreachable, but
+            // the message names the real fault rather than blaming the user.
             Some(other) => Err(CliError::Usage(format!(
-                "unknown command {other:?} (try `kx --help`)"
+                "{other:?} is listed in VERBS but has no dispatch arm (a kx bug)"
             ))),
         }
     }
@@ -349,6 +428,8 @@ async fn dispatch(cli: Cli) -> Result<(), CliError> {
         Cli::Approvals(a) => verbs::approvals::execute(a).await,
         Cli::Cost(a) => verbs::cost::execute(a).await,
         Cli::Eval(a) => verbs::eval::execute(a).await,
+        Cli::Workflow(a) => verbs::workflow::execute(a).await,
+        Cli::Scripts(a) => verbs::scripts::execute(a).await,
         Cli::Migrate(a) => verbs::migrate::execute(&a),
     }
 }
@@ -1029,6 +1110,48 @@ kx eval score <INSTANCE_ID> [--json] [client flags]
   (terminal reached, turns / tool-calls, budget burn, rejections) via the ScoreRun
   gateway RPC."
             .into(),
+        "workflow" => "\
+kx workflow save <HANDLE> <FILE> [--draft] [client flags]
+kx workflow list [--limit N] [--after <handle>] [client flags]
+kx workflow get <HANDLE> [--output <file>] [client flags]
+kx workflow run <HANDLE> [--args <json>] [--require-approval] [--wait [--timeout <secs>]] [--out <file>]
+kx workflow delete <HANDLE> [client flags]
+kx workflow propose <GOAL...> [client flags]
+
+The durable Workflow entity: a stored definition the server runs under warrants
+it derives itself. `run` drives RunWorkflow, never SubmitRun \u{2014} the CLI has no path
+that hands the server a warrant you wrote.
+
+`propose` PREVIEWS and saves NOTHING. It prints the plan the planner produced (or
+the refusal) and stops; saving it is a separate, explicit `kx workflow save`.
+That separation is the safety property, not an inconvenience.
+
+`--draft` saves with lifecycle=draft. Finishing a draft is the SAME save without
+the flag: identical bytes under a changed lifecycle is a real write, so there is
+no separate `finish` verb because there is no separate mechanism. A draft
+workflow is refused as a trigger target until it is finished.
+".into(),
+        "scripts" => "\
+kx scripts register --name <N> --version <V> --interpreter <I> --source <FILE>
+                    [--description <D>] [--argv <ARG>]... [--env KEY=VALUE]...
+                    [--mount <ro|rw>:<PATH>]... [--net-host <HOST>]...
+                    [--wall-clock-ms N] [--mem-bytes N] [--max-output-bytes N]
+kx scripts list [--limit N] [--after-name <N>] [--after-version <V>]
+kx scripts get <NAME> <VERSION> [--output <file>] [client flags]
+kx scripts deregister <NAME> <VERSION> [client flags]
+
+Scripts run SANDBOXED or not at all: registration refuses if the host cannot
+enforce a sandbox, or cannot run the declared interpreter (it is probed, not
+assumed).
+
+Registration grants NOTHING. --mount and --net-host DECLARE what the script says
+it needs; that declaration becomes its requirement, and the broker still refuses
+any dispatch whose requirement exceeds the granting warrant.
+
+--argv and --env are fixed HERE and are never model-controlled; the child's
+environment is cleared before they are set. A model calling a script controls
+exactly one thing: the input string on stdin.
+".into(),
         "migrate" => "\
 kx migrate --journal <path> [--out <path>] [--dry-run] [--json]
   Bring a journal written by an OLDER kortecx up to this binary's schema version.
@@ -1224,57 +1347,16 @@ mod tests {
     /// eval). A regression guard for the help/usage honesty surface.
     #[test]
     fn every_verb_is_discoverable_in_usage_and_help() {
-        // The four capabilities that `kx --help` used to hide are now named in USAGE.
+        // The four capabilities that `kx --help` used to hide are named in USAGE.
+        // These pin SUBcommands, which VERBS does not cover.
         for needle in ["approvals", "kx cost", "pull", "use <id"] {
             assert!(
                 USAGE.contains(needle),
                 "USAGE must mention {needle:?} (no hidden shipped capability)"
             );
         }
-        // Every verb `from_args` dispatches resolves to a real `kx help <verb>` arm.
-        for verb in [
-            "run",
-            "replay",
-            "digest",
-            "serve",
-            "chat",
-            "agent",
-            "invoke",
-            "blueprint",
-            "chain",
-            "swarm",
-            "projection",
-            "runs",
-            "recipe",
-            "mote",
-            "content",
-            "events",
-            "telemetry",
-            "feedback",
-            "replan",
-            "react",
-            "rerank",
-            "capture",
-            "alerts",
-            "signatures",
-            "tools",
-            "connections",
-            "skills",
-            "new",
-            "context",
-            "app",
-            "branch",
-            "models",
-            "datasets",
-            "memory",
-            "health",
-            "info",
-            "secrets",
-            "triggers",
-            "approvals",
-            "cost",
-            "eval",
-        ] {
+        // Driven by VERBS, never a retyped copy of it.
+        for verb in VERBS {
             let help = help_for(verb);
             assert!(
                 !help.starts_with("no help for"),
@@ -1284,6 +1366,74 @@ mod tests {
                 help.contains(verb),
                 "the `{verb}` help arm should name the verb it documents"
             );
+            assert!(
+                USAGE.contains(verb),
+                "`{verb}` dispatches but USAGE never mentions it — \
+                 a shipped capability nobody can discover"
+            );
         }
+    }
+
+    /// `VERBS` and the arms `from_args` actually dispatches must be the SAME set.
+    ///
+    /// The arm set is DERIVED by scanning this file's own source, never retyped —
+    /// a guard that shares its subject's hand-maintained list is decoration, which
+    /// is exactly how `migrate` shipped dispatchable and unguarded. Deleting
+    /// `"migrate"` from `VERBS` fails this test by name.
+    #[test]
+    fn verbs_is_exactly_the_set_from_args_dispatches() {
+        use std::collections::BTreeSet;
+
+        const SRC: &str = include_str!("cli.rs");
+
+        let start = SRC.find("pub fn from_args").expect("from_args exists");
+        let body = &SRC[start..];
+        let end = body
+            .find("is listed in VERBS but has no dispatch arm")
+            .expect("the terminal arm exists");
+        let body = &body[..end];
+
+        // Every string literal inside a `Some(...)` pattern in from_args.
+        let mut arms: BTreeSet<&str> = BTreeSet::new();
+        let mut rest = body;
+        while let Some(i) = rest.find("Some(") {
+            rest = &rest[i + 5..];
+            let Some(close) = rest.find(')') else { break };
+            let pat = &rest[..close];
+            // Only pattern positions, not the guard arm we just added.
+            if pat.contains('"') && !pat.contains("VERBS") {
+                let mut chunk = pat;
+                while let Some(a) = chunk.find('"') {
+                    chunk = &chunk[a + 1..];
+                    let Some(b) = chunk.find('"') else { break };
+                    let lit = &chunk[..b];
+                    chunk = &chunk[b + 1..];
+                    // A verb, not a flag: lowercase/hyphen, never leading `-`.
+                    if !lit.is_empty()
+                        && !lit.starts_with('-')
+                        && lit.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                    {
+                        arms.insert(lit);
+                    }
+                }
+            }
+        }
+        // `help` is a meta-command, not a dispatchable verb.
+        arms.remove("help");
+
+        let listed: BTreeSet<&str> = VERBS.iter().copied().collect();
+        assert_eq!(
+            arms,
+            listed,
+            "VERBS and the from_args arms disagree — missing from VERBS: {:?}; \
+             listed with no arm: {:?}",
+            arms.difference(&listed).collect::<Vec<_>>(),
+            listed.difference(&arms).collect::<Vec<_>>(),
+        );
+        assert!(
+            listed.len() >= 42,
+            "expected the full verb table, got {}",
+            listed.len()
+        );
     }
 }

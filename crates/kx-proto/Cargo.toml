@@ -50,6 +50,12 @@ smallvec = { workspace = true }
 [build-dependencies]
 tonic-build = { workspace = true }
 protoc-bin-vendored = { workspace = true }
+# The build script decodes the FileDescriptorSet tonic-build emits and generates
+# `control_index.rs` (the machine-known half of the ControlSurface) from it. Both
+# are already in the dependency graph via tonic-build; naming them here keeps the
+# build script's own imports honest rather than relying on a transitive path.
+prost = { workspace = true }
+prost-types = { workspace = true }
 
 [dev-dependencies]
 # `time` is additive over the workspace tokio features — the skeleton test uses

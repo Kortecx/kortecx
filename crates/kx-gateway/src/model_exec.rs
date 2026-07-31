@@ -669,8 +669,11 @@ object and nothing else: {\"tool_call\":{\"name\":\"<tool name>\",\"version\":\"
 tool's inputs. You work ONE step per turn: after a tool result is returned, keep reasoning, and \
 if the task still needs another step, call the NEXT tool — passing values from the result you \
 just received as its arguments. Chaining tools this way is expected, and a task may need several \
-before you can answer. When you have enough information, reply with the final answer as plain \
-text and do NOT emit a tool_call. Never invent a tool, version, or argument that is not listed.";
+before you can answer. If several tools can be called at once and NONE of them needs another's \
+result, you may instead reply with one object whose single key is \"tool_calls\", holding an \
+array of the same name/version/args entries (at most 20). Use that only for independent \
+calls; otherwise keep to one step per turn. When you have enough information, reply with the \
+final answer as plain text and do NOT emit a tool_call. Never invent a tool, version, or argument that is not listed.";
 
 /// gemma3 connector-tool-fire (`T-RUNAPP-RAG-RECIPE-ROUTE` generalized from RAG to
 /// arbitrary connector/skill tool-calls): a shared tool-USE directive appended to the
@@ -702,12 +705,13 @@ const TOOL_STEER_DIRECTIVE: &str = "Use the tools listed above to obtain data th
 that you do not already have: when a listed tool holds the authoritative value, call it \
 (using the format above) rather than guessing. A task may need SEVERAL tools in sequence. \
 The numbered blocks below are the conversation so far, oldest first: a [step] block is what \
-you said, and a [result of <tool>] block is what that tool returned. Read the MOST RECENT \
-result and decide ONE of these: if you can already answer the question, answer NOW in plain \
+you said, and a [result of <tool>] block is what that tool returned. Read the result blocks \
+below the MOST RECENT [step] block and decide ONE of these: if you can already answer the question, answer NOW in plain \
 text, quoting the exact values you were given; otherwise, if the task still needs a value \
 you do not have, call the NEXT tool, passing values from that result as its arguments. Do \
 not call a tool whose result you already have, and never repeat a call with the SAME \
-arguments.";
+arguments. If a result you already have is not what the task needs, calling that same tool \
+again with DIFFERENT arguments is a new call, not a repeat.";
 
 /// Qwen ChatML wrapping of a user prompt with an EXPLICIT system message — the
 /// **training contract** the companion model repo mirrors (kept byte-identical to
@@ -3960,6 +3964,53 @@ mod tests {
         assert!(
             TOOL_STEER_DIRECTIVE.contains("SAME arguments"),
             "the duplicate-call steer is kept, scoped to identical ARGUMENTS"
+        );
+        // (4) The third option is taught PRE-EMPTIVELY, on ordinary tool-eligible
+        //     turns. It cannot reach the duplicate turn itself: `react_tool_menu`
+        //     suppresses the menu — and this directive, which is only ever appended
+        //     to it — when `react_answer_force` fires, and that is exactly the
+        //     duplicate-rejection turn. Lowering the rate at which duplicates
+        //     happen is what a prompt can do here; rescuing a turn already in
+        //     answer-force would be a behavioural change to the grammar arm.
+        assert!(
+            TOOL_STEER_DIRECTIVE.contains("DIFFERENT arguments is a new call"),
+            "the retry-with-different-args option is taught"
+        );
+    }
+
+    /// `REACT_SYSTEM` teaches the batch envelope the executor already accepts.
+    ///
+    /// `ToolBatch` has been wired end to end since journal v13 — parser, journal
+    /// branch, coordinator accounting, gateway render — and the prompt never
+    /// mentioned it, so the capability existed and was unreachable by anything the
+    /// model was told.
+    ///
+    /// ENGINE ASYMMETRY, stated because it is not obvious: on llama.cpp the lazy
+    /// GBNF trigger regex requires the literal `"tool_call"` INCLUDING the closing
+    /// quote, and `{"tool_calls"` has an `s` where that quote would be — so the
+    /// trigger never fires, generation stays unconstrained, and a batch decodes.
+    /// On Ollama the default-on union `format` is a WHOLE-RESPONSE schema with no
+    /// batch arm, so a batch is structurally impossible there. This teaching is
+    /// therefore effective on one engine and inert on the other; the complete fix
+    /// is a batch arm in `ToolEnvelopeSpec`, which is a separate change.
+    #[test]
+    fn react_system_teaches_the_batch_envelope_and_its_cap() {
+        assert!(
+            REACT_SYSTEM.contains("\"tool_calls\""),
+            "the batch key must be named"
+        );
+        assert!(
+            REACT_SYSTEM.contains("at most 20"),
+            "the batch cap must be stated (MAX_TOOL_BATCH_CALLS)"
+        );
+        assert_eq!(
+            kx_journal::MAX_TOOL_BATCH_CALLS,
+            20,
+            "the taught cap and the enforced cap must be the same number"
+        );
+        assert!(
+            REACT_SYSTEM.contains("NONE of them needs another's result"),
+            "the batch must be taught as INDEPENDENT calls only"
         );
     }
 

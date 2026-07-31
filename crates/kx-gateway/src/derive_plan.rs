@@ -509,11 +509,21 @@ pub(crate) struct CapabilityMenu {
 
 /// What the menu could not show, so the console can say so instead of implying completeness.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+// Every field counts omissions on one axis, so the shared `_omitted` postfix is
+// the meaning, not noise — `tools` / `apps` alone would read as counts of what
+// was SHOWN, which is the opposite.
+#[allow(clippy::struct_field_names)]
 pub(crate) struct MenuTruncation {
     /// Tool ids omitted for the byte budget.
     pub(crate) tools_omitted: usize,
     /// Callable Apps omitted for the byte budget.
     pub(crate) apps_omitted: usize,
+    /// Skill names omitted for the byte budget.
+    pub(crate) skills_omitted: usize,
+    /// Integration names omitted for the byte budget.
+    pub(crate) connections_omitted: usize,
+    /// Dataset names omitted for the byte budget.
+    pub(crate) datasets_omitted: usize,
 }
 
 impl CapabilityMenu {
@@ -548,19 +558,58 @@ impl CapabilityMenu {
         // each line must read as "these are the names you may write", not as background.
         // Names only, for the same reason the tool list is ids only: whatever this renders
         // is what the model sends back, so a decoration here becomes an unresolvable name
-        // there. Each line is dropped whole if it does not fit — never half a list.
-        for (label, values) in [
-            ("Skills you may attach to a step", &self.skills),
-            ("Integrations you may attach to a step", &self.connections),
-            ("Datasets a step may ground on", &self.datasets),
+        // there.
+        //
+        // These used to be dropped a WHOLE LINE at a time and counted nowhere, which made
+        // the failure both silent and order-biased: skills render first, so a long skills
+        // list vanished entirely while a shorter datasets list AFTER it still fitted, and
+        // the author was told about neither. Now each axis fills per NAME and reports what
+        // it could not show, exactly as the tool axis above already did.
+        for (label, values, omitted) in [
+            (
+                "Skills you may attach to a step",
+                &self.skills,
+                &mut truncation.skills_omitted,
+            ),
+            (
+                "Integrations you may attach to a step",
+                &self.connections,
+                &mut truncation.connections_omitted,
+            ),
+            (
+                "Datasets a step may ground on",
+                &self.datasets,
+                &mut truncation.datasets_omitted,
+            ),
         ] {
             if values.is_empty() {
                 continue;
             }
-            let line = format!("{label}: {}\n", values.join(", "));
-            if out.len() + line.len() <= MAX_DERIVE_MENU_BYTES {
-                out.push_str(&line);
+            let header = format!("{label}: ");
+            if out.len() + header.len() + 1 > MAX_DERIVE_MENU_BYTES {
+                // Not even the label fits: the whole axis is unshowable.
+                *omitted = values.len();
+                continue;
             }
+            let mut line = header;
+            let mut shown = 0usize;
+            for v in values {
+                let sep = if shown == 0 { "" } else { ", " };
+                let candidate = format!("{sep}{v}");
+                // +1 for the newline this line will end with.
+                if out.len() + line.len() + candidate.len() + 1 > MAX_DERIVE_MENU_BYTES {
+                    *omitted += 1;
+                    continue;
+                }
+                line.push_str(&candidate);
+                shown += 1;
+            }
+            if shown == 0 {
+                // The label alone conveys nothing; do not spend bytes on it.
+                continue;
+            }
+            line.push('\n');
+            out.push_str(&line);
         }
         // The composition registry. This is the ONE axis that cannot be names-only: a bare
         // handle says nothing about whether that App is the one a step needs, so each line
@@ -977,6 +1026,90 @@ notes\",\"tools\":[]}],\"edges\":[{\"parent\":0,\"child\":1}]}}";
             assert!(
                 line.ends_with("some-fairly-long-tool-name"),
                 "truncated mid-entry: {line:?}"
+            );
+        }
+    }
+
+    /// A names-only axis too large for the budget must REPORT what it dropped.
+    ///
+    /// Before this was fixed the whole line was dropped and counted nowhere, so an
+    /// author whose account held thirty skills saw a design with none attached and
+    /// could not tell that from an account with none at all. Worse, the drop was
+    /// ORDER-BIASED: skills render first, so a long skills list vanished entirely
+    /// while a shorter datasets list after it still fitted.
+    #[test]
+    fn an_oversized_names_axis_reports_what_it_dropped() {
+        let mut m = menu();
+        // Far more skills than the budget can hold, each name long enough that the
+        // axis cannot be rendered whole.
+        m.skills = (0..400)
+            .map(|i| format!("skills/local/skill-{i:04}"))
+            .collect();
+        // A short datasets list that WOULD fit if the skills axis did not eat the
+        // budget — this is the order-bias half of the bug.
+        m.datasets = vec!["ds-tiny".to_string()];
+
+        let (out, t) = m.render();
+
+        assert!(
+            out.len() <= MAX_DERIVE_MENU_BYTES,
+            "the render must stay inside its budget, got {}",
+            out.len()
+        );
+        assert!(
+            t.skills_omitted > 0,
+            "an oversized skills axis must report the names it dropped, got {t:?}"
+        );
+        assert!(
+            t.skills_omitted < m.skills.len(),
+            "it must still SHOW some skills rather than dropping the axis whole \
+             (dropped {} of {})",
+            t.skills_omitted,
+            m.skills.len()
+        );
+        assert!(
+            out.contains("Skills you may attach to a step"),
+            "the axis must still be rendered, partially: {out}"
+        );
+    }
+
+    /// Every dropped name is accounted for: shown + omitted == offered.
+    ///
+    /// A counter that undercounts is worse than none — it tells the author the
+    /// menu was nearly complete when it was not.
+    #[test]
+    fn the_names_axes_account_for_every_offered_name() {
+        let mut m = menu();
+        m.skills = (0..200).map(|i| format!("skills/local/s{i:03}")).collect();
+        m.connections = (0..200).map(|i| format!("conn-{i:03}")).collect();
+        m.datasets = (0..200).map(|i| format!("dataset-{i:03}")).collect();
+
+        let (out, t) = m.render();
+
+        for (label, offered, omitted) in [
+            (
+                "Skills you may attach to a step",
+                m.skills.len(),
+                t.skills_omitted,
+            ),
+            (
+                "Integrations you may attach to a step",
+                m.connections.len(),
+                t.connections_omitted,
+            ),
+            (
+                "Datasets a step may ground on",
+                m.datasets.len(),
+                t.datasets_omitted,
+            ),
+        ] {
+            let shown = out.lines().find(|l| l.starts_with(label)).map_or(0, |l| {
+                l.split(": ").nth(1).map_or(0, |v| v.split(", ").count())
+            });
+            assert_eq!(
+                shown + omitted,
+                offered,
+                "{label}: shown {shown} + omitted {omitted} != offered {offered}"
             );
         }
     }

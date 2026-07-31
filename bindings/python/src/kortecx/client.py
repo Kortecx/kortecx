@@ -77,6 +77,7 @@ from .errors import KxError, KxFailedPrecondition, KxNotFound, KxUsage, from_rpc
 from .eval import RunScore
 from .feedback import FeedbackPage, FeedbackRow, rating_to_proto
 from .grants import AssetGrants
+from .hosted_apps import HostedAppStatus
 from .memory import DecayReport, Memory, MemoryHit, MemoryKind, MemoryStats, StoreResult
 from .models import ModelLifecycleResult, ModelSummary, PullStatus
 from .motes import MoteDetail
@@ -87,6 +88,7 @@ from .replan import ReplanRound, ReplanRoundPage
 from .rerank import ReRankTurn, ReRankTurnPage
 from .run import AsyncRun, Result, Run
 from .runs import RunInputs, RunPage, RunSummary
+from .scripts import RegisteredScriptsPage, ScriptWithSource
 from .secrets import SecretName, SecretNamesPage
 from .server_info import ServerInfo
 from .skills import AddSkillResult, SkillForm, SkillSummary
@@ -1780,6 +1782,135 @@ class KxClient:
         if not resp.found:
             return None
         return [BranchVersion.from_proto(v) for v in resp.versions]
+
+    # ---- the script registry -------------------------------------------------
+    #
+    # Registration grants NOTHING: fs_mounts/net_hosts DECLARE what the script
+    # says it needs, that declaration becomes its requirement, and the broker
+    # still refuses any dispatch whose requirement exceeds the granting warrant.
+    # argv and env are fixed HERE and are never model-controlled — a model
+    # calling a script controls exactly one thing, the input string on stdin.
+
+    def register_script(
+        self,
+        *,
+        name: str,
+        version: str,
+        interpreter: str,
+        source: bytes,
+        description: str = "",
+        argv: Optional[List[str]] = None,
+        env: Optional[Dict[str, str]] = None,
+        fs_mounts: Optional[List[Tuple[str, str]]] = None,
+        net_hosts: Optional[List[str]] = None,
+        wall_clock_ms: int = 0,
+        mem_bytes: int = 0,
+        max_output_bytes: int = 0,
+    ) -> str:
+        """Register a sandboxed script and return its SERVER-DERIVED ``script_id``
+        (hex). ``fs_mounts`` is a list of ``(mode, path)`` such as
+        ``[("ro", "/srv/data")]``. Raises ``KxFailedPrecondition`` when the host
+        cannot enforce a sandbox or cannot run the declared interpreter — a script
+        that cannot be confined does not register."""
+        resp = self._call(
+            lambda: self._stub.RegisterScript(
+                _g.RegisterScriptRequest(
+                    script_name=name,
+                    script_version=version,
+                    description=description,
+                    interpreter=interpreter,
+                    source=source,
+                    argv=list(argv or []),
+                    env=[_g.ScriptEnv(key=k, value=v) for k, v in (env or {}).items()],
+                    fs_mounts=[
+                        _g.ScriptMount(path=path, mode=mode) for (mode, path) in (fs_mounts or [])
+                    ],
+                    net_hosts=list(net_hosts or []),
+                    wall_clock_ms=wall_clock_ms,
+                    mem_bytes=mem_bytes,
+                    max_output_bytes=max_output_bytes,
+                ),
+                metadata=self._md,
+            )
+        )
+        return hexids.encode(resp.script_id)
+
+    def list_scripts(
+        self, *, limit: int = 0, after_name: str = "", after_version: str = ""
+    ) -> RegisteredScriptsPage:
+        """One page of the registry, in ``(name, version)`` order."""
+        resp = self._call(
+            lambda: self._stub.ListScripts(
+                _g.ListScriptsRequest(
+                    limit=limit, after_name=after_name, after_version=after_version
+                ),
+                metadata=self._md,
+            )
+        )
+        return RegisteredScriptsPage.from_proto(resp)
+
+    def get_script(self, name: str, version: str) -> Optional[ScriptWithSource]:
+        """One script plus the exact source bytes that run, or ``None`` if absent
+        (uniform — no existence oracle)."""
+        resp = self._call(
+            lambda: self._stub.GetScript(
+                _g.GetScriptRequest(script_name=name, script_version=version),
+                metadata=self._md,
+            )
+        )
+        if not resp.found:
+            return None
+        return ScriptWithSource.from_proto(resp)
+
+    def deregister_script(self, name: str, version: str) -> bool:
+        """Deregister an exact ``(name, version)``. ``False`` iff it was absent."""
+        resp = self._call(
+            lambda: self._stub.DeregisterScript(
+                _g.DeregisterScriptRequest(script_name=name, script_version=version),
+                metadata=self._md,
+            )
+        )
+        return resp.removed
+
+    # ---- hosted Apps ---------------------------------------------------------
+    #
+    # Feature-gated server-side. A serve without `hosted-apps` answers every one
+    # of these UNIMPLEMENTED, which arrives here as KxUnimplemented.
+
+    def start_hosted_app(self, handle: str, *, rebuild: bool = False) -> HostedAppStatus:
+        """Start (or restart) the hosted server for a saved App."""
+        resp = self._call(
+            lambda: self._stub.StartHostedApp(
+                _g.StartHostedAppRequest(handle=handle, rebuild=rebuild),
+                metadata=self._md,
+            )
+        )
+        return HostedAppStatus.from_proto(resp)
+
+    def stop_hosted_app(self, handle: str) -> bool:
+        """Stop the hosted server. ``False`` iff nothing was running."""
+        resp = self._call(
+            lambda: self._stub.StopHostedApp(
+                _g.StopHostedAppRequest(handle=handle), metadata=self._md
+            )
+        )
+        return resp.stopped
+
+    def get_hosted_app_status(self, handle: str) -> HostedAppStatus:
+        """The hosted App's current state, url and recent logs."""
+        resp = self._call(
+            lambda: self._stub.GetHostedAppStatus(
+                _g.GetHostedAppStatusRequest(handle=handle), metadata=self._md
+            )
+        )
+        return HostedAppStatus.from_proto(resp)
+
+    def list_hosted_apps(self) -> List[HostedAppStatus]:
+        """Every hosted App this serve knows about."""
+        resp = self._call(
+            lambda: self._stub.ListHostedApps(_g.ListHostedAppsRequest(), metadata=self._md)
+        )
+        return [HostedAppStatus.from_proto(a) for a in resp.apps]
 
     def restore_branch(self, handle: str, version: int) -> RestoreResult:
         """Restore branch ``handle`` to the state recorded at ``version``. Restore

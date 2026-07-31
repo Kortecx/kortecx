@@ -749,7 +749,10 @@ jobs:
       - name: Build the FFI-free kx (serve + client) for the contract tests
         # `observability` rides along (W6.1): the SDK contract suites page
         # listMoteTelemetry rows, which needs the telemetry sidecar wired.
-        run: cargo build -p kx-cli --features hnsw,observability
+        # kx-script-runner is the sandbox shim: without it beside the binary a
+        # serve refuses every script registration, so the SDK's script parity
+        # tests fail on correct behaviour.
+        run: cargo build -p kx-cli -p kx-script-runner --features hnsw,observability
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -822,7 +825,10 @@ jobs:
       - name: Build the FFI-free kx (serve + client) for the contract tests
         # `observability` rides along (W6.1): the SDK contract suites page
         # listMoteTelemetry rows, which needs the telemetry sidecar wired.
-        run: cargo build -p kx-cli --features hnsw,observability
+        # kx-script-runner is the sandbox shim: without it beside the binary a
+        # serve refuses every script registration, so the SDK's script parity
+        # tests fail on correct behaviour.
+        run: cargo build -p kx-cli -p kx-script-runner --features hnsw,observability
 
       - name: Set up Node
         uses: actions/setup-node@v4

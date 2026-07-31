@@ -108,7 +108,9 @@ pub use param_schema::{
 };
 pub use provenance::{RegistrationStatus, ToolProvenance};
 pub use registry::{resolve_run_versions, InMemoryToolRegistry, ToolRegistry};
-pub use sqlite::{tool_id_of, RegisteredEntry, SqliteToolRegistry, TOOL_REGISTRY_SCHEMA_VERSION};
+pub use sqlite::{
+    tool_id_of, RegisteredEntry, SqliteToolRegistry, DDL, TOOL_REGISTRY_SCHEMA_VERSION,
+};
 pub use token::registration_token_of;
 pub use tool_def::{ResolvedTool, ToolDef, ToolResolutionEvent};
 pub use tool_kind::ToolKind;

@@ -376,6 +376,22 @@ fn design_notices(plan: &DerivedPlan, truncation: &MenuTruncation) -> Vec<String
             truncation.apps_omitted
         ));
     }
+    // The three names-only axes. These were silently dropped for as long as the
+    // menu has existed: the author saw a design with no skills attached and had
+    // no way to know whether their account had none, or had thirty that did not
+    // fit. An omission the author cannot see is one they cannot correct.
+    for (n, what) in [
+        (truncation.skills_omitted, "skills"),
+        (truncation.connections_omitted, "integrations"),
+        (truncation.datasets_omitted, "datasets"),
+    ] {
+        if n > 0 {
+            notices.push(format!(
+                "{n} more {what} exist than fit the design prompt — attach any that are \
+                 missing below before creating the app"
+            ));
+        }
+    }
     if plan.folded_app_level {
         notices.push(
             "the design attached some capabilities to the app rather than to a step — they \
