@@ -1954,7 +1954,7 @@ fn policy_admin_status(err: crate::PolicyAdminError) -> Status {
 /// The fail-closed cap on how many tools one role may name.
 const MAX_POLICY_ROLE_TOOLS: usize = 256;
 
-/// [`admit_script`], reachable from the equivalence test in `tests/`.
+/// `admit_script`, reachable from the equivalence test in `tests/`.
 ///
 /// The function itself stays private: it is an internal seam between the RPC and
 /// the NL proposer, not API. This wrapper exists ONLY so
@@ -1963,17 +1963,17 @@ const MAX_POLICY_ROLE_TOOLS: usize = 256;
 /// from a unit test inside this module because the RPC needs a served client.
 ///
 /// # Errors
-/// Whatever [`admit_script`] returns.
+/// Whatever `admit_script` returns.
 #[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
 pub fn admit_script_for_test(req: &proto::RegisterScriptRequest) -> Result<(), Status> {
     admit_script(req)
 }
 
-/// [`admit_registration`], reachable from the equivalence test. See
+/// `admit_registration`, reachable from the equivalence test. See
 /// [`admit_script_for_test`].
 ///
 /// # Errors
-/// Whatever [`admit_registration`] returns.
+/// Whatever `admit_registration` returns.
 #[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
 pub fn admit_registration_for_test(req: &proto::RegisterToolRequest) -> Result<(), Status> {
     admit_registration(req)
