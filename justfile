@@ -21,7 +21,7 @@ check: fmt-check clippy test lease-test
 # Exact mirror of the CI workflow's gates (in dependency order). Runs every
 # job .github/workflows/ci.yml runs in parallel, here sequentially. Modify
 # this recipe in lock-step with ci.yml.
-ci: fmt-check clippy test eval deny doc ffi-link build-no-inference build-serve-engine features-guard check-reproducible scale-smoke test-connector-real test-skill registry-check
+ci: fmt-check clippy test eval deny doc ffi-link build-no-inference build-serve-engine features-guard check-descriptor-determinism check-reproducible scale-smoke test-connector-real test-skill registry-check
 
 # Run the SDK CI gates locally — the exact `sdk-python` + `sdk-typescript` jobs from ci.yml
 # (codegen-fresh, ruff+mypy / biome+tsc, and the unit/contract tests). Run before an SDK PR:
@@ -795,6 +795,72 @@ features-guard:
     fi
     cargo check -p kx-cli --features hnsw,serve-engine,hosted-apps
     echo " ✓ features-guard: kx-cli --features hnsw,serve-engine,hosted-apps builds (FFI-free)"
+
+# The descriptor + generated ControlSurface index must not depend on WHERE they
+# were built.
+#
+# `check-reproducible` builds twice into the SAME target dir, so it cannot see an
+# OUT_DIR leak — the path is identical in both halves. This builds kx-proto into
+# two DIFFERENT target dirs, which is the only arrangement where an absolute
+# build path embedded in `kortecx.fds` or `control_index.rs` shows up as a diff.
+#
+# Why it exists: kx-proto/build.rs ARGUES three properties (relative includes ⇒
+# repo-relative FileDescriptorProto.name; no external import ⇒ --include_imports
+# reaches nothing; the descriptor bytes never reach a shipped rlib). Those were
+# checked by hand once. An argument nothing re-runs is a comment, and the
+# ControlSurface's whole value is that the generated half cannot drift.
+check-descriptor-determinism:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    A="$(mktemp -d)"; B="$(mktemp -d)"
+    trap 'rm -rf "$A" "$B"' EXIT
+    CARGO_TARGET_DIR="$A" cargo build -p kx-proto >/dev/null
+    CARGO_TARGET_DIR="$B" cargo build -p kx-proto >/dev/null
+    fail=0
+    for artifact in kortecx.fds control_index.rs; do
+        # The build dir hash differs between target dirs, so glob for it.
+        a="$(find "$A" -name "$artifact" -type f | head -1)"
+        b="$(find "$B" -name "$artifact" -type f | head -1)"
+        if [ -z "$a" ] || [ -z "$b" ]; then
+            echo "::error::$artifact was not produced in one of the two builds" >&2
+            fail=1; continue
+        fi
+        if cmp -s "$a" "$b"; then
+            echo " ✓ $artifact is byte-identical across two CARGO_TARGET_DIRs"
+        else
+            echo "::error::$artifact DIFFERS between two build directories — something" \
+                 "in the generator embeds its own output path. The ControlSurface's" \
+                 "generated half must depend only on the .proto, never on where it was built." >&2
+            # Name the differing bytes rather than just asserting inequality.
+            cmp "$a" "$b" >&2 || true
+            fail=1
+        fi
+    done
+    # Anti-vacuity: a pass that compared nothing is not a pass. The descriptor
+    # must actually contain the service we care about, and the generated index
+    # must actually carry the RPC table.
+    a="$(find "$A" -name kortecx.fds -type f | head -1)"
+    if [ -n "$a" ] && ! grep -aq KxGateway "$a"; then
+        echo "::error::kortecx.fds does not mention KxGateway — the comparison was vacuous" >&2
+        fail=1
+    fi
+    idx="$(find "$A" -name control_index.rs -type f | head -1)"
+    if [ -n "$idx" ] && ! grep -aq "enum GatewayRpc" "$idx"; then
+        echo "::error::control_index.rs has no GatewayRpc enum — the comparison was vacuous" >&2
+        fail=1
+    fi
+    # And no absolute build path may appear in either artifact at all. This is the
+    # property build.rs argues for; here it is, asserted.
+    for artifact in kortecx.fds control_index.rs; do
+        a="$(find "$A" -name "$artifact" -type f | head -1)"
+        [ -n "$a" ] || continue
+        if grep -aqF "$A" "$a"; then
+            echo "::error::$artifact contains its own build directory path" >&2
+            fail=1
+        fi
+    done
+    [ "$fail" -eq 0 ] || exit 1
+    echo "descriptor determinism: PASS"
 
 # Byte-determinism check (I1.c). Two consecutive release builds must produce
 # bit-identical artifacts. Failure indicates the build is nondeterministic and

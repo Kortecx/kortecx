@@ -1325,6 +1325,35 @@ jobs:
   # match). Closes the "merge green while missing from an index" hole. Pure local
   # file reads (python3 stdlib) — no Rust build, no network, <30s.
   # ---------------------------------------------------------------------------
+  # The compiled descriptor and the generated ControlSurface index must depend
+  # only on the .proto, never on WHERE they were built.
+  #
+  # Deliberately its OWN job rather than a step inside `reproducible`: that job
+  # exports RUSTFLAGS with --remap-path-prefix, and running this under a flag
+  # whose whole purpose is to normalise paths would test the remapping rather
+  # than the property. This job runs with no such flag, so the artifacts are
+  # compared exactly as an ordinary `cargo build` produces them.
+  #
+  # `reproducible` also cannot substitute for it: it builds twice into the SAME
+  # target dir, where an embedded OUT_DIR is identical in both halves and
+  # cancels out. Two DIFFERENT target dirs are the only arrangement that sees it.
+  descriptor-determinism:
+    name: descriptor-determinism (the generated index cannot depend on where it was built)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (NO submodules — kx-proto is FFI-free)
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+
+      - name: Install just
+        uses: extractions/setup-just@v4
+
+      - name: Build kx-proto into two target dirs and compare the artifacts
+        run: just check-descriptor-determinism
+
   registry-consistency:
     name: registry-consistency (index ⟷ tree)
     runs-on: ubuntu-latest
