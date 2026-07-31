@@ -59,6 +59,13 @@ from .client import (
 )
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
+from .control import (
+    ControlPreview,
+    ControlProposal,
+    ControlSurfaceEntry,
+    PolicyRole,
+    PolicyRoleTool,
+)
 from .cost import RunCost
 from .critic import decode_critic_verdict
 from .datasets import (
@@ -187,6 +194,12 @@ from .wait import WaitOutcome, WaitState
 __version__ = "0.1.0"
 
 __all__ = [
+    # The ControlSurface + NL authoring surface.
+    "ControlPreview",
+    "ControlProposal",
+    "ControlSurfaceEntry",
+    "PolicyRole",
+    "PolicyRoleTool",
     "__version__",
     "DEFAULT_ENDPOINT",
     # clients

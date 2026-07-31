@@ -62,6 +62,7 @@ from .branch import (
 from .capture import CaptureRecord, CaptureRecordPage
 from .content import ContentItem, PutResult
 from .context import ContextBundle, ContextBundleItem, PutContextBundleResult
+from .control import ControlProposal, ControlSurfaceEntry, PolicyRole
 from .cost import RunCost
 from .datasets import (
     DatasetHit,
@@ -2926,6 +2927,78 @@ class KxClient:
         resp = self._call(lambda: self._stub.SearchRecipes(req, metadata=self._md))
         return [ScoredRecipe.from_proto(s) for s in resp.ranked]
 
+    def list_policy_roles(self, *, limit: int = 0) -> List["PolicyRole"]:
+        """The caller's durable Policy/Roles, name-ordered.
+
+        A role NARROWS tool authority and never grants it: the effective set is the
+        INTERSECTION of every present leg, so assigning one can only take capability
+        away. An EMPTY role is meaningful and is not the same as no role — it narrows
+        to nothing."""
+        resp = self._call(
+            lambda: self._stub.ListPolicyRoles(
+                _g.ListPolicyRolesRequest(limit=limit), metadata=self._md
+            )
+        )
+        return [PolicyRole.from_proto(r) for r in resp.roles]
+
+    def put_policy_role(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        tools: Optional[Sequence[Tuple[str, str]]] = None,
+    ) -> bool:
+        """Create or update a role. ``tools`` are ``(tool_id, tool_version)`` pairs the
+        role narrows TO — naming one the party could not fire anyway simply drops out
+        of the intersection. Returns ``True`` iff the role was newly created."""
+        req = _g.PutPolicyRoleRequest(name=name, description=description)
+        for tool_id, tool_version in tools or []:
+            req.tools.append(_g.PolicyRoleTool(tool_id=tool_id, tool_version=tool_version))
+        return self._call(lambda: self._stub.PutPolicyRole(req, metadata=self._md)).created
+
+    def delete_policy_role(self, name: str) -> bool:
+        """Delete a role. This WIDENS every party still assigned it back to un-narrowed
+        authority — the honest outcome, since refusing would make a role permanent the
+        moment it was used. Returns ``True`` iff a row was removed."""
+        return self._call(
+            lambda: self._stub.DeletePolicyRole(
+                _g.DeletePolicyRoleRequest(name=name), metadata=self._md
+            )
+        ).removed
+
+    def assign_policy_role(self, party: str, role: Optional[str]) -> bool:
+        """Assign ``role`` to ``party``, or UNASSIGN when ``role`` is ``None``.
+        Assigning a role that does not exist raises ``KxNotFound`` rather than
+        silently succeeding — a silent success reads as "narrowed" while the party
+        stays un-narrowed."""
+        req = _g.AssignPolicyRoleRequest(party=party, name=role or "")
+        return self._call(lambda: self._stub.AssignPolicyRole(req, metadata=self._md)).assigned
+
+    def describe_control_surface(
+        self, *, domain: str = "", authoring_only: bool = False
+    ) -> List["ControlSurfaceEntry"]:
+        """What every gateway RPC IS — domain, whether it mutates, whose authority.
+
+        Projected from the GENERATED index plus the hand-authored classification, so it
+        cannot drift from either. This is the table a control plane federates rather
+        than re-deriving."""
+        req = _g.DescribeControlSurfaceRequest(domain=domain, authoring_only=authoring_only)
+        resp = self._call(lambda: self._stub.DescribeControlSurface(req, metadata=self._md))
+        return [ControlSurfaceEntry.from_proto(e) for e in resp.entries]
+
+    def propose_control_action(self, goal: str, *, domain: str = "") -> "ControlProposal":
+        """NL authoring: one sentence in, the EXACT typed request the runtime would
+        issue out.
+
+        WRITES NOTHING. Approval is client-held: the returned preview carries the real
+        request message, and enacting it means calling that ordinary RPC with those
+        bytes — never re-deriving them from a rendering. A refusal is an ANSWER
+        (``proposed=False`` with a reason), not a transport error: an inadmissible ask
+        should be refused before a human is asked to approve it."""
+        req = _g.ProposeControlActionRequest(goal=goal, domain=domain)
+        resp = self._call(lambda: self._stub.ProposeControlAction(req, metadata=self._md))
+        return ControlProposal.from_proto(resp)
+
     def list_teams(self) -> List[TeamSummary]:
         """Enumerate the teams the gateway knows (UI-3 Systems viewer). VIEW-only."""
         resp = self._call(lambda: self._stub.ListTeams(_g.ListTeamsRequest(), metadata=self._md))
@@ -3872,6 +3945,49 @@ class AsyncKxClient:
             req.limit = limit
         resp = await self._acall(self._stub.SearchRecipes(req, metadata=self._md))
         return [ScoredRecipe.from_proto(s) for s in resp.ranked]
+
+    async def list_policy_roles(self, *, limit: int = 0) -> List["PolicyRole"]:
+        resp = await self._acall(
+            self._stub.ListPolicyRoles(_g.ListPolicyRolesRequest(limit=limit), metadata=self._md)
+        )
+        return [PolicyRole.from_proto(r) for r in resp.roles]
+
+    async def put_policy_role(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        tools: Optional[Sequence[Tuple[str, str]]] = None,
+    ) -> bool:
+        req = _g.PutPolicyRoleRequest(name=name, description=description)
+        for tool_id, tool_version in tools or []:
+            req.tools.append(_g.PolicyRoleTool(tool_id=tool_id, tool_version=tool_version))
+        return (await self._acall(self._stub.PutPolicyRole(req, metadata=self._md))).created
+
+    async def delete_policy_role(self, name: str) -> bool:
+        return (
+            await self._acall(
+                self._stub.DeletePolicyRole(
+                    _g.DeletePolicyRoleRequest(name=name), metadata=self._md
+                )
+            )
+        ).removed
+
+    async def assign_policy_role(self, party: str, role: Optional[str]) -> bool:
+        req = _g.AssignPolicyRoleRequest(party=party, name=role or "")
+        return (await self._acall(self._stub.AssignPolicyRole(req, metadata=self._md))).assigned
+
+    async def describe_control_surface(
+        self, *, domain: str = "", authoring_only: bool = False
+    ) -> List["ControlSurfaceEntry"]:
+        req = _g.DescribeControlSurfaceRequest(domain=domain, authoring_only=authoring_only)
+        resp = await self._acall(self._stub.DescribeControlSurface(req, metadata=self._md))
+        return [ControlSurfaceEntry.from_proto(e) for e in resp.entries]
+
+    async def propose_control_action(self, goal: str, *, domain: str = "") -> "ControlProposal":
+        req = _g.ProposeControlActionRequest(goal=goal, domain=domain)
+        resp = await self._acall(self._stub.ProposeControlAction(req, metadata=self._md))
+        return ControlProposal.from_proto(resp)
 
     async def list_teams(self) -> List[TeamSummary]:
         resp = await self._acall(self._stub.ListTeams(_g.ListTeamsRequest(), metadata=self._md))

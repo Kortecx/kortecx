@@ -47,6 +47,12 @@ import {
   type ContextItemInput,
   PutContextBundleResult,
 } from "./context.js";
+import type {
+  ControlPreview,
+  ControlProposal,
+  ControlSurfaceEntry,
+  PolicyRole,
+} from "./control.js";
 import { RunCost } from "./cost.js";
 import {
   DatasetHit,
@@ -2782,6 +2788,123 @@ export abstract class KxClientBase {
   async getRecipeForm(handle: string): Promise<RecipeForm> {
     const resp = await rpc(this.grpc.getRecipeForm({ handle }));
     return RecipeForm.fromProto(resp);
+  }
+
+  /**
+   * What every gateway RPC IS — domain, whether it mutates, whose authority.
+   *
+   * Projected from the GENERATED index plus the hand-authored classification, so it
+   * cannot drift from either. This is the table a control plane federates rather than
+   * re-deriving. An old gateway without this RPC throws {@link KxUnimplemented}.
+   */
+  async describeControlSurface(
+    opts: { domain?: string; authoringOnly?: boolean } = {},
+  ): Promise<ControlSurfaceEntry[]> {
+    const resp = await rpc(
+      this.grpc.describeControlSurface({
+        domain: opts.domain ?? "",
+        authoringOnly: opts.authoringOnly ?? false,
+      }),
+    );
+    return resp.entries.map((e) => ({
+      rpc: e.rpc,
+      domain: e.domain,
+      mutates: e.mutates,
+      authority: e.authority,
+      authoring: e.authoring,
+    }));
+  }
+
+  /**
+   * NL authoring: one sentence in, the EXACT typed request the runtime would issue out.
+   *
+   * WRITES NOTHING. Approval is client-held — the returned preview carries the real
+   * request message, and enacting it means calling that ordinary RPC with those bytes
+   * rather than re-deriving them from the rendering. A refusal is an ANSWER
+   * (`proposed: false` with a reason), not a thrown error: an inadmissible ask should
+   * be refused before a human is asked to approve it.
+   */
+  async proposeControlAction(
+    goal: string,
+    opts: { domain?: string } = {},
+  ): Promise<ControlProposal> {
+    const resp = await rpc(this.grpc.proposeControlAction({ goal, domain: opts.domain ?? "" }));
+    if (resp.result?.case === "preview") {
+      const p = resp.result.value;
+      return {
+        proposed: true,
+        preview: {
+          rpc: p.rpc,
+          summary: p.summary,
+          requestField: p.request?.case ?? "",
+          request: p.request?.value,
+        },
+        reason: "",
+      };
+    }
+    if (resp.result?.case === "rejected") {
+      return { proposed: false, reason: resp.result.value.reason };
+    }
+    return { proposed: false, reason: "the gateway returned no result" };
+  }
+
+  /**
+   * The caller's durable Policy/Roles, name-ordered.
+   *
+   * A role NARROWS tool authority and never grants it: the effective set is the
+   * INTERSECTION of every present leg, so assigning one can only take capability away.
+   * An EMPTY role is meaningful and is NOT the same as no role — it narrows to nothing.
+   */
+  async listPolicyRoles(opts: { limit?: number } = {}): Promise<PolicyRole[]> {
+    const resp = await rpc(this.grpc.listPolicyRoles({ limit: opts.limit ?? 0 }));
+    return resp.roles.map((r) => ({
+      name: r.name,
+      description: r.description,
+      tools: r.tools.map((t) => ({ toolId: t.toolId, toolVersion: t.toolVersion })),
+      createdUnixMs: Number(r.createdUnixMs),
+      updatedUnixMs: Number(r.updatedUnixMs),
+    }));
+  }
+
+  /**
+   * Create or update a role. `tools` are the `(id, version)` pairs it narrows TO —
+   * naming one the party could not fire anyway simply drops out of the intersection.
+   * Resolves `true` iff the role was newly created.
+   */
+  async putPolicyRole(
+    name: string,
+    opts: { description?: string; tools?: Array<{ toolId: string; toolVersion: string }> } = {},
+  ): Promise<boolean> {
+    const resp = await rpc(
+      this.grpc.putPolicyRole({
+        name,
+        description: opts.description ?? "",
+        tools: opts.tools ?? [],
+      }),
+    );
+    return resp.created;
+  }
+
+  /**
+   * Delete a role. This WIDENS every party still assigned it back to un-narrowed
+   * authority — the honest outcome, since refusing would make a role permanent the
+   * moment it was used. Resolves `true` iff a row was removed.
+   */
+  async deletePolicyRole(name: string): Promise<boolean> {
+    const resp = await rpc(this.grpc.deletePolicyRole({ name }));
+    return resp.removed;
+  }
+
+  /**
+   * Assign `role` to `party`, or UNASSIGN when `role` is null.
+   *
+   * Assigning a role that does not exist throws {@link KxNotFound} rather than
+   * silently succeeding — a silent success reads as "narrowed" while the party stays
+   * un-narrowed.
+   */
+  async assignPolicyRole(party: string, role: string | null): Promise<boolean> {
+    const resp = await rpc(this.grpc.assignPolicyRole({ party, name: role ?? "" }));
+    return resp.assigned;
   }
 
   /**
