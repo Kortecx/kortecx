@@ -2363,6 +2363,383 @@ pub fn render_delete_branch(resp: &proto::DeleteBranchResponse, json: bool) -> S
     }
 }
 
+/// The display name for a `HostedAppState` wire value.
+///
+/// Exhaustive with NO wildcard: a new state must fail to compile here rather
+/// than render as "unknown" to an operator trying to work out why their app is
+/// not up.
+#[must_use]
+pub fn hosted_state_name(state: i32) -> &'static str {
+    match proto::HostedAppState::try_from(state) {
+        Ok(proto::HostedAppState::Unspecified) => "unspecified",
+        Ok(proto::HostedAppState::HostedStopped) => "stopped",
+        Ok(proto::HostedAppState::HostedMaterializing) => "materializing",
+        Ok(proto::HostedAppState::HostedInstalling) => "installing",
+        Ok(proto::HostedAppState::HostedStarting) => "starting",
+        Ok(proto::HostedAppState::HostedRunning) => "running",
+        Ok(proto::HostedAppState::HostedFailed) => "failed",
+        Ok(proto::HostedAppState::HostedBuilding) => "building",
+        Err(_) => "unrecognized",
+    }
+}
+
+/// Render one hosted App's status.
+///
+/// The `url` is an ABSOLUTE loopback origin, not a gateway-relative path —
+/// there is no proxy — so it is printed verbatim and is directly usable.
+#[must_use]
+pub fn render_hosted_status(s: &proto::HostedAppStatus, json: bool) -> String {
+    if json {
+        return json!({
+            "handle": s.handle,
+            "state": hosted_state_name(s.state),
+            "url": s.url,
+            "port": s.port,
+            "framework": s.framework,
+            "serve_mode": if s.serve_mode.is_empty() { "dev" } else { &s.serve_mode },
+            "detail": s.detail,
+            "recent_logs": s.recent_logs,
+        })
+        .to_string();
+    }
+    let mut out = format!("{}  {}", s.handle, hosted_state_name(s.state));
+    if !s.url.is_empty() {
+        let _ = write!(out, "  {}", s.url);
+    }
+    if !s.framework.is_empty() {
+        let mode = if s.serve_mode.is_empty() {
+            "dev"
+        } else {
+            &s.serve_mode
+        };
+        let _ = write!(out, "  ({} / {mode})", s.framework);
+    }
+    if !s.detail.is_empty() {
+        let _ = write!(out, "\n  {}", s.detail);
+    }
+    // Logs are the whole reason a FAILED status is actionable; showing them only
+    // under --json would mean the human form is the useless one.
+    if !s.recent_logs.is_empty() {
+        for line in &s.recent_logs {
+            let _ = write!(out, "\n  | {line}");
+        }
+    }
+    out
+}
+
+/// Render `hosted list`.
+#[must_use]
+pub fn render_hosted_list(resp: &proto::ListHostedAppsResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "apps": resp.apps.iter().map(|s| json!({
+                "handle": s.handle,
+                "state": hosted_state_name(s.state),
+                "url": s.url,
+                "port": s.port,
+                "framework": s.framework,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+    if resp.apps.is_empty() {
+        return "no hosted apps".to_string();
+    }
+    resp.apps
+        .iter()
+        .map(|s| {
+            let url = if s.url.is_empty() { "-" } else { &s.url };
+            format!("{:<32} {:<14} {url}", s.handle, hosted_state_name(s.state))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Render `teams list`.
+#[must_use]
+pub fn render_teams_list(resp: &proto::ListTeamsResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "teams": resp.teams.iter().map(|t| json!({
+                "team_id": t.team_id,
+                "display_name": t.display_name,
+                "owner": t.owner,
+                "member_count": t.member_count,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+    if resp.teams.is_empty() {
+        return "no teams".to_string();
+    }
+    resp.teams
+        .iter()
+        .map(|t| {
+            format!(
+                "{:<24} {:<24} owner={} members={}",
+                t.team_id, t.display_name, t.owner, t.member_count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Render `teams members`.
+///
+/// `resolved_warrant` is present only when `--asset` was given AND a membership
+/// path actually resolves. Absent means "no path", which is different from an
+/// empty warrant, so the human form says so rather than printing blanks.
+#[must_use]
+pub fn render_team_members(resp: &proto::ListTeamMembersResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "owner": resp.owner,
+            "members": resp.members.iter().map(|m| json!({
+                "party": m.party,
+                "role": m.role,
+                "action_caps": m.action_caps,
+                "resolved_warrant": m.resolved_warrant.as_ref().map(|w| json!({
+                    "executor_class": w.executor_class,
+                    "model_route": w.model_route,
+                    "net_scope": w.net_scope,
+                    "fs_scope": w.fs_scope,
+                    "max_calls": w.max_calls,
+                    "cpu_milli": w.cpu_milli,
+                    "wall_clock_ms": w.wall_clock_ms,
+                })),
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+    if resp.members.is_empty() {
+        return "no members".to_string();
+    }
+    let mut out = String::new();
+    for m in &resp.members {
+        let owner_mark = if m.party == resp.owner {
+            " (owner)"
+        } else {
+            ""
+        };
+        let _ = writeln!(
+            out,
+            "{}{owner_mark}  role={}  caps=[{}]",
+            m.party,
+            m.role,
+            m.action_caps.join(",")
+        );
+        match &m.resolved_warrant {
+            Some(w) => {
+                let _ = writeln!(
+                    out,
+                    "    {} · {} · net={} · fs={}",
+                    w.executor_class, w.model_route, w.net_scope, w.fs_scope
+                );
+            }
+            None => out.push_str("    (no resolved warrant for this asset)\n"),
+        }
+    }
+    out.trim_end().to_string()
+}
+
+/// Render `teams grants`.
+///
+/// A REVOKED grant is still a fact and is shown as one: hiding it would make the
+/// fold look like the grant never existed, and "who used to be able to do this"
+/// is exactly what an operator reads this for.
+#[must_use]
+pub fn render_asset_grants(resp: &proto::ListAssetGrantsResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "owner": resp.owner,
+            "grants": resp.grants.iter().map(|g| json!({
+                "grantor": g.grantor,
+                "grantee": g.grantee,
+                "actions": g.actions,
+                "runtime_scope": g.runtime_scope,
+                "is_root": g.is_root,
+                "revoked": g.revoked,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+    let owner = if resp.owner.is_empty() {
+        "(unbound)"
+    } else {
+        &resp.owner
+    };
+    if resp.grants.is_empty() {
+        return format!("owner={owner}; no grants");
+    }
+    let mut out = format!("owner={owner}\n");
+    for g in &resp.grants {
+        let kind = if g.is_root { "root" } else { "delegated" };
+        let state = if g.revoked { " REVOKED" } else { "" };
+        let _ = writeln!(
+            out,
+            "  {} -> {}  [{}]  scope={}  ({kind}){state}",
+            g.grantor,
+            g.grantee,
+            g.actions.join(","),
+            g.runtime_scope
+        );
+    }
+    out.trim_end().to_string()
+}
+
+/// Render `content batch`.
+///
+/// An EMPTY payload with `full_size: 0` is the UNIFORM answer for unauthorized,
+/// missing and malformed — the caller cannot tell which, by design. The human
+/// rendering therefore says "unavailable" rather than guessing a cause, and the
+/// JSON form carries `available` so a script does not have to infer it from an
+/// empty string.
+#[must_use]
+pub fn render_content_batch(resp: &proto::GetContentBatchResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "items": resp.items.iter().map(|i| json!({
+                "content_ref": hex::encode(&i.content_ref),
+                "available": i.full_size > 0,
+                "truncated": i.truncated,
+                "full_size": i.full_size,
+                "payload_hex": hex::encode(&i.payload),
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+    let mut out = String::new();
+    for i in &resp.items {
+        let r = hex::encode(&i.content_ref);
+        if i.full_size == 0 {
+            let _ = writeln!(out, "{r}  unavailable");
+        } else if i.truncated {
+            let _ = writeln!(
+                out,
+                "{r}  {} of {} bytes (truncated)",
+                i.payload.len(),
+                i.full_size
+            );
+        } else {
+            let _ = writeln!(out, "{r}  {} bytes", i.full_size);
+        }
+    }
+    if out.is_empty() {
+        return "no items".to_string();
+    }
+    out.trim_end().to_string()
+}
+
+/// Render `datasets discover` — the advisory fuzzy-in / EXACT-out ladder.
+///
+/// `score_bp` is DISPLAY-ONLY basis points and never an identity input; the
+/// `content_ref` is the exact-out join key a caller feeds to `content get`.
+#[must_use]
+pub fn render_fuzzy_discovery(resp: &proto::FuzzyDiscoveryResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "hits": resp.hits.iter().map(|h| json!({
+                "content_ref": hex::encode(&h.content_ref),
+                "score_bp": h.score_bp,
+                "parent_ref": hex::encode(&h.parent_ref),
+                "chunk_index": h.chunk_index,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+    if resp.hits.is_empty() {
+        return "no hits".to_string();
+    }
+    let mut out = String::new();
+    for h in &resp.hits {
+        let _ = writeln!(
+            out,
+            "{:>5} bp  {}  (chunk {} of {})",
+            h.score_bp,
+            hex::encode(&h.content_ref),
+            h.chunk_index,
+            hex::encode(&h.parent_ref)
+        );
+    }
+    out.trim_end().to_string()
+}
+
+/// Render `branch versions` — the recorded point-in-time ladder, newest first.
+///
+/// `found: false` is UNIFORM for an absent branch, a not-owned branch, and a
+/// branch with no history: the caller learns nothing about which. That is the
+/// same no-existence-oracle posture every other caller-scoped read takes, and it
+/// is why the human line says "no history" rather than "no such branch".
+#[must_use]
+pub fn render_branch_versions(resp: &proto::ListBranchVersionsResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "found": resp.found,
+            "has_more": resp.has_more,
+            "versions": resp.versions.iter().map(|v| json!({
+                "version": v.version,
+                "branch_ref": hex::encode(&v.branch_ref),
+                "recorded_unix_ms": v.recorded_unix_ms,
+                "cause": v.cause,
+                "item_count": v.item_count,
+            })).collect::<Vec<_>>(),
+        })
+        .to_string();
+    }
+    if !resp.found {
+        return "no history (absent, not owned, or never recorded)".to_string();
+    }
+    if resp.versions.is_empty() {
+        return "no versions on this page".to_string();
+    }
+    let mut out = String::new();
+    for v in &resp.versions {
+        let _ = writeln!(
+            out,
+            "v{:<5} {:<9} {:>4} item(s)  {}",
+            v.version,
+            v.cause,
+            v.item_count,
+            hex::encode(&v.branch_ref)
+        );
+    }
+    if resp.has_more {
+        out.push_str("… more (use --after-version <oldest shown>)");
+    }
+    out.trim_end().to_string()
+}
+
+/// Render `branch restore`.
+///
+/// A restore APPENDS a version rather than rewriting history, so the new version
+/// number is worth showing: it is what makes the restore itself restorable.
+/// `deduplicated` means the branch already matched — nothing was recorded, and
+/// saying so is more useful than a bare success.
+#[must_use]
+pub fn render_restore_branch(resp: &proto::RestoreBranchResponse, json: bool) -> String {
+    if json {
+        return json!({
+            "new_version": resp.new_version,
+            "deduplicated": resp.deduplicated,
+            "workflow_resynced": resp.workflow_resynced,
+            "items": resp.branch.as_ref().map_or(0, |b| b.items.len()),
+        })
+        .to_string();
+    }
+    if resp.deduplicated {
+        return "already at that version — nothing recorded".to_string();
+    }
+    let items = resp.branch.as_ref().map_or(0, |b| b.items.len());
+    let mut out = format!(
+        "restored to v{} ({items} item(s)); recorded as v{}",
+        resp.new_version, resp.new_version
+    );
+    if resp.workflow_resynced {
+        out.push_str("\nthe stored workflow definition was re-synced from the restored manifest");
+    }
+    out
+}
+
 /// Render `tools score` — the advisory rank ladder + the lowering dry-run
 /// verdict. Every number is DISPLAY-ONLY: a score can surface a tool,
 /// never grant one.

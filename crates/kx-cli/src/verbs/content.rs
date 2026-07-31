@@ -8,6 +8,11 @@
 //!   a blob. With `--instance` the run scope (the run's committed result refs);
 //!   WITHOUT it the UPLOADS scope (refs this party uploaded). Denials are
 //!   uniform (no existence oracle).
+//! - `kx content batch --ref <hex32> [--ref …] [--instance <hex16>]
+//!   [--max-bytes-per-item N]` — fetch up to 64 blobs in ONE round trip, in
+//!   request order. An unauthorized / missing / malformed ref yields an EMPTY
+//!   payload in its slot rather than an error, so one bad ref never costs the
+//!   other 63: the response shape IS the uniform no-existence-oracle posture.
 //! - The original flag-form `kx content --ref … --instance …` is preserved
 //!   verbatim (back-compat: a first arg starting with `--` selects `get`).
 
@@ -27,6 +32,21 @@ pub enum ContentArgs {
     Get(GetArgs),
     /// Upload a file (Batch A `PutContent`).
     Put(PutArgs),
+    /// Fetch many blobs in one round trip.
+    Batch(BatchArgs),
+}
+
+/// Parsed `content batch` arguments.
+#[derive(Debug)]
+pub struct BatchArgs {
+    /// The refs to fetch, in the order they will be returned.
+    pub content_refs: Vec<[u8; 32]>,
+    /// The owning run (16B instance id); `None` = the uploads scope.
+    pub instance: Option<[u8; 16]>,
+    /// Truncate each payload beyond this many bytes (`full_size` stays honest).
+    pub max_bytes_per_item: Option<u64>,
+    /// Common client flags.
+    pub common: ClientCommon,
 }
 
 /// Parsed `content get` (and legacy flag-form) arguments.
@@ -60,19 +80,68 @@ pub struct PutArgs {
 /// the subcommand explicitly.
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<ContentArgs, CliError> {
     let first = args.next().ok_or_else(|| {
-        CliError::Usage("content requires a subcommand (get | put) or --ref …".into())
+        CliError::Usage("content requires a subcommand (get | put | batch) or --ref …".into())
     })?;
     match first.as_str() {
         "put" => parse_put(args).map(ContentArgs::Put),
         "get" => parse_get(args, None).map(ContentArgs::Get),
+        "batch" => parse_batch(args).map(ContentArgs::Batch),
         flag if flag.starts_with("--") => {
             // Legacy flag-form: re-feed the consumed flag into the get parser.
             parse_get(args, Some(first)).map(ContentArgs::Get)
         }
         other => Err(CliError::Usage(format!(
-            "unknown content subcommand {other:?} (expected: get | put)"
+            "unknown content subcommand {other:?} (expected: get | put | batch)"
         ))),
     }
+}
+
+fn parse_batch(mut args: impl Iterator<Item = String>) -> Result<BatchArgs, CliError> {
+    let mut content_refs: Vec<[u8; 32]> = Vec::new();
+    let mut instance: Option<[u8; 16]> = None;
+    let mut max_bytes_per_item: Option<u64> = None;
+    let mut common = ClientCommon::default();
+
+    while let Some(flag) = args.next() {
+        if common.try_consume(&flag, &mut args)? {
+            continue;
+        }
+        match flag.as_str() {
+            "--ref" => content_refs.push(take_fixed::<_, 32>(&mut args, "--ref")?),
+            "--instance" => instance = Some(take_fixed::<_, 16>(&mut args, "--instance")?),
+            "--max-bytes-per-item" => {
+                let v = next_value(&mut args, "--max-bytes-per-item")?;
+                max_bytes_per_item = Some(v.parse().map_err(|_| {
+                    CliError::Usage(format!(
+                        "--max-bytes-per-item expects an integer, got {v:?}"
+                    ))
+                })?);
+            }
+            other => return Err(CliError::Usage(format!("unknown flag {other:?}"))),
+        }
+    }
+
+    if content_refs.is_empty() {
+        return Err(CliError::Usage(
+            "content batch requires at least one --ref <hex32>".into(),
+        ));
+    }
+    // Refuse locally rather than spending a round trip on a request the server
+    // will refuse anyway — and name the actual count, which is what the caller
+    // needs to split their list.
+    if content_refs.len() > 64 {
+        return Err(CliError::Usage(format!(
+            "content batch takes at most 64 refs per call, got {}",
+            content_refs.len()
+        )));
+    }
+
+    Ok(BatchArgs {
+        content_refs,
+        instance,
+        max_bytes_per_item,
+        common,
+    })
 }
 
 fn parse_get(
@@ -146,7 +215,24 @@ pub async fn execute(args: ContentArgs) -> Result<(), CliError> {
     match args {
         ContentArgs::Get(a) => execute_get(a).await,
         ContentArgs::Put(a) => execute_put(a).await,
+        ContentArgs::Batch(a) => execute_batch(a).await,
     }
+}
+
+async fn execute_batch(args: BatchArgs) -> Result<(), CliError> {
+    let resolved = args.common.resolve()?;
+    let mut client = resolved.connect().await?;
+    let resp = client
+        .get_content_batch(resolved.request(proto::GetContentBatchRequest {
+            instance_id: args.instance.map(|i| i.to_vec()).unwrap_or_default(),
+            content_refs: args.content_refs.iter().map(|r| r.to_vec()).collect(),
+            max_bytes_per_item: args.max_bytes_per_item,
+        })?)
+        .await
+        .map_err(CliError::from_status)?
+        .into_inner();
+    println!("{}", format::render_content_batch(&resp, args.common.json));
+    Ok(())
 }
 
 async fn execute_get(args: GetArgs) -> Result<(), CliError> {
@@ -218,14 +304,14 @@ mod tests {
     fn get(parts: &[&str]) -> GetArgs {
         match p(parts).unwrap() {
             ContentArgs::Get(a) => a,
-            other @ ContentArgs::Put(_) => panic!("expected get, got {other:?}"),
+            other => panic!("expected get, got {other:?}"),
         }
     }
 
     fn put(parts: &[&str]) -> PutArgs {
         match p(parts).unwrap() {
             ContentArgs::Put(a) => a,
-            other @ ContentArgs::Get(_) => panic!("expected put, got {other:?}"),
+            other => panic!("expected put, got {other:?}"),
         }
     }
 
@@ -289,5 +375,64 @@ mod tests {
     fn unknown_subcommand_is_usage() {
         assert!(p(&["frobnicate"]).is_err());
         assert!(p(&[]).is_err(), "no args at all");
+    }
+
+    fn batch(parts: &[&str]) -> BatchArgs {
+        match p(parts).unwrap() {
+            ContentArgs::Batch(a) => a,
+            other => panic!("expected batch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn batch_collects_refs_in_request_order() {
+        let a = batch(&[
+            "batch",
+            "--ref",
+            &"ab".repeat(32),
+            "--ref",
+            &"cd".repeat(32),
+        ]);
+        assert_eq!(a.content_refs.len(), 2);
+        assert_eq!(a.content_refs[0][0], 0xab);
+        assert_eq!(a.content_refs[1][0], 0xcd);
+        assert!(a.instance.is_none(), "no --instance is the uploads scope");
+    }
+
+    /// The 64-ref cap is refused LOCALLY, naming the actual count, rather than
+    /// spending a round trip on a request the server will refuse anyway.
+    #[test]
+    fn batch_refuses_more_than_sixty_four_refs_and_names_the_count() {
+        let hex = "ab".repeat(32);
+        let mut parts: Vec<&str> = vec!["batch"];
+        for _ in 0..65 {
+            parts.push("--ref");
+            parts.push(&hex);
+        }
+        let err = p(&parts).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("at most 64"), "{msg:?}");
+        assert!(
+            msg.contains("65"),
+            "the refusal must name the actual count: {msg:?}"
+        );
+    }
+
+    /// Exactly 64 is fine — the boundary is not off by one.
+    #[test]
+    fn batch_accepts_exactly_sixty_four_refs() {
+        let hex = "ab".repeat(32);
+        let mut parts: Vec<&str> = vec!["batch"];
+        for _ in 0..64 {
+            parts.push("--ref");
+            parts.push(&hex);
+        }
+        assert_eq!(batch(&parts).content_refs.len(), 64);
+    }
+
+    #[test]
+    fn batch_requires_at_least_one_ref() {
+        let err = p(&["batch"]).unwrap_err();
+        assert!(err.to_string().contains("at least one --ref"));
     }
 }

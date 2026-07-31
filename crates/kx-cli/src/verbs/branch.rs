@@ -54,6 +54,23 @@ pub enum BranchSub {
         /// The branch handle.
         handle: String,
     },
+    /// List a branch's recorded point-in-time versions, newest first.
+    Versions {
+        /// The branch handle.
+        handle: String,
+        /// Page size; 0 = server default (100, clamped to 256).
+        limit: u32,
+        /// Exclusive DESCENDING cursor: return versions strictly older than this.
+        after_version: u32,
+    },
+    /// Restore a branch to a recorded version. APPENDS a new version — it never
+    /// rewrites history, so a restore is itself restorable.
+    Restore {
+        /// The branch handle.
+        handle: String,
+        /// The recorded version whose items become the new current state.
+        version: u32,
+    },
     /// D155 Phase-3: agentically edit a branch file IN-CAS. A single model step
     /// rewrites the file's current body (attached as a context ref) per
     /// `instruction`; the edited body commits as a NEW content ref and the
@@ -96,7 +113,7 @@ pub struct BranchArgs {
 pub fn parse(mut args: impl Iterator<Item = String>) -> Result<BranchArgs, CliError> {
     let kw = args.next().ok_or_else(|| {
         CliError::Usage(
-            "branch requires a subcommand: create | snapshot | list | get | remove | edit | advance"
+            "branch requires a subcommand: create | snapshot | list | get | remove | edit | advance | versions | restore"
                 .into(),
         )
     })?;
@@ -108,6 +125,9 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<BranchArgs, CliEr
     let mut instruction: Option<String> = None;
     let mut content_ref: Option<String> = None;
     let mut timeout_secs = DEFAULT_EDIT_TIMEOUT_SECS;
+    let mut limit: u32 = 0;
+    let mut after_version: u32 = 0;
+    let mut version: Option<u32> = None;
     let mut common = ClientCommon::default();
 
     while let Some(flag) = args.next() {
@@ -120,6 +140,24 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<BranchArgs, CliEr
             "--path" => paths.push(next_value(&mut args, "--path")?),
             "--instruction" => instruction = Some(next_value(&mut args, "--instruction")?),
             "--ref" => content_ref = Some(next_value(&mut args, "--ref")?),
+            "--limit" => {
+                let v = next_value(&mut args, "--limit")?;
+                limit = v.parse().map_err(|_| {
+                    CliError::Usage(format!("--limit expects an integer, got {v:?}"))
+                })?;
+            }
+            "--after-version" => {
+                let v = next_value(&mut args, "--after-version")?;
+                after_version = v.parse().map_err(|_| {
+                    CliError::Usage(format!("--after-version expects an integer, got {v:?}"))
+                })?;
+            }
+            "--version" => {
+                let v = next_value(&mut args, "--version")?;
+                version = Some(v.parse().map_err(|_| {
+                    CliError::Usage(format!("--version expects an integer, got {v:?}"))
+                })?);
+            }
             "--timeout-secs" => {
                 let v = next_value(&mut args, "--timeout-secs")?;
                 timeout_secs = v.parse().map_err(|_| {
@@ -197,9 +235,23 @@ pub fn parse(mut args: impl Iterator<Item = String>) -> Result<BranchArgs, CliEr
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| CliError::Usage("branch advance requires --ref <64-hex>".into()))?,
         },
+        "versions" => BranchSub::Versions {
+            handle: require_handle(handle, "versions")?,
+            limit,
+            after_version,
+        },
+        "restore" => BranchSub::Restore {
+            handle: require_handle(handle, "restore")?,
+            // A restore target is never DEFAULTED. Guessing "latest" would make
+            // a mistyped command silently a no-op, and guessing "1" would throw
+            // away everything since the baseline.
+            version: version.ok_or_else(|| {
+                CliError::Usage("branch restore requires --version <N> (see `branch versions`)".into())
+            })?,
+        },
         other => {
             return Err(CliError::Usage(format!(
-                "unknown branch subcommand {other:?} (expected create | snapshot | list | get | remove | edit | advance)"
+                "unknown branch subcommand {other:?} (expected create | snapshot | list | get | remove | edit | advance | versions | restore)"
             )))
         }
     };
@@ -266,6 +318,30 @@ pub async fn execute(args: BranchArgs) -> Result<(), CliError> {
                 .map_err(CliError::from_status)?
                 .into_inner();
             println!("{}", format::render_get_branch(&resp, json));
+        }
+        BranchSub::Versions {
+            handle,
+            limit,
+            after_version,
+        } => {
+            let resp = client
+                .list_branch_versions(resolved.request(proto::ListBranchVersionsRequest {
+                    handle,
+                    limit,
+                    after_version,
+                })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            println!("{}", format::render_branch_versions(&resp, json));
+        }
+        BranchSub::Restore { handle, version } => {
+            let resp = client
+                .restore_branch(resolved.request(proto::RestoreBranchRequest { handle, version })?)
+                .await
+                .map_err(CliError::from_status)?
+                .into_inner();
+            println!("{}", format::render_restore_branch(&resp, json));
         }
         BranchSub::Remove { handle } => {
             let resp = client

@@ -920,7 +920,7 @@ jobs:
         working-directory: ui
         run: npm run build
 
-      - name: Eager-JS bundle gate (entry + modulepreload ≤ 673 KiB)
+      - name: Eager-JS bundle gate (entry + modulepreload ≤ 680 KiB)
         working-directory: ui
         run: npm run size
 

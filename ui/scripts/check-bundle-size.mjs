@@ -6,7 +6,7 @@
  * (statically-imported vendor chunks). Lazy chunks (MoteDag, sections, the
  * motion-features pack, the DevTools dock) are reported but NOT counted.
  *
- * Budget: 678 KiB raw (694,272 B — the value enforced below; keep this line in
+ * Budget: 680 KiB raw (696,320 B — the value enforced below; keep this line in
  * lock-step with it, and with the step name in ci.yml, or the doc becomes the
  * third place that disagrees). Override with KX_UI_EAGER_BUDGET_BYTES for
  * emergencies — a deliberate, reviewed override, never a silent default bump.
@@ -91,6 +91,22 @@
  *     old ceiling); bumped to the next KiB boundary above the measured value. Local
  *     toolchain measures a few KiB heavier than CI (see the NOTE above) — the delta is
  *     the trustworthy half.
+ *   - 678 KiB → 680 KiB (2026-07-31, the NL authoring surface): the eager SDK
+ *     client gains proposeControlAction / describeControlSurface / putPolicyRole /
+ *     listPolicyRoles / deletePolicyRole / assignPolicyRole plus the regenerated
+ *     proto descriptor for their messages — including `ControlPreview`, a oneof
+ *     over eight request types, which is the largest single message added. Proto
+ *     schemas cannot be lazy-split and connection-context constructs the client
+ *     up front, so this rides eager `common.js` like every entry above. Plus the
+ *     `use-live-invalidation` hook mounted at AppShell (no new route, no new
+ *     screen — it is a subscription, not a page).
+ *     Measured A/B with the SDK dist held constant, both halves built by the same
+ *     local toolchain in the same session: origin/main 694,167 B → this branch
+ *     695,680 B (+1,513 B eager). The three vendor chunks are BYTE-IDENTICAL
+ *     across both builds (same content hashes), so the whole delta is in the
+ *     entry chunk — 419,532 B → 421,045 B — which is what makes this delta
+ *     trustworthy rather than a toolchain artefact. Bumped to the next KiB
+ *     boundary above the measured value.
  *
  * Exit 1 over budget. The printed table doubles as the measurement evidence blob.
  */
@@ -110,7 +126,7 @@ const DIST = join(UI_ROOT, "dist");
 // `deriveApp` mapping additions, and the SDK client is eager on every route. Adding a
 // per-step contract axis buys that; bumping here — in the PR that spends it — is the same move
 // #375, #363, #362, #358 and #304 each made.
-const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 694_272);
+const BUDGET = Number(process.env.KX_UI_EAGER_BUDGET_BYTES ?? 696_320);
 
 /** Pull the eager JS URLs out of dist/index.html (entry scripts + modulepreloads). */
 export function eagerJsUrls(html) {

@@ -45,6 +45,23 @@ export function eventVisual(kind: string): EventVisual {
 }
 
 /**
+ * Whether `kind` is one this client actually understands.
+ *
+ * Rendering can afford to be permissive — an unknown kind falls through to
+ * `UNKNOWN_VISUAL` and shows as a generic row, which is honest. ACTING on an
+ * event cannot: `use-live-invalidation` invalidates NOTHING for a kind it does
+ * not recognise, because the alternative ("invalidate everything, just in case")
+ * turns one unknown event into a refetch storm exactly when the client is oldest.
+ *
+ * This reads `KIND_VISUAL` rather than declaring a second list. A separate array
+ * would be a second thing to update, and forgetting it would be invisible: the
+ * feed would render the event while the cache silently ignored it.
+ */
+export function isKnownEventKind(kind: string): boolean {
+  return Object.hasOwn(KIND_VISUAL, kind);
+}
+
+/**
  * The journal's `FailureReason` discriminant → a short triage label. Mirrors the
  * closed enum in `kx-journal/src/entry.rs` (variants 0-8, in declaration order).
  * An unknown discriminant maps to "UNKNOWN REASON" rather than crashing (the proto
