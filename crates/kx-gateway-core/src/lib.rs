@@ -196,15 +196,16 @@ pub use script_admin::{
 pub use secret_admin::{SecretAdmin, SecretAdminError, SecretNameView};
 pub use server_info::ServerInfoFacts;
 pub use service::{
-    author_steps_from_proto, AssetGrantsView, AuthorEdge, AuthorExecutionMode, AuthorStep,
-    AuthorStepKind, BinderError, BoundRecipe, CatalogSeamError, EventStream, EventTailer,
-    GatewayService, GlobalEventStream, GlobalEventTailer, GrantEntry, GrantView, MembershipView,
-    NoTokenTailer, RecipeBinder, RecipeCatalog, RecipeFormFieldEntry, RecipeMetadataEntry,
-    RecipeParamKind, RegisteredSignature, RegisteredToolsView, ScoredRecipeEntry, SignatureCatalog,
-    SignatureSummaryEntry, SnapshotGlobalTailer, SnapshotTailer, TeamMemberEntry, TeamMembersView,
-    TeamSummaryEntry, TokenStream, TokenTailer, WarrantProjection, WorkflowAuthor,
-    BATCH_ITEM_CLAMP_BYTES, DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS, MAX_FEEDBACK_COMMENT_BYTES,
-    REFUSAL_CODE_METADATA_KEY, SEARCH_RECIPES_DEFAULT_LIMIT, SEARCH_RECIPES_MAX_LIMIT,
+    admit_registration_for_test, admit_script_for_test, author_steps_from_proto, AssetGrantsView,
+    AuthorEdge, AuthorExecutionMode, AuthorStep, AuthorStepKind, BinderError, BoundRecipe,
+    CatalogSeamError, EventStream, EventTailer, GatewayService, GlobalEventStream,
+    GlobalEventTailer, GrantEntry, GrantView, MembershipView, NoTokenTailer, RecipeBinder,
+    RecipeCatalog, RecipeFormFieldEntry, RecipeMetadataEntry, RecipeParamKind, RegisteredSignature,
+    RegisteredToolsView, ScoredRecipeEntry, SignatureCatalog, SignatureSummaryEntry,
+    SnapshotGlobalTailer, SnapshotTailer, TeamMemberEntry, TeamMembersView, TeamSummaryEntry,
+    TokenStream, TokenTailer, WarrantProjection, WorkflowAuthor, BATCH_ITEM_CLAMP_BYTES,
+    DEFAULT_PUT_CAP_BYTES, MAX_BATCH_REFS, MAX_FEEDBACK_COMMENT_BYTES, REFUSAL_CODE_METADATA_KEY,
+    SEARCH_RECIPES_DEFAULT_LIMIT, SEARCH_RECIPES_MAX_LIMIT,
 };
 pub use skills_view::{
     AddedInstructions, SkillCatalog, SkillRecord, MAX_SKILL_INSTRUCTIONS_BODY_BYTES,

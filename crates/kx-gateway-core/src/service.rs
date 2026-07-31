@@ -1883,6 +1883,118 @@ fn policy_admin_status(err: crate::PolicyAdminError) -> Status {
 /// The fail-closed cap on how many tools one role may name.
 const MAX_POLICY_ROLE_TOOLS: usize = 256;
 
+/// [`admit_script`], reachable from the equivalence test in `tests/`.
+///
+/// The function itself stays private: it is an internal seam between the RPC and
+/// the NL proposer, not API. This wrapper exists ONLY so
+/// `tests/admit_equivalence.rs` can compare it against the RPC over a real
+/// transport — which is the whole point of extracting it, and cannot be done
+/// from a unit test inside this module because the RPC needs a served client.
+///
+/// # Errors
+/// Whatever [`admit_script`] returns.
+#[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+pub fn admit_script_for_test(req: &proto::RegisterScriptRequest) -> Result<(), Status> {
+    admit_script(req)
+}
+
+/// [`admit_registration`], reachable from the equivalence test. See
+/// [`admit_script_for_test`].
+///
+/// # Errors
+/// Whatever [`admit_registration`] returns.
+#[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+pub fn admit_registration_for_test(req: &proto::RegisterToolRequest) -> Result<(), Status> {
+    admit_registration(req)
+}
+
+/// Whether a `RegisterScript` request is ADMISSIBLE, independent of any host.
+///
+/// This is the prologue `register_script` used to inline, extracted verbatim so
+/// there is ONE definition of "would this registration be refused" rather than
+/// two that can drift.
+///
+/// # Why it needs a name
+///
+/// NL authoring proposes a registration and must be able to say, before a human
+/// approves anything, whether the runtime would take it. Re-stating these rules
+/// in the proposer would be a second definition of admissible — the exact drift
+/// the two-gates design exists to prevent — so the proposer decodes through THIS
+/// function, and `admit_matches_register` pins that it agrees with the real RPC.
+///
+/// # What it deliberately does NOT cover
+///
+/// The host-side half of admission is not pure and stays where it is: the
+/// interpreter is validated against the host's CLOSED allowlist and then PROBED
+/// by actually spawning it inside the sandbox, and a serve that cannot confine a
+/// script refuses there. A proposal that passes here can still be refused at
+/// registration, which is correct — the sandbox is the authority on what this
+/// host can run, and a preview must not pretend otherwise.
+///
+/// # Errors
+/// `invalid_argument` for an empty identity half, an over-cap description, an
+/// empty source, or too many argv/env/mount/host entries.
+#[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+fn admit_script(req: &proto::RegisterScriptRequest) -> Result<(), Status> {
+    if req.script_name.trim().is_empty() || req.script_version.trim().is_empty() {
+        return Err(Status::invalid_argument(
+            "script_name and script_version are required",
+        ));
+    }
+    if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
+        return Err(Status::invalid_argument("description too long"));
+    }
+    if req.source.is_empty() {
+        return Err(Status::invalid_argument("source is required"));
+    }
+    if req.argv.len() > MAX_TOOL_PARAMS
+        || req.env.len() > MAX_TOOL_PARAMS
+        || req.fs_mounts.len() > MAX_TOOL_PARAMS
+        || req.net_hosts.len() > MAX_TOOL_PARAMS
+    {
+        return Err(Status::invalid_argument(
+            "too many argv / env / fs_mounts / net_hosts entries",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether a `RegisterTool` request is ADMISSIBLE, independent of any host.
+///
+/// The `register_tool` prologue, extracted for the same reason as
+/// [`admit_script`]: the NL proposer must decode through the real enforcer, not
+/// through a restatement of it.
+///
+/// The host-side half stays put here too — `server_host` is SSRF-vetted against
+/// the operator's allowlist by `vet_registration_host` in the host seam, which
+/// needs configuration this function does not have.
+///
+/// # Errors
+/// `invalid_argument` for an empty identity half, an empty `server_host`, an
+/// over-cap description, or too many params.
+#[allow(clippy::result_large_err)] // tonic::Status; the crate-wide convention
+fn admit_registration(req: &proto::RegisterToolRequest) -> Result<(), Status> {
+    if req.tool_name.trim().is_empty() || req.tool_version.trim().is_empty() {
+        return Err(Status::invalid_argument(
+            "tool_name and tool_version are required",
+        ));
+    }
+    if req.server_host.trim().is_empty() {
+        return Err(Status::invalid_argument(
+            "server_host is required (the external MCP endpoint the PR-6b gateway will dial)",
+        ));
+    }
+    if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
+        return Err(Status::invalid_argument("description too long"));
+    }
+    if let Some(s) = &req.input_schema {
+        if s.params.len() > MAX_TOOL_PARAMS {
+            return Err(Status::invalid_argument("too many tool params"));
+        }
+    }
+    Ok(())
+}
+
 /// The wire token for a [`crate::control_surface::Domain`].
 ///
 /// Exhaustive with NO wildcard, deliberately: a new domain must fail to compile
@@ -4254,26 +4366,8 @@ impl KxGateway for GatewayService {
             .as_ref()
             .ok_or_else(|| Status::unimplemented("RegisterScript: no script registry wired"))?;
         let req = request.into_inner();
-        if req.script_name.trim().is_empty() || req.script_version.trim().is_empty() {
-            return Err(Status::invalid_argument(
-                "script_name and script_version are required",
-            ));
-        }
-        if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
-            return Err(Status::invalid_argument("description too long"));
-        }
-        if req.source.is_empty() {
-            return Err(Status::invalid_argument("source is required"));
-        }
-        if req.argv.len() > MAX_TOOL_PARAMS
-            || req.env.len() > MAX_TOOL_PARAMS
-            || req.fs_mounts.len() > MAX_TOOL_PARAMS
-            || req.net_hosts.len() > MAX_TOOL_PARAMS
-        {
-            return Err(Status::invalid_argument(
-                "too many argv / env / fs_mounts / net_hosts entries",
-            ));
-        }
+        // The ONE admissibility statement, shared with the NL proposer.
+        admit_script(&req)?;
         let reg = crate::ScriptRegistration {
             script_name: req.script_name,
             script_version: req.script_version,
@@ -4392,25 +4486,9 @@ impl KxGateway for GatewayService {
             Status::unimplemented("RegisterTool: no tool registry wired (tools.db absent)")
         })?;
         let req = request.into_inner();
-        // Fail-closed field caps BEFORE the durable write.
-        if req.tool_name.trim().is_empty() || req.tool_version.trim().is_empty() {
-            return Err(Status::invalid_argument(
-                "tool_name and tool_version are required",
-            ));
-        }
-        if req.server_host.trim().is_empty() {
-            return Err(Status::invalid_argument(
-                "server_host is required (the external MCP endpoint the PR-6b gateway will dial)",
-            ));
-        }
-        if req.description.len() > MAX_TOOL_DESCRIPTION_BYTES {
-            return Err(Status::invalid_argument("description too long"));
-        }
-        if let Some(s) = &req.input_schema {
-            if s.params.len() > MAX_TOOL_PARAMS {
-                return Err(Status::invalid_argument("too many tool params"));
-            }
-        }
+        // Fail-closed field caps BEFORE the durable write — the ONE admissibility
+        // statement, shared with the NL proposer.
+        admit_registration(&req)?;
         let reg = crate::ToolRegistration {
             tool_name: req.tool_name,
             tool_version: req.tool_version,
@@ -4435,11 +4513,6 @@ impl KxGateway for GatewayService {
             Status::unimplemented("DeregisterTool: no tool registry wired (tools.db absent)")
         })?;
         let req = request.into_inner();
-        if req.tool_name.trim().is_empty() || req.tool_version.trim().is_empty() {
-            return Err(Status::invalid_argument(
-                "tool_name and tool_version are required",
-            ));
-        }
         let removed = admin.deregister(&req.tool_name, &req.tool_version)?;
         Ok(Response::new(proto::DeregisterToolResponse { removed }))
     }
