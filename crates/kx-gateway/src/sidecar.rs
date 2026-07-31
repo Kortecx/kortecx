@@ -36,6 +36,20 @@
 //!
 //! The `Cache` arm is byte-identical to the previous behaviour. The classification is
 //! per-store and deliberate — see each caller.
+//!
+//! ## `policies.db` — `UserAuthored`, schema version 1
+//!
+//! The policy registry (`policies.rs`) is classified `UserAuthored` on the day it lands,
+//! before it has any users. That ordering is the whole point of the `apps.db` lesson
+//! above: a store classified `Cache` ships an upgrade path that silently wipes, and by
+//! the time anyone notices, the only safe move left is to freeze the version — which
+//! freezes the schema too. Roles and assignments are typed by hand and cannot be
+//! re-derived from anything, so a wipe is data loss and a downgrade must REFUSE.
+//!
+//! It starts at 1 and there is nothing to migrate FROM yet. What that buys is that the
+//! first bump lands on the `UserAuthored` upgrade arm — rename aside, recreate, import
+//! the surviving columns — rather than on a decision someone has to make under pressure
+//! after the first schema change is already needed.
 
 use std::path::{Path, PathBuf};
 
