@@ -115,6 +115,23 @@ pub struct ScaffoldRecord {
     pub duration_ms: u64,
     /// Files the server reported done when the scaffold settled.
     pub files_done: u64,
+    /// WHY the drive folded as failed, or empty when it did not.
+    ///
+    /// **This field is the one the type already claimed to have.** The doc above
+    /// says a 0 gate "cannot say whether the scaffold never finished or the run
+    /// answered wrong", and `scaffold_failure_transcript`'s doc says the record
+    /// "beside it says WHY" — but there was nowhere for a why to live. Six distinct
+    /// causes (launch refused · status poll failed · the scaffold phase reported
+    /// `Failed` · the phase exceeded [`SCAFFOLD_TIMEOUT`] · args encode · the RUN
+    /// never settled) all produced the identical zero-turn, no-answer transcript,
+    /// and the reason string reached `tracing::warn!` and stopped there.
+    ///
+    /// So `task_success@scaffold` = 0 on both engines has never been attributable
+    /// even in principle — the trajectory witness prints `terminal Pending`, zero
+    /// turns, `final_answer = <none>` for every one of them. It is deliberately NOT
+    /// a synthetic turn on the transcript: that would move `loop_efficiency@scaffold`
+    /// and make an instrument change move a score. No scorer reads this.
+    pub reason: String,
 }
 
 /// The separator between a swarm task's participant prompts. The instruction of a
@@ -1327,6 +1344,33 @@ fn scaffold_failure_transcript(task: &GoldenTask, reason: &str) -> Transcript {
     }
 }
 
+/// Fold a `scaffold`-family drive that could not complete, CARRYING its cause.
+///
+/// A named function rather than the local closure it replaced, because the property
+/// worth asserting is about it: six distinct causes must remain six distinguishable
+/// records. As a closure it could only be exercised by a live serve, which is exactly
+/// how "the reason went to a log and nowhere else" survived — the one thing that could
+/// tell the causes apart was unreachable from any test.
+///
+/// The transcript stays zero-turn and answerless: `task_success` must still read 0
+/// (the run really did not produce the answer), and adding a synthetic turn here
+/// would move `loop_efficiency@scaffold` — an instrument change that moves a score
+/// measures itself. The cause rides the RECORD, which no scorer reads.
+fn scaffold_drive_failed(
+    task: &GoldenTask,
+    reason: &str,
+    mut record: ScaffoldRecord,
+    started: std::time::Instant,
+) -> (Transcript, Vec<u8>, ScaffoldRecord) {
+    record.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    record.reason = reason.to_string();
+    (
+        scaffold_failure_transcript(task, reason),
+        Vec::new(),
+        record,
+    )
+}
+
 /// The `scaffold` family's drive: launch a LIVE scaffold of the (canary-free)
 /// saved App with the task instruction as the goal, poll it to a terminal
 /// phase, then run the App and fold the run — recording what the scaffold
@@ -1343,18 +1387,9 @@ pub async fn drive_scaffolded_app(
         completed: false,
         duration_ms: 0,
         files_done: 0,
+        reason: String::new(),
     };
-    let fail = |task: &GoldenTask,
-                reason: &str,
-                mut record: ScaffoldRecord,
-                started: std::time::Instant| {
-        record.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        (
-            scaffold_failure_transcript(task, reason),
-            Vec::new(),
-            record,
-        )
-    };
+    let fail = scaffold_drive_failed;
 
     if let Err(e) = client
         .scaffold_app(proto::ScaffoldAppRequest {
@@ -1626,6 +1661,97 @@ fn branch_from_wire(s: &str) -> Branch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The six reason strings `drive_scaffolded_app` can fold with — one per `fail`
+    /// call site, quoted from those sites so a new site that forgets a distinct
+    /// reason shows up as a duplicate here.
+    const SCAFFOLD_FAILURE_CAUSES: &[&str] = &[
+        "scaffold launch: transport error",
+        "scaffold status: transport error",
+        "scaffold failed: the planner produced no files",
+        "scaffold did not settle in time",
+        "args encode: bad json",
+        "run fold: task \"x\" did not settle a terminal branch in time",
+    ];
+
+    /// The REAL corpus task, via the module's existing loader — not a fabricated
+    /// `GoldenTask`. The drive folds a transcript keyed on the task, so a stand-in
+    /// would be testing the stand-in.
+    fn probe_task() -> GoldenTask {
+        bench_task("scaffold-contextual-runs")
+    }
+
+    fn probe_record() -> ScaffoldRecord {
+        ScaffoldRecord {
+            task_id: "scaffold-contextual-runs".to_string(),
+            completed: false,
+            duration_ms: 0,
+            files_done: 0,
+            reason: String::new(),
+        }
+    }
+
+    /// ★ THE GUARD. `task_success@scaffold` reads 0 on both engines, and until this
+    /// field existed the number was not attributable even in principle: all six ways
+    /// the drive can fold produce the SAME zero-turn, answerless transcript, so the
+    /// trajectory witness prints `terminal Pending` / no turns / `<none>` for every
+    /// one of them, and the string that told them apart went to `tracing::warn!`.
+    ///
+    /// The assertion is DISTINCTNESS, not presence: a record that carried a constant
+    /// (or the task id, or "failed") would be non-empty and still say nothing. Six
+    /// causes in, six different records out.
+    #[test]
+    fn every_scaffold_failure_cause_is_distinguishable_from_the_others() {
+        let started = std::time::Instant::now();
+        let seen: std::collections::BTreeSet<String> = SCAFFOLD_FAILURE_CAUSES
+            .iter()
+            .map(|cause| {
+                let (_, _, record) =
+                    scaffold_drive_failed(&probe_task(), cause, probe_record(), started);
+                assert!(
+                    record.reason.contains(cause),
+                    "the record must carry the cause it was given, not a summary of it: \
+                     {cause:?} folded to {:?}",
+                    record.reason
+                );
+                record.reason
+            })
+            .collect();
+        assert_eq!(
+            seen.len(),
+            SCAFFOLD_FAILURE_CAUSES.len(),
+            "two scaffold failure causes fold to the SAME record — a 0 that cannot be \
+             attributed is the defect this field exists to close. Distinct: {seen:?}"
+        );
+    }
+
+    /// The ACCEPTING CONTROL, varying exactly one thing: whether the drive failed. A
+    /// scaffold that completed carries NO reason, so a non-empty `reason` always means
+    /// a real failure and the harness line stays quiet on a green run.
+    #[test]
+    fn a_scaffold_that_did_not_fail_carries_no_reason() {
+        assert_eq!(probe_record().reason, "");
+    }
+
+    /// The transcript a failed drive folds to must stay scoreable-as-zero and must NOT
+    /// gain a turn: `loop_efficiency@scaffold` counts turns, so carrying the cause on
+    /// the transcript instead of the record would have moved a published score as a
+    /// side effect of making a failure legible.
+    #[test]
+    fn carrying_the_cause_does_not_move_the_scored_transcript() {
+        let (transcript, terminal, _) = scaffold_drive_failed(
+            &probe_task(),
+            "scaffold did not settle in time",
+            probe_record(),
+            std::time::Instant::now(),
+        );
+        assert!(transcript.turns.is_empty(), "no synthetic turn");
+        assert!(transcript.final_answer.is_none(), "no synthetic answer");
+        assert!(
+            terminal.is_empty(),
+            "no terminal mote for a run that never ran"
+        );
+    }
 
     /// A task's declared budget must be one the recipe will actually ADMIT.
     ///
