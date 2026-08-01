@@ -192,7 +192,19 @@ pub fn validate_args(schema: &InputSchema, args_bytes: &[u8]) -> Result<(), Sche
     }
 
     for spec in &schema.params {
-        match map.get(&spec.name) {
+        // An explicit JSON `null` IS absence, not a value of the wrong type. This is not a
+        // model malformation tolerated like a trailing comma — it is ordinary JSON, and it
+        // is how every real external API with optional parameters is called: the FIRST page
+        // of a paginated tool has no cursor, so `{"cursor": null}` is the idiomatic first
+        // call. Type-checking it made that first call unrepresentable, which made pagination
+        // structurally impossible (`bench-v1`'s `http-paginated-roster` refused the same
+        // proposal five turns running, then gave up and said so).
+        //
+        // Folding it into the `None` arm keeps the two spellings of absence AGREEING, which
+        // is the property that matters: whichever one the model picks, it gets the same
+        // answer — either "fine, it's optional" or "you did not supply a required one".
+        let supplied = map.get(&spec.name).filter(|raw| raw.get().trim() != "null");
+        match supplied {
             None => {
                 if spec.required {
                     return Err(SchemaError::MissingRequired {
@@ -506,6 +518,64 @@ fn check_value(name: &str, ty: &ParamType, raw: &RawValue) -> Result<(), SchemaE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The incident.** `bench-v1`'s `http-paginated-roster` scored 0 on BOTH engines for
+    /// its whole existence, and it was read as a loop failure ("it called the roster once,
+    /// received a `next_cursor`, and stopped"). The trajectory says otherwise — FIVE
+    /// consecutive turns, every one refused identically:
+    ///
+    /// ```text
+    /// turn 0 Rejected reason="the arguments for `fleet/page@1` do not match its
+    ///                         inputSchema: parameter `cursor` is not a string"
+    /// … turns 1-4, identical …
+    /// turn 5 Answer "I was given incorrect instructions regarding the fleet roster
+    ///                tool's input schema. The `cursor` argument must be a string, but
+    ///                I was instructed to pass null as its value."
+    /// ```
+    ///
+    /// The model was RIGHT. The server declares `cursor` with `"required": []` — optional —
+    /// and the FIRST page legitimately has no cursor, so `{"cursor": null}` is the
+    /// idiomatic call. Treating an explicit `null` as a type violation rather than as
+    /// absence made the first page of a paginated tool UNREACHABLE, which made pagination
+    /// structurally impossible and the task unsatisfiable by construction.
+    ///
+    /// This is not a model malformation to be tolerated like a trailing comma — it is
+    /// ordinary JSON, and every real external API with optional parameters is called this
+    /// way.
+    #[test]
+    fn an_explicit_null_for_an_optional_param_means_absent_not_a_type_error() {
+        // The accepting arm: the exact shape the served model emitted for page one.
+        assert!(
+            validate_args(&schema(), br#"{"count":1,"label":null}"#).is_ok(),
+            "an explicit null for an OPTIONAL parameter must read as absent — the first \
+             page of a paginated tool has no cursor, and refusing it makes pagination \
+             unreachable"
+        );
+        // Omitting it entirely must stay OK, and must agree with the null form.
+        assert!(validate_args(&schema(), br#"{"count":1}"#).is_ok());
+
+        // The refusing arm, varying exactly ONE variable — required instead of optional.
+        // `null` for a REQUIRED parameter is still absence, so the error must say so
+        // rather than complain about the type: "you did not supply it" is the reason that
+        // tells a model what to do next.
+        let err = validate_args(&schema(), br#"{"count":null}"#)
+            .expect_err("null for a REQUIRED parameter is still absence, and absence is refused");
+        assert!(
+            matches!(&err, SchemaError::MissingRequired { name } if name == "count"),
+            "the refusal must name absence, not a type mismatch — a type complaint sends \
+             the model looking for a different VALUE when the real answer is to supply \
+             one: {err:?}"
+        );
+
+        // And a genuinely wrong TYPE must still be a type mismatch, so this relaxation
+        // cannot be mistaken for "optional params are unchecked".
+        let err = validate_args(&schema(), br#"{"count":1,"label":42}"#)
+            .expect_err("a non-null wrong type on an optional param is still refused");
+        assert!(
+            matches!(&err, SchemaError::TypeMismatch { name, .. } if name == "label"),
+            "got: {err:?}"
+        );
+    }
 
     fn schema() -> InputSchema {
         InputSchema {
