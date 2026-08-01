@@ -77,6 +77,17 @@ pub struct Captured {
     pub auth_ok: bool,
     /// The `cursor` argument, when the caller sent one.
     pub cursor: Option<String>,
+    /// The REMOTE tool name a `tools/call` asked for (`"page"` / `"get"`), absent on
+    /// every other method.
+    ///
+    /// Without it `cursor` cannot answer the question it exists to answer. `cursor` is
+    /// `None` both for a `page` call that carried no cursor AND for every `get` call, so
+    /// a sequence of `None`s is equally consistent with "the loop never paginated" and
+    /// with "the loop paginated and then looked two records up by id" — the exact
+    /// ambiguity that let *"the cursor is never carried"* be asserted from a trajectory
+    /// that could not show an argument. Recording the tool name makes the pair
+    /// `(tool, cursor)` decidable, which is what a witness has to be.
+    pub tool: Option<String>,
 }
 
 /// A hermetic in-process HTTP/1.1 MCP server on `127.0.0.1:0`.
@@ -202,6 +213,13 @@ fn serve_one(conn: &TcpStream, captured: &Arc<Mutex<Vec<Captured>>>) {
         .and_then(|a| a.get("cursor"))
         .and_then(|c| c.as_str())
         .map(str::to_string);
+    // The remote tool a `tools/call` names, so `cursor` becomes decidable (see the
+    // `Captured::tool` doc). Absent on `initialize` / `tools/list`.
+    let tool = request
+        .get("params")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .map(str::to_string);
 
     let auth_ok = authorization.as_deref() == Some(BENCH_HTTP_BEARER);
     if let Ok(mut c) = captured.lock() {
@@ -210,6 +228,7 @@ fn serve_one(conn: &TcpStream, captured: &Arc<Mutex<Vec<Captured>>>) {
             saw_auth: authorization.is_some(),
             auth_ok,
             cursor: cursor.clone(),
+            tool,
         });
     }
 

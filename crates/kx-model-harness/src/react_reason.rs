@@ -88,6 +88,28 @@ mod tests {
     use super::*;
     use kx_mote::{ToolName, ToolVersion};
 
+    /// The unreadable-tool-call reason, spelled as a LITERAL on this side of the dep
+    /// wall. Its twin is `kx_coordinator::react_shape::tests`. Literals on both sides
+    /// rather than an equality between the two call sites: the renderer is shared
+    /// (`kx_toolcall::unreadable_tool_call_reason`), so comparing the drivers to each
+    /// other would compare a function to itself and pass however wrong the text became.
+    /// This reason folds into the re-prompted turn's `MoteId`, so a wording change is a
+    /// chain-identity change and must redden a test on BOTH sides.
+    #[test]
+    fn unreadable_tool_call_reason_matches_the_coordinator() {
+        assert_eq!(
+            crate::toolcall::unreadable_tool_call_reason(),
+            "your reply looked like a tool call but could not be read as one. Emit \
+             EXACTLY one JSON object and nothing else: \
+             {\"tool_call\":{\"name\":\"<tool name>\",\"version\":\"<tool version>\",\
+             \"args\":{ ... }}} — using a name and version from the tool list. If you did \
+             not mean to call a tool, reply with your final answer as plain text."
+        );
+        // It survives the bound intact, so the envelope always reaches the model.
+        let bounded = bounded_reason(crate::toolcall::unreadable_tool_call_reason());
+        assert_eq!(bounded, crate::toolcall::unreadable_tool_call_reason());
+    }
+
     #[test]
     fn reprompt_text_matches_the_coordinator() {
         // The EXACT bytes the coordinator's `render_reprompt` produces (react_shape.rs)
