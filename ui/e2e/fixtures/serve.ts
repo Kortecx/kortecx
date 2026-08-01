@@ -146,8 +146,17 @@ export async function spawnGateway(opts: SpawnOpts = {}): Promise<Gateway> {
   // Force Ollama OFF so every spawn is model-free + deterministic, MATCHING CI (which
   // has no Ollama daemon). `KX_SERVE_OLLAMA=auto` (the default) would auto-detect a
   // dev's ambient Ollama on :11434 and silently provision a model — flaking any spec
-  // that asserts model-free behaviour (e.g. the no-model degrade notice). The
-  // model-needing specs opt back in explicitly.
+  // that asserts model-free behaviour (e.g. the no-model degrade notice).
+  //
+  // ⚠ THIS IS UNCONDITIONAL, AND THERE IS NO OPT-IN. This comment used to end "The
+  // model-needing specs opt back in explicitly" — describing a mechanism that was never
+  // built: `SpawnOpts` has no model field, `KX_SERVE_OLLAMA` appears nowhere else under
+  // `ui/`, and the literal is written AFTER the `...process.env` spread, so an ambient
+  // value cannot override it either. Consequence, stated plainly: **all 57 console e2e
+  // specs are model-less by construction**, so no CI check can see a prompt regression, a
+  // failed authoring call, or a scaffold that produces the wrong files — the console has
+  // ZERO coverage against a real model. Adding an opt-in here is the seam that would
+  // close it; until then do not read a green e2e suite as evidence about model behaviour.
   const env: NodeJS.ProcessEnv = { ...process.env, KX_SERVE_OLLAMA: "off" };
   if (opts.fsRoot) {
     env.KX_SERVE_FS_ROOT = opts.fsRoot;

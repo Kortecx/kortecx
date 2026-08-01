@@ -1973,7 +1973,12 @@ impl HostRecipeBinder {
                     .map(|def| ((name, version), def))
             })
             .collect();
-        Some(tool_union_warrant(base, &defs))
+        // The live broker's own view of what each registered capability needs.
+        Some(tool_union_warrant(
+            base,
+            &defs,
+            &ag.registered.registered_secret_scopes(),
+        ))
     }
 
     /// POC-1 CHAT-RAG: ground a [`CHAT_RAG_RECIPE_HANDLE`] bind. Returns the args +
@@ -4058,12 +4063,14 @@ fn fs_scope_union(a: &FsScope, b: &FsScope) -> Option<FsScope> {
 pub(crate) fn tool_union_warrant(
     base: &WarrantSpec,
     defs: &std::collections::BTreeMap<(ToolName, ToolVersion), ToolDef>,
+    secret_scopes: &std::collections::BTreeMap<(String, String), SecretScope>,
 ) -> WarrantSpec {
     // Deterministic order: BTreeMap already iterates by (ToolName, ToolVersion),
     // so the cap takes a stable prefix and the warrant is byte-reproducible.
     let mut tool_grants: BTreeSet<ToolGrant> = BTreeSet::new();
     let mut net_scope = NetScope::None;
     let mut fs_scope = FsScope::empty();
+    let mut secret_refs: BTreeSet<kx_warrant::SecretRef> = BTreeSet::new();
     let mut dropped_to_cap: Vec<String> = Vec::new();
     for ((name, version), def) in defs {
         if tool_grants.len() >= AUTOGRANT_MAX_TOOLS {
@@ -4087,6 +4094,20 @@ pub(crate) fn tool_union_warrant(
         };
         fs_scope = merged_fs;
         net_scope = net_scope_union(&net_scope, &cap.net_scope_required);
+        // Carry the SECRET names this tool's capability declares. Without this the
+        // literal below falls through to `SecretScope::None` ("authorizes none", D110.3)
+        // and the broker refuses EVERY credentialed connector on
+        // `capability.required_secret_scope ⊆ warrant.secret_scope` — measured as
+        // `task_success@http` = 0 on both engines with ZERO requests reaching the server.
+        // Unioned only for tools actually being granted, and only from the SAME
+        // capabilities the precheck will interrogate, so the grant is exactly sufficient
+        // and never broader than the menu. NAMES only — the value is resolved transiently
+        // in the transport at dispatch and dropped (D81).
+        if let Some(SecretScope::AllowList(names)) =
+            secret_scopes.get(&(name.0.clone(), version.0.clone()))
+        {
+            secret_refs.extend(names.iter().cloned());
+        }
         tool_grants.insert(ToolGrant {
             tool_id: name.clone(),
             tool_version: version.clone(),
@@ -4097,6 +4118,13 @@ pub(crate) fn tool_union_warrant(
         nd_class: MoteClass::ReadOnlyNondet,
         fs_scope,
         net_scope,
+        // Empty ⇒ `None` ("authorizes none"), byte-identical to the previous behaviour for every
+        // menu that contains no credentialed tool — so no existing chain identity moves.
+        secret_scope: if secret_refs.is_empty() {
+            SecretScope::None
+        } else {
+            SecretScope::AllowList(secret_refs)
+        },
         syscall_profile_ref: ContentRef::from_bytes(EMPTY_SYSCALL_PROFILE),
         tool_grants,
         model_route: base.model_route.clone(),
@@ -6685,7 +6713,11 @@ mod tests {
         // The union warrant the autonomous loop actually binds must carry the route
         // through — an empty def set still exercises the `base.model_route` clone.
         let base = react_auto_base_warrant(ExecutorClass::Bwrap, &model);
-        let union = tool_union_warrant(&base, &std::collections::BTreeMap::new());
+        let union = tool_union_warrant(
+            &base,
+            &std::collections::BTreeMap::new(),
+            &std::collections::BTreeMap::new(),
+        );
         assert_eq!(
             union.model_route.max_output_tokens, expected,
             "the react-auto UNION warrant carries the decode budget (this is the warrant \
@@ -7376,7 +7408,7 @@ mod tests {
             (ToolName("sandboxed".into()), ToolVersion("1".into())),
             tool_def_with(NetScope::None, FsScope::empty(), [9u8; 32]),
         );
-        let w = tool_union_warrant(&base, &defs);
+        let w = tool_union_warrant(&base, &defs, &std::collections::BTreeMap::new());
         // alpha + bravo granted; the non-empty-syscall tool is FILTERED out.
         assert_eq!(w.tool_grants.len(), 2);
         assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "alpha"));
@@ -7394,7 +7426,83 @@ mod tests {
         assert_eq!(w.syscall_profile_ref, ContentRef::from_bytes([0u8; 32]));
         assert_eq!(w.model_route.model_id, ModelId("m".into()));
         // Determinism: same input ⇒ byte-identical warrant.
-        assert_eq!(w, tool_union_warrant(&base, &defs));
+        assert_eq!(
+            w,
+            tool_union_warrant(&base, &defs, &std::collections::BTreeMap::new())
+        );
+    }
+
+    /// A CREDENTIALED tool's declared secret names must reach the union warrant, or
+    /// the broker refuses it on `capability.required_secret_scope ⊆ warrant.secret_scope`
+    /// and no credentialed connector can ever fire on the autonomous loop.
+    ///
+    /// Landed RED against the incident it exists to catch. Before the fix, the union's
+    /// `secret_scope` fell through `..Default::default()` and this asserted
+    /// `AllowList({FLEET_TOKEN})` against `SecretScope::None`. Measured live on `a2e20056`
+    /// as `broker dispatch failed: capability dispatch exceeds warrant on axis SecretScope`
+    /// with ZERO requests reaching the HTTP fixture.
+    ///
+    /// The ACCEPTING CONTROL varies exactly ONE variable — the same menu with the same
+    /// tools, differing only in whether a scope was declared — so a pass cannot come from
+    /// the union simply always emitting an allowlist.
+    #[test]
+    fn tool_union_warrant_carries_a_credentialed_tools_secret_scope() {
+        let base = react_auto_base_warrant(ExecutorClass::Bwrap, &ModelId("m".into()));
+        let mut defs: std::collections::BTreeMap<(ToolName, ToolVersion), ToolDef> =
+            std::collections::BTreeMap::new();
+        defs.insert(
+            (ToolName("fleet/get".into()), ToolVersion("1".into())),
+            tool_def_with(NetScope::None, FsScope::empty(), EMPTY_SYSCALL_PROFILE),
+        );
+        defs.insert(
+            (ToolName("mcp-echo/echo".into()), ToolVersion("1".into())),
+            tool_def_with(NetScope::None, FsScope::empty(), EMPTY_SYSCALL_PROFILE),
+        );
+
+        // THE REFUSAL CASE'S FIX: the credentialed tool declares a secret; the plain one
+        // declares none, so the union must be exactly the one name — never both, never all.
+        let mut scopes: std::collections::BTreeMap<(String, String), SecretScope> =
+            std::collections::BTreeMap::new();
+        scopes.insert(
+            ("fleet/get".into(), "1".into()),
+            SecretScope::AllowList(
+                [kx_warrant::SecretRef("FLEET_TOKEN".into())]
+                    .into_iter()
+                    .collect(),
+            ),
+        );
+        scopes.insert(("mcp-echo/echo".into(), "1".into()), SecretScope::None);
+
+        let w = tool_union_warrant(&base, &defs, &scopes);
+        match &w.secret_scope {
+            SecretScope::AllowList(names) => {
+                assert!(
+                    names.contains(&kx_warrant::SecretRef("FLEET_TOKEN".into())),
+                    "the credentialed tool's secret name must reach the warrant, or the \
+                     broker refuses the dial on axis SecretScope: {names:?}"
+                );
+                assert_eq!(
+                    names.len(),
+                    1,
+                    "least privilege: only the names granted tools actually declared: \
+                     {names:?}"
+                );
+            }
+            SecretScope::None => panic!(
+                "a granted CREDENTIALED tool left the union warrant at SecretScope::None \
+                 — every credentialed connector fails closed on the autonomous loop"
+            ),
+        }
+
+        // ACCEPTING CONTROL — one variable changed (no tool declares a scope). The result
+        // must stay `None`, so the fix cannot have widened a menu that asked for nothing.
+        let none_declared: std::collections::BTreeMap<(String, String), SecretScope> =
+            std::collections::BTreeMap::new();
+        assert_eq!(
+            tool_union_warrant(&base, &defs, &none_declared).secret_scope,
+            SecretScope::None,
+            "a menu with no credentialed tool must stay byte-identical to the previous behaviour"
+        );
     }
 
     #[test]
@@ -7408,7 +7516,7 @@ mod tests {
                 tool_def_with(NetScope::None, FsScope::empty(), EMPTY_SYSCALL_PROFILE),
             );
         }
-        let w = tool_union_warrant(&base, &defs);
+        let w = tool_union_warrant(&base, &defs, &std::collections::BTreeMap::new());
         assert_eq!(w.tool_grants.len(), AUTOGRANT_MAX_TOOLS, "capped");
         // The deterministic prefix is the first AUTOGRANT_MAX_TOOLS by (id, ver).
         assert!(w.tool_grants.iter().any(|g| g.tool_id.0 == "tool-00"));

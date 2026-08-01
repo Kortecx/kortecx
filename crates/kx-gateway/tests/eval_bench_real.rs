@@ -1269,6 +1269,23 @@ async fn observed_tool_ids(c: &mut KxGatewayClient<Channel>) -> Vec<(String, Str
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "real LLM inference; needs a Gemma GGUF (just fetch-gemma-model) or Ollama (KX_SERVE_OLLAMA=on KX_SERVE_OLLAMA_MODELS=gemma3:12b); opt in with --ignored"]
 async fn bench_v1_oracle_scored_over_a_live_react_chain() {
+    // GIVE THE HARNESS'S OWN DIAGNOSTICS SOMEWHERE TO GO.
+    //
+    // Without a subscriber, every `tracing::warn!` the runtime emits during a bench run is
+    // dropped on the floor — including the ones that carry the reason a tool failed.
+    // The journal carries a failing tool's own reason to the MODEL; the reason a dispatch
+    // never happened at all goes to `tracing::warn!` instead — and in THIS harness that was
+    // a log nobody could read, so `RUST_LOG=debug` produced no output and the diagnostic
+    // was dropped twice. Off by default (`RUST_LOG` unset ⇒
+    // the `warn` fallback only), so a normal capture is unchanged and no scored byte moves.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
+        .with_test_writer()
+        .try_init();
+
     // Resolve the model: a GGUF (set the env so serve loads it) or the Ollama opt-in.
     if let Some(gguf) = serve_gguf() {
         std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
@@ -1555,15 +1572,26 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // both halves of "a verdict without evidence" are keyed on the same thing — the task
     // scored 0 — and keying one of them on the TERMINAL instead is what silently withheld
     // the trajectory for every task that answered wrongly.
+    // …and keying it on ONE score is what still withholds the trajectory for every task
+    // that answers CORRECTLY while zeroing a different gate.
+    //
+    // Measured on `a2e20056`: `memory-update-recall` scored `task_success` = 1000 ("answer
+    // reached, oracle satisfied") and `memory_quality` = 0 ("0 of 1 facts recalled AND
+    // grounded") — and printed NOTHING, so `memory_quality@memory` = 0 stayed
+    // unattributable even under a diagnostic built to attribute it. The same shape hides
+    // llama.cpp's `groundedness`/`context_recall` zeros, where `task_success@reach` passes.
+    //
+    // So: ANY applicable gate at 0 earns a witness.
+    //
+    // ⚠ `gate_per_mille()` is load-bearing and a raw `matches!` on the value is WRONG here:
+    // `ScoreOutput::not_applicable` stores `Gate { per_mille: 0 }` with `applicable: false`,
+    // so matching the value alone would flag nearly every task (every task has some N/A
+    // metric) and drown the witness in noise. `gate_per_mille()` returns `Some` only for an
+    // APPLICABLE gate — an N/A can never mint a witness.
     let failed_task_ids: std::collections::BTreeSet<&str> = report
         .per_task
         .iter()
-        .filter(|t| {
-            t.scores.iter().any(|s| {
-                s.metric_id == "task_success"
-                    && matches!(s.value, kx_eval::ScoreValue::Gate { per_mille: 0 })
-            })
-        })
+        .filter(|t| t.scores.iter().any(|s| s.gate_per_mille() == Some(0)))
         .map(|t| t.task_id.as_str())
         .collect();
     {
@@ -1629,9 +1657,94 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         );
     }
 
-    // Measure-first: the raw committed tool-id form, to pin `expected_tools` against.
+    // THE CREDENTIAL ASSERTION, MOVED TO THE PATH THAT ACTUALLY CARRIES THE TASKS.
+    //
+    // `provision_http_tool` already asserts the bearer reached the fixture — but it asserts
+    // `captured().any(|r| r.auth_ok)`, and the request that satisfies it is the REGISTRATION
+    // dial (`initialize` + `tools/list`), which runs in the gateway's own context before a
+    // single task starts. Its own comment says "if the header never arrived, every later
+    // call is a 401 and the family would score a model failure" — which is exactly the
+    // failure it cannot see: one authorised discovery satisfies `any()` forever, while every
+    // `tools/call` the ReAct loop dispatches can still arrive unauthenticated.
+    //
+    // The fixture records `method` and `auth_ok` per request, so the distinction is already
+    // measurable and was simply never read. Read it, scoped to `tools/call` — the only
+    // method a task drives.
+    //
+    // Why an unauthenticated `tools/call` is invisible downstream: the fixture answers a
+    // bad credential with HTTP 200 + JSON-RPC `-32001`, the dispatch dead-letters, and the
+    // model is handed the generic no-detail steer ("it failed to run"). The family then
+    // scores a MODEL failure for what is a credential-plumbing failure — a diagnostic
+    // addressed to the wrong audience, one layer below the journal's own detail channel.
+    let dialled: Vec<_> = fleet
+        .captured()
+        .into_iter()
+        .filter(|r| r.method == "tools/call")
+        .collect();
+    let unauthed = dialled.iter().filter(|r| !r.auth_ok).count();
+    // The full method histogram, because "no tools/call" has THREE causes that the
+    // tools/call count alone cannot tell apart, and picking the wrong one sends the fix to
+    // the wrong layer. `invoke_stateless` dials in the order
+    // `open_session` → `initialize` → `tools/call`, so:
+    //   no rows at all beyond registration ⇒ open_session failed; nothing left the process
+    //   extra `initialize` rows, no `tools/call` ⇒ the handshake reached the server and
+    //                                             failed, so the call was never sent
+    //   `tools/call` rows ⇒ the dial happened and the failure is in the call or its reply
+    let mut by_method: std::collections::BTreeMap<String, (usize, usize)> =
+        std::collections::BTreeMap::new();
+    for r in fleet.captured() {
+        let e = by_method.entry(r.method.clone()).or_insert((0, 0));
+        e.0 += 1;
+        if !r.auth_ok {
+            e.1 += 1;
+        }
+    }
+    eprintln!(
+        "eval-bench: fixture saw {} tools/call dial(s), {} WITHOUT a valid bearer",
+        dialled.len(),
+        unauthed
+    );
+    eprintln!("eval-bench: fixture request histogram (method => total, unauthorized):");
+    for (m, (n, bad)) in &by_method {
+        eprintln!("    {m:<24} {n:>3} total, {bad:>3} unauthorized");
+    }
+    // ARM 1 — DID THE LOOP DIAL AT ALL? This arm exists because the credential arm below
+    // PASSED VACUOUSLY on the very incident this guard was written for: `unauthed == 0` is
+    // trivially true over an EMPTY set, and the measured truth was 0 dials, not 0 bad ones.
+    // A guard whose "nothing happened" case is indistinguishable from its "all good" case is
+    // the same defect as the `any(auth_ok)` check it replaces, so the emptiness is asserted
+    // FIRST and separately.
+    //
+    // Measured on sha a2e20056, Ollama gemma3:12b: the model proposed `fleet/get@1`, the
+    // runtime COMMITTED it (it appears in `observed committed tool ids`), and the fixture
+    // recorded ZERO `tools/call` requests — so the HTTP dispatch fails before a single byte
+    // reaches the server, and the model is handed the generic no-detail "it failed to run".
+    // That is the whole of `task_success@http` = 0, and it is not a model failure.
     let observed = observed_tool_ids(&mut c).await;
     eprintln!("eval-bench: observed committed tool ids = {observed:?}");
+    let committed_http_call = observed
+        .iter()
+        .any(|(id, _)| id.starts_with(&format!("{BENCH_HTTP_SERVER}/")));
+    assert!(
+        !committed_http_call || !dialled.is_empty(),
+        "the ReAct loop COMMITTED a call to the HTTP connector and the fixture recorded \
+         ZERO `tools/call` requests — the dispatch never dialled the server. `http` then \
+         scores a MODEL failure for a transport failure, and the model is told only \
+         \"it failed to run\"."
+    );
+    // ARM 2 — and when it does dial, it carries the credential. `provision_http_tool` only
+    // ever proved this for the REGISTRATION dial.
+    assert_eq!(
+        unauthed,
+        0,
+        "the ReAct loop dispatched {unauthed} of {} `tools/call` to the HTTP connector \
+         WITHOUT a valid bearer — the credential resolves on the registration path and not \
+         on the dispatch path.",
+        dialled.len()
+    );
+
+    // (`observed` — the raw committed tool-id form, to pin `expected_tools` against — is
+    // computed above, because the HTTP-dial guard needs it too.)
 
     // THE TOOL-CONTRACT ASSERTION, observed rather than inferred. `tool-contract-refusal`
     // instructs the model to use a tool no chain was ever granted. The oracle scores what

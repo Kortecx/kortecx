@@ -144,6 +144,39 @@ impl<S: ContentStore + Send + Sync> LocalCapabilityBroker<S> {
             .collect()
     }
 
+    /// The SECRET scope each registered capability declares, keyed exactly like
+    /// [`registered_grants`][Self::registered_grants].
+    ///
+    /// Read-only, and deliberately sourced from the SAME capabilities `precheck`
+    /// interrogates — a caller building a warrant that must satisfy
+    /// `capability.required_secret_scope ⊆ warrant.secret_scope` gets the authority's own
+    /// answer rather than a second derivation that could disagree with it. Re-derived from
+    /// a connection store, the two could drift and the loop would be refused by the very
+    /// axis it thought it had granted.
+    ///
+    /// Returns NAMES only (a `SecretScope::AllowList` of `SecretRef`); a secret VALUE is
+    /// resolved transiently inside the transport at dispatch and never travels here (D81).
+    /// A capability that needs no secret reports `SecretScope::None`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned (see
+    /// [`register_capability`][Self::register_capability]).
+    #[must_use]
+    pub fn registered_secret_scopes(&self) -> BTreeMap<(String, String), kx_warrant::SecretScope> {
+        self.capabilities
+            .read()
+            .expect("RwLock poisoned")
+            .iter()
+            .map(|(name, cap)| {
+                (
+                    (name.0.clone(), cap.version().0.clone()),
+                    cap.required_secret_scope(),
+                )
+            })
+            .collect()
+    }
+
     /// Internal: run the per-call contract checks shared by
     /// `dispatch` and `probe_readback`. Returns the resolved capability
     /// version on success (so the caller can build a `BrokerHandle`
