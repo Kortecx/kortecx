@@ -60,6 +60,7 @@ fn failed(mote_id_byte: u8, key_byte: u8, reason: FailureReason) -> JournalEntry
         seq: 0,
         reason_class: reason,
         reporter_id: 0,
+        detail: String::new(),
     }
 }
 
@@ -319,10 +320,13 @@ fn obligation_13_schema_version_mismatch_loud_refusal() {
 /// variant (branch tag 5), T-MULTI-ELEMENT-TOOLCALLS; v13→v14 added the trailing
 /// `ReactRound.image_ref`, AGENTIC-VISION; v14→v15 added the `Approval` kind (10) +
 /// the trailing `ReactRound.require_approval`, D114 HITL pre-action approval; v15→v16
-/// added the `ReRankRound` kind (11), RC4c-2 live LLM listwise rerank.)
+/// added the `ReRankRound` kind (11), RC4c-2 live LLM listwise rerank; v16→v17 added
+/// the `TimerArmed` kind (12); v17→v18 added the trailing `Failed.detail` — the
+/// diagnostic the failing subsystem itself produced, so a tool that named its own
+/// failure can have that name reach the model instead of the class-derived steer.)
 #[test]
-fn schema_version_is_v17() {
-    assert_eq!(JOURNAL_SCHEMA_VERSION, 17);
+fn schema_version_is_v18() {
+    assert_eq!(JOURNAL_SCHEMA_VERSION, 18);
 }
 
 /// (M2.x-E): pin the migration floor. The schema-migration ladder

@@ -270,7 +270,18 @@ use smallvec::SmallVec;
 /// invariant (the PURE-8-mote demo never arms a timer; `TimerArmed` is off-DAG
 /// metadata folded into a side-table, never an identity input — the `Approval`
 /// law).
-pub const JOURNAL_SCHEMA_VERSION: u16 = 17;
+///
+/// v18 adds a TRAILING u16-prefixed `detail` to the `Failed` kind (3): the
+/// diagnostic the FAILING SUBSYSTEM itself produced, so a tool that named its own
+/// failure can have that name reach the model. A v17 `Failed` body is exactly 17
+/// bytes and carries no such field; the canonical decoder up-converts a
+/// byte-absent body to an EMPTY detail, so a v17 → v18 migration is a PURE
+/// pass-through — the same shape as every trailing-field addition on `ReactRound`
+/// (v9 `step_salt`, v11 `is_agentic_launch`, v12 `context_items_ref`, v14
+/// `image_ref`, v15 `require_approval`). The product identity digest is invariant:
+/// a `Failed` entry is not an identity input, and an empty detail encodes to the
+/// same two zero bytes for every pre-existing writer.
+pub const JOURNAL_SCHEMA_VERSION: u16 = 18;
 
 /// Fixed entry-header length in bytes (`journal-entry.md` §3).
 pub const HEADER_LEN: usize = 74;
@@ -571,6 +582,36 @@ pub enum ReactBranch {
 /// `DoS`/context-window bound. The coordinator truncates at a char boundary
 /// before building the entry; [`MAX_ENTRY_LEN`] still fences the total body.
 pub const MAX_REJECTED_REASON_LEN: usize = 512;
+
+/// Hard cap on a [`JournalEntry::Failed`] `detail`'s length (char count) — the
+/// same `DoS`/context-window bound as [`MAX_REJECTED_REASON_LEN`], and
+/// deliberately the SAME number, because the detail's whole purpose is to be
+/// rendered INTO a `ReactBranch::Rejected` reason: a cap that let the detail
+/// exceed the reason would truncate mid-render at a boundary nobody chose.
+///
+/// **This bounds bytes the runtime did not author.** A `detail` originates in an
+/// external subsystem (an MCP server's JSON-RPC `error.message`, a broker
+/// diagnostic), so it is untrusted text on a path that reaches the model. It is
+/// truncated at a char boundary by [`bounded_failure_detail`] before the entry is
+/// built, and [`MAX_ENTRY_LEN`] still fences the total body.
+pub const MAX_FAILURE_DETAIL_LEN: usize = 512;
+
+/// Truncate a failure `detail` to [`MAX_FAILURE_DETAIL_LEN`] chars at a char
+/// boundary — deterministic, panic-free, total.
+///
+/// **Lives here, beside the cap it enforces, because two writers must agree.** The
+/// executor's commit protocol and the coordinator's own dead-letter paths both
+/// build `Failed` entries, and a `detail` that folded into a re-prompt at two
+/// different lengths would give the same chain two identities (the reason rides
+/// the re-prompted turn's `MoteId`). One statement, one length.
+#[must_use]
+pub fn bounded_failure_detail(detail: &str) -> String {
+    if detail.chars().count() <= MAX_FAILURE_DETAIL_LEN {
+        detail.to_string()
+    } else {
+        detail.chars().take(MAX_FAILURE_DETAIL_LEN).collect()
+    }
+}
 
 /// Hard cap on a [`ReactBranch::ToolBatch`]'s recorded calls — a `DoS` bound
 /// independent of the size cap (v13, T-MULTI-ELEMENT-TOOLCALLS). The per-turn
@@ -1009,16 +1050,31 @@ pub const fn is_pre_commit_crash(reason: FailureReason) -> bool {
 /// reason [`is_pre_commit_crash`] lives here.
 ///
 /// Deterministic in its inputs and nothing else: no timestamp, no OS error number, no
-/// address, so a cold re-fold re-derives the same string. The phrasing steers the model
-/// toward a DIFFERENT action rather than a retry, because repeating the identical call
-/// is refused by the duplicate-call guard anyway.
+/// address, so a cold re-fold re-derives the same string.
+///
+/// **Two arms, and which one fires is what this function is for.**
+///
+/// - **No `detail`** — the reporter had nothing more specific than `reason`, so the
+///   class-derived phrase is all there is, and the steer points AWAY from a retry
+///   (repeating the identical call is refused by the duplicate-call guard anyway).
+///   These bytes are unchanged from before `detail` existed.
+/// - **With a `detail`** — the failing subsystem named its own failure, and the steer
+///   INVERTS. `-32004 no such vessel "x"` means *change the argument*; telling the
+///   model not to change its arguments is not merely vague, it is backwards. Measured:
+///   `task_success@http` read 0 on both engines for the family's whole existence while
+///   the runtime discarded the one sentence that said what to fix.
+///
+/// The `detail` is bounded by [`bounded_failure_detail`] at the WRITE site, so this
+/// renderer cannot blow the turn's context window regardless of what a remote server
+/// returned.
 #[must_use]
 pub fn observation_failure_reason(
     tool_id: &str,
     tool_version: &str,
     reason: Option<FailureReason>,
+    detail: &str,
 ) -> String {
-    let detail = match reason {
+    let class_phrase = match reason {
         Some(FailureReason::ExecutorRefused) => "the runtime refused to dispatch it",
         Some(FailureReason::UnsafeWorldMutatingConstruction) => {
             "the runtime refused it as an unsafe world-mutating construction"
@@ -1037,10 +1093,29 @@ pub fn observation_failure_reason(
         // unreachable server. That is exactly the case worth surviving.
         _ => "it failed to run",
     };
+    // The NO-DETAIL arm is BYTE-IDENTICAL to what this function rendered before the
+    // detail existed, and deliberately so: every chain whose reporter said nothing
+    // more specific rebuilds the same reason, the same re-prompt, and therefore the
+    // same turn `MoteId`, so no existing golden moves and no committed baseline is
+    // disturbed by this change on paths it does not reach.
+    if detail.is_empty() {
+        return format!(
+            "the tool `{tool_id}@{tool_version}` was called but did not complete — \
+             {class_phrase}. Do not call it again with the same arguments; use a \
+             different tool or different arguments, or answer with what you already have."
+        );
+    }
+    // With a detail, the steer INVERTS — and that inversion is the whole point. The
+    // generic text tells the model not to change its arguments; when the tool itself
+    // said `no such vessel "x"`, changing one argument is precisely the fix, so the
+    // old advice was not vague but actively wrong. The class phrase is kept as the
+    // lead-in (it says which BUCKET the failure fell into) and the tool's own words
+    // follow it.
     format!(
-        "the tool `{tool_id}@{tool_version}` was called but did not complete — {detail}. \
-         Do not call it again with the same arguments; use a different tool or different \
-         arguments, or answer with what you already have."
+        "the tool `{tool_id}@{tool_version}` was called but did not complete — \
+         {class_phrase}: {detail}. Use that reason to decide what to do next — correct \
+         the arguments and call it again, use a different tool, or answer with what you \
+         already have."
     )
 }
 
@@ -1202,6 +1277,24 @@ pub enum JournalEntry {
         reason_class: FailureReason,
         /// UUID-shaped identifier of the worker / coordinator reporting the failure.
         reporter_id: u128,
+        /// v18: the diagnostic the FAILING SUBSYSTEM itself produced, bounded to
+        /// [`MAX_FAILURE_DETAIL_LEN`] chars at construction. Empty when the
+        /// reporter had nothing more specific than [`Self::Failed::reason_class`]
+        /// — and empty is what every v17 body up-converts to.
+        ///
+        /// **Why the class was not enough.** `reason_class` is a nine-variant enum
+        /// that says which BUCKET a failure fell into; it cannot say *"-32004 no
+        /// such vessel `x`"*. Every dispatch failure that is not one of the eight
+        /// specific buckets lands in `DeadLettered`, whose rendered steer is *"it
+        /// failed to run … do not call it again with the same arguments"* — advice
+        /// that is exactly backwards when the fix IS to change one argument. The
+        /// tool named its own failure and the runtime discarded the name.
+        ///
+        /// Read by [`observation_failure_reason`], which folds it into the next
+        /// turn's identity-bearing instruction. It is therefore IDENTITY-BEARING
+        /// downstream: it must be deterministic in its inputs (no timestamp, no
+        /// OS errno, no address), or a cold re-fold re-derives a different chain.
+        detail: String,
     },
 
     /// A WORLD-MUTATING effect was staged (intent durably recorded) but not yet
@@ -2023,6 +2116,8 @@ pub enum EncodeError {
 ///     seq: 5,
 ///     reason_class: FailureReason::WorkerCrashed,
 ///     reporter_id: 0xdead_beef,
+///     // v18: the failing subsystem's own diagnostic; empty when it had none.
+///     detail: String::new(),
 /// };
 /// let bytes = encode_entry(&entry).unwrap();
 /// let decoded = decode_entry(&bytes).unwrap();
@@ -2181,10 +2276,16 @@ pub fn encode_entry(entry: &JournalEntry) -> Result<Vec<u8>, EncodeError> {
         JournalEntry::Failed {
             reason_class,
             reporter_id,
+            detail,
             ..
         } => {
             out.push(reason_class.as_u8());
             out.extend_from_slice(&reporter_id.to_le_bytes());
+            // v18: the TRAILING u16-prefixed detail. Always written (an empty
+            // detail is two zero bytes) so the encoding is one shape, not two —
+            // the decoder's absent-arm exists for v17 bytes on disk, never for
+            // bytes this writer produces.
+            push_len_prefixed_str(&mut out, detail)?;
         }
         JournalEntry::EffectStaged { .. } => {
             // v2 (D38 §2b): EffectStaged body is HEADER-ONLY. No body bytes.
@@ -2683,22 +2784,44 @@ pub fn decode_entry_with_def_hash(
             })
         }
         KIND_FAILED => {
-            if body.len() != 17 {
+            // v18: the body became VARIABLE-length (a trailing u16-prefixed
+            // `detail`), so the exact-length fence became a PREFIX fence plus an
+            // explicit trailing-bytes check at the end — the same cursor discipline
+            // `ReactRound` has used since v8. Dropping the exact fence without
+            // adding the end fence would have made kind 3 the one kind that
+            // silently accepts arbitrary trailing bytes.
+            const FAILED_PREFIX_LEN: usize = 17;
+            if body.len() < FAILED_PREFIX_LEN {
                 return Err(DecodeError::BodyTooShort {
                     kind,
                     got: body.len(),
-                    expected: 17,
+                    expected: FAILED_PREFIX_LEN,
                 });
             }
             let reason_class =
                 FailureReason::from_u8(body[0]).ok_or(DecodeError::UnknownReason(body[0]))?;
             let reporter_id = u128::from_le_bytes(body[1..17].try_into().expect("16 bytes"));
+            let mut cursor = FAILED_PREFIX_LEN;
+            // A v17 body ends here and carries no detail ⇒ up-convert to EMPTY,
+            // which is exactly what "the reporter said nothing more specific"
+            // means. A v18 body always carries the field (empty encodes to two
+            // zero bytes), so this arm is for bytes already on disk, never for
+            // bytes this binary writes.
+            let detail = if cursor < body.len() {
+                read_len_prefixed_str(body, &mut cursor, kind)?
+            } else {
+                String::new()
+            };
+            if cursor != body.len() {
+                return Err(DecodeError::TrailingBytes(body.len() - cursor));
+            }
             Ok(JournalEntry::Failed {
                 mote_id,
                 idempotency_key,
                 seq,
                 reason_class,
                 reporter_id,
+                detail,
             })
         }
         KIND_EFFECT_STAGED => {
@@ -3342,6 +3465,101 @@ mod tests {
     use super::*;
     use kx_mote::{EdgeKind, MoteDefHash, NdClass};
 
+    /// The real JSON-RPC error the `fleet/*` fixture server returns for an unknown
+    /// vessel — the exact bytes `http-authed-lookup` hit while the family sat at 0.
+    const SERVER_DIAGNOSTIC: &str = r#"-32004 no such vessel "x""#;
+
+    /// The generic steer a `DeadLettered` class renders with no detail. Quoted here
+    /// rather than in each assertion so the two tests below cannot drift from each
+    /// other while agreeing with nothing.
+    const GENERIC_STEER: &str = "Do not call it again with the same arguments";
+
+    /// ★ THE GUARD. A tool that named its OWN failure must have that name reach the
+    /// model, because the generic steer is not merely vague — it is BACKWARDS.
+    ///
+    /// `-32004 no such vessel "x"` means *change the argument*. The runtime replaced
+    /// it with *"it failed to run. Do not call it again with the same arguments"*,
+    /// which instructs the model to do anything EXCEPT the one thing that would work.
+    /// Measured consequence: on `http-authed-lookup` the model concluded it had no
+    /// access to crew records, and `task_success@http` read 0 on both engines for the
+    /// family's entire existence with nothing in the trajectory able to say why.
+    ///
+    /// Varies exactly ONE variable against [`a_failure_with_no_detail_keeps_the_class_steer`]
+    /// below: whether the reporter supplied a detail. Same tool, same version, same
+    /// `FailureReason`.
+    #[test]
+    fn a_tool_that_named_its_own_failure_reaches_the_model_with_that_name() {
+        let rendered = observation_failure_reason(
+            "fleet/get",
+            "1",
+            Some(FailureReason::DeadLettered),
+            SERVER_DIAGNOSTIC,
+        );
+        assert!(
+            rendered.contains(SERVER_DIAGNOSTIC),
+            "the tool named its own failure ({SERVER_DIAGNOSTIC:?}) and the runtime \
+             discarded the name — the model is told only that something failed, so it \
+             cannot know the fix is to change ONE argument. Rendered: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(GENERIC_STEER),
+            "when the tool's own error says WHICH argument is wrong, steering the model \
+             away from changing its arguments is backwards advice. Rendered: {rendered:?}"
+        );
+    }
+
+    /// The ACCEPTING CONTROL, and the reason the guard above is not satisfied by
+    /// deleting the steer outright: with NO detail there is nothing more specific to
+    /// say, and the class-derived steer is still the right thing to render. A fix that
+    /// dropped it unconditionally would pass the guard and regress every failure that
+    /// genuinely has no diagnostic.
+    #[test]
+    fn a_failure_with_no_detail_keeps_the_class_steer() {
+        let rendered =
+            observation_failure_reason("fleet/get", "1", Some(FailureReason::DeadLettered), "");
+        assert!(
+            rendered.contains(GENERIC_STEER),
+            "with no detail the class steer is all there is — it must survive. \
+             Rendered: {rendered:?}"
+        );
+    }
+
+    /// The `detail` folds into the next turn's identity-bearing instruction, so it must
+    /// be deterministic in its inputs and nothing else: same inputs, same bytes, or a
+    /// cold re-fold rebuilds a DIFFERENT `MoteId` and the chain wedges on the
+    /// fail-closed divergence check.
+    #[test]
+    fn the_rendered_reason_is_deterministic_in_its_inputs() {
+        let once = observation_failure_reason(
+            "fleet/get",
+            "1",
+            Some(FailureReason::DeadLettered),
+            SERVER_DIAGNOSTIC,
+        );
+        let twice = observation_failure_reason(
+            "fleet/get",
+            "1",
+            Some(FailureReason::DeadLettered),
+            SERVER_DIAGNOSTIC,
+        );
+        assert_eq!(once, twice);
+    }
+
+    /// A `detail` is bytes the runtime did NOT author — an external server's error
+    /// message on a path that reaches the model — so its bound is enforced, not
+    /// assumed. Truncation is at a CHAR boundary (a byte-boundary cut on multi-byte
+    /// input would panic in `String::from_utf8` or silently corrupt the re-prompt).
+    #[test]
+    fn an_oversize_detail_is_truncated_at_a_char_boundary() {
+        let hostile: String = "é".repeat(MAX_FAILURE_DETAIL_LEN * 2);
+        let bounded = bounded_failure_detail(&hostile);
+        assert_eq!(bounded.chars().count(), MAX_FAILURE_DETAIL_LEN);
+        assert!(bounded.chars().all(|c| c == 'é'), "no partial code point");
+        // Under the cap it is returned verbatim — the bound must not rewrite a
+        // detail that was already fine.
+        assert_eq!(bounded_failure_detail(SERVER_DIAGNOSTIC), SERVER_DIAGNOSTIC);
+    }
+
     fn sample_committed() -> JournalEntry {
         JournalEntry::Committed {
             mote_id: MoteId::from_bytes([7u8; 32]),
@@ -3381,6 +3599,7 @@ mod tests {
                 seq: 0,
                 reason_class: FailureReason::TimedOut,
                 reporter_id: 0,
+                detail: String::new(),
             },
             // v2 (D38 §2b): EffectStaged. Header-only; body is empty.
             JournalEntry::EffectStaged {
@@ -3471,17 +3690,38 @@ mod tests {
     }
 
     #[test]
-    fn failed_total_length_is_91() {
-        // Unchanged in v2 — Failed body has no warrant_ref (the per-attempt
-        // failure references the prior Proposed which carries warrant_ref).
-        let e = JournalEntry::Failed {
+    fn failed_total_length_is_93_plus_the_detail() {
+        // Was 91 through v17 (74 header + 17 body). v18 appends the u16-prefixed
+        // `detail`, so an EMPTY detail costs exactly two bytes — the length is
+        // pinned here rather than left to drift, because the body is now
+        // variable-length and a wrong prefix would be caught only by a decode.
+        //
+        // (Unchanged since v2: the Failed body carries no warrant_ref — the
+        // per-attempt failure references the prior Proposed, which carries it.)
+        let empty = JournalEntry::Failed {
             mote_id: MoteId::from_bytes([1u8; 32]),
             idempotency_key: [2u8; 32],
             seq: 0,
             reason_class: FailureReason::TimedOut,
             reporter_id: 0,
+            detail: String::new(),
         };
-        assert_eq!(encode_entry(&e).unwrap().len(), 91);
+        assert_eq!(encode_entry(&empty).unwrap().len(), 93);
+
+        // And it grows by exactly the detail's BYTE length — asserted with a
+        // multi-byte string so a char-vs-byte confusion in the prefix shows up
+        // here rather than as a truncated re-prompt at runtime.
+        let detail = "é-32004";
+        assert_eq!(detail.len(), 8, "2-byte é + 6 ASCII");
+        let carried = JournalEntry::Failed {
+            mote_id: MoteId::from_bytes([1u8; 32]),
+            idempotency_key: [2u8; 32],
+            seq: 0,
+            reason_class: FailureReason::TimedOut,
+            reporter_id: 0,
+            detail: detail.to_string(),
+        };
+        assert_eq!(encode_entry(&carried).unwrap().len(), 93 + detail.len());
     }
 
     #[test]
@@ -3603,15 +3843,32 @@ mod tests {
         };
         assert_eq!(decode_entry(&encode_entry(&r).unwrap()).unwrap(), r);
 
-        // Failed
+        // Failed — round-tripped with a NON-EMPTY detail on purpose. A fixture that
+        // only ever carries `String::new()` round-trips the absent arm twice and
+        // never exercises the field at all, which is how an optional branch gets
+        // deleted by its own test data.
         let f = JournalEntry::Failed {
             mote_id: MoteId::from_bytes([6u8; 32]),
             idempotency_key: [11u8; 32],
             seq: 50,
             reason_class: FailureReason::UnsafeWorldMutatingConstruction,
             reporter_id: 0xABCD,
+            detail: SERVER_DIAGNOSTIC.to_string(),
         };
         assert_eq!(decode_entry(&encode_entry(&f).unwrap()).unwrap(), f);
+        // …and the empty arm too, since that is what every v17 body up-converts to.
+        let f_empty = JournalEntry::Failed {
+            mote_id: MoteId::from_bytes([6u8; 32]),
+            idempotency_key: [11u8; 32],
+            seq: 50,
+            reason_class: FailureReason::UnsafeWorldMutatingConstruction,
+            reporter_id: 0xABCD,
+            detail: String::new(),
+        };
+        assert_eq!(
+            decode_entry(&encode_entry(&f_empty).unwrap()).unwrap(),
+            f_empty
+        );
 
         // v2 (D38 §2b): EffectStaged
         let es = JournalEntry::EffectStaged {

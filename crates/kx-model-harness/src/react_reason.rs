@@ -135,6 +135,57 @@ mod tests {
         );
     }
 
+    /// v18 — the CROSS-IMPL golden for a failed OBSERVATION's reason, with the
+    /// downstream system's own diagnostic carried.
+    ///
+    /// **Written as LITERAL bytes on both sides on purpose.** The renderer itself
+    /// lives in `kx-journal`, so asserting `harness(x) == coordinator(x)` would be
+    /// `f(x) == f(x)` — true no matter what either driver does, and true even if the
+    /// text became wrong. The non-vacuous statement is a THIRD one: each crate spells
+    /// out the exact bytes it expects. A deliberate wording change then reddens both
+    /// tests (that is the review gate), while a one-sided drift is impossible because
+    /// neither crate owns the string.
+    ///
+    /// The bytes matter beyond aesthetics: this reason folds into the re-prompted
+    /// turn's `MoteId`, so the served coordinator and the single-node harness must
+    /// produce the identical chain identity for the identical failure.
+    #[test]
+    fn observation_failure_reason_with_a_detail_matches_the_coordinator() {
+        let r = kx_journal::observation_failure_reason(
+            "fleet/get",
+            "1",
+            Some(kx_journal::FailureReason::DeadLettered),
+            r#"MCP error -32004: no such vessel "x""#,
+        );
+        assert_eq!(
+            r,
+            "the tool `fleet/get@1` was called but did not complete — it failed to \
+             run: MCP error -32004: no such vessel \"x\". Use that reason to decide \
+             what to do next — correct the arguments and call it again, use a \
+             different tool, or answer with what you already have."
+        );
+    }
+
+    /// The no-detail arm, pinned SEPARATELY because it must stay byte-identical to
+    /// what shipped before the detail existed — every chain whose reporter said
+    /// nothing more specific has to rebuild the same `MoteId`, so no committed
+    /// baseline moves on a path this change does not reach.
+    #[test]
+    fn observation_failure_reason_without_a_detail_is_unchanged() {
+        let r = kx_journal::observation_failure_reason(
+            "fleet/get",
+            "1",
+            Some(kx_journal::FailureReason::DeadLettered),
+            "",
+        );
+        assert_eq!(
+            r,
+            "the tool `fleet/get@1` was called but did not complete — it failed to \
+             run. Do not call it again with the same arguments; use a different tool \
+             or different arguments, or answer with what you already have."
+        );
+    }
+
     #[test]
     fn bounded_reason_truncates_at_a_char_boundary_total() {
         let short = "short".to_string();

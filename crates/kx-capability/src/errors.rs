@@ -108,3 +108,152 @@ pub enum BrokerError {
         diagnostic: String,
     },
 }
+
+impl BrokerError {
+    /// The part of this refusal that may be shown to the MODEL — the DOWNSTREAM
+    /// system's own diagnostic, and nothing the runtime knows about itself.
+    ///
+    /// **Why this is a narrow allowlist and not `format!("{self}")`.** The rendered
+    /// detail travels onto a durable `Failed` entry and from there into the next ReAct
+    /// turn's instruction, which is the widest audience any of these strings has. Most
+    /// `BrokerError` variants describe the RUNTIME's own state and carry host-shaped
+    /// text — [`Self::StageWriteFailed`]'s store diagnostic can name a filesystem path,
+    /// [`Self::SandboxRefused`]'s reason describes local confinement. None of that
+    /// belongs in a model prompt, and a blanket stringify would put it there the moment
+    /// a new variant appeared.
+    ///
+    /// Only [`Self::CapabilityFailure`] qualifies, and only through
+    /// [`CapabilityFailureReason`] — a CLOSED enum whose single free-text arm the MCP
+    /// layer populates with the server's own `"MCP error {code}: {message}"`. That
+    /// boundary was already drawn deliberately: `TransportError::Unreachable(_)` DROPS
+    /// its diagnostic to [`CapabilityFailureReason::NetworkUnreachable`] rather than
+    /// echo an endpoint. This method respects that line instead of routing around it.
+    ///
+    /// Every other variant returns `""`, which renders as the unchanged class-derived
+    /// steer — the pre-existing behaviour, preserved by default rather than by
+    /// omission. There is no wildcard arm: a new `BrokerError` variant fails
+    /// `cargo check` here and must be classified deliberately.
+    #[must_use]
+    pub fn model_facing_detail(&self) -> String {
+        match self {
+            Self::CapabilityFailure { reason, .. } => match reason {
+                // The downstream system's own words — the whole point of the method.
+                CapabilityFailureReason::Other(detail) => detail.clone(),
+                // The closed arms are already a vocabulary the model can act on, and
+                // they carry no free text, so rendering them is safe AND useful: "the
+                // endpoint refused your credentials" is actionable where "it failed to
+                // run" is not.
+                CapabilityFailureReason::AuthDenied => {
+                    "the external system denied authentication".to_string()
+                }
+                CapabilityFailureReason::RateLimited => {
+                    "the external system rate-limited this call".to_string()
+                }
+                CapabilityFailureReason::NetworkUnreachable => {
+                    "the external system was unreachable".to_string()
+                }
+                CapabilityFailureReason::Timeout => "the call exceeded its time budget".to_string(),
+                CapabilityFailureReason::InvalidResponse => {
+                    "the external system's response did not match the expected shape".to_string()
+                }
+            },
+            // Runtime-side refusals. The model is told THAT the call did not complete
+            // (via the class-derived steer) and not how this machine is configured.
+            Self::UnknownCapability { .. }
+            | Self::UnsupportedPattern { .. }
+            | Self::CapabilityExceedsWarrant { .. }
+            | Self::SandboxRefused { .. }
+            | Self::StageWriteFailed { .. } => String::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cap() -> ToolName {
+        ToolName("fleet/get".to_string())
+    }
+
+    /// ★ The reason this method exists. An MCP server that says WHICH argument is
+    /// wrong must have those words survive to the model, because the class-derived
+    /// alternative ("it failed to run — do not call it again with the same
+    /// arguments") is not vague but backwards: changing one argument IS the fix.
+    #[test]
+    fn a_downstream_systems_own_error_is_model_facing() {
+        let e = BrokerError::CapabilityFailure {
+            capability: cap(),
+            reason: CapabilityFailureReason::Other(
+                r#"MCP error -32004: no such vessel "x""#.to_string(),
+            ),
+        };
+        assert_eq!(
+            e.model_facing_detail(),
+            r#"MCP error -32004: no such vessel "x""#
+        );
+    }
+
+    /// The REFUSING control, varying exactly one thing: who authored the text. A
+    /// store diagnostic can name a filesystem path on this machine, and a prompt is
+    /// the widest audience any of these strings has.
+    #[test]
+    fn a_runtime_side_diagnostic_is_never_model_facing() {
+        let e = BrokerError::StageWriteFailed {
+            capability: cap(),
+            diagnostic: "/Users/someone/.kx/blobs: permission denied".to_string(),
+        };
+        assert_eq!(
+            e.model_facing_detail(),
+            "",
+            "a host path must never reach a model prompt"
+        );
+        let sandbox = BrokerError::SandboxRefused {
+            capability: cap(),
+            reason: "bwrap: /usr/bin/dash exited 71".to_string(),
+        };
+        assert_eq!(sandbox.model_facing_detail(), "");
+    }
+
+    /// The closed [`CapabilityFailureReason`] arms carry no free text, so they are
+    /// safe to render AND more actionable than the generic steer — but they must
+    /// still say something, or the arm is indistinguishable from a refusal.
+    #[test]
+    fn the_closed_reason_arms_are_rendered_and_non_empty() {
+        for reason in [
+            CapabilityFailureReason::AuthDenied,
+            CapabilityFailureReason::RateLimited,
+            CapabilityFailureReason::NetworkUnreachable,
+            CapabilityFailureReason::Timeout,
+            CapabilityFailureReason::InvalidResponse,
+        ] {
+            let rendered = BrokerError::CapabilityFailure {
+                capability: cap(),
+                reason: reason.clone(),
+            }
+            .model_facing_detail();
+            assert!(
+                !rendered.is_empty(),
+                "{reason:?} must render something the model can act on"
+            );
+            assert!(
+                !rendered.contains('/') || reason == CapabilityFailureReason::InvalidResponse,
+                "{reason:?} rendered {rendered:?} — no path-shaped text in a closed arm"
+            );
+        }
+    }
+
+    /// The detail is bounded at the WRITE site, but a hostile server controls its
+    /// length, so pin that this method does not itself promise a bound — the caller
+    /// must apply `kx_journal::bounded_failure_detail`. Stated as a test so the
+    /// obligation is discoverable from here rather than only from the call site.
+    #[test]
+    fn an_unbounded_server_message_is_returned_verbatim_for_the_caller_to_bound() {
+        let huge = "x".repeat(10_000);
+        let e = BrokerError::CapabilityFailure {
+            capability: cap(),
+            reason: CapabilityFailureReason::Other(huge.clone()),
+        };
+        assert_eq!(e.model_facing_detail().len(), huge.len());
+    }
+}

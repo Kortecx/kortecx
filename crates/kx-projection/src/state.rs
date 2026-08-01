@@ -94,6 +94,18 @@ pub(crate) struct MoteInfo {
     /// entry, so it stays `None` there and the digest is byte-unchanged. Surfaced
     /// via [`crate::Projection::failure_reason_of`] / [`crate::Snapshot::failure_reason_of`].
     pub(crate) failure_reason: Option<FailureReason>,
+    /// **v18.** The `detail` of the SAME `Failed` entry that set
+    /// [`Self::failure_reason`] — the downstream system's own diagnostic, empty when
+    /// the reporter had none. Retained under the identical first-terminal-wins rule
+    /// and set INSIDE the same `failure_reason.is_none()` branch rather than beside
+    /// it: under its own condition a later `Failed` could overwrite the detail while
+    /// the reason still pointed at the first one, and a re-plan reading both would be
+    /// given the cause of one failure and the diagnostic of another.
+    ///
+    /// Read-side only, exactly like `failure_reason`: never an input to identity,
+    /// `digest_projection`, `ready_set`, or any commit. The canonical demo folds no
+    /// terminal `Failed`, so it stays empty there and the digest is byte-unchanged.
+    pub(crate) failure_detail: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]

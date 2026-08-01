@@ -156,6 +156,7 @@ fn failed_entry(mote: &Mote, reason: FailureReason) -> JournalEntry {
         seq: 0,
         reason_class: reason,
         reporter_id: 0,
+        detail: String::new(),
     }
 }
 

@@ -305,14 +305,23 @@ fn arb_failed() -> impl Strategy<Value = JournalEntry> {
         any::<u64>(),
         arb_failure_reason(),
         any::<u128>(),
+        // v18: the detail must be ARBITRARY here, not a constant. A generator that
+        // always produced `""` would round-trip the absent arm on every case and
+        // sweep the new field zero times — the failing condition manufactured away
+        // by its own test data. The empty string is still IN this range, so the
+        // v17-shaped body stays covered.
+        "[a-zA-Z0-9 ._/\"-]{0,64}",
     )
         .prop_map(
-            |(mote_id, idempotency_key, seq, reason_class, reporter_id)| JournalEntry::Failed {
-                mote_id,
-                idempotency_key,
-                seq,
-                reason_class,
-                reporter_id,
+            |(mote_id, idempotency_key, seq, reason_class, reporter_id, detail)| {
+                JournalEntry::Failed {
+                    mote_id,
+                    idempotency_key,
+                    seq,
+                    reason_class,
+                    reporter_id,
+                    detail,
+                }
             },
         )
 }
@@ -576,6 +585,7 @@ fn reader_never_observes_partial_entry() {
                 seq: 0, // assigned by journal
                 reason_class: FailureReason::TimedOut,
                 reporter_id: u128::from(i),
+                detail: String::new(),
             };
             writer_journal.append(entry).expect("writer append");
         }

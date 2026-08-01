@@ -6,6 +6,28 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **A failing tool's own error now reaches the model — journal schema v17 → v18.**
+  When a tool ran and failed, the runtime told the model only which BUCKET the
+  failure fell into: a nine-variant enum whose catch-all renders as *"it failed to
+  run. Do not call it again with the same arguments."* A JSON-RPC
+  `-32004 no such vessel "x"` means change the argument, so that steer was not
+  merely vague, it was the opposite of the fix. The tool named its own failure and
+  the runtime discarded the name.
+
+  `JournalEntry::Failed` gains a trailing, length-prefixed `detail` carrying the
+  diagnostic the failing subsystem itself produced. What may be shown to a model is
+  an ALLOWLIST, not a stringify: only a capability's own failure reason qualifies,
+  and every runtime-side diagnostic (sandbox refusals, content-store paths) renders
+  as it did before. With no detail, the rendered text is byte-identical to v17, so
+  no existing chain identity moves.
+
+  **Operator impact: none, and no action is required.** A v17 journal is read by a
+  v18 binary unchanged — a v17 `Failed` body carries no detail and up-converts to an
+  empty one, so the migration is a pure pass-through, exactly like the trailing-field
+  additions at v9/v11/v12/v14/v15. The product identity digest is unchanged. As
+  always, an OLDER binary refuses a NEWER journal loudly rather than mis-reading it,
+  so roll forward before rolling back.
+
 - **Natural-language authoring across every authoring domain, and a durable
   Policy/Role registry.** `ProposeControlAction` turns one sentence into the
   EXACT typed request the runtime would issue, and returns it without writing

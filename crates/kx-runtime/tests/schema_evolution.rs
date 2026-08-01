@@ -82,6 +82,7 @@ fn curated_v6_entries() -> Vec<JournalEntry> {
             seq: 0,
             reason_class: FailureReason::TimedOut,
             reporter_id: 0,
+            detail: String::new(),
         },
     ]
 }
@@ -153,10 +154,14 @@ fn migrate_and_verify_preserves_product_identity() {
     // v9→v10..v14→v15 deltas only touch kind-9 bodies (+ the new kind-10 Approval),
     // the v15→v16 delta only adds the new kind-11 ReRankRound (RC4c-2), and the
     // v16→v17 delta only adds the new kind-12 TimerArmed (the durable workflow
-    // wait/backoff timer) — none of which a v5 entry can carry). Pinned as a
+    // wait/backoff timer) — none of which a v5 entry can carry). The v17→v18 delta
+    // DOES touch this fixture's kind-3 Failed entry, but only by appending the
+    // two-byte empty-detail prefix on RE-ENCODE; the decoded value is identical
+    // (a v17 body up-converts to an empty detail), and a Failed entry is not a
+    // committed fact, so the product digest below is untouched. Pinned as a
     // reviewable change — the PRODUCT identity digest below is the real invariant
     // (unchanged).
-    assert_eq!(report.to_version, 17);
+    assert_eq!(report.to_version, 18);
     assert_eq!(report.entries_upconverted, 1);
 
     // The up-converted source and the migrated destination fold to the same
