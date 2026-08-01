@@ -1788,8 +1788,20 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
 
     for r in &outcome.scaffolds {
         eprintln!(
-            "eval-bench: scaffold {} — completed={} files={} in {}ms",
-            r.task_id, r.completed, r.files_done, r.duration_ms
+            "eval-bench: scaffold {} — completed={} files={} in {}ms{}",
+            r.task_id,
+            r.completed,
+            r.files_done,
+            r.duration_ms,
+            // The cause, when there was one. `scaffold` has read 0 on both engines
+            // while this line printed `completed=…` and nothing else — and the six
+            // ways the drive can fold as failed are indistinguishable from that
+            // alone, because the transcript it produces is empty for all of them.
+            if r.reason.is_empty() {
+                String::new()
+            } else {
+                format!(" — FAILED: {}", r.reason)
+            }
         );
         report.spikes.push(kx_eval::SpikeMetric {
             id: format!("scaffold_ms@{}", r.task_id),
