@@ -1,6 +1,10 @@
 [package]
 name         = "kx-executor"
-version      = "0.1.1"
+# 0.1.1 -> 0.2.0: BREAKING. `CommitProtocolError::BrokerDispatchFailed` gains a
+# `model_detail` field carrying the DOWNSTREAM system's own diagnostic, separate from
+# the operator-facing `reason`. An exhaustive struct-variant literal, so this is
+# breaking-in-Rust; on 0.x a breaking change takes a MINOR bump.
+version      = "0.2.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }

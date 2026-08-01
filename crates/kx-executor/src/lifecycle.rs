@@ -556,6 +556,10 @@ where
                 seq: 0, // journal-assigned
                 reason_class: FailureReason::QuarantinedAtLeastOnce,
                 reporter_id: 0,
+                // A quarantine is a runtime decision taken WITHOUT calling the
+                // capability (no compensation support), so there is no downstream
+                // diagnostic in existence to carry.
+                detail: String::new(),
             };
             let written = journal.append(entry).map_err(|e| {
                 LifecycleError::JournalAppend(format!("append Failed{{Quarantined}}: {e:?}"))

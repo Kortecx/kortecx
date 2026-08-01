@@ -384,6 +384,7 @@ mod tests {
             seq,
             reason_class: reason,
             reporter_id: 0,
+            detail: String::new(),
         }
     }
 

@@ -89,6 +89,61 @@ pub(crate) fn classify_lifecycle_error(err: &LifecycleError) -> FailureClass {
     }
 }
 
+/// The model-facing detail carried by a dispatch failure, or `""` when the failure
+/// was the runtime's own.
+///
+/// The sibling of [`classify_lifecycle_error`], and deliberately beside it: the class
+/// answers *may this be retried*, this answers *what may the model be told*, and both
+/// are read at the same call site when a dead-letter is journaled. Only the
+/// commit-protocol arm can carry one — a resource-acquisition failure, an executor
+/// spawn failure or a submission refusal are all statements about this machine.
+///
+/// Exhaustive with no wildcard, for the same reason as the two methods it delegates
+/// to: a new `LifecycleError` variant must be classified deliberately rather than
+/// default into a model prompt.
+pub(crate) fn model_facing_detail(err: &LifecycleError) -> &str {
+    match err {
+        LifecycleError::CommitProtocol(e) => commit_error_detail(e),
+        LifecycleError::JournalAppend(_)
+        | LifecycleError::ResourceAcquire(_)
+        | LifecycleError::ExecutorRun(_)
+        | LifecycleError::Refused(_)
+        | LifecycleError::Internal(_) => "",
+    }
+}
+
+/// The model-facing detail carried by a commit-protocol failure.
+///
+/// **Lives here, not on `CommitProtocolError`.** `crates/kx-executor/src` is frozen by
+/// the `frozen-trio` CI guard — the single-node execution kernel is the stable spine,
+/// and a layer on top must not reach down and edit it. Journal v18 forces a DATA-SHAPE
+/// change there (a new field is an `E0063` at every exhaustive struct literal), which
+/// the guard now narrowly exempts; adding LOGIC would not be exempt and should not be.
+/// So the field lives in the kernel and the reading of it lives out here, which is also
+/// where its sibling `classify_lifecycle_error` already lives.
+///
+/// Only [`CommitProtocolError::BrokerDispatchFailed`] can carry one. Everything else is
+/// the executor talking about ITSELF — an R-11 content-store inconsistency, a journal
+/// append failure, an R-13 recovery refusal — and a model can act on none of it; those
+/// keep the class-derived steer.
+///
+/// Exhaustive with no wildcard: a new `CommitProtocolError` variant fails `cargo check`
+/// here rather than defaulting its way into a model prompt.
+fn commit_error_detail(err: &CommitProtocolError) -> &str {
+    match err {
+        CommitProtocolError::BrokerDispatchFailed { model_detail, .. } => model_detail,
+        CommitProtocolError::R11ResultRefIncomplete { .. }
+        | CommitProtocolError::R12CommittedNotProofOfValidity { .. }
+        | CommitProtocolError::R13WmReDispatchRefused { .. }
+        | CommitProtocolError::ProbeFailed { .. }
+        | CommitProtocolError::CompensateFailed { .. }
+        | CommitProtocolError::ContentStorePutFailed { .. }
+        | CommitProtocolError::JournalAppendCommittedFailed { .. }
+        | CommitProtocolError::JournalAppendEffectStagedFailed { .. }
+        | CommitProtocolError::Internal { .. } => "",
+    }
+}
+
 fn classify_resource_error(err: &ResourceError) -> FailureClass {
     use FailureClass::{TerminalLogic, TransientInfra};
     match err {

@@ -107,6 +107,7 @@ fn curated_v6_entries() -> Vec<JournalEntry> {
             seq: 0,
             reason_class: FailureReason::TimedOut,
             reporter_id: 0,
+            detail: String::new(),
         },
         JournalEntry::DigestSealed {
             through_seq: 6,
@@ -229,6 +230,7 @@ fn replay_journal_is_read_only() {
         seq: 0,
         reason_class: FailureReason::TimedOut,
         reporter_id: 0,
+        detail: String::new(),
     });
     assert!(matches!(attempt, Err(JournalError::Invariant(_))));
 }
@@ -1174,6 +1176,7 @@ fn migrate_to_enables_resume_and_append() {
             seq: 0,
             reason_class: FailureReason::WorkerCrashed,
             reporter_id: 7,
+            detail: String::new(),
         })
         .unwrap();
     assert_eq!(appended.seq(), 8); // continues the sequence after the 7 migrated

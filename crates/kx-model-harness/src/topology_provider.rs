@@ -417,6 +417,7 @@ where
                 seq: 0, // journal assigns
                 reason_class: FailureReason::ExecutorRefused,
                 reporter_id: TOPOLOGY_PROVIDER_REPORTER_ID,
+                detail: String::new(),
             })?;
             return drive_dead_lettered(
                 config,
@@ -814,6 +815,7 @@ fn dead_letter_shaper(journal: &Arc<SqliteJournal>, shaper_id: MoteId) -> Result
         seq: 0, // journal assigns
         reason_class: FailureReason::ExecutorRefused,
         reporter_id: TOPOLOGY_PROVIDER_REPORTER_ID,
+        detail: String::new(),
     })?;
     Ok(())
 }

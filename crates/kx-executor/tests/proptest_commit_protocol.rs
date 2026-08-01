@@ -37,9 +37,16 @@ fn arb_commit_protocol_error() -> impl Strategy<Value = CommitProtocolError> {
         (arb_mote_id(), "[a-z]{0,16}").prop_map(|(mote_id, reason)| {
             CommitProtocolError::R13WmReDispatchRefused { mote_id, reason }
         }),
-        (arb_mote_id(), "[a-z]{0,16}").prop_map(|(mote_id, reason)| {
-            CommitProtocolError::BrokerDispatchFailed { mote_id, reason }
-        }),
+        // The model-facing detail is generated INDEPENDENTLY of the operator-facing
+        // reason, and includes the empty string — the two are different audiences and
+        // a strategy that tied them together would sweep neither combination.
+        (arb_mote_id(), "[a-z]{0,16}", "[a-z ]{0,24}").prop_map(
+            |(mote_id, reason, model_detail)| CommitProtocolError::BrokerDispatchFailed {
+                mote_id,
+                reason,
+                model_detail,
+            },
+        ),
         (arb_mote_id(), "[a-z]{0,16}").prop_map(|(mote_id, reason)| {
             CommitProtocolError::ContentStorePutFailed { mote_id, reason }
         }),

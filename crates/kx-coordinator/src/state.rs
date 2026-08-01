@@ -1767,6 +1767,7 @@ fn failed_worker_crashed_entry(mote_id: MoteId) -> JournalEntry {
         seq: 0,
         reason_class: FailureReason::WorkerCrashed,
         reporter_id: COORDINATOR_REPORTER_ID,
+        detail: String::new(),
     }
 }
 
@@ -1839,6 +1840,7 @@ fn dead_letter_failure<J: Journal>(
         seq: 0,
         reason_class,
         reporter_id: worker_reporter_id(worker),
+        detail: String::new(),
     };
     let durable = journal.append(entry)?;
     let seq = durable.seq();
@@ -3977,6 +3979,7 @@ fn dead_letter_parked_wait<J: Journal>(
         seq: 0,
         reason_class: FailureReason::DeadLettered,
         reporter_id: COORDINATOR_REPORTER_ID,
+        detail: String::new(),
     };
     match journal.append(entry) {
         Ok(durable) => {
@@ -5037,6 +5040,12 @@ fn progress_tool_batch<J: Journal>(
                     tool_id,
                     tool_version,
                     projection.failure_reason_of(&obs.id),
+                    // v18: the downstream system's own diagnostic, read from the SAME
+                    // durable `Failed` fact as the class beside it. Until this was
+                    // carried, a tool that named the wrong argument was rendered as
+                    // "it failed to run — do not call it again with the same
+                    // arguments", which is the opposite of the fix.
+                    projection.failure_detail_of(&obs.id),
                 ));
             append_react_branch(
                 journal,
@@ -5573,6 +5582,7 @@ fn dead_letter_agentic_launch<J: Journal>(
         seq: 0,
         reason_class: FailureReason::DeadLettered,
         reporter_id: COORDINATOR_REPORTER_ID,
+        detail: String::new(),
     };
     match journal.append(entry) {
         Ok(durable) => {

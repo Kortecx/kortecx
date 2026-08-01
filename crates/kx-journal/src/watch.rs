@@ -131,6 +131,7 @@ impl JournalWatch {
 ///         seq: 0,
 ///         reason_class: kx_journal::FailureReason::TimedOut,
 ///         reporter_id: 42,
+///         detail: String::new(),
 ///     })
 ///     .unwrap();
 ///

@@ -14,7 +14,7 @@ use crate::helpers::{promotion_state_impl, ready_set_impl, transitive_consumers_
 use crate::materializer::TopologyMaterializer;
 use crate::register::RegisterMote;
 use crate::snapshot::Snapshot;
-use crate::state::{CommittedInfo, DeclaredInfo, State};
+use crate::state::{CommittedInfo, DeclaredInfo, MoteInfo, State};
 
 /// The journal's read-side projection.
 ///
@@ -460,37 +460,10 @@ impl Projection {
                 mote_id,
                 seq,
                 reason_class,
+                detail,
                 ..
             } => {
-                let info = self.state.moteinfo_mut(mote_id);
-                if info.committed.is_none() {
-                    info.failed_pending_reattempt = true;
-                    // **v2 (STEP 5.2 + STEP 6.2).** Read reason_class to set
-                    // terminal_failure_observed. Prefix-monotonic-true: once
-                    // set, NEVER reset — even by a subsequent Proposed (the
-                    // monotonicity contract that closes cell 5 of the 9-cell
-                    // cross-product). The canonical classifier
-                    // `is_pre_commit_crash` is the single source of class truth.
-                    if !kx_journal::is_pre_commit_crash(*reason_class) {
-                        info.terminal_failure_observed = true;
-                        // **PR-3 (AL2).** Retain the terminal reason (first-wins,
-                        // prefix-monotonic) so a model-driven re-plan can read WHY
-                        // a step dead-lettered. Pure read-side: off-digest, off-id,
-                        // off-DAG (the demo never folds a terminal Failed, so this
-                        // stays None and the canonical digest is byte-unchanged).
-                        if info.failure_reason.is_none() {
-                            info.failure_reason = Some(*reason_class);
-                        }
-                    }
-                    // **v6 (M2.3b, D105.4).** A recovery-time quarantine of a
-                    // staged-uncommitted at-most-once effect: mark it so
-                    // `anomaly_motes` surfaces it for operator review. Set-once;
-                    // terminal_failure_observed is already set above (the variant
-                    // is not pre-commit-crash), so it is non-redispatchable too.
-                    if *reason_class == kx_journal::FailureReason::QuarantinedAtLeastOnce {
-                        info.quarantined = true;
-                    }
-                }
+                fold_failed(self.state.moteinfo_mut(mote_id), *reason_class, detail);
                 self.state.last_seq = self.state.last_seq.max(*seq);
             }
             JournalEntry::Repudiated {
@@ -920,6 +893,26 @@ impl Projection {
     #[must_use]
     pub fn failure_reason_of(&self, mote_id: &MoteId) -> Option<FailureReason> {
         self.state.motes.get(mote_id).and_then(|i| i.failure_reason)
+    }
+
+    /// **v18.** The DOWNSTREAM system's own diagnostic from the same terminal `Failed`
+    /// that [`Self::failure_reason_of`] reports, or `""` when there was none.
+    ///
+    /// **This deliberately widens what a re-plan may read, and the widening is
+    /// bounded at both ends.** `failure_reason_of` returns a closed enum precisely so
+    /// no result bytes or warrant secrets can ride it. This returns free text, so the
+    /// text's provenance is the guarantee instead: it is written only by
+    /// `BrokerError::model_facing_detail`, an allowlist that admits the downstream
+    /// system's message and refuses every runtime-side diagnostic, and it is truncated
+    /// to `kx_journal::MAX_FAILURE_DETAIL_LEN` at the write. It is still UNTRUSTED
+    /// external text — the same trust class as a tool's successful output, which the
+    /// model already reads — and it must never be treated as an instruction.
+    #[must_use]
+    pub fn failure_detail_of(&self, mote_id: &MoteId) -> &str {
+        self.state
+            .motes
+            .get(mote_id)
+            .map_or("", |i| i.failure_detail.as_str())
     }
 
     /// Motes whose parents are all `Committed-and-not-Repudiated` AND whose
@@ -1466,5 +1459,47 @@ impl Projection {
     #[must_use]
     pub fn scheduled_count(&self) -> usize {
         self.iter_motes_in_state(MoteState::Scheduled).count()
+    }
+}
+
+/// Fold ONE `Failed` entry into its Mote's read-side info.
+///
+/// Extracted from the fold's match arm (it grew past the per-function line budget when
+/// v18 added the detail) — and it reads better here anyway: the arm is the only place
+/// in the fold with three interacting monotonicity rules, and they are easier to check
+/// side by side than buried in a hundred-line match.
+///
+/// Every write is PREFIX-MONOTONIC: set once, never reset, so replaying a longer
+/// prefix of the same log can only add facts. That is what closes cell 5 of the
+/// 9-cell recovery cross-product.
+fn fold_failed(info: &mut MoteInfo, reason_class: FailureReason, detail: &str) {
+    if info.committed.is_some() {
+        return; // a committed Mote is not un-committed by a later Failed
+    }
+    info.failed_pending_reattempt = true;
+    // **v2 (STEP 5.2 + STEP 6.2).** `reason_class` decides terminality, and
+    // `is_pre_commit_crash` is the single source of that class truth — never a
+    // hardcoded list here.
+    if !kx_journal::is_pre_commit_crash(reason_class) {
+        info.terminal_failure_observed = true;
+        // **PR-3 (AL2).** Retain the terminal reason (first-wins) so a model-driven
+        // re-plan can read WHY a step dead-lettered. Pure read-side: off-digest,
+        // off-id, off-DAG — the demo never folds a terminal Failed, so this stays
+        // None and the canonical digest is byte-unchanged.
+        if info.failure_reason.is_none() {
+            info.failure_reason = Some(reason_class);
+            // **v18.** Set INSIDE the same first-wins branch, never beside it: under
+            // its own condition a later `Failed` could replace the detail while the
+            // reason still named the first one, and the pair would then describe two
+            // different failures.
+            info.failure_detail = detail.to_string();
+        }
+    }
+    // **v6 (M2.3b, D105.4).** A recovery-time quarantine of a staged-uncommitted
+    // at-most-once effect: mark it so `anomaly_motes` surfaces it for operator
+    // review. `terminal_failure_observed` is already set above (the variant is not
+    // pre-commit-crash), so it is non-redispatchable too.
+    if reason_class == FailureReason::QuarantinedAtLeastOnce {
+        info.quarantined = true;
     }
 }

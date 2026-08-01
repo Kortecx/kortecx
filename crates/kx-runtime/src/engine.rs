@@ -690,12 +690,24 @@ fn handle_failure(
     // fact. NOT re-running a failing Mote is the whole point (the user's "no point
     // re-running it"); the durable `Failed` is what a later model re-plan (AL2) reads.
     let reason_class = reason_for(class);
+    // v18: carry the DOWNSTREAM system's own diagnostic onto the durable fact. Until
+    // this existed, `err` reached only the `tracing::warn!` below — so a tool that
+    // said exactly which argument was wrong had that sentence written to a log the
+    // model cannot read, while the model got the class-derived steer telling it NOT
+    // to change its arguments. Measured: `task_success@http` = 0 on both engines for
+    // the family's entire existence.
+    //
+    // Bounded here, at the write, because the string originates outside this process
+    // and a hostile server controls its length.
+    let detail =
+        kx_journal::bounded_failure_detail(crate::failure_policy::model_facing_detail(err));
     let failed = JournalEntry::Failed {
         mote_id,
         idempotency_key: *mote_id.as_bytes(),
         seq: 0, // journal assigns
         reason_class,
         reporter_id: RUNTIME_REPORTER_ID,
+        detail,
     };
     journal.append(failed)?;
     fold_new(journal, projection, folded_through)?;
@@ -1142,6 +1154,7 @@ mod audit_tests {
             seq,
             reason_class: FailureReason::TimedOut,
             reporter_id: 0,
+            detail: String::new(),
         }
     }
 

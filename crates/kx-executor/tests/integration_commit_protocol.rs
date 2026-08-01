@@ -133,8 +133,12 @@ fn broker_dispatch_failed_variant_constructs() {
     let err = CommitProtocolError::BrokerDispatchFailed {
         mote_id: sample_mote_id(),
         reason: "remote unreachable".into(),
+        model_detail: "MCP error -32004: no such vessel \"x\"".into(),
     };
     assert!(err.to_string().contains("broker dispatch failed"));
+    // Display is OPERATOR-facing and carries the wide diagnostic; the model-facing
+    // subset is a separate field precisely so it is not reached by stringifying.
+    assert!(err.to_string().contains("remote unreachable"));
 }
 
 #[test]
@@ -201,6 +205,7 @@ fn mote_id_extractor_returns_correct_id_for_every_variant() {
         CommitProtocolError::BrokerDispatchFailed {
             mote_id: mid,
             reason: "r".into(),
+            model_detail: String::new(),
         },
         CommitProtocolError::ContentStorePutFailed {
             mote_id: mid,
@@ -245,6 +250,7 @@ fn is_recovery_refusal_identifies_r13_only() {
         CommitProtocolError::BrokerDispatchFailed {
             mote_id: mid,
             reason: "r".into(),
+            model_detail: String::new(),
         },
         CommitProtocolError::ContentStorePutFailed {
             mote_id: mid,

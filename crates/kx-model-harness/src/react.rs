@@ -417,6 +417,12 @@ where
                 &call.name.0,
                 &call.version.0,
                 post.failure_reason_of(&tool_wms[idx].mote.id),
+                // v18: the TWIN of the coordinator's observation arm. Both read the
+                // class and the detail from the same durable `Failed` fact and render
+                // through the one shared function, because the reason folds into the
+                // re-prompted turn's `MoteId` — two spellings would give the same
+                // chain two identities depending on which driver ran it.
+                post.failure_detail_of(&tool_wms[idx].mote.id),
             ));
             tracing::warn!(turn, %reason, "react: a tool dispatch failed — re-prompting");
             trajectory.push(turn_id);

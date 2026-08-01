@@ -540,6 +540,13 @@ struct MoteInfoDto {
     inconsistent: bool,
     quarantined: bool,
     failure_reason: Option<FailureReason>,
+    /// **v18.** `#[serde(default)]` so a checkpoint written before this field
+    /// existed still deserializes — to an EMPTY detail, which is exactly what a
+    /// pre-v18 `Failed` entry means. Without the default, a discardable checkpoint
+    /// would become unreadable rather than merely older, and recovery would fall
+    /// back to a full log fold with no signal that it had to.
+    #[serde(default)]
+    failure_detail: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -737,6 +744,7 @@ impl From<&MoteInfo> for MoteInfoDto {
             inconsistent,
             quarantined,
             failure_reason,
+            failure_detail,
         } = mi;
         Self {
             declared: declared.as_ref().map(DeclaredInfoDto::from),
@@ -748,6 +756,7 @@ impl From<&MoteInfo> for MoteInfoDto {
             inconsistent: *inconsistent,
             quarantined: *quarantined,
             failure_reason: *failure_reason,
+            failure_detail: failure_detail.clone(),
         }
     }
 }
@@ -1106,6 +1115,7 @@ impl TryFrom<MoteInfoDto> for MoteInfo {
             inconsistent,
             quarantined,
             failure_reason,
+            failure_detail,
         } = dto;
         Ok(MoteInfo {
             declared: declared.map(DeclaredInfo::from),
@@ -1117,6 +1127,7 @@ impl TryFrom<MoteInfoDto> for MoteInfo {
             inconsistent,
             quarantined,
             failure_reason,
+            failure_detail,
         })
     }
 }
