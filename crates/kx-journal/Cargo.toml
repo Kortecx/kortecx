@@ -1,9 +1,13 @@
 [package]
 name         = "kx-journal"
+# 0.3.0 -> 0.4.0: BREAKING. `JournalEntry::Failed` gains a `detail` field (journal
+# v17 -> v18) and `observation_failure_reason` gains a `detail` parameter. Both are
+# exhaustive-by-construction, so every downstream construction/call site must be
+# updated. On 0.x a breaking change takes a MINOR bump.
 # 0.2.0 -> 0.3.0: `journal_schema_version` is new public API — a caller can now ask
 # which version a file is at WITHOUT the strict open's refusal, which is what makes a
 # user-facing `kx migrate` (and a boot refusal that names it) possible at all.
-version      = "0.3.0"
+version      = "0.4.0"
 edition      = { workspace = true }
 rust-version = { workspace = true }
 license      = { workspace = true }

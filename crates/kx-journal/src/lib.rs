@@ -97,16 +97,16 @@
 //! - gRPC and the coordinator/worker split — P2.
 
 pub use crate::entry::{
-    approval_request_id, decode_entry, decode_entry_with_def_hash, encode_entry,
-    is_pre_commit_crash, observation_failure_reason, repudiation_idempotency_key, run_root_id,
-    seal_root_id, ApprovalState, DecodeError, EncodeError, FailureReason, IdempotencyClassTag,
-    JournalEntry, ParentEntry, ReRankOutcome, ReactBranch, RepudiationReason,
+    approval_request_id, bounded_failure_detail, decode_entry, decode_entry_with_def_hash,
+    encode_entry, is_pre_commit_crash, observation_failure_reason, repudiation_idempotency_key,
+    run_root_id, seal_root_id, ApprovalState, DecodeError, EncodeError, FailureReason,
+    IdempotencyClassTag, JournalEntry, ParentEntry, ReRankOutcome, ReactBranch, RepudiationReason,
     ResolvedCapabilityRecord, ResolvedKindTag, APPROVAL_REQUEST_ID_LEN, HEADER_LEN,
     INSTANCE_ID_LEN, JOURNAL_SCHEMA_VERSION, KIND_APPROVAL, KIND_COMMITTED, KIND_DIGEST_SEALED,
     KIND_EFFECT_STAGED, KIND_FAILED, KIND_PROPOSED, KIND_REACT_ROUND, KIND_REPLAN_ROUND,
     KIND_REPUDIATED, KIND_RERANK_ROUND, KIND_RUN_REGISTERED, KIND_RUN_VERSIONS_RESOLVED,
-    KIND_TIMER_ARMED, MAX_APPROVAL_TEXT_LEN, MAX_ENTRY_LEN, MAX_PARENTS, MAX_REJECTED_REASON_LEN,
-    MAX_REPLAN_FAILED_STEPS, MAX_RERANK_CANDIDATES, MAX_TOOL_BATCH_CALLS,
+    KIND_TIMER_ARMED, MAX_APPROVAL_TEXT_LEN, MAX_ENTRY_LEN, MAX_FAILURE_DETAIL_LEN, MAX_PARENTS,
+    MAX_REJECTED_REASON_LEN, MAX_REPLAN_FAILED_STEPS, MAX_RERANK_CANDIDATES, MAX_TOOL_BATCH_CALLS,
 };
 pub use crate::in_memory::InMemoryJournal;
 pub use crate::migration::{
@@ -239,6 +239,7 @@ pub enum JournalError {
 ///     seq: 0, // assigned by the journal at append time
 ///     reason_class: FailureReason::TimedOut,
 ///     reporter_id: 42,
+///     detail: String::new(),
 /// };
 /// let stored = journal.append(entry).unwrap();
 /// assert_eq!(stored.seq(), 1); // first entry → seq 1

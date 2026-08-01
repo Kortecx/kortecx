@@ -122,14 +122,19 @@ fn arb_failed_v6() -> impl Strategy<Value = JournalEntry> {
         arb_byte_array_32(),
         reason,
         any::<u128>(),
+        // v18: arbitrary, and deliberately not a constant — see the note on the
+        // matching generator in `proptest_entry.rs`. `arb_short_str` includes the
+        // empty string, so the v17-shaped (detail-absent) body stays swept too.
+        arb_short_str(),
     )
         .prop_map(
-            |(mote_id, key, reason_class, reporter_id)| JournalEntry::Failed {
+            |(mote_id, key, reason_class, reporter_id, detail)| JournalEntry::Failed {
                 mote_id: kx_mote::MoteId::from_bytes(mote_id),
                 idempotency_key: key,
                 seq: 0,
                 reason_class,
                 reporter_id,
+                detail,
             },
         )
 }

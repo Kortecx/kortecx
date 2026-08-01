@@ -51,6 +51,7 @@ fn failed_entry(mote_byte: u8, seq: u64) -> JournalEntry {
         seq,
         reason_class: FailureReason::TimedOut,
         reporter_id: 0,
+        detail: String::new(),
     }
 }
 
@@ -99,6 +100,7 @@ fn failed_entry_with_reason(mote_byte: u8, seq: u64, reason: FailureReason) -> J
         seq,
         reason_class: reason,
         reporter_id: 0,
+        detail: String::new(),
     }
 }
 

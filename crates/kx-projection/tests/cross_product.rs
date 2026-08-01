@@ -77,6 +77,7 @@ fn failed(mote_id: MoteId, seq_hint: u64, reason: FailureReason) -> JournalEntry
         seq: seq_hint,
         reason_class: reason,
         reporter_id: 0,
+        detail: String::new(),
     }
 }
 

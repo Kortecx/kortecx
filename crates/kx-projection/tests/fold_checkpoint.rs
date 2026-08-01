@@ -169,6 +169,7 @@ fn build_journal(ops: &[TraceOp]) -> InMemoryJournal {
                         seq: 0,
                         reason_class: reason,
                         reporter_id: 0,
+                        detail: String::new(),
                     })
                     .unwrap();
             }
@@ -661,6 +662,7 @@ fn scale_resume_is_bounded_by_live_state_not_churn() {
                     seq: 0,
                     reason_class: FailureReason::TimedOut,
                     reporter_id: 0,
+                    detail: String::new(),
                 })
                 .unwrap();
         }
@@ -838,6 +840,7 @@ fn scale_resume_through_sqlite_is_bounded_by_live_state() {
                     seq: 0,
                     reason_class: FailureReason::TimedOut,
                     reporter_id: 0,
+                    detail: String::new(),
                 });
                 if buf.len() >= BATCH {
                     j.append_batch(std::mem::take(&mut buf)).unwrap();

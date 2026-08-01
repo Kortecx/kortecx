@@ -74,6 +74,7 @@ fn arb_failed(mote_id_seed: u8, seq: u64) -> JournalEntry {
         seq,
         reason_class: FailureReason::TimedOut,
         reporter_id: 0,
+        detail: String::new(),
     }
 }
 
@@ -718,6 +719,7 @@ fn failed_for(mid: MoteId, reason: FailureReason) -> JournalEntry {
         seq: 0,
         reason_class: reason,
         reporter_id: 0,
+        detail: String::new(),
     }
 }
 

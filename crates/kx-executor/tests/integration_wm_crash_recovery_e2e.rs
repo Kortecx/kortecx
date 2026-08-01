@@ -426,6 +426,7 @@ fn wm_mote_terminal_failure_recovery_refused_cell_4_hazard_guard() {
             seq: 0,
             reason_class: kx_journal::FailureReason::ExecutorRefused, // terminal
             reporter_id: 0,
+            detail: String::new(),
         })
         .unwrap();
 

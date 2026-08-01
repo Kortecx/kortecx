@@ -180,6 +180,7 @@ pub(crate) fn failed_worker_crashed(mote: &Mote, seq: u64) -> JournalEntry {
         seq,
         reason_class: FailureReason::WorkerCrashed,
         reporter_id: 0,
+        detail: String::new(),
     }
 }
 

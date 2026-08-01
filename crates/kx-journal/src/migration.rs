@@ -97,8 +97,18 @@ pub fn migrate_entry(
     // double-append its `idempotency_class` byte). `from_version` is guaranteed in
     // [MIN_SUPPORTED, CURRENT] by the guard above.
     match from_version {
-        // v17 (current): no transform, the single source of truth for decode.
+        // v18 (current): no transform, the single source of truth for decode.
         JOURNAL_SCHEMA_VERSION => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
+        // v17 → v18: a PURE pass-through. The lone v17→v18 delta is the trailing
+        // u16-prefixed `detail` on a `Failed` (kind 3) body; a v17 body is exactly 17
+        // bytes and lacks it, and the canonical decoder up-converts a byte-absent body
+        // to an EMPTY detail — so v17 bytes decode correctly under v18 unchanged. Same
+        // shape as every trailing-field addition on `ReactRound` (v9/v11/v12/v14/v15).
+        // NOTE this arm must be EXPLICIT, per the v16 note below: when v17 was current
+        // the `JOURNAL_SCHEMA_VERSION` arm covered it, and this bump silently
+        // re-pointed that arm — orphaning v17 into the fallback error until this line
+        // existed. The exhaustive ladder test pins the class.
+        17 => Ok(decode_entry_with_def_hash(bytes, def_hash)?),
         // v16 → v17: a PURE pass-through. The lone v16→v17 delta is the brand-new
         // `TimerArmed` kind (12) — no v16 journal can contain a kind-12 body — so
         // every existing kind (0..=11) is byte-identical and v16 bytes decode

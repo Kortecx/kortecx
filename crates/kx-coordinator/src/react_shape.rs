@@ -987,6 +987,60 @@ mod tests {
         assert!(obs1.def.config_subset.is_empty());
     }
 
+    /// v18 — the CROSS-IMPL golden for a failed OBSERVATION's reason, the coordinator
+    /// half. Keep in sync with the harness test
+    /// `kx_model_harness::react_reason::tests::observation_failure_reason_with_a_detail_matches_the_coordinator`,
+    /// which spells the SAME literal independently.
+    ///
+    /// Literals on both sides rather than an equality between the two call sites: the
+    /// renderer is shared (`kx_journal::observation_failure_reason`), so comparing the
+    /// drivers to each other would compare a function to itself and pass however wrong
+    /// the text became. This reason folds into the re-prompted turn's `MoteId`, so a
+    /// wording change is a chain-identity change and must redden a test on both sides
+    /// of the dep wall.
+    #[test]
+    fn observation_failure_reason_with_a_detail_is_twin_pinned() {
+        let r = kx_journal::observation_failure_reason(
+            "fleet/get",
+            "1",
+            Some(kx_journal::FailureReason::DeadLettered),
+            r#"MCP error -32004: no such vessel "x""#,
+        );
+        assert_eq!(
+            r,
+            "the tool `fleet/get@1` was called but did not complete — it failed to \
+             run: MCP error -32004: no such vessel \"x\". Use that reason to decide \
+             what to do next — correct the arguments and call it again, use a \
+             different tool, or answer with what you already have."
+        );
+        // The steer INVERTS when there is a reason to act on, and that inversion is
+        // the defect being fixed — asserted here, not just in the string above, so a
+        // future edit that reintroduces the backwards advice fails by name.
+        assert!(
+            !r.contains("Do not call it again with the same arguments"),
+            "when the tool named the wrong argument, steering away from changing \
+             arguments is backwards"
+        );
+    }
+
+    /// The no-detail arm, byte-unchanged from before the detail existed. Pinned so the
+    /// claim "no existing chain identity moves on a path without a detail" is checked
+    /// rather than asserted in a comment.
+    #[test]
+    fn observation_failure_reason_without_a_detail_is_byte_unchanged() {
+        assert_eq!(
+            kx_journal::observation_failure_reason(
+                "fleet/get",
+                "1",
+                Some(kx_journal::FailureReason::DeadLettered),
+                "",
+            ),
+            "the tool `fleet/get@1` was called but did not complete — it failed to \
+             run. Do not call it again with the same arguments; use a different tool \
+             or different arguments, or answer with what you already have."
+        );
+    }
+
     #[test]
     fn render_reprompt_is_deterministic_and_embeds_the_reason() {
         let a = render_reprompt("list the files", "tool `x@1` is not granted to this run");

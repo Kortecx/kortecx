@@ -87,6 +87,7 @@ fn fail(p: &mut Projection, mote_byte: u8, seq: u64) {
         seq,
         reason_class: FailureReason::TimedOut,
         reporter_id: 0,
+        detail: String::new(),
     })
     .unwrap();
 }

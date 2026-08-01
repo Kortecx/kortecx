@@ -168,8 +168,19 @@ pub enum CommitProtocolError {
     BrokerDispatchFailed {
         /// The Mote whose broker call failed.
         mote_id: MoteId,
-        /// Diagnostic from the broker.
+        /// Diagnostic from the broker. **Operator-facing**: the full `{:?}` of the
+        /// typed `BrokerError`, which may name host paths or local configuration.
+        /// It goes to logs and to this error's `Display`, never to a model.
         reason: String,
+        /// **Model-facing** subset of the same failure — the DOWNSTREAM system's own
+        /// diagnostic, computed by `BrokerError::model_facing_detail` while the error
+        /// was still typed, and empty when the failure was runtime-side.
+        ///
+        /// Two fields rather than one because they have different audiences and the
+        /// wider one is the default. Deriving the model's copy from `reason` later
+        /// would mean re-parsing a `{:?}` dump — and would silently start forwarding
+        /// whatever a future `BrokerError` variant happens to stringify.
+        model_detail: String,
     },
 
     /// `ContentStore::put` returned an error. The broker may have already
@@ -607,6 +618,10 @@ where
             seq: 0, // journal-assigned
             reason_class: FailureReason::CompensatedAtLeastOnce,
             reporter_id: 0,
+            // A recovery-time undo has no DOWNSTREAM diagnostic to carry: the
+            // capability's own error (if any) was consumed by `try_compensate`, and
+            // what happened here is a runtime decision. The class says it exactly.
+            detail: String::new(),
         };
         let written = self
             .journal
@@ -660,6 +675,11 @@ where
             )
             .map_err(|e| CommitProtocolError::BrokerDispatchFailed {
                 mote_id,
+                // The model-facing subset is taken HERE, while `e` is still a typed
+                // `BrokerError`. Once it is a `{:?}` string the distinction between
+                // "the server said this" and "this machine is configured that way"
+                // is gone, and only the wider one survives.
+                model_detail: e.model_facing_detail(),
                 reason: format!("{e:?}"),
             })?;
         let result_ref = handle.staged_ref;
@@ -751,6 +771,11 @@ where
             )
             .map_err(|e| CommitProtocolError::BrokerDispatchFailed {
                 mote_id,
+                // The model-facing subset is taken HERE, while `e` is still a typed
+                // `BrokerError`. Once it is a `{:?}` string the distinction between
+                // "the server said this" and "this machine is configured that way"
+                // is gone, and only the wider one survives.
+                model_detail: e.model_facing_detail(),
                 reason: format!("{e:?}"),
             })?;
         let result_ref = handle.staged_ref;
@@ -832,6 +857,11 @@ where
             )
             .map_err(|e| CommitProtocolError::BrokerDispatchFailed {
                 mote_id,
+                // The model-facing subset is taken HERE, while `e` is still a typed
+                // `BrokerError`. Once it is a `{:?}` string the distinction between
+                // "the server said this" and "this machine is configured that way"
+                // is gone, and only the wider one survives.
+                model_detail: e.model_facing_detail(),
                 reason: format!("{e:?}"),
             })?;
         let result_ref = handle.staged_ref;
