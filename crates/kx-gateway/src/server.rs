@@ -2743,6 +2743,14 @@ impl kx_gateway_core::RegisteredToolsView for HostRegisteredTools {
     fn registered_grants(&self) -> std::collections::BTreeSet<(String, String)> {
         self.broker.registered_grants()
     }
+
+    /// The live broker is the authority the precheck consults, so the auto-grant
+    /// union reads its secret scopes from the same place rather than re-deriving them.
+    fn registered_secret_scopes(
+        &self,
+    ) -> std::collections::BTreeMap<(String, String), kx_warrant::SecretScope> {
+        self.broker.registered_secret_scopes()
+    }
 }
 
 /// Resolve the operator-granted read root from `KX_SERVE_FS_ROOT` (D155 / PR-6a).

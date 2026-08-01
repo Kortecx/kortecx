@@ -11,11 +11,30 @@
 //!
 //! ## Why this guard is deliberately narrow
 //!
-//! The tempting rule is "every RPC reaches every facade". Measured against the
-//! tree, that rule starts life failing on 36 entries (CLI 93/115, Python 104/115,
-//! TypeScript 112/115 — the TS gap is the three server streams) and would
-//! immediately need a 36-line exemption list. A guard whose exemption list is
-//! larger than its enforcement is a rubber stamp.
+//! The tempting rule is "every RPC reaches every facade". When this guard was
+//! written that rule started life failing on 36 entries (CLI 93/115, Python
+//! 104/115, TypeScript 112/115) and would immediately have needed a 36-line
+//! exemption list. A guard whose exemption list is larger than its enforcement is
+//! a rubber stamp.
+//!
+//! **Those numbers are historical — re-measured 2026-08-01 the surface is 121
+//! RPCs and reachability is now near-total**, so the sentence above no longer
+//! describes the tree and must not be read as a current measurement:
+//!
+//! ```text
+//! CLI          118/121   missing SubmitRun (declared below),
+//!                        ProposeControlAction + DescribeControlSurface (no
+//!                        `kx control` verb, by design)
+//! Python       121/121   the flat `_stub.<Rpc>(` probe finds 118; the three
+//!                        server streams are wired in events.py as `stub.<Rpc>(`
+//! TypeScript   121/121   the flat `this.grpc.<rpc>(` probe finds 118; the three
+//!                        streams use a functional form, `streamEvents(this.grpc,…)`
+//! ```
+//!
+//! ⚠ **Reachability is not an oracle.** These counts say a verb is *callable* from
+//! a facade, not that it *works*. The model-driven bench drives only **15 of 121**
+//! RPCs (12.4%), and the console has never been exercised against a real model at
+//! all (0/121). Do not let a green count here read as coverage.
 //!
 //! So the rule is scoped to what actually matters: **a MUTATION in an authoring
 //! domain must be reachable from the CLI.** Reads are exempt — `ProposeWorkflow`

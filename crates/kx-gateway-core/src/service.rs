@@ -459,6 +459,23 @@ pub trait RegisteredToolsView: Send + Sync {
     /// The `(tool_id, tool_version)` of every tool whose firing capability is
     /// CURRENTLY registered on the serve broker.
     fn registered_grants(&self) -> std::collections::BTreeSet<(String, String)>;
+
+    /// The SECRET scope each of those capabilities declares.
+    ///
+    /// The auto-grant union warrant must carry these, or the broker precheck
+    /// (`capability.required_secret_scope ⊆ warrant.secret_scope`) refuses every
+    /// CREDENTIALED connector before it dials — which is what held `task_success@http`
+    /// at 0 on both engines while the fixture recorded zero requests.
+    ///
+    /// **The default returns EMPTY, and that is the fail-CLOSED direction**: a view that
+    /// does not override this yields `SecretScope::None` for every tool, i.e. exactly the
+    /// today's behaviour (a refusal). Forgetting to implement it can never widen a
+    /// warrant — it can only keep a credentialed tool unreachable.
+    fn registered_secret_scopes(
+        &self,
+    ) -> std::collections::BTreeMap<(String, String), kx_warrant::SecretScope> {
+        std::collections::BTreeMap::new()
+    }
 }
 
 /// The boxed server-streaming type the `StreamEvents` RPC returns.

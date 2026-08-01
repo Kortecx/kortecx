@@ -122,8 +122,9 @@ pub const REACT_INSTRUCTION_KEY: &str = "instruction";
 /// The [`ConfigKey`] *name* under which a ReAct SEED Mote may carry its
 /// per-run turn budget (PR-2d-2, the `kx/recipes/react` `max_turns` slot; a
 /// canonical-JSON unsigned integer). Seed-only (see
-/// [`REACT_INSTRUCTION_KEY`]); validated `0 < max_tool_calls < max_turns ≤ 8`
-/// at the seed-swap, then recorded DURABLY on the turn-0 `ReactRound` anchor —
+/// [`REACT_INSTRUCTION_KEY`]); validated `0 < max_turns ≤ 8` AND
+/// `0 < max_tool_calls ≤ 20` at the seed-swap, then recorded DURABLY on the
+/// turn-0 `ReactRound` anchor —
 /// the admitted budget never depends on a default that could drift across
 /// binary versions (red-team BLOCKER #4).
 pub const REACT_MAX_TURNS_KEY: &str = "max_turns";

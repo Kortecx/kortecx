@@ -3122,7 +3122,11 @@ fn recover_replan_chain<J: Journal>(
 /// directly-built seed carries raw bytes. The caps come from
 /// `REACT_MAX_TURNS_KEY` / `REACT_MAX_TOOL_CALLS_KEY` (canonical-JSON unsigned
 /// ints), defaulting to `8` turns / `6` tool calls, and are validated
-/// `0 < max_tool_calls < max_turns ≤ 8` — a violation is a LOUD
+/// `0 < max_turns ≤ 8` AND `0 < max_tool_calls ≤ 20` — the two caps are
+/// INDEPENDENT (T-MULTI-ELEMENT-TOOLCALLS: one turn may fire N tools as a
+/// `ToolBatch`, so the old `max_tool_calls < max_turns` coupling, which assumed
+/// ≤1 tool per turn, no longer holds — see the check itself below). A violation
+/// is a LOUD
 /// `ReactSeedRefused` (the flag/recipe is explicit intent; a malformed budget
 /// must never silently anchor). Everything is read off the SEED, which is then
 /// SWAPPED — none of these keys reach an admitted identity.
