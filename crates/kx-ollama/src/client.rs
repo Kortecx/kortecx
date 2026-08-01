@@ -58,13 +58,26 @@ pub struct GenOutcome {
 }
 
 /// A model's `/api/show` metadata, fetched in one round-trip at discovery (PR-B2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// No longer `Copy` — `family` is an owned `String`, because the daemon reports an
+/// open set of architecture names and pinning it to a closed enum here would mean a
+/// new model family could not even be OBSERVED without a code change.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShowMeta {
     /// The declared context window (`<arch>.context_length`), `0` when absent.
     pub context_length: u32,
     /// `true` iff the model declares vision (`/api/show` `capabilities ∋ "vision"`
     /// or a `projector_info` block). Display/discovery only.
     pub vision: bool,
+    /// The model's declared ARCHITECTURE family (`/api/show` `details.family` —
+    /// e.g. `gemma3`, `llama`, `qwen2`), or empty when the daemon omits it.
+    ///
+    /// Read at discovery because the serve path renders the chat prompt ITSELF
+    /// (`/api/generate` with `raw:true` means the daemon applies no template), so
+    /// the runtime needs to know which template the model was actually trained on.
+    /// Empty is honest-degrading and load-bearing: an unknown family renders no
+    /// template at all, which leaves the pre-existing behaviour exactly in place.
+    pub family: String,
 }
 
 /// A blocking HTTP client for one Ollama daemon endpoint.
@@ -183,6 +196,7 @@ impl OllamaClient {
         Ok(ShowMeta {
             context_length: context_length_of(&value).unwrap_or(0),
             vision: vision_of(&value),
+            family: family_of(&value),
         })
     }
 
@@ -554,6 +568,22 @@ fn eval_count_of(value: &serde_json::Value) -> u32 {
         .unwrap_or(0)
 }
 
+/// Extract the model's declared architecture family from an `/api/show` response —
+/// `details.family` (measured against a live daemon: `gemma3:12b` reports
+/// `{"details": {"family": "gemma3", "families": ["gemma3"], ...}}`).
+///
+/// Returns `""` when absent or non-string, never an error: the family is advisory,
+/// and an unknown one must degrade to "render no template", which is precisely the
+/// behaviour that shipped before this field existed.
+fn family_of(value: &serde_json::Value) -> String {
+    value
+        .get("details")
+        .and_then(|d| d.get("family"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// Extract the model's declared context window from an `/api/show` response. The
 /// daemon reports it under `model_info` as `"<arch>.context_length"` (e.g.
 /// `gemma3.context_length`, `llama.context_length`, `qwen2.context_length`). Matched
@@ -731,6 +761,41 @@ mod tests {
         assert_eq!(context_length_of(&gemma), Some(131_072));
         let qwen = serde_json::json!({ "model_info": { "qwen2.context_length": 32_768 } });
         assert_eq!(context_length_of(&qwen), Some(32_768));
+    }
+
+    /// `details.family`, read from the shape a LIVE daemon returns. The payload here
+    /// is the real `/api/show` response for `gemma3:12b`, trimmed to the block under
+    /// test — a hand-invented shape would pass while the accessor read the wrong key.
+    #[test]
+    fn family_of_reads_the_declared_architecture() {
+        let show = serde_json::json!({
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "gemma3",
+                "families": ["gemma3"],
+                "parameter_size": "12.2B",
+                "quantization_level": "Q4_K_M"
+            }
+        });
+        assert_eq!(family_of(&show), "gemma3");
+    }
+
+    /// Absent / malformed ⇒ EMPTY, never an error. The family drives whether a chat
+    /// template is rendered at all, and the empty answer means "render none", which
+    /// is the behaviour that shipped before the field existed. A daemon that omits
+    /// `details` must therefore leave serving exactly as it was, not break it.
+    #[test]
+    fn family_of_degrades_to_empty_when_absent_or_malformed() {
+        assert_eq!(family_of(&serde_json::json!({})), "");
+        assert_eq!(family_of(&serde_json::json!({ "details": {} })), "");
+        assert_eq!(family_of(&serde_json::json!({ "details": null })), "");
+        // Non-string is not coerced — `family` keys a template table, and a number
+        // that stringified to "3" would silently select nothing while looking read.
+        assert_eq!(
+            family_of(&serde_json::json!({"details": {"family": 3}})),
+            ""
+        );
     }
 
     #[test]

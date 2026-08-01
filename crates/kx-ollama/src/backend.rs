@@ -63,6 +63,10 @@ pub struct OllamaBackend {
     /// tag is vision-capable). `None` on a text-only serve ⇒ a Multimodal dispatch
     /// fails closed ("no content store bound").
     content_store: Option<Arc<dyn ContentFetcher>>,
+    /// Per-tag declared architecture family (`/api/show` `details.family`), cached at
+    /// discovery beside the context window it arrives with. Read by
+    /// [`InferenceBackend::render_chat`]; a tag absent here renders no template.
+    family: RwLock<BTreeMap<String, String>>,
 }
 
 impl std::fmt::Debug for OllamaBackend {
@@ -72,6 +76,7 @@ impl std::fmt::Debug for OllamaBackend {
             .field("models", &self.models)
             .field("context_len", &self.context_len)
             .field("vision", &self.vision)
+            .field("family", &self.family)
             .field("content_store", &self.content_store.is_some())
             .finish()
     }
@@ -88,6 +93,7 @@ impl OllamaBackend {
             models: RwLock::new(models),
             context_len: RwLock::new(BTreeMap::new()),
             vision: RwLock::new(BTreeSet::new()),
+            family: RwLock::new(BTreeMap::new()),
             content_store: None,
         }
     }
@@ -129,21 +135,25 @@ impl OllamaBackend {
         // field honest-degrades (ctx `0`, vision `false`) and never blocks startup.
         let mut context_len = BTreeMap::new();
         let mut vision = BTreeSet::new();
+        let mut family = BTreeMap::new();
         for tag in &models {
             let meta = client.show_meta(tag).unwrap_or(crate::client::ShowMeta {
                 context_length: 0,
                 vision: false,
+                family: String::new(),
             });
             context_len.insert(tag.clone(), meta.context_length);
             if meta.vision {
                 vision.insert(tag.clone());
             }
+            family.insert(tag.clone(), meta.family);
         }
         Ok(Self {
             client,
             models: RwLock::new(models),
             context_len: RwLock::new(context_len),
             vision: RwLock::new(vision),
+            family: RwLock::new(family),
             content_store: None,
         })
     }
@@ -187,6 +197,7 @@ impl OllamaBackend {
             .unwrap_or(crate::client::ShowMeta {
                 context_length: 0,
                 vision: false,
+                family: String::new(),
             });
         self.models
             .write()
@@ -202,6 +213,10 @@ impl OllamaBackend {
                 .unwrap_or_else(PoisonError::into_inner)
                 .insert(tag.to_string());
         }
+        self.family
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(tag.to_string(), meta.family);
         Ok(())
     }
 
@@ -467,10 +482,33 @@ impl InferenceBackend for OllamaBackend {
         self.dispatch_inner(model_id, input, params, warrant, token_sink)
     }
 
-    // `render_chat` keeps the trait default (`None`): the serve path renders the
-    // chat prompt itself and the backend dispatches the rendered string verbatim
-    // (`/api/generate` `raw:true`), exactly as the llama backend consumes its
-    // already-rendered prompt — so no second template pass is applied.
+    /// Render `(system, user)` in the SERVED MODEL's own chat template, keyed on the
+    /// architecture family the daemon declares.
+    ///
+    /// **Why this must exist at all.** The dispatch path uses `/api/generate` with
+    /// `raw: true`, which tells the daemon to tokenize the prompt VERBATIM and apply
+    /// no template of its own. The caller therefore owns the templating — and the
+    /// caller's fallback is hand-rolled `ChatML` (`<|im_start|>system …`). So every
+    /// `Ollama`-served model was receiving `ChatML` regardless of what it was trained on.
+    /// `gemma3:12b` — the model every Ollama bench number in the corpus was captured
+    /// on — declares `<start_of_turn>` and NO system role. It was being prompted in a
+    /// format it has never seen, on every turn, in every family.
+    ///
+    /// **`None` is the fail-safe, and it is the default.** An unrecognised (or absent)
+    /// family renders nothing, `render_chat_or_chatml` falls back to `ChatML`, and the
+    /// behaviour is byte-identical to what shipped before this method existed. A new
+    /// model family is therefore never made WORSE by this change — only a family that
+    /// is explicitly known is treated differently.
+    fn render_chat(&self, model_id: &ModelId, system: &str, user: &str) -> Option<String> {
+        let family = self
+            .family
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&model_id.0)
+            .cloned()
+            .unwrap_or_default();
+        render_for_family(&family, system, user)
+    }
 
     fn supports(&self, model_id: &ModelId) -> bool {
         self.supports_tag(&model_id.0)
@@ -519,6 +557,55 @@ impl EmbeddingBackend for OllamaBackend {
             model_id: model_id.clone(),
             elapsed: started.elapsed(),
         })
+    }
+}
+
+/// Render `(system, user)` for a declared architecture `family`, or `None` when the
+/// family is unknown.
+///
+/// A pure function of its inputs so it can be tested without a daemon, and so the
+/// rendered bytes are auditable against the template the model actually declares.
+///
+/// **The gemma3 arm mirrors the template `/api/show` returns, rather than a tidier
+/// prompt of our own invention.** Measured against a live daemon, `gemma3:12b`
+/// reports:
+///
+/// ```text
+/// {{- range $i, $_ := .Messages }}
+/// {{- $last := eq (len (slice $.Messages $i)) 1 }}
+/// {{- if or (eq .Role "user") (eq .Role "system") }}<start_of_turn>user
+/// {{ .Content }}<end_of_turn>
+/// {{ if $last }}<start_of_turn>model
+/// {{ end }}
+/// ```
+///
+/// Two things follow, and both are non-obvious. There is **no system role** — the
+/// template maps `system` onto a `user` turn. And it does so as its OWN turn, not
+/// merged into the user's: a `[system, user]` pair renders as two consecutive
+/// `<start_of_turn>user` blocks. Guessing either detail would have produced a prompt
+/// that looks right and is not what the model was trained on, which is the same class
+/// of error as sending it `ChatML`.
+///
+/// An EMPTY system renders the user turn alone — an empty leading turn is not
+/// something the template would ever emit for an absent message.
+fn render_for_family(family: &str, system: &str, user: &str) -> Option<String> {
+    match family {
+        "gemma3" | "gemma2" | "gemma" => {
+            let mut out = String::new();
+            if !system.is_empty() {
+                out.push_str("<start_of_turn>user\n");
+                out.push_str(system);
+                out.push_str("<end_of_turn>\n");
+            }
+            out.push_str("<start_of_turn>user\n");
+            out.push_str(user);
+            out.push_str("<end_of_turn>\n<start_of_turn>model\n");
+            Some(out)
+        }
+        // Unknown / absent ⇒ the caller keeps its ChatML fallback. Adding a family
+        // here is the whole onboarding cost for a new model architecture, and until
+        // a family is added its behaviour is exactly what it is today.
+        _ => None,
     }
 }
 
@@ -626,6 +713,105 @@ fn response_format(grammar: Option<&kx_mote::Grammar>) -> Option<serde_json::Val
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ THE FAIL-SAFE BRANCH, SUPPLIED EXPLICITLY.
+    ///
+    /// An unknown family must render NOTHING, so `render_chat_or_chatml` keeps its
+    /// `ChatML` fallback and a model this table has never heard of behaves exactly as
+    /// it did before the table existed. Adding a template must never be able to make
+    /// an un-listed model worse.
+    ///
+    /// This is the direction the last defect came from: `render_chat` returning
+    /// `None` is a legitimate, documented answer, and three callers treated it as
+    /// fatal — which was invisible because every stub in the workspace answers
+    /// `Some`. The standing requirement out of that is to TEST THE ABSENT BRANCH, so
+    /// here it is, on the method that produces it.
+    #[test]
+    fn an_unknown_family_renders_no_template() {
+        assert_eq!(render_for_family("", "sys", "usr"), None, "absent family");
+        assert_eq!(
+            render_for_family("llama", "sys", "usr"),
+            None,
+            "not in table"
+        );
+        assert_eq!(
+            render_for_family("qwen2", "sys", "usr"),
+            None,
+            "not in table"
+        );
+        assert_eq!(
+            render_for_family("GEMMA3", "sys", "usr"),
+            None,
+            "exact match only"
+        );
+    }
+
+    /// The gemma3 arm must reproduce the template the daemon DECLARES, and the two
+    /// details that are easy to get wrong are asserted by name: there is no system
+    /// role, and the system text is its own `user` turn rather than merged into the
+    /// user's.
+    #[test]
+    fn gemma_renders_the_template_the_model_declares() {
+        let out = render_for_family("gemma3", "SYS", "USR").expect("gemma3 is in the table");
+        assert_eq!(
+            out,
+            "<start_of_turn>user\nSYS<end_of_turn>\n\
+             <start_of_turn>user\nUSR<end_of_turn>\n\
+             <start_of_turn>model\n"
+        );
+        assert!(
+            !out.contains("system"),
+            "gemma has NO system role — emitting one is the ChatML habit this fixes"
+        );
+        assert_eq!(
+            out.matches("<start_of_turn>user").count(),
+            2,
+            "system is its own user turn, not merged into the user's"
+        );
+    }
+
+    /// `ChatML` must be ABSENT from a gemma render. Stated as its own assertion because
+    /// it is the actual defect: `gemma3:12b` was receiving `<|im_start|>system …` on
+    /// every turn of every family, and a test that only checked the new bytes were
+    /// present would pass while the old ones were still there too.
+    #[test]
+    fn a_gemma_render_carries_no_chatml() {
+        let out = render_for_family("gemma3", "SYS", "USR").expect("gemma3 is in the table");
+        for chatml in ["<|im_start|>", "<|im_end|>", "im_start", "im_end"] {
+            assert!(
+                !out.contains(chatml),
+                "a gemma prompt must carry no ChatML marker, found {chatml:?} in {out:?}"
+            );
+        }
+    }
+
+    /// An EMPTY system renders the user turn alone. The template emits a turn per
+    /// MESSAGE, and an absent system message is not an empty one — a leading
+    /// `<start_of_turn>user\n<end_of_turn>` is a turn the model was never trained to
+    /// see, and it would be introduced by exactly the naive concatenation this avoids.
+    #[test]
+    fn an_empty_system_renders_the_user_turn_alone() {
+        let out = render_for_family("gemma3", "", "USR").expect("gemma3 is in the table");
+        assert_eq!(
+            out,
+            "<start_of_turn>user\nUSR<end_of_turn>\n<start_of_turn>model\n"
+        );
+        assert_eq!(out.matches("<start_of_turn>user").count(), 1);
+    }
+
+    /// Every turn end-marker this table can emit must already be in `DEFAULT_STOPS`,
+    /// or generation runs past the turn boundary — `raw:true` means the daemon
+    /// supplies no stops of its own, so the ONLY stops are the ones passed explicitly.
+    /// A future family added to the table without its stop token would produce a
+    /// correctly-shaped prompt and a run-on completion.
+    #[test]
+    fn every_rendered_turn_marker_has_a_stop_token() {
+        let out = render_for_family("gemma3", "SYS", "USR").expect("gemma3 is in the table");
+        assert!(
+            out.contains("<end_of_turn>") && DEFAULT_STOPS.contains(&"<end_of_turn>"),
+            "the gemma turn marker must be a declared stop; DEFAULT_STOPS = {DEFAULT_STOPS:?}"
+        );
+    }
 
     #[test]
     fn response_format_permutation_and_opt_in_strict_envelope() {
