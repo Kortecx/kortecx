@@ -1287,7 +1287,33 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
         .try_init();
 
     // Resolve the model: a GGUF (set the env so serve loads it) or the Ollama opt-in.
-    if let Some(gguf) = serve_gguf() {
+    //
+    // ⚠ REFUSE THE AMBIGUOUS PAIR, and refuse it HERE — before any model time is spent.
+    // `build_serve_runtime` registers the in-process GGUF FIRST and only takes the Ollama
+    // primary `if primary.is_none()`, so when BOTH are configured the GGUF wins and
+    // **llama.cpp serves every turn** — while `engine_and_model()` derives the record's
+    // engine from `KX_SERVE_OLLAMA` alone and labels the run `ollama`. The existing
+    // post-run identity check cannot separate them either: it asserts the served id
+    // CONTAINS "gemma", which is true of `gemma3:12b` and of `gemma-4-12b-it-q4_k_m.gguf`
+    // alike. So the pair silently produces a record whose engine says one thing and whose
+    // numbers came from the other — and every conclusion drawn by comparing the two arms
+    // is then drawn against the same engine twice.
+    //
+    // This is not hypothetical housekeeping: exporting both model env families is the
+    // documented way to make the serve recipes work, so the ambiguous pair is the DEFAULT
+    // state of a session that follows the setup instructions. Fail closed and say exactly
+    // what to unset.
+    let gguf = serve_gguf();
+    assert!(
+        !(gguf.is_some() && ollama_opted_in()),
+        "ambiguous engine configuration: KX_SERVE_MODEL_GGUF resolves to {:?} AND \
+         KX_SERVE_OLLAMA is on. The GGUF becomes the serve PRIMARY, so this run would \
+         measure llama.cpp while recording itself as `ollama`. Unset KX_SERVE_MODEL_GGUF \
+         (and KX_GEMMA_MODEL_DEST, which the serve recipes copy into it) for the Ollama \
+         arm, or unset KX_SERVE_OLLAMA for the llama.cpp arm — one engine per run.",
+        gguf.as_deref()
+    );
+    if let Some(gguf) = gguf {
         std::env::set_var("KX_SERVE_MODEL_GGUF", &gguf);
     } else if !ollama_opted_in() {
         eprintln!(
@@ -1477,12 +1503,48 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     // Post-run identity check: the served model must match the label we recorded (a
     // capable run that silently fell back to a weak model would be a false record).
     let served = served_model_id(&mut c).await.unwrap_or_default();
-    eprintln!("eval-bench: served model_id = {served:?}");
+    eprintln!("eval-bench: served model_id = {served:?} (recorded engine = {engine:?})");
     if capable {
         assert!(
             served.to_ascii_lowercase().contains("gemma"),
             "identity check: asked for a Gemma model but the serve reports {served:?}"
         );
+    }
+    // ENGINE identity, independently of MODEL identity — because the two can disagree and
+    // the substring check above cannot tell them apart: `gemma3:12b` (Ollama) and
+    // `gemma-4-12b-it-q4_k_m.gguf` (llama.cpp) both contain "gemma", so a run served by
+    // the wrong engine passes it while wearing the other engine's label. The record then
+    // carries `engine` from an env var and `model` from the serve, and nothing checks that
+    // those two describe the same thing. A cross-engine comparison built on such a pair is
+    // comparing an engine with itself.
+    //
+    // The Ollama arm is decidable: the served id must be one of the tags the operator
+    // asked for. The llama.cpp arm is decided by exclusion for the same reason — a GGUF's
+    // id is derived from the file and has no fixed spelling to match against, but it can
+    // never equal an Ollama tag.
+    if !served.is_empty() {
+        let asked: Vec<String> = std::env::var("KX_SERVE_OLLAMA_MODELS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let served_is_an_ollama_tag = asked.contains(&served);
+        match engine.as_str() {
+            "ollama" => assert!(
+                served_is_an_ollama_tag,
+                "engine identity: the record says `ollama` but the serve reports \
+                 {served:?}, which is none of the requested tags {asked:?} — the turns \
+                 ran on the in-process engine and this record would misattribute them"
+            ),
+            "llamacpp" => assert!(
+                !served_is_an_ollama_tag,
+                "engine identity: the record says `llamacpp` but the serve reports \
+                 {served:?}, which IS a requested Ollama tag {asked:?}"
+            ),
+            other => panic!("unknown engine label {other:?}"),
+        }
+        eprintln!("eval-bench: engine identity OK — {engine} really served {served:?}");
     }
 
     // The label that travels WITH the numbers into the committed baseline. Recorded from
@@ -1707,6 +1769,51 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
     eprintln!("eval-bench: fixture request histogram (method => total, unauthorized):");
     for (m, (n, bad)) in &by_method {
         eprintln!("    {m:<24} {n:>3} total, {bad:>3} unauthorized");
+    }
+
+    // THE PAGINATION WITNESS — the argument-level evidence the trajectory cannot carry.
+    //
+    // Two tasks turn on carrying a cursor out of one result into the next call's
+    // arguments (`http-paginated-roster`, `long-horizon-fleet-audit`). Whether the loop
+    // does that has been reported as measured, and it was not: `kx_eval::TurnRecord`
+    // holds `tool_id`/`tool_version` and NO arguments, so a turn renders
+    // `Tool tool=fleet/page@1` whether the cursor was carried or not. Ask the standing
+    // question of that instrument — what would it print if the cursor WERE carried? The
+    // same line. It cannot separate the two states it was cited to distinguish, so the
+    // claim rested on the turn-2 duplicate rejection, which proves only that SOME pair of
+    // calls was byte-identical: not which pair, and not that no cursor ever moved.
+    //
+    // The fixture has recorded the answer since it was written (`Captured::cursor`) and
+    // nothing ever read it. Read it. This is a WITNESS, deliberately not an assertion:
+    // whether a model carries a cursor is model behaviour, which the SCORES own — turning
+    // it into a test failure would move a capability verdict out of the numbers and into
+    // a red build. What it must do is make the two states tell each other apart.
+    let page_dials: Vec<Option<String>> = fleet
+        .captured()
+        .into_iter()
+        .filter(|r| r.method == "tools/call" && r.tool.as_deref() == Some("page"))
+        .map(|r| r.cursor)
+        .collect();
+    let carried: Vec<&String> = page_dials.iter().flatten().collect();
+    eprintln!(
+        "eval-bench: PAGINATION WITNESS — {} `page` dial(s), {} carrying a cursor: {:?}",
+        page_dials.len(),
+        carried.len(),
+        page_dials
+    );
+    if page_dials.is_empty() {
+        // Said separately, because "no page dial" and "page dialled, never with a cursor"
+        // have different causes and the same shape in a list of Nones.
+        eprintln!(
+            "eval-bench: PAGINATION WITNESS — the roster tool was never dialled at all \
+             (so this run says NOTHING about cursor carry; check whether the paginating \
+             tasks were in scope)"
+        );
+    } else if carried.is_empty() {
+        eprintln!(
+            "eval-bench: PAGINATION WITNESS — every `page` dial went out WITHOUT a cursor: \
+             the loop reached the roster and never advanced past page one"
+        );
     }
     // ARM 1 — DID THE LOOP DIAL AT ALL? This arm exists because the credential arm below
     // PASSED VACUOUSLY on the very incident this guard was written for: `unauthed == 0` is

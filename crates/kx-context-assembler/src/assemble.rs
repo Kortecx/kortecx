@@ -92,48 +92,13 @@ fn tool_menu_text(grant_id: &str, def: &ToolDef) -> String {
     text
 }
 
-/// Render a deterministic, well-formed example JSON args object over a schema's
-/// REQUIRED params (declared order; optionals omitted to model the minimal valid
-/// call). PURE + total: type-keyed constant placeholders (`Int` → an in-range
-/// integer; `Bool` → `false`; `Enum` → the `BTreeSet`-least allowed value;
-/// `Str`/`Bytes` → a quoted placeholder), no map re-sort (declared order is the
-/// tool's identity contract), no clock/RNG.
-///
-/// **All-optional schemas fall back to every param.** With a required-only filter
-/// a tool whose params are ALL optional rendered `Example: {}` — an example that
-/// teaches nothing and, worse, models a call with no arguments as the correct
-/// shape. The parameter names never reached the model at all: the `Inputs:` block
-/// above lists them, but the example is what the model copies. A tool with
-/// required params is BYTE-UNCHANGED; only the previously-degenerate case moves.
+/// The tool-menu example, delegated to the ONE renderer that also builds the example a
+/// schema REFUSAL shows (`kx_tool_registry::example_args_json`). It used to live here as
+/// a private helper, which meant the menu could show the expected shape while a refusal
+/// could not — and a refusal is the moment the model most needs it. Kept as a thin alias
+/// so this module's byte-pinned menu tests still name it.
 fn example_call_json(schema: &InputSchema) -> String {
-    // Required params model the minimal valid call. When there are none, showing
-    // `{}` would teach the empty call — so show what the tool actually accepts.
-    let required_exists = schema.params.iter().any(|p| p.required);
-    let mut parts: Vec<String> = Vec::new();
-    for p in schema
-        .params
-        .iter()
-        .filter(|p| !required_exists || p.required)
-    {
-        let val = match &p.ty {
-            ParamType::Int { min, max } => match (min, max) {
-                (Some(lo), _) => lo.to_string(),
-                (None, Some(hi)) if *hi < 0 => hi.to_string(),
-                _ => "0".to_string(),
-            },
-            ParamType::Bytes { .. } => "\"<bytes>\"".to_string(),
-            ParamType::Str { .. } => "\"<string>\"".to_string(),
-            ParamType::Bool => "false".to_string(),
-            ParamType::Enum { allowed } => allowed
-                .iter()
-                .next()
-                .map_or_else(|| "\"<enum>\"".to_string(), |v| format!("\"{v}\"")),
-        };
-        // Param names are declared identifiers; the example is advisory prompt
-        // text (never parsed back), so a literal-quoted key is sufficient.
-        parts.push(format!("\"{}\": {val}", p.name));
-    }
-    format!("{{{}}}", parts.join(", "))
+    kx_tool_registry::example_args_json(schema)
 }
 
 /// RC3 (T-REACT-TOOL-MENU): render the advisory tool MENU a tool-eligible ReAct

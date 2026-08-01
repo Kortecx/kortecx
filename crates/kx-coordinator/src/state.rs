@@ -4601,7 +4601,9 @@ fn drive_react_chain<J: Journal>(
             let branch = match (decoded, dup_reason) {
                 // A duplicate single call overrides the would-be `Tool` with `Rejected`.
                 (Ok(_), Some(reason)) => ReactBranch::Rejected { reason },
-                (Ok(calls), None) => settle_calls_to_branch(&calls, tool_registry),
+                (Ok(calls), None) => {
+                    settle_calls_to_branch(&calls, raw.as_ref(), &warrant, tool_registry)
+                }
                 // Malformed / oversize / a name that decoded to no grant ⇒ a
                 // `Rejected` round (the committed turn fact remains; the model
                 // gets a chance to re-propose under the budget).
@@ -4710,15 +4712,52 @@ fn drive_react_chain<J: Journal>(
 /// GUARANTEES registered, schema-valid args (the lease-time re-derivation can then
 /// only fail on I/O). ALL-OR-NOTHING: any one call that fails resolution/validation
 /// freezes the WHOLE turn `Rejected` (one frozen branch/turn, no partial fire) — the
-/// next turn self-corrects under the budget (PR-3/A2). `[]` ⇒ `Answer`; one valid
+/// next turn self-corrects under the budget (PR-3/A2). `[]` ⇒ `Answer` **unless the raw
+/// output attempted a call** (see below); one valid
 /// call ⇒ `Tool` (byte-identical to PR-2d-2); N≥2 valid calls ⇒ `ToolBatch` (fire all
 /// N), bounded by [`kx_journal::MAX_TOOL_BATCH_CALLS`] (a batch over the cap is a LOUD
 /// `Rejected`, never a silent truncation).
+///
+/// **Why `raw` is a parameter and not just `calls`.** An empty call list has two opposite
+/// causes — the model answered, or the model tried to call a tool in a dialect the
+/// decoder does not recognise — and this function used to map both to `Answer`, the one
+/// branch that is TERMINAL. So an unreadable proposal did not cost a turn, it ended the
+/// run. Measured on a served Gemma-4-12b: `long-horizon-fleet-audit` settled at turn 3 of
+/// 8 with five turns and seven tool calls unused, on an "answer" that was
+/// `<|tool_call>call:fleet/get_vessel{…}<tool_call|>`. The decode alone cannot separate
+/// them, because it reports a COUNT; the intent is in the bytes.
 fn settle_calls_to_branch(
     calls: &[kx_toolcall::ToolCall],
+    raw: &[u8],
+    warrant: &WarrantSpec,
     tool_registry: &dyn ToolRegistry,
 ) -> ReactBranch {
     if calls.is_empty() {
+        // An ATTEMPT the decoder could not read is a refused proposal, not a decision to
+        // stop: freeze `Rejected` so the existing A2 machinery re-prompts it under the
+        // budget with the exact envelope. This adds no journal variant and no new
+        // terminal — it moves a case OUT of the terminal branch into the recoverable one.
+        if kx_toolcall::looks_like_an_attempted_tool_call(raw, warrant) {
+            return ReactBranch::Rejected {
+                reason: crate::react_shape::bounded_reason(
+                    kx_toolcall::unreadable_tool_call_reason(),
+                ),
+            };
+        }
+        // The SAME defect wearing the other engine's mask. Where a free-form engine emits
+        // an unparseable call (above), a union-grammar engine is guaranteed to emit a
+        // well-formed `{"answer": …}` — so the identical intent arrives as a syntactically
+        // perfect answer whose CONTENT is a plan. Measured on the same task, same suite,
+        // same session: llama.cpp settled on `<|tool_call>call:fleet/get_vessel{…}`, Ollama
+        // settled on `{"answer": "… I will combine them and proceed."}`. Both end a chain
+        // with work outstanding and budget in hand; neither is an answer.
+        if kx_toolcall::answer_is_a_continuation(raw, warrant) {
+            return ReactBranch::Rejected {
+                reason: crate::react_shape::bounded_reason(
+                    kx_toolcall::continuation_answer_reason(),
+                ),
+            };
+        }
         // A normal completion IS the final answer (the harness two-fact contract).
         return ReactBranch::Answer;
     }
@@ -4737,11 +4776,25 @@ fn settle_calls_to_branch(
             Some(def) => {
                 if let Some(schema) = def.input_schema.as_ref() {
                     if let Err(error) = kx_tool_registry::validate_args(schema, &call.args_bytes) {
+                        // SHOW the shape, do not just name the fault. `SchemaError`'s
+                        // Display is written for an operator reading a log, and for the
+                        // malformed case it forwards serde's own text — measured on a
+                        // served Gemma-4-12b, a `fleet/page` call that was TRYING to carry
+                        // the cursor came back with *"malformed args: expected value at
+                        // line 1 column 11"*: a byte offset into bytes the model cannot
+                        // see. It stopped trying to paginate and repeated its previous
+                        // call, which the duplicate guard then refused.
+                        //
+                        // The example comes from the SAME renderer the tool menu uses
+                        // (`kx_tool_registry::example_args_json`), so the shape a refusal
+                        // teaches and the shape the menu teaches cannot drift apart.
                         return ReactBranch::Rejected {
                             reason: crate::react_shape::bounded_reason(format!(
                                 "the arguments for `{}@{}` do not match its \
-                                 inputSchema: {error}",
-                                call.name.0, call.version.0
+                                 inputSchema: {error}. Expected this shape: {}",
+                                call.name.0,
+                                call.version.0,
+                                kx_tool_registry::example_args_json(schema)
                             )),
                         };
                     }
@@ -6973,6 +7026,259 @@ fn apply_batch<J: Journal>(
         });
     }
     Ok(applied)
+}
+
+#[cfg(test)]
+mod settle_branch_tests {
+    //! The settle authority's branch decision for an EMPTY call list — the one place a
+    //! turn becomes terminal.
+    //!
+    //! **The incident.** `long-horizon-fleet-audit` on a served Gemma-4-12b read the
+    //! paginated roster correctly (turn 0 no cursor, turn 1 carrying `cursor="2"` — the
+    //! fixture recorded both dials), re-proposed an identical call at turn 2 and was
+    //! duplicate-rejected, then at turn 3 emitted
+    //!
+    //! ```text
+    //! <|channel>thought
+    //! <channel|><|tool_call>call:fleet/get_vessel{"vessel_id":"merlin"}<tool_call|>
+    //! ```
+    //!
+    //! and the chain SETTLED — five turns and seven tool calls of budget unused. That
+    //! output is an attempt to act: `<|tool_call>` markers, a `call:` prefix, a
+    //! tool-shaped name, a JSON args object. The decoder did not recognise the dialect
+    //! and reported no calls; this function mapped no-calls to `Answer`, which is
+    //! terminal. So an unreadable proposal did not cost a turn — it ended the run.
+    use super::*;
+    use kx_tool_registry::{
+        IdempotencyClass, InMemoryToolRegistry, InputSchema, ParamSpec, ParamType, ToolDef,
+        ToolKind, ToolProvenance,
+    };
+    use kx_warrant::{FsScope, MoteClass, NetScope, ResourceCeiling, ToolRequirement};
+
+    /// The measured terminal, byte-for-byte.
+    const MEASURED: &[u8] = b"<|channel>thought\n<channel|><|tool_call>call:fleet/get_vessel{\"vessel_id\":\"merlin\"}<tool_call|>";
+
+    /// A registry holding `fleet/page@1` with the roster tool's real schema: one
+    /// OPTIONAL string `cursor` (the shape the live fixture declares).
+    fn registry_with_page() -> InMemoryToolRegistry {
+        let mut reg = InMemoryToolRegistry::new();
+        let _ = reg.register(
+            ToolDef {
+                tool_id: ToolName("fleet/page".into()),
+                tool_version: ToolVersion("1".into()),
+                kind: ToolKind::Builtin,
+                required_capability: ToolRequirement {
+                    net_scope_required: NetScope::None,
+                    fs_scope_required: FsScope::empty(),
+                    syscall_profile_ref: ContentRef::from_bytes([0; 32]),
+                    min_resource_ceiling: ResourceCeiling {
+                        cpu_milli: 0,
+                        mem_bytes: 0,
+                        wall_clock_ms: 0,
+                        fd_count: 0,
+                        disk_bytes: 0,
+                    },
+                },
+                description: "List fleet crew records, two at a time.".into(),
+                idempotency_class: IdempotencyClass::Readback,
+                input_schema: Some(InputSchema {
+                    params: vec![ParamSpec {
+                        name: "cursor".into(),
+                        ty: ParamType::Str { max_len: 256 },
+                        required: false,
+                    }],
+                    deny_unknown: true,
+                }),
+            },
+            ToolProvenance::HumanAuthored {
+                author: "test".to_string(),
+            },
+        );
+        reg
+    }
+
+    /// A warrant granting the roster tools. Load-bearing for the attempted-call arm:
+    /// with an EMPTY grant set the runtime is in pure-reasoning mode and a
+    /// tool-call-shaped completion IS the answer, so the predicate must stay silent —
+    /// asserted separately in `pure_reasoning_mode_still_settles`.
+    fn granting_warrant() -> WarrantSpec {
+        let mut w = WarrantSpec {
+            mote_class: MoteClass::ReadOnlyNondet,
+            nd_class: MoteClass::ReadOnlyNondet,
+            ..Default::default()
+        };
+        for (id, ver) in [("fleet/page", "1"), ("fleet/get", "1")] {
+            w.tool_grants.insert(kx_warrant::ToolGrant {
+                tool_id: ToolName(id.into()),
+                tool_version: ToolVersion(ver.into()),
+            });
+        }
+        w
+    }
+
+    fn call(name: &str, args: &[u8]) -> kx_toolcall::ToolCall {
+        kx_toolcall::ToolCall {
+            name: ToolName(name.into()),
+            version: ToolVersion("1".into()),
+            args_bytes: args.to_vec(),
+        }
+    }
+
+    /// **The incident.** A `fleet/page` call that was TRYING to carry the cursor was
+    /// refused with `malformed args: expected value at line 1 column 11` — a byte offset
+    /// into bytes the model never sees. It did not retry the cursor; it repeated its
+    /// previous call, which the duplicate guard then refused, and the chain settled.
+    ///
+    /// A refusal that names a fault without showing the shape is a diagnostic addressed
+    /// to the wrong reader: `SchemaError`'s Display is written for an operator reading a
+    /// log, and for the malformed arm it forwards serde's own text verbatim.
+    #[test]
+    fn a_schema_refusal_shows_the_expected_shape() {
+        let reg = registry_with_page();
+        // The malformed arm — the measured one.
+        let branch = settle_calls_to_branch(
+            &[call("fleet/page", br#"{"cursor": }"#)],
+            b"irrelevant-raw",
+            &granting_warrant(),
+            &reg,
+        );
+        let ReactBranch::Rejected { reason } = branch else {
+            panic!("malformed args must be refused: {branch:?}");
+        };
+        assert!(
+            reason.contains(r#"Expected this shape: {"cursor": "<string>"}"#),
+            "the refusal must SHOW the shape the model should emit, not only where a \
+             parser stopped: {reason}"
+        );
+        // …and it is the SAME shape the tool menu teaches, from the one renderer.
+        assert!(
+            reason.contains("expected value at line 1 column"),
+            "…without dropping the underlying fault: {reason}"
+        );
+
+        // The unknown-parameter arm — the case where the model invented a key. The same
+        // suffix now tells it which keys exist, which the bare
+        // "unknown parameter `x` (deny_unknown)" never did.
+        let branch = settle_calls_to_branch(
+            &[call("fleet/page", br#"{"name":"merlin"}"#)],
+            b"irrelevant-raw",
+            &granting_warrant(),
+            &reg,
+        );
+        let ReactBranch::Rejected { reason } = branch else {
+            panic!("an unknown parameter must be refused: {branch:?}");
+        };
+        assert!(reason.contains("unknown parameter"), "{reason}");
+        assert!(
+            reason.contains(r#"Expected this shape: {"cursor": "<string>"}"#),
+            "an unknown-key refusal must name what IS accepted: {reason}"
+        );
+
+        // THE ACCEPTING CONTROL, varying exactly one variable: valid args for the same
+        // tool on the same registry must still FIRE, so the assertions above cannot be
+        // satisfied by a settle that refuses everything.
+        assert_eq!(
+            settle_calls_to_branch(
+                &[call("fleet/page", br#"{"cursor":"2"}"#)],
+                b"irrelevant-raw",
+                &granting_warrant(),
+                &reg
+            ),
+            ReactBranch::Tool {
+                tool_id: "fleet/page".to_string(),
+                tool_version: "1".to_string()
+            },
+            "the cursor-carrying call the loop is supposed to make must fire"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_tool_call_attempt_is_rejected_not_answered() {
+        let registry = InMemoryToolRegistry::default();
+        match settle_calls_to_branch(&[], MEASURED, &granting_warrant(), &registry) {
+            ReactBranch::Rejected { reason } => {
+                assert_eq!(reason, kx_toolcall::unreadable_tool_call_reason());
+            }
+            other => panic!(
+                "an attempted tool call must be a REFUSED proposal the chain re-prompts \
+                 under its budget, never a terminal answer — got {other:?}"
+            ),
+        }
+    }
+
+    /// The accepting control, varying exactly ONE variable: the same empty call list, the
+    /// same registry, prose instead of an attempt. Without this the test above would pass
+    /// on a settle that rejected everything.
+    #[test]
+    fn a_real_answer_still_settles() {
+        let registry = InMemoryToolRegistry::default();
+        for answer in [
+            &b"The callsign for merlin is TRESTLE-62."[..],
+            &b"16294"[..],
+            &b"TOOL NOT AVAILABLE"[..],
+            &b"MEMORY DOES NOT SAY"[..],
+            // Empty output: no attempt, so it stays the terminal it has always been.
+            &b""[..],
+        ] {
+            assert_eq!(
+                settle_calls_to_branch(&[], answer, &granting_warrant(), &registry),
+                ReactBranch::Answer,
+                "a genuine answer must remain terminal: {:?}",
+                String::from_utf8_lossy(answer)
+            );
+        }
+    }
+
+    /// **Pure-reasoning mode.** A warrant granting NO tools makes `parse_tool_call`
+    /// return `Ok(None)` for ANY output by construction, so a tool-call-shaped
+    /// completion IS the final answer. Calling it an attempt would re-prompt a chain
+    /// that can never succeed — there is no tool to call — burning the whole budget and
+    /// dead-lettering instead of answering, which is strictly worse than the behaviour
+    /// the attempt arm exists to fix. Caught by the repo's own
+    /// `empty_tool_grants_is_pure_reasoning` e2e before this arm existed.
+    /// The Ollama half, on its VERBATIM measured bytes: a well-formed union answer whose
+    /// content is a plan. Same terminal-with-budget-in-hand as the unparseable call above.
+    #[test]
+    fn a_plan_in_the_answer_slot_is_rejected_not_answered() {
+        let reg = InMemoryToolRegistry::default();
+        let measured = br#"{"answer": "I have the records from two calls to `fleet/page`. I will combine them and proceed."}"#;
+        match settle_calls_to_branch(&[], measured, &granting_warrant(), &reg) {
+            ReactBranch::Rejected { reason } => {
+                assert_eq!(reason, kx_toolcall::continuation_answer_reason());
+            }
+            other => panic!(
+                "a stated intention to continue ends a chain with work outstanding and \
+                 budget in hand — it must re-prompt, not settle: {other:?}"
+            ),
+        }
+        // The accepting control, one variable changed: the SAME envelope carrying a real
+        // answer must still settle.
+        assert_eq!(
+            settle_calls_to_branch(
+                &[],
+                br#"{"answer": "The final number is 16294."}"#,
+                &granting_warrant(),
+                &reg
+            ),
+            ReactBranch::Answer
+        );
+    }
+
+    #[test]
+    fn pure_reasoning_mode_still_settles() {
+        let registry = InMemoryToolRegistry::default();
+        let no_grants = WarrantSpec {
+            mote_class: MoteClass::ReadOnlyNondet,
+            nd_class: MoteClass::ReadOnlyNondet,
+            ..Default::default()
+        };
+        assert!(no_grants.tool_grants.is_empty());
+        assert_eq!(
+            settle_calls_to_branch(&[], MEASURED, &no_grants, &registry),
+            ReactBranch::Answer,
+            "with no grants there is no tool to call, so an attempt must settle"
+        );
+    }
 }
 
 #[cfg(test)]

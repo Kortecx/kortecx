@@ -1041,6 +1041,38 @@ mod tests {
         );
     }
 
+    /// The unreadable-tool-call reason, spelled as a LITERAL on this side of the dep
+    /// wall. Its twin is `kx_model_harness::react_reason::tests`, which spells the SAME
+    /// literal independently — see that test for why a cross-call equality would be
+    /// vacuous. This reason freezes onto a `ReactBranch::Rejected` fact and folds into
+    /// the re-prompted turn's `MoteId`.
+    #[test]
+    fn unreadable_tool_call_reason_is_twin_pinned() {
+        assert_eq!(
+            kx_toolcall::unreadable_tool_call_reason(),
+            "your reply looked like a tool call but could not be read as one. Emit \
+             EXACTLY one JSON object and nothing else: \
+             {\"tool_call\":{\"name\":\"<tool name>\",\"version\":\"<tool version>\",\
+             \"args\":{ ... }}} — using a name and version from the tool list. If you did \
+             not mean to call a tool, reply with your final answer as plain text."
+        );
+        // It must NOT arm the answer-only force. An unreadable proposal is precisely the
+        // case where the model should be allowed to try a tool again — arming the force
+        // here would suppress the tool menu on the very turn that needs it most, which is
+        // how the measured chain produced an invented tool name in the first place.
+        assert!(!kx_toolcall::is_duplicate_reason(
+            &kx_toolcall::unreadable_tool_call_reason()
+        ));
+        assert!(
+            !kx_toolcall::unreadable_tool_call_reason().contains(kx_toolcall::SETTLE_NUDGE_MARKER)
+        );
+        // Bounded intact, so the envelope always reaches the model.
+        assert_eq!(
+            bounded_reason(kx_toolcall::unreadable_tool_call_reason()),
+            kx_toolcall::unreadable_tool_call_reason()
+        );
+    }
+
     #[test]
     fn render_reprompt_is_deterministic_and_embeds_the_reason() {
         let a = render_reprompt("list the files", "tool `x@1` is not granted to this run");

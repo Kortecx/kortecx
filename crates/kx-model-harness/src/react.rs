@@ -269,8 +269,43 @@ where
         // `parse_tool_call` is pure over the same bytes). A registry-miss /
         // schema-invalid resolves to `Ok(Some)` and fails closed later at dispatch
         // (out of A2's decode-refusal scope — its own fail-closed stop below).
-        if let Err(error) = &branch {
-            let reason = react_reason::bounded_reason(react_reason::decode_error_reason(error));
+        // The refusal reason for THIS turn, or `None` when the turn stands as decoded.
+        //
+        // Two causes, one path. The historical one is a decode `Err` (malformed /
+        // ungranted / oversize). The second is an empty call list over output that
+        // ATTEMPTED a call — a dialect the decoder does not recognise. That used to fall
+        // through to the answer branch below, which is TERMINAL, so an unreadable
+        // proposal ended the run instead of costing a turn (measured on a served
+        // Gemma-4-12b: five turns of budget unused). It is a refused proposal and it
+        // takes the refused-proposal path, exactly as the live coordinator's
+        // `settle_calls_to_branch` now does — the two drivers must agree, because the
+        // reason folds into the re-prompted turn's `MoteId`.
+        //
+        // Both arms are PURE over the same committed bytes, so a cold re-fold of a
+        // previously-rejected turn re-derives the identical reason without re-committing.
+        let reject_reason: Option<String> = match &branch {
+            Err(error) => Some(react_reason::bounded_reason(
+                react_reason::decode_error_reason(error),
+            )),
+            Ok(calls)
+                if calls.is_empty()
+                    && toolcall::looks_like_an_attempted_tool_call(&raw, warrant) =>
+            {
+                Some(react_reason::bounded_reason(
+                    toolcall::unreadable_tool_call_reason(),
+                ))
+            }
+            // The union-grammar twin of the arm above: a well-formed answer whose content
+            // is a statement of intent to continue. The live coordinator's
+            // `settle_calls_to_branch` freezes the identical reason.
+            Ok(calls) if calls.is_empty() && toolcall::answer_is_a_continuation(&raw, warrant) => {
+                Some(react_reason::bounded_reason(
+                    toolcall::continuation_answer_reason(),
+                ))
+            }
+            Ok(_) => None,
+        };
+        if let Some(reason) = reject_reason {
             tracing::warn!(turn, %reason, "react: proposal refused — re-prompting (A2)");
             // Commit the rejected turn alone (turn-only round; a committed turn is
             // served by the engine's P0.4 gate, its map entry then inert).

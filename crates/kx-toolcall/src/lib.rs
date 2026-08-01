@@ -30,6 +30,8 @@ pub use dedup::{
     SETTLE_NUDGE_MARKER,
 };
 pub use parse::{
-    extract_answer, max_args_bytes, parse_permutation, parse_tool_call, parse_tool_calls,
+    answer_is_a_continuation, continuation_answer_reason, extract_answer,
+    looks_like_an_attempted_tool_call, max_args_bytes, parse_permutation, parse_tool_call,
+    parse_tool_calls, unreadable_tool_call_reason,
 };
 pub use types::{DecodeError, ToolCall};

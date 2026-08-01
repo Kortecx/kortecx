@@ -145,6 +145,58 @@ impl std::fmt::Display for SchemaError {
 
 impl std::error::Error for SchemaError {}
 
+/// Render a deterministic, well-formed EXAMPLE args object over a schema — the one
+/// renderer for every place the runtime shows a model what a call should look like.
+///
+/// It lives here, beside [`validate_args`], because the two must never disagree: the
+/// example is what a model copies, and an example the validator would refuse is worse
+/// than none. Previously this existed only as a private helper inside the tool-MENU
+/// renderer, so the menu could show the shape while a REFUSAL could not — and a refusal
+/// is the moment the model most needs it. Measured on a served Gemma-4-12b: a `fleet/page`
+/// call carrying the cursor came back refused with *"malformed args: expected value at
+/// line 1 column 11"* — a byte offset into bytes the model cannot see. The model then
+/// stopped trying to paginate and repeated its previous call.
+///
+/// PURE + total: type-keyed constant placeholders (`Int` → an in-range integer; `Bool` →
+/// `false`; `Enum` → the `BTreeSet`-least allowed value; `Str`/`Bytes` → a quoted
+/// placeholder), declared order (the tool's identity contract), no clock/RNG.
+///
+/// **All-optional schemas fall back to every param.** With a required-only filter a tool
+/// whose params are ALL optional rendered `{}` — an example that teaches nothing and,
+/// worse, models a call with no arguments as the correct shape. A schema with a required
+/// param is byte-unchanged; only the previously-degenerate case moves.
+#[must_use]
+pub fn example_args_json(schema: &InputSchema) -> String {
+    // Required params model the minimal valid call. When there are none, showing `{}`
+    // would teach the empty call — so show what the tool actually accepts.
+    let required_exists = schema.params.iter().any(|p| p.required);
+    let mut parts: Vec<String> = Vec::new();
+    for p in schema
+        .params
+        .iter()
+        .filter(|p| !required_exists || p.required)
+    {
+        let val = match &p.ty {
+            ParamType::Int { min, max } => match (min, max) {
+                (Some(lo), _) => lo.to_string(),
+                (None, Some(hi)) if *hi < 0 => hi.to_string(),
+                _ => "0".to_string(),
+            },
+            ParamType::Bytes { .. } => "\"<bytes>\"".to_string(),
+            ParamType::Str { .. } => "\"<string>\"".to_string(),
+            ParamType::Bool => "false".to_string(),
+            ParamType::Enum { allowed } => allowed
+                .iter()
+                .next()
+                .map_or_else(|| "\"<enum>\"".to_string(), |v| format!("\"{v}\"")),
+        };
+        // Param names are declared identifiers; the example is advisory text (never
+        // parsed back), so a literal-quoted key is sufficient.
+        parts.push(format!("\"{}\": {val}", p.name));
+    }
+    format!("{{{}}}", parts.join(", "))
+}
+
 /// Validate a model's proposed tool-call `args_bytes` against `schema`,
 /// **fail-closed**. Total + panic-free over arbitrary bytes: the args are parsed
 /// as a SHALLOW one-level map of raw values (never a recursive dynamic `Value`,

@@ -1061,6 +1061,145 @@ pub fn parse_tool_calls(
         .collect())
 }
 
+/// The marker token that distinguishes *"the model tried to call a tool and we could
+/// not read it"* from *"the model answered"*.
+///
+/// One token, deliberately. It is present in every shape the runtime itself ever
+/// teaches or emits — the canonical envelope key `{"tool_call":…}`, the plural
+/// `{"tool_calls":[…]}`, and the Gemma channel markers `<|tool_call>` / `<tool_call|>`
+/// — so a model reaching for any of them is caught, while prose that merely discusses
+/// tools is not. Broadening it to "looks tool-shaped" (a `{` with a `"name"` in it)
+/// would catch a JSON answer, and a JSON answer is a legitimate terminal.
+const ATTEMPTED_CALL_MARKER: &str = "tool_call";
+
+/// `true` iff `bytes` ATTEMPTED a tool call — consulted only when the decode produced
+/// no calls, to tell a failed proposal apart from a final answer.
+///
+/// **Why this predicate has to exist.** [`parse_tool_calls`] answers "how many calls
+/// are in here", and returns an empty list for two opposite intents: a deliberate prose
+/// answer, and a tool call in a dialect it does not recognise. The settle authority then
+/// maps "no calls" to the ANSWER branch, which is TERMINAL — so every unreadable
+/// proposal silently ends the run instead of costing one turn. Measured on a served
+/// Gemma-4-12b: `long-horizon-fleet-audit` terminated at turn 3 of 8, five turns of
+/// budget unused, on the "answer"
+/// `<|tool_call>call:fleet/get_vessel{"vessel_id":"merlin"}<tool_call|>` — an attempt to
+/// act, scored as a decision to stop.
+///
+/// **Why a false positive is cheap and a false negative is not.** Saying "attempted"
+/// about a genuine answer costs ONE turn: the chain re-prompts under its existing budget
+/// and the model answers again (and at the budget edge the settle-nudge forces the answer
+/// regardless). Saying "answered" about an attempt costs the WHOLE RUN. The predicate is
+/// therefore allowed to be slightly eager, and its one marker is chosen to be eager only
+/// about text that contains the runtime's own envelope token.
+///
+/// **What it does not claim.** It is a heuristic over untrusted text and is never an
+/// authority: it can only turn a terminal branch into a re-promptable one. Grant
+/// membership and arg validation remain where they were, and nothing here can admit a
+/// tool. A dialect that carries no marker at all (a bare `[fleet/get(vessel="x")]`) is
+/// still read as an answer — an honest limit, not a covered case.
+///
+/// **A warrant granting NO tools is always `false`, and that is load-bearing.** With an
+/// empty grant set the runtime is in pure-reasoning mode: `parse_tool_call` returns
+/// `Ok(None)` for ANY output by construction, so a tool-call-shaped completion IS the
+/// final answer. Calling it an attempt there would re-prompt a chain that can never
+/// succeed — there is no tool to call — and it would burn the whole budget and
+/// dead-letter instead of answering, which is strictly worse than the behaviour being
+/// fixed. The check lives INSIDE the predicate rather than at each call site so a third
+/// caller cannot forget it, mirroring `try_decode_multi`'s own empty-grants early return.
+///
+/// Pure + total over arbitrary bytes (non-UTF-8 ⇒ `false`), so the coordinator settle and
+/// the harness twin derive the identical branch on a cold re-fold.
+#[must_use]
+pub fn looks_like_an_attempted_tool_call(bytes: &[u8], warrant: &WarrantSpec) -> bool {
+    if warrant.tool_grants.is_empty() {
+        return false;
+    }
+    std::str::from_utf8(bytes).is_ok_and(|t| t.contains(ATTEMPTED_CALL_MARKER))
+}
+
+/// Forward-intent openers: the closed set of ways a small model announces a NEXT STEP
+/// while filling the answer slot. First-person and future only — the narrowest form that
+/// covers the measured case, because every phrase here can turn a correct answer into a
+/// spent turn.
+const CONTINUATION_OPENERS: [&str; 6] = [
+    "i will ",
+    "i'll ",
+    "let me ",
+    "i am going to ",
+    "i'm going to ",
+    "next, i ",
+];
+
+/// `true` iff a would-be ANSWER is really a statement of intent to continue.
+///
+/// **The other half of the same defect, wearing the other engine's mask.** On llama.cpp a
+/// chain that means to act emits an unparseable tool call and the settle reads it as an
+/// answer ([`looks_like_an_attempted_tool_call`]). On Ollama the union grammar guarantees
+/// a well-formed `{"answer": …}`, so the same intent arrives as a *syntactically perfect
+/// answer whose content is a plan*. Measured, same task, same suite, same session:
+///
+/// ```text
+/// llama.cpp : turn 3 Answer  <|tool_call>call:fleet/get_vessel{…}<tool_call|>
+/// ollama    : turn 3 Answer  {"answer": "I have the records from two calls to
+///                             `fleet/page`. I will combine them and proceed."}
+/// ```
+///
+/// Both terminate a chain with work outstanding and budget in hand; neither is an answer.
+/// The predicate reads the ANSWER TEXT (unwrapping the union arm via [`extract_answer`]),
+/// lowercases it, and tests a closed set of first-person future openers.
+///
+/// **Empty grants ⇒ always `false`,** for the same reason as the sibling predicate: with no
+/// tool to call there is no continuation to make, so a plan-shaped sentence is simply how
+/// that model writes prose.
+///
+/// **Stated limits, because this one is a language heuristic and cannot be anything else.**
+/// It will miss a plan phrased differently ("the next step is to …") and it will fire on a
+/// legitimate answer that opens with one of these phrases. The cost asymmetry is the same
+/// as the sibling's — one spent turn versus a whole run — but it is thinner here, so the
+/// opener list is deliberately short and every answer the corpus expects is pinned as an
+/// accepting control.
+#[must_use]
+pub fn answer_is_a_continuation(bytes: &[u8], warrant: &WarrantSpec) -> bool {
+    if warrant.tool_grants.is_empty() {
+        return false;
+    }
+    let answer = extract_answer(bytes);
+    let Ok(text) = std::str::from_utf8(answer.as_ref()) else {
+        return false;
+    };
+    let lowered = text.to_lowercase();
+    CONTINUATION_OPENERS.iter().any(|p| lowered.contains(p))
+}
+
+/// The fail-closed reason a settle freezes when a would-be answer is really a plan
+/// ([`answer_is_a_continuation`]). A CONSTANT, for the same `MoteId`-folding reason as
+/// its sibling. It names the mechanism the model cannot see — that answering ENDS the
+/// run — because a model that knew would not have announced a next step instead of
+/// taking one.
+#[must_use]
+pub fn continuation_answer_reason() -> String {
+    "you described what you are ABOUT to do instead of doing it. Answering ends the run, \
+     so there is no turn after your answer and the step you described would never happen. \
+     Take that step NOW by calling the tool, or give the final result you were asked for."
+        .to_string()
+}
+
+/// The fail-closed reason a settle freezes when the model ATTEMPTED a tool call the
+/// decoder could not read ([`looks_like_an_attempted_tool_call`]).
+///
+/// A CONSTANT — no interpolation — because it folds into the re-prompted turn's `MoteId`
+/// and both drivers must render it byte-identically on a cold re-fold. It states the
+/// exact envelope rather than describing it: a contract's example is what a model copies,
+/// and the measured failure was a model inventing a dialect with no example in view.
+#[must_use]
+pub fn unreadable_tool_call_reason() -> String {
+    "your reply looked like a tool call but could not be read as one. Emit EXACTLY one \
+     JSON object and nothing else: {\"tool_call\":{\"name\":\"<tool name>\",\"version\":\
+     \"<tool version>\",\"args\":{ ... }}} — using a name and version from the tool list. \
+     If you did not mean to call a tool, reply with your final answer as plain text."
+        .to_string()
+}
+
 /// The multi-element (≥2 calls) detection that sits in front of the single decoder.
 /// Returns `Ok(Some(vec))` when the output IS a multi shape (the vec is the decoded
 /// batch — possibly empty for an all-or-nothing markerless degrade), `Ok(None)` when
@@ -1742,6 +1881,193 @@ mod tests {
             });
         }
         w
+    }
+
+    /// **The incident, verbatim.** `long-horizon-fleet-audit` on a served Gemma-4-12b
+    /// (llama.cpp) reached turn 3 of 8 with four turns of budget unused and terminated
+    /// `Answer` — and the "answer" it settled on was this:
+    ///
+    /// ```text
+    /// <|channel>thought
+    /// <channel|><|channel>thought
+    /// <channel|><|tool_call>call:fleet/get_vessel{"vessel_id":"merlin"}<tool_call|>
+    /// ```
+    ///
+    /// That is not an answer. It is an ATTEMPTED tool call: `<|tool_call>` markers, a
+    /// `call:` prefix, a tool-shaped name and a JSON args object. The model was trying to
+    /// act. The decoder did not recognise the shape, returned "no calls", and the settle
+    /// authority maps no-calls to `Answer` — the one branch that is TERMINAL.
+    ///
+    /// So the loop's most expensive failure is not that the model gives up. It is that
+    /// **a tool call the decoder cannot read is indistinguishable, to the settle, from a
+    /// deliberate final answer** — and the two deserve opposite treatments: a refused
+    /// proposal re-prompts under the budget (that machinery already exists, `Rejected`),
+    /// while an answer ends the run. Every unrecognised dialect is therefore not a parse
+    /// miss that costs one turn, it is a silent terminal that costs the whole run.
+    ///
+    /// This test pins the CURRENT behaviour so the fix has something to move: it asserts
+    /// the decode is empty, i.e. that the runtime today cannot tell these apart.
+    #[test]
+    fn an_attempted_tool_call_the_decoder_cannot_read_decodes_as_no_calls() {
+        let w = warrant_granting_many(&[("fleet/get", "1"), ("fleet/page", "1")]);
+        let measured: &[u8] = b"<|channel>thought\n<channel|><|channel>thought\n<channel|><|tool_call>call:fleet/get_vessel{\"vessel_id\":\"merlin\"}<tool_call|>";
+        let decoded = parse_tool_calls(measured, &w, 4096);
+        assert!(
+            matches!(&decoded, Ok(calls) if calls.is_empty()),
+            "the measured output decodes to NO CALLS (which the settle then reads as a \
+             final answer): {decoded:?}"
+        );
+        // The counterweight that makes the assertion mean something: a real prose answer
+        // ALSO decodes to no calls. That is the whole problem — one predicate, two
+        // opposite intents, and the settle only sees the predicate.
+        let prose: &[u8] = b"The callsign for merlin is TRESTLE-62.";
+        assert!(
+            matches!(parse_tool_calls(prose, &w, 4096), Ok(calls) if calls.is_empty()),
+            "a genuine prose answer decodes to no calls too — identical to the attempted \
+             call above, which is why the settle cannot separate them"
+        );
+    }
+
+    /// The separation the settle needs, asserted on the incident's VERBATIM bytes and on
+    /// an accepting control for every answer the corpus actually expects.
+    ///
+    /// Landed RED: before `looks_like_an_attempted_tool_call` existed there was no
+    /// predicate to call, and the two inputs below were indistinguishable — which is the
+    /// defect, stated as a test.
+    #[test]
+    fn an_attempted_call_and_a_real_answer_are_now_separable() {
+        let w = warrant_granting_many(&[("fleet/get", "1"), ("fleet/page", "1")]);
+        // The incident, byte-for-byte as the model emitted it.
+        let measured: &[u8] = b"<|channel>thought\n<channel|><|channel>thought\n<channel|><|tool_call>call:fleet/get_vessel{\"vessel_id\":\"merlin\"}<tool_call|>";
+        assert!(
+            looks_like_an_attempted_tool_call(measured, &w),
+            "the measured terminal was an ATTEMPT to act and must not be read as an answer"
+        );
+        // The canonical envelope and its plural, in case a decode ever misses them.
+        assert!(looks_like_an_attempted_tool_call(
+            br#"{"tool_call":{"name":"fleet/get","version":"1","args":{}}}"#,
+            &w
+        ));
+        assert!(looks_like_an_attempted_tool_call(
+            br#"{"tool_calls":[{"name":"fleet/get","arguments":{}}]}"#,
+            &w
+        ));
+
+        // PURE-REASONING MODE, and it is not a nicety. With NO grants `parse_tool_call`
+        // returns Ok(None) for any output by construction, so a tool-call-shaped
+        // completion IS the answer — re-prompting it would loop a chain that can never
+        // succeed and dead-letter instead of answering. Caught by the repo's own
+        // `empty_tool_grants_is_pure_reasoning` e2e before this arm existed.
+        let no_grants = warrant_granting(None);
+        assert!(
+            !looks_like_an_attempted_tool_call(measured, &no_grants),
+            "with no grants there is no tool to call, so an attempt is an ANSWER"
+        );
+
+        // THE ACCEPTING CONTROLS — every answer `bench-v1` actually expects. If any of
+        // these were called an attempt, a passing task would start costing a turn, so
+        // they are listed exhaustively rather than sampled.
+        for answer in [
+            "Mercury",
+            "TOOL NOT AVAILABLE",
+            "42",
+            "Friday",
+            "MEMORY DOES NOT SAY",
+            "Ilma Rask",
+            "TRESTLE-62",
+            "16294",
+            "nominal",
+            "The callsign for merlin is TRESTLE-62.",
+            // Prose that TALKS about tools without reaching for one — the nearest miss,
+            // and the reason the marker is the envelope token and not the word "tool".
+            "I used the roster tool and the calculator tool to reach this number: 16294.",
+        ] {
+            assert!(
+                !looks_like_an_attempted_tool_call(answer.as_bytes(), &w),
+                "a real answer must stay terminal: {answer:?}"
+            );
+        }
+
+        // Total over arbitrary bytes: non-UTF-8 is not an attempt, and never a panic.
+        assert!(!looks_like_an_attempted_tool_call(&[0xff, 0xfe, 0x00], &w));
+        assert!(!looks_like_an_attempted_tool_call(b"", &w));
+    }
+
+    /// **The Ollama half of the same defect, on its VERBATIM measured bytes.** The union
+    /// grammar guarantees a well-formed `{"answer": …}`, so a chain that means to act
+    /// produces a syntactically perfect answer whose content is a plan — the same
+    /// terminal-with-budget-in-hand as the llama.cpp unparseable call, differently
+    /// dressed.
+    #[test]
+    fn a_plan_in_the_answer_slot_is_a_continuation_and_a_real_answer_is_not() {
+        let w = warrant_granting_many(&[("fleet/get", "1"), ("fleet/page", "1")]);
+        // Measured, byte-for-byte, on a served gemma3:12b via Ollama.
+        let measured = br#"{"answer": "I have the records from two calls to `fleet/page`. I will combine them and proceed."}"#;
+        assert!(
+            answer_is_a_continuation(measured, &w),
+            "a stated intention to continue is not an answer"
+        );
+        // Bare prose (no union envelope) is handled the same way.
+        assert!(answer_is_a_continuation(
+            b"Let me look up the remaining vessels.",
+            &w
+        ));
+
+        // THE ACCEPTING CONTROLS — every answer `bench-v1` expects, in both the bare and
+        // the union-enveloped form, because Ollama produces the latter.
+        for answer in [
+            "Mercury",
+            "TOOL NOT AVAILABLE",
+            "42",
+            "Friday",
+            "MEMORY DOES NOT SAY",
+            "Ilma Rask",
+            "TRESTLE-62",
+            "16294",
+            "nominal",
+            "The callsign of the vessel 'merlin' is TRESTLE-62.",
+            "The final number is 16294.",
+            // Past-tense narration of work already done must NOT match: it is how a
+            // correct answer explains itself.
+            "I called fleet/page twice and combined the records; the answer is 16294.",
+        ] {
+            assert!(
+                !answer_is_a_continuation(answer.as_bytes(), &w),
+                "a real answer must stay terminal (bare): {answer:?}"
+            );
+            let enveloped = format!(r#"{{"answer":{}}}"#, serde_json::to_string(answer).unwrap());
+            assert!(
+                !answer_is_a_continuation(enveloped.as_bytes(), &w),
+                "a real answer must stay terminal (union arm): {answer:?}"
+            );
+        }
+
+        // Pure-reasoning mode: no grants ⇒ no continuation to make.
+        assert!(!answer_is_a_continuation(measured, &warrant_granting(None)));
+        // Total over arbitrary bytes.
+        assert!(!answer_is_a_continuation(&[0xff, 0xfe], &w));
+        assert!(!answer_is_a_continuation(b"", &w));
+    }
+
+    /// The reason is a CONSTANT and carries the envelope it is asking for. Pinned here
+    /// because it folds into the re-prompted turn's `MoteId`: the coordinator and the
+    /// harness must render these exact bytes or a cold re-fold builds a different chain.
+    #[test]
+    fn unreadable_tool_call_reason_is_constant_and_shows_the_envelope() {
+        let a = unreadable_tool_call_reason();
+        assert_eq!(a, unreadable_tool_call_reason(), "pure — no interpolation");
+        assert!(
+            a.contains(
+                r#"{"tool_call":{"name":"<tool name>","version":"<tool version>","args":{ ... }}}"#
+            ),
+            "the reason must SHOW the envelope, not describe it: {a}"
+        );
+        // It must not be mistaken for the duplicate reason (which arms the answer-force);
+        // an unreadable call is the one case where the model should try a tool AGAIN.
+        assert!(
+            !crate::is_duplicate_reason(&a),
+            "an unreadable-call re-prompt must not arm the answer-only force: {a}"
+        );
     }
 
     #[test]
