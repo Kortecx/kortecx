@@ -6,7 +6,7 @@
 //! propose-proxy). Every control is fail-closed:
 //!
 //! - **Authn (per-trigger).** `HMAC_SHA256` verifies `X-Kx-Signature-256` over the RAW
-//!   body with the trigger's secret (resolved by NAME from the keychain), constant-time
+//!   body with the trigger's secret (resolved by NAME from the local store), constant-time
 //!   (`Mac::verify_slice`). `BEARER` constant-time-compares `Authorization: Bearer`.
 //!   `NONE` is accepted ONLY on a loopback bind. An unknown/disabled/non-webhook trigger
 //!   is a uniform `401` (no existence oracle).
@@ -54,6 +54,10 @@ pub(crate) struct WebhookState {
     pub admin: Arc<dyn TriggerAdmin>,
     /// True when the webhook listener is bound to a loopback address (gates `NONE` auth).
     pub bind_is_loopback: bool,
+    /// The local secret store a trigger's HMAC/bearer verify key resolves against. `None` ⇒
+    /// no readable store; verification then falls back to the environment arm alone and an
+    /// unresolvable key fails the request closed, never open.
+    secrets: Option<Arc<crate::secrets::SecretFile>>,
     rate: WebhookRateLimiter,
 }
 
@@ -62,11 +66,13 @@ impl WebhookState {
         triggers: Arc<TriggersDb>,
         admin: Arc<dyn TriggerAdmin>,
         bind_is_loopback: bool,
+        secrets: Option<Arc<crate::secrets::SecretFile>>,
     ) -> Self {
         Self {
             triggers,
             admin,
             bind_is_loopback,
+            secrets,
             rate: WebhookRateLimiter::new(RL_BURST, RL_REFILL_PER_SEC),
         }
     }
@@ -289,7 +295,8 @@ async fn handle(req: Request<Incoming>, state: Arc<WebhookState>) -> Response<Fu
     let authed = match cfg.auth.as_str() {
         "none" => state.bind_is_loopback, // NONE only on a loopback bind
         "hmac_sha256" => {
-            let Some(secret) = resolve_secret_value(&cfg.auth_secret_ref) else {
+            let Some(secret) = resolve_secret_value(state.secrets.as_deref(), &cfg.auth_secret_ref)
+            else {
                 return unauthorized(); // can't verify ⇒ refuse
             };
             parts
@@ -299,7 +306,8 @@ async fn handle(req: Request<Incoming>, state: Arc<WebhookState>) -> Response<Fu
                 .is_some_and(|sig| verify_hmac_sha256(&secret, &raw, sig))
         }
         "bearer" => {
-            let Some(secret) = resolve_secret_value(&cfg.auth_secret_ref) else {
+            let Some(secret) = resolve_secret_value(state.secrets.as_deref(), &cfg.auth_secret_ref)
+            else {
                 return unauthorized();
             };
             parts

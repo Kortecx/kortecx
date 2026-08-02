@@ -1,7 +1,7 @@
 /**
- * The host secret-store panel (MM-3 / D110) — the govern surface over the local
- * OS-keychain secret store. Add/overwrite a secret (name + value), list the stored
- * NAMES with their audit timestamps, and remove one.
+ * The host secret-store panel — the govern surface over the local secret store.
+ * Add/overwrite a secret (name + value), list the stored NAMES with their audit
+ * timestamps, and remove one.
  *
  * D81: the secret VALUE is WRITE-ONLY. It appears ONLY as the `PutSecret` argument
  * and is NEVER read back — this panel surfaces names + timestamps only (the value
@@ -59,7 +59,7 @@ export function SecretsPanel() {
     <GlowCard hover={false} variants={fadeUp} data-testid="secrets-panel">
       <h2>Secrets</h2>
       <p className="muted">
-        The local OS-keychain secret store. A secret&apos;s <strong>value is write-only</strong> —
+        The local secret store. A secret&apos;s <strong>value is write-only</strong> —
         it is never shown again after you store it (D81); this panel lists only NAMES and audit
         timestamps. Reference a secret by its NAME from a Connection or a Trigger&apos;s auth.
       </p>

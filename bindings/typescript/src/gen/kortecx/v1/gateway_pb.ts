@@ -9854,7 +9854,7 @@ export const GetServerInfoResponseSchema: GenMessage<GetServerInfoResponse> = /*
 
 /**
  * ===========================================================================
- * MM-3 (D110) — the LOCAL OS-keychain secret store. Secrets are stored by NAME
+ * The LOCAL secret store (one operator-visible file on the host). Secrets are stored by NAME
  * (a kx-warrant SecretRef) and resolved transiently at transport setup; the VALUE
  * is NEVER journaled, in a MoteId/StepRecord, the model's context, or any RPC
  * RESPONSE. `value` appears ONLY as a PutSecret request argument (write-only).
@@ -9874,7 +9874,7 @@ export type PutSecretRequest = Message<"kortecx.v1.PutSecretRequest"> & {
   name: string;
 
   /**
-   * write-only: the handler stores it in the keychain + drops it
+   * write-only: the handler stores it locally + drops it
    *
    * @generated from field: string value = 2;
    */
@@ -12574,9 +12574,9 @@ export const KxGateway: GenService<{
     output: typeof CallMcpToolResponseSchema;
   },
   /**
-   * MM-3 (D110) additive — the LOCAL OS-keychain secret store. PutSecret/DeleteSecret
+   * The LOCAL secret store. PutSecret/DeleteSecret
    * write host credential material (loopback-only + authed party); ListSecretNames
-   * returns NAMES + timestamps only (never a value). Off-journal (the OS keychain +
+   * returns NAMES + timestamps only (never a value). Off-journal (the local store +
    * an off-digest secret_index.db NAME index); the value is resolved transiently at
    * transport setup and never journaled (D81). UNIMPLEMENTED when no secret admin is
    * wired (e.g. a no-mcp-gateway build). The hardened KMS/HSM vault is CLOUD (D94).

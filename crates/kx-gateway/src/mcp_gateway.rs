@@ -43,20 +43,24 @@ pub(crate) fn wire_mcp_gateway<S: ContentStore + Send + Sync + 'static>(
     registry: Arc<SqliteToolRegistry>,
     broker: Arc<LocalCapabilityBroker<S>>,
     content: Arc<S>,
+    secrets: Option<Arc<crate::secrets::SecretFile>>,
 ) -> Result<Arc<dyn McpGatewayAdmin>, GatewayError> {
     let store = SqliteConnectionStore::open(catalog_dir.join("connections.db"))?;
     // The SAME broker backs both the dialed-tool capability sink AND the operator
     // diagnostic live-fire (`CallMcpTool`) — one fire path, authority re-enforced there.
     let sink: Arc<dyn CapabilitySink> = Arc::new(BrokerCapabilitySink::new(broker.clone()));
     let allowlist = crate::tools::tool_host_allowlist();
-    // MM-3: resolve a connection's `credential_ref` NAME from the OS keychain
-    // first, then fall back to the host environment (so existing env-var
-    // credentials keep working — back-compat). The value is read transiently
-    // inside the transport at dispatch and dropped (D81); never journaled.
-    let secret_store: Arc<dyn kx_mcp::SecretStore> = Arc::new(kx_mcp::ChainedSecretStore::new(
-        Arc::new(crate::secrets::KeyringSecretStore::os()),
-        Arc::new(kx_mcp::EnvSecretStore),
-    ));
+    // Resolve a connection's `credential_ref` NAME from the local secret store first, then
+    // fall back to the host environment (so existing env-var credentials keep working —
+    // back-compat). The value is read transiently inside the transport at dispatch and
+    // dropped (D81); never journaled. No readable store ⇒ the environment arm alone.
+    let secret_store: Arc<dyn kx_mcp::SecretStore> = match secrets {
+        Some(file) => Arc::new(kx_mcp::ChainedSecretStore::new(
+            file,
+            Arc::new(kx_mcp::EnvSecretStore),
+        )),
+        None => Arc::new(kx_mcp::EnvSecretStore),
+    };
     let gateway = Arc::new(
         McpGateway::new(store, registry.clone(), sink, allowlist).with_secret_store(secret_store),
     );

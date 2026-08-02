@@ -78,7 +78,7 @@ usage: kx <command> [args]
     kx connections add --name <n> (--command <path> | --url <url>) | list | test | remove | discover   (external MCP gateways)
     kx skills add (--dir <pack> | --manifest <file> [--instructions <md>]) | list | show --name <n> | remove --name <n>   (kortecx.skill/v1 catalog)
     kx new (skill | connector) <name> [--dir <parent>]   (scaffold a skill pack / MCP connector crate, offline)
-    kx secrets set --name <N> --value <V> | list | rm --name <N>   (MM-3/D110 local keychain; values write-only)
+    kx secrets set --name <N> --value <V> | list | rm --name <N>   (local secret store; values write-only)
     kx triggers add --name <N> --kind <webhook|cron|grpc> (--recipe <h> | --app <h>) [--auth <a>] [--secret-ref <N>] [--schedule <secs | crontab>] [--timezone <IANA>] [--require-approval] [--enabled] | list | test | fire | rm   (D113 event ingress)
     kx context add <handle> (--item <name>=<hex32> | --file <name>=<path>)... [--description <s>] | list | get <handle> | remove <handle>   (context bundles)
     kx app new <name> --from-blueprint <file> [--model <id>] [--max-turns N] [--max-tool-calls N] [--tag <t>]... [--description <s>] [--delivers <s>] [--branch <h>] [--output <file>] | save <file> [--handle <h>] | list | get <handle> [--output <file>] | manifest <handle> | run <handle> [--wait] [--out <file>] | export <handle> (--output <file> | --bundle <file> [--with-data]) | import <bundle> [--yes] | clone <handle> <newname> | scaffold | files | cat | edit | structure | lock | unlock | delete   (Apps — kortecx.app/v1 envelopes)
@@ -185,7 +185,7 @@ pub enum Cli {
     Health(verbs::health::HealthArgs),
     /// POC-1 Settings "Workspace": the non-secret server configuration (`GetServerInfo`).
     Info(verbs::info::InfoArgs),
-    /// The LOCAL OS-keychain secret store (MM-3/D110 — set/list/rm; values write-only).
+    /// The LOCAL secret store (set/list/rm; values write-only).
     Secrets(verbs::secrets::SecretsArgs),
     /// Event-ingress triggers (D113 — add/list/test/fire/rm; webhook/cron/grpc → recipe).
     Triggers(verbs::triggers::TriggersArgs),
@@ -1026,7 +1026,7 @@ kx memory consolidate [--query <q>] [--k N] [--window-hours H] [--dry-run|--appl
 kx secrets set --name <NAME> --value <VALUE> [client flags]
 kx secrets list [client flags]
 kx secrets rm --name <NAME> [client flags]
-  Manage the LOCAL OS-keychain secret store (MM-3/D110). A secret is host credential
+  Manage the LOCAL secret store. A secret is host credential
   material referenced elsewhere by NAME only — a connection's --credential-ref or a
   trigger's --secret-ref. WRITE-ONLY values: `set` sends the value once and
   it is NEVER returned by any RPC; `list` yields the NAMES + timestamps only. `set`/`rm`

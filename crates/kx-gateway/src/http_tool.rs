@@ -16,7 +16,7 @@
 //! # Boundaries (load-bearing)
 //!
 //! - **The secret VALUE never rests.** `secret_name` is a `SecretRef` NAME
-//!   resolved transiently at dispatch through the SAME keychain→env chain the
+//!   resolved transiently at dispatch through the SAME store→env chain the
 //!   MCP dial uses (D81/D110.2); it is injected as a header and never
 //!   journaled, staged, or logged.
 //! - **Redirects refused (`redirects(0)`)** — a 3xx surfaces as a refused
@@ -189,7 +189,7 @@ impl Capability for HttpCapability {
         if let Some(name) = args.secret_name.as_deref() {
             let Some(value) = self.secrets.resolve(&SecretRef(name.to_string())) else {
                 return Err(CapabilityFailureReason::Other(format!(
-                    "http: secret {name:?} did not resolve (keychain/env)"
+                    "http: secret {name:?} did not resolve (local store or environment)"
                 )));
             };
             let header = args.secret_header.as_deref().unwrap_or("authorization");
@@ -343,7 +343,7 @@ pub(crate) fn http_tool_def() -> ToolDef {
 }
 
 /// Register the bundled [`HttpCapability`] (`http@1`) on the serve broker over
-/// the SAME keychain→env secret chain the MCP dial uses.
+/// the SAME store→env secret chain the MCP dial uses.
 pub(crate) fn register_http_capability<S: ContentStore + Send + Sync>(
     broker: &LocalCapabilityBroker<S>,
     secrets: Arc<dyn SecretStore>,

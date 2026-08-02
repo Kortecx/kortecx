@@ -320,10 +320,10 @@ pub mod sandbox_probe;
 // form and be re-invoked with edits ("Re-run with changes"). Rebuildable-to-
 // EMPTY, off-journal, off-digest, off-identity.
 mod run_inputs;
-// MM-3 (D110): the LOCAL OS-keychain secret store (the kx-mcp SecretStore arm) +
-// the SecretAdmin write surface over an off-journal `secret_index.db` NAME index.
-// Always wired (keyring is non-optional); the resolve impl is mcp-gateway-gated
-// (that is where the kx-mcp SecretStore seam lives). Off-journal, off-digest.
+// The LOCAL secret store: one operator-visible `secrets.json` under the catalog
+// dir, serving both the kx-mcp SecretStore resolve arm and the SecretAdmin write
+// surface. Always wired; the resolve impl is mcp-gateway-gated (that is where the
+// kx-mcp SecretStore seam lives). Off-journal, off-digest.
 mod secrets;
 // D113 (trigger seam): the triggers.db off-journal sidecar (registered triggers +
 // the idempotency-key fire-dedup/run-origin record). Used by the trigger gateway +

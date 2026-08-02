@@ -99,6 +99,20 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Changed
 
+- **Secrets are stored in a file you control, rather than the OS keychain.** The
+  runtime keeps local credentials in `secrets.json` under its catalog directory,
+  created owner-only (`0600`). You can open it, see exactly which credentials the
+  runtime holds, and add one by hand as `"NAME": "value"` — `kx secrets put`,
+  `list` and `remove` work exactly as before. The file is refused at startup if it
+  is readable by group or others (run `chmod 600` on it) or if it does not parse;
+  in either case it is left untouched for you to fix rather than recreated, so no
+  credential is lost to a bad file. Resolving a credential from a host environment
+  variable is unchanged, and still works when no file is present.
+
+  **Breaking:** credentials previously stored in the OS keychain are no longer
+  read. Store them again with `kx secrets put`. Note the values are plaintext on
+  disk protected by file permissions — this is a local-first store, not a vault.
+
 - `tools.db` now opens through the sidecar upgrade policy as `UserAuthored`. It was
   the last store holding authored work outside that policy — and it holds more than
   tools: every registered SCRIPT lives there too, so two of the six authoring

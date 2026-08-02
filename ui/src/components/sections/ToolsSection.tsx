@@ -43,7 +43,7 @@ const TABS: ReadonlyArray<{ id: ToolsTab; label: string }> = [
  * 3. **Integrations** — the connectors bundled with this runtime, and how to dial them.
  * 4. **Connections** — dial external MCP servers (the live untrusted-egress surface).
  * 3. **Triggers** — bind an inbound event (webhook / cron / RPC) to a recipe handle.
- * 4. **Secrets** — the local OS-keychain store; a `SecretRef` NAME is what a
+ * 4. **Secrets** — the local secret store; a `SecretRef` NAME is what a
  *    Connection's / Trigger's `credential_ref` points at (the value is write-only, D81).
  *
  * Each surface degrades to an honest not-wired empty state on older gateways

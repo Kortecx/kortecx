@@ -1073,9 +1073,9 @@ class KxGatewayServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def PutSecret(self, request, context):
-        """MM-3 (D110) additive — the LOCAL OS-keychain secret store. PutSecret/DeleteSecret
+        """The LOCAL secret store. PutSecret/DeleteSecret
         write host credential material (loopback-only + authed party); ListSecretNames
-        returns NAMES + timestamps only (never a value). Off-journal (the OS keychain +
+        returns NAMES + timestamps only (never a value). Off-journal (the local store +
         an off-digest secret_index.db NAME index); the value is resolved transiently at
         transport setup and never journaled (D81). UNIMPLEMENTED when no secret admin is
         wired (e.g. a no-mcp-gateway build). The hardened KMS/HSM vault is CLOUD (D94).

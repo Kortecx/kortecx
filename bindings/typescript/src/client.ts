@@ -2468,7 +2468,7 @@ export abstract class KxClientBase {
   }
 
   /**
-   * Store a host SECRET in the local OS keychain (MM-3 / D110 `PutSecret`) under a
+   * Store a host SECRET in the local secret store (`PutSecret`) under a
    * `SecretRef` NAME that a connection's / trigger's `credential_ref` points at.
    * The `value` is WRITE-ONLY — the handler stores it + drops it; it is never on a
    * read wire (D81). Gated loopback-only + an authenticated party server-side.

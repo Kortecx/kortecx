@@ -1,6 +1,5 @@
 /**
- * The host secret-store admin hooks (MM-3 / D110): the local OS-keychain secret
- * store — list NAMES (`ListSecretNames`), set/overwrite a value (`PutSecret`), and
+ * The host secret-store admin hooks: the local secret store — list NAMES (`ListSecretNames`), set/overwrite a value (`PutSecret`), and
  * remove (`DeleteSecret`). A `SecretRef` NAME is what a connection's / trigger's
  * `credential_ref` points at; the VALUE is WRITE-ONLY — it appears ONLY as a
  * `PutSecret` argument and is never returned on any read (D81). `ListSecretNames`

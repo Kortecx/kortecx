@@ -11,7 +11,7 @@
 //!   a replayed inbound event a no-op (returns the prior run, fires nothing).
 //!
 //! ## Off-journal / off-digest (the connections.db posture)
-//! The OS keychain holds no run state here; everything is off the journal + the
+//! The secret store holds no run state here; everything is off the journal + the
 //! canonical projection digest. A **corrupt/foreign file** still recreates EMPTY —
 //! there is nothing readable to preserve. A **schema-version bump** does NOT: a
 //! registered trigger is authored work, so the catalog is renamed aside and its rows
@@ -21,7 +21,7 @@
 //!
 //! `trigger_id` is server-derived (`blake3("kx-trigger\0" ‖ name)[..16]`), so
 //! re-registering the same name is idempotent; the client never forges it. The auth
-//! secret is referenced by NAME only (the value lives in the keychain, never here).
+//! secret is referenced by NAME only (the value lives in the secret store, never here).
 
 use std::path::Path;
 use std::sync::Mutex;
