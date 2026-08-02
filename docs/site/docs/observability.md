@@ -245,12 +245,29 @@ scrape is fast regardless of journal size:
 | `kortecx_effects_staged_total` | counter | WORLD-MUTATING effects staged |
 | `kortecx_success_ratio_basis_points` | gauge | `committed / (committed + failed)` × 10000 |
 | `kortecx_journal_seq` | gauge | the highest journal sequence folded |
-| `kortecx_mote_wall_p50_ms` / `kortecx_mote_wall_p95_ms` | gauge | recent-window p50/p95 execution latency (model motes) |
+| `kortecx_mote_wall_p50_ms` | gauge | recent-window p50 execution latency (model motes) |
+| `kortecx_mote_wall_p95_ms` | gauge | recent-window p95 — **absent until the window has enough samples to have a tail** |
+| `kortecx_motes_proposed_total` | counter | Mote placements proposed — **in-process runs only**; see the note below |
 | `kortecx_output_tokens_window` | gauge | summed `output_tokens` over the recent window |
 | `kortecx_up` / `kortecx_build_info{version}` | gauge | endpoint liveness + build |
 
 The latency block is **honestly omitted** when no model Mote has run (e.g. an
-FFI-free serve). The endpoint is **unauthenticated by design** (the scraper
+FFI-free serve), and the **p95 is omitted separately** on a window too small to have
+a tail. Over a handful of samples the 95th percentile lands on the slowest one, so a
+published `p95` would simply be the maximum under a name that promises a tail
+estimate — on a fresh server it equals the p50 exactly. The median still publishes,
+and `kortecx_telemetry_window_motes` always tells you how many samples you are
+looking at.
+
+:::caution `motes_proposed_total` is not a denominator
+Do not read `proposed` and `committed` as a pair. A distributed worker runs the
+executor against a scratch journal it does not own and reports the commit over RPC,
+so a served run journals a `Committed` fact and **no** `Proposed` fact. The proposed
+counter therefore stays at 0 on a normal server while the committed counter climbs;
+treating it as a denominator reports a total failure rate on a perfectly healthy
+runtime. Use `kortecx_success_ratio_basis_points`, which is computed from committed
+and failed.
+::: The endpoint is **unauthenticated by design** (the scraper
 convention, like the health service): bind it to loopback or a trusted network. The
 canonical-projection digest is unchanged whether metrics are on, off, or scraped —
 metrics only read committed facts; they are never an identity or digest input.
