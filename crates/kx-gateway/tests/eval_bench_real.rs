@@ -2254,20 +2254,39 @@ async fn bench_v1_oracle_scored_over_a_live_react_chain() {
                      KX_SERVE_MODEL_GGUF=<gemma-12b.gguf> KX_BENCH_UPDATE_BASELINE=1 just eval-bench"
                 )
             });
+        // WHEN the numbers on the right-hand side were taken, printed wherever they are
+        // compared. A baseline is a claim about a runtime at ONE commit, and it keeps
+        // gating long after that runtime has moved: a fix can land, be proven, and the
+        // committed baseline still publishes the pre-fix zero with nothing on screen
+        // saying so. The sha and the capture date have always been in the file; the
+        // comparison just never showed them, so "captured at" was invisible next to a
+        // number that looked current.
+        let provenance = baseline.env.as_ref().map_or_else(
+            || "captured at an UNRECORDED commit (pre-label baseline)".to_string(),
+            |e| {
+                format!(
+                    "captured at {} on {} ({} tasks, unix {})",
+                    &e.git_sha[..e.git_sha.len().min(12)],
+                    e.engine,
+                    e.task_count,
+                    e.captured_unix_s
+                )
+            },
+        );
         if cmp.ok {
             eprintln!(
-                "eval-bench: PASS — all gates >= baseline {}",
+                "eval-bench: PASS — all gates >= baseline {} [{provenance}]",
                 bpath.display()
             );
         } else {
             eprintln!(
-                "eval-bench: {} regression(s) vs {}",
+                "eval-bench: {} regression(s) vs {} [{provenance}]",
                 cmp.regressions.len(),
                 bpath.display()
             );
             for r in &cmp.regressions {
                 eprintln!(
-                    "  - {}: {} < baseline {}",
+                    "  - {}: {} < baseline {} ({provenance})",
                     r.metric_id, r.current_per_mille, r.baseline_per_mille
                 );
             }
