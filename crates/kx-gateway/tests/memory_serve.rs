@@ -28,7 +28,7 @@ mod common;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use kx_gateway::{start, REACT_MEMORY_RECIPE_HANDLE};
 use kx_proto::proto;
