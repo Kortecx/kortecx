@@ -3391,6 +3391,41 @@ pub fn render_replan_rounds(resp: &proto::ListReplanRoundsResponse, json: bool) 
     }
 }
 
+/// Refusal audit, TEXT surface: a single-line excerpt of the output a refused turn was
+/// settled from. Empty string when there is no raw (every non-refused turn, and any
+/// refusal whose blob was unavailable) so the turn line is byte-identical to before.
+///
+/// Newlines and tabs become `\n` / `\t` because the caller writes ONE line per turn and a
+/// model's output is routinely multi-line — an un-escaped raw would silently reflow the
+/// listing and make the trajectory unreadable. Bounded well below the wire cap for the
+/// same reason; `--json` carries the full capped value for anyone actually auditing.
+#[must_use]
+fn raw_excerpt(raw: &[u8]) -> String {
+    if raw.is_empty() {
+        return String::new();
+    }
+    let text = String::from_utf8_lossy(raw);
+    let escaped: String = text
+        .chars()
+        .take(RAW_EXCERPT_CHARS)
+        .map(|c| match c {
+            '\n' => "\\n".to_string(),
+            '\t' => "\\t".to_string(),
+            '\r' => "\\r".to_string(),
+            other => other.to_string(),
+        })
+        .collect();
+    let ellipsis = if text.chars().count() > RAW_EXCERPT_CHARS {
+        "…"
+    } else {
+        ""
+    };
+    format!(" settled-from {escaped}{ellipsis}")
+}
+
+/// Chars of `raw` shown on the one-line TEXT surface (`--json` carries the full value).
+const RAW_EXCERPT_CHARS: usize = 160;
+
 /// Render `react list` (PR-2d-1 observability): newest-first ReAct turns.
 /// `--json` field names mirror the SDK snake_case shape; byte ids are hex.
 #[must_use]
@@ -3416,6 +3451,11 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
                     // Governance axes (names/refs only) — the chain's run-fixed warrant.
                     "granted_tools": t.granted_tools,
                     "secret_scope_names": t.secret_scope_names,
+                    // Refusal audit: the output a REFUSED turn was settled FROM (empty
+                    // otherwise). `rejection_reason` is the verdict; this is its input,
+                    // and without it a heuristic refusal cannot be checked. Lossy UTF-8:
+                    // the wire type is bytes because a model's output need not be valid.
+                    "raw": String::from_utf8_lossy(&t.raw),
                 })
             })
             .collect();
@@ -3437,7 +3477,15 @@ pub fn render_react_turns(resp: &proto::ListReactTurnsResponse, json: bool) -> S
             } else if !t.rejection_reason.is_empty() {
                 // PR-3 (A2): show WHY a turn was rejected so an operator can see
                 // the model self-correct (or, at budget exhaustion, why it died).
-                format!(" reason {}", t.rejection_reason)
+                // Refusal audit: and show WHAT it was settled from, because some of these
+                // verdicts come from a heuristic over those bytes and the reason alone
+                // cannot distinguish an over-fire from a correct refusal. Excerpted here
+                // (one turn per line); `--json` carries the full capped value.
+                format!(
+                    "{}{}",
+                    format_args!(" reason {}", t.rejection_reason),
+                    raw_excerpt(&t.raw)
+                )
             } else {
                 String::new()
             };
@@ -4285,6 +4333,8 @@ mod tests {
                     call_index: 0,
                     granted_tools: vec!["mcp-echo@1".into()],
                     secret_scope_names: vec!["KX_API_KEY".into()],
+                    // A non-refused turn carries no settled-from output.
+                    raw: Vec::new(),
                 },
                 // PR-3 (A2): a rejected turn carries its reason on both surfaces.
                 proto::ReactTurnSummary {
@@ -4303,6 +4353,9 @@ mod tests {
                     call_index: 0,
                     granted_tools: vec!["mcp-echo@1".into()],
                     secret_scope_names: vec!["KX_API_KEY".into()],
+                    // Refusal audit: the bytes the verdict above was passed on. Multi-line
+                    // on purpose — the text surface must not reflow the one-line listing.
+                    raw: b"{\"tool_call\":\n{\"name\":\"mcp-echo\"}}".to_vec(),
                 },
             ],
             has_more: true,
@@ -4325,6 +4378,31 @@ mod tests {
         assert!(
             human.contains("branch rejected") && human.contains("reason args do not match"),
             "the rejected turn shows its reason in human output: {human}"
+        );
+        // Refusal audit: the REASON is the verdict, the RAW is what it judged. A refusal
+        // decided by a heuristic over the model's output cannot be checked from the
+        // verdict alone, so both must reach a reader.
+        assert_eq!(
+            v["turns"][1]["raw"], "{\"tool_call\":\n{\"name\":\"mcp-echo\"}}",
+            "a refused turn carries the output it was settled FROM, verbatim in --json"
+        );
+        // The accepting control, one variable: same response, a turn that was NOT refused
+        // carries no raw. Without this the assertion above passes on a field wired to
+        // return everything.
+        assert_eq!(
+            v["turns"][0]["raw"], "",
+            "a non-refused turn must carry no settled-from output"
+        );
+        assert!(
+            human.contains("settled-from {\"tool_call\":\\n{\"name\":\"mcp-echo\"}}"),
+            "the rejected turn shows its settled-from output, newline ESCAPED: {human}"
+        );
+        // The listing is one line per turn, and a multi-line model output must not break
+        // that — an un-escaped raw would silently reflow the whole trajectory.
+        assert_eq!(
+            human.lines().count(),
+            react.turns.len() + 1,
+            "one line per turn plus the has_more note, regardless of newlines in raw: {human}"
         );
         // Governance axes: the chain's run-fixed warrant grants surface on both surfaces
         // (names/refs only) — a dropped capability axis is now visible, not silent.

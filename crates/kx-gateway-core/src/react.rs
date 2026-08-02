@@ -34,6 +34,16 @@ const MAX_PAGE: usize = 500;
 /// The page size when the request omits `limit`.
 const DEFAULT_PAGE: usize = 200;
 
+/// Hard cap on a refused turn's `raw` settled-from output (bytes on the wire).
+///
+/// 4× [`kx_journal::MAX_REJECTED_REASON_LEN`] — generous for the audit case (the
+/// outputs that motivated the field are an attempted tool call and a one-sentence
+/// plan, both well under 512 bytes) while bounding a page: only `"rejected"` rows
+/// carry raw, so a full [`MAX_PAGE`] of refusals is the worst case. Truncation is
+/// on a BYTE boundary because the field is `bytes`, not `str` — a split multi-byte
+/// char is the client's problem to render lossily, and there is no panic to have.
+const MAX_RAW_BYTES: usize = 2048;
+
 /// One wire row of a settled branch: `(branch_str, tool_id, tool_version, reason,
 /// call_index)`. The branch vocabulary is frozen at append + mirrored in the proto
 /// doc-comment — a string, not an enum, so a future branch is additive on the wire.
@@ -169,6 +179,31 @@ fn warrant_axes(
     (granted_tools, secret_scope_names)
 }
 
+/// Refusal audit: the model output a REFUSED turn was settled FROM, capped to
+/// [`MAX_RAW_BYTES`].
+///
+/// `rejection_reason` is the runtime's VERDICT; this is its INPUT. Some refusals are
+/// decided by a heuristic over these bytes (a proposal in a dialect the decoder cannot
+/// read, an answer whose content is a plan), and with only the verdict recorded an
+/// over-fire is indistinguishable from a correct refusal. The bytes are already durable:
+/// the turn Mote is committed with its model output as the result, which is exactly what
+/// the coordinator re-reads to re-derive a frozen branch, so this is a READ of a
+/// committed fact and never a new one.
+///
+/// A pure read-only projection, like [`warrant_axes`]: absent `content`, an absent
+/// `result_ref`, or an unreadable blob all yield empty (display degrades, never errors;
+/// digest-neutral). Callers apply it ONLY to `"rejected"` rows.
+fn settled_from_raw(
+    content: Option<&dyn ContentReader>,
+    result_ref: Option<&ContentRef>,
+) -> Vec<u8> {
+    let Some(mut blob) = content.zip(result_ref).and_then(|(c, r)| c.get(r)) else {
+        return Vec::new();
+    };
+    blob.truncate(MAX_RAW_BYTES);
+    blob
+}
+
 /// Fold the journal's `ReactRound` facts and return one newest-first page of
 /// turn summaries, optionally scoped to one run's `instance_id`. `limit` is
 /// clamped to `[1, MAX_PAGE]` (or [`DEFAULT_PAGE`] when absent). A present-but-
@@ -178,7 +213,10 @@ fn warrant_axes(
 /// `content` (optional) decodes each chain's run-fixed warrant for the governance
 /// axes (`granted_tools` / `secret_scope_names`); `None` leaves them empty. The decode
 /// is memoized per `warrant_ref` (a chain shares one warrant), so it is at most one
-/// content read per distinct chain regardless of turn count.
+/// content read per distinct chain regardless of turn count. It also resolves each
+/// `"rejected"` row's `raw` — the model output that turn was settled FROM — from the
+/// turn Mote's committed result (see [`settled_from_raw`]); that read happens AFTER
+/// paging, so it is bounded by the page and by the refusals within it.
 ///
 /// # Errors
 /// [`GatewayError::Internal`] on a journal read failure;
@@ -214,6 +252,12 @@ pub(crate) fn list_react_turns(
     // Memoize the decoded warrant axes per `warrant_ref` — a chain shares one run-fixed
     // warrant, so this is at most one content read per distinct chain (not per turn).
     let mut axes_memo: HashMap<[u8; 32], (Vec<String>, Vec<String>)> = HashMap::new();
+    // Refusal audit: a turn Mote's committed result IS the model output that turn was
+    // settled from (the same fact the coordinator re-reads to re-derive a frozen branch).
+    // Collected in THIS pass — a second O(journal) walk would double the cost of every
+    // list call — and resolved to bytes only AFTER paging, so at most one page of blobs
+    // is ever read, and only for rows whose verdict a heuristic may have produced.
+    let mut turn_result: HashMap<[u8; 32], ContentRef> = HashMap::new();
     let mut all: Vec<proto::ReactTurnSummary> = reader
         .read_entries_by_seq(0..head.saturating_add(1))
         .map_err(internal)?
@@ -262,8 +306,23 @@ pub(crate) fn list_react_turns(
                         // Governance observability: the chain's run-fixed warrant axes.
                         granted_tools: granted_tools.clone(),
                         secret_scope_names: secret_scope_names.clone(),
+                        // Refusal audit: filled after paging, for "rejected" rows only.
+                        raw: Vec::new(),
                     })
                     .collect::<Vec<_>>()
+            }
+            // Not a row of its own: remember where each Mote's committed output lives so
+            // a refused turn can show the bytes it was settled from. Cheap (a ref, not a
+            // blob) and unconditional — the ReactRound settle may be appended either side
+            // of its turn's Committed fact, so filtering to turn Motes here would depend
+            // on append order.
+            JournalEntry::Committed {
+                mote_id,
+                result_ref,
+                ..
+            } => {
+                turn_result.insert(*mote_id.as_bytes(), result_ref);
+                Vec::new()
             }
             _ => Vec::new(),
         })
@@ -294,6 +353,15 @@ pub(crate) fn list_react_turns(
     let page = limit.map_or(DEFAULT_PAGE, |l| (l as usize).clamp(1, MAX_PAGE));
     let has_more = all.len() > page;
     all.truncate(page);
+    // Refusal audit, AFTER paging: show a refused turn the output it was settled FROM, so
+    // a heuristic refusal can be checked against its own input rather than taken on trust.
+    // Bounded twice over — one page of rows, only the "rejected" ones, each capped.
+    for row in &mut all {
+        if row.branch == "rejected" {
+            let key: Option<[u8; 32]> = row.turn_mote_id.as_slice().try_into().ok();
+            row.raw = settled_from_raw(content, key.as_ref().and_then(|k| turn_result.get(k)));
+        }
+    }
     Ok(proto::ListReactTurnsResponse {
         turns: all,
         has_more,
@@ -738,5 +806,139 @@ mod tests {
         let anchor_none = resp_none.turns.iter().find(|t| t.turn == 0).unwrap();
         assert!(anchor_none.granted_tools.is_empty());
         assert!(anchor_none.secret_scope_names.is_empty());
+    }
+
+    /// A `Committed` fact for `mote`, carrying `result_ref` — the turn's model output.
+    ///
+    /// The idempotency key is DERIVED from the Mote, never a constant: two turns sharing
+    /// one key are one fact to the journal, so a fixed key silently drops the second
+    /// commit and every assertion about it then passes for the wrong reason.
+    fn committed_turn(mote: MoteId, result_ref: ContentRef) -> JournalEntry {
+        JournalEntry::Committed {
+            mote_id: mote,
+            idempotency_key: *mote.as_bytes(),
+            seq: 0,
+            nondeterminism: kx_mote::NdClass::Pure,
+            result_ref,
+            parents: smallvec::SmallVec::new(),
+            warrant_ref: ContentRef::from_bytes([0u8; 32]),
+            mote_def_hash: kx_mote::MoteDefHash([0u8; 32]),
+        }
+    }
+
+    /// The refusal-audit field, on the incident that motivated it.
+    ///
+    /// A turn settled `Rejected` because the model emitted a tool call in a dialect the
+    /// decoder could not read. `rejection_reason` records the VERDICT; on its own it
+    /// cannot distinguish a predicate that fired correctly from one that OVER-fired,
+    /// because the bytes it judged were nowhere on the wire. This asserts the operator
+    /// can now see them — and, as the one-variable control, that a turn which was NOT
+    /// refused carries none.
+    #[test]
+    fn a_refused_turn_shows_the_output_it_was_settled_from() {
+        // The measured llama.cpp terminal: an ATTEMPT to act, scored as an answer until
+        // the settle learned to read it, and refused ever since.
+        let attempt = b"<|tool_call>call:fleet/get_vessel{\"vessel_id\":\"merlin\"}<tool_call|>";
+        let answer = b"The final number is 16294.";
+        let rejected_ref = ContentRef::from_bytes([0xc1; 32]);
+        let answer_ref = ContentRef::from_bytes([0xc2; 32]);
+
+        let j = InMemoryJournal::new();
+        // turn 0 REJECTED (turn_fact keys the mote as instance+turn), turn 1 ANSWER.
+        j.append(turn_fact(
+            0,
+            0xb0,
+            ReactBranch::Rejected {
+                reason: "an attempted tool call the decoder could not read".to_string(),
+            },
+        ))
+        .unwrap();
+        j.append(turn_fact(1, 0xb0, ReactBranch::Answer)).unwrap();
+        j.append(committed_turn(MoteId::from_bytes([0xb0; 32]), rejected_ref))
+            .unwrap();
+        j.append(committed_turn(MoteId::from_bytes([0xb1; 32]), answer_ref))
+            .unwrap();
+        let r = ReadOnly::new(j);
+
+        let mut map = std::collections::HashMap::new();
+        map.insert(*rejected_ref.as_bytes(), attempt.to_vec());
+        map.insert(*answer_ref.as_bytes(), answer.to_vec());
+        let content = MapContent(map);
+
+        let resp = list_react_turns(&r, Some(&content), None, None, None).unwrap();
+        let rejected = resp
+            .turns
+            .iter()
+            .find(|t| t.branch == "rejected")
+            .expect("a rejected turn");
+        assert_eq!(
+            rejected.raw,
+            attempt.to_vec(),
+            "a refused turn must show the output it was settled FROM — a runtime that \
+             refuses on a heuristic must be able to show what it refused; got {:?}",
+            String::from_utf8_lossy(&rejected.raw)
+        );
+
+        // THE CONTROL, one variable: the same journal, the same content, a turn that was
+        // NOT refused. Without this the assertion above is satisfied by a field wired to
+        // return every turn's output — which is a different, wider feature.
+        let answered = resp
+            .turns
+            .iter()
+            .find(|t| t.branch == "answer")
+            .expect("an answer turn");
+        assert!(
+            answered.raw.is_empty(),
+            "raw is scoped to the refusal-audit case; a settled answer must carry none, \
+             got {:?}",
+            String::from_utf8_lossy(&answered.raw)
+        );
+
+        // WITHOUT content: degrades to empty rather than erroring, exactly like the
+        // governance axes above — a display-only projection never fails a list call.
+        let none = list_react_turns(&r, None, None, None, None).unwrap();
+        assert!(none
+            .turns
+            .iter()
+            .find(|t| t.branch == "rejected")
+            .expect("a rejected turn")
+            .raw
+            .is_empty());
+    }
+
+    /// The wire cap holds on a byte boundary, and it is the SERVER's cap: an oversized
+    /// committed output cannot become an unbounded response.
+    #[test]
+    fn a_refused_turn_raw_is_capped_by_the_server() {
+        let huge = vec![b'x'; MAX_RAW_BYTES * 3];
+        let huge_ref = ContentRef::from_bytes([0xd1; 32]);
+
+        let j = InMemoryJournal::new();
+        j.append(turn_fact(
+            0,
+            0xb0,
+            ReactBranch::Rejected {
+                reason: "refused".to_string(),
+            },
+        ))
+        .unwrap();
+        j.append(committed_turn(MoteId::from_bytes([0xb0; 32]), huge_ref))
+            .unwrap();
+        let r = ReadOnly::new(j);
+        let mut map = std::collections::HashMap::new();
+        map.insert(*huge_ref.as_bytes(), huge);
+        let content = MapContent(map);
+
+        let resp = list_react_turns(&r, Some(&content), None, None, None).unwrap();
+        let rejected = resp
+            .turns
+            .iter()
+            .find(|t| t.branch == "rejected")
+            .expect("a rejected turn");
+        assert_eq!(
+            rejected.raw.len(),
+            MAX_RAW_BYTES,
+            "an oversized turn output is capped by the SERVER, not by what the model wrote"
+        );
     }
 }

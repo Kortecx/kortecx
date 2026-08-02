@@ -26,7 +26,15 @@ name = "kx-proto"
 # `ProposedSecretName` and `ProposedScript` exist so that no field named
 # value/argv/env is reachable from `ControlPreview` — a property the descriptor
 # walk in `src/lib.rs` asserts against this crate's own FileDescriptorSet.
-version = "0.16.0"
+# 0.16.0 -> 0.17.0: `ReactTurnSummary.raw` — the model output a REFUSED turn was
+# settled FROM, so a refusal decided by a heuristic over those bytes can be checked
+# against its own input instead of taken on trust. Wire-additive (`buf breaking`
+# clean, a new field on an existing message), but the message is an exhaustive
+# struct literal in Rust so every construction site gains a field ⇒
+# breaking-in-Rust, minor. Populated iff branch == "rejected" and server-capped;
+# it is a PROJECTION read of an already-committed turn output — no journal fact
+# carries it and no digest moves.
+version = "0.17.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }

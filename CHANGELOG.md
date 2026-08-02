@@ -6,6 +6,35 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
+- **A refused ReAct turn now shows the model output it was refused ON.**
+  `ReactTurnSummary` recorded the runtime's VERDICT (`rejection_reason`) and never
+  its INPUT. That is enough when the refusal is a decode or schema failure, and it
+  is not enough when the refusal comes from a HEURISTIC over the raw output — a
+  proposal in a dialect the decoder cannot read, or an answer whose content is a
+  plan rather than an answer. Given only the verdict, a predicate that fired
+  correctly and a predicate that OVER-fired produce identical trajectories, so its
+  own firings could not be audited. A runtime that refuses on a heuristic must be
+  able to show what it refused.
+
+  `ReactTurnSummary` gains `raw`, populated **iff** `branch == "rejected"` and
+  server-capped at 2048 bytes. `kx react list` renders it on both surfaces: the
+  full capped value under `--json`, and a newline-escaped excerpt on the one-line
+  text listing (a model's output is routinely multi-line, and an unescaped value
+  would silently reflow the trajectory).
+
+  It is a **projection read**, not a new fact: a turn Mote is already committed
+  with its model output as the result — the same fact the coordinator re-reads to
+  re-derive a frozen branch — so the value is resolved from committed content at
+  list time. No journal entry changes, no schema version moves, and the resolution
+  happens after paging, so it costs at most one page of reads and only for the
+  refusals within it. Absent content, an absent result, or an unreadable blob all
+  yield empty: display degrades, never errors.
+
+  **Stated limit:** this audits a false POSITIVE, not a false NEGATIVE. A bad
+  proposal the predicates ACCEPTED is not a refusal, carries no `raw`, and remains
+  invisible. `kx-proto` 0.16.0 → 0.17.0 (wire-additive; the message is an
+  exhaustive struct literal in Rust, so breaking-in-Rust and a minor bump).
+
 - **A failing tool's own error now reaches the model — journal schema v17 → v18.**
   When a tool ran and failed, the runtime told the model only which BUCKET the
   failure fell into: a nine-variant enum whose catch-all renders as *"it failed to
