@@ -128,12 +128,25 @@ jobs:
           #     outcome than the thing the guard protects against.
           #
           #     It is keyed on the FIELD NAME, not on the shape of the value, and the list is
-          #     explicit: `detail` and `model_detail`. That is deliberately narrower than a
-          #     "looks like an initialiser" pattern, which would have exempted any line of the
-          #     form `ident: expr,` — including `foo: run_arbitrary_code(),`. Here a line is
-          #     exempt only if it declares or initialises one of the two NAMED fields this
-          #     carve-out was opened for; adding a third name is itself a guard edit, in a PR,
-          #     with this comment to justify it.
+          #     explicit: `detail`, `model_detail` and `permanent`. That is deliberately
+          #     narrower than a "looks like an initialiser" pattern, which would have exempted
+          #     any line of the form `ident: expr,` — including `foo: run_arbitrary_code(),`.
+          #     Here a line is exempt only if it declares or initialises one of the three NAMED
+          #     fields this carve-out was opened for; adding a fourth name is itself a guard
+          #     edit, in a PR, with this comment to justify it.
+          #
+          #     `permanent` is the third name, and it is the same shape as the first two: a
+          #     `CommitProtocolError::BrokerDispatchFailed` field whose value is computed by
+          #     `BrokerError::is_permanent()` OUTSIDE this path, for the identical reason
+          #     `model_detail` is — the answer is only knowable while the error is still typed,
+          #     and this path renders it to `format!("{e:?}")`. The failure policy classified
+          #     every broker dispatch failure as transient and retried it on a bounded budget,
+          #     so a warrant-axis refusal, an undeclared capability and a denied credential —
+          #     verdicts, not blips — were each re-asked three times. That was measured twice
+          #     in successive subsystems, which is why the fix is a field on the class rather
+          #     than a special case downstream. The READER is `classify_commit` in kx-worker
+          #     and `classify_commit_error` in kx-runtime; neither is in a frozen path, and
+          #     that is the point of the split.
           #
           #     LOGIC is not exempt and must not be — the accessor that READS such a field
           #     lives outside the frozen path on purpose (see
@@ -149,7 +162,7 @@ jobs:
             | grep -E '^[+-]' \
             | grep -vE '^(\+\+\+|---)' \
             | grep -vE '^[+-][[:space:]]*(//|#)' \
-            | grep -vE '^[+-][[:space:]]*(detail|model_detail)[[:space:]]*[:,]' \
+            | grep -vE '^[+-][[:space:]]*(detail|model_detail|permanent)[[:space:]]*[:,]' \
             || true)"
           CHANGED=""
           if [ -n "$SUBSTANTIVE" ]; then

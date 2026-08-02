@@ -235,10 +235,22 @@ fn classify_commit(err: &kx_executor::CommitProtocolError) -> FailureClass {
     use kx_executor::CommitProtocolError;
     use FailureClass::{TerminalLogic, TransientInfra};
     match err {
-        // Storage / broker / probe transients — the broker's idempotency-key dedup makes
+        // A broker dispatch failure is retryable ONLY when it was not a verdict. The
+        // permanence is decided by `BrokerError::is_permanent` while the error is still
+        // typed and carried on the variant, because this layer sees only a `{:?}` dump.
+        // Retrying a warrant-axis refusal, an undeclared capability or a denied
+        // credential re-asks a settled question: it burns the budget, triples the load on
+        // whatever refused, and buries the cause under two identical failures.
+        CommitProtocolError::BrokerDispatchFailed { permanent, .. } => {
+            if *permanent {
+                TerminalLogic
+            } else {
+                TransientInfra
+            }
+        }
+        // Storage / probe transients — the broker's idempotency-key dedup makes
         // a WM re-dispatch exactly-once, so a bounded retry is safe.
-        CommitProtocolError::BrokerDispatchFailed { .. }
-        | CommitProtocolError::ContentStorePutFailed { .. }
+        CommitProtocolError::ContentStorePutFailed { .. }
         | CommitProtocolError::JournalAppendCommittedFailed { .. }
         | CommitProtocolError::JournalAppendEffectStagedFailed { .. }
         | CommitProtocolError::ProbeFailed { .. } => TransientInfra,
@@ -249,5 +261,54 @@ fn classify_commit(err: &kx_executor::CommitProtocolError) -> FailureClass {
         | CommitProtocolError::R13WmReDispatchRefused { .. }
         | CommitProtocolError::CompensateFailed { .. }
         | CommitProtocolError::Internal { .. } => TerminalLogic,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_commit, FailureClass};
+    use kx_executor::CommitProtocolError;
+    use kx_mote::MoteId;
+
+    /// ★ A dispatch failure that was a VERDICT must not be retried.
+    ///
+    /// `BrokerDispatchFailed` was `TransientInfra` unconditionally, so a warrant-axis
+    /// refusal was re-dispatched three times before dead-lettering — measured twice, in
+    /// successive subsystems. The permanence now rides the variant, decided while the
+    /// error was still typed.
+    ///
+    /// Written against THIS classifier only. `kx_runtime::failure_policy` has a twin with
+    /// the same shape, and asserting one against the other would compare a thing to
+    /// itself; each owns an independent statement of the same rule.
+    #[test]
+    fn a_permanent_dispatch_failure_is_terminal_and_a_transient_one_is_retried() {
+        let permanent = CommitProtocolError::BrokerDispatchFailed {
+            mote_id: MoteId::from_bytes([7u8; 32]),
+            reason: "CapabilityExceedsWarrant { axis: ToolGrants }".to_string(),
+            model_detail: String::new(),
+            permanent: true,
+        };
+        assert_eq!(
+            classify_commit(&permanent),
+            FailureClass::TerminalLogic,
+            "a permanent broker refusal must dead-letter, never burn the retry budget \
+             re-asking a settled question"
+        );
+
+        // The accepting control, ONE variable: the same variant, the same fields, a
+        // failure that was not a verdict. Without it the assertion above is satisfied by
+        // a classifier wired to return TerminalLogic for every dispatch failure — which
+        // would strand every genuinely transient blip.
+        let transient = CommitProtocolError::BrokerDispatchFailed {
+            mote_id: MoteId::from_bytes([7u8; 32]),
+            reason: "CapabilityFailure { reason: RateLimited }".to_string(),
+            model_detail: String::new(),
+            permanent: false,
+        };
+        assert_eq!(
+            classify_commit(&transient),
+            FailureClass::TransientInfra,
+            "a transient dispatch failure is still eligible for a bounded retry"
+        );
     }
 }

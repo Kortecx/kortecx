@@ -470,34 +470,70 @@ fn is_dedicated_embedder(model_id: &str) -> bool {
 }
 
 /// Resolve the dataset server-embed model. `KX_SERVE_EMBED_MODEL` (operator-config,
-/// never client-chosen) when set AND served by some engine; else the primary
-/// chat model (back-compat). NOTE: this is a SERVED-set check, NOT an embed-CAPABILITY
-/// check — neither the Ollama daemon nor a GGUF exposes a per-model "can embed" flag,
-/// so a non-embedding model passes here and surfaces an honest `BackendFailure` on the
-/// first embed. The env value MUST therefore name an embedding-capable model (e.g.
-/// `embeddinggemma` on Ollama, or an embedding GGUF on llama.cpp).
+/// never client-chosen) when set AND served by some engine; else the primary chat model
+/// (back-compat, and only when the operator named nothing).
+///
+/// **A substitute that cannot satisfy the contract is refused, not silently used.** This
+/// used to fall back to the serve PRIMARY whenever the requested tag was unserved. The
+/// primary is a CHAT model; a chat-only tag answers the embed endpoint with HTTP 501, so
+/// every embedding was structurally impossible from that moment — and because each layer
+/// below degraded gracefully (the dispatch retried, the model got a generic steer, the
+/// retrieval fixtures were skipped), a one-line config typo surfaced as a benchmark
+/// recording a model that chose badly, on a serve that read green. Falling back onto a
+/// resource that cannot satisfy the request is not graceful degradation; it is a delayed
+/// hard failure with the diagnosis removed.
+///
+/// So when the operator NAMED a tag and it is not served, this returns that tag rather
+/// than substituting. Nothing then claims to be an embedder (`can_embed` matches no
+/// catalog entry, so `ListModels` and Settings show none), and the first embed fails
+/// naming the model the operator actually asked for — which points at the configuration
+/// instead of at a chat model that cannot do the job. The `error!` below is the one line
+/// at startup that names the cause.
+///
+/// The fallback survives where it is safe: an unset/empty variable keeps the primary
+/// exactly as before, and an explicitly-named tag that IS served is used as given. NOTE
+/// this remains a SERVED-set check, not an embed-CAPABILITY check — neither the Ollama
+/// daemon nor a GGUF exposes a per-model "can embed" flag — so a served-but-non-embedding
+/// tag still fails at first use; what is fixed is the SILENT substitution of a model the
+/// operator never named.
 fn resolve_embed_model(
     primary: &ModelId,
     entries: &[kx_gateway_core::ModelSummaryEntry],
 ) -> ModelId {
-    let Ok(raw) = std::env::var("KX_SERVE_EMBED_MODEL") else {
+    let requested = std::env::var("KX_SERVE_EMBED_MODEL").ok();
+    resolve_embed_model_from(requested.as_deref(), primary, entries)
+}
+
+/// The decision behind [`resolve_embed_model`], with the environment read out of it so
+/// it is a pure function of `(requested, primary, served)` — process-global env state is
+/// not something a test can hold still while its siblings run.
+fn resolve_embed_model_from(
+    requested: Option<&str>,
+    primary: &ModelId,
+    entries: &[kx_gateway_core::ModelSummaryEntry],
+) -> ModelId {
+    // Nothing named: the primary, exactly as before.
+    let Some(id) = requested.map(str::trim).filter(|s| !s.is_empty()) else {
         return primary.clone();
     };
-    let id = raw.trim();
-    if id.is_empty() {
-        return primary.clone();
-    }
     if entries.iter().any(|e| e.model_id == id) {
         tracing::info!(embed_model = %id, "dataset embed model set via KX_SERVE_EMBED_MODEL");
-        ModelId(id.to_string())
-    } else {
-        tracing::warn!(
-            requested = %id,
-            fallback = %primary.0,
-            "KX_SERVE_EMBED_MODEL is not served by any engine; using the primary for embeddings"
-        );
-        primary.clone()
+        return ModelId(id.to_string());
     }
+    let served = entries
+        .iter()
+        .map(|e| e.model_id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    tracing::error!(
+        requested = %id,
+        served = %served,
+        "KX_SERVE_EMBED_MODEL names a model no engine serves; refusing to substitute the \
+         primary (a chat model answers the embed endpoint with HTTP 501, which would fail \
+         every retrieval while the serve reads green). Serve this model or unset the \
+         variable — embeddings are UNAVAILABLE until then."
+    );
+    ModelId(id.to_string())
 }
 
 /// Auto-detect a running Ollama daemon and build its backend + engine-tagged catalog
@@ -2520,6 +2556,82 @@ fn internal(reason: &str) -> MoteExecutorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // The embed model is RESOLVED, never SUBSTITUTED
+    // -----------------------------------------------------------------------
+
+    /// A served catalog entry with `model_id`. The resolve reads only `model_id`; every
+    /// other field is display/audit and is filled with its inert value.
+    fn served(model_id: &str) -> kx_gateway_core::ModelSummaryEntry {
+        kx_gateway_core::ModelSummaryEntry {
+            model_id: model_id.to_string(),
+            modalities: vec!["text".to_string()],
+            description: model_id.to_string(),
+            serving: false,
+            context_len: 0,
+            loaded: false,
+            chat_handle: String::new(),
+            engine: "kx-ollama".to_string(),
+            can_embed: false,
+            source: "ollama".to_string(),
+            active: false,
+            chat_rag_handle: String::new(),
+            embed_is_decoder: false,
+        }
+    }
+
+    /// ★ The measured incident: an operator set `KX_SERVE_EMBED_MODEL` to a tag no engine
+    /// served, the resolve fell back to the PRIMARY — a chat model — and Ollama answered
+    /// every embed with HTTP 501. Because each layer below degraded gracefully, that
+    /// one-line config error surfaced as a benchmark recording a model choosing badly on
+    /// a serve that read green.
+    ///
+    /// A substitute must be able to satisfy the contract. This asserts the resolve does
+    /// NOT hand back the primary, and names the tag the operator actually asked for so
+    /// the first failure points at the configuration.
+    #[test]
+    fn an_unserved_embed_tag_is_not_substituted_by_the_primary_chat_model() {
+        let primary = ModelId("gemma3:12b".to_string());
+        let entries = vec![served("gemma3:12b")];
+        let resolved = resolve_embed_model_from(Some("embeddinggemma:latest"), &primary, &entries);
+        assert_ne!(
+            resolved, primary,
+            "an unserved embed tag must not silently resolve to the primary chat model — \
+             every embedding would then fail 501 while the serve reads green"
+        );
+        assert_eq!(
+            resolved.0, "embeddinggemma:latest",
+            "the resolve names the tag the OPERATOR asked for, so the first failure points \
+             at the configuration rather than at a chat model that cannot embed"
+        );
+    }
+
+    /// The two accepting controls, each one variable from the case above. Without them
+    /// the assertion there is satisfied by a resolve that never returns the primary at
+    /// all — which would break every default serve.
+    #[test]
+    fn an_unset_or_served_embed_tag_keeps_its_existing_behaviour() {
+        let primary = ModelId("gemma3:12b".to_string());
+        let entries = vec![served("gemma3:12b"), served("embeddinggemma:latest")];
+        // (a) Nothing named ⇒ the primary, exactly as before.
+        assert_eq!(
+            resolve_embed_model_from(None, &primary, &entries),
+            primary,
+            "an unset variable keeps the pre-existing primary fallback"
+        );
+        assert_eq!(
+            resolve_embed_model_from(Some("   "), &primary, &entries),
+            primary,
+            "an empty/whitespace variable is the same as unset"
+        );
+        // (b) Named AND served ⇒ used as given.
+        assert_eq!(
+            resolve_embed_model_from(Some("embeddinggemma:latest"), &primary, &entries).0,
+            "embeddinggemma:latest",
+            "a served embed tag is used as given"
+        );
+    }
 
     // -----------------------------------------------------------------------
     // EFFECT-QUEUE / G4 — the worker→executor context side-channel is PER MOTE

@@ -181,6 +181,16 @@ pub enum CommitProtocolError {
         /// would mean re-parsing a `{:?}` dump — and would silently start forwarding
         /// whatever a future `BrokerError` variant happens to stringify.
         model_detail: String,
+        /// Would an identical re-dispatch fail identically? Computed by
+        /// `BrokerError::is_permanent` while the error was still typed, for exactly the
+        /// reason `model_detail` is: the answer is unrecoverable from the `{:?}` dump in
+        /// `reason`. A warrant-axis refusal, an undeclared capability and a denied
+        /// credential are VERDICTS, and the failure policy retried them on a bounded
+        /// budget because this variant was transient unconditionally.
+        ///
+        /// The field lives here; the classification that READS it lives outside the
+        /// frozen kernel, beside the other failure policy.
+        permanent: bool,
     },
 
     /// `ContentStore::put` returned an error. The broker may have already
@@ -680,6 +690,7 @@ where
                 // "the server said this" and "this machine is configured that way"
                 // is gone, and only the wider one survives.
                 model_detail: e.model_facing_detail(),
+                permanent: e.is_permanent(),
                 reason: format!("{e:?}"),
             })?;
         let result_ref = handle.staged_ref;
@@ -776,6 +787,7 @@ where
                 // "the server said this" and "this machine is configured that way"
                 // is gone, and only the wider one survives.
                 model_detail: e.model_facing_detail(),
+                permanent: e.is_permanent(),
                 reason: format!("{e:?}"),
             })?;
         let result_ref = handle.staged_ref;
@@ -862,6 +874,7 @@ where
                 // "the server said this" and "this machine is configured that way"
                 // is gone, and only the wider one survives.
                 model_detail: e.model_facing_detail(),
+                permanent: e.is_permanent(),
                 reason: format!("{e:?}"),
             })?;
         let result_ref = handle.staged_ref;
