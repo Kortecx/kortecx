@@ -1,15 +1,37 @@
 import type { ModelSummary } from "@kortecx/sdk/web";
 
 /**
+ * Can this model answer a CHAT turn?
+ *
+ * An embedding model exposes only an embed endpoint; asking it to chat fails at dispatch.
+ * The gateway already says which is which — `serving` marks the primary chat route and
+ * `canEmbed` marks the embedder — so a model that only embeds is never a chat candidate.
+ * Kept deliberately permissive otherwise: an entry that claims neither flag is still
+ * offered, because a serve may list a chat model it has not marked primary.
+ */
+function isChatCapable(m: ModelSummary): boolean {
+  return m.serving === true || m.canEmbed !== true;
+}
+
+/**
  * Resolve the model "Auto" defers to — the Model Control v2 order, SHARED by every
  * surface so the picker's "Auto · X" LABEL can never diverge from what the runtime
  * actually binds: the server's ACTIVE model, then this browser's client-local default
- * (only if it is still served — never name a stale/unserved model), then the first
- * listed. Returns undefined only when nothing is served.
+ * (only if it is still served — never name a stale/unserved model), then the model the
+ * server is SERVING, then the first chat-capable entry. Returns undefined only when
+ * nothing chat-capable is served.
  *
  * Both the composer `ModelPicker` (the label) and `useChatController` (the modelId it
  * sends) call this, so a client-local default can no longer silently override the
  * server-active model the label promises.
+ *
+ * **Why `serving` comes before "first listed".** The last two steps used to be a bare
+ * `models[0]`, which is whatever sorts first in the catalog — and on a fresh install
+ * nothing is server-active and the browser has no local default, so that fallback IS the
+ * common path. A serve with an embedder registered lists it first, so New Chat opened on
+ * a model whose only endpoint is `/api/embed` and the first message dead-lettered. The
+ * gateway published `serving` all along; this just reads it. A substitute that cannot
+ * satisfy the request is not a fallback, it is a deferred failure.
  */
 export function resolveAutoModel(
   models: readonly ModelSummary[] | undefined,
@@ -25,7 +47,14 @@ export function resolveAutoModel(
   if (defaultModelId && models.some((m) => m.modelId === defaultModelId)) {
     return defaultModelId;
   }
-  return models[0]?.modelId;
+  const serving = models.find((m) => m.serving === true)?.modelId;
+  if (serving) {
+    return serving;
+  }
+  // Nothing is marked primary: take the first entry that could answer a chat turn, and
+  // fall back to the first entry only when none qualifies — an embed-only serve then
+  // still names something rather than rendering a picker with no answer at all.
+  return (models.find(isChatCapable) ?? models[0])?.modelId;
 }
 
 /** The model the runtime will actually bind, plus what the picker must disclose. */

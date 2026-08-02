@@ -6,34 +6,40 @@ development; interfaces may change before 1.0 — pin a commit if you build on i
 
 ### Added
 
-- **A refused ReAct turn now shows the model output it was refused ON.**
-  `ReactTurnSummary` recorded the runtime's VERDICT (`rejection_reason`) and never
-  its INPUT. That is enough when the refusal is a decode or schema failure, and it
-  is not enough when the refusal comes from a HEURISTIC over the raw output — a
-  proposal in a dialect the decoder cannot read, or an answer whose content is a
-  plan rather than an answer. Given only the verdict, a predicate that fired
-  correctly and a predicate that OVER-fired produce identical trajectories, so its
-  own firings could not be audited. A runtime that refuses on a heuristic must be
-  able to show what it refused.
+- **A refused agent turn now shows the model output it was refused on.**
+  `ReactTurnSummary` gains `raw` — the model output a turn was settled from, present
+  when the turn was rejected and capped by the server. `kx react list` shows it: the
+  full value under `--json`, a single-line excerpt in the text listing. Previously a
+  trajectory recorded only *why* a proposal was refused, which is enough for a schema
+  error and not enough when the refusal came from a judgement about the output itself.
+  Nothing is stored for it — the value is read from the turn's already-committed
+  output — so no journal or schema version changes. `kx-proto` 0.16.0 → 0.17.0.
 
-  `ReactTurnSummary` gains `raw`, populated **iff** `branch == "rejected"` and
-  server-capped at 2048 bytes. `kx react list` renders it on both surfaces: the
-  full capped value under `--json`, and a newline-escaped excerpt on the one-line
-  text listing (a model's output is routinely multi-line, and an unescaped value
-  would silently reflow the trajectory).
+- **A permanent tool failure is no longer retried as a temporary one.**
+  A dispatch refused for a fixed reason — an undeclared capability, a warrant that does
+  not permit the call, a rejected credential — used to be retried on the transient
+  budget before dead-lettering. Those retries could not succeed; they added latency and
+  buried the original cause. Such failures now fail immediately, with the reason intact.
+  Failures that a retry can genuinely survive (rate limits, timeouts, unreachable hosts)
+  are unchanged.
 
-  It is a **projection read**, not a new fact: a turn Mote is already committed
-  with its model output as the result — the same fact the coordinator re-reads to
-  re-derive a frozen branch — so the value is resolved from committed content at
-  list time. No journal entry changes, no schema version moves, and the resolution
-  happens after paging, so it costs at most one page of reads and only for the
-  refusals within it. Absent content, an absent result, or an unreadable blob all
-  yield empty: display degrades, never errors.
+- **An unavailable embedding model is reported instead of silently swapped.**
+  If `KX_SERVE_EMBED_MODEL` names a model the server does not serve, startup now logs an
+  error naming the model and what is available, and embeddings stay unavailable until it
+  is fixed. Previously the server quietly substituted the primary chat model, which
+  cannot serve embeddings — so every retrieval failed later, for a reason that pointed
+  at the wrong place. Leaving the variable unset is unchanged.
 
-  **Stated limit:** this audits a false POSITIVE, not a false NEGATIVE. A bad
-  proposal the predicates ACCEPTED is not a refusal, carries no `raw`, and remains
-  invisible. `kx-proto` 0.16.0 → 0.17.0 (wire-additive; the message is an
-  exhaustive struct literal in Rust, so breaking-in-Rust and a minor bump).
+- **The chat model picker no longer offers a model that cannot chat.**
+  On a server with an embedding model registered and no explicitly-chosen default, the
+  console's "Auto" selection could land on the embedding model, and the first message
+  would fail. It now prefers the model the server reports as serving.
+
+- **Benchmark comparisons state when the baseline was captured.**
+  Gate results are ratcheted against a committed per-engine baseline. The comparison now
+  prints the commit and capture date alongside the result, so a number is never read as
+  current when the baseline predates the code being measured. The README benchmark tables
+  carry the same note.
 
 - **A failing tool's own error now reaches the model — journal schema v17 → v18.**
   When a tool ran and failed, the runtime told the model only which BUCKET the

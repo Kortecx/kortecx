@@ -11,6 +11,22 @@ function model(modelId: string, active = false): ModelSummary {
   } as unknown as ModelSummary;
 }
 
+/** A model carrying the gateway's capability flags — what `serving` / `canEmbed` say. */
+function capability(
+  modelId: string,
+  flags: { serving: boolean; canEmbed: boolean },
+  active = false,
+): ModelSummary {
+  return {
+    modelId,
+    active,
+    modalities: [],
+    chatHandle: flags.serving ? "kx/recipes/chat" : `kx/recipes/m-${modelId}`,
+    serving: flags.serving,
+    canEmbed: flags.canEmbed,
+  } as unknown as ModelSummary;
+}
+
 describe("resolveAutoModel (Model Control v2 — shared Auto resolution)", () => {
   it("returns undefined when nothing is served", () => {
     expect(resolveAutoModel(undefined, undefined)).toBeUndefined();
@@ -32,6 +48,49 @@ describe("resolveAutoModel (Model Control v2 — shared Auto resolution)", () =>
 
   it("uses the first listed when there is neither an active model nor a default", () => {
     expect(resolveAutoModel([model("a"), model("b")], undefined)).toBe("a");
+  });
+
+  // ── the model Auto offers must be able to answer a chat turn ──────────────────────
+  // A fresh install is exactly the state these cases describe: nothing is server-active
+  // and the browser has no local default, so the last fallback IS the common path.
+
+  it("prefers the SERVING model over whatever sorts first in the catalog", () => {
+    // The shape of a real serve with an embedder registered: the embedding model sorts
+    // first, and the chat model is the one the gateway marks `serving`. Picking the
+    // first listed opened New Chat on a model whose only endpoint is /api/embed, so the
+    // first message dead-lettered.
+    const models = [
+      capability("embeddinggemma:latest", { serving: false, canEmbed: true }),
+      capability("gemma3:12b", { serving: true, canEmbed: false }),
+    ];
+    expect(resolveAutoModel(models, undefined)).toBe("gemma3:12b");
+  });
+
+  it("never offers an embed-only model while a chat-capable one exists", () => {
+    // Same rule with NOTHING marked serving — the embed flag alone must disqualify it.
+    const models = [
+      capability("embeddinggemma:latest", { serving: false, canEmbed: true }),
+      capability("some-chat-model", { serving: false, canEmbed: false }),
+    ];
+    expect(resolveAutoModel(models, undefined)).toBe("some-chat-model");
+  });
+
+  it("still names something when EVERY served model only embeds", () => {
+    // The accepting control for the rule above: disqualifying every candidate must not
+    // leave the picker with no answer at all. One variable from the case before it.
+    const models = [capability("embed-only", { serving: false, canEmbed: true })];
+    expect(resolveAutoModel(models, undefined)).toBe("embed-only");
+  });
+
+  it("does not let `serving` override an ACTIVE model or a served client default", () => {
+    // The new step slots in BELOW the two explicit choices; it must not outrank them.
+    const chosen = capability("chosen", { serving: false, canEmbed: false }, true);
+    const primary = capability("primary", { serving: true, canEmbed: false });
+    // ACTIVE wins over serving.
+    expect(resolveAutoModel([chosen, primary], undefined)).toBe("chosen");
+    // A served client default also wins over serving (same model, no longer active).
+    const notActive = capability("chosen", { serving: false, canEmbed: false });
+    expect(resolveAutoModel([primary, notActive], "chosen")).toBe("chosen");
   });
 });
 

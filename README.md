@@ -280,6 +280,15 @@ on two different Gemma-4-12B builds — Ollama `gemma3:12b` and a llama.cpp GGUF
 `kx-serve:gemma-4-12b-it-q4_k_m`. They are not the same build, and the columns are not
 interchangeable. The label travels in the committed baseline, and CI holds this text to it.
 
+**Captured 2026-07-31** (`5a67e740` Ollama, `d9d43246` llama.cpp). A baseline is a
+measurement of one commit, and fixes land between captures — so a table can publish a zero
+for something already repaired. Two of the zeros below are known to be stale: the `http`
+family was a runtime defect, since fixed and measured passing, and the `react` zero on
+Ollama moved with it. **Treat any number here as "as of the capture above" and re-run
+`just eval-bench` for the current tree.** Numbers are only refreshed by a deliberate
+two-engine re-capture, never edited by hand, which is why a fix can be live before the
+table moves.
+
 ### Per-capability — `task_success@<family>`
 
 A family's score is the floor mean over its bucket — the fraction beside each rate is the
