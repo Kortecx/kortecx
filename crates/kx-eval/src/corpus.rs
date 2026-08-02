@@ -377,6 +377,7 @@ mod tests {
             tool_version: "1".to_string(),
             call_index: 0,
             rejection_reason: String::new(),
+            raw: Vec::new(),
         };
         let run = |turns: Vec<TurnRecord>, answer: &str| Transcript {
             task_id: task.id.clone(),
@@ -395,6 +396,7 @@ mod tests {
             tool_version: String::new(),
             call_index: 0,
             rejection_reason: String::new(),
+            raw: Vec::new(),
         };
         let success_of = |t: &Transcript| {
             score_transcript(&crate::scorers::ScoreInput {
@@ -520,6 +522,7 @@ mod tests {
             tool_version: String::new(),
             call_index: 0,
             rejection_reason: String::new(),
+            raw: Vec::new(),
         };
         let run = |task: &crate::suite::GoldenTask, answer: &str| Transcript {
             task_id: task.id.clone(),

@@ -712,6 +712,29 @@ message ReactTurnSummary {
   // new client reads empty from an old server.
   repeated string granted_tools      = 14;   // sorted tool ids from warrant.tool_grants
   repeated string secret_scope_names = 15;    // sorted secret refs from warrant.secret_scope (empty = None)
+  // Refusal AUDIT (additive): the model output the turn was settled FROM — the exact
+  // bytes the refusal passed judgement on, read from the turn Mote's committed result.
+  //
+  // WHY. `rejection_reason` records the runtime's VERDICT and not its INPUT, and some
+  // refusals are decided by a HEURISTIC over the raw output (a proposal in a dialect the
+  // decoder cannot read; an answer whose content is a plan). Given only the reason, an
+  // over-fire is indistinguishable from a correct refusal — the predicate's own firings
+  // could not be audited. A runtime that refuses on a heuristic must be able to show what
+  // it refused.
+  //
+  // SCOPE, deliberately narrow. Populated IFF branch == "rejected", and capped by the
+  // server. Unlike `granted_tools`/`secret_scope_names` this is model-authored free text
+  // rather than names/refs, so it is confined to the refusal-audit case: the turns whose
+  // verdict cannot otherwise be checked. STATED LIMIT: it therefore cannot audit a false
+  // NEGATIVE — a bad proposal the predicates ACCEPTED carries no raw and stays invisible.
+  //
+  // A pure projection read: no journal fact carries this field, nothing is written, and
+  // the value is resolved from the already-committed turn output at list time. EMPTY when
+  // the branch is not "rejected", when no content reader is wired, or when the blob is
+  // absent — display degrades, never errors. Additive (D120.6): an old client ignores it;
+  // a new client reads empty from an old server. `bytes`, not `string`: a model's output
+  // is not guaranteed valid UTF-8 and proto3 `string` requires it — render lossily.
+  bytes raw = 16;                             // settled-from model output; set iff branch == "rejected"
 }
 message ListReactTurnsResponse {
   repeated ReactTurnSummary turns = 1;   // newest-first (descending seq)

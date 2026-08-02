@@ -451,6 +451,7 @@ async fn drive_nl_author(
             tool_version: String::new(),
             call_index: 0,
             rejection_reason: reason,
+            raw: Vec::new(),
         }],
         final_answer: answer,
         retrieved_docs: Vec::new(),
@@ -519,6 +520,12 @@ pub async fn fold_run_transcript(
             tool_version: r.tool_version.clone(),
             call_index: r.call_index,
             rejection_reason: r.rejection_reason.clone(),
+            // The bytes a refused turn was settled FROM. Carried into the transcript
+            // because the trajectory IS the artefact a behavioural claim gets read from:
+            // without it a refusal renders the same line whether the predicate that
+            // produced it fired correctly or over-fired, and the claim is then
+            // unfalsifiable by the very run it was taken from.
+            raw: r.raw.clone(),
         })
         .collect();
 
@@ -649,6 +656,7 @@ pub async fn fold_workflow_transcript(
             tool_version: String::new(),
             call_index: 0,
             rejection_reason: String::new(),
+            raw: Vec::new(),
         };
         let mut turns: Vec<TurnRecord> = (0..ancestors.len()).map(answer_turn).collect();
         turns.push(answer_turn(turns.len()));

@@ -49,6 +49,7 @@ mod tests {
                 tool_version: "1".into(),
                 call_index: 0,
                 rejection_reason: String::new(),
+                raw: Vec::new(),
             });
         }
         if answered {
@@ -59,6 +60,7 @@ mod tests {
                 tool_version: String::new(),
                 call_index: 0,
                 rejection_reason: String::new(),
+                raw: Vec::new(),
             });
         }
         Transcript {

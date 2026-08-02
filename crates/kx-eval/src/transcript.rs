@@ -47,6 +47,16 @@ pub struct TurnRecord {
     /// The durable refusal reason when `branch == Rejected` (else empty).
     #[serde(default)]
     pub rejection_reason: String,
+    /// The model output the turn was settled FROM, when `branch == Rejected` (else empty).
+    ///
+    /// `rejection_reason` is the runtime's VERDICT; this is the INPUT it judged. Some
+    /// refusals are decided by a HEURISTIC over these bytes, and a trajectory that
+    /// records only the verdict renders identically whether the predicate fired
+    /// correctly or over-fired — so a claim about WHY a chain stalled could not be
+    /// checked against the artefact it was read from. Folded from `ListReactTurns.raw`
+    /// (server-capped); a Tier-A fixture omits it and reads empty.
+    #[serde(default)]
+    pub raw: Vec<u8>,
 }
 
 /// The listwise-rerank outcome of a RAG run (RC4c-2c) — present iff the run reranked its
@@ -212,6 +222,7 @@ mod tests {
             },
             call_index: 0,
             rejection_reason: String::new(),
+            raw: Vec::new(),
         }
     }
 

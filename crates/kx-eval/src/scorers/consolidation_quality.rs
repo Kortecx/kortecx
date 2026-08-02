@@ -60,6 +60,7 @@ mod tests {
                 tool_version: String::new(),
                 call_index: 0,
                 rejection_reason: String::new(),
+                raw: Vec::new(),
             }],
             final_answer: Some(answer.into()),
             retrieved_docs: recalled.iter().map(|s| (*s).to_string()).collect(),

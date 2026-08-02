@@ -794,7 +794,7 @@ class ListReactTurnsRequest(_message.Message):
     def __init__(self, limit: _Optional[int] = ..., instance_id: _Optional[bytes] = ..., step_salt: _Optional[bytes] = ...) -> None: ...
 
 class ReactTurnSummary(_message.Message):
-    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq", "rejection_reason", "step_salt", "call_index", "granted_tools", "secret_scope_names")
+    __slots__ = ("turn", "turn_mote_id", "instance_id", "model_id", "branch", "tool_id", "tool_version", "max_turns", "max_tool_calls", "seq", "rejection_reason", "step_salt", "call_index", "granted_tools", "secret_scope_names", "raw")
     TURN_FIELD_NUMBER: _ClassVar[int]
     TURN_MOTE_ID_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -810,6 +810,7 @@ class ReactTurnSummary(_message.Message):
     CALL_INDEX_FIELD_NUMBER: _ClassVar[int]
     GRANTED_TOOLS_FIELD_NUMBER: _ClassVar[int]
     SECRET_SCOPE_NAMES_FIELD_NUMBER: _ClassVar[int]
+    RAW_FIELD_NUMBER: _ClassVar[int]
     turn: int
     turn_mote_id: bytes
     instance_id: bytes
@@ -825,7 +826,8 @@ class ReactTurnSummary(_message.Message):
     call_index: int
     granted_tools: _containers.RepeatedScalarFieldContainer[str]
     secret_scope_names: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ..., rejection_reason: _Optional[str] = ..., step_salt: _Optional[bytes] = ..., call_index: _Optional[int] = ..., granted_tools: _Optional[_Iterable[str]] = ..., secret_scope_names: _Optional[_Iterable[str]] = ...) -> None: ...
+    raw: bytes
+    def __init__(self, turn: _Optional[int] = ..., turn_mote_id: _Optional[bytes] = ..., instance_id: _Optional[bytes] = ..., model_id: _Optional[str] = ..., branch: _Optional[str] = ..., tool_id: _Optional[str] = ..., tool_version: _Optional[str] = ..., max_turns: _Optional[int] = ..., max_tool_calls: _Optional[int] = ..., seq: _Optional[int] = ..., rejection_reason: _Optional[str] = ..., step_salt: _Optional[bytes] = ..., call_index: _Optional[int] = ..., granted_tools: _Optional[_Iterable[str]] = ..., secret_scope_names: _Optional[_Iterable[str]] = ..., raw: _Optional[bytes] = ...) -> None: ...
 
 class ListReactTurnsResponse(_message.Message):
     __slots__ = ("turns", "has_more")

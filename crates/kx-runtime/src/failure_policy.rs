@@ -181,10 +181,20 @@ fn classify_executor_error(err: &MoteExecutorError) -> FailureClass {
 fn classify_commit_error(err: &CommitProtocolError) -> FailureClass {
     use FailureClass::{TerminalLogic, TransientInfra};
     match err {
-        // Storage / broker / probe transients — the broker's idempotency-key dedup
+        // A broker dispatch failure is retryable ONLY when it was not a verdict. See the
+        // twin in `kx_worker::error::classify_commit`: the permanence is decided by
+        // `BrokerError::is_permanent` while the error is still typed, because by the time
+        // it reaches a failure policy `reason` is a `{:?}` dump and the answer is gone.
+        CommitProtocolError::BrokerDispatchFailed { permanent, .. } => {
+            if *permanent {
+                TerminalLogic
+            } else {
+                TransientInfra
+            }
+        }
+        // Storage / probe transients — the broker's idempotency-key dedup
         // makes a WM re-dispatch exactly-once, so a bounded retry is safe.
-        CommitProtocolError::BrokerDispatchFailed { .. }
-        | CommitProtocolError::ContentStorePutFailed { .. }
+        CommitProtocolError::ContentStorePutFailed { .. }
         | CommitProtocolError::JournalAppendCommittedFailed { .. }
         | CommitProtocolError::JournalAppendEffectStagedFailed { .. }
         | CommitProtocolError::ProbeFailed { .. } => TransientInfra,
@@ -279,5 +289,50 @@ mod tests {
     fn max_attempts_floored_at_one() {
         assert_eq!(FailurePolicy::new(0, Duration::ZERO).max_attempts, 1);
         assert_eq!(FailurePolicy::dev_default().max_attempts, 3);
+    }
+
+    /// ★ A broker dispatch failure that was a VERDICT dead-letters instead of retrying.
+    ///
+    /// This variant was `TransientInfra` unconditionally, so a warrant-axis refusal was
+    /// re-dispatched three times — the retries could not succeed, and the two extra
+    /// failures buried the cause. The permanence is decided while the error is still a
+    /// typed `BrokerError` and carried on the variant, because by the time it arrives
+    /// here `reason` is a `{:?}` dump.
+    ///
+    /// An INDEPENDENT statement of the rule that `kx_worker::error::classify_commit`
+    /// also makes. The two classifiers are duplicate logic on purpose (the worker cannot
+    /// depend on the engine), so each must be asserted on its own — checking one against
+    /// the other would compare a thing to itself and pass however both drifted.
+    #[test]
+    fn a_permanent_broker_refusal_dead_letters_and_a_transient_one_retries() {
+        let mote_id = kx_mote::MoteId::from_bytes([9u8; 32]);
+        let permanent = LifecycleError::CommitProtocol(CommitProtocolError::BrokerDispatchFailed {
+            mote_id,
+            reason: "CapabilityExceedsWarrant { axis: SecretScope }".to_string(),
+            model_detail: String::new(),
+            permanent: true,
+        });
+        assert_eq!(
+            classify_lifecycle_error(&permanent),
+            FailureClass::TerminalLogic,
+            "a permanent broker refusal must dead-letter, not consume the retry budget"
+        );
+        assert_eq!(
+            reason_for(classify_lifecycle_error(&permanent)),
+            FailureReason::DeadLettered
+        );
+
+        // The accepting control, ONE variable: same variant, same fields, not a verdict.
+        let transient = LifecycleError::CommitProtocol(CommitProtocolError::BrokerDispatchFailed {
+            mote_id,
+            reason: "CapabilityFailure { reason: NetworkUnreachable }".to_string(),
+            model_detail: String::new(),
+            permanent: false,
+        });
+        assert_eq!(
+            classify_lifecycle_error(&transient),
+            FailureClass::TransientInfra,
+            "a transient dispatch failure keeps its bounded retry"
+        );
     }
 }
