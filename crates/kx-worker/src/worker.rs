@@ -502,7 +502,10 @@ impl Worker {
                     %error,
                     "terminal execution failure; dead-lettering"
                 );
-                self.dead_letter(mote_id).await;
+                // The model-facing subset is taken HERE, while `error` is still a typed
+                // `WorkerError`. One frame down `dead_letter` has only the MoteId.
+                let detail = crate::error::model_facing_detail(error);
+                self.dead_letter(mote_id, &detail).await;
             }
             FailureClass::TransientInfra => {
                 let attempts = self.attempts.entry(mote_id).or_insert(0);
@@ -515,7 +518,10 @@ impl Worker {
                         %error,
                         "transient failure budget exhausted; dead-lettering"
                     );
-                    self.dead_letter(mote_id).await;
+                    // Same as the terminal arm: the budget is exhausted, so this IS the
+                    // dead-letter, and the failure that exhausted it still names itself.
+                    let detail = crate::error::model_facing_detail(error);
+                    self.dead_letter(mote_id, &detail).await;
                 } else {
                     tracing::warn!(
                         worker_id = self.id,
@@ -534,11 +540,15 @@ impl Worker {
     /// propagated — the Mote simply stays leasable and a later report (or the
     /// coordinator's death reaper) resolves it; the coordinator's `ReportFailure` is
     /// idempotent, so a duplicate after a retry is a no-op.
-    async fn dead_letter(&mut self, mote_id: MoteId) {
+    ///
+    /// `detail` is the MODEL-FACING diagnostic ([`model_facing_detail`]), taken by the
+    /// caller while the `WorkerError` is still typed — this frame holds only a `MoteId`,
+    /// which is exactly how the diagnosis used to be lost on the served path.
+    async fn dead_letter(&mut self, mote_id: MoteId, detail: &str) {
         self.attempts.remove(&mote_id);
         if let Err(error) = self
             .client
-            .report_failure(*mote_id.as_bytes(), self.id)
+            .report_failure(*mote_id.as_bytes(), self.id, detail)
             .await
         {
             tracing::warn!(

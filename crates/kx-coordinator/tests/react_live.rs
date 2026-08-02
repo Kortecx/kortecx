@@ -747,6 +747,114 @@ async fn tool_branch_advances_the_chain_with_trajectory() {
     assert_eq!(served_obs.as_ref(), br#"{"echoed":{"q":"x"}}"#);
 }
 
+// ---------------------------------------------------------------------------
+// v18 model-facing detail — ARRIVAL, on the path the served runtime takes
+// ---------------------------------------------------------------------------
+
+/// A downstream system naming the argument the model got wrong. Distinctive enough
+/// that finding it in a prompt cannot be a coincidence, and it is the case the
+/// class-derived steer actively CONTRADICTS ("do not call it again with the same
+/// arguments" — when changing one argument is the fix).
+const OBS_DETAIL: &str = "MCP error -32602: unknown field `cursr`, did you mean `cursor`?";
+
+/// Drive one chain to a FAILED tool observation reported with `detail`, and return
+/// `(the frozen turn-0 rejection reason, the re-prompted turn-1 PROMPT)`.
+///
+/// The failure is delivered through the REAL `ReportFailure` RPC — the same call
+/// `kx-worker` makes when it dead-letters — so this exercises the coordinator half of
+/// the served path rather than a hand-built journal entry.
+async fn chain_to_failed_observation(detail: &str) -> (String, String) {
+    let dir = TempDir::new().unwrap();
+    let (svc, store) = coordinator(&dir);
+    let w = warrant(true);
+
+    let (_turn0_id, _) = submit_react(&svc, &seed_mote(), &w).await;
+    let worker = common::register(&svc, "w").await;
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    let turn0: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    commit_raw(&svc, &store, &turn0, &w, TOOL_ENVELOPE, worker).await;
+
+    // The observation must be LEASED before it can be dead-lettered: `dead_letter_failure`
+    // admits only the worker that HOLDS the lease, which is the real ordering too.
+    let (obs, _args) = lease_observation(&svc, worker, &turn0).await;
+    common::report_failure_with_detail(
+        &svc,
+        &obs,
+        worker,
+        kx_coordinator::proto::FailureReason::DeadLettered,
+        detail,
+    )
+    .await
+    .expect("the leasing worker may dead-letter its observation");
+
+    let facts = react_facts(&svc, &dir).await;
+    let reason = facts
+        .iter()
+        .rev()
+        .find_map(|f| match f {
+            JournalEntry::ReactRound {
+                turn: 0,
+                branch: ReactBranch::Rejected { reason },
+                ..
+            } => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("a failed observation freezes turn 0 Rejected and keeps the chain alive");
+
+    // The chain continued: turn 1 is leasable, and its PROMPT is what the model reads.
+    let leased = common::lease_work(&svc, worker, MAC, 16).await;
+    assert_eq!(
+        leased.len(),
+        1,
+        "the chain advanced to a re-prompted turn 1"
+    );
+    let turn1: Mote = leased[0].mote.clone().unwrap().try_into().unwrap();
+    (reason, turn_prompt(&turn1))
+}
+
+/// ★ THE ARRIVAL ORACLE. A tool whose backend named its own failure must have those
+/// words reach the MODEL — which means the next turn's PROMPT, not merely a field on a
+/// journal entry that something might one day read.
+///
+/// **Why the prompt and not the journal.** The write side and the read side of this
+/// value were built in different changes, and the durable fact carrying it proves only
+/// that the write side works. `render_reprompt` is the last hop and the only one whose
+/// output the model actually sees; asserting anything earlier is asserting an accessor.
+#[tokio::test]
+async fn a_failing_tools_own_diagnostic_reaches_the_next_turns_prompt() {
+    let (reason, prompt) = chain_to_failed_observation(OBS_DETAIL).await;
+    assert!(
+        reason.contains(OBS_DETAIL),
+        "the frozen Rejected fact carries the downstream diagnostic; got: {reason}"
+    );
+    assert!(
+        prompt.contains(OBS_DETAIL),
+        "the RE-PROMPTED turn must show the model what the tool actually said — \
+         this is the only hop the model sees; got: {prompt}"
+    );
+}
+
+/// ★ THE ACCEPTING CONTROL — one variable changed (the reporter sent no detail), and
+/// the rendering falls back to the class-derived steer, BYTE-UNCHANGED from before the
+/// detail existed. Without this arm the test above would pass on any implementation
+/// that stuffed arbitrary text into the re-prompt.
+#[tokio::test]
+async fn an_observation_failure_without_a_detail_re_prompts_with_the_unchanged_steer() {
+    let (reason, prompt) = chain_to_failed_observation("").await;
+    assert!(
+        !reason.contains(OBS_DETAIL) && !prompt.contains(OBS_DETAIL),
+        "no detail was reported, so none may appear; got: {prompt}"
+    );
+    assert!(
+        reason.contains("Do not call it again with the same arguments"),
+        "the no-detail arm keeps the pre-v18 steer verbatim; got: {reason}"
+    );
+    assert!(
+        prompt.contains("was called but did not complete"),
+        "the model is still told the tool failed; got: {prompt}"
+    );
+}
+
 /// `T-RUNAPP-SECRET-SCOPE-OBSERVATION` regression pin (model-free + deterministic):
 /// a react warrant carrying `secret_scope = AllowList` must reach the OBSERVATION
 /// dispatch with the scope INTACT. The whole submit → anchor → materialize → lease

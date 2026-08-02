@@ -264,6 +264,96 @@ fn classify_commit(err: &kx_executor::CommitProtocolError) -> FailureClass {
     }
 }
 
+/// The MODEL-FACING detail carried by a per-Mote failure, or `""` when the failure was
+/// the runtime's own.
+///
+/// **The sibling of [`classify_worker_failure`], and deliberately beside it.** The class
+/// answers *may this be retried*; this answers *what may the model be told*. Both are
+/// read at the same call site — the moment the worker decides to dead-letter — and both
+/// are only answerable while the error is still TYPED: one frame later the worker holds
+/// a `MoteId` and the executor holds `format!("{e:?}")`.
+///
+/// **Why this is a SECOND statement of a rule `kx-runtime` already states.**
+/// `kx_runtime::failure_policy::model_facing_detail` says the same thing for the
+/// in-process engine path. The worker cannot depend on kx-runtime (the same reason
+/// `classify_worker_failure` re-expresses `classify_lifecycle_error` here), so the rule
+/// is re-derived over the public kx-executor types the worker already sees. They are
+/// duplicate logic ON PURPOSE: asserting one against the other would compare a thing to
+/// itself, so each is pinned against literal expected text instead.
+///
+/// **TWO arms can carry one, and which one fires depends on the Mote's shape** — a fact
+/// worth stating because assuming only the first cost a RED test here:
+///
+/// - [`WorkerError::Dispatch`] — a WORLD-MUTATING Mote. The worker fires the effect
+///   ITSELF through `run_wm`, so the broker's typed error surfaces directly. **This is
+///   the arm the served ReAct tool-observation path takes.**
+/// - [`WorkerError::Execute`] → `CommitProtocol(BrokerDispatchFailed)` — the in-executor
+///   commit protocol, which took the model-facing subset at its own dispatch site.
+///
+/// Every other failure is this machine talking about ITSELF (a resource ceiling, a spawn
+/// failure, a malformed lease item, a rejected commit), and a model can act on none of
+/// it. Those keep the unchanged class-derived steer.
+///
+/// Returns an owned `String` because the WM arm COMPUTES its answer from the typed
+/// `BrokerError` rather than reading a stored field (the kx-runtime twin can borrow
+/// because by then the executor has already stored it).
+///
+/// Exhaustive with no wildcard, for the same reason as the classifier: a new variant
+/// must be classified deliberately rather than default its way into a model prompt.
+pub(crate) fn model_facing_detail(err: &WorkerError) -> String {
+    match err {
+        // The WM path: the worker's own broker call. The subset is taken HERE, while the
+        // error is still a typed `BrokerError` — one `From` later it is a boxed opaque.
+        WorkerError::Dispatch(e) => e.model_facing_detail(),
+        WorkerError::Execute(e) => lifecycle_detail(e).to_string(),
+        WorkerError::Transport(_)
+        | WorkerError::Rpc(_)
+        | WorkerError::Convert(_)
+        | WorkerError::MissingField(_)
+        | WorkerError::CommitRejected(_)
+        | WorkerError::NotCommitted(_)
+        | WorkerError::ContentMissing(_)
+        | WorkerError::EffectStagedRejected(_)
+        | WorkerError::EffectStillInFlight(_)
+        | WorkerError::ExecutionTimedOut(_)
+        | WorkerError::DispatchPanicked(_)
+        | WorkerError::CapabilityResolution(_)
+        | WorkerError::MissingToolArgs(_) => String::new(),
+    }
+}
+
+fn lifecycle_detail(err: &kx_executor::LifecycleError) -> &str {
+    use kx_executor::LifecycleError;
+    match err {
+        LifecycleError::CommitProtocol(e) => commit_detail(e),
+        LifecycleError::JournalAppend(_)
+        | LifecycleError::ResourceAcquire(_)
+        | LifecycleError::ExecutorRun(_)
+        | LifecycleError::Refused(_)
+        | LifecycleError::Internal(_) => "",
+    }
+}
+
+fn commit_detail(err: &kx_executor::CommitProtocolError) -> &str {
+    use kx_executor::CommitProtocolError;
+    match err {
+        // The DOWNSTREAM system's own words, computed by `BrokerError::model_facing_detail`
+        // while the error was still typed. The sibling `reason` field is the full `{:?}`
+        // and is OPERATOR-facing — it can name host paths and local configuration, so it
+        // must never be the thing forwarded here.
+        CommitProtocolError::BrokerDispatchFailed { model_detail, .. } => model_detail,
+        CommitProtocolError::R11ResultRefIncomplete { .. }
+        | CommitProtocolError::R12CommittedNotProofOfValidity { .. }
+        | CommitProtocolError::R13WmReDispatchRefused { .. }
+        | CommitProtocolError::ProbeFailed { .. }
+        | CommitProtocolError::CompensateFailed { .. }
+        | CommitProtocolError::ContentStorePutFailed { .. }
+        | CommitProtocolError::JournalAppendCommittedFailed { .. }
+        | CommitProtocolError::JournalAppendEffectStagedFailed { .. }
+        | CommitProtocolError::Internal { .. } => "",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{classify_commit, FailureClass};

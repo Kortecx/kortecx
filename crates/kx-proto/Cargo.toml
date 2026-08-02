@@ -34,7 +34,17 @@ name = "kx-proto"
 # breaking-in-Rust, minor. Populated iff branch == "rejected" and server-capped;
 # it is a PROJECTION read of an already-committed turn output — no journal fact
 # carries it and no digest moves.
-version = "0.17.0"
+# 0.17.0 -> 0.18.0: `ReportFailureRequest.detail` — the MODEL-FACING diagnostic the
+# failing subsystem itself produced, carried across the worker -> coordinator report so
+# the journal-v18 `Failed.detail` is populated on the DISTRIBUTED path too (the
+# in-executor commit protocol already populated it; `kx serve` takes the worker path,
+# so every served run lost its diagnosis here). Wire-additive and trailing — an older
+# worker sends no field, which decodes to "" and is byte-identical to the previous
+# behaviour — but an exhaustive struct literal in Rust, so every construction site
+# gains a field => breaking-in-Rust, minor. No journal SHAPE moves (v18 already has the
+# field) and the product identity digest is invariant: a `Failed` entry is not an
+# identity input.
+version = "0.18.0"
 edition = { workspace = true }
 rust-version = { workspace = true }
 license = { workspace = true }

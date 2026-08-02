@@ -145,6 +145,7 @@ impl WorkerClient {
         &mut self,
         mote_id: [u8; 32],
         worker_id: u64,
+        detail: &str,
     ) -> Result<u64, WorkerError> {
         let resp = self
             .inner
@@ -153,6 +154,11 @@ impl WorkerClient {
                 idempotency_key: mote_id.to_vec(),
                 reason_class: proto::FailureReason::DeadLettered as i32,
                 worker_id,
+                // v18: bounded at the WRITE site — these are bytes the runtime did not
+                // author and they travel onto a durable fact that reaches a model prompt.
+                // The coordinator bounds again on receipt; a cap applied twice to the
+                // same constant is idempotent, and neither side may assume the other ran.
+                detail: kx_journal::bounded_failure_detail(detail),
             })
             .await?
             .into_inner();

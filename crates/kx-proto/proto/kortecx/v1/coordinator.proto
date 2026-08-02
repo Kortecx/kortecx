@@ -330,6 +330,16 @@ message ReportFailureRequest {
   bytes idempotency_key = 2;            // 32B — == mote_id (idempotency.md)
   FailureReason reason_class = 3;       // why it is terminal (DEAD_LETTERED for the F4 budget/terminal-logic path)
   uint64 worker_id = 4;                 // the reporting worker (admission gate)
+  // Journal v18 — the MODEL-FACING diagnostic the failing subsystem itself produced,
+  // computed by the reporter while the error was still TYPED. Empty when the failure
+  // was the runtime's own (that text is operator-facing and stays in the worker's log).
+  // The coordinator writes it onto the durable `Failed` entry, where the ReAct settle
+  // pass renders it into the next turn's re-prompt — so a tool that named the wrong
+  // argument can have those words reach the model. A trailing addition: an older
+  // worker sends no field, which decodes to "" and is byte-identical to the pre-v18
+  // behaviour. Bounded by the coordinator to `MAX_FAILURE_DETAIL_LEN` on receipt —
+  // these are bytes the runtime did not author.
+  string detail = 5;
 }
 
 message ReportFailureResponse {
