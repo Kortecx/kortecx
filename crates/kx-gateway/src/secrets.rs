@@ -35,6 +35,7 @@
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use kx_gateway_core::{SecretAdmin, SecretAdminError, SecretNameView};
 
@@ -103,6 +104,17 @@ type SecretMap = BTreeMap<String, SecretEntry>;
 pub(crate) struct SecretFile {
     path: PathBuf,
     tmp: PathBuf,
+    /// Serialises the read-modify-write that `put` and `delete` perform.
+    ///
+    /// The whole file is rewritten on every change, so two concurrent writers would each
+    /// load the same map, apply their own edit, and the second rename would win — silently
+    /// dropping the first credential. The store this replaced did not have that shape: a
+    /// row-level `INSERT … ON CONFLICT` is atomic on its own. Rewriting a whole file is
+    /// not, so the serialisation has to be explicit.
+    ///
+    /// Writers only. Readers need no lock: `store` renames over the target, so a reader
+    /// sees either the old file or the new one, never a partial one.
+    write: Mutex<()>,
 }
 
 // Manual `Debug` — print ONLY the path, so a future field on this type can never reach a log
@@ -131,6 +143,7 @@ impl SecretFile {
         let me = Self {
             tmp: dir.join(format!("{SECRETS_FILE}.tmp")),
             path,
+            write: Mutex::new(()),
         };
         if me.path.exists() {
             me.check_mode()?;
@@ -248,6 +261,10 @@ fn now_unix_ms() -> u64 {
 
 impl SecretAdmin for SecretFile {
     fn put(&self, name: &str, value: &str) -> Result<(), SecretAdminError> {
+        let _w = self
+            .write
+            .lock()
+            .map_err(|_| SecretAdminError::Storage("secret store lock poisoned".into()))?;
         let mut map = self.load()?;
         let now = now_unix_ms();
         // Preserve `created_unix_ms` across an overwrite: the operator's question is "when did
@@ -295,6 +312,10 @@ impl SecretAdmin for SecretFile {
     }
 
     fn delete(&self, name: &str) -> Result<bool, SecretAdminError> {
+        let _w = self
+            .write
+            .lock()
+            .map_err(|_| SecretAdminError::Storage("secret store lock poisoned".into()))?;
         let mut map = self.load()?;
         if map.remove(name).is_none() {
             return Ok(false);
@@ -476,6 +497,42 @@ mod tests {
         // pass on any open failure at all — a missing dir, a parse error, a bad path.
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
         SecretFile::open(dir.path()).expect("the same file at 0600 opens");
+    }
+
+    /// ★ Concurrent writers do not lose each other's credentials.
+    ///
+    /// Every change rewrites the WHOLE file, so without serialisation two writers each load
+    /// the same map, apply their own edit, and the second rename wins — silently dropping a
+    /// credential the operator believes is stored. The store this replaced could not fail
+    /// that way (a row-level upsert is atomic on its own), so the regression came in with
+    /// the file.
+    ///
+    /// Probabilistic by nature, but not marginal: eight threads planting eight names each
+    /// would have to interleave perfectly 64 times for an unserialised implementation to
+    /// keep them all.
+    #[test]
+    fn concurrent_writers_do_not_lose_each_others_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = std::sync::Arc::new(admin(dir.path()));
+        std::thread::scope(|s| {
+            for t in 0..8 {
+                let a = std::sync::Arc::clone(&a);
+                s.spawn(move || {
+                    for i in 0..8 {
+                        a.put(&format!("K{t}_{i}"), "v").unwrap();
+                    }
+                });
+            }
+        });
+        let (names, has_more) = a.list_names(0, "").unwrap();
+        assert!(!has_more, "64 names fit in one default page");
+        assert_eq!(
+            names.len(),
+            64,
+            "every stored credential must survive: a lost write here is a credential the \
+             operator believes they have. Got {:?}",
+            names.iter().map(|n| n.name.as_str()).collect::<Vec<_>>()
+        );
     }
 
     #[cfg(unix)]
